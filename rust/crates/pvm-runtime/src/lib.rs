@@ -777,7 +777,13 @@ impl Runtime {
             .instance
             .call_typed_and_get_result::<(), ()>(&mut self.state, "init", ());
         self.record_gas_used(gas);
-        map_call_result(result, "init")
+        map_call_result(result, "init").map_err(|error| {
+            if let Some(log) = self.state.logs.back() {
+                error.context(format!("last guest log: {log}"))
+            } else {
+                error
+            }
+        })
     }
 
     pub fn update(&mut self) -> Result<()> {
