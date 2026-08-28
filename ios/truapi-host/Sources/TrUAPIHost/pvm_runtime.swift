@@ -1211,7 +1211,7 @@ enum NativePvmError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError
 
 
 
-    case Runtime(message: String
+    case Runtime(detail: String
     )
     case DuplicateAsset(path: String
     )
@@ -1246,7 +1246,7 @@ public struct FfiConverterTypeNativePvmError: FfiConverterRustBuffer {
 
 
         case 1: return .Runtime(
-            message: try FfiConverterString.read(from: &buf)
+            detail: try FfiConverterString.read(from: &buf)
             )
         case 2: return .DuplicateAsset(
             path: try FfiConverterString.read(from: &buf)
@@ -1264,9 +1264,9 @@ public struct FfiConverterTypeNativePvmError: FfiConverterRustBuffer {
 
 
 
-        case let .Runtime(message):
+        case let .Runtime(detail):
             writeInt(&buf, Int32(1))
-            FfiConverterString.write(message, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
 
 
         case let .DuplicateAsset(path):

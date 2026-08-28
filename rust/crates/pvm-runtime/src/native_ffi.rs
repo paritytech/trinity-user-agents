@@ -127,8 +127,8 @@ impl From<GpuBatch> for NativePvmGpuBatch {
 
 #[derive(Clone, Debug, thiserror::Error, uniffi::Error)]
 pub enum NativePvmError {
-    #[error("{message}")]
-    Runtime { message: String },
+    #[error("{detail}")]
+    Runtime { detail: String },
     #[error("asset path appears more than once: {path}")]
     DuplicateAsset { path: String },
     #[error("PVM runtime mutex was poisoned")]
@@ -138,7 +138,7 @@ pub enum NativePvmError {
 impl NativePvmError {
     fn runtime(error: impl std::fmt::Display) -> Self {
         Self::Runtime {
-            message: error.to_string(),
+            detail: error.to_string(),
         }
     }
 }

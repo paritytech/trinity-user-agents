@@ -416,10 +416,12 @@ fn collect_block_targets(
     Ok(targets)
 }
 
+type BlockLayout = (Vec<Vec<ParsedInstruction>>, BTreeMap<u32, u32>);
+
 fn build_blocks(
     instructions: &[ParsedInstruction],
     targets: &BTreeSet<u32>,
-) -> Result<(Vec<Vec<ParsedInstruction>>, BTreeMap<u32, u32>)> {
+) -> Result<BlockLayout> {
     let mut blocks = Vec::new();
     let mut current = Vec::new();
     for instruction in instructions {
@@ -861,6 +863,9 @@ fn emit_store_value(
     });
 }
 
+// The decoded store operands map directly to the PolkaVM instruction fields;
+// grouping them would only move this argument list into a transient struct.
+#[allow(clippy::too_many_arguments)]
 fn emit_store(
     context: &EmitContext<'_>,
     f: &mut Function,
@@ -2073,7 +2078,7 @@ mod tests {
             Module::from_blob(&engine, &ModuleConfig::new(), blob).expect("compile fixture");
         let mut instance = module.instantiate().expect("instantiate fixture");
         instance.set_reg(Reg::SP, module.default_sp());
-        instance.set_reg(Reg::RA, RETURN_TO_HOST.into());
+        instance.set_reg(Reg::RA, RETURN_TO_HOST);
         instance.set_gas(i64::MAX);
         instance.set_next_program_counter(entry);
         assert_eq!(

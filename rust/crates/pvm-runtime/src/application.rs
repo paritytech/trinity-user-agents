@@ -14,6 +14,9 @@ use std::collections::{HashMap, VecDeque};
 const MAX_INTERRUPTS_PER_UPDATE: usize = 8_192;
 const MAX_QUEUED_AUDIO_CHUNKS: usize = 64;
 
+// Both variants are large, long-lived runtime state machines. Boxing either
+// adds allocation and indirection to every host call to save 576 enum bytes.
+#[allow(clippy::large_enum_variant)]
 pub enum ApplicationRuntime {
     Cooperative(Runtime),
     CoreVm(CoreVmRuntime),
@@ -231,7 +234,8 @@ impl CoreVmRuntime {
                     if palette.len() != 256 * 3 {
                         return Err(anyhow!("guest supplied an invalid Quake palette"));
                     }
-                    for (target, source) in self.palette.iter_mut().zip(palette.chunks_exact(3)) {
+                    for (target, source) in self.palette.iter_mut().zip(palette.as_chunks::<3>().0)
+                    {
                         target.copy_from_slice(source);
                     }
                 }

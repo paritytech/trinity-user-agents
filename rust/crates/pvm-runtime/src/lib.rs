@@ -646,7 +646,7 @@ impl Runtime {
                  -> Result<u32> {
                     let sample_count = sample_count as usize;
                     if sample_count == 0
-                        || sample_count % AUDIO_CHANNELS as usize != 0
+                        || !sample_count.is_multiple_of(AUDIO_CHANNELS as usize)
                         || sample_count > MAX_AUDIO_SAMPLES_PER_CALL
                         || caller.user_data.audio_samples + sample_count > MAX_QUEUED_AUDIO_SAMPLES
                     {
@@ -661,8 +661,10 @@ impl Runtime {
                     }
                     let bytes = read_guest_memory(caller.instance, pointer, byte_count)?;
                     let samples = bytes
-                        .chunks_exact(2)
-                        .map(|sample| i16::from_le_bytes([sample[0], sample[1]]))
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|sample| i16::from_le_bytes(*sample))
                         .collect();
                     caller.user_data.audio_samples += sample_count;
                     caller.user_data.audio.push_back(AudioChunk {
@@ -931,7 +933,7 @@ fn validate_gpu_capabilities(bytes: &[u8]) -> Result<()> {
         return Err(anyhow!("invalid GPU capabilities limit table"));
     }
     let mut previous = 0;
-    for entry in bytes[HEADER_BYTES..].chunks_exact(ENTRY_BYTES) {
+    for entry in bytes[HEADER_BYTES..].as_chunks::<ENTRY_BYTES>().0 {
         let key = gpu_u16(entry, 0).unwrap();
         if key <= previous
             || key > 12
