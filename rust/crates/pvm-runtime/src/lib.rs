@@ -777,9 +777,15 @@ impl Runtime {
             .instance
             .call_typed_and_get_result::<(), ()>(&mut self.state, "init", ());
         self.record_gas_used(gas);
+        let program_counter = self.instance.program_counter();
         map_call_result(result, "init").map_err(|error| {
-            if let Some(log) = self.state.logs.back() {
+            let error = if let Some(log) = self.state.logs.back() {
                 error.context(format!("last guest log: {log}"))
+            } else {
+                error
+            };
+            if let Some(program_counter) = program_counter {
+                error.context(format!("guest program counter: {program_counter}"))
             } else {
                 error
             }
@@ -795,15 +801,20 @@ impl Runtime {
             self.instance
                 .call_typed_and_get_result::<(), ()>(&mut self.state, "update", ());
         self.record_gas_used(gas);
+        let program_counter = self.instance.program_counter();
         map_call_result(result, "update").map_err(|error| {
-            if let Some(log) = self.state.logs.back() {
+            let error = if let Some(log) = self.state.logs.back() {
                 error.context(format!("last guest log: {log}"))
+            } else {
+                error
+            };
+            if let Some(program_counter) = program_counter {
+                error.context(format!("guest program counter: {program_counter}"))
             } else {
                 error
             }
         })
     }
-
     fn record_gas_used(&mut self, budget: i64) {
         let remaining = self.instance.gas().max(0);
         self.last_gas_used = (budget - remaining.min(budget)) as u64;
