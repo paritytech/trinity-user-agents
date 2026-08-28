@@ -1668,7 +1668,7 @@ version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef975e30683b2d965054bb0a836f8973857c4ebf6acf274fe46617cd285060d8"
 dependencies = [
- "foldhash",
+ "foldhash 0.2.0",
  "libm",
  "portable-atomic",
  "siphasher",
@@ -1754,6 +1754,12 @@ name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
+
+[[package]]
+name = "foldhash"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "foldhash"
@@ -2143,6 +2149,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
  "allocator-api2",
+ "foldhash 0.1.5",
+ "serde",
 ]
 
 [[package]]
@@ -2153,7 +2161,7 @@ checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
  "allocator-api2",
  "equivalent",
- "foldhash",
+ "foldhash 0.2.0",
  "serde",
  "serde_core",
 ]
@@ -2166,7 +2174,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
  "allocator-api2",
  "equivalent",
- "foldhash",
+ "foldhash 0.2.0",
 ]
 
 [[package]]
@@ -2862,6 +2870,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
+name = "leb128fmt"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
+
+[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3402,6 +3416,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
+name = "picosimd"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7823ffd00d2b55ebe51750a19f47f2a33cb1f1d135f5cba893379b81c4d44856"
+
+[[package]]
 name = "pin-project"
 version = "1.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3472,6 +3492,78 @@ dependencies = [
  "flate2",
  "miniz_oxide",
 ]
+
+[[package]]
+name = "polkavm"
+version = "0.37.0"
+source = "git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9#3df1d0309c4c81a1aad0a755d83570d203bba1d9"
+dependencies = [
+ "libc",
+ "log",
+ "picosimd",
+ "polkavm-assembler 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9)",
+ "polkavm-common 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9)",
+ "polkavm-linux-raw 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9)",
+]
+
+[[package]]
+name = "polkavm"
+version = "0.37.0"
+source = "git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997#8cc3c5601aa614b0f6dfac2ae3ee271942b3c997"
+dependencies = [
+ "libc",
+ "log",
+ "picosimd",
+ "polkavm-assembler 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997)",
+ "polkavm-common 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997)",
+ "polkavm-linux-raw 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997)",
+]
+
+[[package]]
+name = "polkavm-assembler"
+version = "0.37.0"
+source = "git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9#3df1d0309c4c81a1aad0a755d83570d203bba1d9"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "polkavm-assembler"
+version = "0.37.0"
+source = "git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997#8cc3c5601aa614b0f6dfac2ae3ee271942b3c997"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "polkavm-common"
+version = "0.37.0"
+source = "git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9#3df1d0309c4c81a1aad0a755d83570d203bba1d9"
+dependencies = [
+ "log",
+ "picosimd",
+ "polkavm-assembler 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9)",
+]
+
+[[package]]
+name = "polkavm-common"
+version = "0.37.0"
+source = "git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997#8cc3c5601aa614b0f6dfac2ae3ee271942b3c997"
+dependencies = [
+ "log",
+ "picosimd",
+ "polkavm-assembler 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997)",
+]
+
+[[package]]
+name = "polkavm-linux-raw"
+version = "0.37.0"
+source = "git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9#3df1d0309c4c81a1aad0a755d83570d203bba1d9"
+
+[[package]]
+name = "polkavm-linux-raw"
+version = "0.37.0"
+source = "git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997#8cc3c5601aa614b0f6dfac2ae3ee271942b3c997"
 
 [[package]]
 name = "polling"
@@ -3586,6 +3678,26 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+name = "pvm-gpu-wire"
+version = "0.1.0"
+
+[[package]]
+name = "pvm-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "polkavm 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9)",
+ "polkavm 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997)",
+ "pvm-gpu-wire",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "uniffi",
+ "wasm-encoder",
+ "wasmi",
+ "wasmparser 0.240.0",
+]
 
 [[package]]
 name = "qrcode"
@@ -4933,6 +5045,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "string-interner"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a3275464d7a9f2d4cac57c89c2ef96a8524dba2864c8d6f82e3980baf136f9b"
+dependencies = [
+ "hashbrown 0.15.5",
+ "serde",
+]
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5817,6 +5939,30 @@ version = "0.1.0"
 dependencies = [
  "getrandom 0.2.17",
  "parity-scale-codec",
+ "parking_lot",
+ "pvm-runtime",
+ "rand 0.8.7",
+ "scale-decode",
+ "scale-info",
+ "schnorrkel",
+ "send_wrapper",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sp-crypto-hashing",
+ "substrate-bip39",
+ "subxt",
+ "subxt-rpcs",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite 0.21.0",
+ "tracing",
+ "tracing-subscriber",
+ "truapi",
+ "truapi-platform",
+ "unicode-normalization",
+ "uniffi",
+ "url",
  "verifiable",
  "wasm-bindgen",
 ]
@@ -6358,6 +6504,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c31d56021e873866c968588ed85ccdf56db5c426e44afdb4618c39895104b920"
 
 [[package]]
+name = "wasm-encoder"
+version = "0.240.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06d642d8c5ecc083aafe9ceb32809276a304547a3a6eeecceb5d8152598bc71f"
+dependencies = [
+ "leb128fmt",
+ "wasmparser 0.240.0",
+]
+
+[[package]]
 name = "wasmi"
 version = "0.40.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6370,7 +6526,7 @@ dependencies = [
  "wasmi_collections",
  "wasmi_core",
  "wasmi_ir",
- "wasmparser",
+ "wasmparser 0.221.3",
 ]
 
 [[package]]
@@ -6378,6 +6534,9 @@ name = "wasmi_collections"
 version = "0.40.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e80d6b275b1c922021939d561574bf376613493ae2b61c6963b15db0e8813562"
+dependencies = [
+ "string-interner",
+]
 
 [[package]]
 name = "wasmi_core"
@@ -6405,6 +6564,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d06bfa36ab3ac2be0dee563380147a5b81ba10dd8885d7fbbc9eb574be67d185"
 dependencies = [
  "bitflags",
+ "indexmap",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.240.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b722dcf61e0ea47440b53ff83ccb5df8efec57a69d150e4f24882e4eba7e24a4"
+dependencies = [
+ "bitflags",
+ "hashbrown 0.15.5",
+ "indexmap",
+ "semver",
+ "serde",
 ]
 
 [[package]]

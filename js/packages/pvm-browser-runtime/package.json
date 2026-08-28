@@ -1,0 +1,28 @@
+{
+  "name": "@parity/pvm-browser-runtime",
+  "version": "0.1.0",
+  "description": "Host-neutral PolkaVM App v2 browser runtime artifacts",
+  "license": "MPL-2.0",
+  "type": "module",
+  "files": [
+    "dist",
+    "LICENSE-MPL-2.0",
+    "SOURCE"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "exports": {
+    "./runtime.wasm": "./dist/pvm-browser-runtime.wasm",
+    "./worker": "./dist/pvm-worker.js",
+    "./gpu-worker": "./dist/pvm-gpu-worker.js",
+    "./checksums": "./dist/SHA256SUMS"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

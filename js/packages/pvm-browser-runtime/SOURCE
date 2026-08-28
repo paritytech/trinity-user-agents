@@ -1,0 +1,10 @@
+PolkaVM App v2 browser runtime
+Source repository: https://github.com/paritytech/host-rust-core
+Source branch: feat/pvm-app-runtime
+Rust crate: rust/crates/pvm-runtime
+GPU wire crate: rust/crates/pvm-gpu-wire
+PolkaVM native revision: 8cc3c5601aa614b0f6dfac2ae3ee271942b3c997
+PolkaVM wasm revision: 3df1d0309c4c81a1aad0a755d83570d203bba1d9
+
+The package build compiles pvm-runtime for wasm32-unknown-unknown and bundles
+its bounded PVM worker plus the Tri2D/WebGPU Raster browser transport.

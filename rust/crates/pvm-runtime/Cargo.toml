@@ -1,0 +1,33 @@
+[package]
+name = "pvm-runtime"
+version = "0.1.0"
+edition = "2021"
+description = "Host-neutral App manifest v2 PolkaVM runtime and browser execution wrapper"
+license = "MPL-2.0"
+publish = false
+
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[features]
+ffi = ["dep:thiserror", "dep:uniffi"]
+
+[dependencies]
+anyhow = "1"
+log = "0.4"
+pvm-gpu-wire = { path = "../pvm-gpu-wire" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wasm-encoder = "0.240"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+polkavm = { git = "https://github.com/paritytech/polkavm.git", rev = "8cc3c5601aa614b0f6dfac2ae3ee271942b3c997", version = "=0.37.0", features = ["generic-sandbox"] }
+thiserror = { version = "1", optional = true }
+uniffi = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+polkavm-wasm = { package = "polkavm", git = "https://github.com/paritytech/polkavm.git", rev = "3df1d0309c4c81a1aad0a755d83570d203bba1d9", version = "=0.37.0", features = ["generic-sandbox"] }
+
+[dev-dependencies]
+wasmi = "0.40"
+wasmparser = "0.240"
