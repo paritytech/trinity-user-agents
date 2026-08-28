@@ -166,8 +166,6 @@ impl NativePvmRuntime {
         audio_enabled: bool,
         max_gas_per_update: u64,
     ) -> Result<Arc<Self>, NativePvmError> {
-        crate::validate_program_configuration(program.len(), max_gas_per_update)
-            .map_err(NativePvmError::runtime)?;
         crate::validate_asset_count(assets.len()).map_err(NativePvmError::runtime)?;
         let mut asset_map = HashMap::with_capacity(assets.len());
         for asset in assets {
