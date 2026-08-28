@@ -3,7 +3,7 @@ Source repository: https://github.com/paritytech/host-rust-core
 Release tag: @parity/pvm-browser-runtime@0.1.0
 Rust crate: rust/crates/pvm-runtime
 GPU wire crate: rust/crates/pvm-gpu-wire
-PolkaVM native revision: 8cc3c5601aa614b0f6dfac2ae3ee271942b3c997
+PolkaVM native revision: e06cce9da5c6d3f72458168876ea304e27992094
 PolkaVM wasm revision: 3df1d0309c4c81a1aad0a755d83570d203bba1d9
 
 The package build compiles pvm-runtime for wasm32-unknown-unknown and bundles

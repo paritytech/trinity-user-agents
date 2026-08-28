@@ -3509,14 +3509,14 @@ dependencies = [
 [[package]]
 name = "polkavm"
 version = "0.37.0"
-source = "git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997#8cc3c5601aa614b0f6dfac2ae3ee271942b3c997"
+source = "git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094#e06cce9da5c6d3f72458168876ea304e27992094"
 dependencies = [
  "libc",
  "log",
  "picosimd",
- "polkavm-assembler 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997)",
- "polkavm-common 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997)",
- "polkavm-linux-raw 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997)",
+ "polkavm-assembler 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094)",
+ "polkavm-common 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094)",
+ "polkavm-linux-raw 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094)",
 ]
 
 [[package]]
@@ -3530,7 +3530,7 @@ dependencies = [
 [[package]]
 name = "polkavm-assembler"
 version = "0.37.0"
-source = "git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997#8cc3c5601aa614b0f6dfac2ae3ee271942b3c997"
+source = "git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094#e06cce9da5c6d3f72458168876ea304e27992094"
 dependencies = [
  "log",
 ]
@@ -3548,11 +3548,11 @@ dependencies = [
 [[package]]
 name = "polkavm-common"
 version = "0.37.0"
-source = "git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997#8cc3c5601aa614b0f6dfac2ae3ee271942b3c997"
+source = "git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094#e06cce9da5c6d3f72458168876ea304e27992094"
 dependencies = [
  "log",
  "picosimd",
- "polkavm-assembler 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997)",
+ "polkavm-assembler 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094)",
 ]
 
 [[package]]
@@ -3563,7 +3563,7 @@ source = "git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0
 [[package]]
 name = "polkavm-linux-raw"
 version = "0.37.0"
-source = "git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997#8cc3c5601aa614b0f6dfac2ae3ee271942b3c997"
+source = "git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094#e06cce9da5c6d3f72458168876ea304e27992094"
 
 [[package]]
 name = "polling"
@@ -3688,7 +3688,7 @@ dependencies = [
  "anyhow",
  "log",
  "polkavm 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9)",
- "polkavm 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=8cc3c5601aa614b0f6dfac2ae3ee271942b3c997)",
+ "polkavm 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094)",
  "pvm-gpu-wire",
  "serde",
  "serde_json",
