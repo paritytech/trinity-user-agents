@@ -416,15 +416,18 @@
             `translated PolkaVM called unknown import ${importIndex}`,
           );
         }
-        if (--this.hostcalls < 0) {
-          throw new Error(
-            `translated PolkaVM guest exceeded hostcall budget in ${name}`,
-          );
-        }
+        this.hostcalls--;
         const yielded = this.coreVm
           ? this.#handleCoreVmCall(name)
           : this.#handleCooperativeCall(name);
         if (yielded && yieldOnFrame) {
+          this.resumePending = true;
+          return;
+        }
+        if (this.hostcalls === 0) {
+          // Resume on the next worker tick after completing this ECALL. Large
+          // assets can require more than one bounded hostcall slice, while
+          // returning here keeps each slice capped and the worker responsive.
           this.resumePending = true;
           return;
         }

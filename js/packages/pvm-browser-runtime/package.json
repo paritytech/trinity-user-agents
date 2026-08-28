@@ -16,6 +16,8 @@
   "exports": {
     "./runtime.wasm": "./dist/pvm-browser-runtime.wasm",
     "./worker": "./dist/pvm-worker.js",
+    "./worker-entry": "./dist/pvm-wasm-worker-entry.js",
+    "./translator": "./dist/pvm-wasm-translated.js",
     "./gpu-worker": "./dist/pvm-gpu-worker.js",
     "./checksums": "./dist/SHA256SUMS"
   },

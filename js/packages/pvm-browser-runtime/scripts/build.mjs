@@ -43,6 +43,14 @@ const translated = await readFile(resolve(source, "pvm-wasm-translated.js"));
 const workerEntry = await readFile(resolve(source, "pvm-wasm-worker-entry.js"));
 await copyFile(wasm, resolve(dist, "pvm-browser-runtime.wasm"));
 await copyFile(resolve(source, "pvm-gpu-worker.js"), resolve(dist, "pvm-gpu-worker.js"));
+await copyFile(
+  resolve(source, "pvm-wasm-translated.js"),
+  resolve(dist, "pvm-wasm-translated.js"),
+);
+await copyFile(
+  resolve(source, "pvm-wasm-worker-entry.js"),
+  resolve(dist, "pvm-wasm-worker-entry.js"),
+);
 await writeFile(
   resolve(dist, "pvm-worker.js"),
   Buffer.concat([translated, Buffer.from("\n"), workerEntry]),
@@ -52,6 +60,8 @@ const files = [
   "pvm-browser-runtime.wasm",
   "pvm-worker.js",
   "pvm-gpu-worker.js",
+  "pvm-wasm-translated.js",
+  "pvm-wasm-worker-entry.js",
 ];
 const sums = [];
 for (const file of files) {

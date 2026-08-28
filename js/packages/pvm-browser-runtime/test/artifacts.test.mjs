@@ -21,6 +21,8 @@ test("browser runtime artifacts match their published checksums", async () => {
     "pvm-browser-runtime.wasm",
     "pvm-worker.js",
     "pvm-gpu-worker.js",
+    "pvm-wasm-translated.js",
+    "pvm-wasm-worker-entry.js",
   ]) {
     const bytes = await readFile(resolve(dist, file));
     assert.equal(createHash("sha256").update(bytes).digest("hex"), expected.get(file));
