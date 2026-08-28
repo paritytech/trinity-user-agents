@@ -27,7 +27,7 @@ uniffi::setup_scaffolding!();
 pub use application::ApplicationRuntime;
 pub use manifest::AppDescriptor;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 pub use polkavm::BackendKind;
 use polkavm::{CallError, Config, Engine, Instance, Linker, Module, ProgramBlob};
 use std::collections::{HashMap, VecDeque};
@@ -97,6 +97,74 @@ const MAX_QUEUED_GPU_BATCHES: usize = 4;
 const MAX_QUEUED_GPU_EVENTS: usize = 256;
 const MAX_GPU_SUBMITS_PER_TICK: u32 = 8;
 const MAX_GPU_UPLOAD_BYTES_PER_TICK: usize = 16 * 1024 * 1024;
+
+pub(crate) fn validate_program_configuration(
+    program_len: usize,
+    max_gas_per_update: u64,
+) -> Result<()> {
+    if program_len == 0 || program_len > MAX_PROGRAM_BYTES {
+        bail!("guest program must contain 1..={MAX_PROGRAM_BYTES} bytes");
+    }
+    if max_gas_per_update == 0 {
+        bail!("guest gas budget must be nonzero");
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_asset_count(count: usize) -> Result<()> {
+    if count > MAX_ASSET_FILES {
+        bail!("guest declares {count} assets; maximum is {MAX_ASSET_FILES}");
+    }
+    Ok(())
+}
+
+fn validate_assets<'a>(
+    count: usize,
+    assets: impl IntoIterator<Item = (&'a str, usize)>,
+) -> Result<()> {
+    validate_asset_count(count)?;
+    let mut total = 0usize;
+    for (path, length) in assets {
+        if path.len() > MAX_ASSET_NAME_BYTES {
+            bail!("guest asset path exceeds {MAX_ASSET_NAME_BYTES} bytes");
+        }
+        manifest::validate_path(path)?;
+        if length > MAX_ASSET_FILE_BYTES {
+            bail!("guest asset {path} exceeds {MAX_ASSET_FILE_BYTES} bytes");
+        }
+        total = total
+            .checked_add(length)
+            .ok_or_else(|| anyhow!("guest asset byte count overflow"))?;
+        if total > MAX_ASSET_BYTES {
+            bail!("guest assets exceed {MAX_ASSET_BYTES} bytes");
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_launch_inputs(
+    program: &[u8],
+    assets: &HashMap<String, Vec<u8>>,
+    max_gas_per_update: u64,
+) -> Result<()> {
+    validate_program_configuration(program.len(), max_gas_per_update)?;
+    validate_assets(
+        assets.len(),
+        assets
+            .iter()
+            .map(|(path, bytes)| (path.as_str(), bytes.len())),
+    )
+}
+
+pub(crate) fn validate_blob(blob: &ProgramBlob) -> Result<()> {
+    if blob.rw_data_size() > MAX_GUEST_RW_DATA_BYTES {
+        bail!("guest read-write data exceeds {MAX_GUEST_RW_DATA_BYTES} bytes");
+    }
+    if blob.stack_size() > MAX_GUEST_STACK_BYTES {
+        bail!("guest stack exceeds {MAX_GUEST_STACK_BYTES} bytes");
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -363,15 +431,27 @@ impl Runtime {
         max_gas_per_update: u64,
         backend: BackendKind,
     ) -> Result<Self> {
+        validate_launch_inputs(program, &assets, max_gas_per_update)?;
         let blob = ProgramBlob::parse(program.into()).context("parse PolkaVM program")?;
-        if blob.rw_data_size() > MAX_GUEST_RW_DATA_BYTES {
-            return Err(anyhow!(
-                "guest read-write data exceeds {MAX_GUEST_RW_DATA_BYTES} bytes"
-            ));
-        }
-        if blob.stack_size() > MAX_GUEST_STACK_BYTES {
-            return Err(anyhow!("guest stack exceeds {MAX_GUEST_STACK_BYTES} bytes"));
-        }
+        validate_blob(&blob)?;
+        Self::from_blob(
+            blob,
+            assets,
+            presentation,
+            audio_enabled,
+            max_gas_per_update,
+            backend,
+        )
+    }
+
+    pub(crate) fn from_blob(
+        blob: ProgramBlob,
+        assets: HashMap<String, Vec<u8>>,
+        presentation: PresentationProfile,
+        audio_enabled: bool,
+        max_gas_per_update: u64,
+        backend: BackendKind,
+    ) -> Result<Self> {
         let mut engine_config = Config::new();
         // macOS requires PolkaVM's experimental generic sandbox for native
         // recompilation. Keep sandboxing enabled while opting into that boundary.
@@ -405,16 +485,16 @@ impl Runtime {
                  height: u32,
                  stride: u32|
                  -> Result<u32> {
-                    let row_bytes = width
-                        .checked_mul(BYTES_PER_PIXEL as u32)
-                        .ok_or_else(|| anyhow!("frame row size overflow"))?;
+                    let Some(row_bytes) = width.checked_mul(BYTES_PER_PIXEL as u32) else {
+                        return Ok(1);
+                    };
                     if stride != row_bytes {
                         return Ok(1);
                     }
-                    let byte_len = row_bytes
-                        .checked_mul(height)
-                        .ok_or_else(|| anyhow!("frame size overflow"))?
-                        as usize;
+                    let Some(byte_len) = row_bytes.checked_mul(height) else {
+                        return Ok(1);
+                    };
+                    let byte_len = byte_len as usize;
                     if byte_len == 0 || byte_len > MAX_FRAME_BYTES {
                         return Ok(1);
                     }
@@ -511,13 +591,14 @@ impl Runtime {
                  length: u32|
                  -> Result<i32> {
                     let length = length as usize;
-                    caller.user_data.charge_hostcall(length)?;
+                    caller.user_data.charge_hostcall(0)?;
                     if caller.user_data.presentation != PresentationProfile::WebGpuRaster {
                         return Ok(gpu_wire::GPU_ERROR_INVALID_STATE);
                     }
                     if length == 0 || length > gpu_wire::MAX_GPU_BATCH_BYTES {
                         return Ok(gpu_wire::GPU_ERROR_MALFORMED_BATCH);
                     }
+                    caller.user_data.charge_hostcall_bytes(length)?;
                     if caller.user_data.gpu_capabilities.is_none() {
                         return Ok(gpu_wire::GPU_ERROR_INVALID_STATE);
                     }
@@ -688,10 +769,11 @@ impl Runtime {
                  capacity: u32|
                  -> Result<u32> {
                     let name_length = name_length as usize;
-                    caller.user_data.charge_hostcall(name_length)?;
+                    caller.user_data.charge_hostcall(0)?;
                     if name_length == 0 || name_length > MAX_ASSET_NAME_BYTES {
                         return Ok(0);
                     }
+                    caller.user_data.charge_hostcall_bytes(name_length)?;
                     let name = read_guest_memory(caller.instance, name_pointer, name_length)?;
                     let Ok(name) = std::str::from_utf8(&name) else {
                         return Ok(0);
@@ -1152,6 +1234,17 @@ mod tests {
             state.input.back().unwrap().event_type,
             InputEventType::SurfaceMetrics
         );
+    }
+
+    #[test]
+    fn launch_limits_reject_unbounded_native_inputs() {
+        assert!(validate_program_configuration(0, 1).is_err());
+        assert!(validate_program_configuration(MAX_PROGRAM_BYTES + 1, 1).is_err());
+        assert!(validate_program_configuration(1, 0).is_err());
+        assert!(validate_assets(MAX_ASSET_FILES + 1, std::iter::empty()).is_err());
+        assert!(validate_assets(1, [("../escape", 1)]).is_err());
+        assert!(validate_assets(1, [("asset.bin", MAX_ASSET_FILE_BYTES + 1)]).is_err());
+        assert!(validate_assets(2, [("first.bin", MAX_ASSET_BYTES), ("second.bin", 1),],).is_err());
     }
 
     #[test]

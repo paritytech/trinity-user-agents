@@ -207,7 +207,15 @@
   }
 
   class TranslatedPvmRuntime {
-    constructor(module, assets, emit, maxGas, audioEnabled, gpuCapabilities = null) {
+    constructor(
+      module,
+      assets,
+      emit,
+      maxGas,
+      audioEnabled,
+      graphicsProfile,
+      gpuCapabilities = null,
+    ) {
       this.metadata = readMetadata(module);
       this.instance = new WebAssembly.Instance(module, {});
       this.pvm = this.instance.exports;
@@ -229,11 +237,28 @@
       );
       this.emit = emit;
       this.audioEnabled = audioEnabled;
+      if (
+        !["framebuffer", "tri2d", "webgpu-raster"].includes(graphicsProfile)
+      ) {
+        throw new Error(
+          `translated PolkaVM runtime has invalid graphics profile ${graphicsProfile}`,
+        );
+      }
+      this.graphicsProfile = graphicsProfile;
+      if (
+        graphicsProfile === "webgpu-raster" &&
+        !(gpuCapabilities instanceof Uint8Array)
+      ) {
+        throw new Error(
+          "WebGPU capabilities are required before PVM initialization",
+        );
+      }
       this.gpuCapabilities =
         gpuCapabilities instanceof Uint8Array ? gpuCapabilities.slice() : null;
       this.gpuEvents = [];
       this.gpuSubmits = 0;
       this.gpuLastSequence = 0n;
+      this.tri2dSubmitted = false;
       this.maxGas = BigInt(maxGas);
       this.input = [];
       this.coreInput = [];
@@ -245,6 +270,11 @@
       this.resumePending = false;
       this.stopped = false;
       this.coreVm = this.metadata.exports.has("_pvm_start");
+      if (this.coreVm && graphicsProfile !== "framebuffer") {
+        throw new Error(
+          "CoreVM guests require the framebuffer graphics profile",
+        );
+      }
       this.coreVmStarted = false;
       this.palette = new Uint32Array(256);
       this.palette.fill(0xffffffff);
@@ -375,6 +405,7 @@
     #resetBudget(hostcalls) {
       this.hostcalls = hostcalls;
       this.hostcallBytes = MAX_HOSTCALL_BYTES;
+      this.tri2dSubmitted = false;
       this.pvm.pvm_set_gas(this.maxGas);
     }
 
@@ -543,6 +574,7 @@
       return null;
     }
 
+    // eslint-disable-next-line complexity -- Flat hostcall dispatch mirrors the guest ABI.
     #handleCooperativeCall(name) {
       const a0 = this.#reg(7);
       const a1 = this.#reg(8);
@@ -565,6 +597,10 @@
             this.#setReg(7, 1n);
             return false;
           }
+          if (this.graphicsProfile !== "framebuffer") {
+            this.#setReg(7, 3n);
+            return false;
+          }
           const source = this.#read(this.#u32(a0), length);
           const pixels = new Uint8Array(length);
           for (let index = 0; index < length; index += 4) {
@@ -583,12 +619,25 @@
             this.#setReg(7, 1n);
             return false;
           }
+          if (this.graphicsProfile !== "tri2d") {
+            this.#setReg(7, 3n);
+            return false;
+          }
+          if (this.tri2dSubmitted) {
+            this.#setReg(7, 2n);
+            return false;
+          }
           const bytes = this.#read(this.#u32(a0), length);
           this.emit({ type: "tri2d", bytes }, [bytes.buffer]);
+          this.tri2dSubmitted = true;
           this.#setReg(7, 0n);
           return false;
         }
         case "epoca_gpu_capabilities": {
+          if (this.graphicsProfile !== "webgpu-raster") {
+            this.#setReg(7, BigInt(GPU_ERROR_INVALID_STATE));
+            return false;
+          }
           if (this.gpuCapabilities === null) {
             this.#setReg(7, BigInt(GPU_ERROR_INVALID_STATE));
             return false;
@@ -604,6 +653,10 @@
           return false;
         }
         case "epoca_gpu_submit": {
+          if (this.graphicsProfile !== "webgpu-raster") {
+            this.#setReg(7, BigInt(GPU_ERROR_INVALID_STATE));
+            return false;
+          }
           const length = this.#u32(a1);
           if (this.gpuCapabilities === null) {
             this.#setReg(7, BigInt(GPU_ERROR_INVALID_STATE));
@@ -626,8 +679,12 @@
           }
           const bytes = this.#read(this.#u32(a0), length);
           const sequence = this.#gpuBatchSequence(bytes);
-          if (sequence === null || sequence <= this.gpuLastSequence) {
+          if (sequence === null) {
             this.#setReg(7, BigInt(GPU_ERROR_MALFORMED_BATCH));
+            return false;
+          }
+          if (sequence <= this.gpuLastSequence) {
+            this.#setReg(7, BigInt(GPU_ERROR_INVALID_STATE));
             return false;
           }
           this.gpuSubmits++;
@@ -637,6 +694,10 @@
           return false;
         }
         case "epoca_gpu_receive": {
+          if (this.graphicsProfile !== "webgpu-raster") {
+            this.#setReg(7, BigInt(GPU_ERROR_INVALID_STATE));
+            return false;
+          }
           const event = this.gpuEvents[0];
           if (event === undefined) {
             this.#setReg(7, 0n);
@@ -834,6 +895,7 @@
       this.coreInput.push([key, value]);
     }
 
+    // eslint-disable-next-line complexity -- Flat hostcall dispatch mirrors the guest ABI.
     #handleCoreVmCall(name) {
       switch (name) {
         case "pvm_set_palette": {

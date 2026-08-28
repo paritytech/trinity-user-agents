@@ -5,7 +5,7 @@
 use crate::corevm::{Interruption, Vm};
 use crate::{
     AudioChunk, Frame, GpuBatch, InputEvent, InputEventType, PresentationProfile, Runtime,
-    Tri2dFrame, MAX_FRAME_BYTES, MAX_GUEST_RW_DATA_BYTES, MAX_GUEST_STACK_BYTES,
+    Tri2dFrame, MAX_FRAME_BYTES,
 };
 use anyhow::{anyhow, Context, Result};
 use polkavm::ProgramBlob;
@@ -61,19 +61,13 @@ impl ApplicationRuntime {
         max_gas_per_update: u64,
         backend: polkavm::BackendKind,
     ) -> Result<Self> {
+        crate::validate_launch_inputs(program, &assets, max_gas_per_update)?;
         let blob = ProgramBlob::parse(program.into()).context("parse PolkaVM program")?;
-        if blob.rw_data_size() > MAX_GUEST_RW_DATA_BYTES {
-            return Err(anyhow!(
-                "guest read-write data exceeds {MAX_GUEST_RW_DATA_BYTES} bytes"
-            ));
-        }
-        if blob.stack_size() > MAX_GUEST_STACK_BYTES {
-            return Err(anyhow!("guest stack exceeds {MAX_GUEST_STACK_BYTES} bytes"));
-        }
+        crate::validate_blob(&blob)?;
         let is_corevm = blob.exports().any(|export| export.symbol() == "_pvm_start");
         if !is_corevm {
-            return Runtime::new_with_backend(
-                program,
+            return Runtime::from_blob(
+                blob,
                 assets,
                 presentation,
                 audio_enabled,

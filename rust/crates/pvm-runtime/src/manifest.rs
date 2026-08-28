@@ -165,8 +165,9 @@ impl AppDescriptor {
     }
 }
 
-fn validate_path(path: &str) -> Result<()> {
-    if path.is_empty()
+pub(crate) fn validate_path(path: &str) -> Result<()> {
+    if path.len() > crate::MAX_ASSET_NAME_BYTES
+        || path.is_empty()
         || path.starts_with('/')
         || path.contains('\\')
         || path
