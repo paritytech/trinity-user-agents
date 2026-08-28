@@ -28,7 +28,8 @@ pub use application::ApplicationRuntime;
 pub use manifest::AppDescriptor;
 
 use anyhow::{anyhow, Context, Result};
-use polkavm::{BackendKind, CallError, Config, Engine, Instance, Linker, Module, ProgramBlob};
+pub use polkavm::BackendKind;
+use polkavm::{CallError, Config, Engine, Instance, Linker, Module, ProgramBlob};
 use std::collections::{HashMap, VecDeque};
 use std::mem::size_of;
 #[cfg(not(target_arch = "wasm32"))]
