@@ -22,6 +22,7 @@ test("browser runtime artifacts match their published checksums", async () => {
     "pvm-worker.js",
     "pvm-gpu-worker.js",
     "pvm-wasm-translated.js",
+    "pvm-runtime-core.js",
     "pvm-wasm-worker-entry.js",
   ]) {
     const bytes = await readFile(resolve(dist, file));

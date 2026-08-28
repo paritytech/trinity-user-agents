@@ -40,6 +40,7 @@ if (process.env.PVM_RUNTIME_WASM === undefined) {
 await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
 const translated = await readFile(resolve(source, "pvm-wasm-translated.js"));
+const runtimeCore = await readFile(resolve(source, "pvm-runtime-core.js"));
 const workerEntry = await readFile(resolve(source, "pvm-wasm-worker-entry.js"));
 await copyFile(wasm, resolve(dist, "pvm-browser-runtime.wasm"));
 await copyFile(resolve(source, "pvm-gpu-worker.js"), resolve(dist, "pvm-gpu-worker.js"));
@@ -48,12 +49,22 @@ await copyFile(
   resolve(dist, "pvm-wasm-translated.js"),
 );
 await copyFile(
+  resolve(source, "pvm-runtime-core.js"),
+  resolve(dist, "pvm-runtime-core.js"),
+);
+await copyFile(
   resolve(source, "pvm-wasm-worker-entry.js"),
   resolve(dist, "pvm-wasm-worker-entry.js"),
 );
 await writeFile(
   resolve(dist, "pvm-worker.js"),
-  Buffer.concat([translated, Buffer.from("\n"), workerEntry]),
+  Buffer.concat([
+    translated,
+    Buffer.from("\n"),
+    runtimeCore,
+    Buffer.from("\n"),
+    workerEntry,
+  ]),
 );
 
 const files = [
@@ -61,6 +72,7 @@ const files = [
   "pvm-worker.js",
   "pvm-gpu-worker.js",
   "pvm-wasm-translated.js",
+  "pvm-runtime-core.js",
   "pvm-wasm-worker-entry.js",
 ];
 const sums = [];
