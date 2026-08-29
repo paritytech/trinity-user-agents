@@ -18,3 +18,8 @@ pvm-runtime-assets = { git = "https://github.com/paritytech/pvm-host-runtime.git
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "pvm-assets-export"
+path = "src/bin/pvm-assets-export.rs"
+required-features = ["browser-assets"]
