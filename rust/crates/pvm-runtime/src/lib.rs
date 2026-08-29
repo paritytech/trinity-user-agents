@@ -554,7 +554,7 @@ impl Runtime {
 
         linker
             .define_typed(
-                "epoca_gpu_capabilities",
+                "host_gpu_capabilities",
                 |caller: polkavm::Caller<'_, HostState>,
                  pointer: u32,
                  capacity: u32|
@@ -581,11 +581,11 @@ impl Runtime {
                     Ok(required)
                 },
             )
-            .context("define epoca_gpu_capabilities")?;
+            .context("define host_gpu_capabilities")?;
 
         linker
             .define_typed(
-                "epoca_gpu_submit",
+                "host_gpu_submit",
                 |caller: polkavm::Caller<'_, HostState>,
                  pointer: u32,
                  length: u32|
@@ -630,11 +630,11 @@ impl Runtime {
                     Ok(gpu_wire::GPU_SUBMIT_ACCEPTED)
                 },
             )
-            .context("define epoca_gpu_submit")?;
+            .context("define host_gpu_submit")?;
 
         linker
             .define_typed(
-                "epoca_gpu_receive",
+                "host_gpu_receive",
                 |caller: polkavm::Caller<'_, HostState>,
                  pointer: u32,
                  capacity: u32|
@@ -661,7 +661,7 @@ impl Runtime {
                     Ok(required)
                 },
             )
-            .context("define epoca_gpu_receive")?;
+            .context("define host_gpu_receive")?;
 
         linker
             .define_typed(

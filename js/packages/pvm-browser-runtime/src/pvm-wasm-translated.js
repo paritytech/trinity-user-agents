@@ -638,7 +638,7 @@
           this.#setReg(7, 0n);
           return false;
         }
-        case "epoca_gpu_capabilities": {
+        case "host_gpu_capabilities": {
           if (this.graphicsProfile !== "webgpu-raster") {
             this.#setReg(7, BigInt(GPU_ERROR_INVALID_STATE));
             return false;
@@ -657,7 +657,7 @@
           this.#setReg(7, BigInt(required));
           return false;
         }
-        case "epoca_gpu_submit": {
+        case "host_gpu_submit": {
           if (this.graphicsProfile !== "webgpu-raster") {
             this.#setReg(7, BigInt(GPU_ERROR_INVALID_STATE));
             return false;
@@ -698,7 +698,7 @@
           this.#setReg(7, 0n);
           return false;
         }
-        case "epoca_gpu_receive": {
+        case "host_gpu_receive": {
           if (this.graphicsProfile !== "webgpu-raster") {
             this.#setReg(7, BigInt(GPU_ERROR_INVALID_STATE));
             return false;
