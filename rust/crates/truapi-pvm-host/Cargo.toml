@@ -13,8 +13,8 @@ ffi = ["pvm-runtime/ffi"]
 browser-assets = ["dep:pvm-runtime-assets"]
 
 [dependencies]
-pvm-runtime = { git = "https://github.com/paritytech/pvm-host-runtime.git", rev = "8aa01ed8d26e15b666a8310546d3de060a1ee2a5" }
-pvm-runtime-assets = { git = "https://github.com/paritytech/pvm-host-runtime.git", rev = "8aa01ed8d26e15b666a8310546d3de060a1ee2a5", optional = true }
+pvm-runtime = { git = "https://github.com/paritytech/pvm-host-runtime.git", rev = "fc0753f0e67620738114ecf3164d8311f7af61d9" }
+pvm-runtime-assets = { git = "https://github.com/paritytech/pvm-host-runtime.git", rev = "fc0753f0e67620738114ecf3164d8311f7af61d9", optional = true }
 
 [lints]
 workspace = true
