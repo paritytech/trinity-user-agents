@@ -80,4 +80,3 @@ js/packages/truapi/dist/generated/
 js/packages/truapi-host/src/generated/
 js/packages/truapi-host/dist/generated/
 js/packages/truapi-host/dist/wasm/
-js/packages/pvm-browser-runtime/dist/
