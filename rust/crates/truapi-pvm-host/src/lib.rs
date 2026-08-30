@@ -10,7 +10,7 @@ pub use pvm_runtime::*;
 pub use pvm_runtime_assets::{BrowserAsset, RUNTIME_VERSION, browser_assets};
 
 /// Immutable standalone runtime source consumed by this bridge release.
-pub const RUNTIME_SOURCE_REVISION: &str = "235d1d407f3340fb73cb7a698fe973a9dad5251f";
+pub const RUNTIME_SOURCE_REVISION: &str = "c85878f5492a9f8b9d511dab7079d9b833a0fabf";
 
 #[cfg(test)]
 mod tests {
@@ -29,7 +29,7 @@ mod tests {
     #[cfg(feature = "browser-assets")]
     #[test]
     fn browser_assets_are_complete_and_source_identified() {
-        assert_eq!(RUNTIME_VERSION, "0.1.4");
+        assert_eq!(RUNTIME_VERSION, "0.1.5");
         assert_eq!(browser_assets().len(), 7);
         assert!(
             browser_assets()
