@@ -2,10 +2,11 @@
 
 ## Status
 
-RFC candidate. The API adds append-only TrUAPI wire methods, cross-host callback
-semantics, and a surface lifecycle state machine, so it should be agreed as an
-RFC before implementation. This issue draft records the direction; it does not
-define a stable API or propose a user-facing permission setting yet.
+Parked prototype note. Do not start an RFC or implementation from this draft
+yet. Current hosts capture non-Tri2D surfaces after a primary click, which is
+sufficient for the existing game prototypes. Revisit only after prototypes
+demonstrate that products need runtime capture/release control beyond the
+host's click-to-capture and Escape-to-release policy.
 
 ## Summary
 
@@ -118,14 +119,23 @@ A host may eventually expose a per-product policy such as `Ask`, `Allow`, or `Bl
 
 If added, the setting should authorize or deny product requests; it should not force an arbitrary cursor-driven product into relative mode. The policy should be scoped to a verified product identity, show a visible capture indicator, and preserve Escape as an unconditional release path.
 
-## Migration direction
+## Revisit criteria
 
-1. Keep the existing temporary host behavior only for legacy products while TrUAPI control is unavailable.
-2. Specify request, release, the immediate state subscription, wire ids, user-gesture semantics, and error behavior in a TrUAPI RFC.
-3. Implement the control plane in the shared Rust core and optional host callback bindings.
-4. Update Epoca and Dotli to default all App v2 surfaces to free pointer input.
-5. Update mouse-look products to request capture when entering gameplay and release it when entering menus.
-6. Remove the temporary profile-based default after migrated products and hosts are deployed.
+Keep the existing host behavior while prototypes mature. Promote this note to
+an RFC only when at least one real product demonstrates a concrete need such
+as:
+
+- a cursor-driven framebuffer or WebGPU surface that must never capture;
+- a mixed menu/game product that must release and reacquire capture without
+  relying on Escape and a new click;
+- a cross-host inconsistency that cannot be fixed as host policy;
+- a product that needs to observe capture denial or loss to provide a usable
+  fallback.
+
+If one of those cases appears, the RFC should specify request, release, the
+immediate state subscription, wire ids, user-gesture semantics, and errors.
+Only after that should the shared Rust core, host callbacks, Epoca, Dotli, and
+products be changed.
 
 ## Unresolved questions
 
