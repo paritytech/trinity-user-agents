@@ -3671,18 +3671,18 @@ version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 name = "pvm-gpu-wire"
-version = "0.1.5"
-source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=1d73f040049583d31998d590a6f29c3c47b31fbb#1d73f040049583d31998d590a6f29c3c47b31fbb"
+version = "0.1.6"
+source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=86d4d78e8bdd4a6c8b024d5895607e6a7b19c180#86d4d78e8bdd4a6c8b024d5895607e6a7b19c180"
 
 [[package]]
 name = "pvm-motion-wire"
-version = "0.1.5"
-source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=1d73f040049583d31998d590a6f29c3c47b31fbb#1d73f040049583d31998d590a6f29c3c47b31fbb"
+version = "0.1.6"
+source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=86d4d78e8bdd4a6c8b024d5895607e6a7b19c180#86d4d78e8bdd4a6c8b024d5895607e6a7b19c180"
 
 [[package]]
 name = "pvm-runtime"
-version = "0.1.5"
-source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=1d73f040049583d31998d590a6f29c3c47b31fbb#1d73f040049583d31998d590a6f29c3c47b31fbb"
+version = "0.1.6"
+source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=86d4d78e8bdd4a6c8b024d5895607e6a7b19c180#86d4d78e8bdd4a6c8b024d5895607e6a7b19c180"
 dependencies = [
  "anyhow",
  "log",
@@ -3699,8 +3699,8 @@ dependencies = [
 
 [[package]]
 name = "pvm-runtime-assets"
-version = "0.1.5"
-source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=1d73f040049583d31998d590a6f29c3c47b31fbb#1d73f040049583d31998d590a6f29c3c47b31fbb"
+version = "0.1.6"
+source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=86d4d78e8bdd4a6c8b024d5895607e6a7b19c180#86d4d78e8bdd4a6c8b024d5895607e6a7b19c180"
 
 [[package]]
 name = "qrcode"
