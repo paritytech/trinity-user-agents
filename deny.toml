@@ -44,6 +44,7 @@ exceptions = [
     # The host-neutral PVM runtime and wire protocol are intentionally MPL-2.0
     # so their Rust and browser implementations retain file-level copyleft.
     { name = "pvm-gpu-wire", allow = ["MPL-2.0"] },
+    { name = "pvm-motion-wire", allow = ["MPL-2.0"] },
     { name = "pvm-runtime", allow = ["MPL-2.0"] },
     { name = "pvm-runtime-assets", allow = ["MPL-2.0"] },
     { name = "uniffi", allow = ["MPL-2.0"] },
