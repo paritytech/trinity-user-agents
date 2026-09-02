@@ -655,6 +655,8 @@ public protocol NativePvmRuntimeProtocol: AnyObject, Sendable {
 
     func sendInput(eventType: NativePvmInputEventType, code: UInt8, x: UInt16, y: UInt16) throws
 
+    func sendInputRecord(bytes: Data) throws
+
     func sendMotionSample(bytes: Data) throws
 
     func setGpuCapabilities(bytes: Data) throws
@@ -834,6 +836,15 @@ open func sendInput(eventType: NativePvmInputEventType, code: UInt8, x: UInt16, 
         FfiConverterUInt8.lower(code),
         FfiConverterUInt16.lower(x),
         FfiConverterUInt16.lower(y),uniffiCallStatus
+    )
+}
+}
+
+open func sendInputRecord(bytes: Data)throws   {try rustCallWithError(FfiConverterTypeNativePvmError_lift) {
+        uniffiCallStatus in
+    uniffi_pvm_runtime_fn_method_nativepvmruntime_send_input_record(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(bytes),uniffiCallStatus
     )
 }
 }
@@ -1930,6 +1941,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_send_input() != 59274) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_send_input_record() != 54674) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_send_motion_sample() != 20569) {
