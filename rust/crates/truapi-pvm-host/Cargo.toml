@@ -14,8 +14,8 @@ browser-assets = ["dep:pvm-runtime-assets"]
 native-gpu = ["pvm-runtime/native-gpu"]
 
 [dependencies]
-pvm-runtime = { git = "https://github.com/paritytech/pvm-host-runtime.git", rev = "1a8a68a662cac9d8d5baece39515b643ff210b04" }
-pvm-runtime-assets = { git = "https://github.com/paritytech/pvm-host-runtime.git", rev = "1a8a68a662cac9d8d5baece39515b643ff210b04", optional = true }
+pvm-runtime = { git = "https://github.com/paritytech/pvm-host-runtime.git", rev = "530885a9d6dbf5a2742d4f2ff9f5c71b05f2a762" }
+pvm-runtime-assets = { git = "https://github.com/paritytech/pvm-host-runtime.git", rev = "530885a9d6dbf5a2742d4f2ff9f5c71b05f2a762", optional = true }
 
 [lints]
 workspace = true
