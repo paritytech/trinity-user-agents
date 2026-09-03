@@ -10,7 +10,7 @@ pub use pvm_runtime::*;
 pub use pvm_runtime_assets::{BrowserAsset, RUNTIME_VERSION, browser_assets};
 
 /// Immutable standalone runtime source consumed by this bridge release.
-pub const RUNTIME_SOURCE_REVISION: &str = "41c7d821708b206ba94959ee35600aa8a8d5581f";
+pub const RUNTIME_SOURCE_REVISION: &str = "380f1f29558b64fba903f3281bd87b3c2a24c2b7";
 
 #[cfg(test)]
 mod tests {

@@ -659,6 +659,8 @@ public protocol NativePvmRuntimeProtocol: AnyObject, Sendable {
 
     func sendMotionSample(bytes: Data) throws
 
+    func sendTextInput(kind: NativePvmTextInputKind, text: String) throws
+
     func setGpuCapabilities(bytes: Data) throws
 
     func setMotionAvailability(availability: NativePvmMotionAvailability) throws
@@ -674,6 +676,8 @@ public protocol NativePvmRuntimeProtocol: AnyObject, Sendable {
     func takeSave() throws  -> Data?
 
     func takeTri2d() throws  -> NativePvmTri2dFrame?
+
+    func takeUiSemantics() throws  -> NativePvmUiSemanticsFrame?
 
     func update() throws
 
@@ -858,6 +862,16 @@ open func sendMotionSample(bytes: Data)throws   {try rustCallWithError(FfiConver
 }
 }
 
+open func sendTextInput(kind: NativePvmTextInputKind, text: String)throws   {try rustCallWithError(FfiConverterTypeNativePvmError_lift) {
+        uniffiCallStatus in
+    uniffi_pvm_runtime_fn_method_nativepvmruntime_send_text_input(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeNativePvmTextInputKind_lower(kind),
+        FfiConverterString.lower(text),uniffiCallStatus
+    )
+}
+}
+
 open func setGpuCapabilities(bytes: Data)throws   {try rustCallWithError(FfiConverterTypeNativePvmError_lift) {
         uniffiCallStatus in
     uniffi_pvm_runtime_fn_method_nativepvmruntime_set_gpu_capabilities(
@@ -925,6 +939,15 @@ open func takeTri2d()throws  -> NativePvmTri2dFrame?  {
     return try  FfiConverterOptionTypeNativePvmTri2dFrame.lift(try rustCallWithError(FfiConverterTypeNativePvmError_lift) {
         uniffiCallStatus in
     uniffi_pvm_runtime_fn_method_nativepvmruntime_take_tri2d(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+open func takeUiSemantics()throws  -> NativePvmUiSemanticsFrame?  {
+    return try  FfiConverterOptionTypeNativePvmUiSemanticsFrame.lift(try rustCallWithError(FfiConverterTypeNativePvmError_lift) {
+        uniffiCallStatus in
+    uniffi_pvm_runtime_fn_method_nativepvmruntime_take_ui_semantics(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -1343,6 +1366,56 @@ public func FfiConverterTypeNativePvmTri2dFrame_lower(_ value: NativePvmTri2dFra
 }
 
 
+public struct NativePvmUiSemanticsFrame: Equatable, Hashable {
+    public var bytes: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(bytes: Data) {
+        self.bytes = bytes
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension NativePvmUiSemanticsFrame: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNativePvmUiSemanticsFrame: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NativePvmUiSemanticsFrame {
+        return
+            try NativePvmUiSemanticsFrame(
+                bytes: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NativePvmUiSemanticsFrame, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.bytes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNativePvmUiSemanticsFrame_lift(_ buf: RustBuffer) throws -> NativePvmUiSemanticsFrame {
+    return try FfiConverterTypeNativePvmUiSemanticsFrame.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNativePvmUiSemanticsFrame_lower(_ value: NativePvmUiSemanticsFrame) -> RustBuffer {
+    return FfiConverterTypeNativePvmUiSemanticsFrame.lower(value)
+}
+
+
 public
 enum NativePvmError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
@@ -1680,6 +1753,79 @@ public func FfiConverterTypeNativePvmPresentationProfile_lower(_ value: NativePv
 }
 
 
+
+
+public enum NativePvmTextInputKind: Equatable, Hashable {
+
+    case text
+    case imePreedit
+    case imeCommit
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension NativePvmTextInputKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNativePvmTextInputKind: FfiConverterRustBuffer {
+    typealias SwiftType = NativePvmTextInputKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NativePvmTextInputKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .text
+
+        case 2: return .imePreedit
+
+        case 3: return .imeCommit
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: NativePvmTextInputKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .text:
+            writeInt(&buf, Int32(1))
+
+
+        case .imePreedit:
+            writeInt(&buf, Int32(2))
+
+
+        case .imeCommit:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNativePvmTextInputKind_lift(_ buf: RustBuffer) throws -> NativePvmTextInputKind {
+    return try FfiConverterTypeNativePvmTextInputKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNativePvmTextInputKind_lower(_ value: NativePvmTextInputKind) -> RustBuffer {
+    return FfiConverterTypeNativePvmTextInputKind.lower(value)
+}
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -1851,6 +1997,30 @@ fileprivate struct FfiConverterOptionTypeNativePvmTri2dFrame: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeNativePvmUiSemanticsFrame: FfiConverterRustBuffer {
+    typealias SwiftType = NativePvmUiSemanticsFrame?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeNativePvmUiSemanticsFrame.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeNativePvmUiSemanticsFrame.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceInt16: FfiConverterRustBuffer {
     typealias SwiftType = [Int16]
 
@@ -1949,6 +2119,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_send_motion_sample() != 20569) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_send_text_input() != 36901) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_set_gpu_capabilities() != 28903) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1971,6 +2144,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_take_tri2d() != 20193) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_take_ui_semantics() != 2159) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_update() != 28698) {
