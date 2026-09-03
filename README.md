@@ -148,7 +148,7 @@ scripts/battery.sh         Run the generated battery against both headless CLI h
 scripts/bundle-size.mjs    Measure the JS and WASM the truapi-* packages ship, against a baseline
 ```
 
-The PolkaVM application runtime, GPU wire contract, browser workers, and
+The PolkaVM application runtime, GPU/UI wire contracts, browser workers, and
 reproducible browser assets live in
 [`paritytech/pvm-host-runtime`](https://github.com/paritytech/pvm-host-runtime).
 Hosts integrate through `truapi-pvm-host`, which pins one reviewed runtime
