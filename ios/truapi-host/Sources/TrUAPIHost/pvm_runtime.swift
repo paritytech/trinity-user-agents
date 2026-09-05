@@ -665,6 +665,10 @@ public protocol NativePvmRuntimeProtocol: AnyObject, Sendable {
 
     func setMotionAvailability(availability: NativePvmMotionAvailability) throws
 
+    func setPointerCaptureActive(active: Bool) throws
+
+    func setPointerCaptureSupported(supported: Bool) throws
+
     func takeAudio() throws  -> NativePvmAudioChunk?
 
     func takeFrame() throws  -> NativePvmFrame?
@@ -673,15 +677,21 @@ public protocol NativePvmRuntimeProtocol: AnyObject, Sendable {
 
     func takeLog() throws  -> String?
 
+    func takePointerCaptureRequest() throws  -> Bool?
+
     func takeSave() throws  -> Data?
 
     func takeTri2d() throws  -> NativePvmTri2dFrame?
+
+    func takeUiOutput() throws  -> NativePvmUiOutputFrame?
 
     func takeUiSemantics() throws  -> NativePvmUiSemanticsFrame?
 
     func update() throws
 
     func usesMotion() throws  -> Bool
+
+    func usesPointerCapture() throws  -> Bool
 
 }
 open class NativePvmRuntime: NativePvmRuntimeProtocol, @unchecked Sendable {
@@ -890,6 +900,24 @@ open func setMotionAvailability(availability: NativePvmMotionAvailability)throws
 }
 }
 
+open func setPointerCaptureActive(active: Bool)throws   {try rustCallWithError(FfiConverterTypeNativePvmError_lift) {
+        uniffiCallStatus in
+    uniffi_pvm_runtime_fn_method_nativepvmruntime_set_pointer_capture_active(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(active),uniffiCallStatus
+    )
+}
+}
+
+open func setPointerCaptureSupported(supported: Bool)throws   {try rustCallWithError(FfiConverterTypeNativePvmError_lift) {
+        uniffiCallStatus in
+    uniffi_pvm_runtime_fn_method_nativepvmruntime_set_pointer_capture_supported(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(supported),uniffiCallStatus
+    )
+}
+}
+
 open func takeAudio()throws  -> NativePvmAudioChunk?  {
     return try  FfiConverterOptionTypeNativePvmAudioChunk.lift(try rustCallWithError(FfiConverterTypeNativePvmError_lift) {
         uniffiCallStatus in
@@ -926,6 +954,15 @@ open func takeLog()throws  -> String?  {
 })
 }
 
+open func takePointerCaptureRequest()throws  -> Bool?  {
+    return try  FfiConverterOptionBool.lift(try rustCallWithError(FfiConverterTypeNativePvmError_lift) {
+        uniffiCallStatus in
+    uniffi_pvm_runtime_fn_method_nativepvmruntime_take_pointer_capture_request(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
 open func takeSave()throws  -> Data?  {
     return try  FfiConverterOptionData.lift(try rustCallWithError(FfiConverterTypeNativePvmError_lift) {
         uniffiCallStatus in
@@ -939,6 +976,15 @@ open func takeTri2d()throws  -> NativePvmTri2dFrame?  {
     return try  FfiConverterOptionTypeNativePvmTri2dFrame.lift(try rustCallWithError(FfiConverterTypeNativePvmError_lift) {
         uniffiCallStatus in
     uniffi_pvm_runtime_fn_method_nativepvmruntime_take_tri2d(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+open func takeUiOutput()throws  -> NativePvmUiOutputFrame?  {
+    return try  FfiConverterOptionTypeNativePvmUiOutputFrame.lift(try rustCallWithError(FfiConverterTypeNativePvmError_lift) {
+        uniffiCallStatus in
+    uniffi_pvm_runtime_fn_method_nativepvmruntime_take_ui_output(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -965,6 +1011,15 @@ open func usesMotion()throws  -> Bool  {
     return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeNativePvmError_lift) {
         uniffiCallStatus in
     uniffi_pvm_runtime_fn_method_nativepvmruntime_uses_motion(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+open func usesPointerCapture()throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeNativePvmError_lift) {
+        uniffiCallStatus in
+    uniffi_pvm_runtime_fn_method_nativepvmruntime_uses_pointer_capture(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -1366,6 +1421,56 @@ public func FfiConverterTypeNativePvmTri2dFrame_lower(_ value: NativePvmTri2dFra
 }
 
 
+public struct NativePvmUiOutputFrame: Equatable, Hashable {
+    public var bytes: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(bytes: Data) {
+        self.bytes = bytes
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension NativePvmUiOutputFrame: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNativePvmUiOutputFrame: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NativePvmUiOutputFrame {
+        return
+            try NativePvmUiOutputFrame(
+                bytes: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NativePvmUiOutputFrame, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.bytes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNativePvmUiOutputFrame_lift(_ buf: RustBuffer) throws -> NativePvmUiOutputFrame {
+    return try FfiConverterTypeNativePvmUiOutputFrame.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNativePvmUiOutputFrame_lower(_ value: NativePvmUiOutputFrame) -> RustBuffer {
+    return FfiConverterTypeNativePvmUiOutputFrame.lower(value)
+}
+
+
 public struct NativePvmUiSemanticsFrame: Equatable, Hashable {
     public var bytes: Data
 
@@ -1687,6 +1792,7 @@ public enum NativePvmPresentationProfile: Equatable, Hashable {
     case framebuffer
     case tri2d
     case webGpuRaster
+    case webGpu
 
 
 
@@ -1714,6 +1820,8 @@ public struct FfiConverterTypeNativePvmPresentationProfile: FfiConverterRustBuff
 
         case 3: return .webGpuRaster
 
+        case 4: return .webGpu
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -1732,6 +1840,10 @@ public struct FfiConverterTypeNativePvmPresentationProfile: FfiConverterRustBuff
 
         case .webGpuRaster:
             writeInt(&buf, Int32(3))
+
+
+        case .webGpu:
+            writeInt(&buf, Int32(4))
 
         }
     }
@@ -1825,6 +1937,30 @@ public func FfiConverterTypeNativePvmTextInputKind_lower(_ value: NativePvmTextI
     return FfiConverterTypeNativePvmTextInputKind.lower(value)
 }
 
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionBool: FfiConverterRustBuffer {
+    typealias SwiftType = Bool?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterBool.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterBool.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1997,6 +2133,30 @@ fileprivate struct FfiConverterOptionTypeNativePvmTri2dFrame: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeNativePvmUiOutputFrame: FfiConverterRustBuffer {
+    typealias SwiftType = NativePvmUiOutputFrame?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeNativePvmUiOutputFrame.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeNativePvmUiOutputFrame.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeNativePvmUiSemanticsFrame: FfiConverterRustBuffer {
     typealias SwiftType = NativePvmUiSemanticsFrame?
 
@@ -2128,6 +2288,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_set_motion_availability() != 51760) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_set_pointer_capture_active() != 26769) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_set_pointer_capture_supported() != 32836) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_take_audio() != 21780) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2140,10 +2306,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_take_log() != 61835) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_take_pointer_capture_request() != 55831) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_take_save() != 52485) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_take_tri2d() != 20193) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_take_ui_output() != 44263) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_take_ui_semantics() != 2159) {
@@ -2153,6 +2325,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_uses_motion() != 54507) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_pvm_runtime_checksum_method_nativepvmruntime_uses_pointer_capture() != 51150) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_pvm_runtime_checksum_constructor_nativepvmruntime_new() != 25625) {
