@@ -4037,18 +4037,18 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
 name = "pvm-gpu-wire"
-version = "0.1.12"
-source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=1e7609a460b696a12a5e1bad038c209861b4e9fe#1e7609a460b696a12a5e1bad038c209861b4e9fe"
+version = "0.1.13"
+source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=7f7f1dcfd499a269f582b89ab4dfba2f962d18fb#7f7f1dcfd499a269f582b89ab4dfba2f962d18fb"
 
 [[package]]
 name = "pvm-motion-wire"
-version = "0.1.12"
-source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=1e7609a460b696a12a5e1bad038c209861b4e9fe#1e7609a460b696a12a5e1bad038c209861b4e9fe"
+version = "0.1.13"
+source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=7f7f1dcfd499a269f582b89ab4dfba2f962d18fb#7f7f1dcfd499a269f582b89ab4dfba2f962d18fb"
 
 [[package]]
 name = "pvm-runtime"
-version = "0.1.12"
-source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=1e7609a460b696a12a5e1bad038c209861b4e9fe#1e7609a460b696a12a5e1bad038c209861b4e9fe"
+version = "0.1.13"
+source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=7f7f1dcfd499a269f582b89ab4dfba2f962d18fb#7f7f1dcfd499a269f582b89ab4dfba2f962d18fb"
 dependencies = [
  "anyhow",
  "log",
@@ -4068,13 +4068,13 @@ dependencies = [
 
 [[package]]
 name = "pvm-runtime-assets"
-version = "0.1.12"
-source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=1e7609a460b696a12a5e1bad038c209861b4e9fe#1e7609a460b696a12a5e1bad038c209861b4e9fe"
+version = "0.1.13"
+source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=7f7f1dcfd499a269f582b89ab4dfba2f962d18fb#7f7f1dcfd499a269f582b89ab4dfba2f962d18fb"
 
 [[package]]
 name = "pvm-ui-wire"
-version = "0.1.12"
-source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=1e7609a460b696a12a5e1bad038c209861b4e9fe#1e7609a460b696a12a5e1bad038c209861b4e9fe"
+version = "0.1.13"
+source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=7f7f1dcfd499a269f582b89ab4dfba2f962d18fb#7f7f1dcfd499a269f582b89ab4dfba2f962d18fb"
 
 [[package]]
 name = "qrcode"
