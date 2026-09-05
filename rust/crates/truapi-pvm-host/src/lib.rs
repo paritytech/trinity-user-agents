@@ -10,9 +10,8 @@ pub use pvm_runtime::*;
 pub use pvm_runtime_assets::{BrowserAsset, RUNTIME_VERSION, browser_assets};
 
 /// Immutable standalone runtime source consumed by this bridge release.
-pub const RUNTIME_SOURCE_REVISION: &str = "7f7f1dcfd499a269f582b89ab4dfba2f962d18fb";
-// Pins the tagged v0.1.13 release with cooperative and CoreVM guest-owned
-// pointer capture plus browser-lint-compatible WebGPU assets.
+pub const RUNTIME_SOURCE_REVISION: &str = "b94fce87db20cfd0a548a2a4463db63eb4f2c977";
+// Pins the tagged v0.1.14 release with complete u64 browser clock results.
 
 #[cfg(test)]
 mod tests {
@@ -31,7 +30,7 @@ mod tests {
     #[cfg(feature = "browser-assets")]
     #[test]
     fn browser_assets_are_complete_and_source_identified() {
-        assert_eq!(RUNTIME_VERSION, "0.1.13");
+        assert_eq!(RUNTIME_VERSION, "0.1.14");
         assert_eq!(browser_assets().len(), 7);
         assert!(
             browser_assets()
