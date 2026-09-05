@@ -5,45 +5,14 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
-## [0.26.0] - 2026-10-21
-
-### Added
-
-- build scheduled durable transactions through submission policies (#1470)
-- fork endpoint overrides and an attest command for e2e suites (#1454)
-- let trusted products sign watermarked bytes with the user's account without a prompt (#1548)
-- serve top-ups, payments and balance to the core (#1337)
-- serve top-ups, payments and balance to the core (#1338)
-- resolve local-session usernames from dotNS (#1536)
-- funding sessions, host overlay, native bridge and test host (#1315)
-- add truapi-host stack commands (#1463)
-- add @parity/trinity-stack (#1461)
-- draw images in the Pocket face preview (#1445)
-- add the stack descriptor crate (#1455)
-- host-place Jollity in the chat list (#1417)
-- give each product runtime its own chain connection (#1418)
-- let a Pocket card's page hide or show the face above it (#1347)
-- Hot Reload, open a product from a dev server on the Mac (#1361)
-- username dotns lookup (#1289)
-- opt-in navigation transcript (TRUAPI_NAVIGATIONS_LOG) (#1162)
+## [Unreleased]
 
 ### Changed
 
-- centralize runtime version conversion (#1421)
-- use a ProductId newtype for product identifiers (#1448)
-- SSO session and responder services (#1515)
-- give Pocket deeplinks a host-owned polkadotapp://pocket URL (#1542)
-- recheck balance access on each pushed balance and keep payment errors append-only (#1464)
-- account fixes  (#1488)
-- split ProductRuntimeHost into ProductConnection and HostSession (#1440)
-- sign personhood through PersonhoodSigner (#1435)
-- add a Motion device permission (#1002)
-- payments by id and balance through host platforms (#1314)
-- remove the raw proof context escape hatch (#554)
-- normalize runtime API versioned handlers (#1403)
-- remove dead-code suppressions (#1401)
-- let a granted PreimageSubmit cover each upload without a second prompt (#1093)
-- resolve usernames from DotNS on Asset Hub (#1390)
+- isolate the optional PolkaVM runtime in `truapi-polkavm-host`; keep the base
+  server and browser asset distribution independent (#540)
+
+## [0.13.1] - 2026-09-02
 
 ### Fixed
 

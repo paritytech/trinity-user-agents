@@ -3825,41 +3825,20 @@ dependencies = [
 [[package]]
 name = "polkavm"
 version = "0.37.0"
-source = "git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9#3df1d0309c4c81a1aad0a755d83570d203bba1d9"
+source = "git+https://github.com/paritytech/polkavm.git?rev=c160c13c3c29bf3219ce1404ec95976000235a94#c160c13c3c29bf3219ce1404ec95976000235a94"
 dependencies = [
  "libc",
  "log",
  "picosimd",
- "polkavm-assembler 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9)",
- "polkavm-common 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9)",
- "polkavm-linux-raw 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9)",
-]
-
-[[package]]
-name = "polkavm"
-version = "0.37.0"
-source = "git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094#e06cce9da5c6d3f72458168876ea304e27992094"
-dependencies = [
- "libc",
- "log",
- "picosimd",
- "polkavm-assembler 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094)",
- "polkavm-common 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094)",
- "polkavm-linux-raw 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094)",
+ "polkavm-assembler",
+ "polkavm-common",
+ "polkavm-linux-raw",
 ]
 
 [[package]]
 name = "polkavm-assembler"
 version = "0.37.0"
-source = "git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9#3df1d0309c4c81a1aad0a755d83570d203bba1d9"
-dependencies = [
- "log",
-]
-
-[[package]]
-name = "polkavm-assembler"
-version = "0.37.0"
-source = "git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094#e06cce9da5c6d3f72458168876ea304e27992094"
+source = "git+https://github.com/paritytech/polkavm.git?rev=c160c13c3c29bf3219ce1404ec95976000235a94#c160c13c3c29bf3219ce1404ec95976000235a94"
 dependencies = [
  "log",
 ]
@@ -3867,32 +3846,53 @@ dependencies = [
 [[package]]
 name = "polkavm-common"
 version = "0.37.0"
-source = "git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9#3df1d0309c4c81a1aad0a755d83570d203bba1d9"
+source = "git+https://github.com/paritytech/polkavm.git?rev=c160c13c3c29bf3219ce1404ec95976000235a94#c160c13c3c29bf3219ce1404ec95976000235a94"
 dependencies = [
  "log",
  "picosimd",
- "polkavm-assembler 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9)",
+ "polkavm-assembler",
 ]
 
 [[package]]
-name = "polkavm-common"
-version = "0.37.0"
-source = "git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094#e06cce9da5c6d3f72458168876ea304e27992094"
+name = "polkavm-gpu-wire"
+version = "0.2.0"
+source = "git+https://github.com/paritytech/polkavm-host-runtime.git?rev=e56fbe58ff3c6d694b1d86368fe87e085710372c#e56fbe58ff3c6d694b1d86368fe87e085710372c"
+
+[[package]]
+name = "polkavm-host-runtime"
+version = "0.2.0"
+source = "git+https://github.com/paritytech/polkavm-host-runtime.git?rev=e56fbe58ff3c6d694b1d86368fe87e085710372c#e56fbe58ff3c6d694b1d86368fe87e085710372c"
 dependencies = [
+ "anyhow",
+ "getrandom 0.3.4",
  "log",
- "picosimd",
- "polkavm-assembler 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094)",
+ "polkavm",
+ "polkavm-gpu-wire",
+ "polkavm-motion-wire",
+ "polkavm-ui-wire",
+ "pollster",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "uniffi",
+ "wasm-encoder",
+ "wgpu",
 ]
 
 [[package]]
 name = "polkavm-linux-raw"
 version = "0.37.0"
-source = "git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9#3df1d0309c4c81a1aad0a755d83570d203bba1d9"
+source = "git+https://github.com/paritytech/polkavm.git?rev=c160c13c3c29bf3219ce1404ec95976000235a94#c160c13c3c29bf3219ce1404ec95976000235a94"
 
 [[package]]
-name = "polkavm-linux-raw"
-version = "0.37.0"
-source = "git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094#e06cce9da5c6d3f72458168876ea304e27992094"
+name = "polkavm-motion-wire"
+version = "0.2.0"
+source = "git+https://github.com/paritytech/polkavm-host-runtime.git?rev=e56fbe58ff3c6d694b1d86368fe87e085710372c#e56fbe58ff3c6d694b1d86368fe87e085710372c"
+
+[[package]]
+name = "polkavm-ui-wire"
+version = "0.2.0"
+source = "git+https://github.com/paritytech/polkavm-host-runtime.git?rev=e56fbe58ff3c6d694b1d86368fe87e085710372c#e56fbe58ff3c6d694b1d86368fe87e085710372c"
 
 [[package]]
 name = "polling"
@@ -6307,6 +6307,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "truapi-polkavm-host"
+version = "0.2.0"
+dependencies = [
+ "polkavm-host-runtime",
+ "truapi-server",
+]
+
+[[package]]
 name = "truapi-provider"
 version = "0.1.0"
 dependencies = [
@@ -6346,14 +6354,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "truapi-pvm-host"
-version = "0.1.0"
-dependencies = [
- "pvm-runtime",
- "pvm-runtime-assets",
-]
-
-[[package]]
 name = "truapi-server"
 version = "0.1.0"
 dependencies = [
@@ -6379,7 +6379,6 @@ dependencies = [
  "tracing-subscriber",
  "truapi",
  "truapi-platform",
- "truapi-pvm-host",
  "unicode-normalization",
  "uniffi",
  "url",

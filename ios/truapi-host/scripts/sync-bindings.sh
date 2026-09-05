@@ -13,7 +13,7 @@ PACKAGE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TRUAPI_ROOT="$(cd "$PACKAGE_ROOT/../.." && pwd)"
 UNIFFI_OUT="$TRUAPI_ROOT/target/uniffi-swift-out"
 
-NAMESPACES="truapi truapi_platform truapi_server pvm_runtime"
+NAMESPACES="truapi truapi_platform truapi_server"
 
 if [ ! -d "$UNIFFI_OUT" ]; then
     echo "error: $UNIFFI_OUT is missing." >&2

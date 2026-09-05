@@ -96,18 +96,11 @@ let package = Package(
             pkgConfig: nil,
             providers: []
         ),
-        .systemLibrary(
-            name: "pvm_runtimeFFI",
-            path: "ios/truapi-host/Sources/pvm_runtimeFFI/include",
-            pkgConfig: nil,
-            providers: []
-        ),
         binaryTarget,
         .target(
             name: "TrUAPIHost",
             dependencies: [
-                "truapiFFI", "truapi_platformFFI", "truapi_serverFFI",
-                "pvm_runtimeFFI", "truapi_serverFFI_binary",
+                "truapiFFI", "truapi_platformFFI", "truapi_serverFFI", "truapi_serverFFI_binary",
             ],
             path: "ios/truapi-host/Sources/TrUAPIHost",
             resources: [.copy("Resources/truapi-container.js")]

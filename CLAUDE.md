@@ -14,8 +14,8 @@ rust/crates/
   truapi-platform/       Host syscall traits (storage, navigation, consent, ...)
   truapi-provider/       network provider backends (WebSocket RPC or smoldot light-client)
   truapi-server/         Rust runtime hosts implement; ships as WASM (browser/node)
-  truapi-pvm-host/       reviewed bridge pinned to paritytech/pvm-host-runtime;
-                         re-exports native APIs and optional browser assets
+  truapi-polkavm-host/  optional native composition pinned to
+                        paritytech/polkavm-host-runtime
 js/packages/
   truapi/                  @parity/truapi TS package; generated TS lives under ignored paths
   truapi-host/            @parity/truapi-host: WASM-backed host runtime. Subpath entries:
@@ -59,10 +59,12 @@ scripts/truapi-host-installer.sh
 .github/consumers.json     maps each released package to the repos notified by a bump issue
 ```
 
-The PolkaVM runtime implementation, GPU wire crate, browser package, and ABI
-contract live in `paritytech/pvm-host-runtime`. Changes here update only the
-`truapi-pvm-host` bridge pin and host integration; do not copy runtime source or
-browser workers back into this repository.
+The PolkaVM runtime implementation, wire crates, browser package, and ABI
+contract live in `paritytech/polkavm-host-runtime`. The base `truapi-server`
+must remain PolkaVM-free. Native integrations use the optional
+`truapi-polkavm-host` composition crate; browser integrations consume
+`@parity/polkavm-browser-runtime` directly. Never copy or export browser assets
+from this repository.
 
 ### Crate + binding invariants
 

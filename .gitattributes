@@ -7,8 +7,6 @@ rust/crates/truapi/src/wasm/generated_bridge.rs linguist-generated=true
 ios/truapi-host/Sources/TrUAPIHost/truapi*.swift linguist-generated=true
 ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js linguist-generated=true
 ios/truapi-host/Sources/truapi*FFI/include/** linguist-generated=true
-ios/truapi-host/Sources/TrUAPIHost/pvm_runtime.swift linguist-generated=true
-ios/truapi-host/Sources/pvm_runtimeFFI/include/** linguist-generated=true
 
 ios/truapi-provider/Sources/TrUAPIProvider/truapi_provider.swift linguist-generated=true
 ios/*-provider/Sources/*FFI/include/** linguist-generated=true
