@@ -248,20 +248,14 @@ pub fn encode_subscription_stop(
 pub fn decode_subscription_item<M: SubscriptionMethod>(
     frame: &[u8],
 ) -> Result<Decoded<M::Item>, DecodeError> {
-    decode_stream_item::<M::Item>(
-        frame,
-        generated_subscription_ids(M::DESCRIPTOR).receive_id,
-    )
+    decode_stream_item::<M::Item>(frame, generated_subscription_ids(M::DESCRIPTOR).receive_id)
 }
 
 /// Decodes a result-subscription item frame.
 pub fn decode_result_subscription_item<M: ResultSubscriptionMethod>(
     frame: &[u8],
 ) -> Result<Decoded<M::Item>, DecodeError> {
-    decode_stream_item::<M::Item>(
-        frame,
-        generated_subscription_ids(M::DESCRIPTOR).receive_id,
-    )
+    decode_stream_item::<M::Item>(frame, generated_subscription_ids(M::DESCRIPTOR).receive_id)
 }
 
 /// Decodes a typed result-subscription interruption.
