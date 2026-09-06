@@ -1,3 +1,4 @@
+use alloc::string::String;
 use parity_scale_codec::{Decode, Encode};
 
 /// Generic error payload carrying a human-readable reason string. Used by many

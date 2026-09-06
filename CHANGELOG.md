@@ -11,6 +11,13 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 - isolate the optional PolkaVM runtime in `truapi-polkavm-host`; keep the base
   server and browser asset distribution independent (#540)
+### Added
+
+- Generate a transport-neutral `no_std` Rust client with typed request,
+  subscription, result-subscription, and host-initiated Worker subscription
+  codecs.
+- Generate complete App, Widget, Worker, and Worker-only method catalogs from
+  the canonical protocol schema.
 
 ## [0.13.1] - 2026-09-02
 

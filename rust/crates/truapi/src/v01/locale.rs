@@ -1,3 +1,4 @@
+use alloc::string::String;
 use parity_scale_codec::{Decode, Encode};
 
 /// Locale the host currently presents its interface in, pushed to subscribers.

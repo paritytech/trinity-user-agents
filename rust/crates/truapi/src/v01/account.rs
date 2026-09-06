@@ -1,3 +1,5 @@
+use crate::v01::transaction::GenesisHash;
+use alloc::{string::String, vec::Vec};
 use parity_scale_codec::{Decode, Encode};
 
 use crate::product_id::ProductId;

@@ -6237,6 +6237,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "truapi-client"
+version = "0.13.1"
+dependencies = [
+ "parity-scale-codec",
+ "truapi",
+]
+
+[[package]]
 name = "truapi-codegen"
 version = "0.1.0"
 dependencies = [

@@ -1,3 +1,4 @@
+#![cfg_attr(not(feature = "runtime"), no_std)]
 #![allow(
 	clippy::double_must_use,
 	reason = "async-trait generates must_use futures for async trait methods"
@@ -26,26 +27,35 @@
 //! - `native_debug` (non-wasm32 only): a loopback WebSocket `DebugSink` that streams tapped frames
 //!   to the `@parity/truapi-debugger` app.
 
-// Runtime code, the generated dispatcher and the macros all name this crate
-// `truapi`, the way code outside it does.
-extern crate self as truapi;
+extern crate alloc;
 
-use core::{
-	convert::Infallible,
-	fmt,
-	future::Future,
-	mem,
-	pin::Pin,
-	task::{Context, Poll, Waker},
-	time::Duration,
-};
+use alloc::string::String;
+#[cfg(feature = "runtime")]
+use alloc::{boxed::Box, format, vec::Vec};
+use core::convert::Infallible;
+#[cfg(feature = "runtime")]
+use core::fmt;
+#[cfg(feature = "runtime")]
+use core::future::Future;
+#[cfg(feature = "runtime")]
+use core::mem;
+#[cfg(feature = "runtime")]
+use core::pin::Pin;
+#[cfg(feature = "runtime")]
+use core::task::{Context, Poll, Waker};
+#[cfg(feature = "runtime")]
+use core::time::Duration;
+#[cfg(feature = "runtime")]
 use std::sync::{Arc, Mutex};
 
+#[cfg(feature = "runtime")]
 use futures::Stream;
 use parity_scale_codec::{Decode, Encode};
 
+#[cfg(feature = "runtime")]
 pub use async_trait::async_trait;
 
+#[cfg(feature = "runtime")]
 pub mod api;
 mod dotns_name;
 mod product_id;
@@ -483,17 +493,20 @@ pub type FrameworkOnlyError = CallError<Infallible>;
 /// when a runtime explicitly cancels it, or when an attached timeout elapses.
 /// Subscription runtimes can cancel this token when the peer sends `_stop` or
 /// disconnects.
+#[cfg(feature = "runtime")]
 #[derive(Clone, Default)]
 pub struct CancellationToken {
 	inner: Arc<CancellationInner>,
 }
 
 #[derive(Default)]
+#[cfg(feature = "runtime")]
 struct CancellationInner {
 	state: Mutex<CancellationState>,
 }
 
 #[derive(Default)]
+#[cfg(feature = "runtime")]
 struct CancellationState {
 	reason: Option<CancellationReason>,
 	next_id: u64,
@@ -501,6 +514,7 @@ struct CancellationState {
 }
 
 /// Cause attached to a cancelled call.
+#[cfg(feature = "runtime")]
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum CancellationReason {
 	/// The caller or runtime explicitly cancelled the call.
@@ -515,6 +529,7 @@ pub enum CancellationReason {
 }
 
 /// Render a timeout as whole seconds when possible, milliseconds otherwise.
+#[cfg(feature = "runtime")]
 fn format_timeout(timeout: &Duration) -> String {
 	if timeout.subsec_millis() == 0 {
 		format!("{}s", timeout.as_secs())
@@ -524,11 +539,13 @@ fn format_timeout(timeout: &Duration) -> String {
 }
 
 /// Future resolved when a [`CancellationToken`] is cancelled.
+#[cfg(feature = "runtime")]
 pub struct CancellationFuture {
 	inner: Arc<CancellationInner>,
 	id: Option<u64>,
 }
 
+#[cfg(feature = "runtime")]
 impl fmt::Debug for CancellationToken {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		f.debug_struct("CancellationToken")
@@ -537,6 +554,7 @@ impl fmt::Debug for CancellationToken {
 	}
 }
 
+#[cfg(feature = "runtime")]
 impl CancellationToken {
 	/// Mark the token as cancelled.
 	pub fn cancel(&self) {
@@ -574,6 +592,7 @@ impl CancellationToken {
 	}
 }
 
+#[cfg(feature = "runtime")]
 impl Future for CancellationFuture {
 	type Output = CancellationReason;
 
@@ -603,6 +622,7 @@ impl Future for CancellationFuture {
 	}
 }
 
+#[cfg(feature = "runtime")]
 impl Drop for CancellationFuture {
 	fn drop(&mut self) {
 		let Some(id) = self.id.take() else {
@@ -617,6 +637,7 @@ impl Drop for CancellationFuture {
 }
 
 /// Ambient context passed to every trait method.
+#[cfg(feature = "runtime")]
 #[derive(Clone, Default)]
 pub struct CallContext {
 	request_id: String,
@@ -624,6 +645,7 @@ pub struct CallContext {
 	timeout: Option<Duration>,
 }
 
+#[cfg(feature = "runtime")]
 impl CallContext {
 	/// Construct a context bound to the given `request_id` with a fresh cancellation token.
 	pub fn with_request_id(request_id: String) -> Self {
@@ -658,32 +680,26 @@ impl CallContext {
 
 /// Handle to an active subscription. Implements [`Stream`] to yield values
 /// pushed by the host. Drop to unsubscribe.
-///
-/// The stream yields `Ok(item)` for each value and at most one `Err`, which
-/// ends it: the runtime encodes that value as the `_interrupt` payload and
-/// polls no further. A stream that ends without an `Err` interrupts with
-/// `Ok(())`, which the peer reads as a normal completion.
-pub struct Subscription<Item, Interrupt> {
-	inner: Pin<Box<dyn Stream<Item = Result<Item, Interrupt>> + Send>>,
+#[cfg(feature = "runtime")]
+pub struct Subscription<T> {
+    inner: Pin<Box<dyn Stream<Item = T> + Send>>,
 }
 
-impl<Item, Interrupt> Stream for Subscription<Item, Interrupt> {
-	type Item = Result<Item, Interrupt>;
+#[cfg(feature = "runtime")]
+impl<T> Stream for Subscription<T> {
+    type Item = T;
 
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
 		self.inner.as_mut().poll_next(cx)
 	}
 }
 
-impl<Item, Interrupt> Subscription<Item, Interrupt> {
-	/// Creates a subscription from a stream of items and at most one
-	/// terminating interrupt.
-	pub fn new<S>(stream: S) -> Self
-	where
-		S: Stream<Item = Result<Item, Interrupt>> + Send + 'static,
-	{
-		Self { inner: Box::pin(stream) }
-	}
+#[cfg(feature = "runtime")]
+impl<T> Subscription<T> {
+    /// Creates a new subscription from a boxed stream.
+    pub fn new(stream: Pin<Box<dyn Stream<Item = T> + Send>>) -> Self {
+        Self { inner: stream }
+    }
 
 	/// Creates a subscription that yields no items and ends with `interrupt`.
 	/// The default trait bodies of unimplemented methods interrupt with
@@ -698,139 +714,7 @@ impl<Item, Interrupt> Subscription<Item, Interrupt> {
 	}
 }
 
-#[cfg(feature = "runtime")]
-pub mod bootstrap;
-#[cfg(feature = "runtime")]
-pub mod chain;
-#[cfg(feature = "runtime")]
-mod chain_runtime;
-#[cfg(feature = "runtime")]
-mod dispatcher;
-#[cfg(feature = "runtime")]
-mod dotns_views;
-#[cfg(feature = "runtime")]
-mod dynamic_vrf;
-#[cfg(feature = "runtime")]
-pub mod frame;
-#[cfg(feature = "runtime")]
-mod host_core;
-#[cfg(feature = "runtime")]
-mod host_internal;
-#[cfg(feature = "runtime")]
-pub mod host_logic;
-#[cfg(feature = "runtime")]
-mod host_rpc_client;
-#[cfg(feature = "runtime")]
-mod interrupt;
-#[cfg(feature = "runtime")]
-pub mod logging;
-#[cfg(feature = "runtime")]
-pub mod platform;
-#[cfg(feature = "runtime")]
-mod protocol_error;
-#[cfg(feature = "runtime")]
-mod runtime;
-#[cfg(feature = "runtime")]
-mod session_usernames;
-#[cfg(feature = "runtime")]
-pub mod subscription;
-#[cfg(feature = "runtime")]
-pub mod transport;
-#[cfg(feature = "runtime")]
-mod truapi_core;
-
-#[cfg(feature = "runtime")]
-#[cfg(test)]
-mod test_support;
-#[cfg(feature = "runtime")]
-mod unix_time;
-
-// Dispatch must keep serving deprecated APIs while clients migrate.
-#[cfg(feature = "runtime")]
-#[allow(deprecated)]
-pub mod generated;
-
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub mod native;
-
-#[cfg(feature = "runtime")]
-#[cfg(target_arch = "wasm32")]
-pub mod wasm;
-
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub mod native_debug;
-
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub mod store;
-
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub mod durable;
-
-#[cfg(feature = "runtime")]
-pub use truapi_core::TrUApiCore;
-
-#[cfg(feature = "runtime")]
-pub use host_core::{
-	ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
-	ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
-};
-#[cfg(feature = "runtime")]
-pub use host_internal::bulletin::{preimage_cid, preimage_key};
-#[cfg(feature = "runtime")]
-pub use host_logic::session::{
-	ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
-};
-#[cfg(feature = "runtime")]
-pub use host_logic::worker::{WorkerLedger, WorkerTransition};
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub use native::{
-	NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
-};
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub use native_debug::{DebugSinkError, WsDebugSink};
-#[cfg(feature = "runtime")]
-pub use platform::{
-	CoreStorageKeyDescription, CoreStorageKeyDescriptionError, HostIdentity, PairingHostConfig,
-	PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform, ProductContext,
-	SigningHostConfig, describe_core_storage_key,
-};
-#[cfg(feature = "runtime")]
-pub use runtime::StatementRenewalTarget;
-#[cfg(feature = "runtime")]
-pub use runtime::contacts::contact_handle;
-#[cfg(feature = "runtime")]
-pub use runtime::login_failure::reports_exhausted_period;
-#[cfg(feature = "runtime")]
-pub use runtime::product_manifest::encode_cached_root_manifest;
-#[cfg(feature = "runtime")]
-pub use runtime::statement_allowance;
-#[cfg(feature = "runtime")]
-pub use runtime::{
-	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-	PairingProposal, PairingProposalMetadata, ResponderExit,
-};
-#[cfg(feature = "runtime")]
-pub use unix_time::current_unix_millis;
-
-#[cfg(feature = "runtime")]
-#[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]
-pub use wasm::WasmSigningHostRuntime;
-#[cfg(feature = "runtime")]
-#[cfg(target_arch = "wasm32")]
-pub use wasm::{
-	WasmPairingHostRuntime, WasmProductRuntime, WasmRendererSubscription,
-	derive_product_account_public_key, describe_core_storage_key_for_wasm,
-	has_trusted_remote_permissions_for_wasm, product_account_address, set_log_level,
-	wire_schema_hash,
-};
-
-#[cfg(test)]
+#[cfg(all(test, feature = "runtime"))]
 mod tests {
 	use super::*;
 
