@@ -104,19 +104,18 @@ fn trait_wire_id(trait_def: &TraitDef) -> Result<u8> {
 	})
 }
 
-fn method_entry(trait_def: &TraitDef, trait_id: u8, method: &MethodDef) -> Result<MethodEntry> {
-	let method_id = method.wire.id.ok_or_else(|| {
-		anyhow::anyhow!(
-			"method `{}::{}` is missing #[wire(id = N)] annotation",
-			trait_def.name,
-			method.name
-		)
-	})?;
-	let ids = MethodIds { trait_id, method_id };
-	match method.kind {
-		MethodKind::Request => Ok(MethodEntry::Request(ids)),
-		MethodKind::Subscription => Ok(MethodEntry::Subscription(ids)),
-	}
+pub(super) fn infer_id(
+    explicit: Option<u8>,
+    anchor: u8,
+    offset: u8,
+    method_name: &str,
+) -> Result<u8> {
+    if let Some(id) = explicit {
+        return Ok(id);
+    }
+    anchor
+        .checked_add(offset)
+        .ok_or_else(|| anyhow::anyhow!("wire id overflow on `{method_name}` (base {anchor})"))
 }
 
 fn insert_entry(

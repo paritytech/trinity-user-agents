@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use convert_case::{Case, Casing};
 use std::fmt::Write;
 
-use super::{module_for_trait, wire_method_name};
+use super::{module_for_trait, wire_method_name, wire_table::infer_id};
 use crate::rustdoc::{ApiDefinition, MethodDef, MethodKind, ReturnType, TraitDef, TypeRef};
 
 pub fn generate_client(api: &ApiDefinition, schema_hash: &str) -> Result<String> {
@@ -103,7 +103,7 @@ fn emit_method(
                 .wire
                 .request_id
                 .ok_or_else(|| anyhow::anyhow!("method `{wire_name}` is missing request_id"))?;
-            let response_id = method.wire.response_id.unwrap_or(request_id + 1);
+            let response_id = infer_id(method.wire.response_id, request_id, 1, &wire_name)?;
             format!(
                 "MethodWire::Request(RequestFrameIds {{ request_id: {request_id}, response_id: {response_id} }})"
             )
@@ -113,9 +113,9 @@ fn emit_method(
                 .wire
                 .start_id
                 .ok_or_else(|| anyhow::anyhow!("method `{wire_name}` is missing start_id"))?;
-            let stop_id = method.wire.stop_id.unwrap_or(start_id + 1);
-            let interrupt_id = method.wire.interrupt_id.unwrap_or(start_id + 2);
-            let receive_id = method.wire.receive_id.unwrap_or(start_id + 3);
+            let stop_id = infer_id(method.wire.stop_id, start_id, 1, &wire_name)?;
+            let interrupt_id = infer_id(method.wire.interrupt_id, start_id, 2, &wire_name)?;
+            let receive_id = infer_id(method.wire.receive_id, start_id, 3, &wire_name)?;
             format!(
                 "MethodWire::Subscription(SubscriptionFrameIds {{ start_id: {start_id}, stop_id: {stop_id}, interrupt_id: {interrupt_id}, receive_id: {receive_id} }})"
             )

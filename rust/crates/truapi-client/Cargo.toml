@@ -4,6 +4,7 @@ version = "0.13.1"
 edition.workspace = true
 license.workspace = true
 description = "Transport-neutral no-std TrUAPI client codecs and generated method catalog"
+publish = false
 
 [dependencies]
 parity-scale-codec = { version = "3", default-features = false }

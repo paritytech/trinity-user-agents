@@ -202,12 +202,72 @@ mod tests {
 		}
 	}
 
-	fn versioned_request_test_types() -> Vec<TypeDef> {
-		["ReqWrapper", "RespWrapper", "ErrWrapper"]
-			.into_iter()
-			.map(versioned_test_type)
-			.collect()
-	}
+    #[test]
+    fn test_client_catalog_rejects_request_id_overflow() {
+        let api = ApiDefinition {
+            traits: vec![TraitDef {
+                name: "System".to_string(),
+                module_path: Vec::new(),
+                methods: vec![make_request_method("handshake", u8::MAX)],
+                docs: None,
+            }],
+            public_trait_order: vec!["System".to_string()],
+            types: versioned_request_test_types(),
+            framework_types: Vec::new(),
+        };
+
+        let error = generate_client(&api, "testhash")
+            .expect_err("an inferred response id beyond u8 must be rejected");
+        assert!(
+            error.to_string().contains("wire id overflow"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn test_client_catalog_rejects_subscription_id_overflow() {
+        let api = ApiDefinition {
+            traits: vec![TraitDef {
+                name: "Account".to_string(),
+                module_path: Vec::new(),
+                methods: vec![make_subscription_method("connection_status_subscribe", 253)],
+                docs: None,
+            }],
+            public_trait_order: vec!["Account".to_string()],
+            types: Vec::new(),
+            framework_types: Vec::new(),
+        };
+
+        let error = generate_client(&api, "testhash")
+            .expect_err("an inferred receive id beyond u8 must be rejected");
+        assert!(
+            error.to_string().contains("wire id overflow"),
+            "unexpected error: {error}"
+        );
+    }
+
+    fn parse_entries(src: &str) -> Vec<(u8, String)> {
+        // Each method's ids are emitted as a named const, e.g.
+        //   pub const PREIMAGE_SUBMIT: RequestFrameIds = RequestFrameIds {
+        //       request_id: 68,
+        //       response_id: 69,
+        //   };
+        // Reconstruct the `(id, "{method}_{suffix}")` pairs the assertions use.
+        let mut out = Vec::new();
+        let mut lines = src.lines();
+        while let Some(line) = lines.next() {
+            let Some(rest) = line.trim().strip_prefix("pub const ") else {
+                continue;
+            };
+            let Some(colon) = rest.find(':') else {
+                continue;
+            };
+            let is_sub = rest.contains("SubscriptionFrameIds");
+            // Skip non-id consts (e.g. `WIRE_TABLE: &[WireEntry]`).
+            if !is_sub && !rest.contains("RequestFrameIds") {
+                continue;
+            }
+            let method = rest[..colon].trim().to_ascii_lowercase();
 
 	fn parse_entries(src: &str) -> Vec<(u8, String)> {
 		// Each method's id is emitted as a named const, e.g.

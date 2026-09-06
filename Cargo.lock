@@ -3856,12 +3856,12 @@ dependencies = [
 [[package]]
 name = "polkavm-gpu-wire"
 version = "0.2.0"
-source = "git+https://github.com/paritytech/polkavm-host-runtime.git?rev=b8ad40e7e2bda4a866d60545892f32caeff9e6fb#b8ad40e7e2bda4a866d60545892f32caeff9e6fb"
+source = "git+https://github.com/paritytech/polkavm-host-runtime.git?rev=d1e3d77dce34c9490196754c1e2bab9596b993f0#d1e3d77dce34c9490196754c1e2bab9596b993f0"
 
 [[package]]
 name = "polkavm-host-runtime"
 version = "0.2.0"
-source = "git+https://github.com/paritytech/polkavm-host-runtime.git?rev=b8ad40e7e2bda4a866d60545892f32caeff9e6fb#b8ad40e7e2bda4a866d60545892f32caeff9e6fb"
+source = "git+https://github.com/paritytech/polkavm-host-runtime.git?rev=d1e3d77dce34c9490196754c1e2bab9596b993f0#d1e3d77dce34c9490196754c1e2bab9596b993f0"
 dependencies = [
  "anyhow",
  "getrandom 0.3.4",
@@ -3887,12 +3887,12 @@ source = "git+https://github.com/paritytech/polkavm.git?rev=c160c13c3c29bf3219ce
 [[package]]
 name = "polkavm-motion-wire"
 version = "0.2.0"
-source = "git+https://github.com/paritytech/polkavm-host-runtime.git?rev=b8ad40e7e2bda4a866d60545892f32caeff9e6fb#b8ad40e7e2bda4a866d60545892f32caeff9e6fb"
+source = "git+https://github.com/paritytech/polkavm-host-runtime.git?rev=d1e3d77dce34c9490196754c1e2bab9596b993f0#d1e3d77dce34c9490196754c1e2bab9596b993f0"
 
 [[package]]
 name = "polkavm-ui-wire"
 version = "0.2.0"
-source = "git+https://github.com/paritytech/polkavm-host-runtime.git?rev=b8ad40e7e2bda4a866d60545892f32caeff9e6fb#b8ad40e7e2bda4a866d60545892f32caeff9e6fb"
+source = "git+https://github.com/paritytech/polkavm-host-runtime.git?rev=d1e3d77dce34c9490196754c1e2bab9596b993f0#d1e3d77dce34c9490196754c1e2bab9596b993f0"
 
 [[package]]
 name = "polling"
