@@ -189,13 +189,13 @@ pub enum DecodeError {
 
 /// Encodes a product-initiated request frame without an intermediate payload allocation.
 pub fn encode_request<M: RequestMethod>(request_id: &str, request: &M::Request) -> Vec<u8> {
-    let ids = request_ids(M::DESCRIPTOR);
+    let ids = generated_request_ids(M::DESCRIPTOR);
     encode_value_frame(request_id, ids.request_id, request)
 }
 
 /// Decodes a product-initiated request's response frame.
 pub fn decode_response<M: RequestMethod>(frame: &[u8]) -> DecodedResponse<M> {
-    let ids = request_ids(M::DESCRIPTOR);
+    let ids = generated_request_ids(M::DESCRIPTOR);
     let frame = decode_frame(frame)?;
     expect_discriminant(ids.response_id, frame.discriminant)?;
     let payload = frame.payload;
@@ -220,7 +220,7 @@ pub fn encode_subscription_start<M: SubscriptionMethod>(
     request_id: &str,
     request: &M::Request,
 ) -> Vec<u8> {
-    let ids = subscription_ids(M::DESCRIPTOR);
+    let ids = generated_subscription_ids(M::DESCRIPTOR);
     encode_value_frame(request_id, ids.start_id, request)
 }
 
@@ -229,35 +229,46 @@ pub fn encode_result_subscription_start<M: ResultSubscriptionMethod>(
     request_id: &str,
     request: &M::Request,
 ) -> Vec<u8> {
-    let ids = subscription_ids(M::DESCRIPTOR);
+    let ids = generated_subscription_ids(M::DESCRIPTOR);
     encode_value_frame(request_id, ids.start_id, request)
 }
 
 /// Encodes a stop frame for a product-initiated subscription.
-pub fn encode_subscription_stop(request_id: &str, descriptor: MethodDescriptor) -> Vec<u8> {
-    let ids = subscription_ids(descriptor);
-    encode_empty_frame(request_id, ids.stop_id)
+///
+/// Returns [`DecodeError::WrongMethodKind`] when `descriptor` describes a request.
+pub fn encode_subscription_stop(
+    request_id: &str,
+    descriptor: MethodDescriptor,
+) -> Result<Vec<u8>, DecodeError> {
+    let ids = subscription_ids(descriptor)?;
+    Ok(encode_empty_frame(request_id, ids.stop_id))
 }
 
 /// Decodes a regular subscription item frame.
 pub fn decode_subscription_item<M: SubscriptionMethod>(
     frame: &[u8],
 ) -> Result<Decoded<M::Item>, DecodeError> {
-    decode_stream_item::<M::Item>(frame, subscription_ids(M::DESCRIPTOR).receive_id)
+    decode_stream_item::<M::Item>(
+        frame,
+        generated_subscription_ids(M::DESCRIPTOR).receive_id,
+    )
 }
 
 /// Decodes a result-subscription item frame.
 pub fn decode_result_subscription_item<M: ResultSubscriptionMethod>(
     frame: &[u8],
 ) -> Result<Decoded<M::Item>, DecodeError> {
-    decode_stream_item::<M::Item>(frame, subscription_ids(M::DESCRIPTOR).receive_id)
+    decode_stream_item::<M::Item>(
+        frame,
+        generated_subscription_ids(M::DESCRIPTOR).receive_id,
+    )
 }
 
 /// Decodes a typed result-subscription interruption.
 pub fn decode_result_subscription_interrupt<M: ResultSubscriptionMethod>(
     frame: &[u8],
 ) -> Result<Decoded<CallError<M::Error>>, DecodeError> {
-    let ids = subscription_ids(M::DESCRIPTOR);
+    let ids = generated_subscription_ids(M::DESCRIPTOR);
     let frame = decode_frame(frame)?;
     expect_discriminant(ids.interrupt_id, frame.discriminant)?;
     let (_, payload) = frame.payload.split_first().ok_or(DecodeError::Malformed)?;
@@ -268,11 +279,13 @@ pub fn decode_result_subscription_interrupt<M: ResultSubscriptionMethod>(
 }
 
 /// Returns whether a frame is the interruption leg for a subscription descriptor.
+///
+/// Returns [`DecodeError::WrongMethodKind`] when `descriptor` describes a request.
 pub fn is_subscription_interrupt(
     frame: &[u8],
     descriptor: MethodDescriptor,
 ) -> Result<bool, DecodeError> {
-    let ids = subscription_ids(descriptor);
+    let ids = subscription_ids(descriptor)?;
     Ok(decode_frame(frame)?.discriminant == ids.interrupt_id)
 }
 
@@ -280,7 +293,7 @@ pub fn is_subscription_interrupt(
 pub fn decode_host_subscription_start<M: HostSubscriptionMethod>(
     frame: &[u8],
 ) -> Result<Decoded<M::Request>, DecodeError> {
-    let ids = subscription_ids(M::DESCRIPTOR);
+    let ids = generated_subscription_ids(M::DESCRIPTOR);
     let frame = decode_frame(frame)?;
     expect_discriminant(ids.start_id, frame.discriminant)?;
     Ok(Decoded {
@@ -294,13 +307,13 @@ pub fn encode_host_subscription_item<M: HostSubscriptionMethod>(
     request_id: &str,
     item: &M::Item,
 ) -> Vec<u8> {
-    let ids = subscription_ids(M::DESCRIPTOR);
+    let ids = generated_subscription_ids(M::DESCRIPTOR);
     encode_value_frame(request_id, ids.receive_id, item)
 }
 
 /// Encodes product-side termination of a host-initiated subscription.
 pub fn encode_host_subscription_interrupt<M: HostSubscriptionMethod>(request_id: &str) -> Vec<u8> {
-    let ids = subscription_ids(M::DESCRIPTOR);
+    let ids = generated_subscription_ids(M::DESCRIPTOR);
     encode_empty_frame(request_id, ids.interrupt_id)
 }
 
@@ -308,22 +321,31 @@ pub fn encode_host_subscription_interrupt<M: HostSubscriptionMethod>(request_id:
 pub fn is_host_subscription_stop<M: HostSubscriptionMethod>(
     frame: &[u8],
 ) -> Result<bool, DecodeError> {
-    let ids = subscription_ids(M::DESCRIPTOR);
+    let ids = generated_subscription_ids(M::DESCRIPTOR);
     Ok(decode_frame(frame)?.discriminant == ids.stop_id)
 }
 
-fn request_ids(descriptor: MethodDescriptor) -> RequestFrameIds {
+fn request_ids(descriptor: MethodDescriptor) -> Result<RequestFrameIds, DecodeError> {
     match descriptor.wire {
-        MethodWire::Request(ids) => ids,
-        MethodWire::Subscription(_) => panic!("generated method kind mismatch"),
+        MethodWire::Request(ids) => Ok(ids),
+        MethodWire::Subscription(_) => Err(DecodeError::WrongMethodKind),
     }
 }
 
-fn subscription_ids(descriptor: MethodDescriptor) -> SubscriptionFrameIds {
+fn subscription_ids(descriptor: MethodDescriptor) -> Result<SubscriptionFrameIds, DecodeError> {
     match descriptor.wire {
-        MethodWire::Subscription(ids) => ids,
-        MethodWire::Request(_) => panic!("generated method kind mismatch"),
+        MethodWire::Subscription(ids) => Ok(ids),
+        MethodWire::Request(_) => Err(DecodeError::WrongMethodKind),
     }
+}
+
+fn generated_request_ids(descriptor: MethodDescriptor) -> RequestFrameIds {
+    request_ids(descriptor).expect("generated request descriptor must use request wire ids")
+}
+
+fn generated_subscription_ids(descriptor: MethodDescriptor) -> SubscriptionFrameIds {
+    subscription_ids(descriptor)
+        .expect("generated subscription descriptor must use subscription wire ids")
 }
 
 fn encode_value_frame<T: Encode + ?Sized>(
@@ -484,7 +506,7 @@ mod tests {
                 payload: vec![1, 2, 3],
             },
         );
-        let ids = subscription_ids(ChatCustomMessageRender::DESCRIPTOR);
+        let ids = generated_subscription_ids(ChatCustomMessageRender::DESCRIPTOR);
         let start = encode_value_frame("host:4", ids.start_id, &request);
         let decoded =
             decode_host_subscription_start::<ChatCustomMessageRender>(&start).expect("start frame");
@@ -515,6 +537,26 @@ mod tests {
                 .expect("interrupt frame")
                 .discriminant,
             ids.interrupt_id
+        );
+    }
+
+    #[test]
+    fn descriptor_apis_validate_subscription_wire_ids() {
+        let descriptor = AccountConnectionStatusSubscribe::DESCRIPTOR;
+        let expected_ids = generated_subscription_ids(descriptor);
+        let stop = encode_subscription_stop("p:1", descriptor).expect("subscription descriptor");
+        assert_eq!(
+            decode_frame(&stop).expect("stop frame").discriminant,
+            expected_ids.stop_id
+        );
+
+        assert_eq!(
+            encode_subscription_stop("p:1", SystemHandshake::DESCRIPTOR),
+            Err(DecodeError::WrongMethodKind)
+        );
+        assert_eq!(
+            is_subscription_interrupt(&stop, SystemHandshake::DESCRIPTOR),
+            Err(DecodeError::WrongMethodKind)
         );
     }
 }

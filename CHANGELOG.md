@@ -19,6 +19,11 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 - Generate complete App, Widget, Worker, and Worker-only method catalogs from
   the canonical protocol schema.
 
+### Fixed
+
+- return a decode error instead of trapping when subscription helpers receive a
+  request descriptor
+
 ## [0.13.1] - 2026-09-02
 
 ### Fixed
