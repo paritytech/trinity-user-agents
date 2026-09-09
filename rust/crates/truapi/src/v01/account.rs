@@ -413,6 +413,23 @@ pub enum HostAccountSignVrfError {
 	},
 }
 
+/// Cipher suite used by product-device Chat identity-route operations.
+///
+/// Legacy v2 preserves current mobile interoperability. Context-bound v1
+/// authenticates the product/network, both account roles, route, and direction.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostProductDeviceChatCipherSuite {
+    /// Existing Chat v2 CryptoKit-compatible empty-context HKDF and AEAD.
+    LegacyV2,
+    /// Domain-separated encryption for peers that explicitly support it.
+    ContextBoundV1 {
+        /// Peer account corresponding to `peer_chat_public_key`.
+        peer_account_id: [u8; 32],
+        /// Statement channel carrying the ciphertext.
+        channel_id: [u8; 32],
+    },
+}
+
 /// Product-device Chat v2 identity operation.
 ///
 /// The wallet Chat identity secret and derived shared key remain host-private.
@@ -433,6 +450,8 @@ pub enum HostProductDeviceChatRequest {
         product_account_id: ProductAccountId,
         /// Peer's X25519 Chat identity public key.
         peer_chat_public_key: [u8; 32],
+        /// Explicit cipher suite; secure callers must never silently downgrade.
+        cipher_suite: HostProductDeviceChatCipherSuite,
         /// Identity-route plaintext.
         plaintext: Vec<u8>,
     },
@@ -442,6 +461,8 @@ pub enum HostProductDeviceChatRequest {
         product_account_id: ProductAccountId,
         /// Peer's X25519 Chat identity public key.
         peer_chat_public_key: [u8; 32],
+        /// Explicit cipher suite; must match the sender's selected suite.
+        cipher_suite: HostProductDeviceChatCipherSuite,
         /// Nonce-prefixed ChaCha20-Poly1305 ciphertext and tag.
         combined_ciphertext: Vec<u8>,
     },
