@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "d5113436b7c04f1d";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "0449982638d57658";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -480,12 +480,6 @@ pub const ACCOUNT_LIST_RING_VRF_KEYS: RequestFrameIds = RequestFrameIds {
 pub const ACCOUNT_RING_VRF_SIGN: RequestFrameIds = RequestFrameIds {
     request_id: 172,
     response_id: 173,
-};
-
-/// Wire discriminants for `account_product_device_chat`.
-pub const ACCOUNT_PRODUCT_DEVICE_CHAT: RequestFrameIds = RequestFrameIds {
-    request_id: 174,
-    response_id: 175,
 };
 
 /// Wire discriminants for `system_get_product_context`.
@@ -1225,10 +1219,6 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "local_storage_subscribe",
         kind: WireKind::Subscription(LOCAL_STORAGE_SUBSCRIBE),
-    },
-    WireEntry {
-        method: "account_product_device_chat",
-        kind: WireKind::Request(ACCOUNT_PRODUCT_DEVICE_CHAT),
     },
     WireEntry {
         method: "system_get_product_context",
