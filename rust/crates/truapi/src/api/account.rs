@@ -297,7 +297,7 @@ pub trait Account: Send + Sync {
     /// const productContext = await truapi.system.getProductContext();
     /// assert(productContext.isOk(), "getProductContext failed:", productContext);
     ///
-    /// const result = await truapi.account.productDeviceChat({
+    /// const result = await truapi.account.deviceChat({
     ///   tag: "Bind",
     ///   value: {
     ///     productAccountId: {
@@ -310,7 +310,7 @@ pub trait Account: Send + Sync {
     ///       "0x0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20",
     ///   },
     /// });
-    /// assert(result.isOk(), "productDeviceChat failed:", result);
+    /// assert(result.isOk(), "deviceChat failed:", result);
     /// console.log("Chat identity binding:", result.value);
     /// ```
     #[wire(request_id = 174, sensitive)]
