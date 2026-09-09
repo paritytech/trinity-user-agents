@@ -4036,47 +4036,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
-name = "pvm-gpu-wire"
-version = "0.1.14"
-source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=b94fce87db20cfd0a548a2a4463db63eb4f2c977#b94fce87db20cfd0a548a2a4463db63eb4f2c977"
-
-[[package]]
-name = "pvm-motion-wire"
-version = "0.1.14"
-source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=b94fce87db20cfd0a548a2a4463db63eb4f2c977#b94fce87db20cfd0a548a2a4463db63eb4f2c977"
-
-[[package]]
-name = "pvm-runtime"
-version = "0.1.14"
-source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=b94fce87db20cfd0a548a2a4463db63eb4f2c977#b94fce87db20cfd0a548a2a4463db63eb4f2c977"
-dependencies = [
- "anyhow",
- "log",
- "polkavm 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=3df1d0309c4c81a1aad0a755d83570d203bba1d9)",
- "polkavm 0.37.0 (git+https://github.com/paritytech/polkavm.git?rev=e06cce9da5c6d3f72458168876ea304e27992094)",
- "pollster",
- "pvm-gpu-wire",
- "pvm-motion-wire",
- "pvm-ui-wire",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "uniffi",
- "wasm-encoder",
- "wgpu",
-]
-
-[[package]]
-name = "pvm-runtime-assets"
-version = "0.1.14"
-source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=b94fce87db20cfd0a548a2a4463db63eb4f2c977#b94fce87db20cfd0a548a2a4463db63eb4f2c977"
-
-[[package]]
-name = "pvm-ui-wire"
-version = "0.1.14"
-source = "git+https://github.com/paritytech/pvm-host-runtime.git?rev=b94fce87db20cfd0a548a2a4463db63eb4f2c977#b94fce87db20cfd0a548a2a4463db63eb4f2c977"
-
-[[package]]
 name = "qrcode"
 version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
