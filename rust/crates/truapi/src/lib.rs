@@ -217,6 +217,12 @@ pub mod latest {
     /// Per-resource allocation outcomes.
     pub type HostRequestResourceAllocationResponse =
         LatestOf<versioned::resource_allocation::HostRequestResourceAllocationResponse>;
+    /// Product-device Chat v2 identity request.
+    pub type HostProductDeviceChatRequest =
+        LatestOf<versioned::account::HostProductDeviceChatRequest>;
+    /// Product-device Chat v2 identity result.
+    pub type HostProductDeviceChatResponse =
+        LatestOf<versioned::account::HostProductDeviceChatResponse>;
     /// Extrinsic payload signing request for a product account.
     pub type HostSignPayloadRequest = LatestOf<versioned::signing::HostSignPayloadRequest>;
     /// Signing operation result.

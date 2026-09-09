@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "0449982638d57658";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "d5113436b7c04f1d";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -235,6 +235,35 @@ impl RequestMethod for AccountRingVrfSign {
     type Request = truapi::versioned::account::HostAccountRingVrfSignRequest;
     type Response = truapi::versioned::account::HostAccountRingVrfSignResponse;
     type Error = truapi::versioned::account::HostAccountRingVrfSignError;
+    const RESPONSE_VERSIONED: bool = true;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `account_product_device_chat` method marker.
+pub struct AccountProductDeviceChat;
+impl AccountProductDeviceChat {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Account",
+        method: "product_device_chat",
+        wire_name: "account_product_device_chat",
+        request_type: "truapi::versioned::account::HostProductDeviceChatRequest",
+        response_type: "truapi::versioned::account::HostProductDeviceChatResponse",
+        error_type: Some("truapi::versioned::account::HostProductDeviceChatError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        sensitive: true,
+        wire: MethodWire::Request(RequestFrameIds {
+            request_id: 174,
+            response_id: 175,
+        }),
+    };
+}
+impl RequestMethod for AccountProductDeviceChat {
+    type Request = truapi::versioned::account::HostProductDeviceChatRequest;
+    type Response = truapi::versioned::account::HostProductDeviceChatResponse;
+    type Error = truapi::versioned::account::HostProductDeviceChatError;
     const RESPONSE_VERSIONED: bool = true;
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
@@ -2121,6 +2150,7 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     AccountRegisterRingVrfKey::DESCRIPTOR,
     AccountListRingVrfKeys::DESCRIPTOR,
     AccountRingVrfSign::DESCRIPTOR,
+    AccountProductDeviceChat::DESCRIPTOR,
     AccountGetLegacyAccounts::DESCRIPTOR,
     AccountGetUserId::DESCRIPTOR,
     AccountRequestLogin::DESCRIPTOR,
@@ -2191,6 +2221,7 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     AccountRegisterRingVrfKey::DESCRIPTOR,
     AccountListRingVrfKeys::DESCRIPTOR,
     AccountRingVrfSign::DESCRIPTOR,
+    AccountProductDeviceChat::DESCRIPTOR,
     AccountGetLegacyAccounts::DESCRIPTOR,
     AccountGetUserId::DESCRIPTOR,
     AccountRequestLogin::DESCRIPTOR,
@@ -2261,6 +2292,7 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     AccountRegisterRingVrfKey::DESCRIPTOR,
     AccountListRingVrfKeys::DESCRIPTOR,
     AccountRingVrfSign::DESCRIPTOR,
+    AccountProductDeviceChat::DESCRIPTOR,
     AccountGetLegacyAccounts::DESCRIPTOR,
     AccountGetUserId::DESCRIPTOR,
     AccountRequestLogin::DESCRIPTOR,

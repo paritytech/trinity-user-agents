@@ -22,6 +22,9 @@ pub enum AllocatableResource {
     SmartContractAllowance(DerivationIndex),
     /// Permission to sign on the product's behalf without per-call user prompts.
     AutoSigning,
+    /// Current UTC-day Statement Store allowance whose target is the product
+    /// account selected by this derivation index.
+    ProductStatementStoreAllowance(DerivationIndex),
 }
 
 /// Outcome of allocating a single resource (RFC 0010).

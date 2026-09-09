@@ -35,4 +35,7 @@ truapi_macros::versioned_type! {
     pub enum HostGetUserIdRequest { V1 }
     pub enum HostGetUserIdResponse { V1 => v01::HostGetUserIdResponse }
     pub enum HostGetUserIdError { V1 => v01::HostGetUserIdError }
+    pub enum HostProductDeviceChatRequest { V1 => v01::HostProductDeviceChatRequest }
+    pub enum HostProductDeviceChatResponse { V1 => v01::HostProductDeviceChatResponse }
+    pub enum HostProductDeviceChatError { V1 => v01::HostProductDeviceChatError }
 }
