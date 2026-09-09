@@ -11,7 +11,7 @@ publish = false
 crate-type = ["rlib"]
 
 [dependencies]
-polkavm-host-runtime = { git = "https://github.com/paritytech/polkavm-host-runtime.git", rev = "0b19c6a8e618b58dc6c323efe89e19586792de01", version = "=0.2.0", features = ["ffi", "native-gpu"] }
+polkavm-host-runtime = { git = "https://github.com/paritytech/polkavm-host-runtime.git", rev = "4cd5a56a84aedd4f46d41ebe84a4aa0c944e897c", version = "=0.2.0", features = ["ffi", "native-gpu"] }
 truapi-server = { path = "../truapi-server" }
 
 [lints]
