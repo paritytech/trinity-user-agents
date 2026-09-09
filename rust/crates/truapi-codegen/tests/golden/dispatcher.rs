@@ -327,7 +327,46 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::ACCOUNT_GET_LEGACY_ACCOUNTS, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::ACCOUNT_PRODUCT_DEVICE_CHAT, move |request_id: String, bytes: Vec<u8>| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::account::HostProductDeviceChatRequest = match Decode::decode(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::account::HostProductDeviceChatError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        return Ok(encode_versioned_err_payload(
+                            error,
+                            <versioned::account::HostProductDeviceChatError as Versioned>::LATEST,
+                        ));
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id.clone());
+                let response: versioned::account::HostProductDeviceChatResponse = match host.product_device_chat(&cx, request).await {
+                    Ok(value) => value,
+                    Err(err) => {
+                        return Ok(encode_versioned_err_payload(
+                            downgrade_call_error(err, target_version),
+                            target_version,
+                        ));
+                    }
+                };
+                // Downgraded to the caller's version: a handler answers in
+                // latest terms, and a peer that asked in an older version
+                // cannot decode a newer variant.
+                Ok(encode_versioned_ok_payload(
+                    <versioned::account::HostProductDeviceChatResponse as truapi::versioned::FromLatest>::from_latest(
+                        truapi::versioned::IntoLatest::into_latest(response),
+                        target_version,
+                    ),
+                ))
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::ACCOUNT_GET_LEGACY_ACCOUNTS, move |request_id: String, bytes: Vec<u8>| {
             let host = host.clone();
             Box::pin(async move {
                 let request: versioned::account::HostGetLegacyAccountsRequest = match DecodeAll::decode_all(&mut &bytes[..]) {

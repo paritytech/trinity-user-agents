@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "5f68beddf80f7b9a";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "d5113436b7c04f1d";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -57,9 +57,441 @@ pub const SYSTEM_FEATURE_SUPPORTED: MethodIds = MethodIds {
 };
 
 /// Wire discriminants for `system_navigate_to`.
-pub const SYSTEM_NAVIGATE_TO: MethodIds = MethodIds {
-    trait_id: 1,
-    method_id: 2,
+pub const SYSTEM_NAVIGATE_TO: RequestFrameIds = RequestFrameIds {
+    request_id: 6,
+    response_id: 7,
+};
+
+/// Wire discriminants for `permissions_request_device_permission`.
+pub const PERMISSIONS_REQUEST_DEVICE_PERMISSION: RequestFrameIds = RequestFrameIds {
+    request_id: 8,
+    response_id: 9,
+};
+
+/// Wire discriminants for `permissions_request_remote_permission`.
+pub const PERMISSIONS_REQUEST_REMOTE_PERMISSION: RequestFrameIds = RequestFrameIds {
+    request_id: 10,
+    response_id: 11,
+};
+
+/// Wire discriminants for `local_storage_read`.
+pub const LOCAL_STORAGE_READ: RequestFrameIds = RequestFrameIds {
+    request_id: 12,
+    response_id: 13,
+};
+
+/// Wire discriminants for `local_storage_write`.
+pub const LOCAL_STORAGE_WRITE: RequestFrameIds = RequestFrameIds {
+    request_id: 14,
+    response_id: 15,
+};
+
+/// Wire discriminants for `local_storage_clear`.
+pub const LOCAL_STORAGE_CLEAR: RequestFrameIds = RequestFrameIds {
+    request_id: 16,
+    response_id: 17,
+};
+
+/// Wire discriminants for `account_connection_status_subscribe`.
+pub const ACCOUNT_CONNECTION_STATUS_SUBSCRIBE: SubscriptionFrameIds = SubscriptionFrameIds {
+    start_id: 18,
+    stop_id: 19,
+    interrupt_id: 20,
+    receive_id: 21,
+};
+
+/// Wire discriminants for `account_get_account`.
+pub const ACCOUNT_GET_ACCOUNT: RequestFrameIds = RequestFrameIds {
+    request_id: 22,
+    response_id: 23,
+};
+
+/// Wire discriminants for `account_get_account_alias`.
+pub const ACCOUNT_GET_ACCOUNT_ALIAS: RequestFrameIds = RequestFrameIds {
+    request_id: 24,
+    response_id: 25,
+};
+
+/// Wire discriminants for `account_create_account_proof`.
+pub const ACCOUNT_CREATE_ACCOUNT_PROOF: RequestFrameIds = RequestFrameIds {
+    request_id: 26,
+    response_id: 27,
+};
+
+/// Wire discriminants for `account_get_legacy_accounts`.
+pub const ACCOUNT_GET_LEGACY_ACCOUNTS: RequestFrameIds = RequestFrameIds {
+    request_id: 28,
+    response_id: 29,
+};
+
+/// Wire discriminants for `signing_create_transaction`.
+pub const SIGNING_CREATE_TRANSACTION: RequestFrameIds = RequestFrameIds {
+    request_id: 30,
+    response_id: 31,
+};
+
+/// Wire discriminants for `signing_create_transaction_with_legacy_account`.
+pub const SIGNING_CREATE_TRANSACTION_WITH_LEGACY_ACCOUNT: RequestFrameIds = RequestFrameIds {
+    request_id: 32,
+    response_id: 33,
+};
+
+/// Wire discriminants for `signing_sign_raw_with_legacy_account`.
+pub const SIGNING_SIGN_RAW_WITH_LEGACY_ACCOUNT: RequestFrameIds = RequestFrameIds {
+    request_id: 34,
+    response_id: 35,
+};
+
+/// Wire discriminants for `signing_sign_payload_with_legacy_account`.
+pub const SIGNING_SIGN_PAYLOAD_WITH_LEGACY_ACCOUNT: RequestFrameIds = RequestFrameIds {
+    request_id: 36,
+    response_id: 37,
+};
+
+/// Wire discriminants for `chat_create_room`.
+pub const CHAT_CREATE_ROOM: RequestFrameIds = RequestFrameIds {
+    request_id: 38,
+    response_id: 39,
+};
+
+/// Wire discriminants for `chat_register_bot`.
+pub const CHAT_REGISTER_BOT: RequestFrameIds = RequestFrameIds {
+    request_id: 40,
+    response_id: 41,
+};
+
+/// Wire discriminants for `chat_list_subscribe`.
+pub const CHAT_LIST_SUBSCRIBE: SubscriptionFrameIds = SubscriptionFrameIds {
+    start_id: 42,
+    stop_id: 43,
+    interrupt_id: 44,
+    receive_id: 45,
+};
+
+/// Wire discriminants for `chat_post_message`.
+pub const CHAT_POST_MESSAGE: RequestFrameIds = RequestFrameIds {
+    request_id: 46,
+    response_id: 47,
+};
+
+/// Wire discriminants for `chat_action_subscribe`.
+pub const CHAT_ACTION_SUBSCRIBE: SubscriptionFrameIds = SubscriptionFrameIds {
+    start_id: 48,
+    stop_id: 49,
+    interrupt_id: 50,
+    receive_id: 51,
+};
+
+/// Wire discriminants for `chat_custom_message_render`.
+pub const CHAT_CUSTOM_MESSAGE_RENDER: SubscriptionFrameIds = SubscriptionFrameIds {
+    start_id: 52,
+    stop_id: 53,
+    interrupt_id: 54,
+    receive_id: 55,
+};
+
+/// Wire discriminants for `statement_store_subscribe`.
+pub const STATEMENT_STORE_SUBSCRIBE: SubscriptionFrameIds = SubscriptionFrameIds {
+    start_id: 56,
+    stop_id: 57,
+    interrupt_id: 58,
+    receive_id: 59,
+};
+
+/// Wire discriminants for `statement_store_create_proof`.
+pub const STATEMENT_STORE_CREATE_PROOF: RequestFrameIds = RequestFrameIds {
+    request_id: 60,
+    response_id: 61,
+};
+
+/// Wire discriminants for `statement_store_submit`.
+pub const STATEMENT_STORE_SUBMIT: RequestFrameIds = RequestFrameIds {
+    request_id: 62,
+    response_id: 63,
+};
+
+/// Wire discriminants for `preimage_lookup_subscribe`.
+pub const PREIMAGE_LOOKUP_SUBSCRIBE: SubscriptionFrameIds = SubscriptionFrameIds {
+    start_id: 64,
+    stop_id: 65,
+    interrupt_id: 66,
+    receive_id: 67,
+};
+
+/// Wire discriminants for `preimage_submit`.
+pub const PREIMAGE_SUBMIT: RequestFrameIds = RequestFrameIds {
+    request_id: 68,
+    response_id: 69,
+};
+
+/// Wire discriminants for `chain_follow_head_subscribe`.
+pub const CHAIN_FOLLOW_HEAD_SUBSCRIBE: SubscriptionFrameIds = SubscriptionFrameIds {
+    start_id: 76,
+    stop_id: 77,
+    interrupt_id: 78,
+    receive_id: 79,
+};
+
+/// Wire discriminants for `chain_get_head_header`.
+pub const CHAIN_GET_HEAD_HEADER: RequestFrameIds = RequestFrameIds {
+    request_id: 80,
+    response_id: 81,
+};
+
+/// Wire discriminants for `chain_get_head_body`.
+pub const CHAIN_GET_HEAD_BODY: RequestFrameIds = RequestFrameIds {
+    request_id: 82,
+    response_id: 83,
+};
+
+/// Wire discriminants for `chain_get_head_storage`.
+pub const CHAIN_GET_HEAD_STORAGE: RequestFrameIds = RequestFrameIds {
+    request_id: 84,
+    response_id: 85,
+};
+
+/// Wire discriminants for `chain_call_head`.
+pub const CHAIN_CALL_HEAD: RequestFrameIds = RequestFrameIds {
+    request_id: 86,
+    response_id: 87,
+};
+
+/// Wire discriminants for `chain_unpin_head`.
+pub const CHAIN_UNPIN_HEAD: RequestFrameIds = RequestFrameIds {
+    request_id: 88,
+    response_id: 89,
+};
+
+/// Wire discriminants for `chain_continue_head`.
+pub const CHAIN_CONTINUE_HEAD: RequestFrameIds = RequestFrameIds {
+    request_id: 90,
+    response_id: 91,
+};
+
+/// Wire discriminants for `chain_stop_head_operation`.
+pub const CHAIN_STOP_HEAD_OPERATION: RequestFrameIds = RequestFrameIds {
+    request_id: 92,
+    response_id: 93,
+};
+
+/// Wire discriminants for `chain_get_spec_genesis_hash`.
+pub const CHAIN_GET_SPEC_GENESIS_HASH: RequestFrameIds = RequestFrameIds {
+    request_id: 94,
+    response_id: 95,
+};
+
+/// Wire discriminants for `chain_get_spec_chain_name`.
+pub const CHAIN_GET_SPEC_CHAIN_NAME: RequestFrameIds = RequestFrameIds {
+    request_id: 96,
+    response_id: 97,
+};
+
+/// Wire discriminants for `chain_get_spec_properties`.
+pub const CHAIN_GET_SPEC_PROPERTIES: RequestFrameIds = RequestFrameIds {
+    request_id: 98,
+    response_id: 99,
+};
+
+/// Wire discriminants for `chain_broadcast_transaction`.
+pub const CHAIN_BROADCAST_TRANSACTION: RequestFrameIds = RequestFrameIds {
+    request_id: 100,
+    response_id: 101,
+};
+
+/// Wire discriminants for `chain_stop_transaction`.
+pub const CHAIN_STOP_TRANSACTION: RequestFrameIds = RequestFrameIds {
+    request_id: 102,
+    response_id: 103,
+};
+
+/// Wire discriminants for `theme_subscribe`.
+pub const THEME_SUBSCRIBE: SubscriptionFrameIds = SubscriptionFrameIds {
+    start_id: 104,
+    stop_id: 105,
+    interrupt_id: 106,
+    receive_id: 107,
+};
+
+/// Wire discriminants for `entropy_derive`.
+pub const ENTROPY_DERIVE: RequestFrameIds = RequestFrameIds {
+    request_id: 108,
+    response_id: 109,
+};
+
+/// Wire discriminants for `account_get_user_id`.
+pub const ACCOUNT_GET_USER_ID: RequestFrameIds = RequestFrameIds {
+    request_id: 110,
+    response_id: 111,
+};
+
+/// Wire discriminants for `account_request_login`.
+pub const ACCOUNT_REQUEST_LOGIN: RequestFrameIds = RequestFrameIds {
+    request_id: 112,
+    response_id: 113,
+};
+
+/// Wire discriminants for `signing_sign_raw`.
+pub const SIGNING_SIGN_RAW: RequestFrameIds = RequestFrameIds {
+    request_id: 114,
+    response_id: 115,
+};
+
+/// Wire discriminants for `signing_sign_payload`.
+pub const SIGNING_SIGN_PAYLOAD: RequestFrameIds = RequestFrameIds {
+    request_id: 116,
+    response_id: 117,
+};
+
+/// Wire discriminants for `payment_balance_subscribe`.
+pub const PAYMENT_BALANCE_SUBSCRIBE: SubscriptionFrameIds = SubscriptionFrameIds {
+    start_id: 118,
+    stop_id: 119,
+    interrupt_id: 120,
+    receive_id: 121,
+};
+
+/// Wire discriminants for `payment_top_up`.
+pub const PAYMENT_TOP_UP: RequestFrameIds = RequestFrameIds {
+    request_id: 122,
+    response_id: 123,
+};
+
+/// Wire discriminants for `payment_request`.
+pub const PAYMENT_REQUEST: RequestFrameIds = RequestFrameIds {
+    request_id: 124,
+    response_id: 125,
+};
+
+/// Wire discriminants for `payment_status_subscribe`.
+pub const PAYMENT_STATUS_SUBSCRIBE: SubscriptionFrameIds = SubscriptionFrameIds {
+    start_id: 126,
+    stop_id: 127,
+    interrupt_id: 128,
+    receive_id: 129,
+};
+
+/// Wire discriminants for `resource_allocation_request`.
+pub const RESOURCE_ALLOCATION_REQUEST: RequestFrameIds = RequestFrameIds {
+    request_id: 130,
+    response_id: 131,
+};
+
+/// Wire discriminants for `statement_store_create_proof_authorized`.
+pub const STATEMENT_STORE_CREATE_PROOF_AUTHORIZED: RequestFrameIds = RequestFrameIds {
+    request_id: 132,
+    response_id: 133,
+};
+
+/// Wire discriminants for `notifications_cancel_push_notification`.
+pub const NOTIFICATIONS_CANCEL_PUSH_NOTIFICATION: RequestFrameIds = RequestFrameIds {
+    request_id: 134,
+    response_id: 135,
+};
+
+/// Wire discriminants for `coin_payment_create_purse`.
+pub const COIN_PAYMENT_CREATE_PURSE: RequestFrameIds = RequestFrameIds {
+    request_id: 136,
+    response_id: 137,
+};
+
+/// Wire discriminants for `coin_payment_query_purse`.
+pub const COIN_PAYMENT_QUERY_PURSE: RequestFrameIds = RequestFrameIds {
+    request_id: 138,
+    response_id: 139,
+};
+
+/// Wire discriminants for `coin_payment_rebalance_purse`.
+pub const COIN_PAYMENT_REBALANCE_PURSE: SubscriptionFrameIds = SubscriptionFrameIds {
+    start_id: 140,
+    stop_id: 141,
+    interrupt_id: 142,
+    receive_id: 143,
+};
+
+/// Wire discriminants for `coin_payment_delete_purse`.
+pub const COIN_PAYMENT_DELETE_PURSE: SubscriptionFrameIds = SubscriptionFrameIds {
+    start_id: 144,
+    stop_id: 145,
+    interrupt_id: 146,
+    receive_id: 147,
+};
+
+/// Wire discriminants for `coin_payment_create_receivable`.
+pub const COIN_PAYMENT_CREATE_RECEIVABLE: RequestFrameIds = RequestFrameIds {
+    request_id: 148,
+    response_id: 149,
+};
+
+/// Wire discriminants for `coin_payment_create_cheque`.
+pub const COIN_PAYMENT_CREATE_CHEQUE: RequestFrameIds = RequestFrameIds {
+    request_id: 150,
+    response_id: 151,
+};
+
+/// Wire discriminants for `coin_payment_deposit`.
+pub const COIN_PAYMENT_DEPOSIT: SubscriptionFrameIds = SubscriptionFrameIds {
+    start_id: 152,
+    stop_id: 153,
+    interrupt_id: 154,
+    receive_id: 155,
+};
+
+/// Wire discriminants for `coin_payment_refund`.
+pub const COIN_PAYMENT_REFUND: SubscriptionFrameIds = SubscriptionFrameIds {
+    start_id: 156,
+    stop_id: 157,
+    interrupt_id: 158,
+    receive_id: 159,
+};
+
+/// Wire discriminants for `coin_payment_listen_for_payment`.
+pub const COIN_PAYMENT_LISTEN_FOR_PAYMENT: SubscriptionFrameIds = SubscriptionFrameIds {
+    start_id: 160,
+    stop_id: 161,
+    interrupt_id: 162,
+    receive_id: 163,
+};
+
+/// Wire discriminants for `account_sign_vrf`.
+pub const ACCOUNT_SIGN_VRF: RequestFrameIds = RequestFrameIds {
+    request_id: 164,
+    response_id: 165,
+};
+
+/// Wire discriminants for `chain_get_chain_info`.
+pub const CHAIN_GET_CHAIN_INFO: RequestFrameIds = RequestFrameIds {
+    request_id: 166,
+    response_id: 167,
+};
+
+/// Wire discriminants for `account_register_ring_vrf_key`.
+pub const ACCOUNT_REGISTER_RING_VRF_KEY: RequestFrameIds = RequestFrameIds {
+    request_id: 168,
+    response_id: 169,
+};
+
+/// Wire discriminants for `account_list_ring_vrf_keys`.
+pub const ACCOUNT_LIST_RING_VRF_KEYS: RequestFrameIds = RequestFrameIds {
+    request_id: 170,
+    response_id: 171,
+};
+
+/// Wire discriminants for `account_ring_vrf_sign`.
+pub const ACCOUNT_RING_VRF_SIGN: RequestFrameIds = RequestFrameIds {
+    request_id: 172,
+    response_id: 173,
+};
+
+/// Wire discriminants for `account_product_device_chat`.
+pub const ACCOUNT_PRODUCT_DEVICE_CHAT: RequestFrameIds = RequestFrameIds {
+    request_id: 174,
+    response_id: 175,
+};
+
+/// Wire discriminants for `system_get_product_context`.
+pub const SYSTEM_GET_PRODUCT_CONTEXT: RequestFrameIds = RequestFrameIds {
+    request_id: 190,
+    response_id: 191,
 };
 
 /// Wire discriminants for `system_host_info`.
@@ -795,8 +1227,12 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Subscription(LOCAL_STORAGE_SUBSCRIBE),
     },
     WireEntry {
-        method: "notifications_send_push_notification",
-        kind: WireKind::Request(NOTIFICATIONS_SEND_PUSH_NOTIFICATION),
+        method: "account_product_device_chat",
+        kind: WireKind::Request(ACCOUNT_PRODUCT_DEVICE_CHAT),
+    },
+    WireEntry {
+        method: "system_get_product_context",
+        kind: WireKind::Request(SYSTEM_GET_PRODUCT_CONTEXT),
     },
     WireEntry {
         method: "notifications_cancel_push_notification",

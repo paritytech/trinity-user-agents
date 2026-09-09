@@ -1,23 +1,19 @@
 //! Unified [`Account`] trait.
 
-use crate::{
-	CallContext, CallError, Subscription,
-	versioned::account::{
-		HostAccountConnectionStatusSubscribeError, HostAccountConnectionStatusSubscribeItem,
-		HostAccountConnectionStatusSubscribeRequest, HostAccountCreateProofError,
-		HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasError,
-		HostAccountGetAliasRequest, HostAccountGetAliasResponse, HostAccountGetError,
-		HostAccountGetRequest, HostAccountGetResponse, HostAccountListRingVrfKeysError,
-		HostAccountListRingVrfKeysRequest, HostAccountListRingVrfKeysResponse,
-		HostAccountRegisterRingVrfKeyError, HostAccountRegisterRingVrfKeyRequest,
-		HostAccountRegisterRingVrfKeyResponse, HostAccountRingVrfSignError,
-		HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse, HostAccountSignVrfError,
-		HostAccountSignVrfRequest, HostAccountSignVrfResponse, HostGetLegacyAccountsError,
-		HostGetLegacyAccountsRequest, HostGetLegacyAccountsResponse, HostGetUserIdError,
-		HostGetUserIdRequest, HostGetUserIdResponse, HostRequestLoginError,
-		HostRequestLoginRequest, HostRequestLoginResponse,
-	},
-	wire, wire_trait,
+use crate::versioned::account::{
+    HostAccountConnectionStatusSubscribeItem, HostAccountCreateProofError,
+    HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasError,
+    HostAccountGetAliasRequest, HostAccountGetAliasResponse, HostAccountGetError,
+    HostAccountGetRequest, HostAccountGetResponse, HostAccountListRingVrfKeysError,
+    HostAccountListRingVrfKeysRequest, HostAccountListRingVrfKeysResponse,
+    HostAccountRegisterRingVrfKeyError, HostAccountRegisterRingVrfKeyRequest,
+    HostAccountRegisterRingVrfKeyResponse, HostAccountRingVrfSignError,
+    HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse, HostAccountSignVrfError,
+    HostAccountSignVrfRequest, HostAccountSignVrfResponse, HostGetLegacyAccountsError,
+    HostGetLegacyAccountsRequest, HostGetLegacyAccountsResponse, HostGetUserIdError,
+    HostGetUserIdRequest, HostGetUserIdResponse, HostProductDeviceChatError,
+    HostProductDeviceChatRequest, HostProductDeviceChatResponse, HostRequestLoginError,
+    HostRequestLoginRequest, HostRequestLoginResponse,
 };
 
 /// Account lookup, aliasing, and proof generation.
@@ -294,24 +290,56 @@ pub trait Account: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// List non-product accounts the user owns.
-	///
-	/// Current hosts do not expose non-product accounts, so the list is empty.
-	///
-	/// ```ts
-	/// const result = await truapi.account.getLegacyAccounts();
-	/// assert(result.isOk(), "getLegacyAccounts failed:", result);
-	/// assert(result.value.accounts.length === 0, "unexpected legacy accounts:", result.value);
-	/// console.log("legacy accounts:", result.value.accounts);
-	/// ```
-	#[wire(id = 4)]
-	async fn get_legacy_accounts(
-		&self,
-		_cx: &CallContext,
-		_request: HostGetLegacyAccountsRequest,
-	) -> Result<HostGetLegacyAccountsResponse, CallError<HostGetLegacyAccountsError>> {
-		Err(CallError::unavailable())
-	}
+    /// Bind a product account as a Chat v2 device, or seal/open identity-route
+    /// payloads without exposing the wallet Chat identity secret.
+    ///
+    /// ```ts
+    /// const productContext = await truapi.system.getProductContext();
+    /// assert(productContext.isOk(), "getProductContext failed:", productContext);
+    ///
+    /// const result = await truapi.account.productDeviceChat({
+    ///   tag: "Bind",
+    ///   value: {
+    ///     productAccountId: {
+    ///       dotNsIdentifier: productContext.value.productId,
+    ///       derivationIndex: { tag: "Index", value: 0 },
+    ///     },
+    ///     peerIdentityAccountId:
+    ///       "0x5555555555555555555555555555555555555555555555555555555555555555",
+    ///     peerChatPublicKey:
+    ///       "0x0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20",
+    ///   },
+    /// });
+    /// assert(result.isOk(), "productDeviceChat failed:", result);
+    /// console.log("Chat identity binding:", result.value);
+    /// ```
+    #[wire(request_id = 174, sensitive)]
+    async fn product_device_chat(
+        &self,
+        _cx: &CallContext,
+        _request: HostProductDeviceChatRequest,
+    ) -> Result<HostProductDeviceChatResponse, CallError<HostProductDeviceChatError>> {
+        Err(CallError::unavailable())
+    }
+
+    /// List non-product accounts the user owns.
+    ///
+    /// Current hosts do not expose non-product accounts, so the list is empty.
+    ///
+    /// ```ts
+    /// const result = await truapi.account.getLegacyAccounts();
+    /// assert(result.isOk(), "getLegacyAccounts failed:", result);
+    /// assert(result.value.accounts.length === 0, "unexpected legacy accounts:", result.value);
+    /// console.log("legacy accounts:", result.value.accounts);
+    /// ```
+    #[wire(request_id = 28)]
+    async fn get_legacy_accounts(
+        &self,
+        _cx: &CallContext,
+        _request: HostGetLegacyAccountsRequest,
+    ) -> Result<HostGetLegacyAccountsResponse, CallError<HostGetLegacyAccountsError>> {
+        Err(CallError::unavailable())
+    }
 
 	/// Fetch the user's primary identity.
 	///

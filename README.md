@@ -91,14 +91,11 @@ requests after a bounded deadline; pass `requestTimeoutMs` to `createTransport` 
 
 See [`js/packages/truapi/README.md`](js/packages/truapi/README.md) for the full client reference.
 
-The [permission model](docs/rfcs/0002-permission-model.md) separates outbound domain access from `OpenUrl` external navigation and requires `Notifications` for push delivery. Hosts preserve the user's `AllowOnce`, `AllowAlways`, or `Deny` choice; Rust owns one-use grants for Rust-backed executions.
-Android permission prompts belong to one request and close when it finishes or is cancelled,
-including cancellation while the app is backgrounded.
-
-The shared Rust core asks trusted products (`peopl`, `dim2` and `stash`,
-on every supported network) only for legacy-account signing other than
-watermarked raw bytes. All other operations it handles bypass permission prompts
-and recorded decisions. Device permissions still need the OS grant.
+`account.productDeviceChat` binds a product-derived account to the connected
+wallet's Chat v2 identity and seals or opens identity-route payloads without
+exposing the wallet's X25519 private key. Browser pairing hosts forward the
+operation over encrypted SSO; signing hosts require the calling product's
+identity-disclosure authorization before using local wallet material.
 
 ## Repository layout
 
