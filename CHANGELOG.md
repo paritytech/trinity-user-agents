@@ -10,7 +10,9 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 ### Changed
 
 - isolate the optional PolkaVM runtime in `truapi-polkavm-host`; keep the base
-  server and browser asset distribution independent (#540)
+  server and browser asset distribution independent, and pin cooperative update
+  deadlines, multi-touch input, and image clipboard output (#540)
+
 ### Added
 
 - Generate a transport-neutral `no_std` Rust client with typed request,
