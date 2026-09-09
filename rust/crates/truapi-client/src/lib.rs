@@ -457,10 +457,21 @@ mod tests {
 
     #[test]
     fn catalogs_partition_worker_only_chat() {
-        assert_eq!(APP_METHODS.len(), 66);
-        assert_eq!(WIDGET_METHODS.len(), 66);
-        assert_eq!(WORKER_METHODS.len(), 72);
-        assert_eq!(WORKER_ONLY_METHODS.len(), 6);
+        assert_eq!(APP_METHODS, WIDGET_METHODS);
+        assert_eq!(
+            WORKER_METHODS.len(),
+            APP_METHODS.len() + WORKER_ONLY_METHODS.len()
+        );
+        assert!(
+            APP_METHODS
+                .iter()
+                .all(|method| WORKER_METHODS.contains(method))
+        );
+        assert!(
+            WORKER_ONLY_METHODS
+                .iter()
+                .all(|method| WORKER_METHODS.contains(method) && !APP_METHODS.contains(method))
+        );
         assert!(WORKER_ONLY_METHODS.iter().all(|method| {
             method.service == "Chat" && method.required_execution == Some(ExecutionKind::Worker)
         }));
