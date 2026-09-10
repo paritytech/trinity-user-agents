@@ -82,6 +82,11 @@ private extension AppPermissionsViewModelFactory {
                 String(localized: .Products.appPermissionUserIdentityTitle),
                 String(localized: .Products.permissionBodyUserIdentityAccess)
             )
+        case .chatAuthority:
+            (
+                String(localized: .Products.appPermissionChatAuthorityTitle),
+                String(localized: .Products.permissionBodyChatAuthority)
+            )
         }
     }
 

@@ -146,6 +146,12 @@ private extension ProductPermissionPromptViewFactory {
                 body: String(localized: .Products.permissionBodyUserIdentityAccess),
                 icon: makeIcon(systemName: "person.text.rectangle")
             )
+        case .chatAuthority:
+            PromptContent(
+                title: String(localized: .Products.permissionTitleChatAuthority(productId: productId)),
+                body: String(localized: .Products.permissionBodyChatAuthority),
+                icon: makeIcon(systemName: "message.badge.shield")
+            )
         }
     }
 
@@ -188,6 +194,8 @@ private extension ProductPermissionPromptViewFactory {
             )
         case .userIdentityAccess:
             "- " + String(localized: .Products.permissionBodyUserIdentityAccess)
+        case .chatAuthority:
+            "- " + String(localized: .Products.permissionBodyChatAuthority)
         }
     }
 

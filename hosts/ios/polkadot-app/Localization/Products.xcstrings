@@ -254,6 +254,23 @@
         }
       }
     },
+    "app.permission.chatAuthority.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat identity authority"
+          }
+        },
+        "es-ES": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Autoridad de identidad de Chat"
+          }
+        }
+      }
+    },
     "app.permission.userIdentity.title": {
       "extractionState": "manual",
       "localizations": {
@@ -529,6 +546,23 @@
         }
       }
     },
+    "permission.body.chatAuthority": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allows this product to bind its device account to your wallet Chat identity and encrypt or decrypt Chat routing data."
+          }
+        },
+        "es-ES": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permite que este producto vincule su cuenta de dispositivo a la identidad de Chat de tu cartera y cifre o descifre los datos de enrutamiento de Chat."
+          }
+        }
+      }
+    },
     "permission.body.userIdentityAccess": {
       "extractionState": "manual",
       "localizations": {
@@ -778,6 +812,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "%1$(productId)@ would like to access account data"
+          }
+        }
+      }
+    },
+    "permission.title.chatAuthority": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ would like to use your Chat identity authority"
+          }
+        },
+        "es-ES": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ quiere usar tu autoridad de identidad de Chat"
           }
         }
       }

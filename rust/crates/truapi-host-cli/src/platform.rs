@@ -922,6 +922,13 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
                 review.product_id
             ),
         ),
+        UserConfirmationReview::ChatAuthority(review) => (
+            "use Chat identity authority",
+            format!(
+                "Product {} requested permission to bind its device account to your wallet Chat identity and encrypt or decrypt Chat routing data.",
+                review.product_id
+            ),
+        ),
     }
 }
 
