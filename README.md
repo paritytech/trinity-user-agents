@@ -95,7 +95,7 @@ See [`js/packages/truapi/README.md`](js/packages/truapi/README.md) for the full 
 wallet's Chat v2 identity and seals or opens identity-route payloads without
 exposing the wallet's X25519 private key. Browser pairing hosts forward the
 operation over encrypted SSO; signing hosts require the calling product's
-identity-disclosure authorization before using local wallet material.
+dedicated Chat-authority permission before using local wallet material.
 
 ## Repository layout
 

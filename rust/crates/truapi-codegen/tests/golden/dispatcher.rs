@@ -342,7 +342,7 @@ where
                     }
                 };
                 let target_version = request.version();
-                let cx = CallContext::with_request_id(request_id.clone());
+                let cx = CallContext::with_request_id(request_id);
                 let response: versioned::account::HostProductDeviceChatResponse = match host.product_device_chat(&cx, request).await {
                     Ok(value) => value,
                     Err(err) => {
