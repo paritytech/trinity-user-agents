@@ -24,10 +24,11 @@ import {
 } from "./worker-permission-authorization.js";
 import type {
   WasmModuleShape,
+  WorkerHostRuntime,
   WorkerPairingHostRuntime,
   WorkerSigningHostRuntime,
   WorkerProductRuntime,
-  WorkerTransition,
+  WorkerSigningHostRuntime,
 } from "./wasm-module.js";
 import { errorMessage } from "./error.js";
 import {
@@ -590,12 +591,7 @@ function buildCoreCallbacks(coreId: number) {
   };
 }
 
-/** The runtime `init` built, tagged with the role it was built for. */
-type HostRuntime =
-  | { role: "pairing"; runtime: WorkerPairingHostRuntime }
-  | { role: "signing"; runtime: WorkerSigningHostRuntime };
-
-let host: HostRuntime | null = null;
+let runtime: WorkerHostRuntime | null = null;
 const cores = new Map<number, WorkerProductRuntime>();
 // Outstanding receiveFrame calls per core. wasm-bindgen holds a borrow of the
 // core for the whole duration of an async method, so `free()` throws while one
@@ -604,6 +600,18 @@ const inFlightFrames = new Map<number, Set<Promise<void>>>();
 /** Live render subscriptions, keyed by main-thread render id. */
 const renders: RenderSubscriptions = new Map();
 let wasm: WasmModuleShape | null = null;
+
+function isPairingRuntime(
+  candidate: WorkerHostRuntime,
+): candidate is WorkerPairingHostRuntime {
+  return "cancelPairing" in candidate;
+}
+
+function isSigningRuntime(
+  candidate: WorkerHostRuntime,
+): candidate is WorkerSigningHostRuntime {
+  return "activateLocalSession" in candidate;
+}
 
 (async () => {
   try {
@@ -643,36 +651,11 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         });
       }
       try {
-        if (msg.role === "signing") {
-          // Only the `testing` bundle carries a signing host; the production
-          // `web` one is built without it, so say that rather than let an
-          // undefined constructor surface as a generic type error.
-          const SigningRuntime = wasm.WasmSigningHostRuntime;
-          if (!SigningRuntime) {
-            postToMain({
-              kind: "fatalError",
-              error:
-                "init: this WASM bundle has no signing host. Use the " +
-                "`testing` bundle, which is built with `wasm-signing-host`.",
-            });
-            break;
-          }
-          host = {
-            role: "signing",
-            runtime: new SigningRuntime(
-              buildRawCallbacks(msg.capabilities),
-              msg.hostConfig,
-            ),
-          };
-        } else {
-          host = {
-            role: "pairing",
-            runtime: new wasm.WasmPairingHostRuntime(
-              buildRawCallbacks(msg.capabilities),
-              msg.hostConfig,
-            ),
-          };
-        }
+        const callbacks = buildRawCallbacks(msg.capabilities);
+        runtime =
+          msg.runtimeKind === "signing"
+            ? new wasm.WasmSigningHostRuntime(callbacks, msg.hostConfig)
+            : new wasm.WasmPairingHostRuntime(callbacks, msg.hostConfig);
         postToMain({ kind: "ready", schema: coreWireSchemaHash(wasm) });
       } catch (err) {
         postToMain({ kind: "fatalError", error: `init: ${errorMessage(err)}` });
@@ -712,8 +695,9 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       void handleDisconnectSession(msg.requestId);
       break;
     case "cancelPairing":
-      // A signing host has no pairing to cancel.
-      if (host?.role === "pairing") host.runtime.cancelPairing();
+      if (runtime && isPairingRuntime(runtime)) {
+        runtime.cancelPairing();
+      }
       break;
     case "getSessionChatIdentityKey":
       handleGetSessionChatIdentityKey(msg.requestId);
@@ -732,27 +716,18 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       );
       break;
     case "notifySessionStoreChanged":
-      // Only a pairing host restores its session from the store.
-      if (host?.role === "pairing") host.runtime.notifySessionStoreChanged();
-      break;
-    case "notifyContactsChanged":
-      host?.runtime.notifyContactsChanged();
-      break;
-    case "acquireWorker":
-      host?.runtime.acquireWorker(msg.productId);
-      break;
-    case "releaseWorker":
-      host?.runtime.releaseWorker(msg.productId);
+      if (runtime && isPairingRuntime(runtime)) {
+        runtime.notifySessionStoreChanged();
+      }
       break;
     case "activateStoredSession":
       void handleSessionActivation(
         msg.requestId,
         "activateStoredSession",
-        (booted) =>
-          pairingRuntime(
-            booted,
-            "activateStoredSession",
-          ).activateStoredSession(),
+        (rt) =>
+          isPairingRuntime(rt)
+            ? rt.activateStoredSession()
+            : Promise.reject(new Error("pairing runtime is not active")),
       );
       break;
     case "activateExternalSession": {
@@ -760,107 +735,44 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       void handleSessionActivation(
         msg.requestId,
         "activateExternalSession",
-        (booted) =>
-          pairingRuntime(
-            booted,
-            "activateExternalSession",
-          ).activateExternalSession(blob),
-      );
-      break;
-    }
-    case "activateLocalSession": {
-      const { secret, liteUsername } = msg;
-      void handleSessionActivation(
-        msg.requestId,
-        "activateLocalSession",
-        (booted) => {
-          const signing = signingRuntime(booted, "activateLocalSession");
-          // Activating with a name is a separate core entry point. Fall back
-          // when the name is absent, or when a core predating it is loaded.
-          if (
-            liteUsername !== undefined &&
-            typeof signing.activateLocalSessionWithIdentity === "function"
-          ) {
-            return signing.activateLocalSessionWithIdentity(
-              secret,
-              liteUsername,
-            );
-          }
-          return signing.activateLocalSession(secret);
-        },
-      );
-      break;
-    }
-    case "setGrantAllowancesUnchecked": {
-      const { granted } = msg;
-      void handleSessionActivation(
-        msg.requestId,
-        "setGrantAllowancesUnchecked",
-        (booted) => {
-          const signing = signingRuntime(booted, "setGrantAllowancesUnchecked");
-          if (typeof signing.setGrantAllowancesUnchecked !== "function") {
-            return Promise.reject(
-              new Error(
-                "setGrantAllowancesUnchecked needs a signing host built with " +
-                  "`wasm-signing-host`; this core does not carry it",
-              ),
-            );
-          }
-          signing.setGrantAllowancesUnchecked(granted);
-          return Promise.resolve();
-        },
-      );
-      break;
-    }
-    case "setSubmitPreimagesLocally": {
-      const { local } = msg;
-      void handleSessionActivation(
-        msg.requestId,
-        "setSubmitPreimagesLocally",
-        ({ runtime }) => {
-          if (typeof runtime.setSubmitPreimagesLocally !== "function") {
-            return Promise.reject(
-              new Error(
-                "setSubmitPreimagesLocally needs a core built with " +
-                  "`test-host`; this core does not carry it",
-              ),
-            );
-          }
-          runtime.setSubmitPreimagesLocally(local);
-          return Promise.resolve();
-        },
-      );
-      break;
-    }
-    case "setWithheldResources": {
-      const { tags } = msg;
-      void handleSessionActivation(
-        msg.requestId,
-        "setWithheldResources",
-        (booted) => {
-          const signing = signingRuntime(booted, "setWithheldResources");
-          if (typeof signing.setWithheldResources !== "function") {
-            return Promise.reject(
-              new Error(
-                "setWithheldResources needs a signing host built with " +
-                  "`wasm-signing-host`; this core does not carry it",
-              ),
-            );
-          }
-          signing.setWithheldResources(tags);
-          return Promise.resolve();
-        },
+        (rt) =>
+          isPairingRuntime(rt)
+            ? rt.activateExternalSession(blob)
+            : Promise.reject(new Error("pairing runtime is not active")),
       );
       break;
     }
     case "resetSessionState":
-      void handleSessionActivation(
-        msg.requestId,
-        "resetSessionState",
-        (booted) =>
-          pairingRuntime(booted, "resetSessionState").resetSessionState(),
+      void handleSessionActivation(msg.requestId, "resetSessionState", (rt) =>
+        isPairingRuntime(rt)
+          ? rt.resetSessionState()
+          : Promise.reject(new Error("pairing runtime is not active")),
       );
       break;
+    case "activateLocalSession": {
+      const { secret } = msg;
+      void handleSessionActivation(
+        msg.requestId,
+        "activateLocalSession",
+        (rt) =>
+          isSigningRuntime(rt)
+            ? rt.activateLocalSession(secret)
+            : Promise.reject(new Error("signing runtime is not active")),
+      );
+      break;
+    }
+    case "activateLocalSessionWithIdentity": {
+      const { secret, liteUsername } = msg;
+      void handleSessionActivation(
+        msg.requestId,
+        "activateLocalSessionWithIdentity",
+        (rt) =>
+          isSigningRuntime(rt)
+            ? rt.activateLocalSessionWithIdentity(secret, liteUsername)
+            : Promise.reject(new Error("signing runtime is not active")),
+      );
+      break;
+    }
     case "getPermissionAuthorizationStatus":
       void handleGetPermissionAuthorizationStatus(
         host?.runtime ?? null,
@@ -1040,7 +952,7 @@ function signingRuntime(
 async function handleSessionActivation(
   requestId: number,
   label: string,
-  activate: (booted: HostRuntime) => Promise<void>,
+  activate: (runtime: WorkerHostRuntime) => Promise<void>,
 ): Promise<void> {
   if (!host) {
     postToMain({

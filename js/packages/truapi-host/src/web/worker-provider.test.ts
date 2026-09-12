@@ -31,16 +31,13 @@ import type {
 } from "../runtime.js";
 import { makeHostCallbacks, settle } from "../test-support.js";
 import {
-  asWorker,
-  FakeWorker,
-  hostConfigFromRuntimeConfig,
-  lastMessageOfKind,
-  readyRuntime,
-  runtimeConfig,
-} from "./worker-test-harness.js";
-import type { WorkerMessage } from "./worker-test-harness.js";
-import { createWebWorkerPairingHostRuntime } from "./index.js";
-import type { CreateWebWorkerPairingHostRuntimeOptions } from "./index.js";
+  createWebWorkerPairingHostRuntime,
+  createWebWorkerSigningHostRuntime,
+} from "./index.js";
+import type {
+  CreateWebWorkerPairingHostRuntimeOptions,
+  CreateWebWorkerSigningHostRuntimeOptions,
+} from "./index.js";
 
 function renderRequest(): ProductRendererRenderRequest {
   return {
@@ -143,16 +140,8 @@ describe("createWebWorkerPairingHostRuntime", () => {
       kind: "init",
       logLevel: "debug",
       hostConfig: hostConfigFromRuntimeConfig(config),
-      capabilities: {
-        chat: false,
-        permissionStatus: false,
-        pocket: false,
-        game: false,
-        contacts: false,
-        scanner: false,
-      },
-      // Null under `bun test`: the `import.meta.env.DEV` gate reads undefined,
-      // so no dial resolves and the worker builds no tap.
+      runtimeKind: "pairing",
+      capabilities: { chat: false, permissionStatus: false },
       debuggerUrl: null,
     });
 
@@ -169,6 +158,43 @@ describe("createWebWorkerPairingHostRuntime", () => {
     expect(typeof provider.disconnectSession).toBe("function");
 
     provider.dispose();
+  });
+
+  it("activates a browser-local signing session in the worker", async () => {
+    const worker = new FakeWorker();
+    const hostConfig = {
+      ...hostConfigFromRuntimeConfig(runtimeConfig()),
+      networkSuffix: "paseo",
+    } satisfies CreateWebWorkerSigningHostRuntimeOptions["hostConfig"];
+    const runtimePromise = createWebWorkerSigningHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks(),
+      { hostConfig },
+    );
+
+    worker.emit({ kind: "loaded" });
+    expect(worker.messages[0]).toMatchObject({
+      kind: "init",
+      hostConfig,
+      runtimeKind: "signing",
+    });
+    worker.emit({ kind: "ready" });
+    const runtime = await runtimePromise;
+
+    const secret = new Uint8Array(32).fill(7);
+    const activation = runtime.activateLocalSession(secret);
+    const request = lastMessageOfKind(worker, "activateLocalSession");
+    expect(request).toMatchObject({
+      kind: "activateLocalSession",
+      secret,
+    });
+    worker.emit({
+      kind: "sessionActivationResponse",
+      requestId: request.requestId,
+      ok: true,
+    });
+    await activation;
+    runtime.dispose();
   });
 
   it("reports the chat capability to the worker when the host serves it", async () => {

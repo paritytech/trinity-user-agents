@@ -62,13 +62,7 @@ function args(crate, outName, target, outDir, features = []) {
       `Unsupported TRUAPI_WASM_PROFILE=${wasmProfile}; expected release, dev, or profiling`,
     );
   }
-  command.push(
-    resolve(repoRoot, "rust/crates", crate),
-    "--no-default-features",
-  );
-  if (features.length > 0) {
-    command.push("--features", features.join(","));
-  }
+  command.push(rustCrate);
   return command;
 }
 

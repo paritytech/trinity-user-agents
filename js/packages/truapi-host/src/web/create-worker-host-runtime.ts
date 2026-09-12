@@ -45,6 +45,10 @@ export type WebWorkerHostConfig = Omit<
   ProductRuntimeConfig,
   "productId" | "executionKind"
 >;
+export type WebWorkerSigningHostConfig = WebWorkerHostConfig & {
+  /** Bare dotNS network suffix (`dot`, `paseo`, or `testnet`). */
+  networkSuffix: string;
+};
 
 export interface WorkerPairingHostRuntime {
   /**
@@ -165,6 +169,20 @@ export interface WorkerPairingHostRuntime {
   ): () => void;
   setLogLevel(level: LogLevel): void;
   dispose(): void;
+}
+export interface WorkerSigningHostRuntime extends Omit<
+  WorkerPairingHostRuntime,
+  | "cancelPairing"
+  | "notifySessionStoreChanged"
+  | "activateStoredSession"
+  | "activateExternalSession"
+  | "resetSessionState"
+> {
+  activateLocalSession(secret: Uint8Array): Promise<void>;
+  activateLocalSessionWithIdentity(
+    secret: Uint8Array,
+    liteUsername?: string,
+  ): Promise<void>;
 }
 
 interface CoreState {
@@ -340,9 +358,8 @@ export type DebuggerEnablement = {
 function buildTimeDebuggerUrl(): string | null {
   let raw: unknown;
   try {
-    raw = (
-      import.meta as unknown as { env: { VITE_TRUAPI_DEBUGGER_URL?: unknown } }
-    ).env.VITE_TRUAPI_DEBUGGER_URL;
+    dev =
+      (import.meta as unknown as { env: { DEV?: boolean } }).env.DEV === true;
   } catch {
     return null;
   }
@@ -470,9 +487,9 @@ function reportDebuggerEnablement(e: DebuggerEnablement): void {
     return;
   }
   const origin = globalThis.location?.origin ?? "(unknown origin)";
-  if (e.reason === "enabled-from-option") {
+  if (e.reason === "enabled") {
     console.info(
-      `[truapi] wire debugger: dialling ${e.url} from the host's option (origin ${origin})`,
+      `[truapi] wire debugger: dialling ${e.url} (origin ${origin})`,
     );
     return;
   }
@@ -1004,39 +1021,21 @@ function teardown(state: RuntimeState, error: Error, fault: boolean): void {
   }
 }
 
-export interface CreateWebWorkerPairingHostRuntimeOptions {
+interface CreateWebWorkerHostRuntimeOptions {
   logLevel?: LogLevel;
-  hostConfig: WebWorkerHostConfig;
+  hostConfig: WebWorkerHostConfig | WebWorkerSigningHostConfig;
   initTimeoutMs?: number;
-  /**
-   * Dev-only: a loopback `ws://` wire debugger to stream tapped frames to.
-   *
-   * Omit to take what the build was compiled with
-   * (`VITE_TRUAPI_DEBUGGER_URL`); pass `null` or `""` to refuse it even when the
-   * build carries one. Ignored outside a dev build. Resolved once, at creation,
-   * and not changeable from the page.
-   */
-  debugger?: string | null;
-  /**
-   * Dev-only: whether to show the built-in indicator while a dial is live.
-   *
-   * Defaults to `true`. Pass `false` only when this host renders its own visible
-   * signal - the point is that a tap streaming frames off this host is never
-   * invisible, not that this particular badge is used.
-   */
-  debuggerIndicator?: boolean;
-  /**
-   * Host role the worker constructs. Omitted means `"pairing"`.
-   *
-   * `"signing"` requires a worker loading the `testing` WASM bundle, the only
-   * one built with a signing host in it.
-   */
-  role?: HostRole;
-  /**
-   * How long `dispose()` waits for open `worker.beginOperation` holds before
-   * tearing down anyway. Defaults to 30s.
-   */
-  operationGraceMs?: number;
+  runtimeKind?: "pairing" | "signing";
+}
+
+export interface CreateWebWorkerPairingHostRuntimeOptions extends CreateWebWorkerHostRuntimeOptions {
+  hostConfig: WebWorkerHostConfig;
+  runtimeKind?: "pairing";
+}
+
+export interface CreateWebWorkerSigningHostRuntimeOptions extends CreateWebWorkerHostRuntimeOptions {
+  hostConfig: WebWorkerSigningHostConfig;
+  runtimeKind?: "signing";
 }
 
 export type WebWorkerHostCallbacks = RequiredHostCallbacks;
@@ -1046,6 +1045,28 @@ export function createWebWorkerPairingHostRuntime(
   host: WebWorkerHostCallbacks,
   options: CreateWebWorkerPairingHostRuntimeOptions,
 ): Promise<WorkerPairingHostRuntime> {
+  return createWebWorkerHostRuntime(worker, host, {
+    ...options,
+    runtimeKind: "pairing",
+  });
+}
+
+export function createWebWorkerSigningHostRuntime(
+  worker: Worker,
+  host: WebWorkerHostCallbacks,
+  options: CreateWebWorkerSigningHostRuntimeOptions,
+): Promise<WorkerSigningHostRuntime> {
+  return createWebWorkerHostRuntime(worker, host, {
+    ...options,
+    runtimeKind: "signing",
+  });
+}
+
+function createWebWorkerHostRuntime(
+  worker: Worker,
+  host: WebWorkerHostCallbacks,
+  options: CreateWebWorkerHostRuntimeOptions,
+): Promise<WorkerPairingHostRuntime & WorkerSigningHostRuntime> {
   const callbacks = createWasmRawCallbacks(host);
 
   return new Promise((resolve, reject) => {
@@ -1080,7 +1101,8 @@ export function createWebWorkerPairingHostRuntime(
       coreWireSchemaHash: undefined,
     };
 
-    let runtime: WorkerPairingHostRuntime | null = null;
+    let runtime: (WorkerPairingHostRuntime & WorkerSigningHostRuntime) | null =
+      null;
 
     const notifyFault = (error: Error): void => {
       teardown(state, error, true);
@@ -1268,6 +1290,7 @@ export function createWebWorkerPairingHostRuntime(
           kind: "init",
           logLevel: devLogLevelOverride ?? options.logLevel ?? "off",
           hostConfig: options.hostConfig,
+          runtimeKind: options.runtimeKind,
           capabilities: {
             chat: host.chat !== undefined,
             permissionStatus: host.permissionStatus !== undefined,
@@ -1366,8 +1389,10 @@ function handleFrameError(
   }
 }
 
-function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
-  const runtime: WorkerPairingHostRuntime = {
+function buildRuntime(
+  state: RuntimeState,
+): WorkerPairingHostRuntime & WorkerSigningHostRuntime {
+  const runtime: WorkerPairingHostRuntime & WorkerSigningHostRuntime = {
     coreWireSchemaHash: state.coreWireSchemaHash,
     createProvider(product): Promise<TrUApiProductProvider> {
       if (state.disposed) {
@@ -1537,6 +1562,24 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
         requestId,
       }));
     },
+    activateLocalSession(secret: Uint8Array): Promise<void> {
+      return sendSessionActivationRequest(state, (requestId) => ({
+        kind: "activateLocalSession",
+        requestId,
+        secret,
+      }));
+    },
+    activateLocalSessionWithIdentity(
+      secret: Uint8Array,
+      liteUsername?: string,
+    ): Promise<void> {
+      return sendSessionActivationRequest(state, (requestId) => ({
+        kind: "activateLocalSessionWithIdentity",
+        requestId,
+        secret,
+        liteUsername,
+      }));
+    },
     getPermissionAuthorizationStatus(productId, request) {
       return sendWorkerRequest<PermissionAuthorizationStatus>(
         state,
@@ -1650,7 +1693,9 @@ function reportRenderFailure(
   cause: unknown,
 ): void {
   try {
-    sink.onError?.(toError(cause));
+    sink.onError(
+      cause instanceof Error ? cause : new Error(errorMessage(cause)),
+    );
   } catch (err) {
     console.warn("[truapi worker] render onError threw:", err);
   }
