@@ -466,6 +466,13 @@ pub enum HostProductDeviceChatRequest {
         /// Nonce-prefixed ChaCha20-Poly1305 ciphertext and tag.
         combined_ciphertext: Vec<u8>,
     },
+    /// Sign the canonical Chat first-contact proof payload without wallet-message framing.
+    SignRequestProof {
+        /// Product account proving ownership of the Chat device.
+        product_account_id: ProductAccountId,
+        /// Canonical SCALE-encoded Chat request proof payload.
+        payload: Vec<u8>,
+    },
 }
 
 /// Result of a product-device Chat v2 identity operation.
@@ -495,6 +502,11 @@ pub enum HostProductDeviceChatResponse {
     Opened {
         /// Authenticated plaintext.
         plaintext: Vec<u8>,
+    },
+    /// Raw sr25519 signature over a canonical Chat request proof payload.
+    RequestProofSigned {
+        /// Unframed 64-byte sr25519 signature.
+        signature: [u8; 64],
     },
 }
 
