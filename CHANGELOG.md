@@ -2,27 +2,31 @@
 
 All notable changes to the TrUAPI protocol are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), generated from
-[Conventional Commits](https://www.conventionalcommits.org/).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
 ### Changed
 
-- isolate the optional PolkaVM runtime in `truapi-polkavm-host`; keep the base server and browser asset distribution
-  independent, and pin cooperative update deadlines, multi-touch input, and image clipboard output (#540)
-- let browser signing hosts request personhood-backed Statement Store allowances for products instead of reporting the
-  allocator as native-only
+- isolate the optional PolkaVM runtime in `truapi-polkavm-host`; keep the base
+  server and browser asset distribution independent, and pin cooperative update
+  deadlines, multi-touch input, and image clipboard output (#540)
+- let browser signing hosts request personhood-backed Statement Store
+  allowances for products instead of reporting the allocator as native-only
 
 ### Added
 
-- Generate a transport-neutral `no_std` Rust client with typed request, subscription, result-subscription, and
-  host-initiated Worker subscription codecs.
-- Generate complete App, Widget, Worker, and Worker-only method catalogs from the canonical protocol schema.
+- Generate a transport-neutral `no_std` Rust client with typed request,
+  subscription, result-subscription, and host-initiated Worker subscription
+  codecs.
+- Generate complete App, Widget, Worker, and Worker-only method catalogs from
+  the canonical protocol schema.
 
 ### Fixed
 
-- return a decode error instead of trapping when subscription helpers receive a request descriptor
+- return a decode error instead of trapping when subscription helpers receive a
+  request descriptor
 
 ## [0.13.1] - 2026-09-02
 
@@ -795,7 +799,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Remove version field from RFC pseudocode CoinPaymentCheque
 - Fix codegen: collect error wrappers for ResultSubscription methods
 - Address review comments: remove version field, error aliases, and Resolvable type
-- Drop host*coin_payment* prefix from CoinPayment trait methods
+- Drop host_coin_payment_ prefix from CoinPayment trait methods
 - move notification methods from System to Notifications trait
 - implement RFC 0019 scheduled push notifications
 - Remove unused PaymentPurse alias and CoinPaymentInvoice type
@@ -878,7 +882,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - truapi-codegen: emit HexString import in generated client.ts
 - add JsonRpc, Theme, ResourceAllocation traits + host_request_login
 - add remote_preimage_submit + statement_store_create_proof_authorized
-- add host*sign*\*\_with_legacy_account (wire 34–37)
+- add host_sign_*_with_legacy_account (wire 34–37)
 - rename remote_chain_head_follow → remote_chain_head_follow_subscribe
 - fix fmt
 - drop host_chat_create_simple_group entirely
@@ -971,3 +975,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - clippy needless_borrow and stale type import
+
