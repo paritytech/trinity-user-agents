@@ -16,16 +16,16 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures_util::{StreamExt as _, TryStreamExt as _, stream};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
-use std::{collections::BTreeSet, sync::Mutex};
+use std::collections::BTreeSet;
+use std::sync::Mutex;
 use tracing::{debug, warn};
-use truapi::host_logic::{
-	attestation::build_lite_registration,
-	dotns_gateway::{MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label},
-	product_account::{
-		SR25519_SIGNING_CONTEXT, derive_identity_keypair, derive_root_keypair_from_entropy,
-		identity_product_id, product_public_key_to_address,
-	},
+use truapi_server::host_logic::attestation::build_lite_registration;
+use truapi_server::host_logic::dotns_gateway::{
+    MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label,
+};
+use truapi_server::host_logic::product_account::{
+    derive_identity_keypair, derive_root_keypair_from_entropy, identity_product_id,
+    product_public_key_to_address,
 };
 
 use crate::{dotns_read::AssetHubReader, network::NetworkConfig};
@@ -154,22 +154,14 @@ async fn mint_backend_token(
 		.to_string();
 	let challenge_bytes = BASE64.decode(&challenge).context("challenge is not valid base64")?;
 
-	let keypair = derive_identity_keypair(auth_entropy, network_suffix)
-		.map_err(|err| anyhow::anyhow!("backend auth identity derivation failed: {err}"))?;
-	let client_id = keypair.public.to_bytes();
-
-	// The proof signs SHA256(challenge || clientId || SHA256(body)). It must
-	// cover the exact bytes the request carries, so the body is serialized once.
-	let payload = b"{}";
-	let mut hasher = Sha256::new();
-	hasher.update(&challenge_bytes);
-	hasher.update(client_id);
-	hasher.update(Sha256::digest(payload));
-	let message: [u8; 32] = hasher.finalize().into();
-	let proof = keypair
-		.secret
-		.sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
-		.to_bytes();
+    let payload = b"{}";
+    let (client_id, proof) = truapi_server::host_logic::attestation::sign_backend_challenge(
+        auth_entropy,
+        network_suffix,
+        &challenge_bytes,
+        payload,
+    )
+    .context("backend auth identity derivation failed")?;
 
 	let url = format!("{backend_base}/auth/token");
 	let response = client
@@ -552,93 +544,75 @@ async fn submit_registration(
 	signed_at: u64,
 	reg: &truapi::host_logic::attestation::LiteRegistration,
 ) -> Result<()> {
-	let backend_base = config.backend_base.as_str();
-	let url = format!("{backend_base}/usernames");
-	let mut dotns = json!({
-		"signature": hex0x(&reg.dotns_signature),
-		"signedAt": signed_at,
-	});
-	if let Some(reserved) = config.reserved_username.as_deref() {
-		dotns["reservedUsername"] = json!(reserved);
-	}
-	let body = json!({
-		"username": config.username_base,
-		"candidateAccountId": reg.candidate_account_id,
-		"candidateSignature": hex0x(&reg.candidate_signature),
-		"ringVrfKey": hex0x(&reg.ring_vrf_key),
-		"proofOfOwnership": hex0x(&reg.proof_of_ownership),
-		"identifierKey": hex0x(&reg.identifier_key),
-		"consumerRegistrationSignature": hex0x(&reg.consumer_registration_signature),
-		"dotns": dotns,
-	});
-	let response = send_with_backend_auth(
-		client,
-		backend_base,
-		&config.entropy,
-		&config.network_suffix,
-		|token| client.post(&url).bearer_auth(token).json(&body),
-	)
-	.await
-	.with_context(|| format!("POST {url}"))?;
-	let status = response.status();
-	if status.is_success() {
-		let text = response.text().await.unwrap_or_default();
-		debug!(%status, body = %text, "POST /usernames accepted");
-		return Ok(());
-	}
-	let text = response.text().await.unwrap_or_default();
-	// Already-registered is a soft success; the on-chain poll confirms it.
-	if text.contains("already") || text.contains("AlreadyRegistered") || text.contains("duplicate")
-	{
-		warn!(%status, body = %text, "username already registered; confirming on-chain");
-		return Ok(());
-	}
-	bail!("username registration failed ({status}): {text}");
+    let backend_base = config.backend_base.as_str();
+    let url = format!("{backend_base}/usernames");
+    let body = reg.request_body(
+        &config.username_base,
+        config.reserved_username.as_deref(),
+        signed_at,
+    );
+    let response = send_with_backend_auth(
+        client,
+        backend_base,
+        &config.entropy,
+        &config.network_suffix,
+        |token| client.post(&url).bearer_auth(token).json(&body),
+    )
+    .await
+    .with_context(|| format!("POST {url}"))?;
+    let status = response.status();
+    if status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        debug!(%status, body = %text, "POST /usernames accepted");
+        return Ok(());
+    }
+    let text = response.text().await.unwrap_or_default();
+    // Already-registered is a soft success; the on-chain poll confirms it.
+    if text.contains("already") || text.contains("AlreadyRegistered") || text.contains("duplicate")
+    {
+        warn!(%status, body = %text, "username already registered; confirming on-chain");
+        return Ok(());
+    }
+    bail!("username registration failed ({status}): {text}");
 }
 
-fn hex0x(bytes: &[u8]) -> String {
-	format!("0x{}", hex::encode(bytes))
-}
-
-async fn wait_for_lite_username(
-	reader: &mut AssetHubReader,
-	candidate: &[u8; 32],
-) -> Result<String> {
-	// First-time lite registration is backend-async and can lag the HTTP
-	// response. The record is permanent once written. Later runs therefore
-	// resolve on the first poll.
-	const MAX_ATTEMPTS: usize = 30;
-	for attempt in 1..=MAX_ATTEMPTS {
-		let lite_username = reader
-			.dotns_identity(candidate)
-			.await
-			.map(|identity| identity.and_then(|identity| identity.into_lite_username()));
-		match lite_username {
-			Ok(Some(lite_username)) => {
-				crate::terminal_ui::update_activity(
-					"signer",
-					"Setting up signer",
-					Some("dotNS identity ready".to_string()),
-					crate::terminal_ui::ActivityState::Running,
-				);
-				return Ok(lite_username);
-			},
-			Ok(_) => {
-				crate::terminal_ui::update_activity(
-					"signer",
-					"Setting up signer",
-					Some(format!("Waiting for dotNS username · attempt {attempt}/{MAX_ATTEMPTS}")),
-					crate::terminal_ui::ActivityState::Running,
-				);
-				debug!("dotNS username poll {attempt}/{MAX_ATTEMPTS}: empty");
-			},
-			Err(err) => warn!(%err, "dotNS username poll attempt {attempt} failed"),
-		}
-		if attempt < MAX_ATTEMPTS {
-			tokio::time::sleep(Duration::from_secs(4)).await;
-		}
-	}
-	bail!("dotNS username did not appear on Asset Hub after attestation")
+async fn wait_for_dotns_username(
+    reader: &mut AssetHubReader,
+    candidate: &[u8; 32],
+) -> Result<truapi_server::host_logic::dotns_gateway::DotnsIdentity> {
+    // First-time lite registration is backend-async and can lag the HTTP
+    // response. The record is permanent once written. Later runs therefore
+    // resolve on the first poll.
+    const MAX_ATTEMPTS: usize = 30;
+    for attempt in 1..=MAX_ATTEMPTS {
+        match reader.dotns_identity(candidate).await {
+            Ok(identity) if identity.lite_username.is_some() => {
+                crate::terminal_ui::update_activity(
+                    "signer",
+                    "Setting up signer",
+                    Some("dotNS identity ready".to_string()),
+                    crate::terminal_ui::ActivityState::Running,
+                );
+                return Ok(identity);
+            }
+            Ok(_) => {
+                crate::terminal_ui::update_activity(
+                    "signer",
+                    "Setting up signer",
+                    Some(format!(
+                        "Waiting for dotNS username · attempt {attempt}/{MAX_ATTEMPTS}"
+                    )),
+                    crate::terminal_ui::ActivityState::Running,
+                );
+                debug!("dotNS username poll {attempt}/{MAX_ATTEMPTS}: empty");
+            }
+            Err(err) => warn!(%err, "dotNS username poll attempt {attempt} failed"),
+        }
+        if attempt < MAX_ATTEMPTS {
+            tokio::time::sleep(Duration::from_secs(4)).await;
+        }
+    }
+    bail!("dotNS username did not appear on Asset Hub after attestation")
 }
 
 #[cfg(test)]

@@ -27,6 +27,21 @@ eligible personhood ring. A randomly generated browser account can still sign,
 but it cannot spend another identity's personhood allowance; use a pairing host
 with the mobile Account Holder when that identity remains on the phone.
 
+After activating a local signing session, call `refreshLocalIdentity()` to read
+the configured Asset Hub's dotNS ownership and install verified username
+metadata. `registerLocalLiteUsername(baseUsername, identityBackendBaseUrl)`
+authenticates to the identity backend with native UID proofs, submits the
+registration with the real RFC-0004 X25519 identifier key and Asset Hub time,
+then waits for chain ownership confirmation. Backend acceptance alone is not
+registration success.
+
+Both methods return `LocalIdentity` (exported from `@parity/truapi-host/web`):
+the canonical lowercase `0x`-prefixed `identityAccountId` and an optional verified
+`liteUsername`. The backend must allow the worker's origin, or the host must
+provide an approved same-origin proxy. Secret material stays in the signing
+runtime. Disconnecting or replacing the local activation invalidates an
+in-flight identity operation; concurrent identity operations are rejected.
+
 ## Bundler requirements
 
 The worker imports the WASM glue by a literal specifier, so every bundler

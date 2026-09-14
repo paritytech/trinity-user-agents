@@ -31,6 +31,7 @@ import type {
   WorkerSigningHostRuntime,
 } from "./wasm-module.js";
 import { errorMessage } from "./error.js";
+import { resolveLocalIdentity } from "./worker-local-identity.js";
 import {
   CHAT_ACTION_ENTRY_POINT,
   RENDERER_ACTION_ENTRY_POINT,
@@ -600,6 +601,55 @@ const inFlightFrames = new Map<number, Set<Promise<void>>>();
 /** Live render subscriptions, keyed by main-thread render id. */
 const renders: RenderSubscriptions = new Map();
 let wasm: WasmModuleShape | null = null;
+let identityAbort: AbortController | null = null;
+const identityOperations = new Set<Promise<void>>();
+
+function handleLocalIdentity(
+  requestId: number,
+  registration?: { baseUsername: string; identityBackendBaseUrl: string },
+): void {
+  const rt = runtime;
+  if (!rt || !isSigningRuntime(rt) || identityAbort) {
+    postToMain({
+      kind: "localIdentityResponse",
+      requestId,
+      ok: false,
+      error: identityAbort
+        ? "local identity operation already in progress"
+        : "signing runtime is not active",
+    });
+    return;
+  }
+  const controller = new AbortController();
+  identityAbort = controller;
+  const operation = (async () => {
+    try {
+      const identity = await resolveLocalIdentity(
+        rt,
+        controller.signal,
+        registration,
+      );
+      controller.signal.throwIfAborted();
+      postToMain({
+        kind: "localIdentityResponse",
+        requestId,
+        ok: true,
+        identity,
+      });
+    } catch (error) {
+      postToMain({
+        kind: "localIdentityResponse",
+        requestId,
+        ok: false,
+        error: errorMessage(error),
+      });
+    } finally {
+      if (identityAbort === controller) identityAbort = null;
+    }
+  })();
+  identityOperations.add(operation);
+  void operation.finally(() => identityOperations.delete(operation));
+}
 
 function isPairingRuntime(
   candidate: WorkerHostRuntime,
@@ -692,6 +742,7 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       void handleFrame(msg.coreId, msg.bytes);
       break;
     case "disconnectSession":
+      identityAbort?.abort(new Error("local identity session disconnected"));
       void handleDisconnectSession(msg.requestId);
       break;
     case "cancelPairing":
@@ -750,6 +801,7 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       );
       break;
     case "activateLocalSession": {
+      identityAbort?.abort(new Error("local identity activation changed"));
       const { secret } = msg;
       void handleSessionActivation(
         msg.requestId,
@@ -762,6 +814,7 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       break;
     }
     case "activateLocalSessionWithIdentity": {
+      identityAbort?.abort(new Error("local identity activation changed"));
       const { secret, liteUsername } = msg;
       void handleSessionActivation(
         msg.requestId,
@@ -773,6 +826,12 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       );
       break;
     }
+    case "refreshLocalIdentity":
+      handleLocalIdentity(msg.requestId);
+      break;
+    case "registerLocalLiteUsername":
+      handleLocalIdentity(msg.requestId, msg);
+      break;
     case "getPermissionAuthorizationStatus":
       void handleGetPermissionAuthorizationStatus(
         host?.runtime ?? null,
@@ -888,10 +947,14 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       // Null the runtime synchronously so a message arriving mid-disposal takes
       // its `if (!host)` path instead of calling into a runtime being torn
       // down; free the captured handle after the cores finish disposing.
-      const disposing = host?.runtime;
-      host = null;
+      const disposing = runtime;
+      runtime = null;
+      identityAbort?.abort(new Error("runtime disposed"));
       void (async () => {
         try {
+          if (disposing && isSigningRuntime(disposing))
+            await disposing.disconnectSession();
+          await Promise.allSettled(identityOperations);
           await Promise.all(
             [...cores.keys()].map((coreId) => disposeCore(coreId)),
           );

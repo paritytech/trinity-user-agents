@@ -13,3 +13,4 @@ export {
   createWebWorkerPairingHostRuntime,
   createWebWorkerSigningHostRuntime,
 } from "./create-worker-host-runtime.js";
+export type { LocalIdentity } from "../worker-protocol.js";

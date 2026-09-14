@@ -32,7 +32,7 @@ import type { RawCallbacks } from "../generated/host-callbacks-adapter.js";
 import { isLoopbackWsUrl } from "../worker-protocol.js";
 import type {
   CallbackName,
-  HostRole,
+  LocalIdentity,
   MainToWorker,
   SubscriptionName,
   WorkerToMain,
@@ -183,6 +183,13 @@ export interface WorkerSigningHostRuntime extends Omit<
     secret: Uint8Array,
     liteUsername?: string,
   ): Promise<void>;
+  /** Read dotNS ownership and install verified metadata into the native session. */
+  refreshLocalIdentity(): Promise<LocalIdentity>;
+  /** Complete native UID auth/proofs and wait for on-chain ownership confirmation. */
+  registerLocalLiteUsername(
+    baseUsername: string,
+    identityBackendBaseUrl: string,
+  ): Promise<LocalIdentity>;
 }
 
 interface CoreState {
@@ -245,6 +252,7 @@ interface RuntimeState {
     number,
     { resolve: () => void; reject: (error: Error) => void }
   >;
+  pendingLocalIdentities: Map<number, PendingEntry<LocalIdentity>>;
   pendingPermissionAuthorizationStatuses: Map<
     number,
     {
@@ -316,8 +324,9 @@ let nextDeviceStatementKeyRequestId = 0;
 let nextDeviceEncryptionKeyRequestId = 0;
 let nextProductSubtreePublicKeyRequestId = 0;
 let nextSessionActivationRequestId = 0;
-let nextActionRequestId = 0;
-let nextRenderId = 0;
+let nextLocalIdentityRequestId = 0;
+let nextChatActionRequestId = 0;
+let nextCustomRenderId = 0;
 
 function encodePermissionAuthorizationRequest(
   request: PermissionAuthorizationRequest,
@@ -901,6 +910,7 @@ function handleDeviceEncryptionKeyResponse(
 function rejectPendingRuntimeRequests(state: RuntimeState, error: Error): void {
   rejectAll(state.pendingDisconnects, error);
   rejectAll(state.pendingSessionActivations, error);
+  rejectAll(state.pendingLocalIdentities, error);
   rejectAll(state.pendingPermissionAuthorizationStatuses, error);
   rejectAll(state.pendingPermissionAuthorizationStatusBatches, error);
   rejectAll(state.pendingSetPermissionAuthorizationStatuses, error);
@@ -959,6 +969,25 @@ function sendSessionActivationRequest(
     undefined,
     buildMessage,
   );
+}
+
+function sendLocalIdentityRequest(
+  state: RuntimeState,
+  buildMessage: (requestId: number) => MainToWorker,
+): Promise<LocalIdentity> {
+  if (state.disposed) {
+    return Promise.reject(state.closedError ?? new Error("runtime disposed"));
+  }
+  const { promise, resolve, reject } = Promise.withResolvers<LocalIdentity>();
+  const requestId = ++nextLocalIdentityRequestId;
+  state.pendingLocalIdentities.set(requestId, { resolve, reject });
+  try {
+    state.worker.postMessage(buildMessage(requestId));
+  } catch (error) {
+    state.pendingLocalIdentities.delete(requestId);
+    reject(error);
+  }
+  return promise;
 }
 
 function closeCoreState(core: CoreState, error: Error): void {
@@ -1083,6 +1112,7 @@ function createWebWorkerHostRuntime(
       chainConnections: new Map(),
       pendingDisconnects: new Map(),
       pendingSessionActivations: new Map(),
+      pendingLocalIdentities: new Map(),
       pendingPermissionAuthorizationStatuses: new Map(),
       pendingPermissionAuthorizationStatusBatches: new Map(),
       pendingSetPermissionAuthorizationStatuses: new Map(),
@@ -1144,6 +1174,15 @@ function createWebWorkerHostRuntime(
           break;
         case "sessionActivationResponse":
           handleSessionActivationResponse(state, msg);
+          break;
+        case "localIdentityResponse":
+          settlePending(
+            state.pendingLocalIdentities,
+            msg.requestId,
+            msg.ok
+              ? { ok: true, value: msg.identity }
+              : { ok: false, error: msg.error },
+          );
           break;
         case "permissionAuthorizationStatusResponse":
           handlePermissionAuthorizationStatusResponse(state, msg);
@@ -1578,6 +1617,23 @@ function buildRuntime(
         requestId,
         secret,
         liteUsername,
+      }));
+    },
+    refreshLocalIdentity(): Promise<LocalIdentity> {
+      return sendLocalIdentityRequest(state, (requestId) => ({
+        kind: "refreshLocalIdentity",
+        requestId,
+      }));
+    },
+    registerLocalLiteUsername(
+      baseUsername,
+      identityBackendBaseUrl,
+    ): Promise<LocalIdentity> {
+      return sendLocalIdentityRequest(state, (requestId) => ({
+        kind: "registerLocalLiteUsername",
+        requestId,
+        baseUsername,
+        identityBackendBaseUrl,
       }));
     },
     getPermissionAuthorizationStatus(productId, request) {

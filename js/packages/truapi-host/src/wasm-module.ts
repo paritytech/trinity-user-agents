@@ -4,6 +4,7 @@
 // these interfaces so the worker can name it in a statically analysable import.
 
 import type { PermissionAuthorizationRuntime } from "./worker-permission-authorization.js";
+import type { LocalIdentity } from "./worker-protocol.js";
 
 /** Cancellable handle on one live render stream inside the core. */
 export interface WorkerRendererSubscription {
@@ -76,6 +77,17 @@ export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
     secret: Uint8Array,
     liteUsername?: string,
   ): Promise<void>;
+  localIdentityContext(): { activationId: string; identityAccountId: string };
+  localIdentityAuthProof(
+    activationId: string,
+    challenge: Uint8Array,
+  ): Uint8Array;
+  localLiteRegistrationBody(
+    activationId: string,
+    usernameBase: string,
+    verifier: Uint8Array,
+  ): Promise<string>;
+  refreshLocalIdentity(activationId: string): Promise<LocalIdentity>;
 }
 
 /** Module surface the wasm-pack glue exports. */
