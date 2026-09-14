@@ -50,62 +50,33 @@ import uniffi.truapi.RendererNode
 import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.ThemeName
 import uniffi.truapi.ThemeVariant
-import uniffi.truapi.AuthState
-import uniffi.truapi.HostChainSet
-import uniffi.truapi.PermissionAuthorizationRequest
-import uniffi.truapi.PermissionAuthorizationStatus
-import uniffi.truapi.PermissionDecision
-import uniffi.truapi.UserConfirmationReview
-import uniffi.truapi.DbStatus
-import uniffi.truapi.HostCallbacks
-import uniffi.truapi.ChatBotRegistrationStatus
-import uniffi.truapi.NativeChatCallbacks
-import uniffi.truapi.NativeCoreDatabaseException
-import uniffi.truapi.RecoveryException
-import uniffi.truapi.ChatRoomRegistrationStatus
-import uniffi.truapi.NativeGameCallbacks
-import uniffi.truapi.NativePocketCallbacks
-import uniffi.truapi.NativePocketRemoval
-import uniffi.truapi.NativeRendererObserver
-import uniffi.truapi.DevicePermissionStatus
-import uniffi.truapi.ExpandedCardFaceOutcome
-import uniffi.truapi.NativeProductExecution
-import uniffi.truapi.NativeTrUApiHostRuntime
-import uniffi.truapi.NativeAnnouncedPairing
-import uniffi.truapi.PairedSsoPeer
-import uniffi.truapi.ResponderExit
-import uniffi.truapi.ProductRuntimeException
-import uniffi.truapi.HostNavigateToException
-import uniffi.truapi.HostRejection
-import uniffi.truapi.HostLocalStorageReadException
-import uniffi.truapi.localhostBridgeBootstrapScript
-import uniffi.truapi.NativeRuntimeConfigException
-import uniffi.truapi.StatementRenewalTarget
-import uniffi.truapi.TrackedStatementRenewalTarget
-import uniffi.truapi.StatementRenewalReport
-import uniffi.truapi.WorkerTransition
-import uniffi.truapi.WsBridgeEndpoint
-import uniffi.truapi.WsBridgeStartException
-import uniffi.truapi.HostRuntimeConfig
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.HostContactLookup
-import uniffi.truapi.HostContactMatches
-import uniffi.truapi.HostContactPick
-import uniffi.truapi.NativeContactsCallbacks
-import uniffi.truapi.HostPaymentBalanceSubscribeException
-import uniffi.truapi.HostPaymentException
-import uniffi.truapi.HostPaymentRequest
-import uniffi.truapi.HostPaymentStatusSubscribeItem
-import uniffi.truapi.HostPaymentTopUpException
-import uniffi.truapi.HostPaymentTopUpRequest
-import uniffi.truapi.HostPaymentTopUpStatusSubscribeItem
-import uniffi.truapi.HostScan
-import uniffi.truapi.HostScannerScanRequest
-import uniffi.truapi.NativeBalanceCallbacks
-import uniffi.truapi.NativePaymentCallbacks
-import uniffi.truapi.NativeScannerCallbacks
-import uniffi.truapi.NativeTopUpCallbacks
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.HostLocalStorageReadError
+import uniffi.truapi.HostNavigateToError
+import uniffi.truapi_platform.AuthState
+import uniffi.truapi_platform.HostChainSet
+import uniffi.truapi_platform.PermissionAuthorizationRequest
+import uniffi.truapi_platform.PermissionAuthorizationStatus
+import uniffi.truapi_platform.UserConfirmationReview
+import uniffi.truapi_server.HostCallbacks
+import uniffi.truapi_server.NativeChatCallbacks
+import uniffi.truapi_server.NativeCustomRendererObserver
+import uniffi.truapi_server.NativeDevicePermissionStatus
+import uniffi.truapi_server.NativeProductExecution
+import uniffi.truapi_server.NativeTrUApiHostRuntime
+import uniffi.truapi_server.ProductRuntimeException
+import uniffi.truapi_server.HostNavigateRejection
+import uniffi.truapi_server.HostRejection
+import uniffi.truapi_server.HostStorageException
+import uniffi.truapi_platform.ProductExecutionKind as UniFfiProductExecutionKind
+import uniffi.truapi_server.NativeRenewalTargetException
+import uniffi.truapi_server.NativeRuntimeConfigException
+import uniffi.truapi_server.NativeStatementRenewalTarget
+import uniffi.truapi_server.StatementRenewalReport
+import uniffi.truapi_server.SsoRequestOutcome
+import uniffi.truapi_server.WsBridgeEndpoint
+import uniffi.truapi_server.WsBridgeStartException
+import uniffi.truapi_server.NativeHostRuntimeConfig as UniFfiNativeHostRuntimeConfig
+import uniffi.truapi_server.NativeProductExecutionConfig as UniFfiNativeProductExecutionConfig
 
 /** Package metadata. */
 object TrUAPIHost {
@@ -1147,6 +1118,14 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     fun activateLocalSession(secret: ByteArray, liteUsername: String? = null) {
         inner.activateLocalSession(secret, liteUsername)
     }
+
+    /** Handle a paired session's opaque SSO request, awaiting native user consent. */
+    @Throws(HostRejection::class)
+    suspend fun handleSsoRequest(message: ByteArray): SsoRequestOutcome =
+        inner.handleSsoRequest(message)
+
+    /** Encode the disconnect notification; the caller routes it to the ending session. */
+    fun prepareDisconnectRequest(): ByteArray = inner.prepareDisconnectRequest()
 
     /** Push a JSON-RPC response from a native chain connection into the runtime. */
     fun notifyChainResponse(connectionId: UInt, json: String) {
