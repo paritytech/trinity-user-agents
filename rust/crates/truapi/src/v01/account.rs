@@ -473,6 +473,24 @@ pub enum HostProductDeviceChatRequest {
         /// Canonical SCALE-encoded Chat request proof payload.
         payload: Vec<u8>,
     },
+    /// Read the authorized wallet's public Chat identity for incoming requests.
+    Identity {
+        /// Product account requesting the operation.
+        product_account_id: ProductAccountId,
+    },
+    /// Verify a peer's identity-to-device binding without exposing shared keys.
+    VerifyPeerDevice {
+        /// Product account requesting the operation.
+        product_account_id: ProductAccountId,
+        /// Peer identity whose binding is being checked.
+        peer_identity_account_id: [u8; 32],
+        /// Peer's independently resolved X25519 Chat identity public key.
+        peer_chat_public_key: [u8; 32],
+        /// Device account authenticated by the signed contact request.
+        peer_device_account_id: [u8; 32],
+        /// Keyed identity binding carried by that request.
+        proof: [u8; 32],
+    },
 }
 
 /// Result of a product-device Chat v2 identity operation.
@@ -507,6 +525,18 @@ pub enum HostProductDeviceChatResponse {
     RequestProofSigned {
         /// Unframed 64-byte sr25519 signature.
         signature: [u8; 64],
+    },
+    /// Public Chat identity of the authorized wallet.
+    Identity {
+        /// Canonical wallet identity account.
+        identity_account_id: [u8; 32],
+        /// X25519 Chat identity public key; never private key material.
+        chat_public_key: [u8; 32],
+    },
+    /// Result of verifying a peer identity-to-device binding.
+    PeerDeviceVerified {
+        /// Whether the supplied binding matches the authenticated shared key.
+        valid: bool,
     },
 }
 
