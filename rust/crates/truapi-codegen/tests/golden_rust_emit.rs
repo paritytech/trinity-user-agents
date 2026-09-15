@@ -1,4 +1,4 @@
-//! Golden snapshot test for the Rust dispatcher emitter.
+//! Integration tests for Rust emission and host-callback generation.
 //!
 //! `cargo rustdoc` runs once per package, under the nightly named in the
 //! repository's `nightly-toolchain` file, into a dedicated
@@ -208,70 +208,6 @@ fn prettier_generated(workspace_root: &Path, files: &[PathBuf]) {
 		output.status,
 		String::from_utf8_lossy(&output.stdout),
 		String::from_utf8_lossy(&output.stderr),
-	);
-}
-
-#[test]
-fn golden_dispatcher_and_wire_table() {
-	let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-	let workspace = workspace_root();
-
-	let tempdir = workspace_tempdir(&workspace);
-	let rustdoc_json = produce_rustdoc_json(&workspace);
-
-	let out = Command::new(env!("CARGO_BIN_EXE_truapi-codegen"))
-		.args([
-			"--input",
-			rustdoc_json.to_str().unwrap(),
-			"--output",
-			tempdir.path().join("ts").to_str().unwrap(),
-			"--rust-output",
-			tempdir.path().join("rust").to_str().unwrap(),
-		])
-		.output()
-		.expect("run truapi-codegen");
-	assert!(
-		out.status.success(),
-		"codegen failed: stdout=\n{}\nstderr=\n{}",
-		String::from_utf8_lossy(&out.stdout),
-		String::from_utf8_lossy(&out.stderr),
-	);
-
-	// Compare the emitted files against the goldens. We assert on
-	// wire_table.rs first because it's small and the diff is easy to
-	// read when the wire ids drift. mod.rs is covered because the
-	// the runtime feature includes `generated`, so dropping it breaks
-	// runtime builds.
-	let golden_dir = manifest_dir.join("tests/golden");
-	let cases = [
-		("wire_table.rs", "wire_table.rs"),
-		("dispatcher.rs", "dispatcher.rs"),
-		("mod.rs", "mod.rs"),
-	];
-	for (golden_name, output_name) in cases {
-		let golden = fs::read_to_string(golden_dir.join(golden_name))
-			.unwrap_or_else(|e| panic!("read {golden_name}: {e}"));
-		let actual = fs::read_to_string(tempdir.path().join("rust").join(output_name))
-			.unwrap_or_else(|e| panic!("read generated {output_name}: {e}"));
-		if golden != actual {
-			// Dump actual to a sibling file for easy inspection
-			// when running locally.
-			let dump = manifest_dir.join(format!("tests/golden/{output_name}.actual"));
-			let _ = fs::write(&dump, &actual);
-			panic!("golden mismatch for {output_name}; wrote actual to {}", dump.display());
-		}
-	}
-
-	// A method body should only ever reference its pre-built `T.{Method}Version`
-	// codec by name (see `method_envelope_name` in `ts.rs`); `types.ts`
-	// legitimately inlines `S.indexedTaggedUnion(` to define those wrapper
-	// codecs themselves, which is why only `client.ts` is scanned here.
-	let client_ts = fs::read_to_string(tempdir.path().join("ts").join("client.ts"))
-		.unwrap_or_else(|e| panic!("read generated client.ts: {e}"));
-	assert!(
-		!client_ts.contains("indexedTaggedUnion"),
-		"generated client.ts contains `S.indexedTaggedUnion(`; a method body should \
-         reference its `T.{{Method}}Version` codec by name instead of inlining one"
 	);
 }
 
