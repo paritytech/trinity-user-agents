@@ -1,6 +1,5 @@
 import type { LocalIdentity } from "./worker-protocol.js";
 import type { WorkerSigningHostRuntime } from "./wasm-module.js";
-import { errorMessage } from "./error.js";
 
 function stringField(value: unknown, field: string): string {
   if (typeof value !== "object" || value === null || !(field in value)) {
@@ -139,20 +138,26 @@ export async function resolveLocalIdentity(
     );
   }
 
-  let lastFailure: string | undefined;
-  for (let attempt = 0; attempt < 30; attempt++) {
+  // Backend acceptance is not chain confirmation. Keep observing this activation
+  // until ownership is verified or the caller disposes it; never resubmit a claim
+  // just because indexing/finality takes longer than a fixed polling window.
+  for (;;) {
     check();
+    let identity: LocalIdentity;
     try {
-      const identity = await refresh();
-      if (identity.liteUsername) return identity;
-      lastFailure = undefined;
-    } catch (error) {
+      identity = await runtime.refreshLocalIdentity(context.activationId);
+    } catch {
       check();
-      lastFailure = errorMessage(error);
+      await delay(4_000, signal);
+      continue;
     }
-    if (attempt < 29) await delay(4_000, signal);
+    check();
+    if (identity.identityAccountId !== context.identityAccountId) {
+      throw new Error(
+        "verified identity does not match the active UID account",
+      );
+    }
+    if (identity.liteUsername) return identity;
+    await delay(4_000, signal);
   }
-  throw new Error(
-    `registration was not confirmed on Asset Hub${lastFailure ? `: ${lastFailure}` : ""}`,
-  );
 }

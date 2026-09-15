@@ -32,8 +32,10 @@ the configured Asset Hub's dotNS ownership and install verified username
 metadata. `registerLocalLiteUsername(baseUsername, identityBackendBaseUrl)`
 authenticates to the identity backend with native UID proofs, submits the
 registration with the real RFC-0004 X25519 identifier key and Asset Hub time,
-then waits for chain ownership confirmation. Backend acceptance alone is not
-registration success.
+then monitors chain ownership until it is confirmed or the activation is
+disconnected/replaced. Backend acceptance alone is not registration success.
+Slow confirmation and transient chain-read failures do not resubmit the claim
+or require repeated manual refreshes.
 
 Both methods return `LocalIdentity` (exported from `@parity/truapi-host/web`):
 the canonical lowercase `0x`-prefixed `identityAccountId` and an optional verified
