@@ -11,10 +11,10 @@
 //! product's storage for a write, and there is nothing for those requests to
 //! address.
 
-use crate::{
-	v01, v02,
-	versioned::{FromLatest, IntoLatest},
-};
+use alloc::string::ToString;
+
+use crate::versioned::{FromLatest, IntoLatest};
+use crate::{v01, v02};
 
 truapi_macros::versioned_type! {
 	pub enum HostLocalStorageReadRequest {
