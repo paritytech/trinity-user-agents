@@ -14,15 +14,16 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
   deadlines, multi-touch input, and image clipboard output (#540)
 - let browser signing hosts request personhood-backed Statement Store
   allowances for products instead of reporting the allocator as native-only
+- migrate the generic runtime and Rust client to SDK 0.16's scoped wire codec 2;
+  product guests must be rebuilt rather than sending codec-1 frames
 
 ### Added
 
 - expose local signing-wallet username registration and chain-verified identity
   refresh through the browser worker, with native UID proofs and RFC-0004
   X25519 identifier keys
-- Generate a transport-neutral `no_std` Rust client with typed request,
-  subscription, result-subscription, and host-initiated Worker subscription
-  codecs.
+- Generate a transport-neutral `no_std` Rust client with typed request responses,
+  subscription interrupts, and host-initiated Renderer subscription codecs.
 - Generate complete App, Widget, Worker, and Worker-only method catalogs from
   the canonical protocol schema.
 
