@@ -28,6 +28,10 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- require separate Chat-authority consent on the local product API as well as
+  SSO; existing username-disclosure grants do not authorize Chat operations,
+  and denial or revocation blocks subsequent binding, sealing, and opening (#709)
+- move the secret-bearing SSO pairing result instead of cloning it (#709)
 - keep host-backed allowance helpers available on Wasm with browser-compatible
   polling clocks, while excluding the native-only renewal driver (#540)
 - return a decode error instead of trapping when subscription helpers receive a
