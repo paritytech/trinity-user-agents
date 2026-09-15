@@ -28,6 +28,8 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- keep host-backed allowance helpers available on Wasm with browser-compatible
+  polling clocks, while excluding the native-only renewal driver (#540)
 - return a decode error instead of trapping when subscription helpers receive a
   request descriptor
 
