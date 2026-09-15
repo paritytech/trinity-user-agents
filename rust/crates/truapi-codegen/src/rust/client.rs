@@ -186,7 +186,11 @@ fn emit_method(
             )?;
             writeln!(out, "}}\n")?;
         }
-        (MethodKind::Subscription, ReturnType::Subscription(item), false) => {
+        (
+            MethodKind::Subscription,
+            ReturnType::Subscription { item, interrupt },
+            host_initiated,
+        ) => {
             let item = rust_type(item, &module)?;
             writeln!(out, "impl SubscriptionMethod for {marker} {{")?;
             writeln!(out, "    type Request = {request};")?;

@@ -189,57 +189,76 @@ pub enum DecodeError {
 
 /// Encodes a product-initiated request frame without an intermediate payload allocation.
 pub fn encode_request<M: RequestMethod>(request_id: &str, request: &M::Request) -> Vec<u8> {
-    let ids = generated_request_ids(M::DESCRIPTOR);
-    encode_value_frame(request_id, ids.request_id, request)
+    encode_value_frame(
+        request_id,
+        generated_request_ids(M::DESCRIPTOR),
+        MessageType::Request,
+        request,
+    )
 }
 
 /// Decodes a product-initiated request's response frame.
 pub fn decode_response<M: RequestMethod>(frame: &[u8]) -> DecodedResponse<M> {
-    let ids = generated_request_ids(M::DESCRIPTOR);
-    let frame = decode_frame(frame)?;
-    expect_discriminant(ids.response_id, frame.discriminant)?;
-    let payload = frame.payload;
-    if payload.len() < 2 {
-        return Err(DecodeError::Malformed);
-    }
-    let version = payload[0];
-    let value = match payload[1] {
-        0 if M::RESPONSE_VERSIONED => Ok(decode_prefixed_exact(version, &payload[2..])?),
-        0 => Ok(decode_exact(&payload[2..])?),
-        1 => Err(decode_exact(&payload[2..])?),
-        other => return Err(DecodeError::UnexpectedResultDiscriminant(other)),
-    };
-    Ok(Decoded {
-        request_id: frame.request_id,
-        value,
-    })
+    decode_value_frame(
+        frame,
+        generated_request_ids(M::DESCRIPTOR),
+        MessageType::Response,
+    )
 }
 
-/// Encodes a product-initiated subscription start frame.
+/// Encodes a subscription start.
 pub fn encode_subscription_start<M: SubscriptionMethod>(
     request_id: &str,
     request: &M::Request,
 ) -> Vec<u8> {
-    let ids = generated_subscription_ids(M::DESCRIPTOR);
-    encode_value_frame(request_id, ids.start_id, request)
+    encode_value_frame(
+        request_id,
+        generated_subscription_ids(M::DESCRIPTOR),
+        MessageType::Request,
+        request,
+    )
 }
 
-/// Encodes a product-initiated result-subscription start frame.
-pub fn encode_result_subscription_start<M: ResultSubscriptionMethod>(
-    request_id: &str,
-    request: &M::Request,
-) -> Vec<u8> {
-    let ids = generated_subscription_ids(M::DESCRIPTOR);
-    encode_value_frame(request_id, ids.start_id, request)
-}
-
-/// Encodes a stop frame for a product-initiated subscription.
-///
-/// Returns [`DecodeError::WrongMethodKind`] when `descriptor` describes a request.
+/// Encodes subscription cancellation; rejects request descriptors.
 pub fn encode_subscription_stop(
     request_id: &str,
     descriptor: MethodDescriptor,
 ) -> Result<Vec<u8>, DecodeError> {
+    Ok(encode_value_frame(
+        request_id,
+        subscription_ids(descriptor)?,
+        MessageType::Stop,
+        &(),
+    ))
+}
+
+/// Decodes a subscription item.
+pub fn decode_subscription_item<M: SubscriptionMethod>(
+    frame: &[u8],
+) -> Result<Decoded<M::Item>, DecodeError> {
+    decode_value_frame(
+        frame,
+        generated_subscription_ids(M::DESCRIPTOR),
+        MessageType::Response,
+    )
+}
+
+/// Decodes normal completion (`Ok(())`) or a typed subscription failure.
+pub fn decode_subscription_interrupt<M: SubscriptionMethod>(
+    frame: &[u8],
+) -> Result<Decoded<SubscriptionOutcome<M>>, DecodeError> {
+    decode_value_frame(
+        frame,
+        generated_subscription_ids(M::DESCRIPTOR),
+        MessageType::Interrupt,
+    )
+}
+
+/// Whether a frame interrupts this subscription; rejects request descriptors.
+pub fn is_subscription_interrupt(
+    frame: &[u8],
+    descriptor: MethodDescriptor,
+) -> Result<bool, DecodeError> {
     let ids = subscription_ids(descriptor)?;
     Ok(encode_empty_frame(request_id, ids.stop_id))
 }
@@ -272,22 +291,47 @@ pub fn decode_result_subscription_interrupt<M: ResultSubscriptionMethod>(
     })
 }
 
-/// Returns whether a frame is the interruption leg for a subscription descriptor.
-///
-/// Returns [`DecodeError::WrongMethodKind`] when `descriptor` describes a request.
-pub fn is_subscription_interrupt(
-    frame: &[u8],
-    descriptor: MethodDescriptor,
-) -> Result<bool, DecodeError> {
-    let ids = subscription_ids(descriptor)?;
-    Ok(decode_frame(frame)?.discriminant == ids.interrupt_id)
-}
-
-/// Decodes a host-initiated subscription start for a product worker.
+/// Decodes a host-initiated start for a product worker.
 pub fn decode_host_subscription_start<M: HostSubscriptionMethod>(
     frame: &[u8],
 ) -> Result<Decoded<M::Request>, DecodeError> {
-    let ids = generated_subscription_ids(M::DESCRIPTOR);
+    decode_value_frame(
+        frame,
+        generated_subscription_ids(M::DESCRIPTOR),
+        MessageType::Request,
+    )
+}
+
+/// Encodes a product-served subscription item.
+pub fn encode_host_subscription_item<M: HostSubscriptionMethod>(
+    request_id: &str,
+    item: &M::Item,
+) -> Vec<u8> {
+    encode_value_frame(
+        request_id,
+        generated_subscription_ids(M::DESCRIPTOR),
+        MessageType::Response,
+        item,
+    )
+}
+
+/// Encodes normal or failed termination of a product-served subscription.
+pub fn encode_host_subscription_interrupt<M: HostSubscriptionMethod>(
+    request_id: &str,
+    outcome: &Result<(), CallError<M::Error>>,
+) -> Vec<u8> {
+    encode_value_frame(
+        request_id,
+        generated_subscription_ids(M::DESCRIPTOR),
+        MessageType::Interrupt,
+        outcome,
+    )
+}
+
+/// Whether a host frame cancels this product-served subscription.
+pub fn is_host_subscription_stop<M: HostSubscriptionMethod>(
+    frame: &[u8],
+) -> Result<bool, DecodeError> {
     let frame = decode_frame(frame)?;
     expect_discriminant(ids.start_id, frame.discriminant)?;
     Ok(Decoded {
@@ -321,8 +365,10 @@ pub fn is_host_subscription_stop<M: HostSubscriptionMethod>(
 
 fn request_ids(descriptor: MethodDescriptor) -> Result<RequestFrameIds, DecodeError> {
     match descriptor.wire {
-        MethodWire::Request(ids) => Ok(ids),
-        MethodWire::Subscription(_) => Err(DecodeError::WrongMethodKind),
+        MethodWire::Request(ids) => ids,
+        MethodWire::Subscription(_) => {
+            panic!("generated request descriptor must use request wire ids")
+        }
     }
 }
 
@@ -333,18 +379,15 @@ fn subscription_ids(descriptor: MethodDescriptor) -> Result<SubscriptionFrameIds
     }
 }
 
-fn generated_request_ids(descriptor: MethodDescriptor) -> RequestFrameIds {
-    request_ids(descriptor).expect("generated request descriptor must use request wire ids")
-}
-
-fn generated_subscription_ids(descriptor: MethodDescriptor) -> SubscriptionFrameIds {
+fn generated_subscription_ids(descriptor: MethodDescriptor) -> MethodIds {
     subscription_ids(descriptor)
         .expect("generated subscription descriptor must use subscription wire ids")
 }
 
 fn encode_value_frame<T: Encode + ?Sized>(
     request_id: &str,
-    discriminant: u8,
+    ids: MethodIds,
+    message_type: MessageType,
     value: &T,
 ) -> Vec<u8> {
     let mut frame = Vec::new();
@@ -369,25 +412,62 @@ struct BorrowedFrame<'a> {
 
 fn decode_frame(mut frame: &[u8]) -> Result<BorrowedFrame<'_>, DecodeError> {
     let request_id = String::decode(&mut frame).map_err(|_| DecodeError::Malformed)?;
-    let (&discriminant, payload) = frame.split_first().ok_or(DecodeError::Malformed)?;
+    let [trait_id, method_id, message_type, payload @ ..] = frame else {
+        return Err(DecodeError::Malformed);
+    };
+    let ids = MethodIds {
+        trait_id: *trait_id,
+        method_id: *method_id,
+    };
+    if ids == PROTOCOL_ERROR_IDS {
+        if *message_type != MessageType::Response as u8 {
+            return Err(DecodeError::UnexpectedMessageType {
+                expected: MessageType::Response,
+                actual: *message_type,
+            });
+        }
+        let error = match (payload.first(), payload.get(1)) {
+            (None, _) => return Err(DecodeError::Malformed),
+            (Some(version), _) if *version != 0 => None,
+            (Some(_), Some(variant)) if *variant != 0 => None,
+            _ => {
+                let (version, variant, trait_id, method_id): (u8, u8, u8, u8) =
+                    decode_exact(payload)?;
+                debug_assert_eq!((version, variant), (0, 0));
+                Some(ProtocolError::UnsupportedMessage(MethodIds {
+                    trait_id,
+                    method_id,
+                }))
+            }
+        };
+        return Err(DecodeError::Protocol { request_id, error });
+    }
     Ok(BorrowedFrame {
         request_id,
-        discriminant,
+        ids,
+        message_type: *message_type,
         payload,
     })
 }
 
-fn expect_discriminant(expected: u8, actual: u8) -> Result<(), DecodeError> {
-    if actual == expected {
-        Ok(())
-    } else {
-        Err(DecodeError::UnexpectedDiscriminant { expected, actual })
-    }
-}
-
-fn decode_stream_item<T: Decode>(frame: &[u8], receive_id: u8) -> Result<Decoded<T>, DecodeError> {
+fn decode_value_frame<T: Decode>(
+    frame: &[u8],
+    ids: MethodIds,
+    message_type: MessageType,
+) -> Result<Decoded<T>, DecodeError> {
     let frame = decode_frame(frame)?;
-    expect_discriminant(receive_id, frame.discriminant)?;
+    if frame.ids != ids {
+        return Err(DecodeError::UnexpectedMethod {
+            expected: ids,
+            actual: frame.ids,
+        });
+    }
+    if frame.message_type != message_type as u8 {
+        return Err(DecodeError::UnexpectedMessageType {
+            expected: message_type,
+            actual: frame.message_type,
+        });
+    }
     Ok(Decoded {
         request_id: frame.request_id,
         value: decode_exact(frame.payload)?,
@@ -400,50 +480,6 @@ fn decode_exact<T: Decode>(mut payload: &[u8]) -> Result<T, DecodeError> {
         Ok(value)
     } else {
         Err(DecodeError::TrailingBytes)
-    }
-}
-
-fn decode_prefixed_exact<T: Decode>(prefix: u8, payload: &[u8]) -> Result<T, DecodeError> {
-    let mut input = PrefixedInput {
-        prefix: Some(prefix),
-        payload,
-    };
-    let value = T::decode(&mut input).map_err(|_| DecodeError::Malformed)?;
-    match input.remaining_len().map_err(|_| DecodeError::Malformed)? {
-        Some(0) => Ok(value),
-        _ => Err(DecodeError::TrailingBytes),
-    }
-}
-
-struct PrefixedInput<'a> {
-    prefix: Option<u8>,
-    payload: &'a [u8],
-}
-
-impl Input for PrefixedInput<'_> {
-    fn remaining_len(&mut self) -> Result<Option<usize>, CodecError> {
-        Ok(Some(
-            usize::from(self.prefix.is_some()) + self.payload.len(),
-        ))
-    }
-
-    fn read(&mut self, into: &mut [u8]) -> Result<(), CodecError> {
-        let mut written = 0;
-        if let Some(prefix) = self.prefix.take() {
-            let Some(first) = into.first_mut() else {
-                self.prefix = Some(prefix);
-                return Ok(());
-            };
-            *first = prefix;
-            written = 1;
-        }
-        let remaining = &mut into[written..];
-        if remaining.len() > self.payload.len() {
-            return Err("not enough data to fill buffer".into());
-        }
-        remaining.copy_from_slice(&self.payload[..remaining.len()]);
-        self.payload = &self.payload[remaining.len()..];
-        Ok(())
     }
 }
 
@@ -479,13 +515,12 @@ mod tests {
 
     #[test]
     fn request_and_response_use_canonical_envelopes() {
-        let request = HostHandshakeRequest::V1(v01::HostHandshakeRequest { codec_version: 1 });
+        let request = HostHandshakeRequest::V1(v01::HostHandshakeRequest { codec_version: 2 });
         assert_eq!(
             encode_request::<SystemHandshake>("p:1", &request),
-            [12, b'p', b':', b'1', 0, 0, 1]
+            [12, b'p', b':', b'1', 1, 0, 0, 0, 2]
         );
-
-        let decoded = decode_response::<SystemHandshake>(&[12, b'p', b':', b'1', 1, 0, 0])
+        let decoded = decode_response::<SystemHandshake>(&[12, b'p', b':', b'1', 1, 0, 1, 0, 0])
             .expect("response frame");
         assert_eq!(decoded.request_id, "p:1");
         assert_eq!(decoded.value, Ok(HostHandshakeResponse::V1));
@@ -496,72 +531,161 @@ mod tests {
         let error = CallError::Domain(truapi::versioned::system::HostHandshakeError::V1(
             v01::HostHandshakeError::UnsupportedProtocolVersion,
         ));
-        let mut frame = vec![12, b'p', b':', b'1', 1, 0, 1];
+        let mut frame = vec![12, b'p', b':', b'1', 1, 0, 1, 1];
         error.encode_to(&mut frame);
-        let decoded = decode_response::<SystemHandshake>(&frame).expect("error frame");
-        assert_eq!(decoded.value, Err(error));
+        assert_eq!(
+            decode_response::<SystemHandshake>(&frame)
+                .expect("error frame")
+                .value,
+            Err(error)
+        );
     }
 
     #[test]
-    fn worker_serves_host_initiated_custom_chat_rendering() {
-        let request = truapi::versioned::chat::ProductChatCustomMessageRenderRequest::V1(
-            v01::ProductChatCustomMessageRenderRequest {
-                message_id: "message-7".into(),
-                message_type: "poll".into(),
-                payload: vec![1, 2, 3],
+    fn worker_serves_unified_renderer() {
+        use truapi::versioned::renderer::{
+            ProductRendererRenderItem, ProductRendererRenderRequest,
+        };
+        let request = ProductRendererRenderRequest::V1(v01::ProductRendererRenderRequest {
+            context: v01::RenderContext::PocketCard {
+                card_id: "loyalty".into(),
             },
-        );
-        let ids = generated_subscription_ids(ChatCustomMessageRender::DESCRIPTOR);
-        let start = encode_value_frame("host:4", ids.start_id, &request);
+            payload: vec![1, 2, 3],
+        });
+        let ids = generated_subscription_ids(RendererRender::DESCRIPTOR);
+        let start = encode_value_frame("host:4", ids, MessageType::Request, &request);
         let decoded =
-            decode_host_subscription_start::<ChatCustomMessageRender>(&start).expect("start frame");
+            decode_host_subscription_start::<RendererRender>(&start).expect("start frame");
         assert_eq!(decoded.request_id, "host:4");
         assert_eq!(decoded.value, request);
-
-        let item = truapi::versioned::chat::ProductChatCustomMessageRenderItem::V1(
-            v01::CustomRendererNode::Nil,
-        );
-        let rendered = encode_host_subscription_item::<ChatCustomMessageRender>("host:4", &item);
-        let rendered = decode_frame(&rendered).expect("rendered item frame");
-        assert_eq!(rendered.discriminant, ids.receive_id);
+        let item = ProductRendererRenderItem::V1(v01::RendererNode::Nil);
+        let rendered = encode_host_subscription_item::<RendererRender>("host:4", &item);
         assert_eq!(
-            decode_exact::<truapi::versioned::chat::ProductChatCustomMessageRenderItem>(
-                rendered.payload
-            ),
-            Ok(item)
+            decode_value_frame::<ProductRendererRenderItem>(&rendered, ids, MessageType::Response)
+                .expect("item frame")
+                .value,
+            item
         );
-
-        let stop = encode_empty_frame("host:4", ids.stop_id);
+        let stop = encode_value_frame("host:4", ids, MessageType::Stop, &());
+        assert_eq!(is_host_subscription_stop::<RendererRender>(&stop), Ok(true));
+        let interrupt = encode_host_subscription_interrupt::<RendererRender>("host:4", &Ok(()));
         assert_eq!(
-            is_host_subscription_stop::<ChatCustomMessageRender>(&stop),
-            Ok(true)
-        );
-        let interrupt = encode_host_subscription_interrupt::<ChatCustomMessageRender>("host:4");
-        assert_eq!(
-            decode_frame(&interrupt)
-                .expect("interrupt frame")
-                .discriminant,
-            ids.interrupt_id
+            decode_value_frame::<Result<(), CallError<v01::GenericError>>>(
+                &interrupt,
+                ids,
+                MessageType::Interrupt
+            )
+            .expect("interrupt")
+            .value,
+            Ok(())
         );
     }
 
     #[test]
-    fn descriptor_apis_validate_subscription_wire_ids() {
-        let descriptor = AccountConnectionStatusSubscribe::DESCRIPTOR;
-        let expected_ids = generated_subscription_ids(descriptor);
-        let stop = encode_subscription_stop("p:1", descriptor).expect("subscription descriptor");
-        assert_eq!(
-            decode_frame(&stop).expect("stop frame").discriminant,
-            expected_ids.stop_id
+    fn subscription_completion_and_failure_are_typed_and_strict() {
+        type Method = AccountConnectionStatusSubscribe;
+        let ids = generated_subscription_ids(Method::DESCRIPTOR);
+        let complete = encode_value_frame(
+            "p:1",
+            ids,
+            MessageType::Interrupt,
+            &Ok::<(), CallError<v01::GenericError>>(()),
         );
+        assert_eq!(
+            decode_subscription_interrupt::<Method>(&complete)
+                .expect("completion")
+                .value,
+            Ok(())
+        );
+        let failed = encode_value_frame(
+            "p:1",
+            ids,
+            MessageType::Interrupt,
+            &Err::<(), _>(CallError::<v01::GenericError>::Denied),
+        );
+        assert_eq!(
+            decode_subscription_interrupt::<Method>(&failed)
+                .expect("failure")
+                .value,
+            Err(CallError::Denied)
+        );
+        let mut trailing = complete;
+        trailing.push(0);
+        assert_eq!(
+            decode_subscription_interrupt::<Method>(&trailing),
+            Err(DecodeError::TrailingBytes)
+        );
+        let empty = encode_value_frame("p:1", ids, MessageType::Interrupt, &());
+        assert_eq!(
+            decode_subscription_interrupt::<Method>(&empty),
+            Err(DecodeError::Malformed)
+        );
+    }
 
+    #[test]
+    fn frame_address_and_leg_both_must_match() {
+        let ids = generated_request_ids(SystemHandshake::DESCRIPTOR);
+        let other = MethodIds {
+            trait_id: ids.trait_id + 1,
+            method_id: ids.method_id,
+        };
+        let wrong_method = encode_value_frame(
+            "p:1",
+            other,
+            MessageType::Response,
+            &Ok::<_, CallError<()>>(HostHandshakeResponse::V1),
+        );
+        assert_eq!(
+            decode_response::<SystemHandshake>(&wrong_method),
+            Err(DecodeError::UnexpectedMethod {
+                expected: ids,
+                actual: other
+            })
+        );
+        let wrong_leg = encode_value_frame("p:1", ids, MessageType::Request, &());
+        assert_eq!(
+            decode_response::<SystemHandshake>(&wrong_leg),
+            Err(DecodeError::UnexpectedMessageType {
+                expected: MessageType::Response,
+                actual: 0
+            })
+        );
         assert_eq!(
             encode_subscription_stop("p:1", SystemHandshake::DESCRIPTOR),
             Err(DecodeError::WrongMethodKind)
         );
+    }
+
+    #[test]
+    fn protocol_failures_keep_correlation_and_accept_future_variants() {
+        let known = [12, b'p', b':', b'1', 255, 255, 1, 0, 0, 4, 7];
         assert_eq!(
-            is_subscription_interrupt(&stop, SystemHandshake::DESCRIPTOR),
-            Err(DecodeError::WrongMethodKind)
+            decode_response::<SystemHandshake>(&known),
+            Err(DecodeError::Protocol {
+                request_id: "p:1".into(),
+                error: Some(ProtocolError::UnsupportedMessage(MethodIds {
+                    trait_id: 4,
+                    method_id: 7
+                }))
+            })
+        );
+        let future = [12, b'p', b':', b'1', 255, 255, 1, 0, 1, 42];
+        assert_eq!(
+            decode_response::<SystemHandshake>(&future),
+            Err(DecodeError::Protocol {
+                request_id: "p:1".into(),
+                error: None
+            })
+        );
+        assert_eq!(
+            decode_response::<SystemHandshake>(&known[..known.len() - 1]),
+            Err(DecodeError::Malformed)
+        );
+        let mut trailing = known.to_vec();
+        trailing.push(0);
+        assert_eq!(
+            decode_response::<SystemHandshake>(&trailing),
+            Err(DecodeError::TrailingBytes)
         );
     }
 }
