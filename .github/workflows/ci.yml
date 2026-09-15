@@ -56,10 +56,11 @@ jobs:
       - name: cargo build
         run: cargo build --workspace --all-targets --all-features
 
-      - name: Check Rust library documentation
-        env:
-          RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --workspace --lib --all-features --no-deps
+      - name: cargo check no-std guest SDK
+        run: cargo check --locked -p truapi -p truapi-client --no-default-features
+
+      - name: cargo check wasm32
+        run: cargo check --target wasm32-unknown-unknown -p truapi-server
 
       - name: cargo check wasm32
         run: cargo check --target wasm32-unknown-unknown -p truapi

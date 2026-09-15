@@ -1,3 +1,5 @@
+use alloc::{string::String, vec::Vec};
+
 use parity_scale_codec::{Decode, Encode};
 
 /// One of the calling product's Pocket cards.
