@@ -118,7 +118,8 @@ struct TrUAPIReviewPromptMapperTests {
                 .statementStoreAllowance,
                 .bulletinAllowance,
                 .smartContractAllowance(.index(4)),
-                .autoSigning
+                .autoSigning,
+                .productStatementStoreAllowance(.index(7))
             ]
         ))
 
@@ -128,7 +129,8 @@ struct TrUAPIReviewPromptMapperTests {
                 .statementStoreAllowance,
                 .bulletInAllowance,
                 .smartContractAllowance(dest: .index(4)),
-                .autoSigning
+                .autoSigning,
+                .productStatementStoreAllowance(dest: .index(7))
             ]
         ))
     }

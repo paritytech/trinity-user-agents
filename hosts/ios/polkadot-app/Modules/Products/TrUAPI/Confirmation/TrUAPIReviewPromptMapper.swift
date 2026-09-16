@@ -131,6 +131,8 @@ private extension TrUAPIReviewPromptMapper {
             try .smartContractAllowance(dest: index.toSelector())
         case .autoSigning:
             .autoSigning
+        case let .productStatementStoreAllowance(index):
+            try .productStatementStoreAllowance(dest: index.toSelector())
         }
     }
 
