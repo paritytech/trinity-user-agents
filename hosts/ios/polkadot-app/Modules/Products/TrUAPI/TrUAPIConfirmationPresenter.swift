@@ -75,28 +75,13 @@ private extension TrUAPIConfirmationPresenter {
             await confirmStatementSign(
                 promptMapper.makeStatementSignRequest(from: statementReview)
             )
-        case let .identityDisclosure(identityReview):
-            await confirmPermission(
-                promptMapper.makePermissionRequest(from: identityReview)
-            )
-        case let .chatAuthority(chatReview):
-            await confirmPermission(
-                promptMapper.makePermissionRequest(from: chatReview)
-            )
-        case let .preimageSubmit(preimageReview):
-            await confirmPermission(
-                promptMapper.makePermissionRequest(from: preimageReview)
-            )
-        case let .accountAccess(accessReview):
-            await confirmPermission(
-                promptMapper.makePermissionRequest(from: accessReview)
-            )
-        case let .productSubtree(subtreeReview):
-            await confirmAction(promptMapper.makeActionRequest(from: subtreeReview))
         case .identityDisclosure,
+             .chatAuthority,
+             .preimageSubmit,
              .accountAccess,
+             .productSubtree,
              .accountAlias:
-            await confirmPermission(review: review, from: requesterName) != .deny
+            try await confirmPermissionReview(review)
         case let .createProof(proofReview):
             try await confirmCreateProof(
                 promptMapper.makeCreateProofRequest(from: proofReview)
@@ -147,9 +132,30 @@ private extension TrUAPIConfirmationPresenter {
         }
     }
 
-    func presentPermission(_ request: TrUAPIPermissionRequest) async -> TrUAPIPermissionDecision {
-        await awaitDecision(cancelled: .deny) { [routerFacade] in
-            let decision: Products.PermissionDecision = await withCheckedContinuation { continuation in
+    func confirmPermissionReview(_ review: UserConfirmationReview) async throws -> Bool {
+        let request: TrUAPIPermissionRequest
+        switch review {
+        case let .identityDisclosure(value):
+            request = promptMapper.makePermissionRequest(from: value)
+        case let .chatAuthority(value):
+            request = promptMapper.makePermissionRequest(from: value)
+        case let .preimageSubmit(value):
+            request = promptMapper.makePermissionRequest(from: value)
+        case let .accountAccess(value):
+            request = promptMapper.makePermissionRequest(from: value)
+        case let .productSubtree(value):
+            request = promptMapper.makePermissionRequest(from: value)
+        case let .accountAlias(value):
+            request = promptMapper.makePermissionRequest(from: value)
+        default:
+            throw TrUAPIReviewMappingError.notAPermissionReview
+        }
+        return await confirmPermission(request)
+    }
+
+    func confirmPermission(_ request: TrUAPIPermissionRequest) async -> Bool {
+        await awaitDecision { [routerFacade] in
+            let decision: PermissionDecision = await withCheckedContinuation { continuation in
                 let context = ProductPermissionContext(
                     productId: request.productId,
                     permissions: request.permissions
