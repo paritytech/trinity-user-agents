@@ -11,6 +11,24 @@
 
 Products running on a Polkadot Host need to submit data to three allowance-gated systems — the Bulletin chain, the Statement Store, and Asset Hub smart contracts — each of which grants free-to-use resources to users but requires the signing origin to hold the appropriate allowance. This RFC defines how products obtain and use those allowances via TrUAPI without managing the underlying slot-table state themselves, by introducing a single pre-allocation call (`host_request_resource_allocation`) and a companion Accounts Protocol request used by the Host to negotiate private-key material with the Account Holder.
 
+**SDK 0.16 implementation constraint (Statement Store).** Explicit
+`ResourceAllocation.request` calls retain the additional-slot (`Increase`)
+semantics below and require confirmation for every operation. Implicit
+provisioning always uses `Ignore`: an existing current-period allowance is
+reused, not scaled up when a product reopens. Durable
+`StatementStoreAllowance { derivation_index }` authorization distinguishes the
+legacy allowance account (`None`) from each product account (`Some(index)`).
+An explicit approval can establish a missing durable grant in its single review;
+cancelling a subsequent increase does not revoke that grant. Durable grants
+authorize implicit provisioning, not unlimited additional funding.
+
+Product grant-derived background renewal is disabled, and old product ledger
+entries are pruned: the signing host cannot resolve artifact-scoped permission
+storage from a product id alone. Next-period provisioning happens on demand.
+Wallet and paired-device background renewal remain independent. Revocation
+stops subsequent provisioning, not already issued on-chain quota. Paired signing
+hosts retain their separate confirmation boundary.
+
 ## Motivation
 
 Three systems in the Polkadot ecosystem grant sponsored access via per-user quotas:

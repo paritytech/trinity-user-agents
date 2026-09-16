@@ -10,8 +10,7 @@ import {
   AllocatableResource,
   Bytes32,
   ChainIdentifier,
-  CodeFormat,
-  FundingDirection,
+  DerivationIndex,
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
   HostSignPayloadRequest,
@@ -502,7 +501,14 @@ export type PermissionAuthorizationRequest =
   /**
    * Product-scoped permission to bind and use wallet-held Chat identity authority.
    */
-  | { tag: "ChatAuthority"; value?: undefined };
+  | { tag: "ChatAuthority"; value?: undefined }
+  /**
+   * Product-scoped permission to ensure Statement Store quota, not increase it.
+   */
+  | {
+      tag: "StatementStoreAllowance";
+      value: { derivationIndex?: DerivationIndex };
+    };
 
 /**
  * Authorization status for a permission request.
@@ -1085,6 +1091,9 @@ export const PermissionAuthorizationRequest: S.Codec<PermissionAuthorizationRequ
           targetProductId: string;
         }>,
         ChatAuthority: S._void,
+        StatementStoreAllowance: S.Struct({
+          derivationIndex: S.Option(DerivationIndex),
+        }) as S.Codec<{ derivationIndex?: DerivationIndex }>,
       }),
   );
 

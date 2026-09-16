@@ -29,6 +29,11 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- persist typed Statement Store allowance approvals and denials per product and
+  account selector for implicit, idempotent provisioning; explicit requests for
+  additional quota retain per-operation confirmation and increase semantics.
+  Stop unscoped product background renewal, including previously recorded
+  targets, so artifact-scoped revocation cannot be bypassed.
 - require separate Chat-authority consent on the local product API as well as
   SSO; existing username-disclosure grants do not authorize Chat operations,
   and denial or revocation blocks subsequent binding, sealing, and opening (#709)
