@@ -15,8 +15,8 @@ screen. The product carries opaque signalling over a channel it already has,
 says where each participant's video belongs, and is told how the call is going.
 
 This is the tracking issue for the implementation. The first implementation is
-WebRTC, with the Host running the peer connections; the service itself names no
-transport, so another can be added later without changing products.
+WebRTC, with the Host running the peer connections. Nothing a product sees says
+so: it handles sealed messages and Host-minted handles, not transport detail.
 
 ## Requirements
 

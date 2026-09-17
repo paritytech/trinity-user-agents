@@ -15,8 +15,8 @@ screen. The product carries opaque signalling over a channel it already has,
 says where each participant's video belongs, and is told how the call is going.
 
 The first implementation is WebRTC, with the host running the peer connections.
-The service names no transport, so what a product sees does not change if
-another one is added.
+Nothing a product sees says so: it handles sealed messages and host-minted
+handles, not transport detail.
 
 ## Motivation
 
