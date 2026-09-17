@@ -31,6 +31,12 @@ so: it handles sealed messages and Host-minted handles, not transport detail.
 - Screen sharing goes through the Host's own picker, so the user chooses what is
   shared and the product never names a window or a display.
 - Camera and microphone use the existing device permissions.
+- Devices belong to the Host: which microphone and camera are used, gain, echo
+  cancellation, routing, and the in-call affordance for switching them. A
+  product states what it wants sent and may express a preference, such as the
+  front-facing camera or a speakerphone-style call; the Host or the OS may
+  override it, and the product is told what is actually live. A product never
+  enumerates devices.
 - Starting a call, joining one, or answering an invitation each take an explicit
   user decision before anything reaches the network. Adding a further person to
   a call the user is already in does not ask again.
@@ -48,20 +54,6 @@ so: it handles sealed messages and Host-minted handles, not transport detail.
   that is not running for an incoming call.
 - The product keeps what it already owns: who may call whom, peer identity,
   ringing and decline, and call history.
-
-## Service surface
-
-| Method | Purpose |
-| --- | --- |
-| `create_session` | declare local tracks, take the user decision, mint a session |
-| `add_participant` | invite a peer, or answer an invitation; returns a handle |
-| `remove_participant` | drop one peer without ending the call |
-| `deliver_signalling` | feed a received signalling message in |
-| `session_subscribe` | signalling out, state, participants, tracks, quality, live devices |
-| `set_local_tracks` | mute the microphone, enable, disable, or flip the camera, start or stop screen sharing |
-| `set_audio_route` | earpiece, speaker, or system |
-| `set_surfaces` | replace the whole set of picture rectangles atomically |
-| `end_session` | hang up on everyone; idempotent |
 
 ## Core implementation scope
 
@@ -99,7 +91,7 @@ so: it handles sealed messages and Host-minted handles, not transport detail.
 - [ ] Signalling sealing, key rotation and revocation
 - [ ] Compositing contract for cameras and shared screens, including clamping
       rules
-- [ ] Audio-route and device-state contract
+- [ ] Device ownership and live-state reporting contract
 - [ ] Privacy conformance fixtures
 - [ ] Product client wrappers
 - [ ] Reference flow: invite, accept, end

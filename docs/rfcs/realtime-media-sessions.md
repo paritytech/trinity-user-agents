@@ -89,17 +89,24 @@ without ending the call.
 - session state — negotiating, connecting, connected, reconnecting, ended;
 - participants joining and leaving, and which tracks each is sending;
 - a coarse quality level, never a bitrate, round-trip time, or address;
-- which local devices are actually live, which is not the same as what the
-  product asked for: a withdrawn permission or another app taking the camera
-  changes it unprompted.
+- whether the microphone and each picture are actually live, which is not the
+  same as what the product asked for: a withdrawn permission, another app
+  taking the camera, or the OS moving the route changes it unprompted.
 
-`deliver_signalling` feeds a received message in. `set_local_tracks` mutes the
-microphone, enables, disables, or flips the camera, and starts or stops sharing
-the screen. `set_audio_route` picks earpiece, speaker, or system, and loses to
-anything the OS routes itself.
-`set_surfaces` replaces the whole rectangle set at once, so a layout change is
-atomic. `end_session` hangs up on everyone, is idempotent, and is always
-allowed.
+`deliver_signalling` feeds a received message in. `set_local_tracks` states what
+the product wants sent — microphone on or muted, camera on or off, screen shared
+or not — and may express a preference such as the front-facing camera or a
+speakerphone-style call. `set_surfaces` replaces the whole rectangle set at
+once, so a layout change is atomic. `end_session` hangs up on everyone, is
+idempotent, and is always allowed.
+
+Devices belong to the host. It chooses which microphone and camera to use, owns
+gain, echo cancellation, and routing, and owns whatever in-call affordance lets
+the user switch them. A product preference is a preference: the host may ignore
+it, the OS may override it the moment a headset appears, and the stream reports
+what is live rather than what was asked for. A product never enumerates devices
+and never learns which one is in use — a device list would be a fingerprinting
+surface for no gain.
 
 ### The host draws the pictures
 
