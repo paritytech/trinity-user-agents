@@ -45,7 +45,7 @@ A **session** is one call. It has a host-minted `MediaSessionId`, belongs to the
 product that created it, and holds one or more remote **participants**. A
 participant is a host-minted handle, meaningless outside its session: enough to
 say which peer a signalling message is for, whose tracks arrived, and whose
-video a rectangle draws. The host is told no product-side identity, and the
+picture a rectangle draws. The host is told no product-side identity, and the
 product keeps its own mapping from handle to contact. Nothing in the transport
 needs to know who anyone is.
 
@@ -54,13 +54,12 @@ participant. The host emits them, the product delivers them over its own
 channel, and feeds received ones back. The product learns nothing from the
 bytes: no session description, no candidate, no address.
 
-A **media key** is a long-lived host key pair. The host hands a product the
-public half, the product publishes it to its peers however it already
-distributes keys, and a caller seals its invitation to it. So an invitation can
-be stored and forwarded by a product that cannot open it; the host unseals it
-when the call is answered. Later messages use a per-session key the host derives
-during negotiation. Tampering or replay fails the session rather than disclosing
-anything.
+An **invitation** is the first signalling message, and it carries no addresses:
+the host puts its session's public key and negotiation terms in it, and nothing
+that locates the device. Candidates come later, sealed to the key pair the two
+hosts agree from the invitation and its answer. Both key pairs are per session,
+so there is no long-lived identity to publish, rotate, or correlate. Tampering
+or replay fails the session.
 
 A **surface rectangle** places one incoming picture — a participant's camera or
 their shared screen — in the coordinates of whatever surface the product already
@@ -114,22 +113,25 @@ list: those would be a fingerprinting surface for no gain.
 
 The product sends rectangles and never receives frames. Every host already
 composites the product's own surface — a canvas, a web view, a native view — so
-a video layer is a sibling it positions from the rectangles the product gave it.
+a picture layer is a sibling it positions from the rectangles the product gave
+it.
 Nothing here depends on how the product renders.
 
 The alternative, handing decoded frames to the product as textures, is rejected:
 it puts camera output inside the product, and it copies every frame across the
 product boundary for nothing.
 
-The product therefore cannot read, filter, capture, or post-process call video,
-and a rectangle is a request the host may clamp to what is actually visible.
+The product therefore cannot read, filter, capture, or post-process an incoming
+picture, and a rectangle is a request the host may clamp to what is actually
+visible.
 
 ### Consent and addresses
 
-Capture uses the existing `Camera` and `Microphone` permissions; no new device
-permission. Screen sharing goes through the host's own picker, so the user
-chooses what is shared and the product never names a window or a display.
-Beyond that:
+Microphone and camera capture use the existing `Camera` and `Microphone`
+permissions. Screen capture is not a device permission: the host runs its own
+picker, so the user chooses what is shared, the product never names a window or
+a display, and the OS prompt or broadcast flow the platform requires stays the
+host's business. Beyond that:
 
 - Connecting exposes the user's address to the other participants, so a call
   needs an explicit decision before the first signalling message leaves the
@@ -162,9 +164,9 @@ may interrupt the user is a product decision, made on material the product
 already authenticates — not something a host registry can answer.
 
 A product's background worker is the right place to notice an invitation, and it
-is inside the same boundary as the rest of the product: the invitation is sealed
-to the media key, so the worker forwards bytes it cannot open, and no call hands
-it an address, a candidate, or a device identifier. It learns only what it knew
+is inside the same boundary as the rest of the product: the invitation carries no
+addresses, so the worker can store and forward it and still learn nothing, and no
+call hands it a candidate or a device identifier. It learns only what it knew
 already — which of its own contacts is calling.
 
 Waking a product that is not running is out of scope here. It is a
@@ -175,7 +177,7 @@ product that is already open.
 ## Trade-offs
 
 - Products cannot touch call media. That is the point, and it forecloses
-  product-drawn effects and overlays on video.
+  product-drawn effects and overlays on a call picture.
 - Opaque signalling means no interoperability with a third-party dialect.
 - Recording and product-chosen codecs are out; each needs its own consent
   story.
@@ -184,9 +186,10 @@ product that is already open.
   is no partial mode.
 - Group calls work without a server, but not at arbitrary size. A host that
   wants large calls needs infrastructure this RFC does not describe.
-- The media key is a long-lived host identity. Its rotation and revocation need
-  specifying, and the same public key seen by two products tells them they are
-  talking to one device.
+- Sealing protects addresses from a product that forwards faithfully. A product
+  that substitutes its own key when relaying an invitation could read what
+  follows, and no design placing the product on the signalling path prevents
+  that: the product is the channel.
 
 ## Open questions
 
@@ -198,3 +201,6 @@ product that is already open.
   audio-only session.
 - Is a coarse quality level worth sending at all, given a product cannot act on
   the reason behind it?
+- Should a host be able to prove to another host that a key came from it, so a
+  substituted key fails rather than succeeds silently? That needs a trust root
+  the product cannot touch, which no channel here provides.

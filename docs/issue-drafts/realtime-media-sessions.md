@@ -28,8 +28,11 @@ so: it handles sealed messages and Host-minted handles, not transport detail.
   participant and per direction.
 - The Host draws each incoming picture — a participant's camera or their shared
   screen — into rectangles the product places, at a depth the product chooses.
-- Screen sharing goes through the Host's own picker, so the user chooses what is
-  shared and the product never names a window or a display.
+- The first signalling message carries no addresses, and later ones are sealed
+  to per-session keys, so there is no long-lived key to publish or rotate.
+- Screen capture is not a device permission: the Host runs its own picker, the
+  user chooses what is shared, and the product never names a window or a
+  display.
 - Camera and microphone use the existing device permissions.
 - Devices belong to the Host: which microphone and camera are used, gain, echo
   cancellation, routing, and the in-call affordance for switching them. A
@@ -62,7 +65,7 @@ so: it handles sealed messages and Host-minted handles, not transport detail.
 - Dispatcher and generated product clients.
 - Session lifecycle, participants joining and leaving, ownership, consent, and
   teardown on permission withdrawal.
-- Signalling sealing, including key rotation and revocation.
+- Signalling sealing with per-session keys, and address-free invitations.
 - Host WebRTC binding: peer connections, capture including the screen picker,
   echo cancellation, audio session, connectivity with Host-minted relay
   credentials, and compositing.
@@ -89,7 +92,7 @@ so: it handles sealed messages and Host-minted handles, not transport detail.
 - [ ] `Media` service definition, versioned types, wire ids
 - [ ] Dispatcher and generated clients
 - [ ] Session lifecycle, ownership, consent
-- [ ] Signalling sealing, key rotation and revocation
+- [ ] Signalling sealing and address-free invitations
 - [ ] Compositing contract for cameras and shared screens, including clamping
       rules
 - [ ] Device ownership and live-state reporting contract
