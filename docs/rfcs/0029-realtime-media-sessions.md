@@ -61,10 +61,16 @@ offers.
 A **signalling message** is an opaque, host-sealed byte string. The host emits
 them; the product delivers them to the remote party over its own channel and
 feeds received ones back. The product learns nothing from the bytes: no SDP, no
-candidate, no address. The host seals each message to the session's peer using a
-key pair it creates with the session, and publishes only the public half in the
-first message. A product that tampers with, reorders, or replays a message
-causes a session failure, not a disclosure.
+candidate, no address.
+
+Every host keeps a **media key**: a long-lived key pair whose public half the
+host will hand to a product on request, for the product to publish to its peers
+however it already distributes keys. A caller seals its invitation to the
+callee's media key, so the callee's product can carry and store the invitation
+without being able to open it, and the host unseals only inside
+`create_session(Answer)`. Later messages in a session are sealed to a per-session
+key pair the host derives during negotiation. A product that tampers with,
+reorders, or replays a message causes a session failure, not a disclosure.
 
 A **media surface** is a rectangle, in the product's own surface coordinates,
 where the host draws a track. The product chooses the rectangle, the track, the
@@ -269,13 +275,62 @@ this party may interrupt the user* — which is the only hard question on the
 inbound path. That question belongs to the product: Chat knows whether the
 sender is an accepted contact, because it already authenticates every message.
 
-What a delivery-while-not-running path does need is orthogonal to this RFC and
-shared with every other product that must react to a remote event: a wake
-contract (which executable runs, with which capabilities, for how long, and how
-often a peer may trigger it) layered on the existing notification path. That is
-worth its own RFC, it is not media-specific, and this API works without it: a
-call reaches a running product today, and gains background ringing when that
-contract lands.
+### The worker as the inbound watcher
+
+A product's worker is the right place to notice an invitation, and the pattern
+already exists in production: `paritytech/getcash-community` ships a worker
+beside its app, keeps itself alive with `hostWorker.beginOperation` /
+`endOperation` while it has work, exports `onEvent("background.wake")` to run a
+pass when the host wakes it, re-derives its secrets from host entropy on every
+wake, and reaches its page over a storage-backed RPC channel with a heartbeat
+because no worker-to-surface channel exists.
+
+So the division of labour for a call is:
+
+1. The worker holds the product's inbound subscription, authenticates the
+   invitation, and decides whether this sender may interrupt the user.
+2. It rings through the notification path and offers a deeplink, which
+   `system.navigate_to` already accepts, to raise the surface.
+3. The surface calls `create_session`, because that is where the video
+   rectangles live.
+
+This RFC therefore scopes session creation to the executable that owns a
+surface, the same way `Chat`, `Pocket`, and `Renderer` are scoped with
+`required_execution = Worker`. A worker that is stopped mid-call cannot orphan a
+session, and a worker cannot open a media session with no way to show it.
+
+The worker is part of the product, so every guarantee in this RFC binds it
+exactly as it binds the surface. It is the component that handles an invitation
+earliest, and it must learn nothing from it: an invitation is sealed to the
+host's media key, so the worker stores and forwards bytes it cannot open, and
+the host unseals them only when the surface answers. No host call gives a worker
+an address, a candidate, an SDP fragment, a relay identity, or a device
+identifier, and `session_subscribe` — the only stream that carries session
+detail — is unavailable to it.
+
+What the worker does know is what it knew already: which of the product's own
+contacts is calling, from the product's own authenticated channel. That is the
+product's data, not something the host disclosed, and the distinction is the
+point — the inbound path gives a worker no new knowledge about a peer beyond the
+fact that a contact it can already name wants to talk.
+
+Two things this pattern needs that TrUAPI does not define today. First,
+[Worker Lifecycle](worker-lifecycle.md) makes the worker demand-driven — it runs
+only while referenced, may be stopped whenever it is not, has "no way to do
+background work of its own", and explicitly drops an always-on worker — and its
+reference table has no holder for *a remote message addressed to this product*.
+Chat holds a reference for a message in flight, but that is the host's chat
+modality, not a product's own channel. Second, the keep-alive operation and
+`background.wake` that getcash relies on are host-specific today; getcash notes
+that without the operation API "the worker lives only as long as a surface is
+open".
+
+Both belong to [Statement Routes and Product Wake](0030-statement-routes-and-wake.md),
+which gives a product one durable topic route the host matches while the product
+is not running, and one wake with the matched statements. A call invitation is
+then one statement on one route, and this API needs no inbound path of its own.
+It also works without it: a call reaches a product with a surface open, and
+gains background ringing when 0030 lands.
 
 ## Trade-offs
 
@@ -291,6 +346,13 @@ contract lands.
 - Rectangles instead of frames means the host composites over product content.
   A product that wants video *behind* its own drawing gets that via z-order, but
   cannot sample it.
+- Session creation is scoped to a surface-owning executable, so a worker cannot
+  start ringing a peer before the surface is up. Voice-only calls would benefit
+  from the opposite rule.
+- A PolkaVM product that wants a worker-side watcher needs a JavaScript worker
+  beside its PolkaVM app, because a worker is a JavaScript executable. For Chat
+  that means either its message authentication exists twice, or the worker rings
+  on an unverified invitation and the app verifies before anything connects.
 
 ## Open questions
 
@@ -304,4 +366,7 @@ contract lands.
 - The wake contract is deferred to its own RFC. Does anything in this API have
   to change to accept it later, or does a background-delivered invitation reach
   `create_session` exactly as a foreground one does?
+- Should an audio-only session be creatable by a worker, so a call can ring and
+  even connect before a surface exists? That splits the execution scope by track
+  kind, which is a real cost for a real gain.
 - Is `Quality` coarse enough to be safe, and useful enough to be worth sending?

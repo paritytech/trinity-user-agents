@@ -102,12 +102,34 @@ product is already determined by channel ownership, and the open question is
 *whether this party may interrupt the user* — which the product answers, because
 it authenticates the channel.
 
-Delivering an invitation to a product that is not running needs a wake contract:
-which executable runs, with which capabilities, for how long, and how often a
-remote party may trigger it. That is shared with every product reacting to a
-remote event, is not media-specific, and belongs in its own RFC. This API works
-without it — a call reaches a running product, and gains background ringing when
-the contract lands.
+The inbound watcher is the product's worker, and the pattern exists in
+production: `paritytech/getcash-community` runs a worker beside its app, holds
+`hostWorker.beginOperation` while it has work, exports
+`onEvent("background.wake")`, re-derives secrets from host entropy per wake, and
+talks to its page over storage-backed RPC because no worker-to-surface channel
+exists. For a call the worker authenticates the invitation, rings, and raises the
+surface by deeplink; the surface creates the session, because that is where the
+video lives. Session creation is therefore scoped to a surface-owning
+executable, the same way `Chat`, `Pocket`, and `Renderer` use
+`required_execution = Worker`.
+
+The worker is part of the product, so it is inside the same privacy boundary as
+the surface, not outside it. An invitation is sealed to the host's media key,
+whose public half the product publishes to its peers itself, so the worker
+stores and forwards bytes it cannot open and the host unseals only when the
+surface answers. No host call hands a worker an address, candidate, SDP
+fragment, relay identity, or device identifier, and `session_subscribe` is not
+available to it. The worker knows only what it already knew from its own
+authenticated channel: which of the product's contacts is calling.
+
+Two prerequisites are missing from TrUAPI and belong to a separate wake-contract
+RFC, with getcash as prior art: a Worker Lifecycle reference holder for a remote
+message addressed to a product (the current table has none — Chat's holder is
+the host's chat modality, not a product's own channel, and the RFC states a
+worker has "no way to do background work of its own" and drops always-on
+workers), and a standard keep-alive operation plus wake event. This API works
+without both: a call reaches a product with a surface open, and gains background
+ringing when that contract lands.
 
 ## Tasks
 
@@ -128,4 +150,6 @@ the contract lands.
   - [ ] dotli-community
   - [ ] iOS
   - [ ] Android
-- [ ] Follow-up RFC: background wake contract for remote-initiated delivery
+- [ ] Follow-up RFC: wake contract for remote-initiated delivery — inbound
+      reference holder, keep-alive operation, wake event
+- [ ] Decide whether an audio-only session may be created by a worker
