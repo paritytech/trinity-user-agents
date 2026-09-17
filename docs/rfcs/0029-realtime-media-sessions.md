@@ -43,9 +43,10 @@ acceptable on any axis:
   echo cancellation, and its own bugs, and each would negotiate separately with
   the same user's OS.
 
-The host already owns the equivalent surfaces for the browser case. This RFC
-gives the same guarantee to products that are not browsers, with an API shaped
-so that media never crosses the product boundary.
+The host already owns the equivalent surfaces for the browser case, including a
+realtime engine and a TURN deployment. This RFC gives the same guarantee to
+products that are not browsers, with an API shaped so that media never crosses
+the product boundary.
 
 ## Approach
 
@@ -196,6 +197,42 @@ to the visible surface.
   suppress it, and cannot make a call invisible by placing every rectangle
   off-surface.
 
+### Transport and addresses
+
+The host owns the whole transport: candidate gathering, STUN, TURN credentials,
+the selected pair, and every renegotiation. None of it is a product concern and
+none of it is a product input.
+
+The product therefore never learns either party's address. It sees only sealed
+signalling blobs, session states, coarse `Quality`, and `RemoteTracks`; there is
+no candidate list, no selected-pair report, no statistics object, and no relay
+flag. That guarantee comes from sealing the signalling: a design that passed raw
+SDP through the product would hand it the peer's host and server-reflexive
+candidates, which is exactly the disclosure this API exists to prevent.
+
+Address privacy *between the two devices* is a separate, host-chosen policy,
+because ICE with a default transport policy still trades candidates end to end:
+
+- **Relay-only** forces every packet through TURN. Neither device learns the
+  other's address; the relay operator sees the flow, and latency and egress cost
+  rise.
+- **Direct-preferred** allows a peer-to-peer pair when NAT permits, so the two
+  devices learn each other's addresses.
+
+The host selects the policy and may differ per product or per network; the
+product cannot request, detect, or override it. A host that serves a messaging
+product where contacts are not mutually trusted with their locations should
+default to relay-only.
+
+### Host obligations
+
+A host advertising this API must supply, from its own stack, the realtime
+engine, capture pipeline, echo cancellation, audio session ownership, ICE with
+STUN and TURN reachability (including short-lived TURN credentials it mints and
+rotates without product involvement), and the compositing path that draws tracks
+into the rectangles the product named. A host missing any of these answers
+`Unsupported` rather than advertising partial support.
+
 ### What the product still owns
 
 Signalling delivery, retries, and ordering; who is allowed to call whom;
@@ -224,9 +261,9 @@ signalling messages as ordinary messages and needs no signalling server.
   variant with per-session semantics? Reuse keeps the permission catalogue
   small; a new variant avoids giving a browser-shaped remembered grant a second
   meaning.
-- Who provisions STUN and TURN, and does the product learn that a relay is in
-  use? Relay status is weak location information, which argues for keeping it
-  inside `Quality`.
+- The API keeps relay-versus-direct invisible to the product, but a product that
+  wants to warn a user about a relay's latency has no way to. Is the coarse
+  `Quality` signal enough to carry that, or does the honest answer stay "no"?
 - Should the host expose an incoming-call path for a product that is not
   running, or does a call require an already-open product? The former needs the
   notification path and a wake contract.
