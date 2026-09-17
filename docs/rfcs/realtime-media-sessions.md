@@ -142,9 +142,11 @@ detect, or override. A host whose users should not reveal their location to
 their contacts relays everything, which costs latency and egress and is the
 right default for a messaging product.
 
-Group calls are allowed and deliberately unspecified: participants are a set,
-and how the host connects them is its own business. A small call needs no new
-server, and none is proposed here.
+Group calls are allowed, and how a host connects them is its own business.
+A host must carry at least six participants, which is what a shared game needs
+and what a mesh does comfortably; beyond that it may refuse, and a refusal is
+reported so a product can grey out the control rather than fail mid-call. No new
+server is required at that size, and none is proposed here.
 
 ### Incoming calls
 
@@ -177,9 +179,3 @@ product that is already open.
   cancellation, audio session, connectivity, compositing — or report the
   service unsupported. There is no partial mode, so a host adds calling for
   every product at once or not at all.
-
-## Open questions
-
-- How large a group call should a host attempt before refusing? Mesh stops being
-  reasonable somewhere, and the answer decides whether a product can offer a
-  group call button at all.
