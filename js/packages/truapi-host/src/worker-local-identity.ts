@@ -1,4 +1,8 @@
-import type { LocalIdentity } from "./worker-protocol.js";
+import { errorMessage } from "./error.js";
+import type {
+  LocalIdentity,
+  LocalIdentityProgress,
+} from "./worker-protocol.js";
 import type { WorkerSigningHostRuntime } from "./wasm-module.js";
 
 function stringField(value: unknown, field: string): string {
@@ -32,6 +36,7 @@ export async function resolveLocalIdentity(
   runtime: WorkerSigningHostRuntime,
   signal: AbortSignal,
   registration?: { baseUsername: string; identityBackendBaseUrl: string },
+  onProgress?: (progress: LocalIdentityProgress) => void,
 ): Promise<LocalIdentity> {
   const context = runtime.localIdentityContext();
   const check = () => {
@@ -51,6 +56,14 @@ export async function resolveLocalIdentity(
     }
     return identity;
   };
+  const reportProgress = (progress: LocalIdentityProgress) => {
+    try {
+      onProgress?.(progress);
+    } catch {
+      // Observers must not interrupt authentication, submission, or polling.
+    }
+  };
+  reportProgress({ stage: "checking" });
   const existing = await refresh();
   if (!registration || existing.liteUsername) return existing;
 
@@ -82,6 +95,7 @@ export async function resolveLocalIdentity(
     return JSON.parse(text) as unknown;
   };
   const headers = { "Content-Type": "application/json" };
+  reportProgress({ stage: "authenticating" });
   const attester = stringField(
     await json("/attester", { method: "GET" }),
     "attester",
@@ -125,6 +139,7 @@ export async function resolveLocalIdentity(
     verifier,
   );
   check();
+  reportProgress({ stage: "submitting" });
   const response = await request("/usernames", {
     method: "POST",
     headers: { ...headers, Authorization: `Bearer ${token}` },
@@ -137,6 +152,7 @@ export async function resolveLocalIdentity(
       `username registration failed (${response.status}): ${responseText}`,
     );
   }
+  reportProgress({ stage: "confirming" });
 
   // Backend acceptance is not chain confirmation. Keep observing this activation
   // until ownership is verified or the caller disposes it; never resubmit a claim
@@ -146,8 +162,15 @@ export async function resolveLocalIdentity(
     let identity: LocalIdentity;
     try {
       identity = await runtime.refreshLocalIdentity(context.activationId);
-    } catch {
+    } catch (error) {
       check();
+      let message = "Chain read failed";
+      try {
+        message = errorMessage(error);
+      } catch {
+        // An unprintable thrown value must not stop confirmation polling.
+      }
+      reportProgress({ stage: "retrying", error: message });
       await delay(4_000, signal);
       continue;
     }
@@ -157,6 +180,7 @@ export async function resolveLocalIdentity(
         "verified identity does not match the active UID account",
       );
     }
+    reportProgress({ stage: "confirming" });
     if (identity.liteUsername) return identity;
     await delay(4_000, signal);
   }

@@ -33,6 +33,7 @@ import { isLoopbackWsUrl } from "../worker-protocol.js";
 import type {
   CallbackName,
   LocalIdentity,
+  LocalIdentityProgress,
   MainToWorker,
   SubscriptionName,
   WorkerToMain,
@@ -189,6 +190,7 @@ export interface WorkerSigningHostRuntime extends Omit<
   registerLocalLiteUsername(
     baseUsername: string,
     identityBackendBaseUrl: string,
+    onProgress?: (progress: LocalIdentityProgress) => void,
   ): Promise<LocalIdentity>;
 }
 
@@ -252,7 +254,12 @@ interface RuntimeState {
     number,
     { resolve: () => void; reject: (error: Error) => void }
   >;
-  pendingLocalIdentities: Map<number, PendingEntry<LocalIdentity>>;
+  pendingLocalIdentities: Map<
+    number,
+    PendingEntry<LocalIdentity> & {
+      onProgress?: (progress: LocalIdentityProgress) => void;
+    }
+  >;
   pendingPermissionAuthorizationStatuses: Map<
     number,
     {
@@ -974,13 +981,14 @@ function sendSessionActivationRequest(
 function sendLocalIdentityRequest(
   state: RuntimeState,
   buildMessage: (requestId: number) => MainToWorker,
+  onProgress?: (progress: LocalIdentityProgress) => void,
 ): Promise<LocalIdentity> {
   if (state.disposed) {
     return Promise.reject(state.closedError ?? new Error("runtime disposed"));
   }
   const { promise, resolve, reject } = Promise.withResolvers<LocalIdentity>();
   const requestId = ++nextLocalIdentityRequestId;
-  state.pendingLocalIdentities.set(requestId, { resolve, reject });
+  state.pendingLocalIdentities.set(requestId, { resolve, reject, onProgress });
   try {
     state.worker.postMessage(buildMessage(requestId));
   } catch (error) {
@@ -1174,6 +1182,16 @@ function createWebWorkerHostRuntime(
           break;
         case "sessionActivationResponse":
           handleSessionActivationResponse(state, msg);
+          break;
+        case "localIdentityProgress":
+          if (state.disposed) break;
+          try {
+            state.pendingLocalIdentities
+              .get(msg.requestId)
+              ?.onProgress?.(msg.progress);
+          } catch {
+            // UI observers cannot fail or settle an identity operation.
+          }
           break;
         case "localIdentityResponse":
           settlePending(
@@ -1628,13 +1646,18 @@ function buildRuntime(
     registerLocalLiteUsername(
       baseUsername,
       identityBackendBaseUrl,
+      onProgress,
     ): Promise<LocalIdentity> {
-      return sendLocalIdentityRequest(state, (requestId) => ({
-        kind: "registerLocalLiteUsername",
-        requestId,
-        baseUsername,
-        identityBackendBaseUrl,
-      }));
+      return sendLocalIdentityRequest(
+        state,
+        (requestId) => ({
+          kind: "registerLocalLiteUsername",
+          requestId,
+          baseUsername,
+          identityBackendBaseUrl,
+        }),
+        onProgress,
+      );
     },
     getPermissionAuthorizationStatus(productId, request) {
       return sendWorkerRequest<PermissionAuthorizationStatus>(

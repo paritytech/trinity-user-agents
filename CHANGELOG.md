@@ -19,6 +19,8 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- report local-wallet registration stages and retryable chain-read errors through
+  a request-scoped browser callback without resubmitting accepted claims
 - expose local signing-wallet username registration and chain-verified identity
   refresh through the browser worker, with native UID proofs and RFC-0004
   X25519 identifier keys

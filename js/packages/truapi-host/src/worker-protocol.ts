@@ -57,6 +57,11 @@ export interface LocalIdentity {
   liteUsername?: string;
 }
 
+/** Observable registration stages; acceptance is not verified ownership. */
+export type LocalIdentityProgress =
+  | { stage: "checking" | "authenticating" | "submitting" | "confirming" }
+  | { stage: "retrying"; error: string };
+
 /**
  * Messages posted by the main window to the WASM worker. These either control
  * worker/core lifecycle, forward encoded TrUAPI frames into the core, or return
@@ -252,6 +257,11 @@ export type WorkerToMain =
       requestId: number;
       ok: false;
       error: string;
+    }
+  | {
+      kind: "localIdentityProgress";
+      requestId: number;
+      progress: LocalIdentityProgress;
     }
   | {
       kind: "localIdentityResponse";

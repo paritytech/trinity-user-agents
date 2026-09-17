@@ -1,6 +1,7 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { resolveLocalIdentity } from "./worker-local-identity.js";
 import type { WorkerSigningHostRuntime } from "./wasm-module.js";
+import type { LocalIdentityProgress } from "./worker-protocol.js";
 
 const account = `0x${"11".repeat(32)}`;
 const registration = {
@@ -66,6 +67,41 @@ test("an accepted claim confirms after the old polling cutoff without resubmissi
   await expect(
     resolveLocalIdentity(runtime, new AbortController().signal, registration),
   ).resolves.toEqual(confirmed);
+  expect(submissions()).toBe(1);
+});
+
+test("accepted registration reports read retries and recovers without another submission", async () => {
+  const progress: LocalIdentityProgress[] = [];
+  const confirmed = {
+    identityAccountId: account,
+    liteUsername: "lateconfirmation.paseo",
+  };
+  let reads = 0;
+  const { runtime, submissions } = setup(async () => {
+    reads++;
+    if (reads === 2) throw new Error("temporary chain disconnect");
+    return reads === 4 ? confirmed : { identityAccountId: account };
+  });
+  await expect(
+    resolveLocalIdentity(
+      runtime,
+      new AbortController().signal,
+      registration,
+      (event) => {
+        progress.push(event);
+        throw new Error("observer failed");
+      },
+    ),
+  ).resolves.toEqual(confirmed);
+  expect(progress).toEqual([
+    { stage: "checking" },
+    { stage: "authenticating" },
+    { stage: "submitting" },
+    { stage: "confirming" },
+    { stage: "retrying", error: "temporary chain disconnect" },
+    { stage: "confirming" },
+    { stage: "confirming" },
+  ]);
   expect(submissions()).toBe(1);
 });
 

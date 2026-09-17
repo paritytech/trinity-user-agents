@@ -628,6 +628,10 @@ function handleLocalIdentity(
         rt,
         controller.signal,
         registration,
+        (progress) => {
+          if (controller.signal.aborted || identityAbort !== controller) return;
+          postToMain({ kind: "localIdentityProgress", requestId, progress });
+        },
       );
       controller.signal.throwIfAborted();
       postToMain({

@@ -37,6 +37,7 @@ import {
 import type {
   CreateWebWorkerPairingHostRuntimeOptions,
   CreateWebWorkerSigningHostRuntimeOptions,
+  LocalIdentityProgress,
 } from "./index.js";
 
 function renderRequest(): ProductRendererRenderRequest {
@@ -99,6 +100,33 @@ async function createProviderFromRuntime(
       runtime.dispose();
     },
   };
+}
+
+async function readyRuntime(worker: FakeWorker) {
+  const runtimePromise = createWebWorkerPairingHostRuntime(
+    asWorker(worker),
+    makeHostCallbacks(),
+    { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
+  );
+  worker.emit({ kind: "loaded" });
+  worker.emit({ kind: "ready" });
+  return runtimePromise;
+}
+
+async function readySigningRuntime(worker: FakeWorker) {
+  const runtimePromise = createWebWorkerSigningHostRuntime(
+    asWorker(worker),
+    makeHostCallbacks(),
+    {
+      hostConfig: {
+        ...hostConfigFromRuntimeConfig(runtimeConfig()),
+        networkSuffix: "paseo",
+      },
+    },
+  );
+  worker.emit({ kind: "loaded" });
+  worker.emit({ kind: "ready" });
+  return runtimePromise;
 }
 
 async function readyProvider(worker: FakeWorker, options: ReadyOptions = {}) {
@@ -196,6 +224,106 @@ describe("createWebWorkerPairingHostRuntime", () => {
     await activation;
     runtime.dispose();
   });
+
+  it("scopes identity progress to pending requests and isolates observer failures", async () => {
+    const worker = new FakeWorker();
+    const runtime = await readySigningRuntime(worker);
+    const progress: LocalIdentityProgress[] = [];
+    const identity = {
+      identityAccountId: `0x${"11".repeat(32)}`,
+      liteUsername: "alice.paseo",
+    };
+    const claim = runtime.registerLocalLiteUsername(
+      "alice",
+      "https://identity.invalid",
+      (event) => {
+        progress.push(event);
+        throw new Error("observer failed");
+      },
+    );
+    const request = lastMessageOfKind(worker, "registerLocalLiteUsername");
+    let settled = false;
+    void claim.then(() => {
+      settled = true;
+    });
+    worker.emit({
+      kind: "localIdentityProgress",
+      requestId: request.requestId,
+      progress: { stage: "confirming" },
+    });
+    await settle();
+    expect(settled).toBe(false);
+    worker.emit({
+      kind: "localIdentityResponse",
+      requestId: request.requestId,
+      ok: true,
+      identity,
+    });
+    await expect(claim).resolves.toEqual(identity);
+
+    const nextProgress: LocalIdentityProgress[] = [];
+    const nextClaim = runtime.registerLocalLiteUsername(
+      "bob",
+      "https://identity.invalid",
+      (event) => nextProgress.push(event),
+    );
+    const next = lastMessageOfKind(worker, "registerLocalLiteUsername");
+    worker.emit({
+      kind: "localIdentityProgress",
+      requestId: request.requestId,
+      progress: { stage: "retrying", error: "late response" },
+    });
+    worker.emit({
+      kind: "localIdentityProgress",
+      requestId: next.requestId,
+      progress: { stage: "checking" },
+    });
+    worker.emit({
+      kind: "localIdentityResponse",
+      requestId: next.requestId,
+      ok: false,
+      error: "claim rejected",
+    });
+    await expect(nextClaim).rejects.toThrow("claim rejected");
+    worker.emit({
+      kind: "localIdentityProgress",
+      requestId: next.requestId,
+      progress: { stage: "confirming" },
+    });
+    expect(progress).toEqual([{ stage: "confirming" }]);
+    expect(nextProgress).toEqual([{ stage: "checking" }]);
+    runtime.dispose();
+  });
+
+  for (const close of ["dispose", "fault"] as const) {
+    it(`ignores late identity progress after runtime ${close}`, async () => {
+      const worker = new FakeWorker();
+      const runtime = await readySigningRuntime(worker);
+      const progress: LocalIdentityProgress[] = [];
+      const claim = runtime.registerLocalLiteUsername(
+        "alice",
+        "https://identity.invalid",
+        (event) => progress.push(event),
+      );
+      const request = lastMessageOfKind(worker, "registerLocalLiteUsername");
+      worker.emit({
+        kind: "localIdentityProgress",
+        requestId: request.requestId,
+        progress: { stage: "confirming" },
+      });
+      if (close === "dispose") runtime.dispose();
+      else worker.emitError("worker stopped");
+      await expect(claim).rejects.toThrow(
+        close === "dispose" ? "runtime disposed" : "worker stopped",
+      );
+      worker.emit({
+        kind: "localIdentityProgress",
+        requestId: request.requestId,
+        progress: { stage: "retrying", error: "late response" },
+      });
+      expect(progress).toEqual([{ stage: "confirming" }]);
+    });
+  }
 
   it("reports the chat capability to the worker when the host serves it", async () => {
     const worker = new FakeWorker();

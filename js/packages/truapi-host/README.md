@@ -29,13 +29,22 @@ with the mobile Account Holder when that identity remains on the phone.
 
 After activating a local signing session, call `refreshLocalIdentity()` to read
 the configured Asset Hub's dotNS ownership and install verified username
-metadata. `registerLocalLiteUsername(baseUsername, identityBackendBaseUrl)`
+metadata. `registerLocalLiteUsername(baseUsername, identityBackendBaseUrl, onProgress?)`
 authenticates to the identity backend with native UID proofs, submits the
 registration with the real RFC-0004 X25519 identifier key and Asset Hub time,
 then monitors chain ownership until it is confirmed or the activation is
 disconnected/replaced. Backend acceptance alone is not registration success.
 Slow confirmation and transient chain-read failures do not resubmit the claim
 or require repeated manual refreshes.
+
+The optional callback receives `LocalIdentityProgress` (exported from
+`@parity/truapi-host/web`): `checking`, `authenticating`, `submitting`,
+`confirming`, or `retrying` with a chain-read `error`. Stages reflect actual
+work, not elapsed-time estimates. `confirming` means the backend accepted
+the request, not that the username is owned yet; only the resolved promise
+confirms ownership. A retry does not submit another registration. Observer
+exceptions do not interrupt the operation, and settled or disposed requests
+receive no further progress.
 
 Both methods return `LocalIdentity` (exported from `@parity/truapi-host/web`):
 the canonical lowercase `0x`-prefixed `identityAccountId` and an optional verified
