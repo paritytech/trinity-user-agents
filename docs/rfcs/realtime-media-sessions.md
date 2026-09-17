@@ -43,10 +43,11 @@ participant is a host-minted handle: enough to say whose tracks arrived and
 whose picture a rectangle draws.
 
 **Signalling belongs to the host.** The product names a peer; the host offers,
-answers, and exchanges candidates over its own channel, and the product never
-carries, stores, or sees any of it. No session description, no candidate, and no
-address reaches product code, so there is nothing to seal and no key to
-distribute. A host that has no channel of its own cannot serve this service.
+answers, and exchanges candidates over the statement store, and the product
+never carries, stores, or sees any of it. No session description, no candidate,
+and no address reaches product code, so there is nothing to seal and no key to
+distribute. The host owns that subscription, so calling needs no statement
+permission of its own.
 
 A **picture rectangle** places one incoming picture — a participant's camera or
 their shared screen — in the coordinates of the surface the product draws into,
@@ -63,7 +64,7 @@ a second one.
 or none of them — and returns the session id. It connects nothing on its own.
 
 `add_participant` names one peer and returns a participant handle. The host
-reaches that peer over its own channel; answering an incoming call names the
+reaches that peer over the statement store; answering an incoming call names the
 peer the same way. Offering and answering are therefore per participant rather
 than per call, so in a group call a product may be answering one peer while
 inviting another. `remove_participant` drops one peer without ending the call.
@@ -143,10 +144,10 @@ server, and none is proposed here.
 
 ### Incoming calls
 
-An incoming call arrives on the host's channel and reaches the product through
-`session_subscribe`, naming the peer. There is no routing question: the host
-knows which product a call is for, because it knows which product's channel
-carried it. Whether a particular caller may interrupt the user is still a
+An incoming call arrives on the host's statement subscription and reaches the
+product through `session_subscribe`, naming the peer. There is no routing
+question: the host knows which product a call is for, because the signalling is
+addressed to that product's channel. Whether a particular caller may interrupt the user is still a
 product decision — the product knows whether that peer is an accepted contact —
 so the product accepts or refuses.
 
@@ -159,9 +160,9 @@ product that is already open.
 
 - Products cannot touch call media. That is the point, and it forecloses
   product-drawn effects and overlays on a call picture.
-- Host-owned signalling means a host without a channel of its own cannot serve
-  the service at all, and a product cannot interoperate with an outside
-  endpoint that expects to exchange session descriptions.
+- Signalling over the statement store ties calling to it, and a product cannot
+  interoperate with an outside endpoint that expects to exchange session
+  descriptions itself.
 - No statistics call, so a product cannot diagnose a bad call beyond the coarse
   quality level.
 - Recording and product-chosen codecs are out; each needs its own consent
@@ -183,6 +184,3 @@ product that is already open.
   audio-only call.
 - Is a coarse quality level worth sending at all, given a product cannot act on
   the reason behind it?
-- Does the host's channel need to be the same one the product uses for
-  messaging? Sharing it keeps call setup inside an authenticated conversation;
-  separating it keeps the host from depending on a product's transport.
