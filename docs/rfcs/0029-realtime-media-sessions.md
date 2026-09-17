@@ -240,6 +240,43 @@ identity and authentication of the peer; ringing, accept, and decline UI; call
 history. Chat already has an authenticated encrypted channel, so it carries
 signalling messages as ordinary messages and needs no signalling server.
 
+### Incoming sessions, and why this is not the input modality
+
+This API has no inbound listener. A session exists because a product called
+`create_session`, so there is no host-level notion of "an incoming WebRTC call"
+to route, and no ambiguity about which product a call belongs to: an invitation
+is a message on a product's own channel, and the product that owns the channel
+is the product that offers the call. For Chat that channel is the existing
+authenticated conversation, and a call invitation is one more message kind in
+it.
+
+That is deliberately different from the input modality. The two look alike —
+both end with the host handing work to a product that was not on screen — but
+they differ where it matters:
+
+| | Input modality | Incoming session |
+| --- | --- | --- |
+| Who starts it | the user, on this device | a remote party, over the network |
+| Authorisation at dispatch | the user's own act | nobody; the peer chose the moment |
+| Selection | the host asks which product handles this input | already decided: the channel's owner |
+| Failure mode | the wrong product answers a query | an unwanted party makes the device ring |
+
+Because the authorisation differs, the anti-abuse surface differs, and that is
+why an incoming session must not be modelled as "input arriving from the
+network". A modality-style registry answers *which product*, a question
+channel ownership already answers here, and it answers nothing about *whether
+this party may interrupt the user* — which is the only hard question on the
+inbound path. That question belongs to the product: Chat knows whether the
+sender is an accepted contact, because it already authenticates every message.
+
+What a delivery-while-not-running path does need is orthogonal to this RFC and
+shared with every other product that must react to a remote event: a wake
+contract (which executable runs, with which capabilities, for how long, and how
+often a peer may trigger it) layered on the existing notification path. That is
+worth its own RFC, it is not media-specific, and this API works without it: a
+call reaches a running product today, and gains background ringing when that
+contract lands.
+
 ## Trade-offs
 
 - One-to-one only. Group calls need a conference model — SFU addressing,
@@ -264,7 +301,7 @@ signalling messages as ordinary messages and needs no signalling server.
 - The API keeps relay-versus-direct invisible to the product, but a product that
   wants to warn a user about a relay's latency has no way to. Is the coarse
   `Quality` signal enough to carry that, or does the honest answer stay "no"?
-- Should the host expose an incoming-call path for a product that is not
-  running, or does a call require an already-open product? The former needs the
-  notification path and a wake contract.
+- The wake contract is deferred to its own RFC. Does anything in this API have
+  to change to accept it later, or does a background-delivered invitation reach
+  `create_session` exactly as a foreground one does?
 - Is `Quality` coarse enough to be safe, and useful enough to be worth sending?
