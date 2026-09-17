@@ -49,15 +49,13 @@ address reaches product code, so there is nothing to seal and no key to
 distribute. A host that has no channel of its own cannot serve this service.
 
 A **picture rectangle** places one incoming picture — a participant's camera or
-their shared screen — in the coordinates of the surface the product draws into.
-The product chooses the rectangle, the corner radius, and the depth relative to
-its own content. A call with no pictures needs none: audio-only calls are
-ordinary, camera and screen are optional per participant and per direction, and
-a product places a rectangle only for a picture actually arriving.
-
-A web product usually has a placeholder element rather than coordinates, so an
-SDK may offer `attach(track, element)` and keep the rectangle updated as layout
-changes. That is sugar over the same wire contract, not a second one.
+their shared screen — in the coordinates of the surface the product draws into,
+with a corner radius and a depth relative to the product's own content.
+Audio-only calls are ordinary and need none; camera and screen are optional per
+participant and per direction. A web product usually has a placeholder element
+rather than coordinates, so an SDK may offer `attach(track, element)` and keep
+the rectangle updated as layout changes — sugar over the same wire contract, not
+a second one.
 
 ### Service
 
@@ -90,32 +88,25 @@ the front-facing camera or a speakerphone-style call. `set_surfaces` replaces
 the whole rectangle set at once, so a layout change is atomic. `end_session`
 hangs up on everyone, is idempotent, and is always allowed.
 
-Devices belong to the host. It chooses which microphone and camera to use, owns
-gain, echo cancellation, and routing, and owns whatever in-call affordance lets
-the user switch them. A product preference is a preference: the host may ignore
-it, the OS may override it the moment a headset appears, and the stream reports
-what is live rather than what was asked for. The product is told the kind of
-device in use, which is what a call UI needs, and never a device name, model, or
-list: those would be a fingerprinting surface for no gain.
-
-There is no statistics call. A product that could read candidate pairs would
-learn the addresses this design exists to keep from it, and the coarse quality
-level covers what a call UI can act on.
+Devices belong to the host: which microphone and camera, gain, echo
+cancellation, routing, and the in-call affordance for switching them. A product
+preference stays a preference — the host may ignore it and the OS may override
+it the moment a headset appears. The product is told the kind of device in use,
+which is what a call UI needs, and never a name, model, or list. There is no
+statistics call either: candidate pairs carry the addresses this design keeps
+out of products.
 
 ### The host draws the pictures
 
 The product sends rectangles and never receives frames. Every host already
 composites the product's own surface — a canvas, a web view, a native view — so
-a picture layer is a sibling it positions from the rectangles the product gave
-it. Nothing here depends on how the product renders.
+a picture layer is a sibling it positions from the rectangles it was given, and
+nothing here depends on how the product renders. The alternative, handing
+decoded frames to the product as textures, is rejected: it puts camera output
+inside the product and copies every frame across the boundary for nothing.
 
-The alternative, handing decoded frames to the product as textures, is
-rejected: it puts camera output inside the product, and it copies every frame
-across the product boundary for nothing.
-
-The product therefore cannot read, filter, capture, or post-process an incoming
-picture, and a rectangle is a request the host may clamp to what is actually
-visible.
+So a product cannot read, filter, capture, or post-process an incoming picture,
+and a rectangle is a request the host may clamp to what is actually visible.
 
 ### Permission and control
 
@@ -140,13 +131,11 @@ host rather than in a prompt:
 ### Addresses
 
 The host owns the transport end to end: candidate gathering, relay credentials
-it mints and rotates, the selected path, and every renegotiation. The product
-learns no participant's address, because signalling never reaches it.
-
-Whether a call runs directly or through a relay is a host policy the product
-cannot request, detect, or override. A host whose users should not reveal their
-location to their contacts relays everything, which costs latency and egress
-and is the right default for a messaging product.
+it mints and rotates, the selected path, and every renegotiation. Whether a call
+runs directly or through a relay is a host policy the product cannot request,
+detect, or override. A host whose users should not reveal their location to
+their contacts relays everything, which costs latency and egress and is the
+right default for a messaging product.
 
 Group calls are allowed and deliberately unspecified: participants are a set,
 and how the host connects them is its own business. A small call needs no new
