@@ -8,365 +8,154 @@ status: draft
 
 ## Summary
 
-A `Media` host API that lets a product run a one-to-one audio or video call
-without implementing, embedding, or observing any realtime transport. The host
-owns the peer connection, the capture devices, the codecs, the jitter buffers,
-the audio route, and the on-screen video. The product supplies the signalling
-channel it already has, positions the video the host draws, and receives
-session state.
-
-This is the capability a PolkaVM product needs. `RemotePermission::WebRtc`
-exists today, but [RFC 0002] scopes it to the browser sandbox — "fetch
-requests, WebSockets, WebRTC, and device permissions should be handled by the
-Host's sandbox implementation" — and it is enforced by removing
-`RTCPeerConnection` from a web realm. A PolkaVM product has no web realm and no
-such object, so today it cannot place a call at all.
-
-[RFC 0002]: 0002-permission-model.md
+A `Media` service that lets a product run an audio or video call without
+implementing, embedding, or observing any realtime transport. The host owns the
+connections, the capture devices, the codecs, the audio route, and the video on
+screen. The product carries opaque signalling over a channel it already has,
+says where each participant's video belongs, and is told how the call is going.
 
 ## Motivation
 
-Chat is a PolkaVM product with an authenticated, end-to-end encrypted channel
-to a contact and no way to turn that contact into a call. The transport is the
-only missing piece: offer, answer, and candidate exchange can travel as
-ordinary Chat messages over the channel that already carries text.
+No host service carries audio or video, so a product that wants a call has to
+bring its own stack. Only a web product can even try — `RemotePermission::WebRtc`
+ungates the sandbox's own `RTCPeerConnection` — and the result is microphone and
+camera frames, plus every participant's network address, inside product code.
+Every other kind of product has no route at all.
 
-The alternative — a product shipping its own realtime stack — is not
-acceptable on any axis:
-
-- **It cannot work.** Capture devices, hardware codecs, the audio session, and
-  the OS permission prompts are host-owned. A guest reaches none of them.
-- **It should not work.** A media stack inside a product means microphone and
-  camera frames inside a product. The device permission model exists to keep
-  them out.
-- **It would not be one stack.** Every product would carry its own ICE, its own
-  echo cancellation, and its own bugs, and each would negotiate separately with
-  the same user's OS.
-
-The host already owns the equivalent surfaces for the browser case, including a
-realtime engine and a TURN deployment. This RFC gives the same guarantee to
-products that are not browsers, with an API shaped so that media never crosses
-the product boundary.
+Capture devices, hardware codecs, the audio session, and the OS prompts are
+host-owned, so a product cannot do this well. A media stack inside a product
+defeats the device permissions that exist to keep frames out of it. And one
+stack per product means one set of bugs per product, with no single place for
+the user to see or stop a call.
 
 ## Approach
 
 ### Concepts
 
-A **session** is one negotiated connection with one remote party. It is
-identified by a `MediaSessionId` minted by the host, and it is bound to the
-product that created it. A session carries at most one outbound audio track and
-one outbound video track, and it reports the inbound tracks the remote party
-offers.
+A **session** is one call. It has a host-minted `MediaSessionId`, belongs to the
+product that created it, and holds one or more remote **participants**. The
+product names participants with its own identifiers; the host never resolves
+them to anything.
 
-A **signalling message** is an opaque, host-sealed byte string. The host emits
-them; the product delivers them to the remote party over its own channel and
-feeds received ones back. The product learns nothing from the bytes: no SDP, no
-candidate, no address.
+A **signalling message** is an opaque, host-sealed byte string, addressed to one
+participant. The host emits them, the product delivers them over its own
+channel, and feeds received ones back. The product learns nothing from the
+bytes: no session description, no candidate, no address.
 
-Every host keeps a **media key**: a long-lived key pair whose public half the
-host will hand to a product on request, for the product to publish to its peers
-however it already distributes keys. A caller seals its invitation to the
-callee's media key, so the callee's product can carry and store the invitation
-without being able to open it, and the host unseals only inside
-`create_session(Answer)`. Later messages in a session are sealed to a per-session
-key pair the host derives during negotiation. A product that tampers with,
-reorders, or replays a message causes a session failure, not a disclosure.
+A **media key** is a long-lived host key pair. The host hands a product the
+public half, the product publishes it to its peers however it already
+distributes keys, and a caller seals its invitation to it. So an invitation can
+be stored and forwarded by a product that cannot open it; the host unseals it
+when the call is answered. Later messages use a per-session key the host derives
+during negotiation. Tampering or replay fails the session rather than disclosing
+anything.
 
-A **media surface** is a rectangle, in the product's own surface coordinates,
-where the host draws a track. The product chooses the rectangle, the track, the
-corner radius, and the z-order relative to its own content. The host draws it,
-and the frames never enter the product's address space.
+A **surface rectangle** places one participant's video, in the coordinates of
+whatever surface the product already draws into. The product chooses the
+rectangle, the corner radius, and the depth relative to its own content.
 
 ### Service
 
-New service, methods numbered from 196 upward (the next free block; `Locale`
-holds 194).
+Seven methods. `create_session` states the direction, which local tracks to
+send, and for an answer the invitation being answered; it prompts the user and
+returns the session id. `session_subscribe` streams everything the product needs
+to know:
 
-```rust
-#[wire(request_id = 196)]
-async fn create_session(
-    &self,
-    cx: &CallContext,
-    request: HostMediaCreateSessionRequest,
-) -> Result<HostMediaCreateSessionResponse, CallError<HostMediaCreateSessionError>>;
-```
+- signalling to deliver, per participant;
+- session state — negotiating, connecting, connected, reconnecting, ended;
+- participants joining and leaving, and which tracks each is sending;
+- a coarse quality level, never a bitrate, round-trip time, or address;
+- which local devices are actually live, which is not the same as what the
+  product asked for: a withdrawn permission or another app taking the camera
+  changes it unprompted.
 
-`HostMediaCreateSessionRequest` names the direction (`Offer` or `Answer`), the
-tracks the product wants to send (`audio: bool`, `video: bool`), and, for
-`Answer`, the invitation it is answering. The response carries the
-`MediaSessionId`. Creating a session starts nothing on the network: the first
-signalling message is what does, which is why the user decision is taken here
-rather than on the constructor.
+`deliver_signalling` feeds a received message in. `set_local_tracks` mutes the
+microphone and enables, disables, or flips the camera. `set_audio_route` picks
+earpiece, speaker, or system, and loses to anything the OS routes itself.
+`set_surfaces` replaces the whole rectangle set at once, so a layout change is
+atomic. `end_session` hangs up, is idempotent, and is always allowed.
 
-```rust
-#[wire(start_id = 198)]
-async fn session_subscribe(
-    &self,
-    cx: &CallContext,
-    request: HostMediaSessionSubscribeRequest,
-) -> Subscription<HostMediaSessionSubscribeItem, CallError<HostMediaSessionSubscribeError>>;
-```
+### The host draws the video
 
-One stream per session, carrying:
+The product sends rectangles and never receives frames. Every host already
+composites the product's own surface — a canvas, a web view, a native view — so
+a video layer is a sibling it positions from the rectangles the product gave it.
+Nothing here depends on how the product renders.
 
-- `Signalling { message }` — hand this to the remote party.
-- `State { state }` — `Negotiating`, `Connecting`, `Connected`, `Reconnecting`,
-  `Ended { reason }`.
-- `RemoteTracks { audio, video }` — what the peer is sending, so the product can
-  lay out a video rectangle only when there is video.
-- `Quality { level }` — a coarse `Good | Degraded | Poor`, never a bitrate,
-  round-trip time, or address.
-- `LocalDevices { microphone, camera }` — the host's view of what is actually
-  live, which is not the product's request: a revoked OS permission or another
-  app taking the camera changes this without the product asking.
+The alternative, handing decoded frames to the product as textures, is rejected:
+it puts camera output inside the product, and it copies every frame across the
+product boundary for nothing.
 
-```rust
-#[wire(request_id = 202)]
-async fn deliver_signalling(
-    &self,
-    cx: &CallContext,
-    request: HostMediaDeliverSignallingRequest,
-) -> Result<(), CallError<HostMediaDeliverSignallingError>>;
+The product therefore cannot read, filter, capture, or post-process call video,
+and a rectangle is a request the host may clamp to what is actually visible.
 
-#[wire(request_id = 204)]
-async fn set_local_tracks(
-    &self,
-    cx: &CallContext,
-    request: HostMediaSetLocalTracksRequest,
-) -> Result<(), CallError<HostMediaSetLocalTracksError>>;
+### Consent and addresses
 
-#[wire(request_id = 206)]
-async fn set_audio_route(
-    &self,
-    cx: &CallContext,
-    request: HostMediaSetAudioRouteRequest,
-) -> Result<(), CallError<HostMediaSetAudioRouteError>>;
+Capture uses the existing `Camera` and `Microphone` permissions; no new device
+permission. Beyond that:
 
-#[wire(request_id = 208)]
-async fn set_surfaces(
-    &self,
-    cx: &CallContext,
-    request: HostMediaSetSurfacesRequest,
-) -> Result<(), CallError<HostMediaSetSurfacesError>>;
+- Connecting exposes the user's address to the other participants, so a call
+  needs an explicit decision before the first signalling message leaves the
+  device, and being added to someone else's call needs one too. Neither is a
+  blanket grant.
+- Withdrawing camera or microphone access ends the session.
+- The host may show its own call indicator, which a product cannot suppress —
+  including by placing every rectangle out of view.
 
-#[wire(request_id = 210)]
-async fn end_session(
-    &self,
-    cx: &CallContext,
-    request: HostMediaEndSessionRequest,
-) -> Result<(), CallError<HostMediaEndSessionError>>;
-```
+The host owns the transport end to end: candidate gathering, relay credentials it
+mints and rotates, the selected path, and every renegotiation. The product never
+learns any participant's address, because it only ever sees sealed blobs and
+coarse state. Whether a call runs directly or through a relay is a host policy
+the product cannot request, detect, or override; a host whose users should not
+reveal their location to their contacts relays by default.
 
-`set_local_tracks` mutes and unmutes the microphone and enables, disables, or
-flips the camera. `set_audio_route` selects `Earpiece | Speaker | System`;
-anything the OS routes on its own (a headset arriving) wins, and the change is
-reported through `LocalDevices`. `set_surfaces` replaces the full set of
-rectangles in one call, so a layout change is atomic. `end_session` is
-idempotent and always allowed.
+Group calls are allowed and deliberately unspecified: participants are a set,
+and how the host connects them is its own business. No new server is required
+for a small call, and none is proposed here.
 
-### Rendering
+### Incoming calls
 
-The host draws every track. The product sends rectangles; it never receives
-frames.
+There is no inbound listener. A session exists because a product created one, so
+there is nothing for a host to route and no question of which product a call
+belongs to: an invitation is a message on the product's own channel, and the
+channel's owner is the product that offers the call. Whether a particular sender
+may interrupt the user is a product decision, made on material the product
+already authenticates — not something a host registry can answer.
 
-This is the load-bearing decision, and the presentation stack already supports
-it: the PolkaVM surface is a host-owned view inside a host-owned container, so a
-video view is a sibling the host composites, positioned from the rectangles the
-product supplied. Nothing about it is specific to one graphics profile, and no
-new texture path is needed.
+A product's background worker is the right place to notice an invitation, and it
+is inside the same boundary as the rest of the product: the invitation is sealed
+to the media key, so the worker forwards bytes it cannot open, and no call hands
+it an address, a candidate, or a device identifier. It learns only what it knew
+already — which of its own contacts is calling.
 
-The rejected alternative is delivering decoded frames to the guest as textures.
-It fails on three counts: `Tri2D` has no external-texture concept, every frame
-would cross the guest boundary and be copied twice for no gain, and it would put
-camera frames inside the product — exactly what the device permission model is
-meant to prevent.
-
-Consequences the product must accept: it cannot read, filter, screenshot, or
-post-process call video, and a rectangle is a request that the host may clamp
-to the visible surface.
-
-### Permissions and consent
-
-- Capture uses the existing device permissions, `Camera` and `Microphone`. No
-  new device permission.
-- A session needs an explicit user decision before the first signalling message
-  leaves the device, because connecting reveals the user's address to the peer.
-  `RemotePermission::WebRtc` already names this risk, but its
-  remembered-grant-at-load semantics come from the browser case, where the gate
-  is resolved before the realm exists. Sessions are per-call and need per-call
-  intent, so `create_session` prompts and the answer is not remembered as a
-  blanket grant. Whether that reuses the `WebRtc` variant or adds one is an open
-  question below.
-- A denied prompt fails `create_session`. A revoked permission mid-call ends the
-  session and reports `Ended { reason: PermissionRevoked }`.
-- The host may show its own always-visible call indicator. A product cannot
-  suppress it, and cannot make a call invisible by placing every rectangle
-  off-surface.
-
-### Transport and addresses
-
-The host owns the whole transport: candidate gathering, STUN, TURN credentials,
-the selected pair, and every renegotiation. None of it is a product concern and
-none of it is a product input.
-
-The product therefore never learns either party's address. It sees only sealed
-signalling blobs, session states, coarse `Quality`, and `RemoteTracks`; there is
-no candidate list, no selected-pair report, no statistics object, and no relay
-flag. That guarantee comes from sealing the signalling: a design that passed raw
-SDP through the product would hand it the peer's host and server-reflexive
-candidates, which is exactly the disclosure this API exists to prevent.
-
-Address privacy *between the two devices* is a separate, host-chosen policy,
-because ICE with a default transport policy still trades candidates end to end:
-
-- **Relay-only** forces every packet through TURN. Neither device learns the
-  other's address; the relay operator sees the flow, and latency and egress cost
-  rise.
-- **Direct-preferred** allows a peer-to-peer pair when NAT permits, so the two
-  devices learn each other's addresses.
-
-The host selects the policy and may differ per product or per network; the
-product cannot request, detect, or override it. A host that serves a messaging
-product where contacts are not mutually trusted with their locations should
-default to relay-only.
-
-### Host obligations
-
-A host advertising this API must supply, from its own stack, the realtime
-engine, capture pipeline, echo cancellation, audio session ownership, ICE with
-STUN and TURN reachability (including short-lived TURN credentials it mints and
-rotates without product involvement), and the compositing path that draws tracks
-into the rectangles the product named. A host missing any of these answers
-`Unsupported` rather than advertising partial support.
-
-### What the product still owns
-
-Signalling delivery, retries, and ordering; who is allowed to call whom;
-identity and authentication of the peer; ringing, accept, and decline UI; call
-history. Chat already has an authenticated encrypted channel, so it carries
-signalling messages as ordinary messages and needs no signalling server.
-
-### Incoming sessions, and why this is not the input modality
-
-This API has no inbound listener. A session exists because a product called
-`create_session`, so there is no host-level notion of "an incoming WebRTC call"
-to route, and no ambiguity about which product a call belongs to: an invitation
-is a message on a product's own channel, and the product that owns the channel
-is the product that offers the call. For Chat that channel is the existing
-authenticated conversation, and a call invitation is one more message kind in
-it.
-
-That is deliberately different from the input modality. The two look alike —
-both end with the host handing work to a product that was not on screen — but
-they differ where it matters:
-
-| | Input modality | Incoming session |
-| --- | --- | --- |
-| Who starts it | the user, on this device | a remote party, over the network |
-| Authorisation at dispatch | the user's own act | nobody; the peer chose the moment |
-| Selection | the host asks which product handles this input | already decided: the channel's owner |
-| Failure mode | the wrong product answers a query | an unwanted party makes the device ring |
-
-Because the authorisation differs, the anti-abuse surface differs, and that is
-why an incoming session must not be modelled as "input arriving from the
-network". A modality-style registry answers *which product*, a question
-channel ownership already answers here, and it answers nothing about *whether
-this party may interrupt the user* — which is the only hard question on the
-inbound path. That question belongs to the product: Chat knows whether the
-sender is an accepted contact, because it already authenticates every message.
-
-### The worker as the inbound watcher
-
-A product's worker is the right place to notice an invitation, and the pattern
-already exists in production: `paritytech/getcash-community` ships a worker
-beside its app, keeps itself alive with `hostWorker.beginOperation` /
-`endOperation` while it has work, exports `onEvent("background.wake")` to run a
-pass when the host wakes it, re-derives its secrets from host entropy on every
-wake, and reaches its page over a storage-backed RPC channel with a heartbeat
-because no worker-to-surface channel exists.
-
-So the division of labour for a call is:
-
-1. The worker holds the product's inbound subscription, authenticates the
-   invitation, and decides whether this sender may interrupt the user.
-2. It rings through the notification path and offers a deeplink, which
-   `system.navigate_to` already accepts, to raise the surface.
-3. The surface calls `create_session`, because that is where the video
-   rectangles live.
-
-This RFC therefore scopes session creation to the executable that owns a
-surface, the same way `Chat`, `Pocket`, and `Renderer` are scoped with
-`required_execution = Worker`. A worker that is stopped mid-call cannot orphan a
-session, and a worker cannot open a media session with no way to show it.
-
-The worker is part of the product, so every guarantee in this RFC binds it
-exactly as it binds the surface. It is the component that handles an invitation
-earliest, and it must learn nothing from it: an invitation is sealed to the
-host's media key, so the worker stores and forwards bytes it cannot open, and
-the host unseals them only when the surface answers. No host call gives a worker
-an address, a candidate, an SDP fragment, a relay identity, or a device
-identifier, and `session_subscribe` — the only stream that carries session
-detail — is unavailable to it.
-
-What the worker does know is what it knew already: which of the product's own
-contacts is calling, from the product's own authenticated channel. That is the
-product's data, not something the host disclosed, and the distinction is the
-point — the inbound path gives a worker no new knowledge about a peer beyond the
-fact that a contact it can already name wants to talk.
-
-Two things this pattern needs that TrUAPI does not define today. First,
-[Worker Lifecycle](worker-lifecycle.md) makes the worker demand-driven — it runs
-only while referenced, may be stopped whenever it is not, has "no way to do
-background work of its own", and explicitly drops an always-on worker — and its
-reference table has no holder for *a remote message addressed to this product*.
-Chat holds a reference for a message in flight, but that is the host's chat
-modality, not a product's own channel. Second, the keep-alive operation and
-`background.wake` that getcash relies on are host-specific today; getcash notes
-that without the operation API "the worker lives only as long as a surface is
-open".
-
-Both belong to [Statement Routes and Product Wake](statement-routes-and-wake.md),
-which gives a product one durable topic route the host matches while the product
-is not running, and one wake with the matched statements. A call invitation is
-then one statement on one route, and this API needs no inbound path of its own.
-It also works without it: a call reaches a product with a surface open, and
-gains background ringing when that RFC lands.
+Waking a product that is not running is a separate, media-neutral problem, and
+belongs to [Statement Routes and Product Wake](statement-routes-and-wake.md). An
+invitation is then one message on one route. Until that lands, a call reaches a
+product that is already open.
 
 ## Trade-offs
 
-- One-to-one only. Group calls need a conference model — SFU addressing,
-  per-participant tracks, speaker selection — that does not follow from this API
-  and should not be retrofitted into it.
-- No screen sharing, no recording, no virtual backgrounds, no custom codecs.
-  Each needs its own consent story.
-- Products cannot touch call media at all. This is the point, and it does
-  foreclose product-side effects and overlays drawn from frames.
-- Signalling is opaque, so a product cannot implement interoperability with a
-  third-party SDP dialect. A host that wants that must expose it deliberately.
-- Rectangles instead of frames means the host composites over product content.
-  A product that wants video *behind* its own drawing gets that via z-order, but
-  cannot sample it.
-- Session creation is scoped to a surface-owning executable, so a worker cannot
-  start ringing a peer before the surface is up. Voice-only calls would benefit
-  from the opposite rule.
-- A PolkaVM product that wants a worker-side watcher needs a JavaScript worker
-  beside its PolkaVM app, because a worker is a JavaScript executable. For Chat
-  that means either its message authentication exists twice, or the worker rings
-  on an unverified invitation and the app verifies before anything connects.
+- Products cannot touch call media. That is the point, and it forecloses
+  product-drawn effects and overlays on video.
+- Opaque signalling means no interoperability with a third-party dialect.
+- Screen sharing, recording, and product-chosen codecs are out; each needs its
+  own consent story.
+- A host must supply the whole stack — engine, capture, echo cancellation, audio
+  session, connectivity, compositing — or report the service unsupported. There
+  is no partial mode.
+- Group calls work without a server, but not at arbitrary size. A host that
+  wants large calls needs infrastructure this RFC does not describe.
+- The media key is a long-lived host identity. Its rotation and revocation need
+  specifying, and the same public key seen by two products tells them they are
+  talking to one device.
 
 ## Open questions
 
-- Does session consent reuse `RemotePermission::WebRtc`, or does it need a
-  variant with per-session semantics? Reuse keeps the permission catalogue
-  small; a new variant avoids giving a browser-shaped remembered grant a second
-  meaning.
-- The API keeps relay-versus-direct invisible to the product, but a product that
-  wants to warn a user about a relay's latency has no way to. Is the coarse
-  `Quality` signal enough to carry that, or does the honest answer stay "no"?
-- The wake contract is deferred to its own RFC. Does anything in this API have
-  to change to accept it later, or does a background-delivered invitation reach
-  `create_session` exactly as a foreground one does?
-- Should an audio-only session be creatable by a worker, so a call can ring and
-  even connect before a surface exists? That splits the execution scope by track
-  kind, which is a real cost for a real gain.
-- Is `Quality` coarse enough to be safe, and useful enough to be worth sending?
+- Does per-call consent reuse `RemotePermission::WebRtc`, or need its own
+  variant? Reuse keeps the catalogue small but gives a browser-shaped remembered
+  grant a second meaning.
+- May a call start without a visible surface, so audio can connect while the
+  product is still opening? That would let a background worker create an
+  audio-only session.
+- Is a coarse quality level worth sending at all, given a product cannot act on
+  the reason behind it?
