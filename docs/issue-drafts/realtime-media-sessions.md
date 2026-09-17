@@ -8,9 +8,9 @@
 
 ## Problem
 
-A user cannot make a call from a product. A messaging product can carry a
-conversation with a contact, but it cannot offer to ring that contact, because
-no Host service carries a live call.
+A user cannot make a call from a product. A messaging product can show a contact
+and exchange messages with them, but cannot start a voice or video call with
+them, because no Host service carries real-time audio or video.
 
 The only way to do it today is for the product to drive WebRTC itself. That is
 possible for a web product, since the browser engine is there, but it puts the
