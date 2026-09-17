@@ -23,6 +23,8 @@ so: it handles sealed messages and Host-minted handles, not transport detail.
 - No media reaches a product: no frames, no tracks, no device handles.
 - Signalling is sealed by the Host. A product learns no session detail and no
   participant's address.
+- A call may be audio only. Video is optional per participant and per
+  direction, and a product places rectangles only for participants sending it.
 - The Host draws each participant's video into rectangles the product places, at
   a depth the product chooses.
 - Camera and microphone use the existing device permissions.
@@ -75,6 +77,14 @@ so: it handles sealed messages and Host-minted handles, not transport detail.
 
 - RFC document: #TBD
 - Background delivery to a product that is not running: handled separately
+
+## Target products
+
+- DIM2, as an SPA
+- Chat, as an SPA
+- T3ams, for audio and video calling
+- Meet
+- any other product needing peer-to-peer audio, video, or sharing
 
 ## Tasks
 

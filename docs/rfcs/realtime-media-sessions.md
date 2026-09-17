@@ -63,7 +63,10 @@ anything.
 
 A **surface rectangle** places one participant's video, in the coordinates of
 whatever surface the product already draws into. The product chooses the
-rectangle, the corner radius, and the depth relative to its own content.
+rectangle, the corner radius, and the depth relative to its own content. A call
+with no video needs none: audio-only calls are ordinary, video is optional per
+participant and per direction, and a product places a rectangle only for a
+participant actually sending video.
 
 ### Service
 
