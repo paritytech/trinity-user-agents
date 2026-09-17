@@ -9,15 +9,14 @@ status: draft
 ## Summary
 
 A `Media` service that lets a product run an audio or video call, with screen
-sharing, without implementing, embedding, or observing any realtime transport.
-The host owns the connections, the capture devices, the codecs, the audio route,
-and the pictures on screen. The product carries opaque signalling over a channel
-it already has, says where each participant's picture belongs, and is told how
-the call is going.
+sharing, without running a realtime stack in its own code. The host owns the
+connections, the signalling, the capture devices, the codecs, the audio route,
+and the pictures on screen. The product names who is on the call, says where
+each picture belongs, and is told how the call is going.
 
 The first implementation is WebRTC, with the host running the peer connections.
-Nothing a product sees says so: it handles sealed messages and host-minted
-handles, not transport detail.
+Nothing a product sees says so: it names peers and host-minted handles, not
+transport detail.
 
 ## Motivation
 
@@ -27,11 +26,12 @@ drive `RTCPeerConnection` itself, and every other kind of product cannot make a
 call at all.
 
 Running it in product code is the wrong place for it. The camera and microphone
-feed and every participant's network address pass through the product, defeating
-the device permissions that exist to keep them out. The capture devices, the
-hardware codecs and the audio session are host-owned, so the product is fighting
-for things it does not control. And each product that tries ends up with its own
-stack, its own bugs, and no single place for the user to see or stop a call.
+feed and every participant's network address pass through the product,
+defeating the device permissions that exist to keep them out. The capture
+devices, the hardware codecs and the audio session are host-owned, so the
+product is fighting for things it does not control. And each product that tries
+ends up with its own stack, its own bugs, and no single place for the user to
+see or stop a call.
 
 ## Approach
 
@@ -39,62 +39,56 @@ stack, its own bugs, and no single place for the user to see or stop a call.
 
 A **session** is one call. It has a host-minted `MediaSessionId`, belongs to the
 product that created it, and holds one or more remote **participants**. A
-participant is a host-minted handle, meaningless outside its session: enough to
-say which peer a signalling message is for, whose tracks arrived, and whose
-picture a rectangle draws. The host is told no product-side identity, and the
-product keeps its own mapping from handle to contact.
+participant is a host-minted handle: enough to say whose tracks arrived and
+whose picture a rectangle draws.
 
-A **signalling message** is an opaque, host-sealed byte string, addressed to one
-participant. The host emits them, the product delivers them over its own
-channel, and feeds received ones back. The product learns nothing from the
-bytes: no session description, no candidate, no address.
+**Signalling belongs to the host.** The product names a peer; the host offers,
+answers, and exchanges candidates over its own channel, and the product never
+carries, stores, or sees any of it. No session description, no candidate, and no
+address reaches product code, so there is nothing to seal and no key to
+distribute. A host that has no channel of its own cannot serve this service.
 
-An **invitation** is the first signalling message, and it carries no addresses:
-the host puts its session's public key and negotiation terms in it, and nothing
-that locates the device. Candidates come later, sealed to the key pair the two
-hosts agree from the invitation and its answer. Both key pairs are per session,
-so there is no long-lived identity to publish, rotate, or correlate. Tampering
-or replay fails the session.
+A **picture rectangle** places one incoming picture — a participant's camera or
+their shared screen — in the coordinates of the surface the product draws into.
+The product chooses the rectangle, the corner radius, and the depth relative to
+its own content. A call with no pictures needs none: audio-only calls are
+ordinary, camera and screen are optional per participant and per direction, and
+a product places a rectangle only for a picture actually arriving.
 
-A **surface rectangle** places one incoming picture — a participant's camera or
-their shared screen — in the coordinates of whatever surface the product already
-draws into. The product chooses the rectangle, the corner radius, and the depth
-relative to its own content. A call with no pictures needs none: audio-only
-calls are ordinary, camera and screen are optional per participant and per
-direction, and a product places a rectangle only for a picture actually
-arriving.
+A web product usually has a placeholder element rather than coordinates, so an
+SDK may offer `attach(track, element)` and keep the rectangle updated as layout
+changes. That is sugar over the same wire contract, not a second one.
 
 ### Service
 
 `create_session` says which local tracks to send — microphone, camera, screen,
-or none of them — prompts the user, and returns the session id. It connects
-nothing on its own.
+or none of them — and returns the session id. It connects nothing on its own.
 
-`add_participant` adds one peer. Given an invitation the product received, the
-host answers it; given none, the host produces an invitation for the product to
-deliver. Either way it returns a participant handle, so offering and answering
-are per participant rather than per call — in a group call a product may be
-answering one peer while inviting another. `remove_participant` drops one peer
-without ending the call.
+`add_participant` names one peer and returns a participant handle. The host
+reaches that peer over its own channel; answering an incoming call names the
+peer the same way. Offering and answering are therefore per participant rather
+than per call, so in a group call a product may be answering one peer while
+inviting another. `remove_participant` drops one peer without ending the call.
 
 `session_subscribe` streams everything the product needs to know:
 
-- signalling to deliver, per participant;
 - session state — negotiating, connecting, connected, reconnecting, ended;
 - participants joining and leaving, and which tracks each is sending;
-- a coarse quality level, never a bitrate, round-trip time, or address;
+- an incoming call the host has been offered, for the product to accept or
+  refuse;
+- a coarse quality level, never a bitrate, round-trip time, candidate, or
+  address;
 - whether the microphone and each picture are actually live, and what the host
-  chose: earpiece, speaker, or a headset; front or rear camera. None of it is
+  chose: earpiece, speaker, or a headset; front or rear camera. None of that is
   what the product asked for — a withdrawn permission, another app taking the
   camera, or the OS moving the route changes it unprompted — so a call UI can
   show the truth.
 
-`deliver_signalling` feeds a received message in. `set_local_tracks` states what
-the product wants sent — microphone on or muted, camera on or off, screen shared
-or not — and may express a preference such as the front-facing camera or a
-speakerphone-style call. `set_surfaces` replaces the whole rectangle set at
-once, so a layout change is atomic. `end_session` hangs up on everyone, is
-idempotent, and is always allowed.
+`set_local_tracks` states what the product wants sent — microphone on or muted,
+camera on or off, screen shared or not — and may express a preference such as
+the front-facing camera or a speakerphone-style call. `set_surfaces` replaces
+the whole rectangle set at once, so a layout change is atomic. `end_session`
+hangs up on everyone, is idempotent, and is always allowed.
 
 Devices belong to the host. It chooses which microphone and camera to use, owns
 gain, echo cancellation, and routing, and owns whatever in-call affordance lets
@@ -104,6 +98,10 @@ what is live rather than what was asked for. The product is told the kind of
 device in use, which is what a call UI needs, and never a device name, model, or
 list: those would be a fingerprinting surface for no gain.
 
+There is no statistics call. A product that could read candidate pairs would
+learn the addresses this design exists to keep from it, and the coarse quality
+level covers what a call UI can act on.
+
 ### The host draws the pictures
 
 The product sends rectangles and never receives frames. Every host already
@@ -111,38 +109,44 @@ composites the product's own surface — a canvas, a web view, a native view —
 a picture layer is a sibling it positions from the rectangles the product gave
 it. Nothing here depends on how the product renders.
 
-The alternative, handing decoded frames to the product as textures, is rejected:
-it puts camera output inside the product, and it copies every frame across the
-product boundary for nothing.
+The alternative, handing decoded frames to the product as textures, is
+rejected: it puts camera output inside the product, and it copies every frame
+across the product boundary for nothing.
 
 The product therefore cannot read, filter, capture, or post-process an incoming
 picture, and a rectangle is a request the host may clamp to what is actually
 visible.
 
-### Consent and addresses
+### Permission and control
 
-Microphone and camera capture use the existing `Camera` and `Microphone`
-permissions. Screen capture is not a device permission: the host runs its own
-picker, so the user chooses what is shared, the product never names a window or
-a display, and the OS prompt or broadcast flow the platform requires stays the
-host's business. Beyond that:
+Calling is one permission, asked once and remembered, like every other in
+[RFC 0002](0002-permission-model.md). A host may offer to allow a single call
+instead of remembering, which is prompt behaviour rather than a second kind of
+grant. Microphone and camera capture keep using the existing `Camera` and
+`Microphone` permissions; screen capture is not a device permission, because the
+host runs its own picker, so the user chooses what is shared and the product
+never names a window or a display.
 
-- Connecting exposes the user's address to the other participants, so a call
-  needs an explicit decision before the first signalling message leaves the
-  device. Starting a call, joining one, and answering an invitation all go
-  through `create_session`, so all three take that decision; inviting a further
-  peer into a call the user is already in does not ask again.
+A remembered grant must not become an invisible call, so control sits in the
+host rather than in a prompt:
+
+- The host shows its own in-call indicator, which a product cannot suppress —
+  including by placing every rectangle out of view — and from which the user can
+  end the call.
 - Withdrawing camera or microphone access ends the session. Ending a screen
   share stops that track and leaves the call running.
-- The host may show its own call indicator, which a product cannot suppress —
-  including by placing every rectangle out of view.
+- Revoking the calling permission ends any call the product is in.
 
-The host owns the transport end to end: candidate gathering, relay credentials it
-mints and rotates, the selected path, and every renegotiation. The product never
-learns any participant's address, because it only ever sees sealed blobs and
-coarse state. Whether a call runs directly or through a relay is a host policy
-the product cannot request, detect, or override; a host whose users should not
-reveal their location to their contacts relays by default.
+### Addresses
+
+The host owns the transport end to end: candidate gathering, relay credentials
+it mints and rotates, the selected path, and every renegotiation. The product
+learns no participant's address, because signalling never reaches it.
+
+Whether a call runs directly or through a relay is a host policy the product
+cannot request, detect, or override. A host whose users should not reveal their
+location to their contacts relays everything, which costs latency and egress
+and is the right default for a messaging product.
 
 Group calls are allowed and deliberately unspecified: participants are a set,
 and how the host connects them is its own business. A small call needs no new
@@ -150,18 +154,12 @@ server, and none is proposed here.
 
 ### Incoming calls
 
-There is no inbound listener. A session exists because a product created one, so
-there is nothing for a host to route and no question of which product a call
-belongs to: an invitation is a message on the product's own channel, and the
-channel's owner is the product that offers the call. Whether a particular sender
-may interrupt the user is a product decision, made on material the product
-already authenticates — not something a host registry can answer.
-
-A product's background worker is the right place to notice an invitation, and it
-is inside the same boundary as the rest of the product: the invitation carries no
-addresses, so the worker can store and forward it and still learn nothing, and no
-call hands it a candidate or a device identifier. It learns only what it knew
-already — which of its own contacts is calling.
+An incoming call arrives on the host's channel and reaches the product through
+`session_subscribe`, naming the peer. There is no routing question: the host
+knows which product a call is for, because it knows which product's channel
+carried it. Whether a particular caller may interrupt the user is still a
+product decision — the product knows whether that peer is an accepted contact —
+so the product accepts or refuses.
 
 Waking a product that is not running is out of scope here. It is a
 media-neutral problem — every product that reacts to a remote event needs the
@@ -172,29 +170,30 @@ product that is already open.
 
 - Products cannot touch call media. That is the point, and it forecloses
   product-drawn effects and overlays on a call picture.
-- Opaque signalling means no interoperability with a third-party dialect.
+- Host-owned signalling means a host without a channel of its own cannot serve
+  the service at all, and a product cannot interoperate with an outside
+  endpoint that expects to exchange session descriptions.
+- No statistics call, so a product cannot diagnose a bad call beyond the coarse
+  quality level.
 - Recording and product-chosen codecs are out; each needs its own consent
   story.
-- A host must supply the whole stack — engine, capture, echo cancellation, audio
-  session, connectivity, compositing — or report the service unsupported. There
-  is no partial mode.
 - Group calls work without a server, but not at arbitrary size. A host that
   wants large calls needs infrastructure this RFC does not describe.
-- Sealing protects addresses from a product that forwards faithfully. A product
-  that substitutes its own key when relaying an invitation could read what
-  follows, and no design placing the product on the signalling path prevents
-  that: the product is the channel.
+- A host must supply the whole stack — engine, signalling, capture, echo
+  cancellation, audio session, connectivity, compositing — or report the
+  service unsupported. There is no partial mode, so a host adds calling for
+  every product at once or not at all.
 
 ## Open questions
 
-- Does per-call consent reuse `RemotePermission::WebRtc`, or need its own
-  variant? Reuse keeps the catalogue small but gives a browser-shaped remembered
-  grant a second meaning.
+- Does calling reuse `RemotePermission::WebRtc`, whose grant is resolved at load
+  time for the browser case, or does it need its own permission with ordinary
+  prompt-once semantics?
 - May a call start without a visible surface, so audio can connect while the
-  product is still opening? That would let a background worker create an
-  audio-only session.
+  product is still opening? That would let a background worker begin an
+  audio-only call.
 - Is a coarse quality level worth sending at all, given a product cannot act on
   the reason behind it?
-- Should a host be able to prove to another host that a key came from it, so a
-  substituted key fails rather than succeeds silently? That needs a trust root
-  the product cannot touch, which no channel here provides.
+- Does the host's channel need to be the same one the product uses for
+  messaging? Sharing it keeps call setup inside an authenticated conversation;
+  separating it keeps the host from depending on a product's transport.
