@@ -23,8 +23,8 @@ handles, not transport detail.
 
 A product has no way to make a call without running the WebRTC stack in its own
 code. No host service carries real-time audio or video, so a web product must
-drive `RTCPeerConnection` itself — `RemotePermission::WebRtc` ungates it — and
-every other kind of product cannot make a call at all.
+drive `RTCPeerConnection` itself, and every other kind of product cannot make a
+call at all.
 
 Running it in product code is the wrong place for it. The camera and microphone
 feed and every participant's network address pass through the product, defeating
