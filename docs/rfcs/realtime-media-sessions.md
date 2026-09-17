@@ -89,9 +89,11 @@ without ending the call.
 - session state — negotiating, connecting, connected, reconnecting, ended;
 - participants joining and leaving, and which tracks each is sending;
 - a coarse quality level, never a bitrate, round-trip time, or address;
-- whether the microphone and each picture are actually live, which is not the
-  same as what the product asked for: a withdrawn permission, another app
-  taking the camera, or the OS moving the route changes it unprompted.
+- whether the microphone and each picture are actually live, and what the host
+  chose: earpiece, speaker, or a headset; front or rear camera. None of it is
+  what the product asked for — a withdrawn permission, another app taking the
+  camera, or the OS moving the route changes it unprompted — so a call UI can
+  show the truth.
 
 `deliver_signalling` feeds a received message in. `set_local_tracks` states what
 the product wants sent — microphone on or muted, camera on or off, screen shared
@@ -104,9 +106,9 @@ Devices belong to the host. It chooses which microphone and camera to use, owns
 gain, echo cancellation, and routing, and owns whatever in-call affordance lets
 the user switch them. A product preference is a preference: the host may ignore
 it, the OS may override it the moment a headset appears, and the stream reports
-what is live rather than what was asked for. A product never enumerates devices
-and never learns which one is in use — a device list would be a fingerprinting
-surface for no gain.
+what is live rather than what was asked for. The product is told the kind of
+device in use, which is what a call UI needs, and never a device name, model, or
+list: those would be a fingerprinting surface for no gain.
 
 ### The host draws the pictures
 

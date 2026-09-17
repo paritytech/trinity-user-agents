@@ -35,8 +35,9 @@ so: it handles sealed messages and Host-minted handles, not transport detail.
   cancellation, routing, and the in-call affordance for switching them. A
   product states what it wants sent and may express a preference, such as the
   front-facing camera or a speakerphone-style call; the Host or the OS may
-  override it, and the product is told what is actually live. A product never
-  enumerates devices.
+  override it, and the product is told what is actually live and what kind of
+  device the Host chose, so its call UI can show the truth. A product never
+  learns a device name, model, or list.
 - Starting a call, joining one, or answering an invitation each take an explicit
   user decision before anything reaches the network. Adding a further person to
   a call the user is already in does not ask again.
