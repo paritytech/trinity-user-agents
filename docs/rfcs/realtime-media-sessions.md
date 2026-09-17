@@ -4,7 +4,7 @@ owner: "@replghost"
 status: draft
 ---
 
-# RFC 0029 — Realtime Media Sessions for Products
+# RFC — Realtime Media Sessions for Products
 
 ## Summary
 
@@ -325,12 +325,12 @@ modality, not a product's own channel. Second, the keep-alive operation and
 that without the operation API "the worker lives only as long as a surface is
 open".
 
-Both belong to [Statement Routes and Product Wake](0030-statement-routes-and-wake.md),
+Both belong to [Statement Routes and Product Wake](statement-routes-and-wake.md),
 which gives a product one durable topic route the host matches while the product
 is not running, and one wake with the matched statements. A call invitation is
 then one statement on one route, and this API needs no inbound path of its own.
 It also works without it: a call reaches a product with a surface open, and
-gains background ringing when 0030 lands.
+gains background ringing when that RFC lands.
 
 ## Trade-offs
 

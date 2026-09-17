@@ -3,7 +3,7 @@
 > Tracking-issue draft. File with labels `enhancement`, `rfc`. Fill in the RFC
 > and implementation PR numbers once they exist.
 
-**Source RFC:** #TBD · `docs/rfcs/0029-realtime-media-sessions.md`
+**Source RFC:** #TBD · `docs/rfcs/realtime-media-sessions.md`
 **Core implementation:** #TBD
 
 ## Problem
@@ -27,8 +27,10 @@ channel it already has, says where each participant's video goes, and is told
 how the call is doing. A product never receives media, and never learns any
 participant's network address.
 
-Screen sharing and recording are not part of this work. A product that is not
-running cannot yet be woken for an incoming call; that is tracked separately.
+Calls between more than two people are allowed, without this work prescribing
+how. No new server infrastructure is in scope. Screen sharing and recording are
+out. A product that is not running cannot yet be woken for an incoming call;
+that is tracked separately.
 
 ## Requirements
 
@@ -40,8 +42,8 @@ running cannot yet be woken for an incoming call; that is tracked separately.
 - Camera and microphone use the existing device permissions.
 - A call needs an explicit user decision before it reaches the network, and ends
   when the user withdraws camera or microphone access.
-- How a call is carried — directly, through a relay, or through a Host-operated
-  conference server — is the Host's choice and invisible to the product.
+- Whether a call connects directly or through a relay is the Host's choice and
+  invisible to the product.
 - A Host that cannot provide the whole stack reports the service as unsupported
   rather than working partially.
 - The product keeps what it already owns: who may call whom, peer identity,
@@ -55,8 +57,7 @@ running cannot yet be woken for an incoming call; that is tracked separately.
   teardown on permission withdrawal.
 - Signalling sealing, including key rotation and revocation.
 - Host engine binding: capture, echo cancellation, audio session, connectivity
-  with Host-minted relay credentials, conference topology, and video
-  compositing.
+  with Host-minted relay credentials, and video compositing.
 - Conformance fixtures for the privacy guarantees, not only a working call.
 - Reference product flow: invite, accept, decline, end.
 
@@ -64,7 +65,7 @@ running cannot yet be woken for an incoming call; that is tracked separately.
 
 - RFC document: #TBD
 - Background delivery to a product that is not running:
-  `docs/rfcs/0030-statement-routes-and-wake.md`
+  `docs/rfcs/statement-routes-and-wake.md`
 
 ## Tasks
 

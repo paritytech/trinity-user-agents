@@ -4,7 +4,7 @@ owner: "@replghost"
 status: draft
 ---
 
-# RFC 0030 — Statement Routes and Product Wake
+# RFC — Statement Routes and Product Wake
 
 ## Summary
 
@@ -100,7 +100,7 @@ bound how often it can be asked.
 
 - **Chat.** Messages addressed to a closed conversation arrive; the worker
   decrypts, stores, and notifies.
-- **RFC 0029 media sessions.** An invitation is one statement on a route. The
+- **[Realtime media sessions](realtime-media-sessions.md).** An invitation is one statement on a route. The
   worker rings and raises the surface; the surface answers. No media-specific
   inbound path exists, and none is needed.
 - **RFC 0017 coin payments.** `listen_for_payment` stops requiring an open
