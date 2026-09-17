@@ -16,11 +16,15 @@ says where each participant's video belongs, and is told how the call is going.
 
 ## Motivation
 
-No host service carries audio or video, so a product that wants a call has to
-bring its own stack. Only a web product can even try — `RemotePermission::WebRtc`
-ungates the sandbox's own `RTCPeerConnection` — and the result is microphone and
-camera frames, plus every participant's network address, inside product code.
-Every other kind of product has no route at all.
+A product cannot call anyone. No host service carries a live call, so a
+messaging product can hold a conversation with a contact and still have no way
+to turn it into a voice or video call.
+
+The only way to do it today is for the product to drive WebRTC itself. A web
+product can: `RemotePermission::WebRtc` ungates the sandbox's own
+`RTCPeerConnection`. The camera and microphone feed and every participant's
+network address then pass through product code. Every other kind of product has
+no route at all.
 
 Capture devices, hardware codecs, the audio session, and the OS prompts are
 host-owned, so a product cannot do this well. A media stack inside a product

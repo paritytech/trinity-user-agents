@@ -8,12 +8,18 @@
 
 ## Problem
 
-Products cannot offer calls. No Host API carries audio or video, so a product
-that wants a voice or video call has to bring its own realtime stack — which
-only web products can do, and only by handling microphone and camera frames,
-plus every participant's network address, inside product code. Every product
-would ship a different stack, and the user would have no single place to see or
-stop a call.
+A product cannot call anyone. A messaging product can hold a conversation with a
+contact but has no way to turn it into a voice or video call, because no Host
+service carries a live call.
+
+The only way to do it today is for the product to drive WebRTC itself. That is
+possible for a web product, since the browser engine is there, but it puts the
+camera and microphone feed and both sides' network addresses inside product
+code. Every other kind of product has no route at all.
+
+Left there, each product that wants calls builds its own, users trust a
+different implementation every time, and the Host has no way to show that a call
+is running or to stop it.
 
 ## Goal
 
