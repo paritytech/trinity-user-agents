@@ -1,155 +1,87 @@
-# RFC: Realtime Media Sessions for Products
+# RFC: Host-mediated realtime media sessions
 
-> Tracking-issue draft, in the shape of #550. File as an issue with labels
-> `enhancement`, `rfc`. Fill the RFC PR number into **Source RFC** and the
-> implementation PR number into **Core implementation** once both exist.
+> Tracking-issue draft. File with labels `enhancement`, `rfc`. Fill in the RFC
+> and implementation PR numbers once they exist.
 
-**Source RFC:** #TBD · `docs/rfcs/0029-realtime-media-sessions.md` · @replghost
+**Source RFC:** #TBD · `docs/rfcs/0029-realtime-media-sessions.md`
 **Core implementation:** #TBD
 
 ## Problem
 
-Products cannot place a call. `RemotePermission::WebRtc` exists, but RFC 0002
-scopes it to the browser sandbox — "fetch requests, WebSockets, WebRTC, and
-device permissions should be handled by the Host's sandbox implementation" — and
-hosts enforce it by removing `RTCPeerConnection` from a web realm. A PolkaVM
-product has no realm and no such object, and none of the 18 product-facing
-TrUAPI services carries media, so the capability is absent rather than
-restricted.
-
-A product cannot close that gap itself. Capture devices, hardware codecs, the
-audio session, and the OS permission prompts are host-owned, and a media stack
-inside a product would put microphone and camera frames inside a product —
-precisely what the device permission model exists to prevent.
+Products cannot offer calls. No Host API carries audio or video, so a product
+that wants a voice or video call has to bring its own realtime stack — which
+only web products can do, and only by handling microphone and camera frames,
+plus both parties' network addresses, inside product code. Every product would
+ship a different stack, and the user would have no single place to see or stop a
+call.
 
 ## Goal
 
-Define one host-neutral `Media` service through which a product runs a
-one-to-one audio or video call without implementing, embedding, or observing any
-realtime transport, and implement it once so every host behaves identically.
+One `Media` service, implemented once, that any product can use to run a
+one-to-one audio or video call, with the Host keeping everything sensitive.
 
-The host owns the peer connection, capture, codecs, ICE with STUN and TURN, the
-audio route, and all on-screen video. The product carries signalling over a
-channel it already has, positions the rectangles the host draws, and receives
-session state.
+The Host owns the connection, the camera and microphone, the codecs, the audio
+route, and the video on screen. The product says who to call over a channel it
+already has, says where the video goes, and is told how the call is doing. A
+product never receives media, and never learns either party's network address.
+
+Calls are one-to-one. Group calls, screen sharing, and recording are not part of
+this work. A product that is not running cannot yet be woken for an incoming
+call; that is tracked separately.
 
 ## Requirements
 
-- Media never crosses the product boundary. No frames, no tracks, no device
-  handles.
-- Signalling is opaque and host-sealed. A product learns no SDP, no candidate,
-  and neither party's address.
-- Video is composited by the host into rectangles named in the product's own
-  surface coordinates, with product-chosen z-order. No external-texture or
-  frame-delivery path.
-- Capture reuses the existing `Camera` and `Microphone` device permissions. No
-  new device permission.
-- A session requires an explicit user decision before the first signalling
-  message leaves the device, and ends when a required permission is revoked.
-- Relay-versus-direct ICE policy is host-chosen and invisible to the product; a
-  messaging host defaults to relay-only so neither device learns the other's
-  address.
-- One-to-one only. Group calls, screen sharing, recording, and custom codecs are
-  out of scope.
-- A host that cannot supply the full stack answers `Unsupported` rather than
-  advertising partial support.
-- The product keeps signalling delivery, peer authentication, call policy,
-  ringing and decline UI, and call history.
-
-## Service surface
-
-New service, methods numbered from 196 upward (`Locale` holds 194):
-
-| Method | Kind | Purpose |
-| --- | --- | --- |
-| `create_session` | request | mint a session, prompt for consent, declare local tracks |
-| `session_subscribe` | subscription | signalling out, state, remote tracks, quality, live device state |
-| `deliver_signalling` | request | feed a received signalling message in |
-| `set_local_tracks` | request | mute/unmute microphone, enable/disable/flip camera |
-| `set_audio_route` | request | earpiece, speaker, or system routing |
-| `set_surfaces` | request | replace the full set of video rectangles atomically |
-| `end_session` | request | hang up; idempotent and always allowed |
+- No media reaches a product: no frames, no tracks, no device handles.
+- Signalling is sealed by the Host. A product learns no session detail and
+  neither party's address.
+- The Host draws video into rectangles the product names, at a depth the product
+  chooses.
+- Camera and microphone use the existing device permissions.
+- A call needs an explicit user decision before it reaches the network, and ends
+  when the user withdraws camera or microphone access.
+- Whether a call relays through TURN or connects directly is the Host's choice
+  and invisible to the product.
+- A Host that cannot provide the whole stack reports the service as unsupported
+  rather than working partially.
+- The product keeps what it already owns: who may call whom, peer identity,
+  ringing and decline, and call history.
 
 ## Core implementation scope
 
-- `Media` trait, versioned request/response/item/error types, and wire ids in
-  `truapi`.
-- Dispatcher wiring and generated clients, including the Rust product client.
-- Session lifecycle and per-product session ownership in `truapi-server`,
-  including consent, permission-revocation teardown, and `Unsupported` on hosts
-  without a stack.
-- Signalling sealing: per-session key pair, public half published in the first
-  message, tamper and replay causing session failure rather than disclosure.
-- Host-side engine binding: capture pipeline, echo cancellation, audio-session
-  ownership, ICE with host-minted rotating TURN credentials, and the compositing
-  path that draws tracks into product-named rectangles.
-- Conformance fixtures asserting the privacy properties, not just the happy
-  path: no address-bearing field on any emitted item, sealed signalling rejected
-  on tamper, revocation ending the session.
+- `Media` service definition, versioned types, and wire ids.
+- Dispatcher and generated product clients.
+- Session lifecycle, ownership, consent, and teardown on permission withdrawal.
+- Signalling sealing, including key rotation and revocation.
+- Host engine binding: capture, echo cancellation, audio session, connectivity
+  with Host-minted TURN credentials, and video compositing.
+- Conformance fixtures for the privacy guarantees, not only a working call.
+- Reference product flow: invite, accept, decline, end.
 
-## Non-goals
+## Implementation references
 
-Group calls and any SFU addressing; screen sharing; recording; virtual
-backgrounds; product-selected codecs; third-party SDP interoperability; the
-background wake contract (see below).
-
-## Relationship to the input modality and the wake contract
-
-An incoming call is not an input-modality dispatch. The input modality answers
-*which product handles input the user just produced on this device*; an
-invitation arrives from a remote party on a product's own channel, so the
-product is already determined by channel ownership, and the open question is
-*whether this party may interrupt the user* — which the product answers, because
-it authenticates the channel.
-
-The inbound watcher is the product's worker, and the pattern exists in
-production: `paritytech/getcash-community` runs a worker beside its app, holds
-`hostWorker.beginOperation` while it has work, exports
-`onEvent("background.wake")`, re-derives secrets from host entropy per wake, and
-talks to its page over storage-backed RPC because no worker-to-surface channel
-exists. For a call the worker authenticates the invitation, rings, and raises the
-surface by deeplink; the surface creates the session, because that is where the
-video lives. Session creation is therefore scoped to a surface-owning
-executable, the same way `Chat`, `Pocket`, and `Renderer` use
-`required_execution = Worker`.
-
-The worker is part of the product, so it is inside the same privacy boundary as
-the surface, not outside it. An invitation is sealed to the host's media key,
-whose public half the product publishes to its peers itself, so the worker
-stores and forwards bytes it cannot open and the host unseals only when the
-surface answers. No host call hands a worker an address, candidate, SDP
-fragment, relay identity, or device identifier, and `session_subscribe` is not
-available to it. The worker knows only what it already knew from its own
-authenticated channel: which of the product's contacts is calling.
-
-Two prerequisites are missing from TrUAPI and belong to a separate wake-contract
-RFC, with getcash as prior art: a Worker Lifecycle reference holder for a remote
-message addressed to a product (the current table has none — Chat's holder is
-the host's chat modality, not a product's own channel, and the RFC states a
-worker has "no way to do background work of its own" and drops always-on
-workers), and a standard keep-alive operation plus wake event. This API works
-without both: a call reaches a product with a surface open, and gains background
-ringing when that contract lands.
+- RFC document: #TBD
+- Background delivery to a product that is not running:
+  `docs/rfcs/0030-statement-routes-and-wake.md`
+- Existing realtime engine and TURN deployment: Epoca
 
 ## Tasks
 
 - [ ] RFC document body — #TBD
 - [ ] RFC review and acceptance
-- [ ] `Media` trait, versioned types, and wire-id allocation
-- [ ] Dispatcher and generated client surfaces
-- [ ] Session lifecycle, ownership, and consent in `truapi-server`
-- [ ] Signalling sealing and its tamper/replay tests
-- [ ] Compositing contract for host-drawn tracks, including clamping rules
-- [ ] Audio-route and device-state reporting contract
+- [ ] `Media` service definition, versioned types, wire ids
+- [ ] Dispatcher and generated clients
+- [ ] Session lifecycle, ownership, consent
+- [ ] Signalling sealing, key rotation and revocation
+- [ ] Video compositing contract, including clamping rules
+- [ ] Audio-route and device-state contract
 - [ ] Privacy conformance fixtures
-- [ ] PolkaVM product client wrappers
-- [ ] Reference product flow: call invitation, accept, decline, end over an
-      existing authenticated channel
+- [ ] Product client wrappers
+- [ ] Reference flow: invite, accept, decline, end
+- [ ] Decide where the engine binding lives: a trait each Host implements, or
+      shared Host code
+- [ ] Decide whether an audio-only call may start without a visible surface
 - [ ] Host adoption
   - [ ] Epoca
   - [ ] dotli-community
   - [ ] iOS
   - [ ] Android
-- [ ] Follow-up RFC: wake contract for remote-initiated delivery — inbound
-      reference holder, keep-alive operation, wake event
-- [ ] Decide whether an audio-only session may be created by a worker
