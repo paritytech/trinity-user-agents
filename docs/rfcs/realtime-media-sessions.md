@@ -61,7 +61,10 @@ a second one.
 ### Service
 
 `create_session` says which local tracks to send — microphone, camera, screen,
-or none of them — and returns the session id. It connects nothing on its own.
+or none of them — and returns the session id. It connects nothing on its own,
+and needs no visible surface: audio connects while the product is still opening,
+so a background worker can answer a call and the picture arrives when there is
+somewhere to draw it.
 
 `add_participant` names one peer and returns a participant handle. The host
 reaches that peer over the statement store; answering an incoming call names the
@@ -75,8 +78,6 @@ inviting another. `remove_participant` drops one peer without ending the call.
 - participants joining and leaving, and which tracks each is sending;
 - an incoming call the host has been offered, for the product to accept or
   refuse;
-- a coarse quality level, never a bitrate, round-trip time, candidate, or
-  address;
 - whether the microphone and each picture are actually live, and what the host
   chose: earpiece, speaker, or a headset; front or rear camera. None of that is
   what the product asked for — a withdrawn permission, another app taking the
@@ -93,9 +94,10 @@ Devices belong to the host: which microphone and camera, gain, echo
 cancellation, routing, and the in-call affordance for switching them. A product
 preference stays a preference — the host may ignore it and the OS may override
 it the moment a headset appears. The product is told the kind of device in use,
-which is what a call UI needs, and never a name, model, or list. There is no
-statistics call either: candidate pairs carry the addresses this design keeps
-out of products.
+which is what a call UI needs, and never a name, model, or list. Nothing
+reports bitrates, round-trip times, candidates, or addresses: a product cannot
+act on them, and candidate pairs carry exactly what this design keeps out of
+product code.
 
 ### The host draws the pictures
 
@@ -111,10 +113,12 @@ and a rectangle is a request the host may clamp to what is actually visible.
 
 ### Permission and control
 
-Calling is one permission, asked once and remembered, like every other in
-[RFC 0002](0002-permission-model.md). A host may offer to allow a single call
-instead of remembering, which is prompt behaviour rather than a second kind of
-grant. Microphone and camera capture keep using the existing `Camera` and
+Calling is its own permission, asked once and remembered, like every other in
+[RFC 0002](0002-permission-model.md). It is not `RemotePermission::WebRtc`,
+whose grant is resolved at load time so a browser realm can be locked down
+before page script runs; that timing is browser-specific and says nothing about
+a product placing a call. A host may offer to allow a single call instead of
+remembering, which is prompt behaviour rather than a second kind of grant. Microphone and camera capture keep using the existing `Camera` and
 `Microphone` permissions; screen capture is not a device permission, because the
 host runs its own picker, so the user chooses what is shared and the product
 never names a window or a display.
@@ -163,8 +167,8 @@ product that is already open.
 - Signalling over the statement store ties calling to it, and a product cannot
   interoperate with an outside endpoint that expects to exchange session
   descriptions itself.
-- No statistics call, so a product cannot diagnose a bad call beyond the coarse
-  quality level.
+- Nothing reports call quality, so a product cannot tell a user their
+  connection is poor. Adding a coarse signal later breaks nothing.
 - Recording and product-chosen codecs are out; each needs its own consent
   story.
 - Group calls work without a server, but not at arbitrary size. A host that
@@ -176,11 +180,6 @@ product that is already open.
 
 ## Open questions
 
-- Does calling reuse `RemotePermission::WebRtc`, whose grant is resolved at load
-  time for the browser case, or does it need its own permission with ordinary
-  prompt-once semantics?
-- May a call start without a visible surface, so audio can connect while the
-  product is still opening? That would let a background worker begin an
-  audio-only call.
-- Is a coarse quality level worth sending at all, given a product cannot act on
-  the reason behind it?
+- How large a group call should a host attempt before refusing? Mesh stops being
+  reasonable somewhere, and the answer decides whether a product can offer a
+  group call button at all.
