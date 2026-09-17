@@ -28,9 +28,10 @@ how the call is doing. A product never receives media, and never learns any
 participant's network address.
 
 Calls between more than two people are allowed, without this work prescribing
-how. No new server infrastructure is in scope. Screen sharing and recording are
-out. A product that is not running cannot yet be woken for an incoming call;
-that is tracked separately.
+how. A small group call needs no new server, and none is in scope; large calls
+would need infrastructure this work does not cover. Screen sharing and
+recording are out. A product that is not running cannot yet be woken for an
+incoming call; that is tracked separately.
 
 ## Requirements
 
@@ -40,14 +41,32 @@ that is tracked separately.
 - The Host draws each participant's video into rectangles the product names, at
   a depth the product chooses.
 - Camera and microphone use the existing device permissions.
-- A call needs an explicit user decision before it reaches the network, and ends
-  when the user withdraws camera or microphone access.
+- Starting a call, joining one, or answering an invitation each take an explicit
+  user decision before anything reaches the network. Adding a further person to
+  a call the user is already in does not ask again.
+- A call ends when the user withdraws camera or microphone access.
+- Participants are Host-minted handles. The Host is never told a product's own
+  contact identities.
 - Whether a call connects directly or through a relay is the Host's choice and
   invisible to the product.
 - A Host that cannot provide the whole stack reports the service as unsupported
   rather than working partially.
 - The product keeps what it already owns: who may call whom, peer identity,
   ringing and decline, and call history.
+
+## Service surface
+
+| Method | Purpose |
+| --- | --- |
+| `create_session` | declare local tracks, take the user decision, mint a session |
+| `add_participant` | invite a peer, or answer an invitation; returns a handle |
+| `remove_participant` | drop one peer without ending the call |
+| `deliver_signalling` | feed a received signalling message in |
+| `session_subscribe` | signalling out, state, participants, tracks, quality, live devices |
+| `set_local_tracks` | mute the microphone, enable, disable, or flip the camera |
+| `set_audio_route` | earpiece, speaker, or system |
+| `set_surfaces` | replace the whole set of video rectangles atomically |
+| `end_session` | hang up on everyone; idempotent |
 
 ## Core implementation scope
 

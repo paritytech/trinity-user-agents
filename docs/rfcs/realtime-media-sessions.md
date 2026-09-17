@@ -59,10 +59,17 @@ rectangle, the corner radius, and the depth relative to its own content.
 
 ### Service
 
-Seven methods. `create_session` states the direction, which local tracks to
-send, and for an answer the invitation being answered; it prompts the user and
-returns the session id. `session_subscribe` streams everything the product needs
-to know:
+`create_session` says which local tracks to send, prompts the user, and returns
+the session id. It connects nothing on its own.
+
+`add_participant` adds one peer. Given an invitation the product received, the
+host answers it; given none, the host produces an invitation for the product to
+deliver. Either way it returns a participant handle, so offering and answering
+are per participant rather than per call — in a group call a product may be
+answering one peer while inviting another. `remove_participant` drops one peer
+without ending the call.
+
+`session_subscribe` streams everything the product needs to know:
 
 - signalling to deliver, per participant;
 - session state — negotiating, connecting, connected, reconnecting, ended;
@@ -76,7 +83,8 @@ to know:
 microphone and enables, disables, or flips the camera. `set_audio_route` picks
 earpiece, speaker, or system, and loses to anything the OS routes itself.
 `set_surfaces` replaces the whole rectangle set at once, so a layout change is
-atomic. `end_session` hangs up, is idempotent, and is always allowed.
+atomic. `end_session` hangs up on everyone, is idempotent, and is always
+allowed.
 
 ### The host draws the video
 
@@ -99,8 +107,9 @@ permission. Beyond that:
 
 - Connecting exposes the user's address to the other participants, so a call
   needs an explicit decision before the first signalling message leaves the
-  device, and being added to someone else's call needs one too. Neither is a
-  blanket grant.
+  device. Starting a call, joining one, and answering an invitation all go
+  through `create_session`, so all three take that decision; inviting a further
+  peer into a call the user is already in does not ask again.
 - Withdrawing camera or microphone access ends the session.
 - The host may show its own call indicator, which a product cannot suppress —
   including by placing every rectangle out of view.
@@ -113,8 +122,8 @@ the product cannot request, detect, or override; a host whose users should not
 reveal their location to their contacts relays by default.
 
 Group calls are allowed and deliberately unspecified: participants are a set,
-and how the host connects them is its own business. No new server is required
-for a small call, and none is proposed here.
+and how the host connects them is its own business. A small call needs no new
+server, and none is proposed here.
 
 ### Incoming calls
 
