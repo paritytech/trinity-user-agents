@@ -21,21 +21,17 @@ handles, not transport detail.
 
 ## Motivation
 
-A user cannot make a call from a product. No host service carries real-time
-audio or video, so a messaging product can show a contact and exchange messages
-with them, and still cannot start a voice or video call with them.
+A product has no way to make a call without running the WebRTC stack in its own
+code. No host service carries real-time audio or video, so a web product must
+drive `RTCPeerConnection` itself — `RemotePermission::WebRtc` ungates it — and
+every other kind of product cannot make a call at all.
 
-The only way to do it today is for the product to drive WebRTC itself. A web
-product can: `RemotePermission::WebRtc` ungates the sandbox's own
-`RTCPeerConnection`. The camera and microphone feed and every participant's
-network address then pass through product code. Every other kind of product has
-no route at all.
-
-Capture devices, hardware codecs, the audio session, and the OS prompts are
-host-owned, so a product cannot do this well. A media stack inside a product
-defeats the device permissions that exist to keep frames out of it. And one
-stack per product means one set of bugs per product, with no single place for
-the user to see or stop a call.
+Running it in product code is the wrong place for it. The camera and microphone
+feed and every participant's network address pass through the product, defeating
+the device permissions that exist to keep them out. The capture devices, the
+hardware codecs and the audio session are host-owned, so the product is fighting
+for things it does not control. And each product that tries ends up with its own
+stack, its own bugs, and no single place for the user to see or stop a call.
 
 ## Approach
 
@@ -46,8 +42,7 @@ product that created it, and holds one or more remote **participants**. A
 participant is a host-minted handle, meaningless outside its session: enough to
 say which peer a signalling message is for, whose tracks arrived, and whose
 picture a rectangle draws. The host is told no product-side identity, and the
-product keeps its own mapping from handle to contact. Nothing in the transport
-needs to know who anyone is.
+product keeps its own mapping from handle to contact.
 
 A **signalling message** is an opaque, host-sealed byte string, addressed to one
 participant. The host emits them, the product delivers them over its own
@@ -114,8 +109,7 @@ list: those would be a fingerprinting surface for no gain.
 The product sends rectangles and never receives frames. Every host already
 composites the product's own surface — a canvas, a web view, a native view — so
 a picture layer is a sibling it positions from the rectangles the product gave
-it.
-Nothing here depends on how the product renders.
+it. Nothing here depends on how the product renders.
 
 The alternative, handing decoded frames to the product as textures, is rejected:
 it puts camera output inside the product, and it copies every frame across the
