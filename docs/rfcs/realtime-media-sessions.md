@@ -33,9 +33,12 @@ the user to see or stop a call.
 ### Concepts
 
 A **session** is one call. It has a host-minted `MediaSessionId`, belongs to the
-product that created it, and holds one or more remote **participants**. The
-product names participants with its own identifiers; the host never resolves
-them to anything.
+product that created it, and holds one or more remote **participants**. A
+participant is a host-minted handle, meaningless outside its session: enough to
+say which peer a signalling message is for, whose tracks arrived, and whose
+video a rectangle draws. The host is told no product-side identity, and the
+product keeps its own mapping from handle to contact. Nothing in the transport
+needs to know who anyone is.
 
 A **signalling message** is an opaque, host-sealed byte string, addressed to one
 participant. The host emits them, the product delivers them over its own
