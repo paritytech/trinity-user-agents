@@ -27,3 +27,4 @@ created: 2026-03-13
 | 0023   | [sr25519 VRF signing for product accounts](0023-account-sign-vrf.md)                                     | draft    | Valentin Sergeev  | —                                                               |
 | 0026   | [Host chain discovery and name resolution](0026-supported-chains.md)                                     | draft    | Valentin Fernandez | [#354](https://github.com/paritytech/trinity-user-agents/pull/354)          |
 | 0027   | [Wire Message Type: An Explicit Byte for Trait, Method, and Leg](0027-wire-message-type-byte.md)         | draft    | Nidish            | [#357](https://github.com/paritytech/trinity-user-agents/pull/357)  |
+| 0029   | [Realtime Media Sessions for Products](0029-realtime-media-sessions.md)                                  | draft    | @replghost        | —                                                               |
