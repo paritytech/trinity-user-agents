@@ -6,45 +6,24 @@
 **Source RFC:** #TBD · `docs/rfcs/realtime-media-sessions.md`
 **Core implementation:** #TBD
 
-## Problem
+## Summary
 
-A user cannot make a call from a product. A messaging product can show a contact
-and exchange messages with them, but cannot start a voice or video call with
-them, because no Host service carries real-time audio or video.
+A `Media` service that lets a product run an audio or video call without
+implementing, embedding, or observing any realtime transport. The Host owns the
+connections, the capture devices, the codecs, the audio route, and the video on
+screen. The product carries opaque signalling over a channel it already has,
+says where each participant's video belongs, and is told how the call is going.
 
-The only way to do it today is for the product to drive WebRTC itself. That is
-possible for a web product, since the browser engine is there, but it puts the
-camera and microphone feed and both sides' network addresses inside product
-code. Every other kind of product has no route at all.
-
-Left there, each product that wants calls builds its own, users trust a
-different implementation every time, and the Host has no way to show that a call
-is running or to stop it.
-
-## Goal
-
-One `Media` service, implemented once, that any product can use to run an audio
-or video call between two or more people, with the Host keeping everything
-sensitive.
-
-The Host owns the connection, the camera and microphone, the codecs, the audio
-route, and the video on screen. The product says who is on the call over a
-channel it already has, says where each participant's video goes, and is told
-how the call is doing. A product never receives media, and never learns any
-participant's network address.
-
-Calls between more than two people are allowed, without this work prescribing
-how. A small group call needs no new server, and none is in scope; large calls
-would need infrastructure this work does not cover. Screen sharing and
-recording are out. A product that is not running cannot yet be woken for an
-incoming call; that is tracked separately.
+This is the tracking issue for the implementation. The first implementation is
+WebRTC, with the Host running the peer connections; the service itself names no
+transport, so another can be added later without changing products.
 
 ## Requirements
 
 - No media reaches a product: no frames, no tracks, no device handles.
 - Signalling is sealed by the Host. A product learns no session detail and no
   participant's address.
-- The Host draws each participant's video into rectangles the product names, at
+- The Host draws each participant's video into rectangles the product places, at
   a depth the product chooses.
 - Camera and microphone use the existing device permissions.
 - Starting a call, joining one, or answering an invitation each take an explicit
@@ -57,6 +36,11 @@ incoming call; that is tracked separately.
   invisible to the product.
 - A Host that cannot provide the whole stack reports the service as unsupported
   rather than working partially.
+- Calls between more than two people are allowed. A small group call needs no
+  new server, and none is in scope; large calls would need infrastructure this
+  work does not cover.
+- Screen sharing, recording, and product-chosen codecs are out of scope, as is
+  waking a product that is not running for an incoming call.
 - The product keeps what it already owns: who may call whom, peer identity,
   ringing and decline, and call history.
 
@@ -81,10 +65,11 @@ incoming call; that is tracked separately.
 - Session lifecycle, participants joining and leaving, ownership, consent, and
   teardown on permission withdrawal.
 - Signalling sealing, including key rotation and revocation.
-- Host engine binding: capture, echo cancellation, audio session, connectivity
-  with Host-minted relay credentials, and video compositing.
+- Host WebRTC binding: peer connections, capture, echo cancellation, audio
+  session, connectivity with Host-minted relay credentials, and video
+  compositing.
 - Conformance fixtures for the privacy guarantees, not only a working call.
-- Reference product flow: invite, accept, decline, end.
+- Reference product flow: invite, accept, end.
 
 ## Implementation references
 
@@ -103,8 +88,8 @@ incoming call; that is tracked separately.
 - [ ] Audio-route and device-state contract
 - [ ] Privacy conformance fixtures
 - [ ] Product client wrappers
-- [ ] Reference flow: invite, accept, decline, end
-- [ ] Decide where the engine binding lives: a trait each Host implements, or
+- [ ] Reference flow: invite, accept, end
+- [ ] Decide where the WebRTC binding lives: a trait each Host implements, or
       shared Host code
 - [ ] Decide whether an audio-only call may start without a visible surface
 - [ ] Host adoption
