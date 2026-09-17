@@ -89,8 +89,7 @@ incoming call; that is tracked separately.
 ## Implementation references
 
 - RFC document: #TBD
-- Background delivery to a product that is not running:
-  `docs/rfcs/statement-routes-and-wake.md`
+- Background delivery to a product that is not running: handled separately
 
 ## Tasks
 

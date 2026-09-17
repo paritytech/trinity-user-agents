@@ -144,9 +144,9 @@ to the media key, so the worker forwards bytes it cannot open, and no call hands
 it an address, a candidate, or a device identifier. It learns only what it knew
 already — which of its own contacts is calling.
 
-Waking a product that is not running is a separate, media-neutral problem, and
-belongs to [Statement Routes and Product Wake](statement-routes-and-wake.md). An
-invitation is then one message on one route. Until that lands, a call reaches a
+Waking a product that is not running is out of scope here. It is a
+media-neutral problem — every product that reacts to a remote event needs the
+same thing — and will be dealt with separately. Until then, a call reaches a
 product that is already open.
 
 ## Trade-offs
