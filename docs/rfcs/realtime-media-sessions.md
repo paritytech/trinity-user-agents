@@ -16,9 +16,9 @@ says where each participant's video belongs, and is told how the call is going.
 
 ## Motivation
 
-A product cannot call anyone. No host service carries a live call, so a
-messaging product can hold a conversation with a contact and still have no way
-to turn it into a voice or video call.
+A user cannot make a call from a product. No host service carries a live call,
+so a messaging product can carry a conversation with a contact and still not be
+able to offer to ring that contact.
 
 The only way to do it today is for the product to drive WebRTC itself. A web
 product can: `RemotePermission::WebRtc` ungates the sandbox's own
