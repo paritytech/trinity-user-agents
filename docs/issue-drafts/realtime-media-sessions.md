@@ -3,16 +3,17 @@
 > Tracking-issue draft. File with labels `enhancement`, `rfc`. Fill in the RFC
 > and implementation PR numbers once they exist.
 
-**Source RFC:** #TBD · `docs/rfcs/realtime-media-sessions.md`
-**Core implementation:** #TBD
+**Source RFC:** to follow
+**Core implementation:** to follow
 
 ## Summary
 
-A `Media` service that lets a product run an audio or video call without
-implementing, embedding, or observing any realtime transport. The Host owns the
-connections, the capture devices, the codecs, the audio route, and the video on
-screen. The product carries opaque signalling over a channel it already has,
-says where each participant's video belongs, and is told how the call is going.
+A `Media` service that lets a product run an audio or video call, with screen
+sharing, without implementing, embedding, or observing any realtime transport.
+The Host owns the connections, the capture devices, the codecs, the audio route,
+and the pictures on screen. The product carries opaque signalling over a channel
+it already has, says where each participant's picture belongs, and is told how
+the call is going.
 
 This is the tracking issue for the implementation. The first implementation is
 WebRTC, with the Host running the peer connections. Nothing a product sees says
@@ -23,10 +24,12 @@ so: it handles sealed messages and Host-minted handles, not transport detail.
 - No media reaches a product: no frames, no tracks, no device handles.
 - Signalling is sealed by the Host. A product learns no session detail and no
   participant's address.
-- A call may be audio only. Video is optional per participant and per
-  direction, and a product places rectangles only for participants sending it.
-- The Host draws each participant's video into rectangles the product places, at
-  a depth the product chooses.
+- A call may be audio only. Camera and screen sharing are optional per
+  participant and per direction.
+- The Host draws each incoming picture — a participant's camera or their shared
+  screen — into rectangles the product places, at a depth the product chooses.
+- Screen sharing goes through the Host's own picker, so the user chooses what is
+  shared and the product never names a window or a display.
 - Camera and microphone use the existing device permissions.
 - Starting a call, joining one, or answering an invitation each take an explicit
   user decision before anything reaches the network. Adding a further person to
@@ -41,8 +44,8 @@ so: it handles sealed messages and Host-minted handles, not transport detail.
 - Calls between more than two people are allowed. A small group call needs no
   new server, and none is in scope; large calls would need infrastructure this
   work does not cover.
-- Screen sharing, recording, and product-chosen codecs are out of scope, as is
-  waking a product that is not running for an incoming call.
+- Recording and product-chosen codecs are out of scope, as is waking a product
+  that is not running for an incoming call.
 - The product keeps what it already owns: who may call whom, peer identity,
   ringing and decline, and call history.
 
@@ -55,9 +58,9 @@ so: it handles sealed messages and Host-minted handles, not transport detail.
 | `remove_participant` | drop one peer without ending the call |
 | `deliver_signalling` | feed a received signalling message in |
 | `session_subscribe` | signalling out, state, participants, tracks, quality, live devices |
-| `set_local_tracks` | mute the microphone, enable, disable, or flip the camera |
+| `set_local_tracks` | mute the microphone, enable, disable, or flip the camera, start or stop screen sharing |
 | `set_audio_route` | earpiece, speaker, or system |
-| `set_surfaces` | replace the whole set of video rectangles atomically |
+| `set_surfaces` | replace the whole set of picture rectangles atomically |
 | `end_session` | hang up on everyone; idempotent |
 
 ## Core implementation scope
@@ -67,41 +70,43 @@ so: it handles sealed messages and Host-minted handles, not transport detail.
 - Session lifecycle, participants joining and leaving, ownership, consent, and
   teardown on permission withdrawal.
 - Signalling sealing, including key rotation and revocation.
-- Host WebRTC binding: peer connections, capture, echo cancellation, audio
-  session, connectivity with Host-minted relay credentials, and video
-  compositing.
+- Host WebRTC binding: peer connections, capture including the screen picker,
+  echo cancellation, audio session, connectivity with Host-minted relay
+  credentials, and compositing.
 - Conformance fixtures for the privacy guarantees, not only a working call.
 - Reference product flow: invite, accept, end.
 
 ## Implementation references
 
-- RFC document: #TBD
+- RFC document: to follow
 - Background delivery to a product that is not running: handled separately
 
 ## Target products
 
 - DIM2, as an SPA
 - Chat, as an SPA
-- T3ams, for audio and video calling
-- Meet
+- T3ams, for audio and video calling with screen sharing
+- Meet, including screen sharing
 - any other product needing peer-to-peer audio, video, or sharing
 
 ## Tasks
 
-- [ ] RFC document body — #TBD
+- [ ] RFC document body
 - [ ] RFC review and acceptance
 - [ ] `Media` service definition, versioned types, wire ids
 - [ ] Dispatcher and generated clients
 - [ ] Session lifecycle, ownership, consent
 - [ ] Signalling sealing, key rotation and revocation
-- [ ] Video compositing contract, including clamping rules
+- [ ] Compositing contract for cameras and shared screens, including clamping
+      rules
 - [ ] Audio-route and device-state contract
 - [ ] Privacy conformance fixtures
 - [ ] Product client wrappers
 - [ ] Reference flow: invite, accept, end
 - [ ] Decide where the WebRTC binding lives: a trait each Host implements, or
       shared Host code
-- [ ] Decide whether an audio-only call may start without a visible surface
+- [ ] Decide whether a background worker may start an audio-only call before
+      the product's surface is open
 - [ ] Host adoption
   - [ ] Epoca
   - [ ] dotli-community

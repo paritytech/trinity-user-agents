@@ -8,11 +8,12 @@ status: draft
 
 ## Summary
 
-A `Media` service that lets a product run an audio or video call without
-implementing, embedding, or observing any realtime transport. The host owns the
-connections, the capture devices, the codecs, the audio route, and the video on
-screen. The product carries opaque signalling over a channel it already has,
-says where each participant's video belongs, and is told how the call is going.
+A `Media` service that lets a product run an audio or video call, with screen
+sharing, without implementing, embedding, or observing any realtime transport.
+The host owns the connections, the capture devices, the codecs, the audio route,
+and the pictures on screen. The product carries opaque signalling over a channel
+it already has, says where each participant's picture belongs, and is told how
+the call is going.
 
 The first implementation is WebRTC, with the host running the peer connections.
 Nothing a product sees says so: it handles sealed messages and host-minted
@@ -61,17 +62,19 @@ when the call is answered. Later messages use a per-session key the host derives
 during negotiation. Tampering or replay fails the session rather than disclosing
 anything.
 
-A **surface rectangle** places one participant's video, in the coordinates of
-whatever surface the product already draws into. The product chooses the
-rectangle, the corner radius, and the depth relative to its own content. A call
-with no video needs none: audio-only calls are ordinary, video is optional per
-participant and per direction, and a product places a rectangle only for a
-participant actually sending video.
+A **surface rectangle** places one incoming picture — a participant's camera or
+their shared screen — in the coordinates of whatever surface the product already
+draws into. The product chooses the rectangle, the corner radius, and the depth
+relative to its own content. A call with no pictures needs none: audio-only
+calls are ordinary, camera and screen are optional per participant and per
+direction, and a product places a rectangle only for a picture actually
+arriving.
 
 ### Service
 
-`create_session` says which local tracks to send, prompts the user, and returns
-the session id. It connects nothing on its own.
+`create_session` says which local tracks to send — microphone, camera, screen,
+or none of them — prompts the user, and returns the session id. It connects
+nothing on its own.
 
 `add_participant` adds one peer. Given an invitation the product received, the
 host answers it; given none, the host produces an invitation for the product to
@@ -91,13 +94,14 @@ without ending the call.
   changes it unprompted.
 
 `deliver_signalling` feeds a received message in. `set_local_tracks` mutes the
-microphone and enables, disables, or flips the camera. `set_audio_route` picks
-earpiece, speaker, or system, and loses to anything the OS routes itself.
+microphone, enables, disables, or flips the camera, and starts or stops sharing
+the screen. `set_audio_route` picks earpiece, speaker, or system, and loses to
+anything the OS routes itself.
 `set_surfaces` replaces the whole rectangle set at once, so a layout change is
 atomic. `end_session` hangs up on everyone, is idempotent, and is always
 allowed.
 
-### The host draws the video
+### The host draws the pictures
 
 The product sends rectangles and never receives frames. Every host already
 composites the product's own surface — a canvas, a web view, a native view — so
@@ -114,14 +118,17 @@ and a rectangle is a request the host may clamp to what is actually visible.
 ### Consent and addresses
 
 Capture uses the existing `Camera` and `Microphone` permissions; no new device
-permission. Beyond that:
+permission. Screen sharing goes through the host's own picker, so the user
+chooses what is shared and the product never names a window or a display.
+Beyond that:
 
 - Connecting exposes the user's address to the other participants, so a call
   needs an explicit decision before the first signalling message leaves the
   device. Starting a call, joining one, and answering an invitation all go
   through `create_session`, so all three take that decision; inviting a further
   peer into a call the user is already in does not ask again.
-- Withdrawing camera or microphone access ends the session.
+- Withdrawing camera or microphone access ends the session. Ending a screen
+  share stops that track and leaves the call running.
 - The host may show its own call indicator, which a product cannot suppress —
   including by placing every rectangle out of view.
 
@@ -161,8 +168,8 @@ product that is already open.
 - Products cannot touch call media. That is the point, and it forecloses
   product-drawn effects and overlays on video.
 - Opaque signalling means no interoperability with a third-party dialect.
-- Screen sharing, recording, and product-chosen codecs are out; each needs its
-  own consent story.
+- Recording and product-chosen codecs are out; each needs its own consent
+  story.
 - A host must supply the whole stack — engine, capture, echo cancellation, audio
   session, connectivity, compositing — or report the service unsupported. There
   is no partial mode.
