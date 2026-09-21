@@ -44,6 +44,9 @@ export type {
   SubscriptionName,
 } from "./generated/worker-callbacks.js";
 
+/** Shared cap includes connections still opening or closing during an open. */
+export const MAX_JSON_RPC_CONNECTIONS = 64;
+
 /**
  * Positional arguments for a callback. The wasm core calls each callback
  * at a fixed arity; a uniform `unknown[]` keeps the wire protocol simple.
@@ -94,7 +97,7 @@ export type MainToWorker =
        */
       role?: HostRole;
     }
-  | { kind: "createCore"; coreId: number; product: unknown }
+  | { kind: "createCore"; coreId: number; product: unknown; capabilities?: OptionalCapabilities }
   | { kind: "disposeCore"; coreId: number }
   | { kind: "setLogLevel"; level: LogLevel }
   | { kind: "frame"; coreId: number; bytes: Uint8Array }
@@ -215,6 +218,7 @@ export type MainToWorker =
   | { kind: "chainConnectAck"; connId: number; ok: true }
   | { kind: "chainConnectAck"; connId: number; ok: false; error: string }
   | { kind: "chainResponse"; connId: number; json: string }
+  | { kind: "chainClosed"; connId: number }
   | { kind: "dispose" };
 
 /**
@@ -385,17 +389,25 @@ export type WorkerToMain =
   | {
       kind: "callbackRequest";
       requestId: number;
+      coreId?: number;
       name: CallbackName;
       args: CallbackArgs;
     }
   | {
       kind: "subscriptionStart";
       subId: number;
+      coreId?: number;
       name: SubscriptionName;
       payload: Uint8Array | string | null;
     }
   | { kind: "subscriptionStop"; subId: number }
   | { kind: "chainConnectStart"; connId: number; genesisHash: string }
+  | {
+      kind: "hopConnectStart";
+      connId: number;
+      genesisHash: string;
+      endpoint: string;
+    }
   | { kind: "chainSend"; connId: number; request: string }
   | { kind: "chainClose"; connId: number };
 

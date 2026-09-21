@@ -19,6 +19,23 @@ The shipped WASM includes `WasmSigningHostRuntime`. Its configuration requires
 `runtimeConfig.networkSuffix`: the bare TLD (`dot`, `paseo`, or `testnet`)
 matching the People chain and the wallet's onboarding configuration.
 
+Signing hosts using instance-scoped Coinage must also supply
+`runtimeConfig.coinageInstanceId` (or `hostConfig.coinageInstanceId` in the worker
+factory) from trusted host/network configuration. It is an integer from `0`
+through `4294967295`, including zero; strings, fractions and out-of-range values
+are rejected. Omission preserves legacy Coinage support, but Coinage operations
+on an instance-scoped runtime fail closed without it. This asset instance is
+not a purse derivation identifier and is never selected by guest product code.
+
+`runtimeConfig.assetHub` is required by both configurations, pairing and
+signing. It is the Asset Hub genesis hash, in the same shape as
+`runtimeConfig.people` and `runtimeConfig.bulletin`. Product manifests are read
+from the dotNS contracts deployed there, so it is what makes a
+`trustedProducts` grant resolvable: without a usable value no manifest resolves,
+so every cross-product grant not already cached is refused, and the refusal is
+indistinguishable from the other product having granted nothing. A config
+omitting it is rejected.
+
 When a product requests a Statement Store allowance, the signing runtime first
 uses `confirmUserAction` for host-owned approval UI, then registers the
 product-scoped allowance account through the platform's People-chain
@@ -306,6 +323,24 @@ const secondProvider = await runtime.createProvider({
 `@parity/truapi-host/web` also exports `createIframeHost` for the
 protocol-iframe MessageChannel handshake. Host code creates one worker runtime
 and then opens one provider per product id.
+
+When UI callbacks capture a product label, pass that product's typed callbacks
+as the second argument to `runtime.createProvider(product, callbacks)`. The
+worker routes these callbacks to that execution without replacing the shared
+signing authority, main purse, native Chat actors, or private core storage.
+Disposing a provider does not dispose the owner runtime. A signing host must
+keep one owner alive for background reception, and must not run independent
+signing runtimes against the same purse inventory.
+
+`createBrowserNativeChatFilesHost(sourceStore?)` accepts an optional
+`BrowserNativeChatFileSourceStore` with `putSources`, `readSource` and
+`releaseSource`. Use it when core custody spans host origins: immutable file
+sources must remain reachable wherever the persisted actor is restored.
+`putSources` must commit all supplied Blob snapshots durably before resolving;
+`readSource` returns that snapshot, not a mutable filesystem reference.
+Picker/export consent and bounded reads remain in the SDK. The default source
+store is origin-local IndexedDB with private immutable Blobs, not application
+encryption at rest. An embedder owns disposal of a file host it supplies.
 
 ## Session lifecycle
 

@@ -1,7 +1,7 @@
 //! Versioned wrappers for [`Account`](crate::api::Account) methods.
 use alloc::vec::Vec;
 
-use crate::v01;
+use crate::{v01, v02};
 
 truapi_macros::versioned_type! {
     pub enum HostAccountGetRequest { V1 => v01::HostAccountGetRequest }
@@ -35,7 +35,15 @@ truapi_macros::versioned_type! {
     pub enum HostGetUserIdRequest { V1 }
     pub enum HostGetUserIdResponse { V1 => v01::HostGetUserIdResponse }
     pub enum HostGetUserIdError { V1 => v01::HostGetUserIdError }
-    pub enum HostProductDeviceChatRequest { V1 => v01::HostProductDeviceChatRequest }
-    pub enum HostProductDeviceChatResponse { V1 => v01::HostProductDeviceChatResponse }
-    pub enum HostProductDeviceChatError { V1 => v01::HostProductDeviceChatError }
+    pub enum HostProductDeviceChatRequest { V1 => v02::HostProductDeviceChatRequest }
+    pub enum HostProductDeviceChatResponse { V1 => v02::HostProductDeviceChatResponse }
+    pub enum HostProductDeviceChatError { V1 => v02::HostProductDeviceChatError }
+}
+
+impl core::fmt::Display for HostProductDeviceChatError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::V1(error) => core::fmt::Display::fmt(error, f),
+        }
+    }
 }

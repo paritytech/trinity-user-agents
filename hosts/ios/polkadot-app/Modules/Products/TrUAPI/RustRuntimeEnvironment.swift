@@ -87,10 +87,8 @@ private extension RustRuntimeEnvironment {
         routers: ProductRoutersFacadeProtocol,
         purpose: ExecutionPurpose
     ) throws -> ExecutionModel {
-        let chainConnections = TrUAPIV2SpecConnectionPool(
+        let chainConnections = TrUAPIChainConnectionPool(
             chainRegistry: chainRegistry,
-            applicationHandler: ApplicationHandler(),
-            dateProvider: NowDateProvider(),
             logger: logger
         )
 
@@ -144,6 +142,7 @@ private extension RustRuntimeEnvironment {
             productStorage: TrUAPILocalStorage.createProductLocalStorage(productId: productId),
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: routers),
+            chatFiles: TrUAPINativeChatFiles.shared,
             preimageCache: TrUAPIPreimageCache { [logger, ipfsFetcher] key in
                 do {
                     return try await ipfsFetcher.lookupBy(rawHash: key)

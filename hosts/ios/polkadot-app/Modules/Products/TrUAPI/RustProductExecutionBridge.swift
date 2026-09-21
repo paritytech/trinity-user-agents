@@ -30,6 +30,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let productStorage: TrUAPILocalStoring
         let coreStorage: TrUAPILocalStoring
         let confirmationPresenter: TrUAPIConfirmationPresenting
+        let chatFiles: NativeChatFilesHost
         let preimageCache: TrUAPIPreimageLookuping
         let hostProvider: ProductHostProviding
         let themeManager: ThemeManagerProtocol
@@ -141,6 +142,36 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         }
     }
 
+    func pickChatFiles(request: NativeChatFilePickRequest) async throws -> [NativeChatPickedFile] {
+        guard request.productId == dependencies.productId else { throw ChatFileFailure.unavailable }
+        return try await dependencies.chatFiles.pickChatFiles(request: request)
+    }
+
+    func readChatFile(sourceId: String, offset: UInt64, length: UInt32) async throws -> Data {
+        try await dependencies.chatFiles.readChatFile(sourceId: sourceId, offset: offset, length: length)
+    }
+
+    func releaseChatFile(sourceId: String) async throws {
+        try await dependencies.chatFiles.releaseChatFile(sourceId: sourceId)
+    }
+
+    func beginChatFileExport(request: NativeChatFileExportRequest) async throws -> String? {
+        guard request.productId == dependencies.productId else { throw ChatFileFailure.unavailable }
+        return try await dependencies.chatFiles.beginChatFileExport(request: request)
+    }
+
+    func writeChatFileExport(exportId: String, offset: UInt64, data: Data) async throws {
+        try await dependencies.chatFiles.writeChatFileExport(exportId: exportId, offset: offset, data: data)
+    }
+
+    func finishChatFileExport(exportId: String) async throws {
+        try await dependencies.chatFiles.finishChatFileExport(exportId: exportId)
+    }
+
+    func cancelChatFileExport(exportId: String) async throws {
+        try await dependencies.chatFiles.cancelChatFileExport(exportId: exportId)
+    }
+
     func confirmUserAction(review: UserConfirmationReview) async throws -> Bool {
         await dependencies.confirmationPresenter.confirm(review: review, from: dependencies.productId)
     }
@@ -151,6 +182,16 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     func chainConnect(genesisHash: Data) throws -> UInt32? {
         dependencies.chainConnections.connect(genesisHash: genesisHash)
+    }
+
+    func allowedHopEndpoints(bulletinGenesisHash: Data) async throws -> [String] {
+        dependencies.chainConnections.allowedHopEndpoints(bulletinGenesisHash: bulletinGenesisHash)
+    }
+
+    func hopConnect(bulletinGenesisHash: Data, endpoint: String) throws -> UInt32? {
+        try dependencies.chainConnections.hopConnect(
+            bulletinGenesisHash: bulletinGenesisHash, endpoint: endpoint
+        )
     }
 
     func chainSend(connectionId: UInt32, request: String) throws {
@@ -166,13 +207,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func currentTheme() throws -> HostThemeSubscribeItem {
-        cachedTheme.withLock { $0 }
-    }
-
-    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
-        guard let cardFace else { return .unsupported }
-
-        return await cardFace.setFaceShown(shown)
+        HostThemeSubscribeItem(name: .default, variant: .dark)
     }
 
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {

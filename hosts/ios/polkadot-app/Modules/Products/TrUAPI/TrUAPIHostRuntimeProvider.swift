@@ -129,13 +129,11 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             secret: secret,
             liteUsername: settingsManager.string(for: .username),
             networkSuffix: networkSuffix,
-            databaseDirectory: Self.coreDatabaseDirectory()
+            coinageInstanceId: AppConfig.Coinage.instanceId
         )
 
-        let chainConnections = TrUAPIV2SpecConnectionPool(
+        let chainConnections = TrUAPIChainConnectionPool(
             chainRegistry: chainRegistry,
-            applicationHandler: ApplicationHandler(),
-            dateProvider: NowDateProvider(),
             logger: logger
         )
 
@@ -144,7 +142,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             coreStorage: coreStorage,
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
-            workerManager: workerManager,
+            chatFiles: TrUAPINativeChatFiles.shared,
             logger: logger
         )
 
@@ -188,7 +186,7 @@ extension TrUAPIHostRuntimeProvider {
         secret: Data,
         liteUsername: String?,
         networkSuffix: String,
-        databaseDirectory: String
+        coinageInstanceId: UInt32
     ) throws -> HostRuntimeConfig {
         let peopleChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.peopleChain)
         let bulletinChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.bulletInChain)
@@ -224,7 +222,8 @@ extension TrUAPIHostRuntimeProvider {
             networkSuffix: networkSuffix,
             databaseDirectory: databaseDirectory,
             localSessionSecret: secret,
-            localSessionLiteUsername: liteUsername
+            localSessionLiteUsername: liteUsername,
+            coinageInstanceId: coinageInstanceId
         )
     }
 

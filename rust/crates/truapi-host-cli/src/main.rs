@@ -17,7 +17,7 @@ mod bootstrap;
 mod bulletin_lookup;
 mod chain;
 mod chat;
-mod contacts;
+mod chat_files;
 mod dotns_read;
 mod frame_server;
 #[cfg(feature = "test-host")]
@@ -378,30 +378,30 @@ impl ExecutionKind {
 
 #[derive(Args)]
 struct PairingHostArgs {
-	/// Execution kind the served product runs as. `worker` installs the CLI's
-	/// in-memory chat host; `app` leaves Chat unserved. `worker` also installs
-	/// the Pocket host when `TRUAPI_POCKET_CARDS` is set.
-	#[arg(long = "execution-kind", value_enum, default_value = "app")]
-	execution_kind: ExecutionKind,
-	/// Product script to run (JS/TS). If omitted, start the terminal UI.
-	#[arg(long)]
-	script: Option<PathBuf>,
-	/// Product id the host serves; scopes storage and product accounts.
-	#[arg(long = "product-id", default_value = DEFAULT_PRODUCT_ID)]
-	product_id: String,
-	/// TCP address to serve product WebSocket frames on. When omitted, use a
-	/// private per-process Unix-domain socket.
-	#[arg(long)]
-	frame_listen: Option<SocketAddr>,
-	/// Base directory; CLI-managed state lives in its v2 subdirectory.
-	#[arg(long = "base-path", env = "TRUAPI_HOST_BASE_PATH")]
-	base_path: Option<PathBuf>,
-	/// Network preset that supplies all RPC/backend/genesis config.
-	#[arg(long, value_enum, default_value = "paseo-next-v2")]
-	network: Network,
-	/// Approve every confirmation without prompting on the CLI.
-	#[arg(long)]
-	auto_accept: bool,
+    /// Execution kind the served product runs as. `worker` installs the CLI's
+    /// in-memory chat host; `app` leaves Chat unserved. `worker` also installs
+    /// the Pocket host when `TRUAPI_POCKET_CARDS` is set.
+    #[arg(long = "execution-kind", value_enum, default_value = "app")]
+    execution_kind: ExecutionKind,
+    /// Product script to run (JS/TS). If omitted, start the terminal UI.
+    #[arg(long)]
+    script: Option<PathBuf>,
+    /// Product id the host serves; scopes storage and product accounts.
+    #[arg(long = "product-id", default_value = DEFAULT_PRODUCT_ID)]
+    product_id: String,
+    /// TCP address to serve product WebSocket frames on. When omitted, use a
+    /// private per-process Unix-domain socket.
+    #[arg(long)]
+    frame_listen: Option<SocketAddr>,
+    /// Base directory; CLI-managed state lives in its v2 subdirectory.
+    #[arg(long = "base-path", env = "TRUAPI_HOST_BASE_PATH")]
+    base_path: Option<PathBuf>,
+    /// Network preset that supplies all RPC/backend/genesis config.
+    #[arg(long, value_enum, default_value = "paseo-next-v2")]
+    network: Network,
+    /// Automatically approve non-payment confirmations. Main-purse payments still require review.
+    #[arg(long)]
+    auto_accept: bool,
 }
 
 /// Default loopback port for the frame socket and the bridge script.
@@ -412,101 +412,110 @@ const DEFAULT_DEV_PORT: u16 = 9955;
 
 #[derive(Args)]
 struct DevArgs {
-	/// Port the wrapped development server listens on. Names the product id.
-	#[arg(long = "app-port", default_value_t = 3000)]
-	app_port: u16,
-	/// Loopback port serving product frames and the bridge script.
-	#[arg(long, default_value_t = DEFAULT_DEV_PORT)]
-	port: u16,
-	/// Product id the host serves. Defaults to the development server's own
-	/// origin, which is what a product derives for itself locally.
-	#[arg(long = "product-id")]
-	product_id: Option<String>,
-	/// Network preset that supplies all RPC/backend/genesis config.
-	#[arg(long, value_enum, default_value = "paseo-next-v2")]
-	network: Network,
-	/// Persistent signing-host session to restore or create.
-	#[arg(long)]
-	session: Option<String>,
-	/// BIP-39 mnemonic for the wallet root, to sign as an existing identity
-	/// instead of the auto-managed one. Confirmations are auto-approved here,
-	/// so the connected product can sign anything: testnet keys only.
-	#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
-	mnemonic: Option<String>,
-	/// Base directory; CLI-managed state lives in its v2 subdirectory.
-	#[arg(long = "base-path", env = "TRUAPI_HOST_BASE_PATH")]
-	base_path: Option<PathBuf>,
-	/// Local product config declaring `trustedProducts`, as the publisher will
-	/// read it. Repeat to serve a grant between two products. The grants are
-	/// applied for this run only and never reach a chain.
-	#[arg(long = "product-config")]
-	product_config: Vec<PathBuf>,
-	/// Development command to run once the host is ready, after `--`.
-	#[arg(last = true)]
-	command: Vec<String>,
+    /// Port the wrapped development server listens on. Names the product id.
+    #[arg(long = "app-port", default_value_t = 3000)]
+    app_port: u16,
+    /// Loopback port serving product frames and the bridge script.
+    #[arg(long, default_value_t = DEFAULT_DEV_PORT)]
+    port: u16,
+    /// Product id the host serves. Defaults to the development server's own
+    /// origin, which is what a product derives for itself locally.
+    #[arg(long = "product-id")]
+    product_id: Option<String>,
+    /// Network preset that supplies all RPC/backend/genesis config.
+    #[arg(long, value_enum, default_value = "paseo-next-v2")]
+    network: Network,
+    /// Trusted Coinage asset instance. Required for instance-scoped Coinage runtimes.
+    #[arg(long, env = "TRUAPI_COINAGE_INSTANCE_ID")]
+    coinage_instance_id: Option<u32>,
+    /// Persistent signing-host session to restore or create.
+    #[arg(long)]
+    session: Option<String>,
+    /// BIP-39 mnemonic for the wallet root, to sign as an existing identity
+    /// instead of the auto-managed one. Confirmations are auto-approved here,
+    /// so the connected product can sign anything: testnet keys only.
+    #[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+    mnemonic: Option<String>,
+    /// Base directory; CLI-managed state lives in its v2 subdirectory.
+    #[arg(long = "base-path", env = "TRUAPI_HOST_BASE_PATH")]
+    base_path: Option<PathBuf>,
+    /// Local product config declaring `trustedProducts`, as the publisher will
+    /// read it. Repeat to serve a grant between two products. The grants are
+    /// applied for this run only and never reach a chain.
+    #[arg(long = "product-config")]
+    product_config: Vec<PathBuf>,
+    /// Development command to run once the host is ready, after `--`.
+    #[arg(last = true)]
+    command: Vec<String>,
 }
 
 #[derive(Args, Default)]
 struct SigningHostArgs {
-	/// Execution kind the served product runs as. `worker` installs the CLI's
-	/// in-memory chat host; `app` leaves Chat unserved. `worker` also installs
-	/// the Pocket host when `TRUAPI_POCKET_CARDS` is set.
-	#[arg(long = "execution-kind", value_enum, default_value = "app")]
-	execution_kind: ExecutionKind,
-	/// Product script to run (JS/TS). If omitted, start an interactive shell.
-	#[arg(long)]
-	script: Option<PathBuf>,
-	/// Product id used by scripts and product-scoped operations.
-	#[arg(long = "product-id", default_value = DEFAULT_PRODUCT_ID)]
-	product_id: String,
-	/// Pairing deeplink to add. Managed interactive and serve sessions also
-	/// restore responders for every previously paired host.
-	#[arg(long)]
-	deeplink: Option<String>,
-	/// BIP-39 mnemonic for the wallet root. If omitted, the
-	/// `HOST_CLI_SIGNER_MNEMONIC` env var is used when set. Any mnemonic
-	/// bypasses account auto-management.
-	#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
-	mnemonic: Option<String>,
-	/// Named stored account to use. Omit this and `--mnemonic` to auto-select
-	/// or create a usable account.
-	#[arg(long)]
-	account: Option<String>,
-	/// Select the newest saved session for a username base, or the exact numbered username.
-	/// Interactive startup provisions a new base when needed; exec leaves that to its command.
-	#[arg(long)]
-	session: Option<String>,
-	/// Full-person base name a newly-created auto account reserves on dotNS
-	/// alongside its lite username, to claim later as a full person.
-	#[arg(long = "reserved-username")]
-	reserved_username: Option<String>,
-	/// Base directory; CLI-managed state lives in its v2 subdirectory.
-	#[arg(long = "base-path", env = "TRUAPI_HOST_BASE_PATH")]
-	base_path: Option<PathBuf>,
-	/// Network preset that supplies all RPC/backend/genesis config.
-	#[arg(long, value_enum, default_value = "paseo-next-v2")]
-	network: Network,
-	/// TCP address to serve product WebSocket frames on. When omitted, use a
-	/// private per-process Unix-domain socket.
-	#[arg(long)]
-	frame_listen: Option<SocketAddr>,
-	/// Approve every confirmation without prompting on the CLI.
-	#[arg(long)]
-	auto_accept: bool,
-	/// Serve product frames without a terminal UI and stay up until stopped.
-	/// Needs no TTY, so a dev server can supervise this process: the frame
-	/// endpoint and every lifecycle event are logged one line at a time, and
-	/// the signer is ready once "Signing host ready" is printed. Pair it with
-	/// `--auto-accept`, because a process with no terminal cannot prompt.
-	#[arg(long)]
-	serve: bool,
-	/// Local product config declaring `trustedProducts`, as the publisher will
-	/// read it. Repeat to serve a grant between two products.
-	#[arg(long = "product-config")]
-	product_config: Vec<PathBuf>,
-	/// Execute one slash command without starting the terminal UI.
-	#[command(subcommand)]
-	action: Option<SigningHostAction>,
+    /// Execution kind the served product runs as. `worker` installs the CLI's
+    /// in-memory chat host; `app` leaves Chat unserved. `worker` also installs
+    /// the Pocket host when `TRUAPI_POCKET_CARDS` is set.
+    #[arg(long = "execution-kind", value_enum, default_value = "app")]
+    execution_kind: ExecutionKind,
+    /// Product script to run (JS/TS). If omitted, start an interactive shell.
+    #[arg(long)]
+    script: Option<PathBuf>,
+    /// Product id used by scripts and product-scoped operations.
+    #[arg(long = "product-id", default_value = DEFAULT_PRODUCT_ID)]
+    product_id: String,
+    /// Pairing deeplink to add. Managed interactive and serve sessions also
+    /// restore responders for every previously paired host.
+    #[arg(long)]
+    deeplink: Option<String>,
+    /// BIP-39 mnemonic for the wallet root. If omitted, the
+    /// `HOST_CLI_SIGNER_MNEMONIC` env var is used when set. Any mnemonic
+    /// bypasses account auto-management.
+    #[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+    mnemonic: Option<String>,
+    /// Named stored account to use. Omit this and `--mnemonic` to auto-select
+    /// or create a usable account.
+    #[arg(long)]
+    account: Option<String>,
+    /// Persistent signing-host session to restore or create.
+    #[arg(long)]
+    session: Option<String>,
+    /// Prefix for newly-created lite usernames in auto-account mode.
+    #[arg(long = "lite-username-prefix")]
+    lite_username_prefix: Option<String>,
+    /// Full-person base name a newly-created auto account reserves on dotNS
+    /// alongside its lite username, to claim later as a full person.
+    #[arg(long = "reserved-username")]
+    reserved_username: Option<String>,
+    /// Base directory; CLI-managed state lives in its v2 subdirectory.
+    #[arg(long = "base-path", env = "TRUAPI_HOST_BASE_PATH")]
+    base_path: Option<PathBuf>,
+    /// Network preset that supplies all RPC/backend/genesis config.
+    #[arg(long, value_enum, default_value = "paseo-next-v2")]
+    network: Network,
+    /// Trusted Coinage asset instance. Required for instance-scoped Coinage runtimes.
+    #[arg(long, env = "TRUAPI_COINAGE_INSTANCE_ID")]
+    coinage_instance_id: Option<u32>,
+    /// TCP address to serve product WebSocket frames on. When omitted, use a
+    /// private per-process Unix-domain socket.
+    #[arg(long)]
+    frame_listen: Option<SocketAddr>,
+    /// Automatically approve non-payment confirmations. Main-purse payments still require review.
+    #[arg(long)]
+    auto_accept: bool,
+    /// Serve product frames without a terminal UI and stay up until stopped.
+    /// Needs no TTY, so a dev server can supervise this process: the frame
+    /// endpoint and every lifecycle event are logged one line at a time, and
+    /// the signer is ready once "Signing host ready" is printed. Pair it with
+    /// `--auto-accept`, because a process with no terminal cannot prompt.
+    /// Main-purse payments cannot be approved in unattended serve mode.
+    #[arg(long)]
+    serve: bool,
+    /// Local product config declaring `trustedProducts`, as the publisher will
+    /// read it. Repeat to serve a grant between two products.
+    #[arg(long = "product-config")]
+    product_config: Vec<PathBuf>,
+    /// Execute one slash command without starting the terminal UI.
+    #[command(subcommand)]
+    action: Option<SigningHostAction>,
 }
 
 #[derive(Subcommand)]
@@ -1071,8 +1080,7 @@ async fn report_slot_scan(
 	Ok(())
 }
 
-/// Map the `--auto-accept` flag to an approval policy: auto-accept, or prompt
-/// each confirmation on the CLI.
+/// Select the default confirmation policy; main-purse payments always prompt.
 fn approval_policy(auto_accept: bool) -> ApprovalPolicy {
 	if auto_accept { ApprovalPolicy::AutoAccept } else { ApprovalPolicy::Prompt }
 }
@@ -1505,27 +1513,28 @@ async fn run_signing_host(
 }
 
 struct SigningHostSession {
-	runtime: Arc<SigningHostRuntime>,
-	platform: Arc<CliPlatform>,
-	runtime_factory: Arc<frame_server::SwitchableSigningRuntime>,
-	responders: ResponderManager,
-	signer: Option<ResolvedSigner>,
-	cached_user_id: Option<String>,
-	last_script: Option<PathBuf>,
-	script_projects: PathBuf,
-	catalog: SessionCatalog,
-	profile: Option<SessionProfile>,
-	network: NetworkConfig,
-	mnemonic: Option<String>,
-	default_account: Option<String>,
-	reserved_username: Option<String>,
-	ui: Option<UiHandle>,
-	/// Set when this host serves a chat product. Held across runtime rebuilds
-	/// so switching session keeps the rooms and messages already posted.
-	chat: Option<Arc<chat::CliChatHost>>,
-	/// Set when this host serves a Pocket product. Held across runtime rebuilds
-	/// so switching session keeps the card set it was seeded with.
-	pocket: Option<Arc<pocket::CliPocketHost>>,
+    runtime: Arc<SigningHostRuntime>,
+    platform: Arc<CliPlatform>,
+    runtime_factory: Arc<frame_server::SwitchableSigningRuntime>,
+    responders: ResponderManager,
+    signer: Option<ResolvedSigner>,
+    cached_user_id: Option<String>,
+    last_script: Option<PathBuf>,
+    catalog: SessionCatalog,
+    profile: Option<SessionProfile>,
+    network: NetworkConfig,
+    coinage_instance_id: Option<u32>,
+    mnemonic: Option<String>,
+    default_account: Option<String>,
+    lite_username_prefix: Option<String>,
+    reserved_username: Option<String>,
+    ui: Option<UiHandle>,
+    /// Set when this host serves a chat product. Held across runtime rebuilds
+    /// so switching session keeps the rooms and messages already posted.
+    chat: Option<Arc<chat::CliChatHost>>,
+    /// Set when this host serves a Pocket product. Held across runtime rebuilds
+    /// so switching session keeps the card set it was seeded with.
+    pocket: Option<Arc<pocket::CliPocketHost>>,
 }
 
 #[derive(Default)]
@@ -1626,191 +1635,198 @@ async fn start_signing_host(
 	network: NetworkConfig,
 	ui: Option<UiHandle>,
 ) -> Result<SigningHostSession> {
-	let mnemonic = normalized(args.mnemonic.clone());
-	let mut profile =
-		if mnemonic.is_some() { None } else { Some(catalog.ensure_profile(&session_name)?) };
-	let default_account = normalized(args.account.clone());
-	let mut cached_user_id = profile
-		.as_ref()
-		.map(|profile| catalog.cached_user_id(profile))
-		.transpose()?
-		.flatten();
-	let selected_account = profile
-		.as_ref()
-		.map(|profile| selected_session_account(&catalog, profile, default_account.as_deref()))
-		.transpose()?
-		.flatten();
-	let mut signer = profile
-		.as_ref()
-		.map(|profile| {
-			accounts::resolve_cached_signer(
-				&profile.account_base_path,
-				network.id,
-				selected_account.as_deref(),
-			)
-		})
-		.transpose()?
-		.flatten();
-	let promotion = if let (Some(current), Some(user_id)) =
-		(&profile, signer.as_ref().and_then(|signer| signer.lite_username.as_ref())) &&
-		current.name != *user_id
-	{
-		let promotion = catalog.prepare_promotion(current, user_id)?;
-		profile = Some(promotion.profile().clone());
-		cached_user_id = Some(user_id.clone());
-		Some(promotion)
-	} else {
-		None
-	};
-	let storage_profile = profile.as_ref().cloned().unwrap_or_else(|| {
-		catalog.profile(DEFAULT_SESSION_NAME).expect("default session profile is valid")
-	});
-	if signer.is_none() && mnemonic.is_some() {
-		let mut explicit_signer = accounts::resolve_signer(ResolveSignerConfig {
-			base_path: &storage_profile.account_base_path,
-			network,
-			mnemonic: mnemonic.clone(),
-			account: None,
-			lite_username_prefix: None,
-			reserved_username: None,
-		})
-		.await?;
-		match attestation::registered_lite_username(network, &explicit_signer.entropy).await {
-			Ok(user_id) => explicit_signer.lite_username = Some(user_id),
-			Err(error) => {
-				tracing::warn!(%error, "explicit signer has no resolvable dotNS username")
-			},
-		}
-		signer = Some(explicit_signer);
-	}
-	let approval = approval_policy(args.auto_accept);
-	let chat = args.execution_kind.chat_host();
-	let pocket = args.execution_kind.pocket_host();
-	let (runtime, platform) = build_signing_runtime(
-		network,
-		storage_profile.path,
-		storage_profile.product_storage_dir,
-		approval,
-		ui.clone(),
-		chat.clone(),
-		pocket.clone(),
-	)?;
-	apply_local_product_grants(platform.as_ref(), &args.product_config).await?;
-	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
-	let last_script = profile
-		.as_ref()
-		.map(|profile| catalog.last_script(profile))
-		.transpose()?
-		.flatten();
-	if let Some(cached_signer) = &signer {
-		runtime
-			.activate_local_session_with_identity(
-				cached_signer.entropy.clone(),
-				cached_signer.lite_username.clone(),
-			)
-			.await
-			.map_err(|error| {
-				anyhow::anyhow!("failed to activate cached session: {}", error.reason)
-			})?;
-		if let (Some(profile), Some(user_id)) = (&profile, &cached_signer.lite_username) {
-			if let Some(account_name) = &cached_signer.account_name {
-				catalog.store_signer_binding(profile, user_id, account_name)?;
-			} else {
-				catalog.store_user_id(profile, user_id)?;
-			}
-			cached_user_id = Some(user_id.clone());
-			if let Some(ui) = &ui {
-				ui.connection(user_id.clone());
-			}
-		}
-		terminal_ui::output_event(SystemEvent::SigningHostReady);
-	}
-	if let Some(profile) = &profile {
-		if profile.name != session_name &&
-			let Some(ui) = &ui
-		{
-			ui.session(profile.name.clone(), catalog.list()?);
-		}
-		if signer.is_some() || normalized(args.session.clone()).is_none() || args.action.is_some() {
-			catalog.set_current(&profile.name)?;
-		}
-	}
-	if profile.is_some() && signer.is_none() {
-		terminal_ui::output_event(SystemEvent::SigningHostNeedsSession);
-	}
-	if let Some(promotion) = promotion {
-		promotion.commit();
-	}
+    let mnemonic = normalized(args.mnemonic.clone());
+    let mut profile = if mnemonic.is_some() {
+        None
+    } else {
+        Some(catalog.ensure_profile(&session_name)?)
+    };
+    let default_account = normalized(args.account.clone());
+    let mut cached_user_id = profile
+        .as_ref()
+        .map(|profile| catalog.cached_user_id(profile))
+        .transpose()?
+        .flatten();
+    if let (Some(current), Some(user_id)) = (&profile, &cached_user_id)
+        && current.name != *user_id
+    {
+        profile = Some(catalog.promote_to_user(current, user_id)?);
+    }
+    let cached_account_name = profile
+        .as_ref()
+        .map(|profile| catalog.cached_account_name(profile))
+        .transpose()?
+        .flatten();
+    let selected_account = cached_account_name.or_else(|| {
+        profile
+            .as_ref()
+            .is_some_and(|profile| profile.name == DEFAULT_SESSION_NAME)
+            .then(|| default_account.clone())
+            .flatten()
+    });
+    let mut signer = profile
+        .as_ref()
+        .map(|profile| {
+            accounts::resolve_cached_signer(
+                &profile.account_base_path,
+                network.id,
+                selected_account.as_deref(),
+            )
+        })
+        .transpose()?
+        .flatten();
+    if let (Some(current), Some(user_id)) = (
+        &profile,
+        signer
+            .as_ref()
+            .and_then(|signer| signer.lite_username.as_ref()),
+    ) && current.name != *user_id
+    {
+        profile = Some(catalog.promote_to_user(current, user_id)?);
+        cached_user_id = Some(user_id.clone());
+    }
+    let storage_profile = profile.as_ref().cloned().unwrap_or_else(|| {
+        catalog
+            .profile(DEFAULT_SESSION_NAME)
+            .expect("default session profile is valid")
+    });
+    if signer.is_none() && mnemonic.is_some() {
+        let mut explicit_signer = accounts::resolve_signer(ResolveSignerConfig {
+            base_path: &storage_profile.account_base_path,
+            network,
+            mnemonic: mnemonic.clone(),
+            account: None,
+            lite_username_prefix: None,
+            reserved_username: None,
+        })
+        .await?;
+        match attestation::registered_lite_username(network, &explicit_signer.entropy).await {
+            Ok(user_id) => explicit_signer.lite_username = Some(user_id),
+            Err(error) => {
+                tracing::warn!(%error, "explicit signer has no resolvable dotNS username")
+            }
+        }
+        signer = Some(explicit_signer);
+    }
+    let approval = approval_policy(args.auto_accept);
+    let chat = args.execution_kind.chat_host();
+    let pocket = args.execution_kind.pocket_host();
+    let (runtime, platform) = build_signing_runtime(
+        network,
+        args.coinage_instance_id,
+        storage_profile.path,
+        storage_profile.product_storage_dir,
+        approval,
+        ui.clone(),
+        chat.clone(),
+        pocket.clone(),
+    )?;
+    apply_local_product_grants(platform.as_ref(), &args.product_config).await?;
+    let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
+    let last_script = profile
+        .as_ref()
+        .map(|profile| catalog.last_script(profile))
+        .transpose()?
+        .flatten();
+    if let Some(cached_signer) = &signer {
+        runtime
+            .activate_local_session_with_identity(
+                cached_signer.entropy.clone(),
+                cached_signer.lite_username.clone(),
+            )
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("failed to activate cached session: {}", error.reason)
+            })?;
+        if let (Some(profile), Some(user_id)) = (&profile, &cached_signer.lite_username) {
+            if let Some(account_name) = &cached_signer.account_name {
+                catalog.store_signer_binding(profile, user_id, account_name)?;
+            } else {
+                catalog.store_user_id(profile, user_id)?;
+            }
+            cached_user_id = Some(user_id.clone());
+            if let Some(ui) = &ui {
+                ui.connection(user_id.clone());
+            }
+        }
+        terminal_ui::output_event(SystemEvent::SigningHostReady);
+    }
+    if let Some(profile) = &profile
+        && profile.name != session_name
+    {
+        catalog.set_current(&profile.name)?;
+        if let Some(ui) = &ui {
+            ui.session(profile.name.clone(), catalog.list()?);
+        }
+    }
+    if profile.is_some() && signer.is_none() {
+        terminal_ui::output_event(SystemEvent::SigningHostNeedsSession);
+    }
 
-	Ok(SigningHostSession {
-		runtime,
-		platform,
-		runtime_factory,
-		responders: ResponderManager::default(),
-		signer,
-		cached_user_id,
-		last_script,
-		script_projects: script_project_directory(args.base_path.clone()),
-		catalog,
-		profile,
-		network,
-		mnemonic,
-		default_account,
-		reserved_username: normalized(args.reserved_username.clone()),
-		ui,
-		chat,
-		pocket,
-	})
+    Ok(SigningHostSession {
+        runtime,
+        platform,
+        runtime_factory,
+        responders: ResponderManager::default(),
+        signer,
+        cached_user_id,
+        last_script,
+        catalog,
+        profile,
+        network,
+        coinage_instance_id: args.coinage_instance_id,
+        mnemonic,
+        default_account,
+        lite_username_prefix: normalized(args.lite_username_prefix.clone()),
+        reserved_username: normalized(args.reserved_username.clone()),
+        ui,
+        chat,
+        pocket,
+    })
 }
 
 fn build_signing_runtime(
-	network: NetworkConfig,
-	storage_path: PathBuf,
-	product_storage_dir: PathBuf,
-	approval: ApprovalPolicy,
-	ui: Option<UiHandle>,
-	chat: Option<Arc<chat::CliChatHost>>,
-	pocket: Option<Arc<pocket::CliPocketHost>>,
+    network: NetworkConfig,
+    coinage_instance_id: Option<u32>,
+    storage_path: PathBuf,
+    product_storage_dir: PathBuf,
+    approval: ApprovalPolicy,
+    ui: Option<UiHandle>,
+    chat: Option<Arc<chat::CliChatHost>>,
+    pocket: Option<Arc<pocket::CliPocketHost>>,
 ) -> Result<(Arc<SigningHostRuntime>, Arc<CliPlatform>)> {
-	std::fs::create_dir_all(&storage_path)
-		.with_context(|| format!("creating state directory {}", storage_path.display()))?;
-	let core_db = futures::executor::block_on(truapi::store::Db::open(
-		truapi::store::core_db_config(&storage_path),
-	))
-	.with_context(|| format!("opening the core database in {}", storage_path.display()))?;
-	let platform = CliPlatform::new(
-		network,
-		Some(CliStoragePaths::new(storage_path, product_storage_dir)),
-		approval,
-		ui,
-	);
-	let config = SigningHostConfig::new(
-		host_info("Headless Signing Host"),
-		platform_info(),
-		network.people_genesis,
-		network.bulletin_genesis,
-		network.asset_hub_genesis,
-		network.network_suffix.to_string(),
-	)
-	.context("invalid signing host config")?;
-	let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
-	let runtime = Arc::new(SigningHostRuntime::with_chat_platform(
-		platform.clone(),
-		config,
-		tokio_spawner(),
-		chat.map(|chat| chat as Arc<dyn ChatPlatform>),
-	));
-	runtime.set_permission_status_host(status_host);
-	if let Some(pocket) = pocket {
-		runtime.set_pocket_platform(pocket);
-	}
-	#[cfg(feature = "test-host")]
-	funding_host::CliFundingHost::install_from_env(&runtime);
-	runtime.set_game_platform(Arc::new(game::CliGameHost));
-	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
-	runtime.set_core_db(core_db);
-	runtime.start_statement_allowance_renewal();
-	Ok((runtime, platform))
+    let platform = CliPlatform::new(
+        network,
+        Some(CliStoragePaths::new(storage_path, product_storage_dir)),
+        approval,
+        ui,
+    );
+    let mut config = SigningHostConfig::new(
+        host_info("Headless Signing Host"),
+        platform_info(),
+        network.people_genesis,
+        network.bulletin_genesis,
+        network.asset_hub_genesis,
+        network.network_suffix.to_string(),
+    )
+    .context("invalid signing host config")?;
+    config.coinage_instance_id = coinage_instance_id;
+    let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
+    let runtime = Arc::new(SigningHostRuntime::with_chat_platform(
+        platform.clone(),
+        config,
+        tokio_spawner(),
+        chat.map(|chat| chat as Arc<dyn ChatPlatform>),
+    ));
+    runtime.set_identity_backend_host(Arc::new(attestation::CliIdentityBackendHost::new(
+        &runtime, network,
+    )?));
+    runtime.set_permission_status_host(status_host);
+    if let Some(pocket) = pocket {
+        runtime.set_pocket_platform(pocket);
+    }
+    runtime.start_statement_allowance_renewal();
+    Ok((runtime, platform))
 }
 
 impl Drop for SigningHostSession {
@@ -2079,24 +2095,26 @@ async fn run_dev(
 	log_controller: LogController,
 	debugger: Option<DebuggerSwitch>,
 ) -> Result<()> {
-	bootstrap::read_container(&bootstrap::container_path())?;
-	let product_id = args.product_id.unwrap_or_else(|| format!("localhost:{}", args.app_port));
-	let signing = SigningHostArgs {
-		product_id,
-		network: args.network,
-		session: args.session,
-		mnemonic: args.mnemonic,
-		base_path: args.base_path,
-		product_config: args.product_config,
-		frame_listen: Some(SocketAddr::from((Ipv4Addr::LOCALHOST, args.port))),
-		// A process with no terminal cannot prompt, which is why this pairs
-		// with a testnet-only network preset.
-		serve: true,
-		auto_accept: true,
-		..Default::default()
-	};
-	let command = (!args.command.is_empty()).then_some(args.command);
-	run_signing_host(signing, initial_log_filter, log_controller, command, debugger).await
+    let product_id = args
+        .product_id
+        .unwrap_or_else(|| format!("localhost:{}", args.app_port));
+    let signing = SigningHostArgs {
+        product_id,
+        network: args.network,
+        coinage_instance_id: args.coinage_instance_id,
+        session: args.session,
+        mnemonic: args.mnemonic,
+        base_path: args.base_path,
+        product_config: args.product_config,
+        frame_listen: Some(SocketAddr::from((Ipv4Addr::LOCALHOST, args.port))),
+        // A process with no terminal cannot prompt, which is why this pairs
+        // with a testnet-only network preset.
+        serve: true,
+        auto_accept: true,
+        ..Default::default()
+    };
+    let command = (!args.command.is_empty()).then_some(args.command);
+    run_signing_host(signing, initial_log_filter, log_controller, command).await
 }
 
 /// Run the wrapped development command, returning the code to exit with.
@@ -2233,31 +2251,79 @@ async fn wait_for_interrupt() {
 }
 
 async fn ensure_signer(session: &mut SigningHostSession) -> Result<()> {
-	if session.signer.is_some() {
-		return Ok(());
-	}
-	if let Some(profile) = &session.profile {
-		activate_session(session, profile.name.clone()).await?;
-		terminal_ui::output_event(SystemEvent::SigningHostReady);
-		return Ok(());
-	}
-	let profile = session.catalog.profile(DEFAULT_SESSION_NAME)?;
-	session.signer = Some(
-		resolve_session_signer(ResolveSignerConfig {
-			base_path: &profile.account_base_path,
-			network: session.network,
-			mnemonic: session.mnemonic.clone(),
-			account: None,
-			lite_username_prefix: None,
-			reserved_username: None,
-		})
-		.await?,
-	);
-	if let Err(error) = activate_current_signer(session).await {
-		session.signer = None;
-		return Err(error);
-	}
-	Ok(())
+    if session.signer.is_some() {
+        return Ok(());
+    }
+    let profile = session
+        .profile
+        .clone()
+        .unwrap_or(session.catalog.profile(DEFAULT_SESSION_NAME)?);
+    let account = (profile.name == DEFAULT_SESSION_NAME)
+        .then(|| session.default_account.clone())
+        .flatten();
+    let lite_username_prefix =
+        sessions::lite_username_prefix(&profile.name, session.lite_username_prefix.as_deref());
+    if !profile.is_provisioned() {
+        terminal_ui::output_event(SystemEvent::SigningHostProvisioning);
+    }
+    session.signer = Some(
+        accounts::resolve_signer(ResolveSignerConfig {
+            base_path: &profile.account_base_path,
+            network: session.network,
+            mnemonic: session.mnemonic.clone(),
+            account,
+            lite_username_prefix,
+            reserved_username: session.reserved_username.clone(),
+        })
+        .await?,
+    );
+    if let Err(error) = promote_current_profile(session) {
+        session.signer = None;
+        return Err(error);
+    }
+    if let Err(error) = activate_current_signer(session).await {
+        session.signer = None;
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn promote_current_profile(session: &mut SigningHostSession) -> Result<()> {
+    let Some(user_id) = session
+        .signer
+        .as_ref()
+        .and_then(|signer| signer.lite_username.clone())
+    else {
+        return Ok(());
+    };
+    let Some(current) = session.profile.as_ref() else {
+        return Ok(());
+    };
+    if current.name == user_id {
+        return Ok(());
+    }
+    let promoted = session.catalog.promote_to_user(current, &user_id)?;
+    let last_script = session.catalog.last_script(&promoted)?;
+    let (runtime, platform) = build_signing_runtime(
+        session.network,
+        session.coinage_instance_id,
+        promoted.path.clone(),
+        promoted.product_storage_dir.clone(),
+        session.platform.approval_policy(),
+        session.ui.clone(),
+        session.chat.clone(),
+        session.pocket.clone(),
+    )?;
+    session.runtime_factory.replace(runtime.clone());
+    session.runtime = runtime;
+    session.platform = platform;
+    session.last_script = last_script;
+    session.profile = Some(promoted);
+    session.catalog.set_current(&user_id)?;
+    if let Some(ui) = &session.ui {
+        ui.session(user_id, session.catalog.list()?);
+    }
+    Ok(())
 }
 
 fn current_account_base_path(session: &SigningHostSession) -> Result<PathBuf> {
@@ -3031,38 +3097,43 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 		terminal_ui::output_event(SystemEvent::SessionCreating { name: name.clone() });
 	}
 
-	// Resolve and provision the target completely while the old runtime keeps
-	// serving. Only the final runtime replacement invalidates product sockets.
-	let provisional_profile = session.catalog.ensure_profile(&name)?;
-	if !provisional_profile.is_provisioned() {
-		terminal_ui::output_event(SystemEvent::SigningHostProvisioning);
-	}
-	let signer = resolve_session_signer(ResolveSignerConfig {
-		base_path: &provisional_profile.account_base_path,
-		network: session.network,
-		mnemonic: None,
-		account,
-		lite_username_prefix,
-		reserved_username: session.reserved_username.clone(),
-	})
-	.await?;
-	let (profile, promotion) = if let Some(user_id) = &signer.lite_username {
-		let promotion = session.catalog.prepare_promotion(&provisional_profile, user_id)?;
-		(promotion.profile().clone(), Some(promotion))
-	} else {
-		(provisional_profile, None)
-	};
-	let last_script = session.catalog.last_script(&profile)?;
-	let (runtime, platform) = build_signing_runtime(
-		session.network,
-		profile.path.clone(),
-		profile.product_storage_dir.clone(),
-		session.platform.approval_policy(),
-		session.ui.clone(),
-		session.chat.clone(),
-		session.pocket.clone(),
-	)?;
-	let available_sessions = session.catalog.list()?;
+    // Resolve and provision the target completely while the old runtime keeps
+    // serving. Only the final runtime replacement invalidates product sockets.
+    let provisional_profile = session.catalog.ensure_profile(&name)?;
+    let lite_username_prefix =
+        sessions::lite_username_prefix(&name, session.lite_username_prefix.as_deref());
+    let signer = accounts::resolve_signer(ResolveSignerConfig {
+        base_path: &provisional_profile.account_base_path,
+        network: session.network,
+        mnemonic: None,
+        account: if name == DEFAULT_SESSION_NAME {
+            session.default_account.clone()
+        } else {
+            None
+        },
+        lite_username_prefix,
+        reserved_username: session.reserved_username.clone(),
+    })
+    .await?;
+    let profile = if let Some(user_id) = &signer.lite_username {
+        session
+            .catalog
+            .promote_to_user(&provisional_profile, user_id)?
+    } else {
+        provisional_profile
+    };
+    let last_script = session.catalog.last_script(&profile)?;
+    let (runtime, platform) = build_signing_runtime(
+        session.network,
+        session.coinage_instance_id,
+        profile.path.clone(),
+        profile.product_storage_dir.clone(),
+        session.platform.approval_policy(),
+        session.ui.clone(),
+        session.chat.clone(),
+        session.pocket.clone(),
+    )?;
+    let available_sessions = session.catalog.list()?;
 
 	if let Err(error) = runtime
 		.activate_local_session_with_identity(signer.entropy.clone(), signer.lite_username.clone())
@@ -3136,26 +3207,27 @@ async fn import_mnemonic_session(
 		terminal_ui::output_event(SystemEvent::SessionCreating { name: session_name.clone() });
 	}
 
-	let profile = session.catalog.ensure_profile(&session_name)?;
-	let last_script = session.catalog.last_script(&profile)?;
-	let (runtime, platform) = build_signing_runtime(
-		session.network,
-		profile.path.clone(),
-		profile.product_storage_dir.clone(),
-		session.platform.approval_policy(),
-		session.ui.clone(),
-		session.chat.clone(),
-		session.pocket.clone(),
-	)?;
-	runtime
-		.activate_local_session_with_identity(imported.entropy().to_vec(), username.clone())
-		.await
-		.map_err(|error| {
-			anyhow::anyhow!(
-				"failed to activate imported session {session_name:?}: {}",
-				error.reason
-			)
-		})?;
+    let profile = session.catalog.ensure_profile(&session_name)?;
+    let last_script = session.catalog.last_script(&profile)?;
+    let (runtime, platform) = build_signing_runtime(
+        session.network,
+        session.coinage_instance_id,
+        profile.path.clone(),
+        profile.product_storage_dir.clone(),
+        session.platform.approval_policy(),
+        session.ui.clone(),
+        session.chat.clone(),
+        session.pocket.clone(),
+    )?;
+    runtime
+        .activate_local_session_with_identity(imported.entropy().to_vec(), username.clone())
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "failed to activate imported session {session_name:?}: {}",
+                error.reason
+            )
+        })?;
 
 	let signer = accounts::persist_imported_signer(
 		&profile.account_base_path,
@@ -3401,217 +3473,217 @@ async fn signing_interactive_loop(
 			.await?;
 	}
 
-	loop {
-		let Some(input) = ui.next_command().await? else {
-			return Ok(None);
-		};
-		ui.command(input.clone());
-		let command = match parse_command(&input) {
-			Ok(command) => command,
-			Err(error) => {
-				ui.error(error);
-				continue;
-			},
-		};
-		match command {
-			ShellCommand::Help => ui.system(HELP_TEXT),
-			ShellCommand::Clear => ui.clear(),
-			ShellCommand::Copy => match ui.copy_transcript() {
-				Ok(entries) => ui.event(SystemEvent::CopiedTranscript { entries }),
-				Err(error) => ui.error(format!("failed to copy transcript: {error}")),
-			},
-			ShellCommand::Log(level) => {
-				if let Err(error) = log_controller.set(level) {
-					ui.error(format!("failed to set log level: {error}"));
-				} else {
-					ui.set_log_level(level);
-					ui.event(SystemEvent::LogLevelChanged { level });
-				}
-			},
-			ShellCommand::Approval(ApprovalCommand::Current) => {
-				let mode = match session.platform.approval_policy() {
-					ApprovalPolicy::Prompt => "manual",
-					ApprovalPolicy::AutoAccept => "automatic",
-				};
-				ui.system(format!("Approval mode: {mode}"));
-			},
-			ShellCommand::Approval(ApprovalCommand::Manual) => {
-				session.platform.set_approval_policy(ApprovalPolicy::Prompt);
-				ui.success(
-					"Approval mode set to manual",
-					Some("Future product confirmations will require approval.".to_string()),
-				);
-			},
-			ShellCommand::Approval(ApprovalCommand::Automatic) => {
-				session.platform.set_approval_policy(ApprovalPolicy::AutoAccept);
-				ui.success(
-					"Approval mode set to automatic",
-					Some(
-						"Future product confirmations will be approved automatically.".to_string(),
-					),
-				);
-			},
-			ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
-			ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-				if product.select(product_id) {
-					let product_id = product.current();
-					ui.set_product(product_id.clone());
-					ui.success(
-						format!("Product set to {product_id}"),
-						Some("Reconnect product clients to continue.".to_string()),
-					);
-				} else {
-					ui.system(product.current());
-				}
-			},
-			ShellCommand::Session(SessionCommand::Current) => {
-				ui.event(session_status_event(session));
-				if session.profile.is_some() && session.signer.is_none() {
-					ui.event(SystemEvent::SigningHostNeedsSession);
-				}
-			},
-			ShellCommand::Session(SessionCommand::List) => match session_list(session) {
-				Ok(sessions) => ui.system(sessions),
-				Err(error) => ui.error(format!("failed to list sessions: {error}")),
-			},
-			ShellCommand::Devices(DeviceCommand::List) => match paired_device_list(session) {
-				Ok(devices) => ui.system(devices),
-				Err(error) => ui.error(format!("failed to list paired devices: {error}")),
-			},
-			ShellCommand::Devices(DeviceCommand::Remove { statement_account_id, force }) => {
-				let (action, detail) = match paired_device_remove_confirmation(
-					session,
-					&statement_account_id,
-					force,
-				) {
-					Ok(confirmation) => confirmation,
-					Err(error) => {
-						ui.error(error.to_string());
-						continue;
-					},
-				};
-				let handle = ui.handle();
-				let approved = match ui.drive(input.clone(), handle.confirm(action, detail)).await?
-				{
-					DriveResult::Complete(approved) => approved,
-					DriveResult::Cancelled => false,
-				};
-				if !approved {
-					ui.system("Paired-device removal cancelled");
-					continue;
-				}
-				match ui
-					.drive(
-						input,
-						disconnect_and_remove_paired_host(session, &statement_account_id, force),
-					)
-					.await?
-				{
-					DriveResult::Complete(Ok(removal)) => {
-						if let Some(reason) = removal.notification_failure {
-							let (title, detail) = forced_removal_warning(&reason);
-							ui.warning(title, Some(detail));
-						}
-						ui.success(
-							"Paired device removed",
-							Some(format!(
-								"{}\nStatement account 0x{}",
-								paired_device_label(&removal.paired_host),
-								hex::encode(statement_account_id)
-							)),
-						);
-					},
-					DriveResult::Complete(Err(error)) => ui.error(error.to_string()),
-					DriveResult::Cancelled => ui.system("Paired-device removal cancelled"),
-				}
-			},
-			ShellCommand::Session(SessionCommand::Clear(target)) => {
-				let active = match validate_session_clear(session, &target) {
-					Ok(active) => active,
-					Err(error) => {
-						ui.error(error.to_string());
-						continue;
-					},
-				};
-				let (action, detail) = session_clear_confirmation(session, &target, active);
-				let handle = ui.handle();
-				let approved = match ui.drive(input.clone(), handle.confirm(action, detail)).await?
-				{
-					DriveResult::Complete(approved) => approved,
-					DriveResult::Cancelled => false,
-				};
-				if !approved {
-					ui.system("Session clear cancelled");
-					continue;
-				}
-				if active || target == SessionClearTarget::All {
-					session.responders.stop_all();
-					session.runtime_factory.reset_connections();
-					tokio::task::yield_now().await;
-					return Ok(Some(target));
-				}
-				match session.catalog.clear(&target) {
-					Ok(_) => {
-						let (title, detail) =
-							session_clear_success(session.catalog.network_id(), &target, false);
-						ui.success(title, Some(detail));
-						let current = session
-							.profile
-							.as_ref()
-							.map_or(DEFAULT_SESSION_NAME, |profile| profile.name.as_str());
-						ui.handle().session(current, session.catalog.list()?);
-					},
-					Err(error) => ui.error(error.to_string()),
-				}
-			},
-			ShellCommand::Quit => return Ok(None),
-			ShellCommand::Pair(PairCommand::Scan) => {
-				let input = match ui.read_pairing_image().await? {
-					DriveResult::Complete(input) => input,
-					DriveResult::Cancelled => continue,
-				};
-				run_interactive_pairing_image(session, input, &mut ui).await?;
-			},
-			ShellCommand::Script(command) => {
-				match select_interactive_script(
-					&command,
-					&session.script_projects,
-					session.profile.as_ref().map(|profile| profile.path.as_path()),
-					&mut session.last_script,
-					&mut ui,
-				)
-				.await
-				{
-					Ok(Some(script)) => {
-						let product_id = product.current();
-						run_interactive_operation(
-							session,
-							&frame_url,
-							&product_id,
-							ShellCommand::Script(ScriptCommand::Run(Some(script))),
-							input,
-							&mut ui,
-						)
-						.await?;
-					},
-					Ok(None) => {},
-					Err(error) => ui.error(error.to_string()),
-				}
-			},
-			command => {
-				let product_id = product.current();
-				run_interactive_operation(
-					session,
-					&frame_url,
-					&product_id,
-					command,
-					input,
-					&mut ui,
-				)
-				.await?;
-			},
-		}
-	}
+    loop {
+        let Some(input) = ui.next_command().await? else {
+            return Ok(None);
+        };
+        ui.command(input.clone());
+        let command = match parse_command(&input) {
+            Ok(command) => command,
+            Err(error) => {
+                ui.error(error);
+                continue;
+            }
+        };
+        match command {
+            ShellCommand::Help => ui.system(HELP_TEXT),
+            ShellCommand::Clear => ui.clear(),
+            ShellCommand::Copy => match ui.copy_transcript() {
+                Ok(entries) => ui.event(SystemEvent::CopiedTranscript { entries }),
+                Err(error) => ui.error(format!("failed to copy transcript: {error}")),
+            },
+            ShellCommand::Log(level) => {
+                if let Err(error) = log_controller.set(level) {
+                    ui.error(format!("failed to set log level: {error}"));
+                } else {
+                    ui.set_log_level(level);
+                    ui.event(SystemEvent::LogLevelChanged { level });
+                }
+            }
+            ShellCommand::Approval(ApprovalCommand::Current) => {
+                let mode = match session.platform.approval_policy() {
+                    ApprovalPolicy::Prompt => "manual",
+                    ApprovalPolicy::AutoAccept => "automatic",
+                };
+                ui.system(format!("Approval mode: {mode}"));
+            }
+            ShellCommand::Approval(ApprovalCommand::Manual) => {
+                session.platform.set_approval_policy(ApprovalPolicy::Prompt);
+                ui.success(
+                    "Approval mode set to manual",
+                    Some("Future product confirmations will require approval.".to_string()),
+                );
+            }
+            ShellCommand::Approval(ApprovalCommand::Automatic) => {
+                session
+                    .platform
+                    .set_approval_policy(ApprovalPolicy::AutoAccept);
+                ui.success(
+                    "Approval mode set to automatic",
+                    Some(
+                        "Future product confirmations will be approved automatically, except main-purse payments, which always require review.".to_string(),
+                    ),
+                );
+            }
+            ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
+            ShellCommand::Product(ProductCommand::Switch(product_id)) => {
+                match product.select(product_id) {
+                    Ok(true) => {
+                        let product_id = product.current();
+                        ui.set_product(product_id.clone());
+                        ui.success(
+                            format!("Product set to {product_id}"),
+                            Some("Reconnect product clients to continue.".to_string()),
+                        );
+                    }
+                    Ok(false) => ui.system(product.current()),
+                    Err(error) => ui.error(error.to_string()),
+                }
+            }
+            ShellCommand::Session(SessionCommand::Current) => {
+                ui.event(session_status_event(session));
+                if session.profile.is_some() && session.signer.is_none() {
+                    ui.event(SystemEvent::SigningHostNeedsSession);
+                }
+            }
+            ShellCommand::Session(SessionCommand::List) => match session_list(session) {
+                Ok(sessions) => ui.system(sessions),
+                Err(error) => ui.error(format!("failed to list sessions: {error}")),
+            },
+            ShellCommand::Devices(DeviceCommand::List) => match paired_device_list(session) {
+                Ok(devices) => ui.system(devices),
+                Err(error) => ui.error(format!("failed to list paired devices: {error}")),
+            },
+            ShellCommand::Devices(DeviceCommand::Remove {
+                statement_account_id,
+                force,
+            }) => {
+                let (action, detail) = match paired_device_remove_confirmation(
+                    session,
+                    &statement_account_id,
+                    force,
+                ) {
+                    Ok(confirmation) => confirmation,
+                    Err(error) => {
+                        ui.error(error.to_string());
+                        continue;
+                    }
+                };
+                let handle = ui.handle();
+                let approved = match ui
+                    .drive(input.clone(), handle.confirm(action, detail))
+                    .await?
+                {
+                    DriveResult::Complete(approved) => approved,
+                    DriveResult::Cancelled => false,
+                };
+                if !approved {
+                    ui.system("Paired-device removal cancelled");
+                    continue;
+                }
+                match ui
+                    .drive(
+                        input,
+                        disconnect_and_remove_paired_host(session, &statement_account_id, force),
+                    )
+                    .await?
+                {
+                    DriveResult::Complete(Ok(removal)) => {
+                        if let Some(reason) = removal.notification_failure {
+                            let (title, detail) = forced_removal_warning(&reason);
+                            ui.warning(title, Some(detail));
+                        }
+                        ui.success(
+                            "Paired device removed",
+                            Some(format!(
+                                "{}\nStatement account 0x{}",
+                                paired_device_label(&removal.paired_host),
+                                hex::encode(statement_account_id)
+                            )),
+                        );
+                    }
+                    DriveResult::Complete(Err(error)) => ui.error(error.to_string()),
+                    DriveResult::Cancelled => ui.system("Paired-device removal cancelled"),
+                }
+            }
+            ShellCommand::Session(SessionCommand::Clear(target)) => {
+                let active = match validate_session_clear(session, &target) {
+                    Ok(active) => active,
+                    Err(error) => {
+                        ui.error(error.to_string());
+                        continue;
+                    }
+                };
+                let (action, detail) = session_clear_confirmation(session, &target, active);
+                let handle = ui.handle();
+                let approved = match ui
+                    .drive(input.clone(), handle.confirm(action, detail))
+                    .await?
+                {
+                    DriveResult::Complete(approved) => approved,
+                    DriveResult::Cancelled => false,
+                };
+                if !approved {
+                    ui.system("Session clear cancelled");
+                    continue;
+                }
+                if active || target == SessionClearTarget::All {
+                    session.responders.stop_all();
+                    session.runtime_factory.reset_connections();
+                    tokio::task::yield_now().await;
+                    return Ok(Some(target));
+                }
+                match session.catalog.clear(&target) {
+                    Ok(_) => {
+                        let (title, detail) =
+                            session_clear_success(session.catalog.network_id(), &target, false);
+                        ui.success(title, Some(detail));
+                        let current = session
+                            .profile
+                            .as_ref()
+                            .map_or(DEFAULT_SESSION_NAME, |profile| profile.name.as_str());
+                        ui.handle().session(current, session.catalog.list()?);
+                    }
+                    Err(error) => ui.error(error.to_string()),
+                }
+            }
+            ShellCommand::Quit => return Ok(None),
+            ShellCommand::Pair(PairCommand::Scan) => {
+                let input = match ui.read_pairing_image().await? {
+                    DriveResult::Complete(input) => input,
+                    DriveResult::Cancelled => continue,
+                };
+                run_interactive_pairing_image(session, input, &mut ui).await?;
+            }
+            ShellCommand::Script(None) => match edit_session_script(session, &mut ui).await {
+                Ok(script) => {
+                    let product_id = product.current();
+                    run_interactive_operation(
+                        session,
+                        &frame_url,
+                        &product_id,
+                        ShellCommand::Script(Some(script)),
+                        input,
+                        &mut ui,
+                    )
+                    .await?;
+                }
+                Err(error) => ui.error(error.to_string()),
+            },
+            command => {
+                let product_id = product.current();
+                run_interactive_operation(
+                    session,
+                    &frame_url,
+                    &product_id,
+                    command,
+                    input,
+                    &mut ui,
+                )
+                .await?;
+            }
+        }
+    }
 }
 
 async fn run_interactive_operation(
@@ -4694,38 +4766,20 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
 		);
 	}
 
-	#[test]
-	fn serve_ready_names_the_endpoint_and_the_approval_policy() {
-		let prompting = terminal_ui::SystemEvent::ServeReady {
-			url: "ws://127.0.0.1:9955".to_string(),
-			auto_accept: false,
-		}
-		.human();
-		assert!(prompting.contains("ws://127.0.0.1:9955"));
-		assert!(prompting.contains("--auto-accept"));
-
-		let accepting = terminal_ui::SystemEvent::ServeReady {
-			url: "ws://127.0.0.1:9955".to_string(),
-			auto_accept: true,
-		}
-		.human();
-		assert!(accepting.contains("approved automatically"));
-	}
-
-	#[test]
-	fn signing_host_accepts_a_startup_session() {
-		let cli = Cli::try_parse_from([
-			"truapi-host",
-			"signing-host",
-			"--session",
-			"alice",
-			"exec",
-			"/session",
-		])
-		.expect("startup session should parse");
-		let Command::SigningHost(args) = cli.command else {
-			panic!("expected signing-host command");
-		};
+    #[test]
+    fn signing_host_accepts_a_startup_session() {
+        let cli = Cli::try_parse_from([
+            "truapi-host",
+            "signing-host",
+            "--session",
+            "alice",
+            "exec",
+            "/session",
+        ])
+        .expect("startup session should parse");
+        let Command::SigningHost(args) = cli.command else {
+            panic!("expected signing-host command");
+        };
 
 		assert_eq!(args.session.as_deref(), Some("alice"));
 		assert!(validate_signing_args(&args).is_ok());

@@ -14,7 +14,8 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 ## Documentation
 
 - [TrUAPI reference](https://docs.polkadot.com/reference/apps/protocol/truapi/)
-- [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
+- [Rust API reference](https://paritytech.github.io/host-rust-core/)
+- [Draft: Host-owned native Chat and main-purse payments](docs/rfcs/native-chat-main-purse.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
@@ -91,11 +92,92 @@ requests after a bounded deadline; pass `requestTimeoutMs` to `createTransport` 
 
 See [`js/packages/truapi/README.md`](js/packages/truapi/README.md) for the full client reference.
 
-`account.productDeviceChat` binds a product-derived account to the connected
-wallet's Chat v2 identity and seals or opens identity-route payloads without
-exposing the wallet's X25519 private key. Browser pairing hosts forward the
-operation over encrypted SSO; signing hosts require the calling product's
-dedicated Chat-authority permission before using local wallet material.
+`account.deviceChat` is a high-level, Host-owned native Chat actor
+(`Account::product_device_chat` in Rust).
+Account method 12 initializes a private device, manages authenticated peers,
+receives/decrypts native traffic, and sends ordinary messages or reviewed Coinage
+payments. Retired method 11 and its raw Open/Seal/proof operations are unsupported,
+including over SSO. Guest and Host must upgrade together.
+
+The signing Host owns the device secret, encrypted roster/outbox, payment WAL,
+and spendable memos. Chat-authority permission is not spending permission:
+every outgoing main-purse payment requires a separate trusted Host review.
+Stable retries resume the same recipient/amount operation; incoming batches
+require durable custody and complete claim plans before acknowledgment.
+Delivery acknowledgment and finalized clearing are separate states.
+
+The [native Chat/main-purse RFC](docs/rfcs/native-chat-main-purse.md) specifies
+the method 12 request/response and compatibility contract, device eligibility,
+custody-before-ACK rule, and delivery versus clearing semantics. It is a draft
+for review in #709, not an approved standard or a release claim. It builds on
+[RFC 0017's](docs/rfcs/0017-coinage-payment.md) main-purse custody model without
+implementing its general purse/receivable/cheque APIs. Chat amounts are `u64`
+cents of the trusted selected Coinage asset; RFC 0017's `u32` dotUSD-cent
+`Balance` is not an interchangeable type. Method 12 provides payment cards,
+not a product-visible wallet balance.
+
+The Coinage engine uses the current iOS MAIN_PURSE/page-0 paths:
+`//coinage//4294967295//0/<index>` (soft item) and
+`//coinage-ring-vrf//4294967295//0//<index>` (hard item).
+Snapshot version 3 rejects legacy `//pps` snapshots without modifying them;
+old counters, reservations and pending memos must not be reinterpreted under
+the new keys. Native iOS CoreData/Keychain and Host snapshots are still separate:
+do not operate both allocators for the same wallet. Same-wallet integration
+requires explicit state reconciliation and a single allocator owner. Competing
+native and Rust allocators able to spend the same inventory are a release
+blocker, not an acceptable temporary integration state.
+Runtime storage keys and asset-instance
+encoding come from metadata. Instance-scoped runtimes require a trusted
+`coinage_instance_id`; the encrypted wallet binds that selection permanently,
+so a configuration change cannot retarget pending claims or payments.
+
+Once initialized and authorized, a Host-owned subscription receives and
+reconciles without an open guest. Revocation, logout, or session replacement
+stops the old receiver. This is in-process execution, not OS wake support.
+The draft requires a durable initialized-product index and post-unlock receiver
+restoration only for products whose Chat and transport grants remain valid;
+embedding Hosts must qualify that cold-restart path separately.
+
+Native push-token announcements are validated as private metadata, including
+when batched with iOS acceptance controls. Their timestamps are checked and
+their digests bind replay detection; token credentials are discarded rather
+than persisted or exposed to the guest. This actor has no mobile push provider
+and does not wake a backgrounded native client.
+
+Native requests and acknowledgments use the sender's own outgoing identity or
+device session; responses do not reuse the original requester's session.
+Authenticated request replay repairs queued acknowledgments from the old
+reversed route without replacing message or payment commitments. Outgoing
+payment readiness requires at least one active, keyed peer device to acknowledge
+the legacy-device revocation update. Payment envelopes include only those
+acknowledged devices, so an offline advertised device does not block an eligible
+recipient. Payment acknowledgments must come from a recipient of the committed
+envelope. Authenticated roster changes reset eligibility; retries preserve the
+payment identity and exact memo when rewrapping for the updated recipients.
+Ordinary chat does not require these revocation acknowledgments.
+Incoming payments instead require an authenticated admitted sender and durable
+memo custody and claim plans before acknowledgment; they do not use that
+outgoing readiness gate.
+
+Native HOP history is expanded privately, including nested compacted batches;
+all payment claim plans and file references are durable before either HOP or
+statement acknowledgment. Attachments use trusted Host selection/export,
+bounded encrypted chunk storage, resumable uploads/downloads and immutable
+retry IDs/ciphertexts. Guests receive metadata, progress and opaque file IDs,
+never claim tickets, URLs, source handles or file bytes. Uploads require the
+existing Bulletin allowance and Preimage-submit permission; this grants no
+Coinage spending authority. HOP connections use the live trusted Bulletin WSS
+allowlist, not arbitrary guest endpoints.
+
+Protocol/storage fixtures cover acceptance loss, restart and download after
+pool deletion. This is not evidence of a funded native-device round trip.
+Attachment-bearing first-contact welcomes and call signaling remain rejected.
+
+The local integration uses matching, unpublished `useragent-chat-v2` attachment
+codec changes. Its published Git pin must be advanced together with the guest
+SDK before release; the local Cargo override is not a portable release dependency.
+Distributing the runtime also requires the exact modified Corresponding Source,
+not only the base repository URLs in the notices.
 
 ## Repository layout
 
@@ -774,4 +856,11 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for issue reports, feature proposals, a
 
 ## License
 
-[MIT](./LICENSE)
+Original project code retains its [MIT license](./LICENSE).
+The Coinage extraction and native Chat integration include AGPL-3.0-only code;
+the combined signing runtime, CLI and distributed Host WASM are **not MIT-only**.
+See [the complete AGPL license](./LICENSE-AGPL-3.0) and
+[Coinage provenance](./rust/crates/truapi-coinage/NOTICE).
+Distributors and network operators must provide the applicable Corresponding
+Source, including local modifications and build instructions. This does not
+relicense upstream AGPL code as MIT.

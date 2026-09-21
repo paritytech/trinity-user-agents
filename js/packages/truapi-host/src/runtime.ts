@@ -37,15 +37,26 @@ export type Awaitable<T> = T | Promise<T>;
  * Open a JSON-RPC connection for `genesisHash`. The wasm bridge passes
  * `onResponse` so the host can push JSON-RPC replies back asynchronously.
  * Returning `null` (or throwing) tells the core no provider is available.
+ * `onClosed`, when supplied, is called when the remote response stream ends
+ * or fails. Local `close()` is idempotent and does not call it.
  */
 export type ChainConnect = (
   genesisHash: string,
   onResponse: (json: string) => void,
+  onClosed?: () => void,
+) => Awaitable<ChainConnection | null>;
+
+/** Open only a host-allowlisted HOP endpoint for this Bulletin chain. */
+export type HopConnect = (
+  bulletinGenesisHash: string,
+  endpoint: string,
+  onResponse: (json: string) => void,
+  onClosed?: () => void,
 ) => Awaitable<ChainConnection | null>;
 
 /**
- * Per-connection handle returned by `chainConnect`. `send` forwards a
- * SCALE-encoded JSON-RPC request; `close` tears the connection down.
+ * Per-connection handle returned by `chainConnect` or `hopConnect`. `send`
+ * forwards a JSON-RPC request string; `close` tears the connection down.
  */
 export interface ChainConnection {
   send(request: string): void;

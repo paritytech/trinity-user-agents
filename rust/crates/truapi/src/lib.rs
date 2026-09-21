@@ -104,7 +104,35 @@ uniffi::custom_type!(u128, String, {
 pub mod latest {
 	use crate::versioned::{self, Versioned};
 
-	pub use crate::product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
+    pub use crate::v01::{
+        AccountId, AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode,
+        BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction,
+        ChatActionLayout, ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile,
+        ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, ChatRoomRegistrationStatus,
+        ColorToken, ColumnProps, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions,
+        Effect, EffectProps, GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
+        HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
+        HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
+        HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
+        ImageFit, ImageProps, ImageSource, Modifier, NotificationId, OperationStartedResult,
+        PocketCard, ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey,
+        RemotePermission, RemoteStatementStoreCreateProofError,
+        RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
+        RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
+        RendererNode, RingLocation, RingVrfKeyDisclosure, RingVrfPublicKey, RowProps, RuntimeApi,
+        RuntimeSpec, RuntimeType, Shape, SignedStatement, Size, Statement, StatementProof,
+        StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps, TextProps,
+        ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
+        VrfSignature,
+    };
+    pub use crate::v02::{
+        HostNativeChatAcknowledgment, HostNativeChatAttachment, HostNativeChatAttachmentKind,
+        HostNativeChatAttachmentMetadata, HostNativeChatAttachmentState, HostNativeChatDevice,
+        HostNativeChatInvitation, HostNativeChatMessages, HostNativeChatPayment,
+        HostNativeChatPaymentDirection, HostNativeChatPaymentFailure, HostNativeChatPaymentState,
+        HostNativeChatPeer, HostNativeChatPeerDevice, HostNativeChatRichMessage,
+        HostNativeChatRichMessageKind,
+    };
 
 	pub use crate::v01::{
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
@@ -217,12 +245,14 @@ pub mod latest {
     /// Per-resource allocation outcomes.
     pub type HostRequestResourceAllocationResponse =
         LatestOf<versioned::resource_allocation::HostRequestResourceAllocationResponse>;
-    /// Product-device Chat v2 identity request.
+    /// Host-owned native Chat request.
     pub type HostProductDeviceChatRequest =
         LatestOf<versioned::account::HostProductDeviceChatRequest>;
-    /// Product-device Chat v2 identity result.
+    /// Safe public view of Host-owned Chat state.
     pub type HostProductDeviceChatResponse =
         LatestOf<versioned::account::HostProductDeviceChatResponse>;
+    /// Host-owned native Chat operation error.
+    pub type HostProductDeviceChatError = LatestOf<versioned::account::HostProductDeviceChatError>;
     /// Extrinsic payload signing request for a product account.
     pub type HostSignPayloadRequest = LatestOf<versioned::signing::HostSignPayloadRequest>;
     /// Signing operation result.

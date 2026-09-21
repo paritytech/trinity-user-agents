@@ -97,6 +97,13 @@ and the People/Bulletin genesis hashes. It must match the People chain's
 `NetworkSuffix.NetworkSuffix`. Include this configuration update in the
 embedding app's package upgrade.
 
+`HostRuntimeConfig.coinageInstanceId` is optional for legacy Coinage runtimes
+and required for instance-scoped Coinage operations. Supply the same trusted
+asset instance as the app's native Coinage service (`AppConfig.Coinage.instanceId`
+in Polkadot App). Do not substitute the main-purse derivation identifier.
+Omission fails closed on instance-scoped runtimes. The UniFFI record appends
+this field; rebuild bindings and native libraries together with the wrapper.
+
 `HostRuntimeConfig.assetHubChainGenesisHash` is required. Supply the Asset Hub
 genesis hash from the same network configuration, as 32 bytes. Product manifests
 are read from the dotNS contracts deployed there, so it is what makes a

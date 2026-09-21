@@ -22,28 +22,22 @@ use async_trait::async_trait;
 use futures::stream::{self, BoxStream};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::{
-	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-	sync::Mutex as AsyncMutex,
-};
-use truapi::{
-	latest as api,
-	platform::{
-		AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
-		DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
-		PermissionDecision, PermissionStatusHost, Permissions, PreimageHost, ProductContext,
-		ProductId, ProductOperations, ProductStorage, ProductStorageKey, ProviderError,
-		SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation,
-		UserConfirmationReview,
-	},
-	v01,
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::Mutex as AsyncMutex;
+use truapi::latest as api;
+use truapi::v01;
+use truapi_platform::{
+    AuthState, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus, Features,
+    HopProvider, JsonRpcConnection, LocaleHost, NativeChatFileExportRequest,
+    NativeChatFilePickRequest, NativeChatFilesHost, NativeChatPickedFile, Navigation,
+    Notifications, PermissionStatusHost, Permissions, PreimageHost, ProductStorage,
+    ProductStorageKey, SessionUiInfo, SignRawReview, ThemeHost, UserConfirmation,
+    UserConfirmationReview,
 };
 
-use crate::{
-	bulletin_lookup::{BitswapRpc, BulletinLookup},
-	chain::WsChainProvider,
-	terminal_ui::{ApprovalKind, SystemEvent, UiHandle},
-};
+use crate::chain::WsChainProvider;
+use crate::chat_files::{self, ChatFiles};
+use crate::terminal_ui::{SystemEvent, UiHandle};
 
 static NEXT_STORAGE_TEMP_ID: AtomicU32 = AtomicU32::new(0);
 static NEXT_OPERATION_ID: AtomicU32 = AtomicU32::new(1);
@@ -94,34 +88,33 @@ impl CliStoragePaths {
 
 /// Headless-host platform shared by both roles.
 pub struct CliPlatform {
-	chain: WsChainProvider,
-	/// Chain roles this host serves, answered by `Features::supported_chains`.
-	chains: truapi::platform::HostChainSet,
-	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
-	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
-	/// Device-scoped core slots, kept outside the per-user namespaces that
-	/// [`Self::switch_pairing_user_storage`] swaps. Peers address this install
-	/// by the key held here, so a user switch must not regenerate it.
-	device_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
-	product_storage_dir: Mutex<Option<PathBuf>>,
-	core_storage_path: Mutex<Option<PathBuf>>,
-	device_storage_path: Option<PathBuf>,
-	state_dir: Mutex<Option<PathBuf>>,
-	pairing_scope: Option<PairingStorageScope>,
-	bulletin: Arc<BulletinLookup<BitswapRpc>>,
-	next_notification_id: AtomicU32,
-	scheduled_notifications: Arc<Mutex<HashMap<u32, api::HostPushNotificationRequest>>>,
-	approval: Mutex<ApprovalPolicy>,
-	/// Consulted-approval transcript (`TRUAPI_APPROVALS_LOG`): one
-	/// `<approved|denied> <action>` line per decided confirmation.
-	approvals_log: Option<PathBuf>,
-	/// Navigation transcript (`TRUAPI_NAVIGATIONS_LOG`): one JSON line
-	/// `{"url":…,"at":<unix ms>}` per destination the core accepted.
-	navigations_log: Option<PathBuf>,
-	ui: Option<UiHandle>,
-	/// Serializes interactive CLI prompts so concurrent confirmations don't
-	/// interleave on stdin.
-	prompt_lock: AsyncMutex<()>,
+    chain: WsChainProvider,
+    /// Chain roles this host serves, answered by `Features::supported_chains`.
+    chains: truapi_platform::HostChainSet,
+    product_storage: Mutex<HashMap<String, HashMap<String, Vec<u8>>>>,
+    core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+    /// Device-scoped core slots, kept outside the per-user namespaces that
+    /// [`Self::switch_pairing_user_storage`] swaps. Peers address this install
+    /// by the key held here, so a user switch must not regenerate it.
+    device_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+    product_storage_dir: Mutex<Option<PathBuf>>,
+    core_storage_path: Mutex<Option<PathBuf>>,
+    device_storage_path: Option<PathBuf>,
+    state_dir: Mutex<Option<PathBuf>>,
+    pairing_scope: Option<PairingStorageScope>,
+    preimages: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+    chat_files: ChatFiles,
+    next_notification_id: AtomicU32,
+    scheduled_notifications:
+        Arc<Mutex<HashMap<api::NotificationId, api::HostPushNotificationRequest>>>,
+    approval: Mutex<ApprovalPolicy>,
+    /// Consulted-approval transcript (`TRUAPI_APPROVALS_LOG`): one
+    /// `<approved|denied> <action>` line per decided confirmation.
+    approvals_log: Option<PathBuf>,
+    ui: Option<UiHandle>,
+    /// Serializes interactive CLI prompts so concurrent confirmations don't
+    /// interleave on stdin.
+    prompt_lock: AsyncMutex<()>,
 }
 
 impl CliPlatform {
@@ -179,27 +172,28 @@ impl CliPlatform {
 		let device_storage =
 			device_storage_path.as_deref().map(load_hex_key_map).unwrap_or_default();
 
-		Arc::new(Self {
-			chain: WsChainProvider::new(network.people_ws, network.live_chain_endpoints),
-			chains: network.host_chain_set(),
-			product_storage: Mutex::new(product_storage),
-			core_storage: Mutex::new(core_storage),
-			device_storage: Mutex::new(device_storage),
-			product_storage_dir: Mutex::new(product_storage_dir),
-			core_storage_path: Mutex::new(core_storage_path),
-			device_storage_path,
-			state_dir: Mutex::new(storage.as_ref().map(|paths| paths.state_dir.clone())),
-			pairing_scope: storage.and_then(|paths| paths.pairing_scope),
-			bulletin: Arc::new(BulletinLookup::new(BitswapRpc::new(network.bulletin_ws))),
-			next_notification_id: AtomicU32::new(1),
-			scheduled_notifications: Arc::new(Mutex::new(HashMap::new())),
-			approval: Mutex::new(approval),
-			approvals_log: std::env::var_os("TRUAPI_APPROVALS_LOG").map(PathBuf::from),
-			navigations_log: std::env::var_os("TRUAPI_NAVIGATIONS_LOG").map(PathBuf::from),
-			ui,
-			prompt_lock: AsyncMutex::new(()),
-		})
-	}
+        Arc::new(Self {
+            chain: WsChainProvider::new(network.people_ws, network.live_chain_endpoints)
+                .with_hop_endpoints(network.bulletin_genesis, network.hop_endpoints),
+            chains: network.host_chain_set(),
+            product_storage: Mutex::new(product_storage),
+            core_storage: Mutex::new(core_storage),
+            device_storage: Mutex::new(device_storage),
+            product_storage_dir: Mutex::new(product_storage_dir),
+            core_storage_path: Mutex::new(core_storage_path),
+            device_storage_path,
+            state_dir: Mutex::new(storage.as_ref().map(|paths| paths.state_dir.clone())),
+            pairing_scope: storage.and_then(|paths| paths.pairing_scope),
+            preimages: Mutex::new(HashMap::new()),
+            chat_files: ChatFiles::default(),
+            next_notification_id: AtomicU32::new(1),
+            scheduled_notifications: Arc::new(Mutex::new(HashMap::new())),
+            approval: Mutex::new(approval),
+            approvals_log: std::env::var_os("TRUAPI_APPROVALS_LOG").map(PathBuf::from),
+            ui,
+            prompt_lock: AsyncMutex::new(()),
+        })
+    }
 
 	/// Return the policy used by future confirmation requests.
 	pub fn approval_policy(&self) -> ApprovalPolicy {
@@ -261,18 +255,36 @@ impl CliPlatform {
 		self.state_dir.lock().expect("state path mutex poisoned").clone()
 	}
 
-	fn switch_pairing_user_storage(&self, user_id: &str) -> Result<(), String> {
-		let Some(scope) = &self.pairing_scope else {
-			return Ok(());
-		};
-		let user_id = pairing_storage_name(user_id);
-		let user_id = user_id.as_ref();
-		let target_state = scope.network_dir.join(format!("{user_id}_pairing_host"));
-		let current_state = self.state_dir.lock().expect("state path mutex poisoned").clone();
-		if current_state.as_ref() == Some(&target_state) {
-			persist_current_pairing_user(&scope.bootstrap_dir, user_id)?;
-			return Ok(());
-		}
+    fn chat_file_scope(&self) -> Result<PathBuf, api::GenericError> {
+        self.state_dir()
+            .ok_or_else(|| chat_files::error("Durable Chat file storage is unavailable"))
+    }
+
+    fn check_chat_file_scope(&self, scope: &Path) -> Result<(), api::GenericError> {
+        if self.state_dir().as_deref() != Some(scope) {
+            return Err(chat_files::error(
+                "Chat file session changed during terminal selection",
+            ));
+        }
+        Ok(())
+    }
+
+    fn switch_pairing_user_storage(&self, user_id: &str) -> Result<(), String> {
+        let Some(scope) = &self.pairing_scope else {
+            return Ok(());
+        };
+        let user_id = pairing_storage_name(user_id);
+        let user_id = user_id.as_ref();
+        let target_state = scope.network_dir.join(format!("{user_id}_pairing_host"));
+        let current_state = self
+            .state_dir
+            .lock()
+            .expect("state path mutex poisoned")
+            .clone();
+        if current_state.as_ref() == Some(&target_state) {
+            persist_current_pairing_user(&scope.bootstrap_dir, user_id)?;
+            return Ok(());
+        }
 
 		fs::create_dir_all(&target_state)
 			.map_err(|error| format!("create {}: {error}", target_state.display()))?;
@@ -335,42 +347,150 @@ impl CliPlatform {
 		persist_current_pairing_user(&scope.bootstrap_dir, user_id)
 	}
 
-	pub async fn decide(&self, action: &str, detail: String) -> bool {
-		self.decide_with(action, detail, ApprovalKind::Action).await != PermissionDecision::Deny
-	}
+    /// Resolve a confirmation: auto-accept, or prompt y/n on the CLI.
+    async fn decide(&self, action: &str, detail: String) -> bool {
+        self.decide_with_policy(action, detail, self.approval_policy())
+            .await
+    }
 
-	async fn decide_with(
-		&self,
-		action: &str,
-		detail: String,
-		kind: ApprovalKind,
-	) -> PermissionDecision {
-		let decision = match self.approval_policy() {
-			ApprovalPolicy::AutoAccept => {
-				if let Some(ui) = &self.ui {
-					ui.success(format!("Approved {action} automatically"), Some(detail));
-				} else {
-					crate::terminal_ui::output_success(
-						format!("Approved {action} automatically"),
-						Some(detail),
-					);
-				}
-				PermissionDecision::AllowAlways
-			},
-			ApprovalPolicy::Prompt => {
-				let _guard = self.prompt_lock.lock().await;
-				if let Some(ui) = &self.ui {
-					ui.decide(action, detail, kind).await
-				} else {
-					prompt_decision(action, &detail, kind).await
-				}
-			},
-		};
-		if let Some(path) = &self.approvals_log {
-			record_approval(path, decision != PermissionDecision::Deny, action);
-		}
-		decision
-	}
+    async fn decide_with_policy(
+        &self,
+        action: &str,
+        detail: String,
+        policy: ApprovalPolicy,
+    ) -> bool {
+        let approved = match policy {
+            ApprovalPolicy::AutoAccept => {
+                if let Some(ui) = &self.ui {
+                    ui.success(format!("Approved {action} automatically"), Some(detail));
+                } else {
+                    crate::terminal_ui::output_success(
+                        format!("Approved {action} automatically"),
+                        Some(detail),
+                    );
+                }
+                true
+            }
+            ApprovalPolicy::Prompt => {
+                let _guard = self.prompt_lock.lock().await;
+                if let Some(ui) = &self.ui {
+                    ui.confirm(action, detail).await
+                } else {
+                    prompt_yes_no(action, &detail).await
+                }
+            }
+        };
+        if let Some(path) = &self.approvals_log {
+            record_approval(path, approved, action);
+        }
+        approved
+    }
+}
+
+#[async_trait]
+impl NativeChatFilesHost for CliPlatform {
+    async fn pick_chat_files(
+        &self,
+        request: NativeChatFilePickRequest,
+    ) -> Result<Vec<NativeChatPickedFile>, api::GenericError> {
+        if request.max_files == 0 {
+            return Err(chat_files::error(
+                "Chat file selection requires a positive file limit",
+            ));
+        }
+        let root = self.chat_file_scope()?;
+        let ui = self.ui.as_ref().ok_or_else(|| {
+            chat_files::error("Chat file selection requires the interactive terminal UI")
+        })?;
+        // Never use auto-accept or a second stdin reader to choose local paths.
+        let _guard = self.prompt_lock.lock().await;
+        let detail = format!(
+            "Product {:?} requests attachments for {:?}. Select at most {} file(s).",
+            request.product_id,
+            request
+                .peer_username
+                .as_deref()
+                .unwrap_or("unnamed Chat peer"),
+            request.max_files,
+        );
+        let paths = ui
+            .chat_file_paths(detail, request.max_files, false)
+            .await
+            .map_err(|_| chat_files::error("Chat file terminal UI is unavailable"))?;
+        let Some(paths) = paths else {
+            return Ok(Vec::new());
+        };
+        self.check_chat_file_scope(&root)?;
+        ChatFiles::import(root, paths).await
+    }
+
+    async fn read_chat_file(
+        &self,
+        source_id: String,
+        offset: u64,
+        length: u32,
+    ) -> Result<Vec<u8>, api::GenericError> {
+        ChatFiles::read(self.chat_file_scope()?, source_id, offset, length).await
+    }
+
+    async fn release_chat_file(&self, source_id: String) -> Result<(), api::GenericError> {
+        ChatFiles::release(self.chat_file_scope()?, source_id).await
+    }
+
+    async fn begin_chat_file_export(
+        &self,
+        request: NativeChatFileExportRequest,
+    ) -> Result<Option<String>, api::GenericError> {
+        let root = self.chat_file_scope()?;
+        let ui = self.ui.as_ref().ok_or_else(|| {
+            chat_files::error("Chat file export requires the interactive terminal UI")
+        })?;
+        let _guard = self.prompt_lock.lock().await;
+        let detail = format!(
+            "Product {:?} requests export of a {}-byte attachment from {:?}.",
+            request.product_id,
+            request.metadata.size_bytes,
+            request
+                .peer_username
+                .as_deref()
+                .unwrap_or("unnamed Chat peer"),
+        );
+        let paths = ui
+            .chat_file_paths(detail, 1, true)
+            .await
+            .map_err(|_| chat_files::error("Chat file terminal UI is unavailable"))?;
+        let Some(destination) = paths.and_then(|paths| paths.into_iter().next()) else {
+            return Ok(None);
+        };
+        self.check_chat_file_scope(&root)?;
+        self.chat_files
+            .begin_export(root, destination, request.metadata.size_bytes)
+            .await
+            .map(Some)
+    }
+
+    async fn write_chat_file_export(
+        &self,
+        export_id: String,
+        offset: u64,
+        data: Vec<u8>,
+    ) -> Result<(), api::GenericError> {
+        self.chat_files
+            .write_export(self.chat_file_scope()?, export_id, offset, data)
+            .await
+    }
+
+    async fn finish_chat_file_export(&self, export_id: String) -> Result<(), api::GenericError> {
+        self.chat_files
+            .finish_export(self.chat_file_scope()?, export_id)
+            .await
+    }
+
+    async fn cancel_chat_file_export(&self, export_id: String) -> Result<(), api::GenericError> {
+        self.chat_files
+            .cancel_export(self.chat_file_scope()?, export_id)
+            .await
+    }
 }
 
 /// Append one `<approved|denied> <action>` line to the approvals transcript.
@@ -546,6 +666,28 @@ impl ChainProvider for CliPlatform {
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
 		self.chain.connect(genesis_hash).await
 	}
+}
+
+#[async_trait]
+impl HopProvider for CliPlatform {
+    async fn allowed_hop_endpoints(
+        &self,
+        bulletin_genesis_hash: [u8; 32],
+    ) -> Result<Vec<String>, api::GenericError> {
+        self.chain
+            .allowed_hop_endpoints(bulletin_genesis_hash)
+            .await
+    }
+
+    async fn connect_hop(
+        &self,
+        bulletin_genesis_hash: [u8; 32],
+        endpoint: String,
+    ) -> Result<Box<dyn JsonRpcConnection>, api::GenericError> {
+        self.chain
+            .connect_hop(bulletin_genesis_hash, endpoint)
+            .await
+    }
 }
 
 #[async_trait]
@@ -783,30 +925,18 @@ fn storage_user_id(info: &SessionUiInfo) -> Option<&str> {
 
 #[async_trait]
 impl UserConfirmation for CliPlatform {
-	async fn confirm_permission(
-		&self,
-		review: UserConfirmationReview,
-	) -> Result<PermissionDecision, api::GenericError> {
-		let (action, detail) = approval_summary(&review);
-		Ok(self.decide_with(action, detail, ApprovalKind::Permission).await)
-	}
-
-	async fn confirm_user_action(
-		&self,
-		review: UserConfirmationReview,
-	) -> Result<bool, api::GenericError> {
-		let (action, detail) = approval_summary(&review);
-		Ok(self.decide(action, detail).await)
-	}
-}
-
-/// Names the product that asked, for the reviews that carry one. A relayed
-/// request carries no caller, and saying so is more use than naming nobody.
-fn asking(calling_product_id: Option<&ProductId>) -> String {
-	match calling_product_id {
-		Some(product_id) => format!("Product {product_id}"),
-		None => "A paired host".to_string(),
-	}
+    async fn confirm_user_action(
+        &self,
+        review: UserConfirmationReview,
+    ) -> Result<bool, api::GenericError> {
+        let (action, detail) = approval_summary(&review);
+        let policy = if matches!(review, UserConfirmationReview::MainPurseChatPayment(_)) {
+            ApprovalPolicy::Prompt
+        } else {
+            self.approval_policy()
+        };
+        Ok(self.decide_with_policy(action, detail, policy).await)
+    }
 }
 
 fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
@@ -927,6 +1057,22 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             format!(
                 "Product {} requested permission to bind its device account to your wallet Chat identity and encrypt or decrypt Chat routing data.",
                 review.product_id
+            ),
+        ),
+        UserConfirmationReview::MainPurseChatPayment(review) => (
+            "pay from your main purse",
+            format!(
+                "Product {:?} requests {}.{:02} Coinage for {:?} (identity 0x{}).\nMaximum main-purse debit: {}.{:02} Coinage.\nChain genesis: 0x{}.\nCoinage asset: {}.\nPayment operation: 0x{}.\nThis approves only this payment, not future spending.",
+                review.calling_product_id,
+                review.amount_cents / 100,
+                review.amount_cents % 100,
+                review.recipient_username.as_deref().unwrap_or("unnamed recipient"),
+                hex::encode(review.recipient_identity),
+                review.max_debit_cents / 100,
+                review.max_debit_cents % 100,
+                hex::encode(review.genesis_hash),
+                review.coinage_instance_id.map_or_else(|| "legacy single asset".to_string(), |id| format!("instance {id}")),
+                hex::encode(review.operation_id),
             ),
         ),
     }

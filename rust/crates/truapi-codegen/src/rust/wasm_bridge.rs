@@ -6,16 +6,11 @@ use std::{
 use anyhow::{Result, bail};
 use indoc::{formatdoc, writedoc};
 
-use crate::{
-	platform::{PlatformDefinition, PlatformInner, PlatformMethod, PlatformTrait},
-	platform_callbacks::{
-		callback_namespace, collect_local_bridge_payload_types, composed_traits,
-		optional_trait_names, platform_trait_names, raw_callback_field_name, raw_callback_name,
-		raw_callback_wire_name, snake_case, stream_item, trait_object_return_name,
-	},
-	rustdoc::{
-		ApiDefinition, TypeDef, TypeDefKind, TypeRef, VariantFields, split_versioned_type_name,
-	},
+use crate::platform::{PlatformDefinition, PlatformInner, PlatformMethod, PlatformTrait};
+use crate::platform_callbacks::{
+    callback_namespace, collect_local_bridge_payload_types, composed_traits,
+    is_scale_vector_result, optional_trait_names, platform_trait_names, raw_callback_field_name,
+    raw_callback_name, raw_callback_wire_name, snake_case, stream_item, trait_object_return_name,
 };
 
 pub fn generate_wasm_bridge(
@@ -51,7 +46,7 @@ pub fn generate_wasm_bridge(
         use super::{{
             WasmPlatform, call_js_function, decode_bytes, decode_js_item, generic, get_function,
             get_optional_function, invoke_bool, invoke_bytes_return, invoke_js_subscription,
-            invoke_optional_bytes_return, invoke_unit, missing_callback, parse_optional_bytes_item,
+            invoke_optional_bytes_return, invoke_optional_string_return, invoke_unit, missing_callback, parse_optional_bytes_item,
         }};
 
         /// JS-side callbacks invoked by the wasm platform bridge. Methods with
@@ -296,27 +291,44 @@ fn emit_result_method(
 	let params = rust_params(method, ctx)?;
 	let map_err = error_mapper(err, ctx)?;
 
-	let body = if is_unit(ok) {
-		await_chain(&bridge_call("invoke_unit", &method.name, &args, &[]), &map_err)
-	} else if is_bool(ok) {
-		await_chain(&bridge_call("invoke_bool", &method.name, &args, &[]), &map_err)
-	} else if is_bytes(ok) {
-		await_chain(&bridge_call("invoke_bytes_return", &method.name, &args, &[]), &map_err)
-	} else if is_optional_bytes(ok) {
-		await_chain(
-			&bridge_call(
-				"invoke_optional_bytes_return",
-				&method.name,
-				&args,
-				&[format!("{:?}", format!("{raw} must resolve to Uint8Array, null or undefined"))],
-			),
-			&map_err,
-		)
-	} else if ctx.is_api_codec(ok) || ctx.is_local_codec(ok) {
-		formatdoc_decode_result(method, ok, &raw, &args, &map_err, ctx)?
-	} else {
-		bail!("unsupported wasm bridge result type for `{raw}`: {ok:?}");
-	};
+    let body = if is_unit(ok) {
+        await_chain(
+            &bridge_call("invoke_unit", &method.name, &args, &[]),
+            &map_err,
+        )
+    } else if is_bool(ok) {
+        await_chain(
+            &bridge_call("invoke_bool", &method.name, &args, &[]),
+            &map_err,
+        )
+    } else if is_bytes(ok) {
+        await_chain(
+            &bridge_call("invoke_bytes_return", &method.name, &args, &[]),
+            &map_err,
+        )
+    } else if matches!(ok, TypeRef::Option(inner) if is_string(inner)) {
+        await_chain(
+            &bridge_call("invoke_optional_string_return", &method.name, &args, &[]),
+            &map_err,
+        )
+    } else if is_optional_bytes(ok) {
+        await_chain(
+            &bridge_call(
+                "invoke_optional_bytes_return",
+                &method.name,
+                &args,
+                &[format!(
+                    "{:?}",
+                    format!("{raw} must resolve to Uint8Array, null or undefined")
+                )],
+            ),
+            &map_err,
+        )
+    } else if ctx.is_api_codec(ok) || ctx.is_local_codec(ok) || is_scale_vector_result(ok) {
+        formatdoc_decode_result(method, ok, &raw, &args, &map_err, ctx)?
+    } else {
+        bail!("unsupported wasm bridge result type for `{raw}`: {ok:?}");
+    };
 
 	Ok(format!(
 		"{header}\n{body}\n    }}\n",
@@ -552,14 +564,14 @@ fn js_arg_expr(name: &str, ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> 
 }
 
 fn numeric_js_arg(name: &str, primitive: &str) -> Result<String> {
-	match primitive {
-		"u8" | "u16" | "u32" | "i8" | "i16" | "i32" => {
-			Ok(format!("JsValue::from_f64(f64::from({name}))"))
-		},
-		"u64" | "i64" | "u128" | "i128" => Ok(format!("js_sys::BigInt::from({name}).into()")),
-		"bool" => Ok(format!("JsValue::from_bool({name})")),
-		other => bail!("numeric callback parameter `{name}: {other}` is not JS-number safe"),
-	}
+    match primitive {
+        "u8" | "u16" | "u32" | "i8" | "i16" | "i32" => {
+            Ok(format!("JsValue::from_f64(f64::from({name}))"))
+        }
+        "u64" | "i64" => Ok(format!("js_sys::BigInt::from({name}).into()")),
+        "bool" => Ok(format!("JsValue::from_bool({name})")),
+        other => bail!("numeric callback parameter `{name}: {other}` is not JS-number safe"),
+    }
 }
 
 /// The `JsValue` a subscription hands its JS callback, or `None` when it takes

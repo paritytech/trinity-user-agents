@@ -5,6 +5,7 @@
 // platform-local types cross as SCALE bytes (`.enc`/`.dec`); strings,
 // primitives and byte blobs pass through unchanged.
 
+import * as S from "@parity/truapi/scale";
 import {
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
@@ -34,18 +35,26 @@ import {
   CoreStorageKey,
   DevicePermissionStatus,
   HostChainSet,
-  HostContactLookup,
-  HostContactMatches,
-  HostContactPick,
-  HostScan,
-  PermissionDecision,
+  NativeChatFileExportRequest,
+  NativeChatFilePickRequest,
+  NativeChatPickedFile,
   ProductContext,
   UserConfirmationReview,
 } from "./host-callbacks.js";
 import type { RequiredHostCallbacks } from "./host-callbacks.js";
 
-import type { ChainConnect } from "../runtime.js";
-import { chainConnectAdapter, driveResultStream } from "../adapter-support.js";
+import type { ChainConnect, HopConnect } from "../runtime.js";
+import {
+  chainConnectAdapter,
+  driveResultStream,
+  hopConnectAdapter,
+  unavailableHopProvider,
+  unavailableNativeChatFilesHost,
+} from "../adapter-support.js";
+
+const allowedHopEndpointsResultCodec = S.Vector(S.str);
+const identityUsernameCandidatesResultCodec = S.Vector(S.Bytes(32));
+const pickChatFilesResultCodec = S.Vector(NativeChatPickedFile);
 
 /**
  * Byte-oriented callback surface the WASM core invokes. Members of an
@@ -80,12 +89,31 @@ export interface RawCallbacks {
   clearCoreStorage(key: Uint8Array): Promise<void>;
   featureSupported(request: Uint8Array): Promise<Uint8Array>;
   supportedChains(): Promise<Uint8Array>;
-  scheduleGameReminder?(product: Uint8Array, startsAt: bigint): Promise<void>;
-  cancelGameReminder?(product: Uint8Array): Promise<void>;
+  allowedHopEndpoints(bulletinGenesisHash: Uint8Array): Promise<Uint8Array>;
+  hopConnect: HopConnect;
+  identityUsernameCandidates?(
+    username: string,
+    peopleChainGenesisHash: Uint8Array,
+  ): Promise<Uint8Array>;
   subscribeLocale(
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
+  pickChatFiles(request: Uint8Array): Promise<Uint8Array>;
+  readChatFile(
+    sourceId: string,
+    offset: bigint,
+    length: number,
+  ): Promise<Uint8Array>;
+  releaseChatFile(sourceId: string): Promise<void>;
+  beginChatFileExport(request: Uint8Array): Promise<string | null | undefined>;
+  writeChatFileExport(
+    exportId: string,
+    offset: bigint,
+    data: Uint8Array,
+  ): Promise<void>;
+  finishChatFileExport(exportId: string): Promise<void>;
+  cancelChatFileExport(exportId: string): Promise<void>;
   navigateTo(url: string): Promise<void>;
   pushNotification(notification: Uint8Array): Promise<Uint8Array>;
   cancelNotification(id: number): Promise<void>;
@@ -133,11 +161,12 @@ export function createWasmRawCallbacks(
   callbacks: RequiredHostCallbacks,
 ): RawCallbacks {
   const chat = callbacks.chat;
-  const contacts = callbacks.contacts;
-  const game = callbacks.game;
+  const identityBackend = callbacks.identityBackend;
   const permissionStatus = callbacks.permissionStatus;
   const pocket = callbacks.pocket;
-  const scanner = callbacks.scanner;
+  const hop = callbacks.hop ?? unavailableHopProvider;
+  const nativeChatFiles =
+    callbacks.nativeChatFiles ?? unavailableNativeChatFilesHost;
   return {
     authStateChanged: async (state) =>
       await callbacks.auth.authStateChanged(AuthState.dec(state)),
@@ -207,15 +236,23 @@ export function createWasmRawCallbacks(
       ),
     supportedChains: async () =>
       HostChainSet.enc(await callbacks.features.supportedChains()),
-    ...(game
+    allowedHopEndpoints: async (bulletinGenesisHash) =>
+      allowedHopEndpointsResultCodec.enc(
+        await hop.allowedHopEndpoints(bulletinGenesisHash),
+      ),
+    hopConnect: hopConnectAdapter(hop),
+    ...(identityBackend
       ? {
-          scheduleGameReminder: async (product, startsAt) =>
-            await game.scheduleGameReminder(
-              ProductContext.dec(product),
-              startsAt,
+          identityUsernameCandidates: async (
+            username,
+            peopleChainGenesisHash,
+          ) =>
+            identityUsernameCandidatesResultCodec.enc(
+              await identityBackend.identityUsernameCandidates(
+                username,
+                peopleChainGenesisHash,
+              ),
             ),
-          cancelGameReminder: async (product) =>
-            await game.cancelGameReminder(ProductContext.dec(product)),
         }
       : {}),
     subscribeLocale: (sendItem, sendError) =>
@@ -224,6 +261,26 @@ export function createWasmRawCallbacks(
         (item) => sendItem(HostLocaleSubscribeItem.enc(item)),
         sendError,
       ),
+    pickChatFiles: async (request) =>
+      pickChatFilesResultCodec.enc(
+        await nativeChatFiles.pickChatFiles(
+          NativeChatFilePickRequest.dec(request),
+        ),
+      ),
+    readChatFile: async (sourceId, offset, length) =>
+      await nativeChatFiles.readChatFile(sourceId, offset, length),
+    releaseChatFile: async (sourceId) =>
+      await nativeChatFiles.releaseChatFile(sourceId),
+    beginChatFileExport: async (request) =>
+      await nativeChatFiles.beginChatFileExport(
+        NativeChatFileExportRequest.dec(request),
+      ),
+    writeChatFileExport: async (exportId, offset, data) =>
+      await nativeChatFiles.writeChatFileExport(exportId, offset, data),
+    finishChatFileExport: async (exportId) =>
+      await nativeChatFiles.finishChatFileExport(exportId),
+    cancelChatFileExport: async (exportId) =>
+      await nativeChatFiles.cancelChatFileExport(exportId),
     navigateTo: async (url) => await callbacks.navigation.navigateTo(url),
     pushNotification: async (notification) =>
       HostPushNotificationResponse.enc(

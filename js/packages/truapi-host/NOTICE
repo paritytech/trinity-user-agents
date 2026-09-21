@@ -1,0 +1,17 @@
+The original TypeScript Host adapter is MIT-licensed; see LICENSE.
+The distributed Rust signing runtime/WASM includes AGPL-3.0-only code.
+It is not an MIT-only distribution. See LICENSE-AGPL-3.0.
+
+Coinage is a modified extraction from paritytech/brevity-dozer,
+revision d504259b60b88ca42f70a8378186a714887ef19f, copyright its contributors.
+Detailed provenance is in rust/crates/truapi-coinage/NOTICE in the source tree.
+Native HOP protocol/crypto is adapted from brevity-chat/src/hop.rs in that
+same Brevity revision, under AGPL-3.0-only, with Host-private durable custody.
+Native Chat wire/crypto uses paritytech/polkavm-app-kit useragent-chat-v2,
+based on revision 57b236fe9e740c83d0ead3d22cc7ca5a85e4ad17, under AGPL-3.0-only,
+including local native-attachment codec and secret-zeroization modifications.
+
+Corresponding Source must include the exact Host source revision, all local
+modifications, the Coinage provenance/license notices and build instructions.
+Source repository: https://github.com/paritytech/host-rust-core
+A repository URL alone does not provide unpublished local modifications.

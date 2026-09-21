@@ -71,6 +71,8 @@ private extension TrUAPIConfirmationPresenter {
              .signRaw,
              .createTransaction:
             try await confirmSigning(for: review, from: requesterName)
+        case let .mainPurseChatPayment(paymentReview):
+            await confirmMainPursePayment(paymentReview)
         case let .statementStoreProductSign(statementReview):
             await confirmStatementSign(
                 promptMapper.makeStatementSignRequest(from: statementReview)
@@ -131,6 +133,19 @@ private extension TrUAPIConfirmationPresenter {
             return decision == .approved
         }
     }
+    func confirmMainPursePayment(_ review: MainPurseChatPaymentReview) async -> Bool {
+        await awaitDecision { [routerFacade] in
+            await withCheckedContinuation { continuation in
+                let context = MainPursePaymentConfirmationContext(review: review)
+                context.setContinuation(continuation)
+                let prompt = MainPursePaymentPromptViewFactory.createView(context: context)
+                if !routerFacade.productsRouter.present(view: prompt) {
+                    context.deliver(false)
+                }
+            }
+        }
+    }
+
 
     func confirmPermissionReview(_ review: UserConfirmationReview) async throws -> Bool {
         let request: TrUAPIPermissionRequest

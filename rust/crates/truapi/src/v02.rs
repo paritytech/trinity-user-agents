@@ -4,8 +4,8 @@
 //! new version does not redefine keeps its [`crate::v01`] type in the versioned
 //! envelope, so this module stays a delta rather than a copy of the protocol.
 
-mod chat;
+mod account;
 mod local_storage;
 
-pub use chat::*;
+pub use account::*;
 pub use local_storage::*;

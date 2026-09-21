@@ -10,6 +10,7 @@ import type {
   SubscriptionName,
   WorkerToMain,
 } from "./worker-protocol.js";
+import { MAX_JSON_RPC_CONNECTIONS } from "./worker-protocol.js";
 import type { GenericError } from "@parity/truapi";
 import { TRUAPI_CODEC_VERSION } from "@parity/truapi";
 import {
@@ -80,18 +81,27 @@ let nextConnId = 0;
 type ChainConnectAck = { ok: true } | { ok: false; error: string };
 const chainConnectAcks = new Map<number, (ack: ChainConnectAck) => void>();
 const chainResponseListeners = new Map<number, (json: string) => void>();
+const chainCloseListeners = new Map<number, (() => void) | undefined>();
+let connectionsDisposed = false;
 
 function callbackRequest(
   name: CallbackName,
   args: readonly unknown[],
+  coreId?: number,
 ): Promise<unknown> {
+  if (connectionsDisposed) return Promise.reject(new Error("Host runtime is unavailable"));
   return new Promise((resolve, reject) => {
     const requestId = ++nextRequestId;
     pendingCallbacks.set(requestId, (r) => {
       if (r.ok) resolve(r.value);
       else reject(new Error(r.error));
     });
-    postToMain({ kind: "callbackRequest", requestId, name, args });
+    try {
+      postToMain({ kind: "callbackRequest", requestId, name, args, ...(coreId === undefined ? {} : { coreId }) });
+    } catch {
+      pendingCallbacks.delete(requestId);
+      reject(new Error("Host callback transport is unavailable"));
+    }
   });
 }
 
@@ -100,15 +110,26 @@ function startSubscription<T>(
   payload: Uint8Array | string | null,
   sendItem: (value: T) => void,
   sendError: (error: GenericError) => void,
+  coreId?: number,
 ): () => void {
+  if (connectionsDisposed) {
+    sendError({ reason: "Host runtime is unavailable" });
+    return () => {};
+  }
   const subId = ++nextSubId;
   subscriptionListeners.set(subId, {
     sendItem: sendItem as (value: unknown) => void,
     sendError: (error) => sendError({ reason: error }),
   });
-  postToMain({ kind: "subscriptionStart", subId, name, payload });
-  return () => {
+  try {
+    postToMain({ kind: "subscriptionStart", subId, name, payload, ...(coreId === undefined ? {} : { coreId }) });
+  } catch {
     subscriptionListeners.delete(subId);
+    sendError({ reason: "Host subscription transport is unavailable" });
+    return () => {};
+  }
+  return () => {
+    if (!subscriptionListeners.delete(subId)) return;
     postToMain({ kind: "subscriptionStop", subId });
   };
 }
@@ -118,68 +139,101 @@ interface WorkerChainConnection {
   close(): void;
 }
 
-/**
- * Worker-side half of the host chain-connect bridge.
- *
- * The Rust core runs in this worker but owns no socket. When it needs chain
- * access (chainHead v1 for dotNS identity on Asset Hub / statement-store SSO) it
- * calls this; the actual transport lives on the host main thread and is reached
- * over postMessage. The data crossing here is JSON-RPC strings, not SCALE: only
- * the product<->core wire is SCALE.
- *
- *   per-tab / sandboxed          core-owned (this Web Worker)       host-owned (main thread)
- *   +-------------------+  SCALE  +--------------------------+      +--------------------------------+
- *   | Product (iframe)  |<------->| truapi WASM core         |      | host.connect() (ChainProvider) |
- *   | speaks TrUAPI     |  frames | chainHead v1, SSO,       |      | host-owned JSON-RPC transport  |
- *   | never sees chains |         | dotNS identity (AH)      |      | remote RPC, native client, ... |
- *   +-------------------+         +--------------------------+      +--------------------------------+
- *                                      |   ^  JSON-RPC strings (not SCALE)        ^   |
- *                       chainConnect() |   | onResponse(json)           connect   |   | responses()
- *                         (this fn)    v   |                                      |   v
- *                 worker-runtime.ts  <======== postMessage ========>  create-worker-host-runtime.ts
- *                 chainConnectStart / chainSend / chainClose   -->   handleChainConnect* -> host.connect()
- *                 chainConnectAck   / chainResponse            <--   (pumped from connection.responses())
- *
- * Allocates a `connId`, posts `chainConnectStart`, and resolves a
- * `{ send, close }` handle once the main thread acks. `send` posts `chainSend`,
- * `close` posts `chainClose`, and every `chainResponse` for this `connId` is
- * delivered to `onResponse`.
- */
+/** Chain and HOP share ownership and JSON-RPC pumping, not dial authority. */
 function chainConnect(
   genesisHash: string,
   onResponse: (json: string) => void,
+  onClosed?: () => void,
 ): Promise<WorkerChainConnection | null> {
+  return connectRpc({ kind: "chainConnectStart", genesisHash }, onResponse, onClosed);
+}
+
+function hopConnect(
+  genesisHash: string,
+  endpoint: string,
+  onResponse: (json: string) => void,
+  onClosed?: () => void,
+): Promise<WorkerChainConnection | null> {
+  return connectRpc({ kind: "hopConnectStart", genesisHash, endpoint }, onResponse, onClosed);
+}
+
+function closeRpcConnection(connId: number, notify = true): void {
+  const ack = chainConnectAcks.get(connId);
+  const onClosed = chainCloseListeners.get(connId);
+  chainConnectAcks.delete(connId);
+  chainResponseListeners.delete(connId);
+  chainCloseListeners.delete(connId);
+  ack?.({ ok: false, error: "JSON-RPC connection closed before opening" });
+  if (notify) {
+    try {
+      onClosed?.();
+    } catch {
+      postToMain({ kind: "disposeError", error: "JSON-RPC close callback failed" });
+    }
+  }
+}
+
+function connectRpc(
+  start:
+    | { kind: "chainConnectStart"; genesisHash: string }
+    | { kind: "hopConnectStart"; genesisHash: string; endpoint: string },
+  onResponse: (json: string) => void,
+  onClosed?: () => void,
+): Promise<WorkerChainConnection | null> {
+  if (connectionsDisposed || chainCloseListeners.size >= MAX_JSON_RPC_CONNECTIONS) {
+    return Promise.reject(new Error("JSON-RPC connections unavailable or limit reached"));
+  }
   const connId = ++nextConnId;
-  return new Promise((resolve, reject) => {
-    chainConnectAcks.set(connId, (ack) => {
-      if (!ack.ok) {
-        chainResponseListeners.delete(connId);
-        reject(new Error(ack.error));
-        return;
-      }
-      resolve({
-        send(request: string) {
-          postToMain({ kind: "chainSend", connId, request });
-        },
-        close() {
-          chainResponseListeners.delete(connId);
-          postToMain({ kind: "chainClose", connId });
-        },
-      });
+  const { promise, resolve, reject } = Promise.withResolvers<WorkerChainConnection | null>();
+  chainConnectAcks.set(connId, (ack) => {
+    if (!ack.ok) {
+      chainResponseListeners.delete(connId);
+      chainCloseListeners.delete(connId);
+      reject(new Error(ack.error));
+      return;
+    }
+    resolve({
+      send(request: string) {
+        if (!chainCloseListeners.has(connId)) {
+          throw new Error("JSON-RPC connection is closed");
+        }
+        postToMain({ kind: "chainSend", connId, request });
+      },
+      close() {
+        if (!chainCloseListeners.has(connId)) return;
+        closeRpcConnection(connId, false);
+        postToMain({ kind: "chainClose", connId });
+      },
     });
-    chainResponseListeners.set(connId, onResponse);
-    postToMain({ kind: "chainConnectStart", connId, genesisHash });
   });
+  chainCloseListeners.set(connId, onClosed);
+  chainResponseListeners.set(connId, (json) => {
+    try {
+      onResponse(json);
+    } catch (err) {
+      closeRpcConnection(connId);
+      throw err;
+    }
+  });
+  try {
+    postToMain({ ...start, connId });
+  } catch (err) {
+    closeRpcConnection(connId, false);
+    reject(err);
+  }
+  return promise;
 }
 
 /** Build the host-level callback object passed to the WASM runtime. */
-function buildRawCallbacks(capabilities: OptionalCapabilities) {
+function buildRawCallbacks(capabilities: OptionalCapabilities, coreId?: number) {
   return {
     ...createWorkerRawCallbacks(
       {
-        callbackRequest,
-        startSubscription,
+        callbackRequest: (name, args) => callbackRequest(name, args, coreId),
+        startSubscription: (name, payload, sendItem, sendError) =>
+          startSubscription(name, payload, sendItem, sendError, coreId),
         chainConnect,
+        hopConnect,
       },
       capabilities,
     ),
@@ -728,6 +782,7 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         const core = host.runtime.productRuntime(
           msg.product,
           buildCoreCallbacks(msg.coreId),
+          msg.capabilities === undefined ? undefined : buildRawCallbacks(msg.capabilities, msg.coreId),
         );
         cores.set(msg.coreId, core);
         postToMain({ kind: "coreReady", coreId: msg.coreId });
@@ -899,6 +954,8 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       if (cb) {
         chainConnectAcks.delete(msg.connId);
         cb(msg.ok ? { ok: true } : { ok: false, error: msg.error });
+      } else if (msg.ok) {
+        postToMain({ kind: "chainClose", connId: msg.connId });
       }
       break;
     }
@@ -911,6 +968,9 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       );
       break;
     }
+    case "chainClosed":
+      closeRpcConnection(msg.connId);
+      break;
     case "publishChatAction":
       handlePublishAction(
         CHAT_ACTION_ENTRY_POINT,
@@ -954,6 +1014,15 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       const disposing = runtime;
       runtime = null;
       identityAbort?.abort(new Error("runtime disposed"));
+      connectionsDisposed = true;
+      for (const settle of pendingCallbacks.values()) {
+        settle({ ok: false, error: "Host runtime is unavailable" });
+      }
+      pendingCallbacks.clear();
+      for (const connId of chainCloseListeners.keys()) {
+        closeRpcConnection(connId);
+        postToMain({ kind: "chainClose", connId });
+      }
       void (async () => {
         try {
           if (disposing && isSigningRuntime(disposing))

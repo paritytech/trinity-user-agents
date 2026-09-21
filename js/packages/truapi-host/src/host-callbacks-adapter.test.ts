@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
+import { hexToBytes, str, Vector } from "@parity/truapi/scale";
 
 import {
   HostChatCreateRoomRequest,
@@ -23,7 +24,9 @@ import { createWasmRawCallbacks } from "./generated/host-callbacks-adapter.js";
 import {
   AuthState,
   CoreStorageKey,
-  PermissionDecision,
+  NativeChatFilePickRequest,
+  NativeChatFileExportRequest,
+  NativeChatPickedFile,
   ProductContext,
   ProductExecutionKind,
   UserConfirmationReview,
@@ -106,6 +109,86 @@ const SIGN_PAYLOAD: HostSignPayloadData = {
 };
 
 describe("createWasmRawCallbacks", () => {
+  it("fails every file operation closed when the embedding has no custody backend", async () => {
+    const raw = createWasmRawCallbacks(makeHostCallbacks());
+    const context = { productId: "chat.dot", peerIdentity: new Uint8Array(32), peerUsername: undefined };
+    const pick = NativeChatFilePickRequest.enc({ ...context, maxFiles: 1 });
+    const save = NativeChatFileExportRequest.enc({
+      ...context,
+      metadata: { mimeType: "application/octet-stream", sizeBytes: 0, kind: { tag: "File" } },
+    });
+    for (const operation of [
+      () => raw.pickChatFiles(pick),
+      () => raw.readChatFile("source", 0n, 0),
+      () => raw.releaseChatFile("source"),
+      () => raw.beginChatFileExport(save),
+      () => raw.writeChatFileExport("export", 0n, new Uint8Array()),
+      () => raw.finishChatFileExport("export"),
+      () => raw.cancelChatFileExport("export"),
+    ]) {
+      await expect(operation()).rejects.toThrow();
+    }
+  });
+
+  it("distinguishes explicit file cancellation from unavailable custody", async () => {
+    const raw = createWasmRawCallbacks(makeHostCallbacks({
+      nativeChatFiles: {
+        pickChatFiles: async () => [],
+        beginChatFileExport: async () => undefined,
+      },
+    }));
+    const context = { productId: "chat.dot", peerIdentity: new Uint8Array(32), peerUsername: undefined };
+    expect(Vector(NativeChatPickedFile).dec(await raw.pickChatFiles(
+      NativeChatFilePickRequest.enc({ ...context, maxFiles: 1 }),
+    ))).toEqual([]);
+    const cancelled = await raw.beginChatFileExport(NativeChatFileExportRequest.enc({
+      ...context,
+      metadata: { mimeType: "application/octet-stream", sizeBytes: 0, kind: { tag: "File" } },
+    }));
+    expect(cancelled == null).toBe(true);
+  });
+
+  it("does not invent an identity search provider for hosts that omit it", () => {
+    const raw = createWasmRawCallbacks(makeHostCallbacks());
+    expect(raw.identityUsernameCandidates).toBeUndefined();
+  });
+
+  it("encodes username candidate accounts as one SCALE vector", async () => {
+    const first = new Uint8Array(32).fill(0x11);
+    const second = new Uint8Array(32).fill(0x22);
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        identityBackend: {
+          identityUsernameCandidates: async () => [first, second],
+        },
+      }),
+    );
+
+    expect(
+      await raw.identityUsernameCandidates!("alice", new Uint8Array(32)),
+    ).toEqual(new Uint8Array([8, ...first, ...second]));
+  });
+
+  it("keeps backend failure distinct from a successful empty search", async () => {
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        identityBackend: {
+          identityUsernameCandidates: async (username) => {
+            if (username === "unavailable") throw new Error("authentication expired");
+            return [];
+          },
+        },
+      }),
+    );
+
+    await expect(
+      raw.identityUsernameCandidates!("unavailable", new Uint8Array(32)),
+    ).rejects.toThrow("authentication expired");
+    expect(
+      await raw.identityUsernameCandidates!("absent", new Uint8Array(32)),
+    ).toEqual(new Uint8Array([0]));
+  });
+
   it("decodes requests and encodes typed responses", async () => {
     const writes: [string, number[]][] = [];
     const clears: string[] = [];
@@ -601,6 +684,105 @@ describe("createWasmRawCallbacks", () => {
     expect(received).toEqual(responses);
     connection!.close();
     expect(closes).toBe(1);
+  });
+
+  it("keeps an unconfigured HOP provider unavailable", async () => {
+    const raw = createWasmRawCallbacks(makeHostCallbacks());
+    expect(Vector(str).dec(await raw.allowedHopEndpoints(hexToBytes(GENESIS)))).toEqual([]);
+    await expect(raw.hopConnect(GENESIS, "wss://hop.example", () => {})).rejects.toThrow();
+  });
+
+  it("requires an exact current trusted WSS endpoint before dialing HOP", async () => {
+    const endpoint = "wss://hop.example/rpc";
+    let allowed = [
+      endpoint,
+      "ws://hop.example/rpc",
+      "wss://user@hop.example/rpc",
+      "wss://hop.example/rpc#fragment",
+    ];
+    const dials: string[] = [];
+    const sent: string[] = [];
+    const received: string[] = [];
+    let closes = 0;
+    let closed = 0;
+    const raw = createWasmRawCallbacks(makeHostCallbacks({
+      hop: {
+        async allowedHopEndpoints(genesis) {
+          expect(genesis).toEqual(hexToBytes(GENESIS));
+          return allowed;
+        },
+        async connectHop(genesis, url) {
+          expect(genesis).toEqual(hexToBytes(GENESIS));
+          dials.push(url);
+          return {
+            send: (request) => sent.push(request),
+            async *responses() { yield '{"id":1,"result":"ok"}'; },
+            close() { closes += 1; },
+          };
+        },
+      },
+    }));
+    expect(Vector(str).dec(await raw.allowedHopEndpoints(hexToBytes(GENESIS)))).toEqual(allowed);
+    for (const denied of [
+      "wss://HOP.example/rpc",
+      "wss://other.example/rpc",
+      ...allowed.slice(1),
+    ]) {
+      await expect(raw.hopConnect(GENESIS, denied, () => {})).rejects.toThrow();
+    }
+    const connection = await raw.hopConnect(
+      GENESIS,
+      endpoint,
+      (response) => received.push(response),
+      () => { closed += 1; },
+    );
+    connection!.send('{"id":1,"method":"hop_info"}');
+    await settle();
+    expect(dials).toEqual([endpoint]);
+    expect(sent).toEqual(['{"id":1,"method":"hop_info"}']);
+    expect(received).toEqual(['{"id":1,"result":"ok"}']);
+    expect(closes).toBe(1);
+    expect(closed).toBe(1);
+    connection!.close();
+    expect(closes).toBe(1);
+    expect(() => connection!.send("{}")).toThrow();
+    allowed = [];
+    await expect(raw.hopConnect(GENESIS, endpoint, () => {})).rejects.toThrow();
+    expect(dials).toEqual([endpoint]);
+  });
+
+  it("drops responses arriving after a connection is closed", async () => {
+    const next = Promise.withResolvers<IteratorResult<string>>();
+    let closes = 0;
+    let returns = 0;
+    const raw = createWasmRawCallbacks(makeHostCallbacks({
+      chain: {
+        async connect() {
+          return {
+            send() {},
+            responses: () => ({
+              [Symbol.asyncIterator]: () => ({
+                next: () => next.promise,
+                async return() {
+                  returns += 1;
+                  return { done: true, value: undefined };
+                },
+              }),
+            }),
+            close() { closes += 1; },
+          };
+        },
+      },
+    }));
+    const received: string[] = [];
+    const connection = await raw.chainConnect(GENESIS, (response) => received.push(response));
+    connection!.close();
+    connection!.close();
+    next.resolve({ done: false, value: "late response" });
+    await settle();
+    expect(received).toEqual([]);
+    expect(closes).toBe(1);
+    expect(returns).toBe(1);
   });
 });
 

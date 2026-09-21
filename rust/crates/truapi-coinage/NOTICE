@@ -1,0 +1,42 @@
+truapi-coinage — AGPL-3.0-only
+
+This crate is a modified extraction of Coinage domain code from
+https://github.com/paritytech/brevity-dozer
+revision d504259b60b88ca42f70a8378186a714887ef19f:
+  core/crates/brevity-coinage/src/
+  core/crates/brevity-chain/src/pallets/members.rs
+  core/crates/brevity-chain/src/tx_extensions.rs
+Copyright the Brevity contributors; the upstream repository identifies its
+license as GNU Affero General Public License version 3.
+
+Modified 2026-09-20: separated database, RPC, app diagnostics and native
+cryptographic adapters; injected Host execution and portable timers; retained
+native Coinage denomination/send/claim/recovery algorithms and wire layouts.
+The extraction retains AGPL-3.0-only licensing. It is not relicensed MIT.
+The complete GNU Affero General Public License is in LICENSE. No warranty.
+
+The sr25519 root entropy and hard-junction derivation in src/keys.rs is
+adapted from the MIT-licensed host-rust-core source:
+  rust/crates/truapi-server/src/host_logic/product_account.rs
+  revision 0926e881d4520ca73c2de82d7ecd91819c3e645f
+Copyright (c) 2026 Parity Technologies.
+Its complete retained MIT notice is in LICENSE-MIT; the combined crate remains
+AGPL-3.0-only.
+
+Modified 2026-09-20: deliberately replaced the extracted legacy Coinage
+derivation with the current hosts/ios/Packages/Coinage main-purse layout:
+  coins:    //coinage//4294967295//0/<index> (soft final junction)
+  vouchers: //coinage-ring-vrf//4294967295//0//<index> (all hard junctions).
+The fixed purse is u32::MAX and page is zero. Coin roots retain Substrate
+BIP-39 expansion; vouchers fold keyed BLAKE2b-256 directly over root entropy.
+The reference factories are Sources/KeypairFactory/CoinKeypairFactory.swift
+and VoucherKeypairFactory.swift; root expansion follows the current iOS
+KeyDerivation package. This is an intentional derivation adaptation, not
+compatibility with legacy persisted coin/voucher indices. Host storage must
+isolate derivation layouts. Product-account and Chat transport keys remain
+independent.
+
+This library does not provide product permission or a secret-bearing guest
+API. Repositories and submission/proof adapters must be owned by the Host's
+signing authority. A distributor/operator must satisfy the applicable AGPL
+Corresponding Source and network-interaction obligations.

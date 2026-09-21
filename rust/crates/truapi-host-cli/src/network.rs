@@ -33,126 +33,37 @@ pub const PEOPLE_WS_ENV: &str = "HOST_CLI_PEOPLE_WS";
 pub const ASSET_HUB_WS_ENV: &str = "HOST_CLI_ASSET_HUB_WS";
 pub const BULLETIN_WS_ENV: &str = "HOST_CLI_BULLETIN_WS";
 
-/// Chain URL overrides; `None` keeps the preset's URL.
-#[derive(Debug, Default)]
-struct ChainOverrides {
-	people_ws: Option<String>,
-	asset_hub_ws: Option<String>,
-	bulletin_ws: Option<String>,
-}
-
-impl ChainOverrides {
-	fn from_env() -> anyhow::Result<Self> {
-		Self::parse(
-			[PEOPLE_WS_ENV, ASSET_HUB_WS_ENV, BULLETIN_WS_ENV].map(|name| std::env::var(name).ok()),
-		)
-	}
-
-	/// Blank values keep the preset. Anything else must be a `ws` or `wss` URL.
-	fn parse([people_ws, asset_hub_ws, bulletin_ws]: [Option<String>; 3]) -> anyhow::Result<Self> {
-		let url = |name: &str, value: Option<String>| -> anyhow::Result<Option<String>> {
-			let Some(value) = value.map(|value| value.trim().to_string()).filter(|v| !v.is_empty())
-			else {
-				return Ok(None);
-			};
-			let url = reqwest::Url::parse(&value)
-				.map_err(|err| anyhow::anyhow!("{name} is not a URL ({err}): {value}"))?;
-			anyhow::ensure!(
-				matches!(url.scheme(), "ws" | "wss"),
-				"{name} must be a ws:// or wss:// URL: {value}"
-			);
-			Ok(Some(value))
-		};
-		Ok(Self {
-			people_ws: url(PEOPLE_WS_ENV, people_ws)?,
-			asset_hub_ws: url(ASSET_HUB_WS_ENV, asset_hub_ws)?,
-			bulletin_ws: url(BULLETIN_WS_ENV, bulletin_ws)?,
-		})
-	}
-
-	/// The env vars behind the overrides that are set.
-	fn set_names(&self) -> Vec<&'static str> {
-		[
-			(PEOPLE_WS_ENV, &self.people_ws),
-			(ASSET_HUB_WS_ENV, &self.asset_hub_ws),
-			(BULLETIN_WS_ENV, &self.bulletin_ws),
-		]
-		.into_iter()
-		.filter_map(|(name, value)| value.is_some().then_some(name))
-		.collect()
-	}
-}
-
-impl Network {
-	/// CLI resolution: the preset with the backend and chain URL overrides, or
-	/// the opt-in disposable local-network configuration, which cannot be
-	/// combined with the chain URL overrides.
-	pub fn cli_config(self) -> anyhow::Result<NetworkConfig> {
-		let overrides = ChainOverrides::from_env()?;
-		let set = overrides.set_names();
-		refuse_light_client(&set, std::env::var(crate::local_network::LIGHT_CLIENT_ENV).ok())?;
-		crate::local_network::resolve(
-			apply_chain_overrides(self.with_backend_override(), overrides),
-			&set,
-		)
-	}
-
-	/// [`Self::cli_config`] without the local-network file, for tests.
-	#[cfg(test)]
-	pub fn config(self) -> NetworkConfig {
-		let overrides = ChainOverrides::from_env().expect("valid chain URL overrides");
-		apply_chain_overrides(self.with_backend_override(), overrides)
-	}
-
-	fn with_backend_override(self) -> NetworkConfig {
-		apply_backend_override(self.preset(), std::env::var(IDENTITY_BACKEND_BASE_ENV).ok())
-	}
-
-	/// The unmodified preset values.
-	fn preset(self) -> NetworkConfig {
-		match self {
-			Self::PaseoNextV2 => NetworkConfig {
-				id: "paseo-next-v2",
-				network_suffix: "paseo",
-				identity_backend_base: "https://identity.dotspark.app/api/v1",
-				people_ws: PASEO_PEOPLE.ws,
-				bulletin_ws: PASEO_BULLETIN.ws,
-				asset_hub_ws: PASEO_ASSET_HUB.ws,
-				people_genesis: PASEO_PEOPLE.genesis,
-				bulletin_genesis: PASEO_BULLETIN.genesis,
-				asset_hub_genesis: PASEO_ASSET_HUB.genesis,
-				live_chain_endpoints: PASEO_NEXT_V2_CHAIN_ENDPOINTS,
-			},
-			Self::Previewnet => NetworkConfig {
-				id: "previewnet",
-				network_suffix: "testnet",
-				identity_backend_base: "https://identity-previewnet.dotspark.app/api/v1",
-				people_ws: PREVIEWNET_PEOPLE.ws,
-				bulletin_ws: PREVIEWNET_BULLETIN.ws,
-				asset_hub_ws: PREVIEWNET_ASSET_HUB.ws,
-				people_genesis: PREVIEWNET_PEOPLE.genesis,
-				bulletin_genesis: PREVIEWNET_BULLETIN.genesis,
-				asset_hub_genesis: PREVIEWNET_ASSET_HUB.genesis,
-				live_chain_endpoints: PREVIEWNET_CHAIN_ENDPOINTS,
-			},
-		}
-	}
-}
-
-/// A fork keeps the live genesis hashes, so the light client would find them in
-/// its catalog and sync the live chains instead.
-fn refuse_light_client(
-	chain_overrides: &[&str],
-	light_client: Option<String>,
-) -> anyhow::Result<()> {
-	anyhow::ensure!(
-		chain_overrides.is_empty() || light_client.as_deref() != Some("1"),
-		"{} and {}=1 cannot be used together: the light client syncs the live chains \
-         by genesis hash; unset one of them",
-		chain_overrides.join(", "),
-		crate::local_network::LIGHT_CLIENT_ENV
-	);
-	Ok(())
+    /// The unmodified preset values.
+    fn preset(self) -> NetworkConfig {
+        match self {
+            Self::PaseoNextV2 => NetworkConfig {
+                id: "paseo-next-v2",
+                network_suffix: "paseo",
+                identity_backend_base: "https://identity.dotspark.app/api/v1",
+                people_ws: PASEO_PEOPLE.ws,
+                bulletin_ws: PASEO_BULLETIN.ws,
+                asset_hub_ws: PASEO_ASSET_HUB.ws,
+                people_genesis: PASEO_PEOPLE.genesis,
+                bulletin_genesis: PASEO_BULLETIN.genesis,
+                asset_hub_genesis: PASEO_ASSET_HUB.genesis,
+                live_chain_endpoints: PASEO_NEXT_V2_CHAIN_ENDPOINTS,
+                hop_endpoints: PASEO_HOP_ENDPOINTS,
+            },
+            Self::Previewnet => NetworkConfig {
+                id: "previewnet",
+                network_suffix: "testnet",
+                identity_backend_base: "https://identity-previewnet.dotspark.app/api/v1",
+                people_ws: PREVIEWNET_PEOPLE.ws,
+                bulletin_ws: PREVIEWNET_BULLETIN.ws,
+                asset_hub_ws: PREVIEWNET_ASSET_HUB.ws,
+                people_genesis: PREVIEWNET_PEOPLE.genesis,
+                bulletin_genesis: PREVIEWNET_BULLETIN.genesis,
+                asset_hub_genesis: PREVIEWNET_ASSET_HUB.genesis,
+                live_chain_endpoints: PREVIEWNET_CHAIN_ENDPOINTS,
+                hop_endpoints: PREVIEWNET_HOP_ENDPOINTS,
+            },
+        }
+    }
 }
 
 /// Replaces the preset's identity backend base with `base` when it carries a
@@ -260,32 +171,64 @@ const PASEO_NEXT_V2_CHAIN_ENDPOINTS: &[ChainEndpoint] =
 const PREVIEWNET_CHAIN_ENDPOINTS: &[ChainEndpoint] =
 	&[PREVIEWNET_ASSET_HUB, PREVIEWNET_PEOPLE, PREVIEWNET_BULLETIN];
 
+// Trusted endpoint/identity pairs from brevity-chain presets.rs and
+// remote_config.json (chains_v2) at d504259b60b88ca42f70a8378186a714887ef19f.
+// Do not infer a HOP endpoint from a chain RPC URL.
+const PASEO_HOP_ENDPOINTS: &[HopEndpoint] = &[
+    HopEndpoint {
+        bulletin_genesis: PASEO_BULLETIN.genesis,
+        ws: "wss://paseo-hop-next-0.polkadot.io",
+    },
+    HopEndpoint {
+        bulletin_genesis: PASEO_BULLETIN.genesis,
+        ws: "wss://paseo-hop-next-1.polkadot.io",
+    },
+];
+
+// This trusted snapshot identifies a newer Previewnet Bulletin than the CLI's
+// existing chain preset. Keep the exact pair: the provider fails closed until
+// the selected Bulletin identity matches, rather than silently changing chains.
+const PREVIEWNET_HOP_ENDPOINTS: &[HopEndpoint] = &[HopEndpoint {
+    bulletin_genesis: hex_literal_genesis(
+        "1144acd27f0e5b2c88da7dc12c111e396983dec036ccfb42da5bbb0dd7104e89",
+    ),
+    ws: "wss://previewnet.substrate.dev/bulletin",
+}];
+
+#[derive(Debug, Clone, Copy)]
+pub struct HopEndpoint {
+    pub bulletin_genesis: [u8; 32],
+    pub ws: &'static str,
+}
+
 /// Resolved RPC/backend/genesis values for one network preset.
 #[derive(Debug, Clone, Copy)]
 pub struct NetworkConfig {
-	pub id: &'static str,
-	/// The network's dotNS TLD without the dot, as its runtimes report it in
-	/// `NetworkSuffix.NetworkSuffix`. Every reserved RFC-0022 identity the CLI
-	/// derives ends in it (`uid.<suffix>`, `peopl.<suffix>`), so a person the
-	/// CLI creates here is the same person a phone derives from that seed on
-	/// this network. `live_people_chain::network_suffix_matches_the_preset`
-	/// holds it against the chain.
-	pub network_suffix: &'static str,
-	pub identity_backend_base: &'static str,
-	pub people_ws: &'static str,
-	pub bulletin_ws: &'static str,
-	/// Asset Hub RPC, where PGAS allowances are claimed.
-	pub asset_hub_ws: &'static str,
-	pub people_genesis: [u8; 32],
-	pub bulletin_genesis: [u8; 32],
-	/// Asset Hub genesis hash, both the role's identity in
-	/// [`NetworkConfig::host_chain_set`] and its routing key. The chain it connects
-	/// to is authoritative for `CheckGenesis`.
-	///
-	/// Wrong here is worse than stale elsewhere: routing matches on it, so a value
-	/// the chain does not report sends Asset Hub traffic to the fallback chain.
-	pub asset_hub_genesis: [u8; 32],
-	pub live_chain_endpoints: &'static [ChainEndpoint],
+    pub id: &'static str,
+    /// The network's dotNS TLD without the dot, as its runtimes report it in
+    /// `NetworkSuffix.NetworkSuffix`. Every reserved RFC-0022 identity the CLI
+    /// derives ends in it (`uid.<suffix>`, `peopl.<suffix>`), so a person the
+    /// CLI creates here is the same person a phone derives from that seed on
+    /// this network. `live_people_chain::network_suffix_matches_the_preset`
+    /// holds it against the chain.
+    pub network_suffix: &'static str,
+    pub identity_backend_base: &'static str,
+    pub people_ws: &'static str,
+    #[allow(dead_code)]
+    pub bulletin_ws: &'static str,
+    /// Asset Hub RPC, where PGAS allowances are claimed.
+    pub asset_hub_ws: &'static str,
+    pub people_genesis: [u8; 32],
+    pub bulletin_genesis: [u8; 32],
+    /// Asset Hub genesis hash, both the role's identity in
+    /// [`NetworkConfig::host_chain_set`] and its routing key. The chain it connects
+    /// to is authoritative for `CheckGenesis`.
+    ///
+    /// Wrong here is worse than stale elsewhere: routing matches on it, so a value
+    /// the chain does not report sends Asset Hub traffic to the fallback chain.
+    pub asset_hub_genesis: [u8; 32],
+    pub live_chain_endpoints: &'static [ChainEndpoint],
+    pub hop_endpoints: &'static [HopEndpoint],
 }
 
 #[derive(Debug, Clone, Copy)]

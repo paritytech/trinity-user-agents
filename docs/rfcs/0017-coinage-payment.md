@@ -647,6 +647,21 @@ Those mechanics are host-private. Products receive only RFC 0006 balances,
 payment receipts and payment status, plus RFC 0017 purse metadata and clearing
 references where those are explicitly returned.
 
+### Relationship to Host-owned Native Chat
+
+The [draft Host-owned native Chat/main-purse RFC](native-chat-main-purse.md)
+uses this RFC's main-purse and secret-custody model for an authenticated native
+Chat channel on Account method 12. Its product-visible payment cards are not
+cheques, an acknowledgment is not clearing, and Chat authorization does not
+replace trusted per-spend consent.
+
+That actor does not implement the general purse, receivable, cheque, deposit,
+refund, or purse-aware balance APIs specified here. Supporting it therefore
+does not establish RFC 0017 compliance. Its `amount_cents: u64` denotes cents
+of the Host-selected Coinage asset; conversion to this RFC's `Balance = u32`
+requires both a checked range conversion and the actual dotUSD denomination.
+A test-network pUSD amount must not be silently relabeled dotUSD.
+
 ### Relationship to Product Payment Layers
 
 Merchant checkout, POS, ecommerce, and reconciliation flows can be implemented

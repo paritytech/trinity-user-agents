@@ -1,4 +1,5 @@
 import type { RequiredHostCallbacks } from "./generated/host-callbacks.js";
+import { unavailableHopProvider, unavailableNativeChatFilesHost } from "./adapter-support.js";
 
 /** `HostCallbacks` with every optional member required, for exhaustive test fixtures. */
 export type CompleteHostCallbacks = RequiredHostCallbacks;
@@ -95,6 +96,12 @@ export function makeHostCallbacks(
     theme: { ...defaults.theme, ...overrides.theme },
     locale: { ...defaults.locale, ...overrides.locale },
     chain: { ...defaults.chain, ...overrides.chain },
+    ...(overrides.hop
+      ? { hop: { ...unavailableHopProvider, ...overrides.hop } }
+      : {}),
+    ...(overrides.nativeChatFiles
+      ? { nativeChatFiles: { ...unavailableNativeChatFilesHost, ...overrides.nativeChatFiles } }
+      : {}),
     // Chat is an optional capability: only fixtures that ask for it get the
     // group, so the default fixture is a host that does not serve chat.
     ...(overrides.chat
@@ -130,24 +137,14 @@ export function makeHostCallbacks(
           },
         }
       : {}),
-    // And for Game: the default fixture is a host that holds no reminders,
-    // so Game calls are answered `Unsupported`.
-    ...(overrides.game
+    // An unavailable authenticated search must not look like an empty result.
+    ...(overrides.identityBackend
       ? {
-          game: {
-            scheduleGameReminder: async () => {},
-            cancelGameReminder: async () => {},
-            ...overrides.game,
-          },
-        }
-      : {}),
-    // And for the scanner: the default fixture is a host with no viewfinder,
-    // so scans are answered `Unsupported`, as on a web host.
-    ...(overrides.scanner
-      ? {
-          scanner: {
-            scanCode: async () => ({ tag: "Dismissed" as const }),
-            ...overrides.scanner,
+          identityBackend: {
+            identityUsernameCandidates: async (): Promise<Uint8Array[]> => {
+              throw new Error("identity backend unavailable");
+            },
+            ...overrides.identityBackend,
           },
         }
       : {}),

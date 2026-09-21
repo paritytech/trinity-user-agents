@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "31bbc7e37560ad31";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "0931d05042135353";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -253,10 +253,9 @@ impl AccountProductDeviceChat {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 174,
-            response_id: 175,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 2,
+            method_id: 12,
         }),
     };
 }

@@ -542,6 +542,64 @@ mod tests {
     }
 
     #[test]
+    fn native_chat_uses_method_twelve_with_v1_envelopes() {
+        use truapi::{v02 as dto, versioned::account};
+
+        let request = account::HostProductDeviceChatRequest::V1(
+            dto::HostProductDeviceChatRequest::Initialize,
+        );
+        assert_eq!(
+            encode_request::<AccountProductDeviceChat>("p:1", &request),
+            [12, b'p', b':', b'1', 2, 12, 0, 0, 0],
+        );
+
+        let response =
+            account::HostProductDeviceChatResponse::V1(dto::HostProductDeviceChatResponse {
+                device: dto::HostNativeChatDevice {
+                    identity_account_id: [1; 32],
+                    identity_chat_public_key: [2; 32],
+                    product_account: v01::ProductAccountId {
+                        dot_ns_identifier: "chat.dot".into(),
+                        derivation_index: v01::DerivationIndex::Index(0),
+                    },
+                    account_id: [3; 32],
+                    chat_public_key: [4; 32],
+                },
+                peers: vec![],
+                invitations: vec![],
+                messages: vec![],
+                acknowledgments: vec![],
+                payments: vec![],
+                rich_messages: vec![],
+            });
+        let mut frame = vec![12, b'p', b':', b'1', 2, 12, 1, 0];
+        response.encode_to(&mut frame);
+        assert_eq!(frame[8], 0, "response envelope is V1");
+        assert_eq!(
+            decode_response::<AccountProductDeviceChat>(&frame),
+            Ok(Decoded {
+                request_id: "p:1".into(),
+                value: Ok(response),
+            }),
+        );
+
+        frame[5] = 11;
+        assert_eq!(
+            decode_response::<AccountProductDeviceChat>(&frame),
+            Err(DecodeError::UnexpectedMethod {
+                expected: MethodIds {
+                    trait_id: 2,
+                    method_id: 12,
+                },
+                actual: MethodIds {
+                    trait_id: 2,
+                    method_id: 11,
+                },
+            }),
+        );
+    }
+
+    #[test]
     fn worker_serves_unified_renderer() {
         use truapi::versioned::renderer::{
             ProductRendererRenderItem, ProductRendererRenderRequest,

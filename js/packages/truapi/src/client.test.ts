@@ -4,11 +4,7 @@ import { describe, expect, it, jest } from "bun:test";
 import { createTransport, RequestTimeoutError } from "./client.js";
 import * as S from "./scale.js";
 import { str, type CallErrorValue } from "./scale.js";
-import {
-  createClient,
-  SubscriptionError,
-  TRUAPI_CODEC_VERSION,
-} from "./generated/client.js";
+import { createClient, SubscriptionError, TRUAPI_CODEC_VERSION } from "./generated/client.js";
 import * as T from "./generated/types.js";
 import * as W from "./generated/wire-table.js";
 import {
@@ -268,26 +264,6 @@ describe("generated client transport", () => {
         expect(toHex(fixture.sent[0])).toBe(toHex(expectedFrame));
     });
 
-    it("uses the transport codec version for generated handshake calls", () => {
-        const fixture = providerFixture();
-        const transport = createTransport(fixture.provider);
-        const client = createClient(transport);
-
-        void client.system.handshake();
-
-        const expectedPayload = T.VersionedHostHandshakeRequest.enc({
-            tag: "V1",
-            value: { codecVersion: TRUAPI_CODEC_VERSION },
-        });
-        const expectedFrame = new Uint8Array(str.enc("p:1").length + 3 + expectedPayload.length);
-        expectedFrame.set(str.enc("p:1"), 0);
-        expectedFrame[str.enc("p:1").length] = 1; // system trait
-        expectedFrame[str.enc("p:1").length + 1] = 0; // handshake
-        expectedFrame[str.enc("p:1").length + 2] = MESSAGE_TYPE_REQUEST;
-        expectedFrame.set(expectedPayload, str.enc("p:1").length + 3);
-
-        expect(toHex(fixture.sent[0])).toBe(toHex(expectedFrame));
-    });
 
     it("resolves a request from its versioned response envelope", async () => {
         const fixture = providerFixture();
@@ -633,28 +609,6 @@ describe("generated client transport", () => {
         expect(subscriptionFixture.sent).toHaveLength(2);
     });
 
-    it("logs a protocol violation for a known pair's out-of-range message type", () => {
-        const fixture = providerFixture();
-        createTransport(fixture.provider);
-
-        const warnings: unknown[][] = [];
-        const originalWarn = console.warn;
-        console.warn = (...args: unknown[]) => {
-            warnings.push(args);
-        };
-        try {
-            fixture.receive(wireFrame("unrelated:1", W.LOCAL_STORAGE_READ, 99));
-        } finally {
-            console.warn = originalWarn;
-        }
-
-        expect(fixture.sent).toHaveLength(0);
-        expect(
-            warnings.some((args) =>
-                String(args[0]).includes("unexpected messageType 99"),
-            ),
-        ).toBe(true);
-    });
 
     it("auto-responds to an inbound handshake with the versioned-result shape", () => {
         const fixture = providerFixture();

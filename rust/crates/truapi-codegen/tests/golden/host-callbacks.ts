@@ -13,6 +13,7 @@ import {
   DerivationIndex,
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
+  HostNativeChatAttachmentMetadata,
   HostSignPayloadRequest,
   HostSignPayloadWithLegacyAccountRequest,
   HostSignRawRequest,
@@ -226,22 +227,50 @@ export type CoreStorageKey =
    */
   | { tag: "ProductManifest"; value: { productId: string } }
   /**
-   * Funding sessions: every live one plus a bounded tail of settled ones,
-   * as one versioned SCALE blob.
+   * Encrypted main-purse inventory, operation journal, and claim recovery state.
+   *
+   * This slot is wallet-owned, not product-owned, and must survive clearing a
+   * product's data. Writes replace the entire value atomically.
    */
-  | { tag: "FundingSessions"; value?: undefined }
+  | {
+      tag: "MainPurseCoinage";
+      value: { rootPublicKey: Uint8Array; genesisHash: Uint8Array };
+    }
   /**
-   * Funding sessions or session pack blobs the core could not read, as a SCALE list of the
-   * raw blobs, newest last, so a stored session is never overwritten
-   * unread and a later bad blob does not replace an earlier one. Kept for
-   * diagnosis only: the core never reads them back.
+   * Encrypted Host-owned native Chat device, peer roster, and migration state.
    */
-  | { tag: "FundingSessionsUnreadable"; value?: undefined }
+  | {
+      tag: "NativeChatDevice";
+      value: {
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
+        productId: string;
+      };
+    }
   /**
-   * Recorded funding sessions compacted out of the funding sessions blob,
-   * as one versioned SCALE blob. Never trimmed.
+   * One encrypted, bounded native Chat attachment cache chunk.
+   * Values use the Chat state's wallet-bound authenticated encryption.
    */
-  | { tag: "FundingSessionPack"; value?: undefined };
+  | {
+      tag: "NativeChatFileChunk";
+      value: {
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
+        productId: string;
+        attachmentId: Uint8Array;
+        chunkIndex: number;
+      };
+    }
+  /**
+   * Previously initialized Chat products to restore after this wallet unlocks.
+   *
+   * This is a host-private wallet-owned index, not a permission grant. The
+   * core rechecks each product's current grants before restoring reception.
+   */
+  | {
+      tag: "NativeChatProducts";
+      value: { rootPublicKey: Uint8Array; genesisHash: Uint8Array };
+    };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -476,6 +505,119 @@ export interface IdentityDisclosureReview {
  * than only display it.
  */
 export type LoginFailureKind = "NoFreeAllowanceSlots" | "Other";
+
+/**
+ * Exact Host-resolved payment reviewed before debiting the user's main purse.
+ *
+ * This review never grants a reusable spending permission. Chat authority and
+ * automatic product signing do not authorize it.
+ */
+export interface MainPurseChatPaymentReview {
+  /**
+   * Authenticated product requesting this payment.
+   */
+  callingProductId: string;
+
+  /**
+   * Recipient identity authenticated by the Host's native Chat session.
+   */
+  recipientIdentity: Uint8Array;
+
+  /**
+   * Host-resolved username for that identity, never a product display label.
+   */
+  recipientUsername?: string;
+
+  /**
+   * Exact recipient amount in cents of the selected Coinage asset.
+   */
+  amountCents: bigint;
+
+  /**
+   * Maximum main-purse debit, including any approved fee, in the same cents.
+   */
+  maxDebitCents: bigint;
+
+  /**
+   * Genesis hash of the Host-selected Coinage chain.
+   */
+  genesisHash: Uint8Array;
+
+  /**
+   * Trusted Coinage asset instance; `undefined` denotes a legacy single-asset runtime.
+   */
+  coinageInstanceId?: number;
+
+  /**
+   * Immutable, wallet-scoped payment operation being authorized.
+   */
+  operationId: Uint8Array;
+}
+
+/**
+ * Trusted context for exporting a verified native Chat attachment.
+ */
+export interface NativeChatFileExportRequest {
+  /**
+   * Authenticated product requesting presentation.
+   */
+  productId: string;
+
+  /**
+   * Host-authenticated peer identity.
+   */
+  peerIdentity: Uint8Array;
+
+  /**
+   * Host-resolved peer name, if available.
+   */
+  peerUsername?: string;
+
+  /**
+   * Verified attachment metadata, including the exact export size.
+   */
+  metadata: HostNativeChatAttachmentMetadata;
+}
+
+/**
+ * Trusted native Chat selection context; never passed to a product.
+ */
+export interface NativeChatFilePickRequest {
+  /**
+   * Authenticated product requesting selection.
+   */
+  productId: string;
+
+  /**
+   * Host-authenticated recipient identity.
+   */
+  peerIdentity: Uint8Array;
+
+  /**
+   * Host-resolved recipient name, if available.
+   */
+  peerUsername?: string;
+
+  /**
+   * Maximum number of files the Host can accept.
+   */
+  maxFiles: number;
+}
+
+/**
+ * Immutable Host-owned source and metadata derived from its actual bytes.
+ */
+export interface NativeChatPickedFile {
+  /**
+   * Opaque private handle surviving restart until explicitly released.
+   */
+  sourceId: string;
+
+  /**
+   * Actual source size and native media metadata.
+   */
+  metadata: HostNativeChatAttachmentMetadata;
+}
 
 /**
  * Permission request whose authorization status can be inspected or updated
@@ -775,7 +917,11 @@ export type UserConfirmationReview =
   /**
    * Allow a product to bind and use wallet-held Chat identity authority.
    */
-  | { tag: "ChatAuthority"; value: ChatAuthorityReview };
+  | { tag: "ChatAuthority"; value: ChatAuthorityReview }
+  /**
+   * Confirm this exact main-purse payment; never eligible for auto-approval.
+   */
+  | { tag: "MainPurseChatPayment"; value: MainPurseChatPaymentReview };
 
 /**
  * Review shown before a product asks to access another product account.
@@ -836,63 +982,75 @@ export const ChatAuthorityReview: S.Codec<ChatAuthorityReview> = S.lazy(
  */
 export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
   (): S.Codec<CoreStorageKey> =>
-    S.indexedTaggedUnion({
-      AuthSession: [0, S._void] as const,
-      PairingDeviceIdentity: [1, S._void] as const,
-      PermissionAuthorization: [
-        2,
-        S.Struct({
-          productId: S.str,
-          request: PermissionAuthorizationRequest,
-        }) as S.Codec<{
-          productId: string;
-          request: PermissionAuthorizationRequest;
-        }>,
-      ] as const,
-      AllowanceKeys: [
-        3,
-        S.Struct({ sessionId: S.str }) as S.Codec<{ sessionId: string }>,
-      ] as const,
-      LastProcessedPairingStatement: [4, S._void] as const,
-      AutoSigningKey: [
-        5,
-        S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
-      ] as const,
-      AutoSigningKeys: [6, S._void] as const,
-      RingVrfRegistry: [
-        7,
-        S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
-          rootPublicKey: Uint8Array;
-        }>,
-      ] as const,
-      StatementRenewalTargets: [8, S._void] as const,
-      DeviceEncryptionKey: [9, S._void] as const,
-      ProductSubtree: [
-        10,
-        S.Struct({ sessionId: S.str, productId: S.str }) as S.Codec<{
-          sessionId: string;
-          productId: string;
-        }>,
-      ] as const,
-      SsoResponderRequestLedger: [
-        11,
-        S.Struct({
-          rootPublicKey: S.Bytes(32),
-          peerStatementAccountId: S.Bytes(32),
-          peerEncryptionPublicKey: S.Bytes(32),
-        }) as S.Codec<{
-          rootPublicKey: Uint8Array;
-          peerStatementAccountId: Uint8Array;
-          peerEncryptionPublicKey: Uint8Array;
-        }>,
-      ] as const,
-      ProductManifest: [
-        12,
-        S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
-      ] as const,
-      FundingSessions: [13, S._void] as const,
-      FundingSessionsUnreadable: [17, S._void] as const,
-      FundingSessionPack: [18, S._void] as const,
+    S.TaggedUnion({
+      AuthSession: S._void,
+      PairingDeviceIdentity: S._void,
+      PermissionAuthorization: S.Struct({
+        productId: S.str,
+        request: PermissionAuthorizationRequest,
+      }) as S.Codec<{
+        productId: string;
+        request: PermissionAuthorizationRequest;
+      }>,
+      AllowanceKeys: S.Struct({ sessionId: S.str }) as S.Codec<{
+        sessionId: string;
+      }>,
+      LastProcessedPairingStatement: S._void,
+      AutoSigningKey: S.Struct({ productId: S.str }) as S.Codec<{
+        productId: string;
+      }>,
+      AutoSigningKeys: S._void,
+      RingVrfRegistry: S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
+        rootPublicKey: Uint8Array;
+      }>,
+      StatementRenewalTargets: S._void,
+      DeviceEncryptionKey: S._void,
+      ProductSubtree: S.Struct({
+        sessionId: S.str,
+        productId: S.str,
+      }) as S.Codec<{ sessionId: string; productId: string }>,
+      SsoResponderRequestLedger: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        peerStatementAccountId: S.Bytes(32),
+        peerEncryptionPublicKey: S.Bytes(32),
+      }) as S.Codec<{
+        rootPublicKey: Uint8Array;
+        peerStatementAccountId: Uint8Array;
+        peerEncryptionPublicKey: Uint8Array;
+      }>,
+      ProductManifest: S.Struct({ productId: S.str }) as S.Codec<{
+        productId: string;
+      }>,
+      MainPurseCoinage: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+      }) as S.Codec<{ rootPublicKey: Uint8Array; genesisHash: Uint8Array }>,
+      NativeChatDevice: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+        productId: S.str,
+      }) as S.Codec<{
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
+        productId: string;
+      }>,
+      NativeChatFileChunk: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+        productId: S.str,
+        attachmentId: S.Bytes(32),
+        chunkIndex: S.u32,
+      }) as S.Codec<{
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
+        productId: string;
+        attachmentId: Uint8Array;
+        chunkIndex: number;
+      }>,
+      NativeChatProducts: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+      }) as S.Codec<{ rootPublicKey: Uint8Array; genesisHash: Uint8Array }>,
     }),
 );
 
@@ -1074,6 +1232,66 @@ export const IdentityDisclosureReview: S.Codec<IdentityDisclosureReview> =
  */
 export const LoginFailureKind: S.Codec<LoginFailureKind> = S.lazy(
   (): S.Codec<LoginFailureKind> => S.Status("NoFreeAllowanceSlots", "Other"),
+);
+
+/**
+ * Exact Host-resolved payment reviewed before debiting the user's main purse.
+ *
+ * This review never grants a reusable spending permission. Chat authority and
+ * automatic product signing do not authorize it.
+ */
+export const MainPurseChatPaymentReview: S.Codec<MainPurseChatPaymentReview> =
+  S.lazy(
+    (): S.Codec<MainPurseChatPaymentReview> =>
+      S.Struct({
+        callingProductId: S.str,
+        recipientIdentity: S.Bytes(32),
+        recipientUsername: S.Option(S.str),
+        amountCents: S.u64,
+        maxDebitCents: S.u64,
+        genesisHash: S.Bytes(32),
+        coinageInstanceId: S.Option(S.u32),
+        operationId: S.Bytes(32),
+      }) as S.Codec<MainPurseChatPaymentReview>,
+  );
+
+/**
+ * Trusted context for exporting a verified native Chat attachment.
+ */
+export const NativeChatFileExportRequest: S.Codec<NativeChatFileExportRequest> =
+  S.lazy(
+    (): S.Codec<NativeChatFileExportRequest> =>
+      S.Struct({
+        productId: S.str,
+        peerIdentity: S.Bytes(32),
+        peerUsername: S.Option(S.str),
+        metadata: HostNativeChatAttachmentMetadata,
+      }) as S.Codec<NativeChatFileExportRequest>,
+  );
+
+/**
+ * Trusted native Chat selection context; never passed to a product.
+ */
+export const NativeChatFilePickRequest: S.Codec<NativeChatFilePickRequest> =
+  S.lazy(
+    (): S.Codec<NativeChatFilePickRequest> =>
+      S.Struct({
+        productId: S.str,
+        peerIdentity: S.Bytes(32),
+        peerUsername: S.Option(S.str),
+        maxFiles: S.u32,
+      }) as S.Codec<NativeChatFilePickRequest>,
+  );
+
+/**
+ * Immutable Host-owned source and metadata derived from its actual bytes.
+ */
+export const NativeChatPickedFile: S.Codec<NativeChatPickedFile> = S.lazy(
+  (): S.Codec<NativeChatPickedFile> =>
+    S.Struct({
+      sourceId: S.str,
+      metadata: HostNativeChatAttachmentMetadata,
+    }) as S.Codec<NativeChatPickedFile>,
 );
 
 /**
@@ -1275,6 +1493,7 @@ export const UserConfirmationReview: S.Codec<UserConfirmationReview> = S.lazy(
       SignVrf: SignVrfReview,
       ProductSubtree: ProductSubtreeReview,
       ChatAuthority: ChatAuthorityReview,
+      MainPurseChatPayment: MainPurseChatPaymentReview,
     }),
 );
 
@@ -1570,10 +1789,10 @@ export interface CoreAdmin {
  * they accumulate for the life of the install.
  *
  * `describe_core_storage_key` names the product owning a slot:
- * `CoreStorageKeyDescription::product_id` is `Some` exactly for the
- * product-indexed variants, which are `PermissionAuthorization`,
- * `AutoSigningKey`, and `ProductSubtree`. Keying host storage by that value
- * makes the sweep a prefix delete rather than a scan.
+ * `CoreStorageKeyDescription::product_id` is `Some` for product-indexed
+ * slots, including the encrypted attachment chunk cache. Wallet-owned state
+ * remains outside that sweep. Keying host storage by this metadata makes
+ * product removal a prefix delete rather than a scan.
  */
 export interface CoreStorage {
   /**
@@ -1626,63 +1845,48 @@ export interface Features {
 }
 
 /**
- * Host-implemented funding surface: the native overlay a funding session
- * runs in. Optional: a host that omits it leaves funding requests answered
- * `Unsupported`.
- */
-export interface FundingPlatform {
-  /**
-   * Show the funding overlay for a session that `product` opened, or the
-   * host itself when `product` is ``undefined``.
-   */
-  presentFunding(
-    product: ProductContext | undefined,
-    session: FundingPresentation,
-  ): Promise<FundingPresentOutcome>;
-
-  /**
-   * Observe a session's status change, for host UI such as the in-flight
-   * pill.
-   */
-  fundingSessionChanged?(
-    intent: string,
-    status: HostFundingStatusSubscribeItem,
-  ): void;
-}
-
-/**
- * Host-implemented adapter that holds a product's next-game reminder.
- * Optional: a host that omits it leaves Game requests answered `Unsupported`.
- * See `OptionalPlatform`.
+ * Host-private HOP transport for the configured Bulletin chain.
  *
- * The core serves only the game product and refuses a start that is not in
- * the future before it calls here; it asks for no per-product consent. The
- * host asks the OS for what the reminder needs, rings an alarm where the OS
- * allows one and delivers an ordinary notification otherwise, and may add the
- * game to the user's calendar. A host keeps one reminder per product: a
- * schedule replaces the reminder the same product already holds and leaves
- * other products' reminders alone. The host keeps each reminder across app
- * kill and device reboot and drops it once its game has started.
+ * Endpoints are trusted host configuration, never product-supplied dialing
+ * instructions. Implementations must re-read their allowlist and enforce exact
+ * URL membership before opening a connection. An unconfigured host is
+ * explicitly unavailable; it must not fall back to a chain RPC endpoint.
  */
-export interface GamePlatform {
+export interface HopProvider {
   /**
-   * Hold `starts_at` (Unix milliseconds, UTC) as the product's reminder,
-   * replacing any it holds. An error, including an OS that allows neither
-   * alarms nor notifications, reaches the product as a host failure.
+   * Current exact WSS endpoints from the host's trusted Bulletin registry.
    */
-  scheduleGameReminder(
-    product: ProductContext,
-    startsAt: bigint,
-  ): Promise<void>;
+  allowedHopEndpoints?(bulletinGenesisHash: Uint8Array): Promise<Array<string>>;
 
   /**
-   * Drop the product's reminder. Idempotent: dropping none succeeds.
+   * Open one private HOP connection, sharing the JSON-RPC lifecycle only.
+   * The caller closes the returned lease when the private operation ends.
    */
-  cancelGameReminder(product: ProductContext): Promise<void>;
+  connectHop?(
+    bulletinGenesisHash: Uint8Array,
+    endpoint: string,
+  ): Promise<JsonRpcConnection>;
 }
 
 /**
- * A live JSON-RPC connection to a chain.
+ * Optional host-authenticated username candidate source. The host owns backend
+ * configuration and credentials. Candidates are never ownership assertions:
+ * the core checks finalized dotNS ownership and the canonical People Chat key.
+ */
+export interface IdentityBackendHost {
+  /**
+   * Return exact-name candidates on the specified People network. Reject
+   * unavailable configuration/authentication and incomplete search results.
+   * Neither a guest URL nor a backend display label crosses this boundary.
+   */
+  identityUsernameCandidates(
+    username: string,
+    peopleChainGenesisHash: Uint8Array,
+  ): Promise<Array<Uint8Array>>;
+}
+
+/**
+ * A live JSON-RPC connection to a host-selected service.
  */
 export interface JsonRpcConnection {
   /**
@@ -1714,6 +1918,66 @@ export interface LocaleHost {
   subscribeLocale(): AsyncIterable<
     Result<HostLocaleSubscribeItem, GenericError>
   >;
+}
+
+/**
+ * Host-private native Chat selection, immutable custody and safe export.
+ *
+ * Handles, file bytes and destinations must never be exposed to products.
+ * Optional embedders without a backend must fail explicitly as unavailable.
+ */
+export interface NativeChatFilesHost {
+  /**
+   * Present trusted selection and durably snapshot the selected files.
+   * An empty result denotes user cancellation, not an unavailable backend.
+   */
+  pickChatFiles(
+    request: NativeChatFilePickRequest,
+  ): Promise<Array<NativeChatPickedFile>>;
+
+  /**
+   * Read exactly `length` bytes from an immutable source. Reject lengths
+   * above 2,000,000 and checked ranges extending beyond its actual u32 size.
+   */
+  readChatFile(
+    sourceId: string,
+    offset: bigint,
+    length: number,
+  ): Promise<Uint8Array>;
+
+  /**
+   * Release durable source custody. Repeated release is harmless.
+   */
+  releaseChatFile(sourceId: string): Promise<void>;
+
+  /**
+   * Present trusted export consent and create a private partial output.
+   * ``undefined`` denotes user cancellation. Never overwrite without consent.
+   */
+  beginChatFileExport(
+    request: NativeChatFileExportRequest,
+  ): Promise<string | undefined>;
+
+  /**
+   * Append a bounded chunk at the exact current offset; never allow holes,
+   * rewrites, or bytes beyond the declared export size.
+   */
+  writeChatFileExport(
+    exportId: string,
+    offset: bigint,
+    data: Uint8Array,
+  ): Promise<void>;
+
+  /**
+   * Publish only an exact-size completed output through safe native UI.
+   * Never automatically execute HTML, SVG, scripts, or other active files.
+   */
+  finishChatFileExport(exportId: string): Promise<void>;
+
+  /**
+   * Idempotently discard a partial output, never a completed user export.
+   */
+  cancelChatFileExport(exportId: string): Promise<void>;
 }
 
 /**
@@ -2060,6 +2324,8 @@ export interface HostCallbacks {
   productStorage: ProductStorage;
   coreStorage: CoreStorage;
   chain: ChainProvider;
+  hop?: HopProvider;
+  nativeChatFiles?: NativeChatFilesHost;
   auth: AuthPresenter;
   userConfirmation: UserConfirmation;
   theme: ThemeHost;
@@ -2067,8 +2333,7 @@ export interface HostCallbacks {
   preimage: PreimageHost;
   productOperations: ProductOperations;
   chat?: ChatPlatform;
-  contacts?: ContactsPlatform;
-  game?: GamePlatform;
+  identityBackend?: IdentityBackendHost;
   permissionStatus?: PermissionStatusHost;
   pocket?: PocketPlatform;
   scanner?: ScannerPlatform;
@@ -2082,6 +2347,8 @@ export interface RequiredHostCallbacks {
   productStorage: Required<ProductStorage>;
   coreStorage: Required<CoreStorage>;
   chain: Required<ChainProvider>;
+  hop?: Required<HopProvider>;
+  nativeChatFiles?: Required<NativeChatFilesHost>;
   auth: Required<AuthPresenter>;
   userConfirmation: Required<UserConfirmation>;
   theme: Required<ThemeHost>;
@@ -2089,8 +2356,7 @@ export interface RequiredHostCallbacks {
   preimage: Required<PreimageHost>;
   productOperations: Required<ProductOperations>;
   chat?: Required<ChatPlatform>;
-  contacts?: Required<ContactsPlatform>;
-  game?: Required<GamePlatform>;
+  identityBackend?: Required<IdentityBackendHost>;
   permissionStatus?: Required<PermissionStatusHost>;
   pocket?: Required<PocketPlatform>;
   scanner?: Required<ScannerPlatform>;

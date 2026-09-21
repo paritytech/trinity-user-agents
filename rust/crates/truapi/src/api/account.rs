@@ -290,30 +290,17 @@ pub trait Account: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-    /// Bind a product account as a Chat v2 device, or seal/open identity-route
-    /// payloads without exposing the wallet Chat identity secret.
+    /// Operate a Host-owned native Chat device and propose one-shot main-purse
+    /// payments. Transport private keys and spendable memos never leave the Host.
+    ///
+    /// Method 11 (the former raw-crypto interface) is retired, not forwarded.
     ///
     /// ```ts
-    /// const productContext = await truapi.system.getProductContext();
-    /// assert(productContext.isOk(), "getProductContext failed:", productContext);
-    ///
-    /// const result = await truapi.account.deviceChat({
-    ///   tag: "Bind",
-    ///   value: {
-    ///     productAccountId: {
-    ///       dotNsIdentifier: productContext.value.productId,
-    ///       derivationIndex: { tag: "Index", value: 0 },
-    ///     },
-    ///     peerIdentityAccountId:
-    ///       "0x5555555555555555555555555555555555555555555555555555555555555555",
-    ///     peerChatPublicKey:
-    ///       "0x0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20",
-    ///   },
-    /// });
+    /// const result = await truapi.account.deviceChat({ tag: "Initialize" });
     /// assert(result.isOk(), "deviceChat failed:", result);
-    /// console.log("Chat identity binding:", result.value);
+    /// console.log("Host-owned Chat device:", result.value.device);
     /// ```
-    #[wire(request_id = 174, sensitive)]
+    #[wire(id = 12)]
     async fn product_device_chat(
         &self,
         _cx: &CallContext,
