@@ -18,4 +18,7 @@ export type {
   LocalIdentityProgress,
 } from "../worker-protocol.js";
 export { createBrowserNativeChatFilesHost } from "./native-chat-files.js";
-export type { BrowserNativeChatFilesHost, BrowserNativeChatFileSourceStore } from "./native-chat-files.js";
+export type {
+  BrowserNativeChatFilesHost,
+  BrowserNativeChatFileSourceStore,
+} from "./native-chat-files.js";

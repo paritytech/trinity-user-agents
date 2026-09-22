@@ -89,7 +89,8 @@ function callbackRequest(
   args: readonly unknown[],
   coreId?: number,
 ): Promise<unknown> {
-  if (connectionsDisposed) return Promise.reject(new Error("Host runtime is unavailable"));
+  if (connectionsDisposed)
+    return Promise.reject(new Error("Host runtime is unavailable"));
   return new Promise((resolve, reject) => {
     const requestId = ++nextRequestId;
     pendingCallbacks.set(requestId, (r) => {
@@ -97,7 +98,13 @@ function callbackRequest(
       else reject(new Error(r.error));
     });
     try {
-      postToMain({ kind: "callbackRequest", requestId, name, args, ...(coreId === undefined ? {} : { coreId }) });
+      postToMain({
+        kind: "callbackRequest",
+        requestId,
+        name,
+        args,
+        ...(coreId === undefined ? {} : { coreId }),
+      });
     } catch {
       pendingCallbacks.delete(requestId);
       reject(new Error("Host callback transport is unavailable"));
@@ -122,7 +129,13 @@ function startSubscription<T>(
     sendError: (error) => sendError({ reason: error }),
   });
   try {
-    postToMain({ kind: "subscriptionStart", subId, name, payload, ...(coreId === undefined ? {} : { coreId }) });
+    postToMain({
+      kind: "subscriptionStart",
+      subId,
+      name,
+      payload,
+      ...(coreId === undefined ? {} : { coreId }),
+    });
   } catch {
     subscriptionListeners.delete(subId);
     sendError({ reason: "Host subscription transport is unavailable" });
@@ -145,7 +158,11 @@ function chainConnect(
   onResponse: (json: string) => void,
   onClosed?: () => void,
 ): Promise<WorkerChainConnection | null> {
-  return connectRpc({ kind: "chainConnectStart", genesisHash }, onResponse, onClosed);
+  return connectRpc(
+    { kind: "chainConnectStart", genesisHash },
+    onResponse,
+    onClosed,
+  );
 }
 
 function hopConnect(
@@ -154,7 +171,11 @@ function hopConnect(
   onResponse: (json: string) => void,
   onClosed?: () => void,
 ): Promise<WorkerChainConnection | null> {
-  return connectRpc({ kind: "hopConnectStart", genesisHash, endpoint }, onResponse, onClosed);
+  return connectRpc(
+    { kind: "hopConnectStart", genesisHash, endpoint },
+    onResponse,
+    onClosed,
+  );
 }
 
 function closeRpcConnection(connId: number, notify = true): void {
@@ -168,7 +189,10 @@ function closeRpcConnection(connId: number, notify = true): void {
     try {
       onClosed?.();
     } catch {
-      postToMain({ kind: "disposeError", error: "JSON-RPC close callback failed" });
+      postToMain({
+        kind: "disposeError",
+        error: "JSON-RPC close callback failed",
+      });
     }
   }
 }
@@ -180,11 +204,17 @@ function connectRpc(
   onResponse: (json: string) => void,
   onClosed?: () => void,
 ): Promise<WorkerChainConnection | null> {
-  if (connectionsDisposed || chainCloseListeners.size >= MAX_JSON_RPC_CONNECTIONS) {
-    return Promise.reject(new Error("JSON-RPC connections unavailable or limit reached"));
+  if (
+    connectionsDisposed ||
+    chainCloseListeners.size >= MAX_JSON_RPC_CONNECTIONS
+  ) {
+    return Promise.reject(
+      new Error("JSON-RPC connections unavailable or limit reached"),
+    );
   }
   const connId = ++nextConnId;
-  const { promise, resolve, reject } = Promise.withResolvers<WorkerChainConnection | null>();
+  const { promise, resolve, reject } =
+    Promise.withResolvers<WorkerChainConnection | null>();
   chainConnectAcks.set(connId, (ack) => {
     if (!ack.ok) {
       chainResponseListeners.delete(connId);
@@ -225,7 +255,10 @@ function connectRpc(
 }
 
 /** Build the host-level callback object passed to the WASM runtime. */
-function buildRawCallbacks(capabilities: OptionalCapabilities, coreId?: number) {
+function buildRawCallbacks(
+  capabilities: OptionalCapabilities,
+  coreId?: number,
+) {
   return {
     ...createWorkerRawCallbacks(
       {
@@ -782,7 +815,9 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         const core = host.runtime.productRuntime(
           msg.product,
           buildCoreCallbacks(msg.coreId),
-          msg.capabilities === undefined ? undefined : buildRawCallbacks(msg.capabilities, msg.coreId),
+          msg.capabilities === undefined
+            ? undefined
+            : buildRawCallbacks(msg.capabilities, msg.coreId),
         );
         cores.set(msg.coreId, core);
         postToMain({ kind: "coreReady", coreId: msg.coreId });

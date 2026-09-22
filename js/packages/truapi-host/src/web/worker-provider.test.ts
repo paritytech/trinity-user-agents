@@ -391,7 +391,10 @@ describe("createWebWorkerPairingHostRuntime", () => {
       makeHostCallbacks({
         identityBackend: {
           identityUsernameCandidates: async (username, peopleGenesis) => {
-            if (username !== "alice" || bytesToHex(peopleGenesis) !== bytesToHex(genesis)) {
+            if (
+              username !== "alice" ||
+              bytesToHex(peopleGenesis) !== bytesToHex(genesis)
+            ) {
               throw new Error("authenticated search unavailable");
             }
             return [account];
@@ -406,7 +409,8 @@ describe("createWebWorkerPairingHostRuntime", () => {
       },
     );
     worker.emit({ kind: "loaded" });
-    const capabilities = lastMessageOfKind(worker, "init").capabilities as OptionalCapabilities;
+    const capabilities = lastMessageOfKind(worker, "init")
+      .capabilities as OptionalCapabilities;
     worker.emit({ kind: "ready" });
     const runtime = await runtimePromise;
     let requestId = 0;
@@ -416,7 +420,8 @@ describe("createWebWorkerPairingHostRuntime", () => {
         worker.emit({ kind: "callbackRequest", requestId: id, name, args });
         await settle();
         const response = worker.messages.find(
-          (message) => message.kind === "callbackResponse" && message.requestId === id,
+          (message) =>
+            message.kind === "callbackResponse" && message.requestId === id,
         );
         if (!response) throw new Error("missing callback response");
         if (!response.ok) throw new Error(String(response.error));
@@ -429,9 +434,9 @@ describe("createWebWorkerPairingHostRuntime", () => {
     ) as unknown as RawCallbacks;
 
     try {
-      expect(await callbacks.identityUsernameCandidates!("alice", genesis)).toEqual(
-        new Uint8Array([4, ...account]),
-      );
+      expect(
+        await callbacks.identityUsernameCandidates!("alice", genesis),
+      ).toEqual(new Uint8Array([4, ...account]));
       await expect(
         callbacks.identityUsernameCandidates!("unavailable", genesis),
       ).rejects.toThrow("authenticated search unavailable");
@@ -1064,13 +1069,22 @@ describe("createWebWorkerPairingHostRuntime", () => {
     const late = Promise.withResolvers<NativeChatPickedFile[]>();
     const owned = new Set(["delivered", "undelivered"]);
     let calls = 0;
-    const metadata = { mimeType: "application/octet-stream", sizeBytes: 1, kind: { tag: "File" as const } };
+    const metadata = {
+      mimeType: "application/octet-stream",
+      sizeBytes: 1,
+      kind: { tag: "File" as const },
+    };
     const runtimePromise = createWebWorkerPairingHostRuntime(
       asWorker(worker),
       makeHostCallbacks({
         nativeChatFiles: {
-          pickChatFiles: async () => ++calls === 1 ? [{ sourceId: "delivered", metadata }] : late.promise,
-          releaseChatFile: async (id) => { owned.delete(id); },
+          pickChatFiles: async () =>
+            ++calls === 1
+              ? [{ sourceId: "delivered", metadata }]
+              : late.promise,
+          releaseChatFile: async (id) => {
+            owned.delete(id);
+          },
         },
       }),
       { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
@@ -1079,17 +1093,34 @@ describe("createWebWorkerPairingHostRuntime", () => {
     worker.emit({ kind: "ready" });
     const runtime = await runtimePromise;
     const request = NativeChatFilePickRequest.enc({
-      productId: "chat.dot", peerIdentity: new Uint8Array(32), peerUsername: undefined, maxFiles: 1,
+      productId: "chat.dot",
+      peerIdentity: new Uint8Array(32),
+      peerUsername: undefined,
+      maxFiles: 1,
     });
-    worker.emit({ kind: "callbackRequest", requestId: 1, name: "pickChatFiles", args: [request] });
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 1,
+      name: "pickChatFiles",
+      args: [request],
+    });
     await settle();
-    worker.emit({ kind: "callbackRequest", requestId: 2, name: "pickChatFiles", args: [request] });
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 2,
+      name: "pickChatFiles",
+      args: [request],
+    });
     await settle();
     runtime.dispose();
     late.resolve([{ sourceId: "undelivered", metadata }]);
     await settle();
     expect([...owned]).toEqual(["delivered"]);
-    expect(worker.messages.filter((message) => message.kind === "callbackResponse").map((message) => message.requestId)).toEqual([1]);
+    expect(
+      worker.messages
+        .filter((message) => message.kind === "callbackResponse")
+        .map((message) => message.requestId),
+    ).toEqual([1]);
   });
 
   it("cancels active and late file exports after a worker fault, not completed exports", async () => {
@@ -1101,9 +1132,12 @@ describe("createWebWorkerPairingHostRuntime", () => {
       asWorker(worker),
       makeHostCallbacks({
         nativeChatFiles: {
-          beginChatFileExport: async () => ["completed", "active"][calls++] ?? late.promise,
+          beginChatFileExport: async () =>
+            ["completed", "active"][calls++] ?? late.promise,
           finishChatFileExport: async () => {},
-          cancelChatFileExport: async (id) => { cancelled.push(id); },
+          cancelChatFileExport: async (id) => {
+            cancelled.push(id);
+          },
         },
       }),
       { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
@@ -1112,22 +1146,52 @@ describe("createWebWorkerPairingHostRuntime", () => {
     worker.emit({ kind: "ready" });
     await runtimePromise;
     const request = NativeChatFileExportRequest.enc({
-      productId: "chat.dot", peerIdentity: new Uint8Array(32), peerUsername: undefined,
-      metadata: { mimeType: "application/octet-stream", sizeBytes: 0, kind: { tag: "File" } },
+      productId: "chat.dot",
+      peerIdentity: new Uint8Array(32),
+      peerUsername: undefined,
+      metadata: {
+        mimeType: "application/octet-stream",
+        sizeBytes: 0,
+        kind: { tag: "File" },
+      },
     });
-    worker.emit({ kind: "callbackRequest", requestId: 1, name: "beginChatFileExport", args: [request] });
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 1,
+      name: "beginChatFileExport",
+      args: [request],
+    });
     await settle();
-    worker.emit({ kind: "callbackRequest", requestId: 2, name: "finishChatFileExport", args: ["completed"] });
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 2,
+      name: "finishChatFileExport",
+      args: ["completed"],
+    });
     await settle();
-    worker.emit({ kind: "callbackRequest", requestId: 3, name: "beginChatFileExport", args: [request] });
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 3,
+      name: "beginChatFileExport",
+      args: [request],
+    });
     await settle();
-    worker.emit({ kind: "callbackRequest", requestId: 4, name: "beginChatFileExport", args: [request] });
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 4,
+      name: "beginChatFileExport",
+      args: [request],
+    });
     await settle();
     worker.emitError("worker stopped");
     late.resolve("late");
     await settle();
     expect(cancelled.sort()).toEqual(["active", "late"]);
-    expect(worker.messages.filter((message) => message.kind === "callbackResponse").map((message) => message.requestId)).toEqual([1, 2, 3]);
+    expect(
+      worker.messages
+        .filter((message) => message.kind === "callbackResponse")
+        .map((message) => message.requestId),
+    ).toEqual([1, 2, 3]);
   });
 
   it("preserves bigint file offsets and never returns backend private error details", async () => {
@@ -1137,7 +1201,8 @@ describe("createWebWorkerPairingHostRuntime", () => {
       makeHostCallbacks({
         nativeChatFiles: {
           readChatFile: async (_id, offset) => {
-            if (offset === 0xffff_ffff_ffff_ffffn) return new Uint8Array([0xa5]);
+            if (offset === 0xffff_ffff_ffff_ffffn)
+              return new Uint8Array([0xa5]);
             throw new Error("private-source-and-path");
           },
         },
@@ -1148,20 +1213,30 @@ describe("createWebWorkerPairingHostRuntime", () => {
     worker.emit({ kind: "ready" });
     const runtime = await runtimePromise;
     worker.emit({
-      kind: "callbackRequest", requestId: 1, name: "readChatFile",
+      kind: "callbackRequest",
+      requestId: 1,
+      name: "readChatFile",
       args: ["private-source-and-path", 0xffff_ffff_ffff_ffffn, 1],
     });
     await settle();
     expect(lastMessageOfKind(worker, "callbackResponse")).toEqual({
-      kind: "callbackResponse", requestId: 1, ok: true, value: new Uint8Array([0xa5]),
+      kind: "callbackResponse",
+      requestId: 1,
+      ok: true,
+      value: new Uint8Array([0xa5]),
     });
     worker.emit({
-      kind: "callbackRequest", requestId: 2, name: "readChatFile",
+      kind: "callbackRequest",
+      requestId: 2,
+      name: "readChatFile",
       args: ["private-source-and-path", 0n, 1],
     });
     await settle();
     expect(lastMessageOfKind(worker, "callbackResponse")).toEqual({
-      kind: "callbackResponse", requestId: 2, ok: false, error: "Native Chat file operation failed",
+      kind: "callbackResponse",
+      requestId: 2,
+      ok: false,
+      error: "Native Chat file operation failed",
     });
     runtime.dispose();
   });
@@ -1185,7 +1260,12 @@ describe("createWebWorkerPairingHostRuntime", () => {
       worker.emit({ kind: "loaded" });
       worker.emit({ kind: "ready" });
       const runtime = await runtimePromise;
-      worker.emit({ kind: "hopConnectStart", connId: 1, genesisHash: "0xab", endpoint });
+      worker.emit({
+        kind: "hopConnectStart",
+        connId: 1,
+        genesisHash: "0xab",
+        endpoint,
+      });
       await settle();
       if (teardown === "dispose") runtime.dispose();
       else if (teardown === "fault") worker.emitError("worker stopped");
@@ -1203,9 +1283,13 @@ describe("createWebWorkerPairingHostRuntime", () => {
       });
       await settle();
       expect(closes).toBe(1);
-      expect(worker.messages.filter((message) =>
-        message.kind === "chainConnectAck" || message.kind === "chainResponse"
-      )).toEqual([]);
+      expect(
+        worker.messages.filter(
+          (message) =>
+            message.kind === "chainConnectAck" ||
+            message.kind === "chainResponse",
+        ),
+      ).toEqual([]);
       runtime.dispose();
       expect(closes).toBe(1);
     });
@@ -1235,7 +1319,9 @@ describe("createWebWorkerPairingHostRuntime", () => {
                   },
                 }),
               }),
-              close() { closes += 1; },
+              close() {
+                closes += 1;
+              },
             };
           },
         },
@@ -1245,19 +1331,29 @@ describe("createWebWorkerPairingHostRuntime", () => {
     worker.emit({ kind: "loaded" });
     worker.emit({ kind: "ready" });
     const runtime = await runtimePromise;
-    worker.emit({ kind: "hopConnectStart", connId: 7, genesisHash: "0xab", endpoint });
+    worker.emit({
+      kind: "hopConnectStart",
+      connId: 7,
+      genesisHash: "0xab",
+      endpoint,
+    });
     await settle();
     expect(lastMessageOfKind(worker, "chainConnectAck")).toEqual({
-      kind: "chainConnectAck", connId: 7, ok: true,
+      kind: "chainConnectAck",
+      connId: 7,
+      ok: true,
     });
     worker.emit({ kind: "chainSend", connId: 7, request: '{"id":1}' });
     response.resolve({ done: false, value: '{"id":1,"result":"ok"}' });
     await settle();
     expect(lastMessageOfKind(worker, "chainResponse")).toEqual({
-      kind: "chainResponse", connId: 7, json: '{"id":1,"result":"ok"}',
+      kind: "chainResponse",
+      connId: 7,
+      json: '{"id":1,"result":"ok"}',
     });
     expect(lastMessageOfKind(worker, "chainClosed")).toEqual({
-      kind: "chainClosed", connId: 7,
+      kind: "chainClosed",
+      connId: 7,
     });
     worker.emit({ kind: "chainSend", connId: 7, request: "late" });
     worker.emit({ kind: "chainClose", connId: 7 });
@@ -1277,7 +1373,10 @@ describe("createWebWorkerPairingHostRuntime", () => {
       makeHostCallbacks({
         hop: {
           allowedHopEndpoints: async () => [endpoint],
-          connectHop() { dials += 1; return opening.promise; },
+          connectHop() {
+            dials += 1;
+            return opening.promise;
+          },
         },
       }),
       { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
@@ -1286,28 +1385,40 @@ describe("createWebWorkerPairingHostRuntime", () => {
     worker.emit({ kind: "ready" });
     const runtime = await runtimePromise;
     for (let connId = 1; connId <= MAX_JSON_RPC_CONNECTIONS; connId += 1) {
-      worker.emit({ kind: "hopConnectStart", connId, genesisHash: "0xab", endpoint });
+      worker.emit({
+        kind: "hopConnectStart",
+        connId,
+        genesisHash: "0xab",
+        endpoint,
+      });
       worker.emit({ kind: "chainClose", connId });
     }
     worker.emit({
-      kind: "hopConnectStart", connId: MAX_JSON_RPC_CONNECTIONS + 1,
-      genesisHash: "0xab", endpoint,
+      kind: "hopConnectStart",
+      connId: MAX_JSON_RPC_CONNECTIONS + 1,
+      genesisHash: "0xab",
+      endpoint,
     });
     await settle();
     expect(dials).toBe(MAX_JSON_RPC_CONNECTIONS);
     expect(lastMessageOfKind(worker, "chainConnectAck")).toMatchObject({
-      connId: MAX_JSON_RPC_CONNECTIONS + 1, ok: false,
+      connId: MAX_JSON_RPC_CONNECTIONS + 1,
+      ok: false,
     });
     opening.resolve({
       send() {},
       async *responses() {},
-      close() { closes += 1; },
+      close() {
+        closes += 1;
+      },
     });
     await settle();
     expect(closes).toBe(MAX_JSON_RPC_CONNECTIONS);
     worker.emit({
-      kind: "hopConnectStart", connId: MAX_JSON_RPC_CONNECTIONS + 2,
-      genesisHash: "0xab", endpoint,
+      kind: "hopConnectStart",
+      connId: MAX_JSON_RPC_CONNECTIONS + 2,
+      genesisHash: "0xab",
+      endpoint,
     });
     await settle();
     expect(dials).toBe(MAX_JSON_RPC_CONNECTIONS + 1);

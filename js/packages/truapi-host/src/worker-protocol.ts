@@ -97,7 +97,12 @@ export type MainToWorker =
        */
       role?: HostRole;
     }
-  | { kind: "createCore"; coreId: number; product: unknown; capabilities?: OptionalCapabilities }
+  | {
+      kind: "createCore";
+      coreId: number;
+      product: unknown;
+      capabilities?: OptionalCapabilities;
+    }
   | { kind: "disposeCore"; coreId: number }
   | { kind: "setLogLevel"; level: LogLevel }
   | { kind: "frame"; coreId: number; bytes: Uint8Array }

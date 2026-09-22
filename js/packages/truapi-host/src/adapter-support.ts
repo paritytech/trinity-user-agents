@@ -150,13 +150,27 @@ export const unavailableHopProvider: Required<HopProvider> = {
 
 /** Optional SDK embeddings must fail closed, never invent successful file handles. */
 export const unavailableNativeChatFilesHost: Required<NativeChatFilesHost> = {
-  async pickChatFiles() { throw new Error("Native Chat files are unavailable"); },
-  async readChatFile() { throw new Error("Native Chat files are unavailable"); },
-  async releaseChatFile() { throw new Error("Native Chat files are unavailable"); },
-  async beginChatFileExport() { throw new Error("Native Chat files are unavailable"); },
-  async writeChatFileExport() { throw new Error("Native Chat files are unavailable"); },
-  async finishChatFileExport() { throw new Error("Native Chat files are unavailable"); },
-  async cancelChatFileExport() { throw new Error("Native Chat files are unavailable"); },
+  async pickChatFiles() {
+    throw new Error("Native Chat files are unavailable");
+  },
+  async readChatFile() {
+    throw new Error("Native Chat files are unavailable");
+  },
+  async releaseChatFile() {
+    throw new Error("Native Chat files are unavailable");
+  },
+  async beginChatFileExport() {
+    throw new Error("Native Chat files are unavailable");
+  },
+  async writeChatFileExport() {
+    throw new Error("Native Chat files are unavailable");
+  },
+  async finishChatFileExport() {
+    throw new Error("Native Chat files are unavailable");
+  },
+  async cancelChatFileExport() {
+    throw new Error("Native Chat files are unavailable");
+  },
 };
 
 export function hopConnectAdapter(host: Required<HopProvider>): HopConnect {

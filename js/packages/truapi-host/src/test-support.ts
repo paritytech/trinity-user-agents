@@ -1,5 +1,8 @@
 import type { RequiredHostCallbacks } from "./generated/host-callbacks.js";
-import { unavailableHopProvider, unavailableNativeChatFilesHost } from "./adapter-support.js";
+import {
+  unavailableHopProvider,
+  unavailableNativeChatFilesHost,
+} from "./adapter-support.js";
 
 /** `HostCallbacks` with every optional member required, for exhaustive test fixtures. */
 export type CompleteHostCallbacks = RequiredHostCallbacks;
@@ -100,7 +103,12 @@ export function makeHostCallbacks(
       ? { hop: { ...unavailableHopProvider, ...overrides.hop } }
       : {}),
     ...(overrides.nativeChatFiles
-      ? { nativeChatFiles: { ...unavailableNativeChatFilesHost, ...overrides.nativeChatFiles } }
+      ? {
+          nativeChatFiles: {
+            ...unavailableNativeChatFilesHost,
+            ...overrides.nativeChatFiles,
+          },
+        }
       : {}),
     // Chat is an optional capability: only fixtures that ask for it get the
     // group, so the default fixture is a host that does not serve chat.

@@ -111,11 +111,19 @@ const SIGN_PAYLOAD: HostSignPayloadData = {
 describe("createWasmRawCallbacks", () => {
   it("fails every file operation closed when the embedding has no custody backend", async () => {
     const raw = createWasmRawCallbacks(makeHostCallbacks());
-    const context = { productId: "chat.dot", peerIdentity: new Uint8Array(32), peerUsername: undefined };
+    const context = {
+      productId: "chat.dot",
+      peerIdentity: new Uint8Array(32),
+      peerUsername: undefined,
+    };
     const pick = NativeChatFilePickRequest.enc({ ...context, maxFiles: 1 });
     const save = NativeChatFileExportRequest.enc({
       ...context,
-      metadata: { mimeType: "application/octet-stream", sizeBytes: 0, kind: { tag: "File" } },
+      metadata: {
+        mimeType: "application/octet-stream",
+        sizeBytes: 0,
+        kind: { tag: "File" },
+      },
     });
     for (const operation of [
       () => raw.pickChatFiles(pick),
@@ -131,20 +139,36 @@ describe("createWasmRawCallbacks", () => {
   });
 
   it("distinguishes explicit file cancellation from unavailable custody", async () => {
-    const raw = createWasmRawCallbacks(makeHostCallbacks({
-      nativeChatFiles: {
-        pickChatFiles: async () => [],
-        beginChatFileExport: async () => undefined,
-      },
-    }));
-    const context = { productId: "chat.dot", peerIdentity: new Uint8Array(32), peerUsername: undefined };
-    expect(Vector(NativeChatPickedFile).dec(await raw.pickChatFiles(
-      NativeChatFilePickRequest.enc({ ...context, maxFiles: 1 }),
-    ))).toEqual([]);
-    const cancelled = await raw.beginChatFileExport(NativeChatFileExportRequest.enc({
-      ...context,
-      metadata: { mimeType: "application/octet-stream", sizeBytes: 0, kind: { tag: "File" } },
-    }));
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        nativeChatFiles: {
+          pickChatFiles: async () => [],
+          beginChatFileExport: async () => undefined,
+        },
+      }),
+    );
+    const context = {
+      productId: "chat.dot",
+      peerIdentity: new Uint8Array(32),
+      peerUsername: undefined,
+    };
+    expect(
+      Vector(NativeChatPickedFile).dec(
+        await raw.pickChatFiles(
+          NativeChatFilePickRequest.enc({ ...context, maxFiles: 1 }),
+        ),
+      ),
+    ).toEqual([]);
+    const cancelled = await raw.beginChatFileExport(
+      NativeChatFileExportRequest.enc({
+        ...context,
+        metadata: {
+          mimeType: "application/octet-stream",
+          sizeBytes: 0,
+          kind: { tag: "File" },
+        },
+      }),
+    );
     expect(cancelled == null).toBe(true);
   });
 
@@ -174,7 +198,8 @@ describe("createWasmRawCallbacks", () => {
       makeHostCallbacks({
         identityBackend: {
           identityUsernameCandidates: async (username) => {
-            if (username === "unavailable") throw new Error("authentication expired");
+            if (username === "unavailable")
+              throw new Error("authentication expired");
             return [];
           },
         },
@@ -688,8 +713,12 @@ describe("createWasmRawCallbacks", () => {
 
   it("keeps an unconfigured HOP provider unavailable", async () => {
     const raw = createWasmRawCallbacks(makeHostCallbacks());
-    expect(Vector(str).dec(await raw.allowedHopEndpoints(hexToBytes(GENESIS)))).toEqual([]);
-    await expect(raw.hopConnect(GENESIS, "wss://hop.example", () => {})).rejects.toThrow();
+    expect(
+      Vector(str).dec(await raw.allowedHopEndpoints(hexToBytes(GENESIS))),
+    ).toEqual([]);
+    await expect(
+      raw.hopConnect(GENESIS, "wss://hop.example", () => {}),
+    ).rejects.toThrow();
   });
 
   it("requires an exact current trusted WSS endpoint before dialing HOP", async () => {
@@ -705,24 +734,32 @@ describe("createWasmRawCallbacks", () => {
     const received: string[] = [];
     let closes = 0;
     let closed = 0;
-    const raw = createWasmRawCallbacks(makeHostCallbacks({
-      hop: {
-        async allowedHopEndpoints(genesis) {
-          expect(genesis).toEqual(hexToBytes(GENESIS));
-          return allowed;
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        hop: {
+          async allowedHopEndpoints(genesis) {
+            expect(genesis).toEqual(hexToBytes(GENESIS));
+            return allowed;
+          },
+          async connectHop(genesis, url) {
+            expect(genesis).toEqual(hexToBytes(GENESIS));
+            dials.push(url);
+            return {
+              send: (request) => sent.push(request),
+              async *responses() {
+                yield '{"id":1,"result":"ok"}';
+              },
+              close() {
+                closes += 1;
+              },
+            };
+          },
         },
-        async connectHop(genesis, url) {
-          expect(genesis).toEqual(hexToBytes(GENESIS));
-          dials.push(url);
-          return {
-            send: (request) => sent.push(request),
-            async *responses() { yield '{"id":1,"result":"ok"}'; },
-            close() { closes += 1; },
-          };
-        },
-      },
-    }));
-    expect(Vector(str).dec(await raw.allowedHopEndpoints(hexToBytes(GENESIS)))).toEqual(allowed);
+      }),
+    );
+    expect(
+      Vector(str).dec(await raw.allowedHopEndpoints(hexToBytes(GENESIS))),
+    ).toEqual(allowed);
     for (const denied of [
       "wss://HOP.example/rpc",
       "wss://other.example/rpc",
@@ -734,7 +771,9 @@ describe("createWasmRawCallbacks", () => {
       GENESIS,
       endpoint,
       (response) => received.push(response),
-      () => { closed += 1; },
+      () => {
+        closed += 1;
+      },
     );
     connection!.send('{"id":1,"method":"hop_info"}');
     await settle();
@@ -755,27 +794,33 @@ describe("createWasmRawCallbacks", () => {
     const next = Promise.withResolvers<IteratorResult<string>>();
     let closes = 0;
     let returns = 0;
-    const raw = createWasmRawCallbacks(makeHostCallbacks({
-      chain: {
-        async connect() {
-          return {
-            send() {},
-            responses: () => ({
-              [Symbol.asyncIterator]: () => ({
-                next: () => next.promise,
-                async return() {
-                  returns += 1;
-                  return { done: true, value: undefined };
-                },
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        chain: {
+          async connect() {
+            return {
+              send() {},
+              responses: () => ({
+                [Symbol.asyncIterator]: () => ({
+                  next: () => next.promise,
+                  async return() {
+                    returns += 1;
+                    return { done: true, value: undefined };
+                  },
+                }),
               }),
-            }),
-            close() { closes += 1; },
-          };
+              close() {
+                closes += 1;
+              },
+            };
+          },
         },
-      },
-    }));
+      }),
+    );
     const received: string[] = [];
-    const connection = await raw.chainConnect(GENESIS, (response) => received.push(response));
+    const connection = await raw.chainConnect(GENESIS, (response) =>
+      received.push(response),
+    );
     connection!.close();
     connection!.close();
     next.resolve({ done: false, value: "late response" });

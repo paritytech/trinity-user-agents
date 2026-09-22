@@ -43,18 +43,12 @@ NIGHTLY_TOOLCHAIN="${TRUAPI_NIGHTLY_TOOLCHAIN:-$(head -n1 "$ROOT/nightly-toolcha
 # libLLVM, which dies with SIGSEGV in initialize_available_targets.
 unset DYLD_LIBRARY_PATH
 
-RUSTDOCFLAGS="${RUSTDOCFLAGS:-} -D warnings -Z unstable-options --output-format json"
-export RUSTDOCFLAGS
-
-cargo +"$NIGHTLY_TOOLCHAIN" doc -p truapi --no-deps --no-default-features
-cp target/doc/truapi.json target/doc/truapi_protocol.json
-cargo run -p truapi-codegen -- \
-  --input target/doc/truapi_protocol.json \
-  --output js/packages/truapi/src/generated \
-  --rust-output rust/crates/truapi/src/generated
-cargo +"$NIGHTLY_TOOLCHAIN" doc -p truapi -p truapi-provider --no-deps
-cargo run -p truapi-codegen -- \
-  --input target/doc/truapi_protocol.json \
+# Both crates in one invocation: rustdoc starts once and truapi is documented
+# once for both, rather than a second process re-reading it.
+RUSTDOCFLAGS="-Z unstable-options --output-format json" \
+  cargo +"$NIGHTLY_TOOLCHAIN" doc --locked -p truapi -p truapi-platform --no-deps
+cargo run --locked -p truapi-codegen -- \
+  --input target/doc/truapi.json \
   --output js/packages/truapi/src/generated \
   --playground-output js/packages/truapi/src/playground \
   --client-examples-output playground/test/generated/examples \
