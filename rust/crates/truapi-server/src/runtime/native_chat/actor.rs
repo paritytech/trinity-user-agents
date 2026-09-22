@@ -15,7 +15,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use truapi::latest::*;
-use useragent_chat_v2 as wire;
+use truapi_chat_v2 as wire;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::{

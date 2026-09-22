@@ -10,7 +10,7 @@ pub(crate) use rich::{MAX_ATTACHMENTS, RichContent, validate_metadata};
 
 use parity_scale_codec::{Compact, Decode, Encode};
 use truapi::latest::HostNativeChatRichMessageKind as RichKind;
-use useragent_chat_v2::{self as chat, V2ChatMessageContent, V2StatementTransportData};
+use truapi_chat_v2::{self as chat, V2ChatMessageContent, V2StatementTransportData};
 use zeroize::Zeroizing;
 
 /// Maximum authenticated devices in a native Chat recipient roster.

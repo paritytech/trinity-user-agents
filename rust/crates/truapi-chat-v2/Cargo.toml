@@ -1,0 +1,32 @@
+[package]
+name = "truapi-chat-v2"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "AGPL-3.0-only"
+description = "Host-owned Chat v2 wire and cryptographic primitives"
+repository = "https://github.com/paritytech/host-rust-core"
+
+[package.metadata.provenance]
+source = "https://github.com/paritytech/polkavm-app-kit"
+revision = "57b236fe9e740c83d0ead3d22cc7ca5a85e4ad17"
+paths = ["crates/useragent-chat-v2"]
+license-notice = "NOTICE"
+
+[dependencies]
+blake2 = { version = "0.10", default-features = false }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+getrandom = { version = "0.2", features = ["js"], optional = true }
+hkdf = { version = "0.12", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+thiserror = { version = "2", default-features = false }
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
+zeroize = { version = "1", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+hex = "0.4"
+
+[features]
+default = ["std"]
+std = ["dep:getrandom"]
+wasm = ["std"]

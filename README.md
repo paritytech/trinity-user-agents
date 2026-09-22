@@ -173,9 +173,9 @@ Protocol/storage fixtures cover acceptance loss, restart and download after
 pool deletion. This is not evidence of a funded native-device round trip.
 Attachment-bearing first-contact welcomes and call signaling remain rejected.
 
-The local integration uses matching, unpublished `useragent-chat-v2` attachment
-codec changes. Its published Git pin must be advanced together with the guest
-SDK before release; the local Cargo override is not a portable release dependency.
+Native Chat wire, cryptography, attachment codecs, and secret-zeroization changes
+are included in the workspace's `truapi-chat-v2` crate. Building the Host requires
+neither a local Cargo override nor an unpublished guest SDK checkout.
 Distributing the runtime also requires the exact modified Corresponding Source,
 not only the base repository URLs in the notices.
 

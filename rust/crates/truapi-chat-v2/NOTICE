@@ -1,0 +1,12 @@
+TrUAPI native Chat v2 wire and cryptographic primitives
+
+Derived from paritytech/polkavm-app-kit crates/useragent-chat-v2 at revision
+57b236fe9e740c83d0ead3d22cc7ca5a85e4ad17, which mirrors the
+paritytech/useragent-kit Chat v2 implementation, under AGPL-3.0-only.
+
+This source includes native attachment wire codecs, bounded attachment
+validation, and secret-zeroization modifications. The complete modified
+implementation is maintained in this crate; no local Cargo override or
+unpublished external source is needed to build the Host.
+
+See LICENSE for the GNU Affero General Public License, version 3.

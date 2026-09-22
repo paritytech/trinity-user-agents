@@ -16,6 +16,10 @@ selection/export, metadata-only guest views and live Bulletin endpoint/session
 fences. The combined signing runtime includes AGPL-3.0-only code; retain the
 included provenance, licenses and exact Corresponding Source.
 
+Include the complete native Chat wire, attachment and cryptography implementation
+as the source-owned `truapi-chat-v2` crate, with upstream provenance and licensing.
+Remove the release dependency on unpublished local Cargo overrides.
+
 Align Coinage keys with current iOS MAIN_PURSE/page-0 derivations, including the
 soft coin item junction. Keep complete exported coin secrets stable for durable
 payment replay. Authenticate the new purse layout through snapshot version 3;
