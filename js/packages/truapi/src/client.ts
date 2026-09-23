@@ -564,6 +564,7 @@ export function createTransport(
 
     if (KNOWN_WIRE_IDS.has(`${payload.traitId}:${payload.methodId}`)) {
       if (
+        payload.messageType === MESSAGE_TYPE_RESPONSE ||
         payload.messageType === MESSAGE_TYPE_STOP ||
         payload.messageType === MESSAGE_TYPE_INTERRUPT ||
         payload.messageType === MESSAGE_TYPE_RECEIVE

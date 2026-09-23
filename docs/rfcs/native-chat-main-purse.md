@@ -101,7 +101,7 @@ timestamps. The Host validates legal own-device lifecycle advertisements and aut
 Invitation and identity routes use the native peers' cipher suite: X25519, HKDF-SHA256 with empty salt and info, and
 ChaCha20-Poly1305 without associated data. Neither key nor ciphertext names its route, so a first-contact request
 sealed to an identity key also decrypts on the identity route. Each route therefore classifies its complete plaintext
-before returning anything, and first-contact plaintext is rejected on identity and device routes. The context-bound
+before returning anything, and first-contact plaintext is rejected on the identity route. The context-bound
 suite, which binds product, sender, recipient and channel into the authenticated data, stays disabled on native routes
 until native peers adopt it; enabling it before then would break interoperability with them.
 
@@ -148,10 +148,10 @@ authenticated principal, and the `calling_product_id` in each request is its att
 signing Host keys permission grants, Chat authority and product-derived keys on that attested identity, as it already
 does for every other SSO method, including AutoSigning's export of the product root key. A compromised paired Host is
 therefore outside this boundary: it can act as any product that host could already act as. Verifying product identity
-at the signing Host would need per-product attestation across all SSO methods and is not part of this design. Device
-state is scoped to
-wallet, network, product and installation; the allocator and imported source identity are wallet/network-wide. Handles
-and continuation IDs must not cross these boundaries.
+at the signing Host would need per-product attestation across all SSO methods and is not part of this design.
+
+Device state is scoped to wallet, network, product and installation; the allocator and imported source identity are
+wallet/network-wide. Handles and continuation IDs must not cross these boundaries.
 
 Chat authority is distinct from username disclosure. Pure `Bind`, `Prepare`, and `Open` do not require Host
 `StatementSubmit`; the product separately requests submission permission and the device's allowance. Uploads require

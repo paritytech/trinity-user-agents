@@ -1,5 +1,5 @@
 import type { Result } from "neverthrow";
-import { describe, expect, it, jest } from "bun:test";
+import { describe, expect, it, jest, spyOn } from "bun:test";
 
 import { createTransport, RequestTimeoutError } from "./client.js";
 import * as S from "./scale.js";
@@ -305,12 +305,13 @@ describe("generated client transport", () => {
             tag: "V1",
             value: { codecVersion: 3 },
         });
-        const expectedFrame = new Uint8Array(str.enc("p:1").length + 3 + expectedPayload.length);
-        expectedFrame.set(str.enc("p:1"), 0);
-        expectedFrame[str.enc("p:1").length] = 1; // system trait
-        expectedFrame[str.enc("p:1").length + 1] = 0; // handshake
-        expectedFrame[str.enc("p:1").length + 2] = MESSAGE_TYPE_REQUEST;
-        expectedFrame.set(expectedPayload, str.enc("p:1").length + 3);
+        const requestId = str.enc("p:1");
+        const expectedFrame = new Uint8Array(requestId.length + 3 + expectedPayload.length);
+        expectedFrame.set(requestId, 0);
+        expectedFrame[requestId.length] = 1; // system trait
+        expectedFrame[requestId.length + 1] = 0; // handshake
+        expectedFrame[requestId.length + 2] = MESSAGE_TYPE_REQUEST;
+        expectedFrame.set(expectedPayload, requestId.length + 3);
 
         expect(toHex(fixture.sent[0])).toBe(toHex(expectedFrame));
     });
@@ -653,27 +654,27 @@ describe("generated client transport", () => {
         expect(subscriptionFixture.sent).toHaveLength(2);
     });
 
-    it("logs a protocol violation for a known pair's out-of-range message type", () => {
+    it("logs a known pair's out-of-range message type but not a late response", () => {
         const fixture = providerFixture();
         createTransport(fixture.provider);
 
-        const warnings: unknown[][] = [];
-        const originalWarn = console.warn;
-        console.warn = (...args: unknown[]) => {
-            warnings.push(args);
-        };
+        const warn = spyOn(console, "warn").mockImplementation(() => {});
         try {
             fixture.receive(wireFrame("unrelated:1", W.LOCAL_STORAGE_READ, 99));
+            expect(
+                warn.mock.calls.some((args) =>
+                    String(args[0]).includes("unexpected messageType 99"),
+                ),
+            ).toBe(true);
+
+            warn.mockClear();
+            fixture.receive(wireFrame("unrelated:2", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
+            expect(warn).not.toHaveBeenCalled();
         } finally {
-            console.warn = originalWarn;
+            warn.mockRestore();
         }
 
         expect(fixture.sent).toHaveLength(0);
-        expect(
-            warnings.some((args) =>
-                String(args[0]).includes("unexpected messageType 99"),
-            ),
-        ).toBe(true);
     });
 
     it("auto-responds to an inbound handshake with the versioned-result shape", () => {
