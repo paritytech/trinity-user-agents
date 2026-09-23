@@ -36,12 +36,12 @@ extension TransferSenderServiceTests {
     }
 
     struct NativeMemoKeyFactory: CoinKeyDeriving {
-        func derivePublicKey(index: DerivationIndex) throws -> PublicKey {
-            Data(repeating: UInt8(truncatingIfNeeded: index), count: 32)
+        func derivePublicKey(index: CoinageKeyIndex) throws -> PublicKey {
+            Data(repeating: UInt8(truncatingIfNeeded: index.item), count: 32)
         }
 
-        func derivePrivateKey(index: DerivationIndex) throws -> PrivateKey {
-            Data(repeating: UInt8(truncatingIfNeeded: index), count: 64)
+        func derivePrivateKey(index: CoinageKeyIndex) throws -> PrivateKey {
+            Data(repeating: UInt8(truncatingIfNeeded: index.item), count: 64)
         }
     }
 

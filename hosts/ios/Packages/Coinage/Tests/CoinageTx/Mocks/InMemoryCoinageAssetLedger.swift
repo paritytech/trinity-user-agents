@@ -212,7 +212,7 @@ private extension InMemoryCoinageAssetLedger {
         state.withLock { validationContext($0) }
     }
 
-    func validationContext(_ current: State) -> InMemoryValidationContext {
+    private func validationContext(_ current: State) -> InMemoryValidationContext {
         let statuses = Dictionary(uniqueKeysWithValues: current.assets.keys.map { ($0, durable.statusSnapshot(of: $0)) })
         return InMemoryValidationContext(
             assets: current.assets,

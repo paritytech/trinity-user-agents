@@ -5,7 +5,7 @@ import Testing
 
 @Suite("Native transfer custody")
 struct NativeTransferCustodyTests {
-    private func custody(_ id: String, indices: [DerivationIndex]) -> NativeTransferCustody {
+    private func custody(_ id: String, indices: [CoinageKeyIndex]) -> NativeTransferCustody {
         NativeTransferCustody(custodyId: id, entries: indices.map {
             .init(coinDerivationIndex: $0, valueExponent: 0, publicKey: testKey($0))
         })

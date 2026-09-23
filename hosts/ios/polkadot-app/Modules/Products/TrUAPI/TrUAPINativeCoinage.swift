@@ -9,64 +9,6 @@ import TrUAPIHost
 
 /// A trusted operation journal over the coordinator's native wallet, never a second inventory/allocator.
 final class TrUAPINativeCoinage: NativeCoinageHost, @unchecked Sendable {
-    /// Narrow service seam used by the regression harness; production always wraps the coordinator's service.
-    struct Wallet: @unchecked Sendable {
-        let denomination: () async throws -> DenominationBreakdownContext
-        let preview: (BigUInt) async throws -> TransferPreview
-        let prepare: (CoinSelectionResult, String, @escaping @Sendable () throws -> Void) async throws -> TransferMemo
-        let retained: (String) async throws -> TransferMemo?
-        /// Matches native subscribeStatuses: INPUT memo secrets; OUTPUT keyed by their derived public keys.
-        let statuses: ([Data]) async throws -> [Data: CoinageTransferState]
-        let accept: (BigUInt, [Data], String, String) async throws -> Void
-        let incomingStatus: (String, String) async throws -> IncomingPaymentStatus
-
-        init(service: any CoinageServicing) {
-            denomination = { try await service.denominationContext() }
-            preview = { try await service.previewTransfer(for: $0) }
-            prepare = { selection, id, authorization in
-                // The native execute overload retains custody atomically with tx registration.
-                // Its memo cannot escape while merely provisional, even if Host transport has not accepted it.
-                try await service.executeTransfer(
-                    result: selection, groupId: id, custodyId: id, authorization: authorization
-                ).memo
-            }
-            retained = { try await service.retainedTransfer(custodyId: $0) }
-            statuses = { keys in
-                for try await snapshot in service.transferStatusService.subscribeStatuses(coinKeys: keys) {
-                    return snapshot
-                }
-                throw CancellationError()
-            }
-            accept = { amount, keys, id, product in
-                try await service.incomingPaymentService.accept(
-                    amount: amount, descriptor: .coins(secretKeys: keys), paymentId: id, productId: product
-                )
-            }
-            incomingStatus = { id, product in
-                let stream = try await service.incomingPaymentService.subscribeStatus(for: id, productId: product)
-                for try await status in stream { return status }
-                throw CancellationError()
-            }
-        }
-
-        init(
-            denomination: @escaping () async throws -> DenominationBreakdownContext,
-            preview: @escaping (BigUInt) async throws -> TransferPreview,
-            prepare: @escaping (CoinSelectionResult, String, @escaping @Sendable () throws -> Void) async throws -> TransferMemo,
-            retained: @escaping (String) async throws -> TransferMemo?,
-            statuses: @escaping ([Data]) async throws -> [Data: CoinageTransferState],
-            accept: @escaping (BigUInt, [Data], String, String) async throws -> Void,
-            incomingStatus: @escaping (String, String) async throws -> IncomingPaymentStatus
-        ) {
-            self.denomination = denomination
-            self.preview = preview
-            self.prepare = prepare
-            self.retained = retained
-            self.statuses = statuses
-            self.accept = accept
-            self.incomingStatus = incomingStatus
-        }
-    }
 
     private struct Refusal: Error { let reason: NativeCoinageFailure }
     private let wallet: Wallet
@@ -154,7 +96,9 @@ final class TrUAPINativeCoinage: NativeCoinageHost, @unchecked Sendable {
 
     private func perform(_ request: NativeCoinageRequest, lease: NativeCoinageLease) async throws -> NativeCoinageResponse {
         let binding = NativeCoinageBinding(request.scope)
-        guard binding.root.count == 32, binding.genesis.count == 32 else { throw Refusal(reason: .invalidRequest) }
+        guard binding.root.count == 32, binding.genesis.count == 32 else {
+            throw Refusal(reason: .invalidRequest)
+        }
         try check(binding, lease)
         if case .denomination = request.operation {
             let context = try await wallet.denomination()
@@ -163,73 +107,9 @@ final class TrUAPINativeCoinage: NativeCoinageHost, @unchecked Sendable {
             guard unit > 0, unit.bitWidth <= 128 else { throw Refusal(reason: .unavailable) }
             return .denomination(centsUnitRaw: String(unit))
         }
-        var records = try await store.records(binding: binding)
+        let records = try await store.records(binding: binding)
         try check(binding, lease)
-        switch request.operation {
-        case .denomination:
-            throw Refusal(reason: .invalidRequest)
-        case let .preparePayment(intent):
-            return try await prepare(intent, binding: binding, records: records, lease: lease)
-        case let .commitHandoff(productId, operationId):
-            var record = try outgoing(records, product: productId, operation: operationId)
-            guard record.approval == .approved else { throw Refusal(reason: .operationConflict) }
-            guard try await wallet.retained(record.custodyId) != nil else { throw Refusal(reason: .operationNotFound) }
-            try check(binding, lease)
-            record.accepted = true
-            try await store.save(.outgoing(record)) { [self] in try check(binding, lease) }
-            try check(binding, lease)
-            return .done
-        case let .noteDelivery(productId, operationId):
-            var record = try outgoing(records, product: productId, operation: operationId)
-            guard record.approval == .approved else { throw Refusal(reason: .operationConflict) }
-            guard try await wallet.retained(record.custodyId) != nil else {
-                throw Refusal(reason: .operationNotFound)
-            }
-            try check(binding, lease)
-            // Authenticated peer delivery proves transport custody even if CommitHandoff was lost.
-            record.accepted = true
-            record.delivered = true
-            try await store.save(.outgoing(record)) { [self] in try check(binding, lease) }
-            try check(binding, lease)
-            return .done
-        case let .readHandoff(productId, operationId):
-            let record = try outgoing(records, product: productId, operation: operationId)
-            guard record.approval == .approved else { throw Refusal(reason: .operationConflict) }
-            guard let memo = try await wallet.retained(record.custodyId) else {
-                throw Refusal(reason: .operationNotFound)
-            }
-            try check(binding, lease)
-            return try await prepared(record, memo: memo, lease: lease, requireHandoff: true)
-        case let .views(productId):
-            return try await payments(records, product: productId, lease: lease)
-        case let .pendingHandoffs(productId, acceptedOperations):
-            let accepted = Set(acceptedOperations)
-            for index in records.indices {
-                guard case var .outgoing(record) = records[index], record.intent.product == productId,
-                      accepted.contains(record.intent.operation), record.approval == .approved else { continue }
-                guard try await wallet.retained(record.custodyId) != nil else { continue }
-                try check(binding, lease)
-                record.accepted = true
-                try await store.save(.outgoing(record)) { [self] in try check(binding, lease) }
-                try check(binding, lease)
-                records[index] = .outgoing(record)
-            }
-            let pending = records.filter {
-                guard case let .outgoing(record) = $0 else { return false }
-                return record.accepted && !record.delivered && accepted.contains(record.intent.operation)
-            }
-            return try await payments(pending, product: productId, lease: lease, onlyPending: true)
-        case .reconcile:
-            // Engine/IncomingPaymentService own transaction recovery. Read their actual status, never spend anew.
-            for case let .outgoing(record) in records where record.approval == .approved {
-                _ = try await card(record, lease: lease)
-            }
-            try check(binding, lease)
-            return .done
-        case let .topUp(productId, operationId, minimumAmountRaw, secretKeys):
-            return try await topUp(product: productId, operation: operationId, minimum: minimumAmountRaw,
-                                   secrets: secretKeys, binding: binding, records: records, lease: lease)
-        }
+        return try await dispatch(request.operation, binding: binding, records: records, lease: lease)
     }
 
     private func outgoing(_ records: [NativeCoinageRecord], product: String, operation: Data) throws -> NativeCoinageOutgoing {
@@ -454,6 +334,188 @@ final class TrUAPINativeCoinage: NativeCoinageHost, @unchecked Sendable {
         case .notClaimed: .notClaimed
         case .detecting, .claiming, .claimed(finalized: false): .pending
         }
+    }
+}
+
+extension TrUAPINativeCoinage {
+    /// Narrow service seam used by the regression harness; production always wraps the coordinator's service.
+    struct Wallet: @unchecked Sendable {
+        let denomination: () async throws -> DenominationBreakdownContext
+        let preview: (BigUInt) async throws -> TransferPreview
+        let prepare: (CoinSelectionResult, String, @escaping @Sendable () throws -> Void) async throws -> TransferMemo
+        let retained: (String) async throws -> TransferMemo?
+        /// Matches native subscribeStatuses: INPUT memo secrets; OUTPUT keyed by their derived public keys.
+        let statuses: ([Data]) async throws -> [Data: CoinageTransferState]
+        let accept: (BigUInt, [Data], String, String) async throws -> Void
+        let incomingStatus: (String, String) async throws -> IncomingPaymentStatus
+
+        init(service: any CoinageServicing) {
+            denomination = { try await service.denominationContext() }
+            preview = { try await service.previewTransfer(for: $0) }
+            prepare = { selection, id, authorization in
+                // The native execute overload retains custody atomically with tx registration.
+                // Its memo cannot escape while merely provisional, even if Host transport has not accepted it.
+                try await service.executeTransfer(
+                    result: selection, groupId: id, custodyId: id, authorization: authorization
+                ).memo
+            }
+            retained = { try await service.retainedTransfer(custodyId: $0) }
+            statuses = { keys in
+                for try await snapshot in service.transferStatusService.subscribeStatuses(coinKeys: keys) {
+                    return snapshot
+                }
+                throw CancellationError()
+            }
+            accept = { amount, keys, id, product in
+                try await service.incomingPaymentService.accept(
+                    amount: amount, descriptor: .coins(secretKeys: keys), paymentId: id, productId: product
+                )
+            }
+            incomingStatus = { id, product in
+                let stream = try await service.incomingPaymentService.subscribeStatus(for: id, productId: product)
+                for try await status in stream { return status }
+                throw CancellationError()
+            }
+        }
+
+        init(
+            denomination: @escaping () async throws -> DenominationBreakdownContext,
+            preview: @escaping (BigUInt) async throws -> TransferPreview,
+            prepare: @escaping (CoinSelectionResult, String, @escaping @Sendable () throws -> Void) async throws -> TransferMemo,
+            retained: @escaping (String) async throws -> TransferMemo?,
+            statuses: @escaping ([Data]) async throws -> [Data: CoinageTransferState],
+            accept: @escaping (BigUInt, [Data], String, String) async throws -> Void,
+            incomingStatus: @escaping (String, String) async throws -> IncomingPaymentStatus
+        ) {
+            self.denomination = denomination
+            self.preview = preview
+            self.prepare = prepare
+            self.retained = retained
+            self.statuses = statuses
+            self.accept = accept
+            self.incomingStatus = incomingStatus
+        }
+    }
+}
+
+private extension TrUAPINativeCoinage {
+    func dispatch(
+        _ operation: NativeCoinageOperation,
+        binding: NativeCoinageBinding,
+        records: [NativeCoinageRecord],
+        lease: NativeCoinageLease
+    ) async throws -> NativeCoinageResponse {
+        switch operation {
+        case .denomination:
+            throw Refusal(reason: .invalidRequest)
+        case let .preparePayment(intent):
+            return try await prepare(intent, binding: binding, records: records, lease: lease)
+        case let .commitHandoff(productId, operationId):
+            return try await updateHandoff(
+                records, product: productId, operation: operationId, delivered: false, binding: binding, lease: lease
+            )
+        case let .noteDelivery(productId, operationId):
+            return try await updateHandoff(
+                records, product: productId, operation: operationId, delivered: true, binding: binding, lease: lease
+            )
+        case let .readHandoff(productId, operationId):
+            return try await readHandoff(
+                records, product: productId, operation: operationId, binding: binding, lease: lease
+            )
+        case let .views(productId):
+            return try await payments(records, product: productId, lease: lease)
+        case let .pendingHandoffs(productId, acceptedOperations):
+            return try await pendingHandoffs(
+                records, product: productId, acceptedOperations: acceptedOperations, binding: binding, lease: lease
+            )
+        case .reconcile:
+            return try await reconcile(records, binding: binding, lease: lease)
+        case let .topUp(productId, operationId, minimumAmountRaw, secretKeys):
+            return try await topUp(
+                product: productId,
+                operation: operationId,
+                minimum: minimumAmountRaw,
+                secrets: secretKeys,
+                binding: binding,
+                records: records,
+                lease: lease
+            )
+        }
+    }
+
+    func updateHandoff(
+        _ records: [NativeCoinageRecord],
+        product: String,
+        operation: Data,
+        delivered: Bool,
+        binding: NativeCoinageBinding,
+        lease: NativeCoinageLease
+    ) async throws -> NativeCoinageResponse {
+        var record = try outgoing(records, product: product, operation: operation)
+        guard record.approval == .approved else { throw Refusal(reason: .operationConflict) }
+        guard try await wallet.retained(record.custodyId) != nil else {
+            throw Refusal(reason: .operationNotFound)
+        }
+        try check(binding, lease)
+        record.accepted = true
+        if delivered { record.delivered = true }
+        try await store.save(.outgoing(record)) { [self] in try check(binding, lease) }
+        try check(binding, lease)
+        return .done
+    }
+
+    func readHandoff(
+        _ records: [NativeCoinageRecord],
+        product: String,
+        operation: Data,
+        binding: NativeCoinageBinding,
+        lease: NativeCoinageLease
+    ) async throws -> NativeCoinageResponse {
+        let record = try outgoing(records, product: product, operation: operation)
+        guard record.approval == .approved else { throw Refusal(reason: .operationConflict) }
+        guard let memo = try await wallet.retained(record.custodyId) else {
+            throw Refusal(reason: .operationNotFound)
+        }
+        try check(binding, lease)
+        return try await prepared(record, memo: memo, lease: lease, requireHandoff: true)
+    }
+
+    func pendingHandoffs(
+        _ storedRecords: [NativeCoinageRecord],
+        product: String,
+        acceptedOperations: [Data],
+        binding: NativeCoinageBinding,
+        lease: NativeCoinageLease
+    ) async throws -> NativeCoinageResponse {
+        let accepted = Set(acceptedOperations)
+        var records = storedRecords
+        for index in records.indices {
+            guard case var .outgoing(record) = records[index], record.intent.product == product,
+                  accepted.contains(record.intent.operation), record.approval == .approved else { continue }
+            guard try await wallet.retained(record.custodyId) != nil else { continue }
+            try check(binding, lease)
+            record.accepted = true
+            try await store.save(.outgoing(record)) { [self] in try check(binding, lease) }
+            try check(binding, lease)
+            records[index] = .outgoing(record)
+        }
+        let pending = records.filter {
+            guard case let .outgoing(record) = $0 else { return false }
+            return record.accepted && !record.delivered && accepted.contains(record.intent.operation)
+        }
+        return try await payments(pending, product: product, lease: lease, onlyPending: true)
+    }
+
+    func reconcile(
+        _ records: [NativeCoinageRecord],
+        binding: NativeCoinageBinding,
+        lease: NativeCoinageLease
+    ) async throws -> NativeCoinageResponse {
+        for case let .outgoing(record) in records where record.approval == .approved {
+            _ = try await card(record, lease: lease)
+        }
+        try check(binding, lease)
+        return .done
     }
 }
 

@@ -3,11 +3,11 @@ import Foundation
 /// Durable native custody contains derivation coordinates, never private keys or a serialized memo.
 public struct NativeTransferCustody: Codable, Equatable, Sendable {
     public struct Entry: Codable, Equatable, Sendable {
-        public let coinDerivationIndex: DerivationIndex
+        public let coinDerivationIndex: CoinageKeyIndex
         public let valueExponent: Int16
         public let publicKey: PublicKey
 
-        public init(coinDerivationIndex: DerivationIndex, valueExponent: Int16, publicKey: PublicKey) {
+        public init(coinDerivationIndex: CoinageKeyIndex, valueExponent: Int16, publicKey: PublicKey) {
             self.coinDerivationIndex = coinDerivationIndex
             self.valueExponent = valueExponent
             self.publicKey = publicKey
