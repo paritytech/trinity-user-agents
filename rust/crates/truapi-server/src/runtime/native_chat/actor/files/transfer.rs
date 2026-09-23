@@ -489,6 +489,16 @@ impl NativeChatActor {
         self: &Arc<Self>,
         context: &NativeChatContext,
     ) -> Result<bool, Error> {
+        context.require_current()?;
+        if self
+            .store
+            .read(|state| state.boundary.legacy_pending)
+            .await?
+        {
+            // The migration view is derived from these retained file records.
+            // Explicit progress resumes once the guest durably commits that view.
+            return Ok(false);
+        }
         require_authorized(context, &self.product).await?;
         let cursor = self.file_cursor.fetch_add(1, Ordering::Relaxed);
         let id = self

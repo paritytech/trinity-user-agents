@@ -1,7 +1,7 @@
-//! Native identity-route primitives for the Host-owned Chat actor.
+//! Native identity-route primitives for the non-exportable Chat crypto boundary.
 //!
-//! Every secret is an explicit Host-private input. This module has no product
-//! request dispatcher and cannot disclose decrypted envelopes to a product.
+//! Every secret is an explicit Host-private input. Only the actor may open a
+//! verified external incoming route; these primitives are not product methods.
 
 use chacha20poly1305::aead::{Aead, AeadInPlace, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};

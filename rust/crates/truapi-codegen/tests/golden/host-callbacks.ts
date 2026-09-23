@@ -14,6 +14,7 @@ import {
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
   HostNativeChatAttachmentMetadata,
+  HostNativeChatPayment,
   HostSignPayloadRequest,
   HostSignPayloadWithLegacyAccountRequest,
   HostSignRawRequest,
@@ -618,6 +619,224 @@ export interface NativeChatPickedFile {
    */
   metadata: HostNativeChatAttachmentMetadata;
 }
+
+/**
+ * Sanitized failures. Never forward secret-bearing native exception descriptions.
+ */
+export type NativeCoinageFailure =
+  | "Unavailable"
+  | "InvalidRequest"
+  | "InvalidSource"
+  | "OperationConflict"
+  | "OperationNotFound"
+  | "InsufficientBalance"
+  | "UserRejected";
+
+/**
+ * Host-private bearer material. Never return this through the product API or log it.
+ * Raw amounts are canonical unsigned decimal u128 strings, avoiding FFI truncation.
+ */
+export interface NativeCoinageMemo {
+  /**
+   * Validated 64-byte native sr25519 secret keys, confined to the trusted Host.
+   */
+  secretKeys: Array<Uint8Array>;
+
+  /**
+   * Exact total in canonical decimal raw chain units.
+   */
+  totalValueRaw: string;
+}
+
+/**
+ * Durable native-wallet operations, not an alternative inventory ledger.
+ */
+export type NativeCoinageOperation =
+  /**
+   * Read trusted denomination metadata without selecting or allocating inventory.
+   */
+  | { tag: "Denomination"; value?: undefined }
+  /**
+   * Native trusted UI must review the exact intent and maximum debit before spending.
+   * Replays must reuse persisted preparation, never allocate a second payment.
+   * Before returning a memo, native custody must survive restart atomically with
+   * transaction registration. Startup must never release these coins as provisional.
+   */
+  | { tag: "PreparePayment"; value: { intent: NativeCoinagePaymentIntent } }
+  /**
+   * Called only after the authenticated Host durably accepts encrypted delivery.
+   * Records transport acceptance; it is not the first durable native custody mark.
+   */
+  | {
+      tag: "CommitHandoff";
+      value: { productId: string; operationId: Uint8Array };
+    }
+  /**
+   * Immutable public cards; do not initialize or claim an unrelated wallet.
+   */
+  | { tag: "Views"; value: { productId: string } }
+  /**
+   * Accepted ids come from the Host's durable ciphertext custody ledger.
+   */
+  | {
+      tag: "PendingHandoffs";
+      value: { productId: string; acceptedOperations: Array<Uint8Array> };
+    }
+  /**
+   * Read an existing recoverable handoff without approval, selection or spending.
+   */
+  | {
+      tag: "ReadHandoff";
+      value: { productId: string; operationId: Uint8Array };
+    }
+  /**
+   * Peer acknowledgment is not monetary settlement.
+   */
+  | {
+      tag: "NoteDelivery";
+      value: { productId: string; operationId: Uint8Array };
+    }
+  /**
+   * Resume already-owned work only; never authorize a fresh debit.
+   */
+  | { tag: "Reconcile"; value?: undefined }
+  /**
+   * Persist source custody before returning. Only finalized credit is successful.
+   * Reordered sources reuse the same id; changed minimum or overlapping custody conflicts.
+   */
+  | {
+      tag: "TopUp";
+      value: {
+        productId: string;
+        operationId: Uint8Array;
+        minimumAmountRaw: string;
+        secretKeys: Array<Uint8Array>;
+      };
+    };
+
+/**
+ * Immutable, Host-authenticated outgoing intent. No field is a product display hint.
+ */
+export interface NativeCoinagePaymentIntent {
+  /**
+   * Stable wallet-, network- and product-scoped operation identity.
+   */
+  operationId: Uint8Array;
+
+  /**
+   * Authenticated calling product, not a guest-provided display name.
+   */
+  productId: string;
+
+  /**
+   * Original caller request identifier, bound immutably to this intent.
+   */
+  requestId: string;
+
+  /**
+   * Recipient identity authenticated by the Host's Chat authority.
+   */
+  peerIdentity: Uint8Array;
+
+  /**
+   * Independently resolved recipient name, when available.
+   */
+  recipientUsername?: string;
+
+  /**
+   * Positive recipient amount in cents of the configured Coinage asset.
+   */
+  amountCents: bigint;
+}
+
+/**
+ * One native operation with the immutable wallet/network scope to authenticate.
+ */
+export interface NativeCoinageRequest {
+  /**
+   * Expected owner and asset, verified against the active native wallet.
+   */
+  scope: NativeCoinageScope;
+
+  /**
+   * Host-private command; incoming sources must never be logged.
+   */
+  operation: NativeCoinageOperation;
+}
+
+/**
+ * Typed native results. Only the trusted Host may consume a Prepared memo.
+ */
+export type NativeCoinageResponse =
+  /**
+   * Trusted denomination metadata for the selected wallet/asset.
+   */
+  | { tag: "Denomination"; value: { centsUnitRaw: string } }
+  /**
+   * Existing durable native preparation, or a terminal public payment.
+   */
+  | {
+      tag: "Prepared";
+      value: { payment: HostNativeChatPayment; memo?: NativeCoinageMemo };
+    }
+  /**
+   * Product-scoped public payment cards, never a spendable balance.
+   */
+  | { tag: "Payments"; value: { payments: Array<HostNativeChatPayment> } }
+  /**
+   * Result of an incoming custody operation.
+   */
+  | { tag: "TopUp"; value: { outcome: NativeCoinageTopUpOutcome } }
+  /**
+   * The requested metadata transition or recovery pass completed.
+   */
+  | { tag: "Done"; value?: undefined }
+  /**
+   * Sanitized domain rejection; cannot authorize another backend.
+   */
+  | { tag: "Failed"; value: { reason: NativeCoinageFailure } };
+
+/**
+ * Wallet and asset binding checked by the native service before every operation.
+ */
+export interface NativeCoinageScope {
+  /**
+   * Authenticated root key of the wallet owning the main purse.
+   */
+  rootPublicKey: Uint8Array;
+
+  /**
+   * Genesis hash of the configured Coinage chain.
+   */
+  genesisHash: Uint8Array;
+
+  /**
+   * Configured asset instance; `undefined` denotes a legacy single-asset runtime.
+   */
+  coinageInstanceId?: number;
+}
+
+/**
+ * Incoming settlement result; acceptance and best-head observations are not finality.
+ */
+export type NativeCoinageTopUpOutcome =
+  /**
+   * The original requested minimum has been credited at finality.
+   * For a zero minimum, the source claim is terminal with positive finalized credit.
+   */
+  | { tag: "Cleared"; value?: undefined }
+  /**
+   * Terminal shortfall, expressed in raw chain units, not cents.
+   */
+  | { tag: "Partial"; value: { creditedAmountRaw: string } }
+  /**
+   * Durable custody exists, but final credit has not been established.
+   */
+  | { tag: "Pending"; value?: undefined }
+  /**
+   * Terminal: none of the requested funds could be claimed.
+   */
+  | { tag: "NotClaimed"; value?: undefined };
 
 /**
  * Permission request whose authorization status can be inspected or updated
@@ -1295,6 +1514,163 @@ export const NativeChatPickedFile: S.Codec<NativeChatPickedFile> = S.lazy(
 );
 
 /**
+ * Sanitized failures. Never forward secret-bearing native exception descriptions.
+ */
+export const NativeCoinageFailure: S.Codec<NativeCoinageFailure> = S.lazy(
+  (): S.Codec<NativeCoinageFailure> =>
+    S.Status(
+      "Unavailable",
+      "InvalidRequest",
+      "InvalidSource",
+      "OperationConflict",
+      "OperationNotFound",
+      "InsufficientBalance",
+      "UserRejected",
+    ),
+);
+
+/**
+ * Host-private bearer material. Never return this through the product API or log it.
+ * Raw amounts are canonical unsigned decimal u128 strings, avoiding FFI truncation.
+ */
+export const NativeCoinageMemo: S.Codec<NativeCoinageMemo> = S.lazy(
+  (): S.Codec<NativeCoinageMemo> =>
+    S.Struct({
+      secretKeys: S.Vector(S.Bytes()),
+      totalValueRaw: S.str,
+    }) as S.Codec<NativeCoinageMemo>,
+);
+
+/**
+ * Durable native-wallet operations, not an alternative inventory ledger.
+ */
+export const NativeCoinageOperation: S.Codec<NativeCoinageOperation> = S.lazy(
+  (): S.Codec<NativeCoinageOperation> =>
+    S.TaggedUnion({
+      Denomination: S._void,
+      PreparePayment: S.Struct({
+        intent: NativeCoinagePaymentIntent,
+      }) as S.Codec<{ intent: NativeCoinagePaymentIntent }>,
+      CommitHandoff: S.Struct({
+        productId: S.str,
+        operationId: S.Bytes(32),
+      }) as S.Codec<{ productId: string; operationId: Uint8Array }>,
+      Views: S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
+      PendingHandoffs: S.Struct({
+        productId: S.str,
+        acceptedOperations: S.Vector(S.Bytes(32)),
+      }) as S.Codec<{
+        productId: string;
+        acceptedOperations: Array<Uint8Array>;
+      }>,
+      ReadHandoff: S.Struct({
+        productId: S.str,
+        operationId: S.Bytes(32),
+      }) as S.Codec<{ productId: string; operationId: Uint8Array }>,
+      NoteDelivery: S.Struct({
+        productId: S.str,
+        operationId: S.Bytes(32),
+      }) as S.Codec<{ productId: string; operationId: Uint8Array }>,
+      Reconcile: S._void,
+      TopUp: S.Struct({
+        productId: S.str,
+        operationId: S.Bytes(32),
+        minimumAmountRaw: S.str,
+        secretKeys: S.Vector(S.Bytes()),
+      }) as S.Codec<{
+        productId: string;
+        operationId: Uint8Array;
+        minimumAmountRaw: string;
+        secretKeys: Array<Uint8Array>;
+      }>,
+    }),
+);
+
+/**
+ * Immutable, Host-authenticated outgoing intent. No field is a product display hint.
+ */
+export const NativeCoinagePaymentIntent: S.Codec<NativeCoinagePaymentIntent> =
+  S.lazy(
+    (): S.Codec<NativeCoinagePaymentIntent> =>
+      S.Struct({
+        operationId: S.Bytes(32),
+        productId: S.str,
+        requestId: S.str,
+        peerIdentity: S.Bytes(32),
+        recipientUsername: S.Option(S.str),
+        amountCents: S.u64,
+      }) as S.Codec<NativeCoinagePaymentIntent>,
+  );
+
+/**
+ * One native operation with the immutable wallet/network scope to authenticate.
+ */
+export const NativeCoinageRequest: S.Codec<NativeCoinageRequest> = S.lazy(
+  (): S.Codec<NativeCoinageRequest> =>
+    S.Struct({
+      scope: NativeCoinageScope,
+      operation: NativeCoinageOperation,
+    }) as S.Codec<NativeCoinageRequest>,
+);
+
+/**
+ * Typed native results. Only the trusted Host may consume a Prepared memo.
+ */
+export const NativeCoinageResponse: S.Codec<NativeCoinageResponse> = S.lazy(
+  (): S.Codec<NativeCoinageResponse> =>
+    S.TaggedUnion({
+      Denomination: S.Struct({ centsUnitRaw: S.str }) as S.Codec<{
+        centsUnitRaw: string;
+      }>,
+      Prepared: S.Struct({
+        payment: HostNativeChatPayment,
+        memo: S.Option(NativeCoinageMemo),
+      }) as S.Codec<{
+        payment: HostNativeChatPayment;
+        memo?: NativeCoinageMemo;
+      }>,
+      Payments: S.Struct({
+        payments: S.Vector(HostNativeChatPayment),
+      }) as S.Codec<{ payments: Array<HostNativeChatPayment> }>,
+      TopUp: S.Struct({ outcome: NativeCoinageTopUpOutcome }) as S.Codec<{
+        outcome: NativeCoinageTopUpOutcome;
+      }>,
+      Done: S._void,
+      Failed: S.Struct({ reason: NativeCoinageFailure }) as S.Codec<{
+        reason: NativeCoinageFailure;
+      }>,
+    }),
+);
+
+/**
+ * Wallet and asset binding checked by the native service before every operation.
+ */
+export const NativeCoinageScope: S.Codec<NativeCoinageScope> = S.lazy(
+  (): S.Codec<NativeCoinageScope> =>
+    S.Struct({
+      rootPublicKey: S.Bytes(32),
+      genesisHash: S.Bytes(32),
+      coinageInstanceId: S.Option(S.u32),
+    }) as S.Codec<NativeCoinageScope>,
+);
+
+/**
+ * Incoming settlement result; acceptance and best-head observations are not finality.
+ */
+export const NativeCoinageTopUpOutcome: S.Codec<NativeCoinageTopUpOutcome> =
+  S.lazy(
+    (): S.Codec<NativeCoinageTopUpOutcome> =>
+      S.TaggedUnion({
+        Cleared: S._void,
+        Partial: S.Struct({ creditedAmountRaw: S.str }) as S.Codec<{
+          creditedAmountRaw: string;
+        }>,
+        Pending: S._void,
+        NotClaimed: S._void,
+      }),
+  );
+
+/**
  * Permission request whose authorization status can be inspected or updated
  * by host administration UI.
  */
@@ -1625,49 +2001,17 @@ export interface ChatPlatform {
 }
 
 /**
- * Host-owned contact picker, drawn from the chat lists the host's chat
- * extensions hold.
+ * Optional native wallet service boundary, never exposed to products.
  *
- * Optional, and listed on `OptionalPlatform` as `ChatPlatform` is.
- *
- * The host owns the UI and the list. It draws the names, so nothing it renders
- * reaches the product, and the list never crosses to the core either: the core
- * asks only about the handles a transaction names. A host omits contacts the
- * user has blocked, from the picker and from lookups alike.
+ * Injecting this service at runtime construction assigns native custody for
+ * the runtime's lifetime. Absence selects the built-in Rust wallet; native
+ * unavailability or failure never permits Rust fallback.
  */
-export interface ContactsPlatform {
+export interface CoinageWalletHost {
   /**
-   * Resolve `lookup.handles` to the contacts they name.
-   *
-   * The one method a host has to write. Answer one entry per handle, in
-   * order, with ``undefined`` for a handle no current contact hashes to — a
-   * removed or blocked contact, or a handle a product made up. The core
-   * re-hashes every account returned and refuses one that does not match
-   * its handle, so a wrong answer is caught rather than trusted.
+   * Invoke the selected native owner. An error never permits Rust fallback.
    */
-  contacts(lookup: HostContactLookup): Promise<HostContactMatches>;
-
-  /**
-   * Present the contact picker on behalf of `product` and return the user's
-   * choice.
-   *
-   * Defaults to `HostContactPick::Unsupported`, so a Rust host that
-   * implements `Self::contacts` alone still compiles and its products get
-   * a truthful answer rather than a dismissal they would retry forever.
-   *
-   * A JS host reaches the same answer by another route: the generated
-   * surface types this method optional, but a capability group counts as
-   * served only when every callback in it is present, so omitting this one
-   * makes the whole group absent and `contacts.pick` answers `Unsupported`
-   * before any of it is reached.
-   *
-   * The core cannot draw UI, so a selection has to come from the host; the
-   * whole point is that the host renders the names rather than shipping
-   * them to the product. `product` is passed so the host can say who is
-   * asking; it is not a filter. A host with no contacts answers
-   * `HostContactPick::NoContacts` instead of drawing an empty overlay.
-   */
-  pickContact?(product: ProductContext): Promise<HostContactPick>;
+  nativeCoinage(request: NativeCoinageRequest): Promise<NativeCoinageResponse>;
 }
 
 /**
@@ -2313,8 +2657,8 @@ export interface UserConfirmation {
 
 /**
  * Combined platform interface. A host must provide every capability trait
- * listed here. Members marked optional may be omitted; the core answers their
- * product calls with `Unsupported`. See `OptionalPlatform`.
+ * listed here. Optional capabilities are declared separately in
+ * `OptionalPlatform`.
  */
 export interface HostCallbacks {
   navigation: Navigation;
@@ -2333,6 +2677,7 @@ export interface HostCallbacks {
   preimage: PreimageHost;
   productOperations: ProductOperations;
   chat?: ChatPlatform;
+  coinageWallet?: CoinageWalletHost;
   identityBackend?: IdentityBackendHost;
   permissionStatus?: PermissionStatusHost;
   pocket?: PocketPlatform;
@@ -2356,6 +2701,7 @@ export interface RequiredHostCallbacks {
   preimage: Required<PreimageHost>;
   productOperations: Required<ProductOperations>;
   chat?: Required<ChatPlatform>;
+  coinageWallet?: Required<CoinageWalletHost>;
   identityBackend?: Required<IdentityBackendHost>;
   permissionStatus?: Required<PermissionStatusHost>;
   pocket?: Required<PocketPlatform>;

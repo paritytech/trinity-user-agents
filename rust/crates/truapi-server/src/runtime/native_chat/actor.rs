@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Native Chat custody and durable transport. Wire algorithms derive from the
-//! AGPL useragent-chat-v2 implementation; no spendable plaintext crosses TrUAPI.
+//! Non-exportable native Chat cryptography and recipient-bound payment custody.
+//! Products own ordinary protocol, history, delivery, retries and acknowledgment.
 
 mod files;
 mod history;
@@ -29,7 +29,7 @@ use crate::host_logic::statement_store::{
 };
 use crate::host_logic::{product_account::*, sso::pairing::derive_identity_chat_private_key};
 use crate::runtime::{
-    chat_device::{HostChatDevice, PeerDevice, validate_guest_messages},
+    chat_device::{HostChatDevice, PeerDevice},
     chat_identity::*,
 };
 
@@ -75,6 +75,22 @@ struct Peer {
 }
 
 impl Peer {
+    fn new(identity: [u8; 32], root_key: [u8; 32], username: Option<String>) -> Self {
+        Self {
+            identity,
+            root_key,
+            username,
+            devices: Vec::new(),
+            invitation: None,
+            invitation_text: None,
+            invitation_timestamp: None,
+            established: false,
+            revocation_request: None,
+            revocation_acked: false,
+            revocation_acks: Vec::new(),
+            revision: 0,
+        }
+    }
     fn active_devices(&self) -> Vec<PeerDevice> {
         self.devices
             .iter()
@@ -143,6 +159,22 @@ struct Outgoing {
     last_attempt: u64,
 }
 
+impl Outgoing {
+    fn prepared(&self, state: &State) -> HostNativeChatPrepared {
+        HostNativeChatPrepared {
+            statement: self.statement.clone(),
+            peer_identity: self.peer,
+            request_id: self.request_id.clone(),
+            requires_ack: self.kind != OutgoingKind::Acknowledgment,
+            client_request_id: state
+                .sent
+                .iter()
+                .find(|sent| sent.peer == self.peer && sent.wire_request_id == self.request_id)
+                .map(|sent| sent.request_id.clone()),
+        }
+    }
+}
+
 #[derive(Clone, Encode, Decode)]
 struct Receipt {
     peer: [u8; 32],
@@ -159,7 +191,7 @@ struct SentReceipt {
     digest: [u8; 32],
 }
 
-#[derive(Clone, Encode, Decode)]
+#[derive(Clone, Encode)]
 struct State {
     secret: Secret32,
     index: [u8; 32],
@@ -176,6 +208,8 @@ struct State {
     history_imports: Vec<history::HistoryImport>,
     files: Vec<files::FileRecord>,
     rich_messages: Vec<files::RichRecord>,
+    marker: [u8; 4],
+    boundary: BoundaryState,
 }
 
 impl State {
@@ -196,6 +230,8 @@ impl State {
             history_imports: Vec::new(),
             files: Vec::new(),
             rich_messages: Vec::new(),
+            marker: *b"HCN3",
+            boundary: BoundaryState::default(),
         })
     }
     fn peer(&self, identity: &[u8; 32]) -> Result<&Peer, Error> {
@@ -225,14 +261,6 @@ impl State {
             if existing.digest != outgoing.digest {
                 return Err(Error::OperationConflict);
             }
-            if existing.kind == OutgoingKind::Acknowledgment
-                && (existing.statement.topics != outgoing.statement.topics
-                    || existing.statement.channel != outgoing.statement.channel)
-            {
-                // Authenticated replay repairs queued ACKs from the old reversed
-                // route without replacing any message or payment commitment.
-                *existing = outgoing;
-            }
             return Ok(());
         }
         if self.outbox.len() >= MAX_OUTBOX {
@@ -241,17 +269,90 @@ impl State {
         self.outbox.push(outgoing);
         Ok(())
     }
-    fn record_messages(&mut self, messages: HostNativeChatMessages) {
-        if messages.messages.is_empty() {
-            return;
-        }
-        if self.messages.len() == MAX_HISTORY_BATCHES {
-            self.messages.remove(0);
-        }
-        self.messages.push(messages);
+}
+
+impl Decode for State {
+    fn decode<I: parity_scale_codec::Input>(
+        input: &mut I,
+    ) -> Result<Self, parity_scale_codec::Error> {
+        let secret = <Secret32>::decode(input)?;
+        let index = <[u8; 32]>::decode(input)?;
+        let peers = <Vec<Peer>>::decode(input)?;
+        let invitations = <Vec<Invitation>>::decode(input)?;
+        let outbox = <Vec<Outgoing>>::decode(input)?;
+        let received = <Vec<Receipt>>::decode(input)?;
+        let sent = <Vec<SentReceipt>>::decode(input)?;
+        let accepted_payments = <Vec<[u8; 32]>>::decode(input)?;
+        let payment_acknowledgments = <Vec<[u8; 32]>>::decode(input)?;
+        let messages = <Vec<HostNativeChatMessages>>::decode(input)?;
+        let acknowledgments = <Vec<HostNativeChatAcknowledgment>>::decode(input)?;
+        let last_expiry = <u64>::decode(input)?;
+        let history_imports = <Vec<history::HistoryImport>>::decode(input)?;
+        let files = <Vec<files::FileRecord>>::decode(input)?;
+        let rich_messages = <Vec<files::RichRecord>>::decode(input)?;
+        // The original snapshot ends exactly here. Never reinterpret malformed
+        // new extensions as old state, and never discard a legacy custody slot.
+        let boundary = if input.remaining_len()? == Some(0) {
+            BoundaryState {
+                legacy_pending: true,
+                ..BoundaryState::default()
+            }
+        } else {
+            if <[u8; 4]>::decode(input)? != *b"HCN3" {
+                return Err("invalid Chat boundary state".into());
+            }
+            BoundaryState::decode(input)?
+        };
+        Ok(Self {
+            secret,
+            index,
+            peers,
+            invitations,
+            outbox,
+            received,
+            sent,
+            accepted_payments,
+            payment_acknowledgments,
+            messages,
+            acknowledgments,
+            last_expiry,
+            history_imports,
+            files,
+            rich_messages,
+            marker: *b"HCN3",
+            boundary,
+        })
     }
 }
 
+#[derive(Clone, Default, Encode, Decode)]
+struct BoundaryState {
+    legacy_pending: bool,
+    migration: Option<MigrationSnapshot>,
+    committed_migration: Option<[u8; 32]>,
+    history: Vec<history::HistoryDelivery>,
+    incoming: Vec<IncomingRequest>,
+}
+
+/// Bounded authentication evidence for an ACK, never ordinary message content.
+/// In particular, a departure can be acknowledged to its authenticated sender
+/// after that sender has removed itself from the active payment roster.
+#[derive(Clone, Encode, Decode)]
+struct IncomingRequest {
+    peer: [u8; 32],
+    request_id: String,
+    digest: [u8; 32],
+    sender: [u8; 32],
+    key: [u8; 32],
+    route: HostNativeChatRoute,
+    timestamp: u64,
+}
+
+#[derive(Clone, Encode, Decode)]
+struct MigrationSnapshot {
+    id: [u8; 32],
+    payments: Vec<HostNativeChatPayment>,
+}
 pub(super) struct NativeChatActor {
     product: String,
     public: HostNativeChatDevice,
@@ -260,9 +361,7 @@ pub(super) struct NativeChatActor {
     signer: Keypair,
     device: HostChatDevice,
     store: Arc<ChatStateStore<State>>,
-    delivering: AtomicBool,
     receiving: futures::lock::Mutex<()>,
-    delivery_gate: futures::lock::Mutex<()>,
     history_ack_gate: futures::lock::Mutex<()>,
     file_selection_gate: futures::lock::Mutex<()>,
     file_transfer_gate: futures::lock::Mutex<()>,
@@ -312,9 +411,7 @@ impl NativeChatActor {
             signer,
             device,
             store,
-            delivering: AtomicBool::new(false),
             receiving: futures::lock::Mutex::new(()),
-            delivery_gate: futures::lock::Mutex::new(()),
             history_ack_gate: futures::lock::Mutex::new(()),
             file_selection_gate: futures::lock::Mutex::new(()),
             file_transfer_gate: futures::lock::Mutex::new(()),
@@ -338,11 +435,24 @@ impl NativeChatActor {
             || state.messages.len() > MAX_HISTORY_BATCHES
             || state.payment_acknowledgments.len() > MAX_RECEIPTS
             || state.acknowledgments.len() > MAX_HISTORY_BATCHES
+            || state.boundary.incoming.len() > MAX_RECEIPTS
         {
             return Err(Error::StorageUnavailable);
         }
         history::validate_imports(&state.history_imports)?;
+        history::validate_deliveries(&state.boundary.history)?;
         files::validate(state)?;
+        for incoming in &state.boundary.incoming {
+            state
+                .peer(&incoming.peer)
+                .map_err(|_| Error::StorageUnavailable)?;
+            valid_id(&incoming.request_id).map_err(|_| Error::StorageUnavailable)?;
+            self.validate_remote_device(&PeerDevice {
+                account_id: incoming.sender,
+                public_key: incoming.key,
+            })
+            .map_err(|_| Error::StorageUnavailable)?;
+        }
         let mut identities = std::collections::HashSet::new();
         for peer in &state.peers {
             if peer.identity == self.public.identity_account_id
@@ -393,317 +503,479 @@ impl NativeChatActor {
         Ok(topics)
     }
 
-    pub(super) async fn incoming_topics(&self) -> Result<Vec<[u8; 32]>, Error> {
+    fn peer_views(&self, state: &State) -> Result<Vec<HostNativeChatPeer>, Error> {
+        state
+            .peers
+            .iter()
+            .map(|peer| {
+                Ok(HostNativeChatPeer {
+                    identity_account_id: peer.identity,
+                    username: peer.username.clone(),
+                    devices: peer
+                        .active_devices()
+                        .into_iter()
+                        .map(|device| HostNativeChatPeerDevice {
+                            account_id: device.account_id,
+                            chat_public_key: device.public_key,
+                        })
+                        .collect(),
+                    incoming_channels: self.peer_incoming_topics(peer)?,
+                    ready_for_payments: peer.ready_for_payments(),
+                })
+            })
+            .collect()
+    }
+
+    async fn require_migrated(&self) -> Result<(), Error> {
         self.store
             .read(|state| {
-                let mut topics = vec![wire::chat_request_full_topic(
-                    &self.public.identity_account_id,
-                )];
-                for peer in &state.peers {
-                    topics.extend(self.peer_incoming_topics(peer)?);
+                if state.boundary.legacy_pending {
+                    Err(Error::OperationConflict)
+                } else {
+                    Ok(())
                 }
-                topics.sort_unstable();
-                topics.dedup();
-                Ok(topics)
             })
             .await?
     }
 
-    pub(super) async fn public_view(
+    fn legacy_view(
         &self,
+        state: &State,
+        payments: Vec<HostNativeChatPayment>,
+    ) -> Result<truapi::v02::HostProductDeviceChatResponse, Error> {
+        Ok(truapi::v02::HostProductDeviceChatResponse {
+            device: self.public.clone(),
+            peers: self.peer_views(state)?,
+            invitations: state
+                .invitations
+                .iter()
+                .map(|invite| HostNativeChatInvitation {
+                    invitation_id: invite.id,
+                    peer_identity: invite.peer,
+                    username: invite.username.clone(),
+                    timestamp: invite.timestamp,
+                    text: invite.text.clone(),
+                })
+                .collect(),
+            messages: state.messages.clone(),
+            acknowledgments: state.acknowledgments.clone(),
+            payments,
+            rich_messages: files::public_views(state)?,
+        })
+    }
+
+    pub(super) async fn public_view(
+        self: &Arc<Self>,
         context: &NativeChatContext,
         payments: Vec<HostNativeChatPayment>,
     ) -> Result<HostProductDeviceChatResponse, Error> {
         context.require_current()?;
+        if self
+            .store
+            .read(|state| state.boundary.legacy_pending && state.boundary.migration.is_none())
+            .await?
+        {
+            let payments = payments.clone();
+            let actor = self.clone();
+            let valid = context.session_valid.clone();
+            self.store
+                .update(move |state| {
+                    if !valid() {
+                        return Err(Error::NotConnected);
+                    }
+                    if state.boundary.legacy_pending && state.boundary.migration.is_none() {
+                        let view = actor.legacy_view(state, payments.clone())?;
+                        let statements: Vec<_> = state
+                            .outbox
+                            .iter()
+                            .filter(|entry| !matches!(entry.kind, OutgoingKind::Payment(_)))
+                            .map(|entry| entry.prepared(state))
+                            .collect();
+                        let invitations: Vec<_> = state
+                            .invitations
+                            .iter()
+                            .map(|invitation| HostNativeChatMigrationInvitation {
+                                invitation_id: invitation.id,
+                                request_id: invitation.message_id.clone(),
+                            })
+                            .collect();
+                        let id = hash(
+                            &(
+                                b"native-chat-migration-v3",
+                                &view,
+                                &statements,
+                                &invitations,
+                            )
+                                .encode(),
+                        );
+                        // Legacy fields themselves are frozen until commit. Do not copy
+                        // the entire old history/ciphertext into its own snapshot.
+                        state.boundary.migration = Some(MigrationSnapshot { id, payments });
+                    }
+                    Ok(())
+                })
+                .await?;
+        }
         self.store
             .read(|state| {
-                let peers = state
-                    .peers
+                let prepared = state
+                    .outbox
                     .iter()
-                    .map(|peer| {
-                        let topics = self.peer_incoming_topics(peer)?;
-                        let devices = peer.active_devices();
-                        Ok(HostNativeChatPeer {
-                            identity_account_id: peer.identity,
-                            username: peer.username.clone(),
-                            devices: devices
-                                .into_iter()
-                                .map(|device| HostNativeChatPeerDevice {
-                                    account_id: device.account_id,
-                                    chat_public_key: device.public_key,
-                                })
-                                .collect(),
-                            incoming_channels: topics,
-                            ready_for_payments: peer.ready_for_payments(),
-                        })
+                    .filter(|entry| {
+                        state.boundary.legacy_pending
+                            || matches!(
+                                entry.kind,
+                                OutgoingKind::Payment(_) | OutgoingKind::Rich(_)
+                            )
                     })
-                    .collect::<Result<Vec<_>, Error>>()?;
+                    .map(|entry| entry.prepared(state))
+                    .collect();
                 Ok(HostProductDeviceChatResponse {
                     device: self.public.clone(),
-                    peers,
-                    invitations: state
-                        .invitations
-                        .iter()
-                        .filter(|invite| fresh(invite.timestamp, current_unix_secs()))
-                        .map(|invite| HostNativeChatInvitation {
-                            invitation_id: invite.id,
-                            peer_identity: invite.peer,
-                            username: invite.username.clone(),
-                            timestamp: invite.timestamp,
-                            text: invite.text.clone(),
-                        })
-                        .collect(),
-                    messages: state.messages.clone(),
-                    acknowledgments: state.acknowledgments.clone(),
+                    peers: self.peer_views(state)?,
+                    binding: None,
+                    opened: Vec::new(),
+                    prepared,
                     payments,
                     rich_messages: files::public_views(state)?,
+                    migration: state
+                        .boundary
+                        .migration
+                        .as_ref()
+                        .map(|migration| self.legacy_view(state, migration.payments.clone()))
+                        .transpose()?,
+                    migration_id: state
+                        .boundary
+                        .migration
+                        .as_ref()
+                        .map(|migration| migration.id),
+                    migration_invitations: if state.boundary.legacy_pending {
+                        state
+                            .invitations
+                            .iter()
+                            .map(|invitation| HostNativeChatMigrationInvitation {
+                                invitation_id: invitation.id,
+                                request_id: invitation.message_id.clone(),
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    },
+                    open_page: None,
+                    state_page: None,
+                    coinage_cents_unit: None,
                 })
             })
             .await?
     }
 
-    pub(super) async fn invite(
+    pub(super) async fn commit_migration(
+        self: &Arc<Self>,
+        context: &NativeChatContext,
+        migration_id: [u8; 32],
+    ) -> Result<(), Error> {
+        let valid = context.session_valid.clone();
+        self.store
+            .update(move |state| {
+                if !valid() {
+                    return Err(Error::NotConnected);
+                }
+                if state.boundary.committed_migration == Some(migration_id) {
+                    return Ok(());
+                }
+                let migration = state
+                    .boundary
+                    .migration
+                    .as_ref()
+                    .ok_or(Error::OperationNotFound)?;
+                if migration.id != migration_id {
+                    return Err(Error::OperationConflict);
+                }
+                // Only the explicitly transferred ordinary view/ciphertext is retired.
+                // Installation keys, payment custody and real file progress survive.
+                state
+                    .outbox
+                    .retain(|entry| matches!(entry.kind, OutgoingKind::Payment(_)));
+                state.messages.clear();
+                state.acknowledgments.clear();
+                state.sent.clear();
+                state
+                    .received
+                    .retain(|entry| entry.request_id.starts_with("invite:"));
+                for peer in &mut state.peers {
+                    peer.invitation_text = None;
+                }
+                for invitation in &mut state.invitations {
+                    invitation.text.clear();
+                }
+                state.boundary.legacy_pending = false;
+                state.boundary.migration = None;
+                state.boundary.committed_migration = Some(migration_id);
+                Ok(())
+            })
+            .await?;
+        self.acknowledge_history(context).await
+    }
+
+    pub(super) async fn bind(
         self: &Arc<Self>,
         context: &NativeChatContext,
         username: String,
-        text: String,
-    ) -> Result<(), Error> {
-        if text.len() > 8192 {
-            return Err(Error::InvalidRequest);
-        }
+    ) -> Result<HostNativeChatBinding, Error> {
+        self.require_migrated().await?;
         let resolved = identity::resolve_username(context, &username).await?;
         context.require_current()?;
         if resolved.identity_account_id == self.public.identity_account_id {
             return Err(Error::InvalidRequest);
         }
-        let actor = self.clone();
+        let shared = chat_shared_secret(&self.root_secret, &resolved.chat_public_key)
+            .map_err(|_| Error::InvalidStatement)?;
+        let binding = HostNativeChatBinding {
+            peer_identity: resolved.identity_account_id,
+            peer_chat_public_key: resolved.chat_public_key,
+            identity_proof: chat_device_identity_proof(
+                &shared,
+                &self.public.identity_account_id,
+                &self.public.account_id,
+            ),
+        };
         let valid = context.session_valid.clone();
         self.store
             .update(move |state| {
                 if !valid() {
                     return Err(Error::NotConnected);
                 }
-                if let Some(peer) = state
+                match state
                     .peers
-                    .iter()
+                    .iter_mut()
                     .find(|peer| peer.identity == resolved.identity_account_id)
                 {
-                    if peer.root_key != resolved.chat_public_key {
-                        return Err(Error::InvalidStatement);
+                    Some(peer) => {
+                        if peer.root_key != resolved.chat_public_key {
+                            return Err(Error::InvalidStatement);
+                        }
+                        peer.username = resolved.username;
                     }
-                    if peer.invitation.is_some() || peer.established {
-                        return if peer.invitation_text.as_deref() == Some(&text) {
-                            Ok(())
-                        } else {
-                            Err(Error::OperationConflict)
-                        };
+                    None => {
+                        if state.peers.len() >= MAX_PEERS {
+                            return Err(Error::StorageUnavailable);
+                        }
+                        state.peers.push(Peer::new(
+                            resolved.identity_account_id,
+                            resolved.chat_public_key,
+                            resolved.username,
+                        ));
                     }
-                } else {
-                    if state.peers.len() >= MAX_PEERS {
-                        return Err(Error::StorageUnavailable);
-                    }
-                    state.peers.push(Peer {
-                        identity: resolved.identity_account_id,
-                        root_key: resolved.chat_public_key,
-                        username: resolved.username,
-                        devices: Vec::new(),
-                        invitation: None,
-                        invitation_text: None,
-                        invitation_timestamp: None,
-                        established: false,
-                        revocation_request: None,
-                        revocation_acked: false,
-                        revocation_acks: Vec::new(),
-                        revision: 0,
-                    });
                 }
-                let peer = state.peer(&resolved.identity_account_id)?.clone();
-                let shared = chat_shared_secret(&actor.root_secret, &peer.root_key)
-                    .map_err(|_| Error::InvalidStatement)?;
-                let request_id = random_id()?;
-                let now = current_unix_secs();
-                state.peer_mut(&peer.identity)?.invitation_text = Some(text.clone());
-                if !text.is_empty() {
-                    state.record_messages(HostNativeChatMessages {
-                        peer_identity: peer.identity,
-                        incoming: false,
-                        request_id: request_id.clone(),
-                        messages: vec![
-                            wire::encode_rich_text_message(
-                                &request_id,
-                                now.saturating_mul(1000),
-                                Some(&text),
-                                None,
-                            )
-                            .map_err(|_| Error::InvalidRequest)?,
-                        ],
-                    });
+                Ok(())
+            })
+            .await?;
+        Ok(binding)
+    }
+
+    pub(super) async fn prepare(
+        self: &Arc<Self>,
+        context: &NativeChatContext,
+        identity: [u8; 32],
+        route: HostNativeChatRoute,
+        plaintext: Vec<u8>,
+    ) -> Result<Vec<HostNativeChatPrepared>, Error> {
+        let plaintext = Zeroizing::new(plaintext);
+        self.require_migrated().await?;
+        context.require_current()?;
+        if plaintext.len() > crate::runtime::chat_device::MAX_CHAT_ENVELOPE_BYTES {
+            return Err(Error::InvalidRequest);
+        }
+        let _gate = self.receiving.lock().await;
+        let actor = self.clone();
+        let valid = context.session_valid.clone();
+        let (request_id, requires_ack, acknowledgment) = if route == HostNativeChatRoute::Invitation
+        {
+            let message = wire::decode_chat_request_message_v2(&plaintext)
+                .map_err(|_| Error::InvalidRequest)?;
+            (message.message_id, true, None)
+        } else {
+            match crate::runtime::chat_device::open_identity_exchange(&plaintext)
+                .map_err(|_| Error::InvalidRequest)?
+            {
+                crate::runtime::chat_device::OpenedDeviceExchange::Response {
+                    request_id,
+                    response_code,
+                } => (
+                    request_id.clone(),
+                    false,
+                    (response_code == 0).then_some(request_id),
+                ),
+                crate::runtime::chat_device::OpenedDeviceExchange::Request {
+                    request_id, ..
+                } => (request_id, true, None),
+            }
+        };
+        let statement = self
+            .store
+            .update(move |state| {
+                if !valid() {
+                    return Err(Error::NotConnected);
                 }
-                let message = wire::V2ChatRequestMessageV2 {
-                    message_id: request_id.clone(),
-                    timestamp: now.saturating_mul(1000),
-                    content: wire::V2ChatRequestContentV2 {
-                        identity_proof: wire::V2ChatRequestIdentityProof {
-                            identity_account_id: actor.public.identity_account_id,
-                            proof: chat_device_identity_proof(
+                let mut peer = state.peer(&identity)?.clone();
+                if route == HostNativeChatRoute::Invitation {
+                    let message = wire::decode_chat_request_message_v2(&plaintext)
+                        .map_err(|_| Error::InvalidRequest)?;
+                    valid_id(&message.message_id)?;
+                    let shared = chat_shared_secret(&actor.root_secret, &peer.root_key)
+                        .map_err(|_| Error::InvalidStatement)?;
+                    if !fresh(message.timestamp, current_unix_secs())
+                        || message.content.identity_proof.identity_account_id
+                            != actor.public.identity_account_id
+                        || message.content.identity_proof.proof
+                            != chat_device_identity_proof(
                                 &shared,
                                 &actor.public.identity_account_id,
                                 &actor.public.account_id,
-                            ),
+                            )
+                        || message.content.device_enc_pub_key != actor.public.chat_public_key
+                        || message
+                            .content
+                            .welcome_text
+                            .as_ref()
+                            .is_some_and(|text| text.len() > 8192)
+                    {
+                        return Err(Error::InvalidRequest);
+                    }
+                    if peer
+                        .invitation
+                        .as_ref()
+                        .is_some_and(|id| id != &message.message_id)
+                    {
+                        return Err(Error::OperationConflict);
+                    }
+                    let payload = wire::encode_chat_request_v2_proof_payload(&message, &identity)
+                        .map_err(|_| Error::InvalidRequest)?;
+                    let signature = actor
+                        .signer
+                        .secret
+                        .sign_simple(SR25519_SIGNING_CONTEXT, &payload, &actor.signer.public)
+                        .to_bytes();
+                    peer.invitation = Some(message.message_id.clone());
+                    peer.invitation_timestamp = Some(message.timestamp);
+                    let day = wire::chat_request_day_from_unix(message.timestamp / 1000)
+                        .ok_or(Error::InvalidRequest)?;
+                    let request = wire::V2ChatRequestV2 {
+                        message,
+                        proof: wire::V2ChatRequestProof {
+                            signature: signature.to_vec(),
+                            signer: actor.public.account_id.to_vec(),
                         },
-                        device_enc_pub_key: actor.public.chat_public_key,
-                        push_token: None,
-                        welcome_text: (!text.is_empty()).then_some(text),
-                    },
-                };
-                let payload = wire::encode_chat_request_v2_proof_payload(&message, &peer.identity)
-                    .map_err(|_| Error::InvalidRequest)?;
-                let signature = actor
-                    .signer
-                    .secret
-                    .sign_simple(SR25519_SIGNING_CONTEXT, &payload, &actor.signer.public)
-                    .to_bytes();
-                let request = wire::V2ChatRequestV2 {
-                    message,
-                    proof: wire::V2ChatRequestProof {
-                        signature: signature.to_vec(),
-                        signer: actor.public.account_id.to_vec(),
-                    },
-                };
-                let ephemeral = Zeroizing::new(random_bytes()?);
-                let data = wire::seal_chat_request_v2_with_nonce(
-                    &ephemeral,
-                    &peer.root_key,
-                    &request,
-                    random_bytes()?,
-                )
-                .map_err(|_| Error::InvalidRequest)?;
-                let channel = chat_request_channel_id(
-                    &shared,
-                    &actor.public.identity_account_id,
-                    &peer.identity,
-                );
-                let day = wire::chat_request_day_from_unix(now).ok_or(Error::InvalidRequest)?;
-                let statement = actor.sign(
-                    state,
-                    channel,
-                    vec![
-                        wire::chat_request_full_topic(&peer.identity),
-                        wire::chat_request_day_topic(&peer.identity, day),
-                    ],
-                    data,
-                )?;
-                state.peer_mut(&peer.identity)?.invitation = Some(request_id.clone());
-                state.peer_mut(&peer.identity)?.invitation_timestamp =
-                    Some(now.saturating_mul(1000));
-                state.queue(Outgoing {
-                    peer: peer.identity,
-                    request_id,
-                    digest: hash(&payload),
-                    kind: OutgoingKind::Invitation,
-                    roster_revision: peer.revision,
-                    statement,
-                    last_attempt: 0,
-                })
-            })
-            .await?;
-        self.start_delivery(context);
-        self.flush(context).await
-    }
-
-    pub(super) async fn reject(
-        &self,
-        context: &NativeChatContext,
-        invitation_id: [u8; 32],
-    ) -> Result<(), Error> {
-        let valid = context.session_valid.clone();
-        self.store
-            .update(move |state| {
-                if !valid() {
-                    return Err(Error::NotConnected);
-                }
-                let position = state
-                    .invitations
-                    .iter()
-                    .position(|invite| invite.id == invitation_id)
-                    .ok_or(Error::InvalidRequest)?;
-                state.invitations.remove(position);
-                Ok(())
-            })
-            .await
-    }
-
-    pub(super) async fn send(
-        self: &Arc<Self>,
-        context: &NativeChatContext,
-        peer_identity: [u8; 32],
-        request_id: String,
-        messages: Vec<Vec<u8>>,
-    ) -> Result<(), Error> {
-        valid_id(&request_id)?;
-        validate_guest_messages(&messages).map_err(|_| Error::InvalidRequest)?;
-        let digest = hash(&messages.encode());
-        let wire_request_id = format!(
-            "msg-{}",
-            hex::encode(hash(
-                &(
-                    b"truapi/native-chat/ordinary/v1".as_slice(),
-                    context.genesis_hash,
-                    self.public.account_id,
-                    &self.product,
-                    peer_identity,
-                    &request_id,
-                )
-                    .encode()
-            ))
-        );
-        let actor = self.clone();
-        let valid = context.session_valid.clone();
-        self.store
-            .update(move |state| {
-                if !valid() {
-                    return Err(Error::NotConnected);
-                }
-                if let Some(old) = state
-                    .sent
-                    .iter()
-                    .find(|old| old.peer == peer_identity && old.request_id == request_id)
-                {
-                    return if old.digest == digest {
-                        Ok(())
-                    } else {
-                        Err(Error::OperationConflict)
                     };
+                    let ephemeral = Zeroizing::new(random_bytes()?);
+                    let data = wire::seal_chat_request_v2_with_nonce(
+                        &ephemeral,
+                        &peer.root_key,
+                        &request,
+                        random_bytes()?,
+                    )
+                    .map_err(|_| Error::InvalidRequest)?;
+                    *state.peer_mut(&identity)? = peer;
+                    return actor.sign(
+                        state,
+                        chat_request_channel_id(
+                            &shared,
+                            &actor.public.identity_account_id,
+                            &identity,
+                        ),
+                        vec![
+                            wire::chat_request_full_topic(&identity),
+                            wire::chat_request_day_topic(&identity, day),
+                        ],
+                        data,
+                    );
                 }
-                if state.sent.len() >= MAX_RECEIPTS {
-                    return Err(Error::StorageUnavailable);
-                }
-                let peer = state.peer(&peer_identity)?.clone();
-                let devices = peer.active_devices();
-                if !peer.established || devices.is_empty() {
-                    return Err(Error::PeerNotReady);
-                }
-                let statement =
-                    actor.multi_statement(state, &peer, &devices, &wire_request_id, &messages)?;
-                state.sent.push(SentReceipt {
-                    peer: peer_identity,
-                    request_id,
-                    wire_request_id: wire_request_id.clone(),
-                    digest,
-                });
-                state.queue(Outgoing {
-                    peer: peer_identity,
-                    request_id: wire_request_id,
-                    digest,
-                    kind: OutgoingKind::Ordinary,
-                    roster_revision: peer.revision,
-                    statement,
-                    last_attempt: 0,
-                })
+                let response = actor.authorize_prepare(state, &mut peer, route, &plaintext)?;
+                *state.peer_mut(&identity)? = peer.clone();
+                actor.transport_statement(state, &peer, route, response, &plaintext)
             })
             .await?;
-        self.start_delivery(context);
-        self.flush(context).await
+        if let Some(request_id) = acknowledgment {
+            // Product constructs this only after persisting every history page and
+            // completing every incoming top-up. Reads never consume a HOP page.
+            self.commit_history(context, identity, &request_id).await?;
+        }
+        Ok(vec![HostNativeChatPrepared {
+            statement,
+            peer_identity: identity,
+            request_id,
+            requires_ack,
+            client_request_id: None,
+        }])
+    }
+
+    fn transport_statement(
+        &self,
+        state: &mut State,
+        peer: &Peer,
+        route: HostNativeChatRoute,
+        response: bool,
+        plaintext: &[u8],
+    ) -> Result<SignedStatement, Error> {
+        let recipients = if response && route == HostNativeChatRoute::Device {
+            let wire::V2StatementTransportData::Response { request_id, .. } =
+                wire::decode_transport_plaintext(plaintext).map_err(|_| Error::InvalidRequest)?
+            else {
+                return Err(Error::InvalidRequest);
+            };
+            let mut devices = Vec::new();
+            for incoming in state.boundary.incoming.iter().filter(|entry| {
+                entry.peer == peer.identity
+                    && entry.request_id == request_id
+                    && entry.route == route
+            }) {
+                if !devices
+                    .iter()
+                    .any(|device: &PeerDevice| device.account_id == incoming.sender)
+                {
+                    devices.push(PeerDevice {
+                        account_id: incoming.sender,
+                        public_key: incoming.key,
+                    });
+                }
+            }
+            if devices.is_empty() {
+                peer.active_devices()
+            } else {
+                devices
+            }
+        } else {
+            peer.active_devices()
+        };
+        let (shared, sender, body) = match route {
+            HostNativeChatRoute::Identity => (
+                chat_shared_secret(&self.root_secret, &peer.root_key)
+                    .map_err(|_| Error::InvalidStatement)?,
+                self.public.identity_account_id,
+                Zeroizing::new(plaintext.to_vec()),
+            ),
+            HostNativeChatRoute::Device => (
+                self.device
+                    .identity_shared_secret(&peer.root_key)
+                    .map_err(|_| Error::InvalidStatement)?,
+                self.public.account_id,
+                Zeroizing::new(
+                    self.device
+                        .seal_multi_device(&recipients, plaintext)
+                        .map_err(|_| Error::InvalidStatement)?,
+                ),
+            ),
+            HostNativeChatRoute::Invitation => return Err(Error::InvalidRequest),
+        };
+        let session = chat_identity_session_id(&shared, &sender, &peer.identity);
+        let channel = if response {
+            wire::chat_identity_response_topic(&session)
+        } else {
+            wire::chat_identity_request_topic(&session)
+        }
+        .map_err(|_| Error::InvalidStatement)?;
+        let encrypted = native_root_seal(&shared, &body).map_err(|_| Error::InvalidStatement)?;
+        self.sign(state, channel, vec![session], encrypted)
     }
 
     pub(super) async fn payment(
@@ -713,6 +985,7 @@ impl NativeChatActor {
         request_id: String,
         amount_cents: u64,
     ) -> Result<(PaymentIntent, Arc<dyn PaymentTransport>), Error> {
+        self.require_migrated().await?;
         valid_id(&request_id)?;
         if amount_cents == 0 {
             return Err(Error::InvalidRequest);
@@ -805,25 +1078,6 @@ impl NativeChatActor {
         decode_signed_statement(&fields.encode()).map_err(|_| Error::InvalidRequest)
     }
 
-    pub(super) async fn flush(&self, context: &NativeChatContext) -> Result<(), Error> {
-        let _delivery = self.delivery_gate.lock().await;
-        context.require_current()?;
-        let queued = self.store.read(|state| state.outbox.clone()).await?;
-        let mut failure = None;
-        for outgoing in queued {
-            match self.flush_outgoing(context, outgoing).await {
-                Ok(()) => {}
-                Err(error @ (Error::NetworkUnavailable | Error::AllowanceRequired)) => {
-                    // One offline/full route must not starve another peer's
-                    // acceptance, revocation, or acknowledgment.
-                    failure.get_or_insert(error);
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        failure.map_or(Ok(()), Err)
-    }
-
     async fn refresh_statement(
         &self,
         peer: [u8; 32],
@@ -879,155 +1133,6 @@ impl NativeChatActor {
             .await
     }
 
-    async fn flush_outgoing(
-        &self,
-        context: &NativeChatContext,
-        mut outgoing: Outgoing,
-    ) -> Result<(), Error> {
-        context.require_current()?;
-        let allowed = self
-            .store
-            .read(|state| {
-                state.peer(&outgoing.peer).is_ok_and(|peer| {
-                    matches!(
-                        outgoing.kind,
-                        OutgoingKind::Invitation
-                            | OutgoingKind::Acceptance
-                            | OutgoingKind::Acknowledgment
-                    ) || (peer.established
-                        && peer.revision == outgoing.roster_revision
-                        && !peer.active_devices().is_empty())
-                })
-            })
-            .await?;
-        let now = current_unix_secs();
-        if !allowed || (outgoing.last_attempt != 0 && now < outgoing.last_attempt.saturating_add(5))
-        {
-            return Ok(());
-        }
-        if outgoing
-            .statement
-            .expiry
-            .is_none_or(|expiry| (expiry >> 32) <= now)
-        {
-            let Some(statement) = self
-                .refresh_statement(outgoing.peer, &outgoing.request_id, &outgoing.kind, 0)
-                .await?
-            else {
-                return Ok(());
-            };
-            outgoing.statement = statement;
-        }
-        let rpc = context
-            .services
-            .statement_store
-            .client("native_chat.delivery")
-            .await
-            .map_err(|_| Error::NetworkUnavailable)?;
-        // A definite priority rejection permits one expiry-only retry. An
-        // ambiguous network failure does not authorize replacing the statement.
-        for attempt in 0..2 {
-            context.require_current()?;
-            let bytes =
-                signed_statement_to_scale(outgoing.statement).map_err(|_| Error::InvalidRequest)?;
-            match crate::runtime::statement_store_rpc::submit(&rpc, bytes).await {
-                Ok(()) => break,
-                Err(error) => {
-                    if attempt == 0
-                        && let Some(expiry) = error.replacement_expiry()
-                    {
-                        context.require_current()?;
-                        let Some(statement) = self
-                            .refresh_statement(
-                                outgoing.peer,
-                                &outgoing.request_id,
-                                &outgoing.kind,
-                                expiry,
-                            )
-                            .await?
-                        else {
-                            return Ok(());
-                        };
-                        outgoing.statement = statement;
-                        continue;
-                    }
-                    return Err(if error.is_no_allowance() {
-                        Error::AllowanceRequired
-                    } else {
-                        Error::NetworkUnavailable
-                    });
-                }
-            }
-        }
-        self.store
-            .update(move |state| {
-                if outgoing.kind == OutgoingKind::Acknowledgment {
-                    state.outbox.retain(|entry| {
-                        !(entry.peer == outgoing.peer
-                            && entry.request_id == outgoing.request_id
-                            && entry.kind == OutgoingKind::Acknowledgment)
-                    });
-                } else if let Some(entry) = state.outbox.iter_mut().find(|entry| {
-                    entry.peer == outgoing.peer
-                        && entry.request_id == outgoing.request_id
-                        && entry.kind == outgoing.kind
-                }) {
-                    entry.last_attempt = now;
-                }
-                Ok(())
-            })
-            .await
-    }
-
-    fn start_delivery(self: &Arc<Self>, context: &NativeChatContext) {
-        if self
-            .delivering
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return;
-        }
-        let actor = self.clone();
-        let context = context.clone();
-        let spawner = context.services.spawner.clone();
-        spawner(Box::pin(async move {
-            struct Running(Arc<NativeChatActor>);
-            impl Drop for Running {
-                fn drop(&mut self) {
-                    self.0.delivering.store(false, Ordering::Release);
-                }
-            }
-            let _running = Running(actor.clone());
-            while (context.session_valid)() {
-                if super::background::require_authorized(&context, &actor.product)
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-                if actor
-                    .store
-                    .read(|state| {
-                        state.outbox.is_empty()
-                            && !history::has_pending(&state.history_imports)
-                            && !files::has_pending(state)
-                    })
-                    .await
-                    .unwrap_or(true)
-                {
-                    break;
-                }
-                let (_, _, files) = futures::join!(
-                    actor.flush(&context),
-                    actor.acknowledge_history(&context),
-                    actor.drive_files(&context)
-                );
-                let delay = if matches!(files, Ok(true)) { 1 } else { 5000 };
-                futures_timer::Delay::new(std::time::Duration::from_millis(delay)).await;
-            }
-        }));
-    }
-
     pub(super) async fn reconcile(
         self: &Arc<Self>,
         context: &NativeChatContext,
@@ -1035,35 +1140,66 @@ impl NativeChatActor {
     ) -> Result<(), Error> {
         context.require_current()?;
         self.store.reauthenticate().await?;
-        let wallet = registry.wallet(context).await?;
-        self.replay_payment_acknowledgments(context, registry)
-            .await?;
-        let accepted = self
+        let (accepted, required) = self
             .store
-            .read(|state| state.accepted_payments.clone())
+            .read(|state| {
+                (
+                    state.accepted_payments.clone(),
+                    !state.accepted_payments.is_empty()
+                        || !state.payment_acknowledgments.is_empty()
+                        || state
+                            .outbox
+                            .iter()
+                            .any(|entry| matches!(entry.kind, OutgoingKind::Payment(_))),
+                )
+            })
             .await?;
-        for payment in wallet
-            .pending_handoffs(context, &self.product, &accepted)
-            .await?
-        {
-            let transport = Arc::new(ChatPaymentTransport {
-                actor: self.clone(),
-                context: context.clone(),
-                peer_identity: payment.peer_identity,
-            });
-            wallet
-                .redeliver(context, &self.product, payment.operation_id, transport)
+        if let Some(wallet) = registry.existing_wallet(context, required).await? {
+            self.replay_payment_acknowledgments(context, registry)
                 .await?;
+            for payment in wallet
+                .pending_handoffs(context, &self.product, &accepted)
+                .await?
+            {
+                let transport = Arc::new(ChatPaymentTransport {
+                    actor: self.clone(),
+                    context: context.clone(),
+                    peer_identity: payment.peer_identity,
+                });
+                wallet
+                    .redeliver(context, &self.product, payment.operation_id, transport)
+                    .await?;
+            }
+            wallet.reconcile(context).await?;
         }
-        self.start_delivery(context);
-        let (delivery, settlement, history) = futures::join!(
-            self.flush(context),
-            wallet.reconcile(context),
-            self.acknowledge_history(context)
-        );
-        delivery?;
-        settlement?;
-        history
+        // Only expiry may be renewed on a durable opaque payment handoff. The
+        // product submits/retries the resulting statement; Host never delivers.
+        let pending = self
+            .store
+            .read(|state| {
+                state
+                    .outbox
+                    .iter()
+                    .filter(|entry| {
+                        matches!(entry.kind, OutgoingKind::Payment(_))
+                            || (!state.boundary.legacy_pending
+                                && matches!(entry.kind, OutgoingKind::Rich(_)))
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .await?;
+        for outgoing in pending {
+            if outgoing
+                .statement
+                .expiry
+                .is_none_or(|expiry| (expiry >> 32) <= current_unix_secs())
+            {
+                self.refresh_statement(outgoing.peer, &outgoing.request_id, &outgoing.kind, 0)
+                    .await?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1143,7 +1279,6 @@ impl PaymentTransport for ChatPaymentTransport {
                 .await
                 .unwrap_or(true);
             if unchanged {
-                self.actor.start_delivery(&self.context);
                 return Ok(());
             }
         }
@@ -1221,7 +1356,6 @@ impl PaymentTransport for ChatPaymentTransport {
         if outcome.is_err() && !write_attempted.load(Ordering::Acquire) {
             return Err(());
         }
-        self.actor.start_delivery(&self.context);
         Ok(())
     }
 }
@@ -1230,9 +1364,6 @@ fn random_bytes<const N: usize>() -> Result<[u8; N], Error> {
     let mut bytes = [0; N];
     getrandom::getrandom(&mut bytes).map_err(|_| Error::StorageUnavailable)?;
     Ok(bytes)
-}
-fn random_id() -> Result<String, Error> {
-    Ok(hex::encode(random_bytes::<16>()?))
 }
 fn hash(bytes: &[u8]) -> [u8; 32] {
     sp_crypto_hashing::blake2_256(bytes)

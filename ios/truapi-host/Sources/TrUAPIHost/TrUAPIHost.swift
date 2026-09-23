@@ -175,6 +175,15 @@ public extension NativeChatFilesHost {
     }
 }
 
+/// Optional process-wide native wallet custody, supplied at runtime construction.
+/// Omit only when the built-in Rust wallet owns custody. Keep a registered native
+/// wallet installed while locked or unavailable; failures never permit fallback.
+public protocol NativeCoinageHost: AnyObject, Sendable {
+    /// Host-private operation. Never expose requests, bearer memos, or raw native
+    /// errors to products or logs. Return sanitized operation failures as values.
+    func nativeCoinage(request: NativeCoinageRequest) async throws -> NativeCoinageResponse
+}
+
 /// Host-side callback bundle that the Rust core invokes for capabilities the
 /// native shell owns. The permission split mirrors the Rust `Permissions`
 /// trait:
@@ -591,24 +600,25 @@ public extension HostBridge {
     func endOperation(productId: String, id: UInt32) async throws {}
 }
 
-/// Ids handed out by the default `beginOperation`, distinct for the life of
-/// the process.
-private final class DefaultOperationIds: @unchecked Sendable {
-    private let lock = NSLock()
-    private var nextId: UInt32 = 1
+/// Kept separate from product callbacks so executions cannot replace custody.
+private final class NativeCoinageCallbackAdapter: NativeCoinageCallbacks, @unchecked Sendable {
+    private let bridge: NativeCoinageHost
 
-    func take() -> UInt32 {
-        lock.lock()
-        defer { lock.unlock() }
-        let id = nextId
-        // Never zero, and never traps: an id is only ever compared, so wrapping
-        // back to one costs nothing.
-        nextId = nextId == UInt32.max ? 1 : nextId + 1
-        return id
+    init(bridge: NativeCoinageHost) {
+        self.bridge = bridge
+    }
+
+    func nativeCoinage(request: NativeCoinageRequest) async throws -> NativeCoinageCallbackResult {
+        do {
+            return NativeCoinageCallbackResult(response: try await bridge.nativeCoinage(request: request))
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // Even typed HostRejection values may embed secret-bearing native errors.
+            throw HostRejection.Rejected(reason: "Native Coinage wallet operation failed")
+        }
     }
 }
-
-private let defaultOperationIds = DefaultOperationIds()
 
 /// Adapter that bridges the public `ChatHostBridge` to the generated UniFFI
 /// `NativeChatCallbacks` protocol.
@@ -1103,28 +1113,22 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
 public final class TrUAPIHostRuntime: @unchecked Sendable {
     private let inner: NativeTrUApiHostRuntime
     private let callbackRetainer: HostCallbacks
-    private let notificationCenter: NotificationCenter
-    private let foregroundObserver: NSObjectProtocol
-    private var contactsRetainer: NativeContactsCallbacks?
-    private var topUpRetainer: NativeTopUpCallbacks?
-    private var paymentsRetainer: NativePaymentCallbacks?
-    private var balanceRetainer: NativeBalanceCallbacks?
-    private var scannerRetainer: NativeScannerCallbacks?
+    private let nativeWalletRetainer: NativeCoinageCallbacks?
 
-    public convenience init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
-        try self.init(bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default)
-    }
-
-    init(
+    /// Register native custody once; nil selects the built-in Rust wallet.
+    public init(
         bridge: HostBridge,
         runtimeConfig: HostRuntimeConfig,
-        notificationCenter: NotificationCenter
+        nativeWallet: NativeCoinageHost? = nil
     ) throws {
         let adapter = HostCallbackAdapter(bridge: bridge)
         callbackRetainer = adapter
-        let inner = try NativeTrUApiHostRuntime.withRuntimeConfig(
+        let walletAdapter = nativeWallet.map { NativeCoinageCallbackAdapter(bridge: $0) }
+        nativeWalletRetainer = walletAdapter
+        inner = try NativeTrUApiHostRuntime.withRuntimeConfig(
             callbacks: adapter,
-            runtimeConfig: runtimeConfig
+            runtimeConfig: runtimeConfig.native,
+            nativeWallet: walletAdapter
         )
         self.inner = inner
         self.notificationCenter = notificationCenter

@@ -33,13 +33,13 @@ pub fn composed_traits(definition: &PlatformDefinition) -> Vec<&PlatformTrait> {
 
 /// Capability trait names a host may omit, taken from the `OptionalPlatform`
 /// super-trait. A host that supplies none of a trait's callbacks is not
-/// broken: the core answers the matching product calls with `Unsupported`.
-pub fn optional_trait_names(definition: &PlatformDefinition) -> BTreeSet<String> {
-	definition
-		.optional_super_trait
-		.as_ref()
-		.map(|s| s.composes.iter().cloned().collect())
-		.unwrap_or_default()
+/// broken: the core applies the capability's absence behavior.
+pub(crate) fn optional_trait_names(definition: &PlatformDefinition) -> BTreeSet<String> {
+    definition
+        .optional_super_trait
+        .as_ref()
+        .map(|s| s.composes.iter().cloned().collect())
+        .unwrap_or_default()
 }
 
 /// JS-side callback name for a platform method (camelCase of the Rust name).

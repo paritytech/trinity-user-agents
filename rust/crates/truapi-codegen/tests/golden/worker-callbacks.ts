@@ -15,9 +15,7 @@ export const CALLBACK_NAMES = [
   "createChatRoom",
   "registerChatBot",
   "postChatMessage",
-  "setChatRoomFooter",
-  "contacts",
-  "pickContact",
+  "nativeCoinage",
   "readCoreStorage",
   "writeCoreStorage",
   "clearCoreStorage",
@@ -283,6 +281,17 @@ function chatRawCallbacks(
   };
 }
 
+function coinageWalletRawCallbacks(
+  bridge: WorkerCallbackBridge,
+): Required<Pick<RawCallbacks, "nativeCoinage">> {
+  return {
+    nativeCoinage: (request) =>
+      bridge.callbackRequest("nativeCoinage", [request]) as ReturnType<
+        Required<RawCallbacks>["nativeCoinage"]
+      >,
+  };
+}
+
 function identityBackendRawCallbacks(
   bridge: WorkerCallbackBridge,
 ): Required<Pick<RawCallbacks, "identityUsernameCandidates">> {
@@ -339,11 +348,13 @@ function scannerRawCallbacks(
 /**
  * Optional capabilities the main-thread host actually serves. A
  * capability left out here is not proxied into the worker, so the
- * core answers its product calls with `Unsupported`.
+ * core applies that capability's absence behavior.
  */
 export interface OptionalCapabilities {
   /** Whether the host serves this capability. */
   chat?: boolean;
+  /** Whether the host serves this capability. */
+  coinageWallet?: boolean;
   /** Whether the host serves this capability. */
   identityBackend?: boolean;
   /** Whether the host serves this capability. */
@@ -365,6 +376,8 @@ export function createWorkerRawCallbacks(
     hopConnect: bridge.hopConnect,
   };
   if (capabilities.chat) Object.assign(callbacks, chatRawCallbacks(bridge));
+  if (capabilities.coinageWallet)
+    Object.assign(callbacks, coinageWalletRawCallbacks(bridge));
   if (capabilities.identityBackend)
     Object.assign(callbacks, identityBackendRawCallbacks(bridge));
   if (capabilities.permissionStatus)

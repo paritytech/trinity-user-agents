@@ -13,6 +13,7 @@
 //! acknowledgments in Host-private custody between effects. For compaction,
 //! durable custody includes every embedded message and its complete claim plan.
 
+#[cfg(test)]
 use std::ops::Range;
 
 use async_trait::async_trait;
@@ -25,6 +26,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 pub const HOP_NOT_FOUND: i64 = 1_004;
 pub const BITSWAP_NOT_FOUND: i64 = -32_810;
+#[cfg(test)]
 pub const BITSWAP_INVALID_CID: i64 = -32_602;
 pub const HOP_CHUNK_BYTES: usize = 2_000_000;
 pub const HOP_INLINE_MAX_BYTES: usize = HOP_CHUNK_BYTES - 64;
@@ -159,6 +161,7 @@ impl FileTicket {
         Ok(mini.expand_to_keypair(ExpansionMode::Ed25519))
     }
 
+    #[cfg(test)]
     pub fn recipient(&self) -> Result<MultiSigner, HopError> {
         Ok(MultiSigner::Sr25519(
             self.signing_keypair()?.public.to_bytes(),
@@ -253,6 +256,8 @@ impl PreparedUpload {
         Self::new(data, ticket)
     }
 
+    // Peer-side compaction fixture construction; the Host only opens history.
+    #[cfg(test)]
     pub fn compaction<M: AsRef<[u8]>>(
         messages: &[M],
         ticket: &FileTicket,
@@ -306,6 +311,7 @@ pub struct PendingAck {
 }
 
 impl PendingAck {
+    #[cfg(test)]
     pub fn hash(&self) -> [u8; 32] {
         self.hash
     }
@@ -330,10 +336,12 @@ pub struct ChunkedFile {
 }
 
 impl ChunkedFile {
+    #[cfg(test)]
     pub fn total_size(&self) -> u64 {
         self.total_size
     }
 
+    #[cfg(test)]
     pub fn chunks(&self) -> &[[u8; 32]] {
         &self.chunks
     }
@@ -466,7 +474,6 @@ impl DownloadProgress {
 
 pub struct ClaimedChunk {
     pub index: u32,
-    pub offset: u64,
     pub data: Zeroizing<Vec<u8>>,
     /// Persist together with data before separately acknowledging pending_ack.
     pub next_progress: DownloadProgress,
@@ -574,6 +581,7 @@ pub struct CompactionBatch {
 }
 
 impl CompactionBatch {
+    #[cfg(test)]
     pub fn message_count(&self) -> usize {
         self.message_count as usize
     }
@@ -591,6 +599,7 @@ impl CompactionBatch {
 
 /// Return ordered ranges into the caller's messages, never duplicate payloads.
 /// The exact SCALE outer count prefix is included at every size boundary.
+#[cfg(test)]
 pub fn pack_compaction_batches<M: AsRef<[u8]>>(
     messages: &[M],
 ) -> Result<Vec<Range<usize>>, HopError> {
@@ -616,6 +625,7 @@ pub fn pack_compaction_batches<M: AsRef<[u8]>>(
     Ok(ranges)
 }
 
+#[cfg(test)]
 pub fn encode_compaction_entry<M: AsRef<[u8]>>(
     messages: &[M],
 ) -> Result<Zeroizing<Vec<u8>>, HopError> {
@@ -776,7 +786,6 @@ impl<'a> HopClient<'a> {
         next_progress.validate(root)?;
         Ok(Some(ClaimedChunk {
             index: progress.next_chunk,
-            offset: progress.downloaded_bytes,
             data,
             next_progress,
             pending_ack,
@@ -952,6 +961,7 @@ fn finish(input: &[u8]) -> Result<(), HopError> {
     }
 }
 
+#[cfg(test)]
 fn encoded_message_size(message: &[u8]) -> Result<usize, HopError> {
     if message.len() > HOP_INLINE_MAX_BYTES {
         return Err(codec("message exceeds inline bound"));

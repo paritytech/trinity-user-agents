@@ -67,12 +67,12 @@ pub fn wire_trait(args: TokenStream, item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// Each declaration becomes a SCALE enum with positional codec indices and an
-/// `impl Versioned` exposing `Latest`, `LATEST`, and `version()`. When the newest
-/// variant carries a payload, `From<payload>` wraps it in that variant, so callers
-/// write `latest.into()` instead of naming a version. Single-version
-/// envelopes also get trivial `IntoLatest`/`FromLatest` impls; multi-version
-/// envelopes leave those to be written by hand, since the conversion is bespoke.
+/// Each declaration becomes a SCALE enum whose `Vn` codec index is `n - 1`,
+/// with an `impl Versioned` exposing `Latest`, `LATEST`, and `version()`.
+/// Declared positive versions must be contiguous, but may retire an earlier
+/// prefix without changing retained wire indices. Single-version envelopes
+/// get trivial `IntoLatest`/`FromLatest` impls; multi-version envelopes leave
+/// those to be written by hand, since the conversion is bespoke.
 ///
 /// The enum and every variant receive generated doc comments; a variant keeps
 /// its own doc attributes when the declaration provides them.

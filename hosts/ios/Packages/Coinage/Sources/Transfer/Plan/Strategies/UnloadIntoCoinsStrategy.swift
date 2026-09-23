@@ -45,7 +45,11 @@ struct UnloadIntoCoinsStrategy {
 // MARK: - TransferStrategy
 
 extension UnloadIntoCoinsStrategy: TransferStrategy {
-    func prepare() async throws -> PreparedStrategy {
+    func prepare(
+        groupId: CoinageTxGroupId?,
+        custodyId: String?,
+        authorization: (@Sendable () throws -> Void)?
+    ) async throws -> PreparedStrategy {
         guard !perGroupAllocations.isEmpty else {
             throw TransferStrategyError.emptyVouchers
         }
@@ -92,32 +96,94 @@ extension UnloadIntoCoinsStrategy: TransferStrategy {
             )
         }
 
-        logger?.info("Declared \(scheduled.count) unload(s) for \(allVouchers.count) vouchers")
+        logger?.info("Submitting \(requests.count) unload extrinsics for \(allVouchers.count) vouchers")
+        return try await txService.prepareTransfer(
+            requests: requests.map {
+                CoinageTxRequest(inputs: $0.inputs, outputs: $0.outputs, builder: $0.builder, origin: $0.origin)
+            },
+            coins: readyCoins + realizedGroups.flatMap(\.recipientCoins),
+            groupId: groupId,
+            custodyId: custodyId,
+            authorization: authorization,
+            afterSubmission: { await quotaTracker.noteUnloadHappened(count: requests.count) }
+        )
+    }
+}
 
-        // Ready coins need no submission; every group's recipient coins leave to the peer. Change
-        // coins stay ours. All pre-committed before the memo can leave.
-        let handedOff = readyCoins + realizedGroups.flatMap(\.recipientCoins)
-        let handoffCommit = try await txService
-            .preCommitHandoff(handedOff.map { .coin($0.derivationIndex, $0.publicKey) })
+// MARK: - Private Helpers
 
-        var memoEntries = readyCoins.map {
-            PlannedMemoEntry(
-                coinDerivationIndex: $0.derivationIndex,
-                valueExponent: $0.exponent
+private extension UnloadIntoCoinsStrategy {
+    struct GroupRequest {
+        let inputs: [CoinageTxInput]
+        let outputs: [OwnAsset]
+        let builder: ExtrinsicBuilderClosure
+        let origin: any ExtrinsicOriginDefining
+    }
+
+    /// Fetches on-chain state (finalized block hash, unload-token origins, recycler revisions) and
+    /// builds one request per group. Nothing is submitted here, so a build failure aborts the whole
+    /// transfer before any extrinsic goes on the wire.
+    func buildRequests(for realizedGroups: [RecyclerGroupCoins]) async throws -> [GroupRequest] {
+        // Fetch finalized block hash upfront to ensure both operations query the same state.
+        let blockHash = try await blockInfoProvider.fetchCurrentHash()
+
+        // Create all origins upfront — each group needs a distinct unload token.
+        let origins = try await originFactory.createAsUnloadTokenOrigins(
+            voucherGroups: realizedGroups.map(\.vouchers),
+            currentDate: currentDate,
+            blockHash: blockHash
+        )
+        guard origins.count == realizedGroups.count else {
+            assertionFailure("Origin for recycler group is missing")
+            throw TransferStrategyError.invalidRecyclerRevision
+        }
+
+        let keys = realizedGroups.map(\.recyclerKey)
+        let revisions = try await recyclerLoader.fetchRevisions(for: keys, blockHash: blockHash)
+        guard keys.count == revisions.count else {
+            assertionFailure("Revision for recyclerKey is missing")
+            throw TransferStrategyError.invalidRecyclerRevision
+        }
+
+        return try zip(realizedGroups, origins).map { groupCoins, origin in
+            let revision = revisions[groupCoins.recyclerKey]! // validated above
+            let call = try buildCall(for: groupCoins, revision: revision)
+            return GroupRequest(
+                inputs: groupCoins.vouchers.map { .recyclerVoucher($0.derivationIndex, $0.publicKey) },
+                outputs: (groupCoins.recipientCoins + groupCoins.changeCoins)
+                    .map { .coin($0.derivationIndex, $0.publicKey) },
+                builder: { try $0.adding(call: call.callAsFunction()) },
+                origin: origin
             )
         }
-        for group in realizedGroups {
-            memoEntries += group.recipientCoins.map {
-                PlannedMemoEntry(
-                    coinDerivationIndex: $0.derivationIndex, valueExponent: $0.exponent
-                )
-            }
+    }
+
+    func buildCall(
+        for groupCoins: RecyclerGroupCoins,
+        revision: UInt32
+    ) throws -> CoinagePallet.Calls.UnloadRecyclerIntoCoins {
+        let key = groupCoins.recyclerKey
+
+        let aliases = try groupCoins.vouchers.map {
+            try voucherKeyFactory.createKeyManager(for: $0)
+                .deriveAlias(for: UnloadTokenContextBuilder.recyclerAliasContext)
         }
 
-        return PreparedStrategy(
-            memoEntries: memoEntries,
-            handoffCommit: handoffCommit,
-            transactions: scheduled
+        var destGrouped: [Int16: [Data]] = [:]
+        for coin in groupCoins.recipientCoins + groupCoins.changeCoins {
+            destGrouped[coin.exponent, default: []].append(coin.publicKey)
+        }
+        let destinations = destGrouped.map { exponent, accounts in
+            CoinagePallet.Calls.Split.SplitDestination(exponent: exponent, accounts: accounts)
+        }
+
+        return CoinagePallet.Calls.UnloadRecyclerIntoCoins(
+            instanceId: instanceId,
+            aliases: aliases,
+            value: Int8(key.exponent),
+            index: key.index,
+            revision: revision,
+            splitInto: destinations.sorted { $0.exponent < $1.exponent }
         )
     }
 }

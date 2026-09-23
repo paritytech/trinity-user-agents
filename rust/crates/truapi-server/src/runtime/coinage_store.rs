@@ -178,12 +178,14 @@ pub struct HostCoinageStore {
 impl HostCoinageStore {
     /// Claim and authenticate this wallet/network. A live owner conflicts; an
     /// absent slot is empty only if no prior write left its durability uncertain.
+    /// Recovery callers require an existing snapshot so absence cannot activate a purse.
     pub async fn open(
         platform: Arc<dyn Platform>,
         root_public_key: [u8; 32],
         genesis_hash: [u8; 32],
         encryption_key: Zeroizing<[u8; 32]>,
         spawner: Spawner,
+        require_existing: bool,
     ) -> Result<Arc<Self>, StoreError> {
         Self::open_storage(
             platform,
@@ -191,6 +193,7 @@ impl HostCoinageStore {
             genesis_hash,
             encryption_key,
             spawner,
+            require_existing,
         )
         .await
     }
@@ -201,6 +204,7 @@ impl HostCoinageStore {
         genesis_hash: [u8; 32],
         encryption_key: Zeroizing<[u8; 32]>,
         spawner: Spawner,
+        require_existing: bool,
     ) -> Result<Arc<Self>, StoreError> {
         let storage_key = CoreStorageKey::MainPurseCoinage {
             root_public_key,
@@ -229,7 +233,7 @@ impl HostCoinageStore {
         };
         match stored {
             Some(stored) => *store.state.lock().await = store.decrypt(&stored)?,
-            None if store.owner.poisoned.load(Ordering::Acquire) => {
+            None if require_existing || store.owner.poisoned.load(Ordering::Acquire) => {
                 return Err(StoreError::Missing);
             }
             None => {}

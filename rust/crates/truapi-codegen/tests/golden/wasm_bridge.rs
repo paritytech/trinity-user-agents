@@ -25,7 +25,7 @@ use super::{
 /// Callbacks of an optional capability trait are replaced by a throwing
 /// stub when the host omits the group. The core never reaches them: it
 /// only holds an adapter for a capability whose `has_*` accessor is
-/// true, and answers the rest with `Unsupported`.
+/// true, and applies each omitted capability's absence behavior.
 pub(super) struct JsBridge {
     pub(super) auth_state_changed: Function,
     pub(super) chain_connect: Function,
@@ -33,6 +33,7 @@ pub(super) struct JsBridge {
     pub(super) register_chat_bot: Function,
     pub(super) post_chat_message: Function,
     pub(super) subscribe_chat_rooms: Function,
+    pub(super) native_coinage: Function,
     pub(super) read_core_storage: Function,
     pub(super) write_core_storage: Function,
     pub(super) clear_core_storage: Function,
@@ -64,6 +65,7 @@ pub(super) struct JsBridge {
     pub(super) subscribe_theme: Function,
     pub(super) confirm_user_action: Function,
     pub(super) chat_present: bool,
+    pub(super) coinage_wallet_present: bool,
     pub(super) identity_backend_present: bool,
     pub(super) permission_status_present: bool,
     pub(super) pocket_present: bool,
@@ -84,10 +86,8 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("setChatRoomFooter")),
             subscribe_chat_rooms: get_optional_function(callbacks, "subscribeChatRooms")?
                 .unwrap_or_else(|| missing_callback("subscribeChatRooms")),
-            contacts: get_optional_function(callbacks, "contacts")?
-                .unwrap_or_else(|| missing_callback("contacts")),
-            pick_contact: get_optional_function(callbacks, "pickContact")?
-                .unwrap_or_else(|| missing_callback("pickContact")),
+            native_coinage: get_optional_function(callbacks, "nativeCoinage")?
+                .unwrap_or_else(|| missing_callback("nativeCoinage")),
             read_core_storage: get_function(callbacks, "readCoreStorage")?,
             write_core_storage: get_function(callbacks, "writeCoreStorage")?,
             clear_core_storage: get_function(callbacks, "clearCoreStorage")?,
@@ -136,6 +136,7 @@ impl JsBridge {
                 && get_optional_function(callbacks, "postChatMessage")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomFooter")?.is_some()
                 && get_optional_function(callbacks, "subscribeChatRooms")?.is_some(),
+            coinage_wallet_present: get_optional_function(callbacks, "nativeCoinage")?.is_some(),
             identity_backend_present: get_optional_function(
                 callbacks,
                 "identityUsernameCandidates",
@@ -152,6 +153,11 @@ impl JsBridge {
     /// Whether the host supplied every `chat` callback.
     pub fn has_chat(&self) -> bool {
         self.chat_present
+    }
+
+    /// Whether the host supplied every `coinage_wallet` callback.
+    pub(super) fn has_coinage_wallet(&self) -> bool {
+        self.coinage_wallet_present
     }
 
     /// Whether the host supplied every `identity_backend` callback.
@@ -279,45 +285,28 @@ impl crate::platform::ChatPlatform for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
-impl crate::platform::ContactsPlatform for WasmPlatform {
-    async fn contacts(
+#[truapi_platform::async_trait]
+impl truapi_platform::CoinageWalletHost for WasmPlatform {
+    async fn native_coinage(
         &self,
-        lookup: &crate::platform::HostContactLookup,
-    ) -> Result<crate::platform::HostContactMatches, latest::GenericError> {
+        request: truapi_platform::NativeCoinageRequest,
+    ) -> Result<truapi_platform::NativeCoinageResponse, v01::GenericError> {
         let bytes = invoke_bytes_return(
-            &self.bridge.contacts,
-            vec![Uint8Array::from(lookup.encode().as_slice()).into()],
+            &self.bridge.native_coinage,
+            vec![Uint8Array::from(request.encode().as_slice()).into()],
         )
         .await
         .map_err(generic)?;
-        decode_bytes::<crate::platform::HostContactMatches>(
+        decode_bytes::<truapi_platform::NativeCoinageResponse>(
             bytes,
-            "contacts response did not decode",
-        )
-        .map_err(generic)
-    }
-
-    async fn pick_contact(
-        &self,
-        _product: &crate::platform::ProductContext,
-    ) -> Result<crate::platform::HostContactPick, latest::GenericError> {
-        let bytes = invoke_bytes_return(
-            &self.bridge.pick_contact,
-            vec![Uint8Array::from(_product.encode().as_slice()).into()],
-        )
-        .await
-        .map_err(generic)?;
-        decode_bytes::<crate::platform::HostContactPick>(
-            bytes,
-            "pickContact response did not decode",
+            "nativeCoinage response did not decode",
         )
         .map_err(generic)
     }
 }
 
-#[crate::platform::async_trait]
-impl crate::platform::CoreStorage for WasmPlatform {
+#[truapi_platform::async_trait]
+impl truapi_platform::CoreStorage for WasmPlatform {
     async fn read_core_storage(
         &self,
         key: crate::platform::CoreStorageKey,

@@ -23,6 +23,13 @@ through `4294967295`, including zero; strings, fractions and out-of-range values
 Coinage support, but Coinage operations on an instance-scoped runtime fail closed without it. This asset instance is not
 a purse derivation identifier and is never selected by guest product code.
 
+The optional runtime-wide `callbacks.coinageWallet` group registers an existing native main-purse service through
+`nativeCoinage(request)`. Omitting the group uses Core's built-in Rust wallet; no explicit backend selector is needed. A
+registered native wallet remains authoritative when unavailable, locked, or failing: none of those states enables Rust
+custody. Registration is captured when the runtime is constructed and cannot be replaced by product callbacks. Malformed
+native groups reject initialization. Native request/response payloads, especially outgoing memos, are Host-private;
+infrastructure exceptions are sanitized at the adapter boundary.
+
 `runtimeConfig.assetHub` is required by both configurations, pairing and signing. It is the Asset Hub genesis hash, in
 the same shape as `runtimeConfig.people` and `runtimeConfig.bulletin`. Product manifests are read from the dotNS
 contracts deployed there, so it is what makes a `trustedProducts` grant resolvable: without a usable value no manifest
@@ -295,8 +302,9 @@ creates one worker runtime and then opens one provider per product id.
 
 When UI callbacks capture a product label, pass that product's typed callbacks as the second argument to
 `runtime.createProvider(product, callbacks)`. The worker routes these callbacks to that execution without replacing the
-shared signing authority, main purse, native Chat actors, or private core storage. Disposing a provider does not dispose
-the owner runtime. A signing host must keep one owner alive for background reception, and must not run independent
+shared signing authority, main purse, native Chat authority, or private core storage. Wallet callbacks always use the
+runtime-wide bundle, even when a provider supplies overrides. Disposing a provider does not dispose the owner runtime. A
+signing host keeps one owner alive for wallet recovery, not ordinary Chat reception, and must not run independent
 signing runtimes against the same purse inventory.
 
 `createBrowserNativeChatFilesHost(sourceStore?)` accepts an optional `BrowserNativeChatFileSourceStore` with

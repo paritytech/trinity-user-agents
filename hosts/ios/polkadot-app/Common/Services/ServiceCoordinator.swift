@@ -82,6 +82,9 @@ final class ServiceCoordinator {
     // Retained so the weakly-held dependency-locator entry stays alive for the product host.
     let paymentsSupport: PaymentsSupport
 
+    private let lifecycleLock = NSLock()
+    private var lifecycleGeneration: UUID?
+
     var coinageService: CoinageServicing {
         paymentsSupport.coinageService
     }
@@ -157,6 +160,14 @@ final class ServiceCoordinator {
 
 extension ServiceCoordinator: ServiceCoordinatorProtocol {
     func setup() {
+        let generation = lifecycleLock.withLock {
+            let generation = UUID()
+            lifecycleGeneration = generation
+            coinageService.setActive(false)
+            truapiRuntimeProvider.setCoinageAvailable(false)
+            return generation
+        }
+
         // Keep the cached TLD warm on each launch without blocking.
         tldProvider.refresh()
 
@@ -173,8 +184,11 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
 
         Task {
             await chainStatusProvider.start()
+            guard isCurrentSetup(generation) else { return }
             await signInHostCoordinator.setup()
+            guard isCurrentSetup(generation) else { return }
             await setupDeviceSyncService()
+            guard isCurrentSetup(generation) else { return }
 
             // Setup coinage service with main asset from chain
             let chainRegistry = ChainRegistryFacade.sharedRegistry
@@ -187,22 +201,56 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
                 assertionFailure()
                 return
             }
+            // Activate only this setup, before it starts root-bound background work. A throttle
+            // invalidates its operation generation even if an awaited setup subsequently resumes.
+            guard lifecycleLock.withLock({
+                guard lifecycleGeneration == generation else { return false }
+                return coinageService.setActive(true)
+            }) else { return }
             do {
                 try await coinageService.setup(with: asset)
             } catch {
-                logger.error("Coinage service setup failed: \(error)")
+                lifecycleLock.withLock {
+                    if lifecycleGeneration == generation {
+                        coinageService.setActive(false)
+                    }
+                }
+                logger.error("Coinage service setup failed")
                 return
             }
-            // After coinage setup, which releases uncommitted handoffs the first pass must not see.
-            durableTransactionEngine.txService.start()
+            // Serialize activation with throttle so a superseded setup cannot reopen custody.
+            guard lifecycleLock.withLock({
+                guard lifecycleGeneration == generation else { return false }
+                guard coinageService.setActive(true) else { return false }
+                // Coinage setup releases provisional handoffs before the engine's first pass.
+                durableTransactionEngine.start()
+                truapiRuntimeProvider.setCoinageAvailable(true)
+                return true
+            }) else { return }
             // Recovering backup 1st
+            await coinageBackupSyncService.setup()
+            guard isCurrentSetup(generation) else { return }
             await coinageTransferMonitor.setup()
+            guard isCurrentSetup(generation) else { return }
             await w3sPaymentTracking.setup()
+            guard isCurrentSetup(generation) else { return }
             await depositService.setup()
         }
     }
 
     func throttle() {
+        lifecycleLock.withLock {
+            lifecycleGeneration = nil
+            coinageService.setActive(false)
+            truapiRuntimeProvider.setCoinageAvailable(false)
+            durableTransactionEngine.stop()
+        }
+
+        #if FEATURE_DIMS
+            determineStateSyncService.throttle()
+            personhoodBackgroundService.throttle()
+        #endif
+
         chatCoordinator.throttle()
         chatRequestCoordinator.throttle()
         fiatOnrampTrackingService.throttle()
@@ -212,12 +260,6 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
         allowanceRenewalService.throttle()
 
         messageExpansionService.stop()
-        durableTransactionEngine.txService.stop()
-
-        // The workers and the product behind an opened card belong to this
-        // session's runtime provider, so they go with the session rather than
-        // waiting for a tap that may come after another user has signed in.
-        pocket?.stop()
 
         Task {
             await deviceSyncService.throttle()
@@ -226,6 +268,12 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
             await signInHostCoordinator.throttle()
             await depositService.throttle()
         }
+    }
+}
+
+private extension ServiceCoordinator {
+    func isCurrentSetup(_ generation: UUID) -> Bool {
+        lifecycleLock.withLock { lifecycleGeneration == generation }
     }
 }
 
@@ -291,6 +339,10 @@ extension ServiceCoordinator {
             logger: logger
         )
 
+        guard let coinageServices = createCoinageServices() else {
+            return nil
+        }
+
         // Single process-wide TrUAPI runtime provider. Registered in the root
         // locator so the static SPA factory reaches the same instance the
         // chat bot factory does — one shared runtime across all products.
@@ -303,6 +355,8 @@ extension ServiceCoordinator {
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
+            coinageService: coinageServices.coinageService,
+            storageFacade: UserDataStorageFacade.shared,
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
@@ -348,9 +402,6 @@ extension ServiceCoordinator {
                 logger: logger
             ),
             let chatCoordinator = createChatCoordinator(factory: chatCoordinatorFactory, logger: logger),
-            let coinageServices = createCoinageServices(
-                allowanceManager: allowanceManagerFacade.smartContractManager
-            ),
             let depositService = createDepositService(
                 walletToFund: depositWallet,
                 walletToDeposit: depositWallet,

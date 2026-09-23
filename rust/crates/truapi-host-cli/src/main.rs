@@ -1817,6 +1817,7 @@ fn build_signing_runtime(
         config,
         tokio_spawner(),
         chat.map(|chat| chat as Arc<dyn ChatPlatform>),
+        None,
     ));
     runtime.set_identity_backend_host(Arc::new(attestation::CliIdentityBackendHost::new(
         &runtime, network,

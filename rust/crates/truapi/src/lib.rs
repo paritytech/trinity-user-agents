@@ -61,6 +61,7 @@ mod dotns_name;
 mod product_id;
 pub mod v01;
 pub mod v02;
+pub mod v03;
 pub mod versioned;
 
 /// A 32-byte value, passed as plain bytes on FFI surfaces. Version-neutral:
@@ -132,6 +133,10 @@ pub mod latest {
         HostNativeChatPaymentDirection, HostNativeChatPaymentFailure, HostNativeChatPaymentState,
         HostNativeChatPeer, HostNativeChatPeerDevice, HostNativeChatRichMessage,
         HostNativeChatRichMessageKind,
+    };
+    pub use crate::v03::{
+        HostNativeChatBinding, HostNativeChatMigrationInvitation, HostNativeChatOpenPage,
+        HostNativeChatOpened, HostNativeChatPrepared, HostNativeChatRoute, HostNativeChatStatePage,
     };
 
 	pub use crate::v01::{
@@ -245,10 +250,10 @@ pub mod latest {
     /// Per-resource allocation outcomes.
     pub type HostRequestResourceAllocationResponse =
         LatestOf<versioned::resource_allocation::HostRequestResourceAllocationResponse>;
-    /// Host-owned native Chat request.
+    /// Native Chat cryptographic request using non-exportable Host keys.
     pub type HostProductDeviceChatRequest =
         LatestOf<versioned::account::HostProductDeviceChatRequest>;
-    /// Safe public view of Host-owned Chat state.
+    /// Authenticated native plaintext, prepared ciphertext, and custody metadata.
     pub type HostProductDeviceChatResponse =
         LatestOf<versioned::account::HostProductDeviceChatResponse>;
     /// Host-owned native Chat operation error.

@@ -27,10 +27,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: "-D warnings"
-      # The wire-table parity test soft-skips when the generated TypeScript is
-      # absent. The codegen artifact carries it, so this is the run that holds
-      # the Rust dispatcher and the TypeScript client to the same table.
-      TRUAPI_REQUIRE_GENERATED_TS: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

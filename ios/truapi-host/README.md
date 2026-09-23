@@ -113,6 +113,18 @@ operations. Supply the same trusted asset instance as the app's native Coinage s
 in Polkadot App). Do not substitute the main-purse derivation identifier. Omission fails closed on instance-scoped
 runtimes. The UniFFI record appends this field; rebuild bindings and native libraries together with the wrapper.
 
+Pass an existing native wallet as `nativeWallet:` when constructing `TrUAPIHostRuntime`. The separate
+`NativeCoinageHost` protocol contains only `nativeCoinage(request:)`; it is not part of `HostBridge` or product
+callbacks. Omitting the optional dependency selects built-in Rust custody. Once registered, a locked, unavailable or
+failing native wallet never falls back to Rust, and product executions cannot replace it. The reference iOS integration
+always supplies its Coinage service adapter directly, delegates to the coordinator's `CoinageService`, and retains the
+guard against opening Rust purse storage.
+
+This callback is Host-private. Validate the request's wallet root, **Coinage/People** genesis and asset instance against
+the service, preserve durable native custody before returning an outgoing memo, and never expose memo secrets or native
+exception text to a product. Regenerate bindings and rebuild the XCFramework together after changing this callback
+surface; generating Swift alone is not an iOS build or funded-payment qualification.
+
 `HostRuntimeConfig.assetHubChainGenesisHash` is required. Supply the Asset Hub genesis hash from the same network
 configuration, as 32 bytes. Product manifests are read from the dotNS contracts deployed there, so it is what makes a
 `trustedProducts` grant resolvable: without a usable value no manifest resolves, so every cross-product grant not

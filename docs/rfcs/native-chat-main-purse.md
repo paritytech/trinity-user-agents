@@ -1,364 +1,294 @@
 ---
-title: "Host-owned native Chat and main-purse payments"
+title: "Product-owned native Chat and main-purse payment authority"
 owner: "@replghost"
 status: draft
 ---
 
-# RFC — Host-owned native Chat and main-purse payments
+# RFC — Product-owned native Chat and main-purse payment authority
 
 ## Summary
 
-This draft specifies the Host-owned native Chat actor on TrUAPI Account method 12, including one-shot, explicitly
-reviewed Coinage payments from the user's main purse. Products receive authenticated conversation views and payment
-status, while the signing Host retains device secrets, payment memos, durable claim plans, and settlement authority. It
-builds on the custody and main-purse model of [RFC 0017](0017-coinage-payment.md), without claiming implementation of
-that RFC's complete CoinPayment API.
+Products own ordinary native Chat: invitations, conversation state, subscriptions, delivery retries, and
+acknowledgments. The Host retains non-exportable identity/device keys, authenticated peer and payment eligibility state,
+outgoing payment secrets, trusted spend approval, exclusive main-purse wallet service ownership, and durable payment
+recovery. Incoming native payment secrets may enter the product, which persists them privately and imports them through
+`payment.top_up(Coins)`.
 
-This proposal is **draft, not approved**. It accompanies the implementation in
-[host-rust-core #709](https://github.com/paritytech/host-rust-core/pull/709) for review; inclusion here is neither
-release availability nor deployment evidence.
+This proposal is **draft, not approved**. It accompanies
+[host-rust-core #709](https://github.com/paritytech/host-rust-core/pull/709) and its separate Chat product integration;
+inclusion here is neither release availability nor deployment evidence. It does not belong in the generic PolkaVM base.
 
-## Motivation
+**Transitional payment interface.** Native `CoinageSend` remains supported. The intended replacement is
+[RFC 0017](0017-coinage-payment.md) receivables, encrypted cheques, and deposits using `MAIN_PURSE`, not a separate Chat
+purse. Native memos are not RFC 0017 cheques, and this implementation does not supply that RFC's general payment API.
 
-Guest-held Chat cryptography lets a product handle identity ciphertext and spendable payment material that should belong
-exclusively to the wallet. A product reload can interrupt receipt between decryption and durable custody; an
-acknowledgment can then destroy the sender's recovery path before the recipient has a recoverable claim. A generic Chat
-permission also cannot safely authorize debits from the user's ordinary balance.
+## Motivation and trust boundary
 
-A Host-owned actor gives native and browser products the same restricted interface. It authenticates the peer roster,
-retains recoverable operations independently of a guest call, and separates delivery from finalized clearing. The
-product can ask to send a payment, but cannot choose coin inputs, construct proofs, approve itself, or obtain the
-secrets needed to spend received funds.
+Ordinary Chat orchestration does not require a Host-owned conversation actor. Outgoing payments do require a stronger
+boundary: a compromised product must not obtain outgoing bearer secrets, select wallet inputs, authenticate its own
+recipient keys, or approve a debit from the user's ordinary balance.
 
-## Approach
+Incoming bearer secrets are deliberately product-visible. A compromised product could redirect them before deposit; this
+design does not claim otherwise. Once the wallet accepts an import, its durable claim plan and recovery are Host-owned.
+A reload before durable recipient custody can interrupt automatic claim/retry. It is not proof of permanent fund loss: a
+sender retaining the keys may still control coins not claimed elsewhere.
 
-### Scope and relationship to RFC 0017
+| Responsibility                                                            | Owner                        |
+| ------------------------------------------------------------------------- | ---------------------------- |
+| Invitations, ordinary messages, reactions/edits, conversation history     | Product                      |
+| Statement subscriptions, submission, ordinary outbox/retries, native ACKs | Product                      |
+| Wallet identity and installation device secrets                           | Host only                    |
+| Authenticated peer admission/revocation and outgoing payment eligibility  | Host                         |
+| Outgoing main-purse selection, consent, memo, reservations and settlement | Host only                    |
+| Incoming bearer keys before import                                        | Product, privately persisted |
+| Accepted incoming claim plans, destination keys and finalized evidence    | Shared Host wallet           |
+| Trusted file selection/export, private file tickets, HOP retrieval        | Host capability              |
 
-RFC 0017 defines `MAIN_PURSE = u32::MAX`, the user's ordinary Coinage purse, its secret-custody boundary, and general
-purse/receivable/cheque APIs. This RFC uses that main-purse concept for a particular authenticated native Chat channel.
-Incoming Chat payments are claimed into the main purse; outgoing payments debit it. Conversation identity and product
-permissions do not create independent purses or product-owned balances.
+The Host device secret cannot be exported merely because ordinary Chat moved into the product. Native outgoing
+ciphertext uses that device's key agreement; exporting it would expose outgoing payment memos. `Open` therefore accepts
+an authenticated complete external statement, not an arbitrary ciphertext/key pair. Own-signer reflections, invalid
+routes, and unadmitted senders must be rejected before any plaintext is returned.
 
-Method 12 does **not** expose `create_purse`, `query_purse`, `rebalance_purse`, `delete_purse`, `create_receivable`,
-`create_cheque`, `listen_for_payment`, `deposit`, or `refund`. A native Chat payment memo is not a product-visible RFC
-0017 cheque. Supporting this RFC MUST NOT be advertised as complete RFC 0017 support, generic merchant checkout, invoice
-support, automatic refunds, or a reusable spending allowance. RFC 0017's proposed purse selectors on RFC 0006 are not
-added by this method.
-
-The normative requirements below describe the proposed contract. The final section separately identifies implementation
-evidence and integration limits; requirements are not assertions that every embedding Host already meets them.
-
-### Wire contract and compatibility
+## API and compatibility
 
 The source of truth is:
 
-- [`api/account.rs`](../../rust/crates/truapi/src/api/account.rs): `Account::product_device_chat`, trait ID **2**,
-  method ID **12**;
-- [`versioned/account.rs`](../../rust/crates/truapi/src/versioned/account.rs): `HostProductDeviceChatRequest::V1`,
-  response `::V1`, and domain error `::V1`;
-- [`v02/account.rs`](../../rust/crates/truapi/src/v02/account.rs): the V1 payload definitions. The `v02` source module
-  is not a `V2` wire envelope.
+- [`api/account.rs`](../../rust/crates/truapi/src/api/account.rs): `Account::product_device_chat`, trait **2**, method
+  **12**;
+- [`versioned/account.rs`](../../rust/crates/truapi/src/versioned/account.rs): request/response envelope **V2**, error
+  **V1**;
+- [`v03/account.rs`](../../rust/crates/truapi/src/v03/account.rs): the narrow request and response payloads;
+- [`v02/account.rs`](../../rust/crates/truapi/src/v02/account.rs): reused public metadata and the decode-only legacy
+  view;
+- [`v01/payment.rs`](../../rust/crates/truapi/src/v01/payment.rs): the existing generic top-up request and errors.
 
-The method is a request/response call returning
-`Result<HostProductDeviceChatResponse, CallError<HostProductDeviceChatError>>`. It is not a guest subscription. The Host
-separately owns receive subscriptions. Generated bindings MUST preserve the canonical enum encodings, integer widths,
-and version envelope; a package version alone is not capability negotiation.
+The old method-12 V1 request is recognized only to return `CallError::unavailable()`. No high-level actor operation is
+emulated, and no V1 response is emitted. Retired response versions do not renumber V2's SCALE discriminant. Account
+method **11** remains retired. The new encrypted SSO Chat operation is **V3, tag 7**; older operations are rejected.
+Generic encrypted SSO top-up messages use appended tags **28/29**, without reusing older tags.
 
-Account method **11** is permanently retired. Its former raw Open/Seal/proof interface MUST NOT be forwarded locally or
-over SSO, reassigned, or emulated by method 12. Unsupported methods, envelope versions, and unavailable Host
-implementations MUST fail through the protocol/`CallError` mechanism rather than appear successful or leave requests
-pending. The default method 12 trait implementation returns `CallError::unavailable()`; the domain error enum has no
-`Unsupported` variant. Hosts MUST NOT translate unsupported operations into empty successful Chat views, fabricated
-payments, or raw-crypto fallback.
+Guest, SDK, generated codecs, core, and consuming artifacts must be upgraded together. A package's broad version number
+is not capability negotiation. Unsupported methods and versions must fail explicitly, never return empty success or fall
+back to raw guest-owned device crypto.
 
-A method-11 guest and a method-12 Host are intentionally incompatible. Guest, SDK, generated codecs, core, and platform
-adapters MUST be upgraded together. An older release carrying the same broad core version is not sufficient unless its
-actual source/artifact contains this contract.
+### Requests
 
-### Public requests
+`Id32` below means `[u8; 32]`. All operations are request/response calls, not Host-owned Chat subscriptions.
 
-The V1 request enum contains exactly these operations. `Id32` in this table means the canonical `[u8; 32]`, not an
-additional wire type.
+| Variant               | Fields                                                              | Contract                                                                                                                  |
+| --------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `Initialize`          | none                                                                | Restore public device/security state, opaque pending handoffs and any legacy migration. No spend authority.               |
+| `Bind`                | `username: String`                                                  | Independently resolve and bind the peer identity and root Chat key on the configured network.                             |
+| `Prepare`             | `peer_identity: Id32`, `route`, `plaintext: Vec<u8>`                | Validate native product-authored content and return signed ciphertext. No delivery.                                       |
+| `Open`                | `statement: SignedStatement`                                        | Authenticate the external native signature, direction, route and device membership before returning allowed plaintext.    |
+| `ContinueOpen`        | `open_id: Id32`, `cursor: u32`                                      | Replay or continue a bounded authenticated HOP handoff.                                                                   |
+| `SendPayment`         | `peer_identity: Id32`, `request_id: String`, `amount_cents: u64`    | Propose one recipient-bound main-purse debit, subject to trusted Host review.                                             |
+| `PaymentStatus`       | `operation_id: Id32`                                                | Read this product's durable payment state without authorizing another debit.                                              |
+| `ReconcilePayments`   | none                                                                | Reconcile existing payment custody and opaque handoffs; do not activate an unrelated allocator for ordinary Chat polling. |
+| `PaymentDenomination` | none                                                                | Read trusted configured raw chain units per native Coinage cent; no balance, inventory selection, or transfer.            |
+| `PrepareAttachments`  | `peer_identity: Id32`, `request_id: String`, `text: Option<String>` | Trusted file selection and private preparation; the product transports the resulting ciphertext.                          |
+| `OpenAttachment`      | `attachment_id: Id32`                                               | Resume a private download and present/export through trusted Host UI.                                                     |
+| `CommitMigration`     | `migration_id: Id32`                                                | Acknowledge durable product import of the complete frozen legacy view and ordinary ciphertext.                            |
+| `ContinueState`       | `state_id: Id32`, `cursor: u32`                                     | Read another immutable page of the original response's public metadata.                                                   |
 
-| Variant            | Fields                                                                | Contract                                                                                                                                                                            |
-| ------------------ | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Initialize`       | none                                                                  | Open or restore the Host-owned device and return public state. It does not authorize spending.                                                                                      |
-| `Invite`           | `username: String`, `text: String`                                    | Resolve the identity and Chat key on the configured network and create a native invitation with ordinary welcome text.                                                              |
-| `Receive`          | `statement: SignedStatement`                                          | Authenticate the complete signed native statement, decrypt privately, and commit custody-sensitive effects before acknowledgment. Passing bytes is not an authentication assertion. |
-| `AcceptInvitation` | `invitation_id: Id32`                                                 | Accept an invitation already authenticated and retained by the Host.                                                                                                                |
-| `RejectInvitation` | `invitation_id: Id32`                                                 | Reject a retained invitation; this is not a payment cancellation operation.                                                                                                         |
-| `Send`             | `peer_identity: Id32`, `request_id: String`, `messages: Vec<Vec<u8>>` | Send validated ordinary native message encodings to the established roster. Payment, arbitrary ciphertext, and device-control injection are forbidden.                              |
-| `SendPayment`      | `peer_identity: Id32`, `request_id: String`, `amount_cents: u64`      | Propose one main-purse payment to the Host-authenticated recipient, subject to trusted per-spend review.                                                                            |
-| `PaymentStatus`    | `operation_id: Id32`                                                  | Read this product's durable operation status without proposing a new debit.                                                                                                         |
-| `Reconcile`        | none                                                                  | Resume authorized durable transport/recovery work and return public views; it grants no new spending permission.                                                                    |
-| `SendAttachments`  | `peer_identity: Id32`, `request_id: String`, `text: Option<String>`   | Select immutable files in trusted Host UI and send safe rich content. The guest cannot pass a local path or upload credential.                                                      |
-| `OpenAttachment`   | `attachment_id: Id32`                                                 | Resume private download and present/export through trusted Host UI, without returning file bytes to the guest.                                                                      |
+Routes are `Invitation`, `Identity`, and `Device`. Invitation plaintext uses the native request-message encoding;
+identity/device plaintext uses tagged native request/response encoding. The product chooses native message IDs and
+timestamps. The Host validates legal own-device lifecycle advertisements and authenticates peer-controlled changes.
+`Prepare` must not become an outgoing payment-memo or private file/history capability injection path.
 
-Caller request IDs MUST be nonempty, at most 128 UTF-8 bytes, and contain no control characters. Welcome text is bounded
-to 8192 UTF-8 bytes. Native message and attachment codecs impose further structural and resource bounds; invalid or
-forbidden payloads return `InvalidRequest`, not a permissive opaque tunnel. Hosts MUST bound queues, histories, storage,
-and nested history expansion, and fail closed when they cannot retain recovery records. Capacity exhaustion MUST NOT
-silently evict live payment custody or idempotency commitments.
+Native identifiers, content, recipients, storage and nested history remain bounded. Invalid input is rejected rather
+than treated as an opaque signing/decryption tunnel. Capacity exhaustion must not evict live custody or idempotency
+commitments.
 
-### Public responses and errors
+### Responses and paging
 
-Every successful operation returns the same V1 response:
+Responses contain public `device` and authenticated `peers`, optional `binding`, authenticated `opened` frames,
+`prepared` ciphertext, `payments`, and `rich_messages`. They also carry migration and paging metadata and an optional
+`coinage_cents_unit` for the explicit denomination request. No field is a wallet balance.
 
-| Field                                                | Public content                                                                                                                                                                             |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `device: HostNativeChatDevice`                       | Wallet identity account/public Chat key, product allowance account, and Host-owned device statement account/public Chat key.                                                               |
-| `peers: Vec<HostNativeChatPeer>`                     | Authenticated identity, optional resolved username, admitted device accounts/public keys, incoming subscription topics, and `ready_for_payments`. The guest cannot write this roster back. |
-| `invitations: Vec<HostNativeChatInvitation>`         | Stable invitation ID, authenticated peer identity, optional resolved username, native millisecond timestamp, and ordinary welcome text.                                                    |
-| `messages: Vec<HostNativeChatMessages>`              | Peer, incoming/outgoing direction, native request ID, and validated ordinary message encodings with custody-sensitive content removed.                                                     |
-| `acknowledgments: Vec<HostNativeChatAcknowledgment>` | Peer, native request ID, and native `response_code: u8`; zero means successful delivery processing, not clearing.                                                                          |
-| `payments: Vec<HostNativeChatPayment>`               | Product-scoped payment cards described below.                                                                                                                                              |
-| `rich_messages: Vec<HostNativeChatRichMessage>`      | Authenticated message/reply/edit metadata, text, opaque attachment IDs, safe media metadata, and transfer progress.                                                                        |
+Each prepared delivery contains the signed statement, peer identity, native request ID, and `requires_ack`. Response
+frames must not generate ACK-of-ACK traffic. Optional `client_request_id` preserves the old caller/native ID mapping
+when transferring pending legacy sends. Incoming opened plaintext may contain payment keys and lifecycle messages; its
+debug representation is redacted and owned secret-bearing buffers zeroize.
 
-Public views may repeat retained messages and acknowledgments. Consumers MUST correlate native request/message IDs and
-upsert payment cards by `operation_id`; response arrival is not an exactly-once event or a complete historical archive.
-`PaymentStatus` uses the common response, not a separate one-card schema.
+- `ContinueOpen` pages retain the **original** native request ID. Each page is immutable, authenticated and replayable;
+  reading does not destructively advance a cursor. Pages contain at most 256 KiB of native frames and 256 frames.
+- `ContinueState` pages contain at most 512 KiB of public metadata. Large legacy history groups split only at whole
+  native-frame boundaries, repeating their peer/direction/request identity. Consumers append/deduplicate their messages.
+- Direct operation results (`binding`, `opened`, `open_page`) are not retained in metadata snapshots or repeated by
+  `ContinueState`. Products must checkpoint these results as well as metadata continuation state.
+- State snapshots are scoped to product and wallet session. A new response may replace a snapshot; stale IDs fail
+  explicitly and the product retries its original durable operation, not a newly identified payment.
+- The guest retains its 1 MiB frame bound. Its short generated correlation IDs fit the reserved envelope space.
 
-A payment card has `operation_id: [u8; 32]`, `request_id: String`, `message_id: String`, `timestamp: u64`
-(milliseconds), `peer_identity: [u8; 32]`, `direction: Incoming | Outgoing`, `amount_cents: u64`, and
-`state: HostNativeChatPaymentState`. It contains no memo, source coin identifiers, private clearing evidence, asset
-selector, or wallet balance. Products MUST obtain asset/network presentation from trusted Host context, not infer a
-currency from the integer alone.
+Migration fields include the frozen legacy public view, `migration_id`, and original native invitation request IDs. All
+pages must reach durable product storage before `CommitMigration`; a display-cache limit is not permission to truncate
+migration input.
 
-Attachment metadata contains `mime_type`, `size_bytes: u32`, and kind `File`, `Image { width, height, thumbnail }`, or
-`Video { duration_seconds, thumbnail }`. Thumbnails are optional validated BlurHash bytes, not URLs or executable
-images. Attachment progress is `Preparing`, `Uploading { uploaded_bytes }`, `Downloading { downloaded_bytes }`, `Ready`,
-or `Recovering`. These states are independent of both message acknowledgment and payment status.
+The domain error remains `HostProductDeviceChatError::V1`, including `NotConnected`, `AccessNotGranted`, `UserRejected`,
+`AllowanceRequired`, `PeerNotReady`, `OperationConflict`, `InvalidRequest`, `InvalidStatement`, `RecipientNotFound`,
+`InsufficientBalance`, `StorageUnavailable`, `NetworkUnavailable`, `OperationNotFound`, and `AttachmentsUnavailable`.
+Errors and diagnostics must not include keys, decrypted memos, private file credentials, or raw secret-bearing backend
+errors. Failure or timeout is not payment cancellation.
 
-Domain errors are the exact `HostProductDeviceChatError` variants:
+## Authentication and permissions
 
-| Error                    | Meaning and caller action                                                                                 |
-| ------------------------ | --------------------------------------------------------------------------------------------------------- |
-| `NotConnected`           | No current authenticated wallet session; restore a session before retry.                                  |
-| `AccessNotGranted`       | Required Chat/transport capability is absent or revoked; do not bypass it.                                |
-| `UserRejected`           | Trusted review, file selection, or export was declined; do not loop prompts automatically.                |
-| `AllowanceRequired`      | The Host device needs its Statement Store allowance.                                                      |
-| `PeerNotReady`           | The peer has not met the applicable establishment/device eligibility requirements.                        |
-| `OperationConflict`      | Immutable parameters or an existing asset binding conflict; changing an ID is not a safe automatic retry. |
-| `InvalidRequest`         | Invalid bounds, amount, identifier, or unsupported native message content.                                |
-| `InvalidStatement`       | Authentication, decryption, or authenticated native content validation failed.                            |
-| `RecipientNotFound`      | Identity resolution failed on the selected network.                                                       |
-| `InsufficientBalance`    | The main purse cannot fund the proposed payment.                                                          |
-| `StorageUnavailable`     | A safe durable commit is unavailable; never assume the operation had no prior effects.                    |
-| `NetworkUnavailable`     | Configured chain/transport is unavailable; reconcile before deciding an operation failed.                 |
-| `OperationNotFound`      | No matching payment visible to this product; do not reveal another product's operation.                   |
-| `AttachmentsUnavailable` | This Host cannot select, recover, or present the requested private file.                                  |
+Calling-product identity comes from the Host connection/SSO context, not caller labels. Device state is scoped to
+wallet, network, product and installation; the allocator and imported source identity are wallet/network-wide. Handles
+and continuation IDs must not cross these boundaries.
 
-Errors MUST be sanitized. Neither domain errors nor transport diagnostics may contain secrets, decrypted payment memos,
-file credentials, or raw backend errors that carry them. Call failure or timeout is not payment cancellation.
+Chat authority is distinct from username disclosure. Pure `Bind`, `Prepare`, and `Open` do not require Host
+`StatementSubmit`; the product separately requests submission permission and the device's allowance. Uploads require
+`PreimageSubmit` and the existing Bulletin allowance. None is a spend grant.
 
-### Identity, product, network, and device eligibility
+The Host verifies native invitations, peer identity proofs and device membership. Outgoing payments additionally require
+an active keyed peer device to acknowledge the legacy-device revocation update. Only eligible devices enter the payment
+envelope; an offline advertised device need not block an eligible one. Payment ACKs must come from a recipient included
+in the committed envelope. Authenticated roster changes invalidate eligibility until re-established.
 
-The authenticated calling product comes from Host connection/SSO context, never request-supplied labels. Chat state is
-scoped to the wallet, selected network, product, and Host installation's device. The main-purse allocator is
-wallet/network owned and serialized across products. Product operation IDs and attachment handles MUST NOT provide
-access across wallets, networks, or products.
+Every new outgoing debit requires trusted signing-Host `MainPurseChatPaymentReview`: authenticated product and
+recipient, Host-resolved username when available, exact `amount_cents`, approved `max_debit_cents`, chain genesis,
+configured Coinage instance and immutable operation ID. Guest UI, auto-sign policy and generic signing permission cannot
+approve it. Retrying an accepted memo never authorizes another debit; renewed preparation must not broaden the approved
+bound.
 
-The Host resolves usernames and root Chat public keys using trusted network configuration and authenticates native
-invitations and device-control messages. Guests select only an established peer identity, not encryption keys, device
-lists, signing accounts, network endpoints, or Coinage asset instances. SSO MUST preserve this boundary at the signing
-Host; the execution Host cannot substitute its own review for the signing Host's authorization.
+Generic incoming `payment.top_up` needs an active wallet session, not Chat authority or outgoing spend consent. It only
+imports supplied coin secrets; it cannot select the Host's existing wallet inventory. Encrypted SSO preserves this
+separation at the signing Host.
 
-Ordinary Chat requires an established peer with active authenticated devices. Outgoing payment eligibility additionally
-requires at least one active, keyed peer device to acknowledge the legacy-device revocation update. The payment envelope
-includes only the eligible acknowledged devices. An offline advertised device need not block an eligible recipient. A
-payment ACK MUST originate from a recipient included in the committed envelope. Authenticated roster changes invalidate
-eligibility until it is re-established; rewrapping a retry MUST preserve the payment identity and exact memo, not create
-a second spend.
+## Amounts, deposit completion and acknowledgments
 
-Incoming payments require an authenticated admitted sender and durable custody; they do not apply the outgoing
-`ready_for_payments` gate to the sender. First contact is not a channel for embedding payments or attachments in welcome
-text. Call signaling remains unsupported. Native push-token metadata may be validated and discarded privately, but this
-does not imply a push provider or OS wake.
+Outgoing `SendPayment.amount_cents` is a positive `u64` count of cents of the **configured Coinage asset**. The Host
+performs checked conversion and binds denomination metadata into durable operations. It is not a JavaScript floating
+point value, a fiat quote, or a chain-native planck count.
 
-### Permissions and trusted per-spend consent
+Native `CoinageSend.total_value` and generic top-up amounts are **raw `u128` chain units**, not cents. For incoming
+Chat:
 
-Chat authority is a dedicated authorization, separate from disclosure of a username and separate from `StatementSubmit`.
-The Host-owned receiver requires current Chat authority and Statement Store submission permission. Attachment uploads
-additionally require the existing Bulletin allowance and `PreimageSubmit`; none of these grants permits spending.
+1. Persist the authenticated raw amount and exact supplied keys in encrypted product recovery storage.
+2. Obtain the Host's positive `coinage_cents_unit`; require an exact integral division and checked `u64` result before
+   presenting a cent-denominated card. Never hardcode a network/asset conversion or treat raw units as cents.
+3. Persist that amount binding, then call `payment.top_up` with `into: None` (main purse), the original raw amount as
+   the minimum expected credit, and `PaymentTopUpSource::Coins` containing the same keys on every retry.
+4. Mark complete only after the Host reports finalized complete import and the product durably saves that receipt and
+   key removal. An underfunded import is not full payment and must not be acknowledged as such.
 
-Each new outgoing debit MUST obtain trusted signing-Host review of `MainPurseChatPaymentReview`: authenticated calling
-product, recipient identity, Host-resolved username when available, exact `amount_cents`, `max_debit_cents` including
-the approved fee bound, chain `genesis_hash`, trusted `coinage_instance_id`, and immutable `operation_id`. The UI MUST
-make the selected network, asset, recipient amount, and maximum main-purse debit unambiguous. It MUST NOT render a guest
-label as authenticated recipient identity or approve through guest JavaScript, auto-sign policy, Chat authorization, or
-generic product signing permission.
+For the generic API, `amount: 0` imports all supplied coins without a positive minimum. Chat does **not** use that form
+for a memo advertising a definite amount. A changed minimum on retry inspects the original receipt; it does not create a
+second claim. `PartialPayment { credited }` carries proven raw credited units after a definitively finished import below
+the requested minimum. Missing/not-yet-funded or ambiguously spent sources remain unresolved, with custody retained; a
+cleared prefix alone must not become a false success or definitive partial result.
 
-Approval authorizes only that immutable operation and debit bound. Transport replay of an already accepted memo does not
-authorize another debit. Resuming unfinished preparation may require renewed review of the same operation; the Host MUST
-NOT silently broaden the prior approval. Denial before effects can cancel the intent. Denial after an accepted effect
-prevents new effects but cannot erase an existing transfer, release ambiguously spent inputs, or promise a refund.
-`PaymentStatus` is not a consent prompt or cancellation API.
+The selected wallet service keeps durable import records, canonical source identity, claim plans and finalized receipts.
+Reordered keys reuse the same custody; conflicting overlaps and cross-product rebinding are rejected. The Rust backend
+uses its encrypted main-purse WAL and preserves original order, denomination binding and destination plans when adopting
+its existing incoming memos. The reference iOS backend delegates custody and claim recovery to its native
+`IncomingPaymentService`. Neither backend requires a running guest to retain accepted incoming funds.
 
-### Integer amounts and asset mapping
+The product sends a native success ACK only when the **whole original batch** and all HOP pages are durably processed,
+and all required top-ups completed. It must not invent per-page request IDs or ACK synthetic batches. Private file
+references needed after remote deletion must also be durable. Delayed ACKs preserve native-peer compatibility.
 
-Chat V1 `amount_cents` is an unsigned 64-bit integer. An outgoing amount MUST be in `1..=u64::MAX` and also pass the
-selected runtime's denomination, checked conversion, inventory, and maximum-debit bounds. Zero, overflow, unsupported
-units, and a non-integral exact received amount MUST be rejected. Products and bindings MUST NOT pass monetary values
-through an inexact floating-point or JavaScript `Number` conversion for values above its safe integer range.
+An ACK from a different native implementation may prove custody rather than clearing. Outgoing status therefore keeps
+`Delivering`, `Delivered`, `Claiming`, `PartiallyCleared`, `Cleared`, `Recovering` and `Failed` distinct. Only chain
+finality proves settlement. A failure must not erase a finalized prefix; late ACKs cannot regress established clearing
+evidence.
 
-The unit is one cent of the **Host-selected Coinage asset**, not a chain-native planck and not an arbitrary fiat quote.
-The Host obtains denomination metadata from the selected chain/instance and uses checked arithmetic to convert cents to
-`u128` chain units. Exact amounts require integral conversion; partial clearing reports only proven whole cents
-(rounding down), while a review's maximum debit rounds up if necessary so it never understates the bound. The durable
-operation binds denomination metadata; a changed runtime mapping MUST NOT reinterpret an in-flight payment.
+RFC 0017 instead uses `u32` **dotUSD cents**. Native amounts need checked width and actual asset conversion before that
+API can replace them. The previously exercised `paseo-next-v2` profile uses People genesis
+`0x4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48`, instance `0`, and pUSD precision 6: one native
+cent is 10,000 chain units. This is configuration, not a default, a new qualification result, or a claim that pUSD is
+dotUSD. Hosts must verify the live selected configuration and must not silently substitute another environment.
 
-RFC 0017 instead specifies `Balance = u32` in **dotUSD cents**, exponent 2. These types are not interchangeable aliases.
-An adapter to that API MUST check `amount_cents <= u32::MAX` and the actual dotUSD asset/denomination before a lossless
-conversion; truncation and relabeling are forbidden. The qualified local native profile is `paseo-next-v2`, People
-genesis `0x4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48`, Coinage instance `0`, with pUSD
-chain-asset precision 6. In that profile, `1` cent is `0.01 pUSD` (10,000 chain units). These are explicit configuration
-values, not values inferred from `MAIN_PURSE`. Hosts MUST verify the live configured chain and denomination metadata
-rather than substitute another Paseo genesis or assume any instance is equivalent. This mapping is not a claim that pUSD
-is dotUSD or redeemable fiat USD.
+## Durability, migration and lifecycle
 
-The chain genesis and optional Coinage instance are Host configuration, not request fields. `None` is valid only for a
-legacy single-asset runtime; an instance-scoped runtime requires its trusted instance ID. An opened encrypted wallet
-binds its selected instance permanently. Configuration changes MUST fail closed instead of retargeting reservations,
-claims, or pending payments. A product unable to identify the configured asset MUST NOT invent a currency label or offer
-an ambiguously denominated payment.
+Outgoing identity binds wallet, network, product and caller request ID. Changed recipient or amount returns
+`OperationConflict`; a new ID is a new proposal, never an automatic retry. Payment ciphertext acceptance is a durable
+handoff, not network submission or peer delivery. The product owns transmission and retries with original native IDs.
 
-### Durable custody, acknowledgment, and clearing
+The guest stores pending protocol work, incoming claims and legacy archives in encrypted bounded shards. It writes an
+authenticated staging/garbage journal before new immutable shards, then atomically replaces the manifest only after all
+shards are acknowledged. Only the manifest acknowledgment advances payment or ACK durability gates. Restore verifies
+every referenced shard and fails closed on missing/corrupt data. Cleanup deletes only unreferenced scoped keys and
+retains its journal across cancellation. Per-call storage limits are unchanged; display retention is separate from exact
+recoverable migration archives.
 
-The Host MUST authenticate and decrypt native traffic privately, validate the whole batch, and durably retain every
-payment memo and its complete claim plan before issuing the corresponding native ACK. This applies to inline batches,
-HOP history, and nested compacted history. Private attachment references needed for later download must likewise be
-durable before acknowledgment. A storage failure leaves the message unacknowledged and retryable; partial processing
-cannot justify acknowledging the entire batch.
+Legacy Host state is frozen until explicit migration commit. Ordinary history, pending ciphertext, invitation native IDs
+and caller/native delivery mappings survive this transfer. The Host does not duplicate the entire legacy snapshot just
+to freeze it. After commit it retires transferred ordinary state while retaining private device keys, security roster,
+payment custody and file state. V1 actor calls and method 11 are not compatibility shims.
 
-The sender MUST retain immutable memo custody and an outbox commitment before transmission. The receiver MUST retain
-enough information to resume claims after restart and after remote history or pool data is deleted. A claim submission
-or an RPC success is not proof of ownership at finality. Chain evidence, rather than guest assertions, delivery
-responses, or synthetic balances, determines settlement.
+The Host runs **no ordinary Chat receiver or outbox service** while the product is closed. It does resume existing
+wallet imports and payment recovery after unlock, without a Chat grant, guest initialization, or a new prompt. It must
+not activate a competing allocator just because an ordinary Chat product polls. Logout and session replacement fence new
+effects; already-owned durable commits may finish. Product revocation/clearing does not erase wallet custody. Suspended
+or terminated Hosts still need platform scheduling; this API promises neither OS wake nor push delivery.
 
-| Payment state                        | Meaning                                                                                     |
-| ------------------------------------ | ------------------------------------------------------------------------------------------- |
-| `Preparing`                          | Approved inputs are reserved and required preparation is in progress.                       |
-| `Delivering`                         | Durable encrypted memo exists; transport is being attempted or retried.                     |
-| `Delivered`                          | An eligible peer acknowledged custody/processing; clearing is not yet established.          |
-| `Claiming`                           | Incoming secrets and claim plans are durable; on-chain claiming is in progress.             |
-| `PartiallyCleared { cleared_cents }` | Finalized evidence covers only part of the amount; do not label the whole payment paid.     |
-| `Cleared`                            | The complete payment has been verified at chain finality.                                   |
-| `Recovering`                         | Effects are ambiguous and require reconciliation; reservations and recovery records remain. |
-| `Failed { reason }`                  | Definitive failure after possible prior effects have been reconciled.                       |
+HOP is retrieved through trusted configured Bulletin access, not caller endpoints. The Host authenticates bounded nested
+history and keeps replayable handoff pages until the product prepares the actual successful native ACK. File selection,
+immutable source recovery, private tickets, cached chunks and export remain trusted Host operations. The product
+receives public metadata and opaque handles and delivers prepared native rich-content ciphertext. First-contact
+attachments and call signaling remain unsupported.
 
-Failure reasons are `Cancelled`, `InsufficientBalance`, `AlreadySpent`, `InvalidMemo`, and `ChainRejected`. A terminal
-failure MUST NOT obscure any value that actually cleared. The V1 `Failed` variant carries no cleared amount; a Host that
-cannot represent a mixed outcome truthfully MUST retain the partial/recovery status rather than collapse it into a
-misleading failure.
+## Main-purse ownership and native service integration
 
-“Claimed” is not a separate V1 enum variant. UI copy MUST distinguish a claim attempt (`Claiming`) from finalized
-ownership (`Cleared`). State observations may skip intermediate states; implementations MUST preserve established
-clearing evidence rather than regress it when an ACK arrives late.
+The main purse uses page-0 `//coinage//4294967295//0/<index>` (soft coin item) and
+`//coinage-ring-vrf//4294967295//0//<index>` (hard voucher item). Wallet snapshot version 3 rejects legacy `//pps` state
+without rewriting or discarding it. Matching derivations alone do not reconcile counters, reservations or pending memos.
 
-### Idempotency, retries, and lifecycle
+The signing Host accepts an optional `CoinageWalletHost` dependency at construction. Without a registered native wallet
+it uses the built-in Rust wallet; with one, all wallet operations use that service for the runtime's lifetime. A locked
+or failed registered native service never enables Rust custody. There is no selection callback or availability-based
+fallback. Products cannot register or replace the runtime's wallet dependency.
 
-Outgoing payment identity binds wallet, network, calling product, and caller request ID. Retrying `SendPayment` with
-that ID MUST keep the recipient and amount unchanged or return `OperationConflict`. It resumes the same durable
-operation, reservations, and memo. A new ID is a new payment proposal, never an automatic recovery tactic. Ordinary
-`Send` deduplication additionally scopes the request ID to the peer and commits the message content; attachment intents
-retain the original recipient, caption, and immutable selected source.
+The reference `hosts/ios` integration injects `TrUAPINativeCoinage`, an adapter over the coordinator's existing
+`CoinageService`, directly into `TrUAPIHostRuntime`. Browser and CLI embeddings omit it and use Rust without extra
+configuration. `NativeCoinageRequest` binds the active wallet root, configured Coinage chain and asset instance.
+Denomination queries, outgoing preparation/status and generic incoming imports use that service's existing inventory,
+counters, balance and recovery. The adapter stores operation/approval bindings, not another inventory or a plaintext
+memo file.
 
-`Invite` does not accept a caller idempotency key and creates a fresh invitation; a product MUST reconcile before
-blindly retrying it after a lost response. Replayed authenticated incoming requests MUST repair pending ACK transmission
-without duplicating custody or replacing original commitments. Responses use the responder's own outgoing
-identity/device route, not a copy of the requester's session direction.
+Outgoing native preparation retains recipient derivation records and committed custody marks atomically with native
+transaction registration (or in one native transaction for an exact-match transfer). This precedes returning bearer
+material to trusted Rust code. A restart must not clear these coins as ordinary provisional reservations. Rust seals the
+memo for the authenticated recipient, records durable ciphertext custody, then separately commits transport acceptance.
+That acceptance is neither peer delivery nor chain finality. Repeated operation IDs replay retained preparation;
+conflicting intent is rejected. Native trusted review includes exact debit and any required privacy warning.
 
-Dropping a guest call or closing the product does not cancel an already owned durable operation. While the Host process
-is running, its authorized receiver owns subscriptions, reconnects, and reconciliation independently of the guest. It
-MUST recheck session and permissions before new effects and stop on revocation, logout, or session replacement,
-including during a stalled network call. Already handed-off durable commits may complete, but stale sessions MUST NOT
-create successor work. Revocation does not delete pending custody or undo a finalized payment.
+The native `CoreStorageKey::MainPurseCoinage` guard (index 13) remains. Native dispatch does not read that slot or
+create the Rust allocator. Matching derivations is not permission to run both owners or migrate an existing purse. A
+payment batch without available safe custody remains unacknowledged; ordinary Chat is not presented as a successful
+payment fallback. Native activation generations fence suspended work even when logout is followed by login to the same
+root.
 
-Restart restores durable device/payment state, not a guest-held secret cache. The Host MUST persist a bounded
-wallet/network index of initialized products and, after wallet unlock, restore receivers only for entries whose Chat
-authority and Statement Store submission permission remain authorized. This restoration MUST NOT require an open guest
-or prompt for new authorization. The index is Host-private wallet state, not product-owned storage. Clearing one product
-may durably unregister that product and stop its receiver, but MUST preserve other registrations and pending payment
-custody/history. Its storage adapter must preserve the canonical `CoreStorageKey::NativeChatProducts` entry (index 16),
-alongside the actor and wallet stores, and reject malformed or over-limit data without fabricating an empty
-initialized-product set. Restoring a registration MUST NOT regenerate a missing device key.
+Native incoming receipts and retained sources must bind a stable wallet-root/chain/instance owner, so same-owner restart
+can resume claims but another wallet cannot adopt them. Pre-upgrade incoming rows without a provable owner remain
+preserved, including their source secrets, but are not automatically resumed under the current root. Such pending
+imports need explicit ownership recovery; this integration does not infer ownership or erase them during the additive
+Core Data schema upgrade.
 
-OS suspension or termination still stops in-process progress. Background wake, push delivery, and platform scheduling
-are embedding-Host responsibilities, not promises of this API. Hosts MUST expose unavailable or pending service state
-honestly rather than label suspended work completed.
+Method 12 exposes no balance. Summing Chat cards cannot produce spendable wallet balance; other products, reservations
+and channels are omitted. `payment.balance_subscribe` is not implemented as working Chat balance support. Existing
+trusted wallet balance visibility must be preserved by actual reconciled inventory, not a synthetic guest total.
 
-### Secret custody, migration, and balance visibility
+Local codec/custody tests, callback smoke execution and generated Swift bindings are not native iOS compilation, funded
+native-peer interoperability or cross-platform qualification. Rebuild the local iOS XCFramework together with its
+bindings before compiling the reference app; freshly generated bindings cannot be paired with an older binary. Native
+qualification still requires denied review, stale sessions, dropped calls, interrupted writes, restart, roster changes,
+ambiguous/partial claims, files and funded native-peer checks on the consuming Host. Prior funded round trips through
+the former actor do not prove this boundary.
 
-The signing Host owns device private keys, encrypted roster/outbox, payment WAL, coin inventory, reservations,
-claim/recovery plans, spendable memos, recycler and voucher material, and proofs. None may enter guest storage, public
-errors, logs, attachment handles, or response payloads. Private file tickets, URLs, source handles, and file bytes
-remain Host-owned. HOP uses trusted Bulletin endpoint configuration, never a guest-supplied network destination.
+## Planned RFC 0017 transition
 
-Migration is a clean cutover: upgrade the guest to method 12, initialize a Host-owned device, establish authenticated
-peer rosters, and complete the legacy-device revocation handshake before sending payments. An old guest roster or
-ciphertext is not authority to import identity keys or spending material through `Send` or `Receive`. Old pending
-guest-held payments require a trusted recovery procedure; method 12 provides no guest secret-import API. Hosts MUST NOT
-silently delete unresolved old funds or fall back to method 11.
+- Create a receivable for `MAIN_PURSE`; its private key stays in the receiving Host.
+- Authorize a main-purse debit in the sending Host and create a cheque encrypted to the receivable. The product carries
+  the opaque cheque, never outgoing coin secrets.
+- Deposit into the associated main purse and report actual clearing progress; no separate Chat purse or follow-up sweep
+  is required.
+- Retain product-owned ordinary Chat and transport. Generic `top_up(Coins)` is the interim native import mechanism, not
+  RFC 0017 `deposit`.
 
-The current main-purse key profile uses page 0: `//coinage//4294967295//0/<index>` (soft item) and
-`//coinage-ring-vrf//4294967295//0//<index>` (hard item). Snapshot version 3 rejects legacy `//pps` snapshots without
-modifying them. Counters, reservations, and pending memos MUST NOT be reinterpreted under new derivations. Matching
-paths are not sufficient to share an allocator: native iOS CoreData/Keychain state and the Rust Host snapshot need
-explicit reconciliation and one allocator owner before both access the same wallet. A Host MUST NOT enable the Rust
-main-purse spend path while an independent native allocator can spend the same inventory. This is a release blocker
-until reconciliation and exclusive ownership are enforced, even when both allocators derive the same keys.
-
-Method 12 deliberately has no balance query. A product MUST NOT calculate a spendable main-purse balance by summing
-conversation cards: cards omit other products, other payment channels, reservations, and wallet history. Trusted wallet
-UI may show a balance backed by its actual reconciled inventory. The current runtime's `payment.balance_subscribe`
-rejects with `PermissionDenied`; this draft does not present it as working Chat balance support. Product-visible balance
-or RFC 0017 `query_purse` requires its own implemented, authorized contract before a product may rely on it. Missing
-balance access is not zero balance, and wallet migration MUST preserve existing trusted balance visibility without
-inventing a guest balance.
-
-## Implementation evidence and remaining integration boundaries
-
-The referenced source implements the actor, typed views, durable stores, Coinage engine integration, trusted review
-callback, and in-process receive service. The implementation effort reports a real local native Host-to-iOS and
-iOS-to-Host `0.01 pUSD` payment clearing in each direction. That narrowly scoped observation is not evidence of general
-RFC 0017 compliance, Android/desktop or browser parity, OS background delivery, or a published product release. This
-document introduces no additional test or deployment result.
-
-The reference `hosts/ios` integration still has a separate native `CoinageService`. It rejects access to
-`CoreStorageKey::MainPurseCoinage` (index 13), preventing the Rust actor from scanning, allocating, or claiming that
-inventory. Ordinary Chat remains available, but main-purse Chat payment custody is unavailable and incoming payment
-batches must not be acknowledged. This fail-closed guard is not a native-store migration. An embedding Host with one
-shared Rust wallet owner may enable payments only when its actual durable storage, review UI, and lifecycle satisfy the
-contract above.
-
-The following remain release/integration obligations rather than implied capabilities:
-
-- Each embedding Host must implement the trusted spend review and durable storage boundary, and consume artifacts built
-  from the matching actor and native codec source. Merely selecting a core version is insufficient.
-- Same-wallet native/Rust allocator migration is a release blocker wherever competing writers can spend the same
-  inventory. Explicit custody/counter reconciliation and one allocator owner are required. Separate devices exchanging
-  payments do not prove safe concurrent allocator sharing.
-- Guests need trusted asset/network display context because V1 payment cards do not carry it. A Host unable to establish
-  the mapping must disable the spend path, not substitute a familiar currency name.
-- Product balance APIs, general RFC 0017 purse/receivable/cheque operations, and OS wake/push are not supplied here.
-- Indexed post-unlock receiver restoration is implemented in the core source, but must still be qualified with durable
-  permission restoration and platform storage. The existing in-process receive service and unexecuted regression cases
-  alone are not evidence of cold-restart conformance.
-- Qualification must separately exercise denial, revoked sessions, dropped calls, interrupted durable writes,
-  restart/replay, roster changes, partial claims, and ambiguous chain outcomes on the actual consuming Hosts. A funded
-  happy-path round trip does not establish these guarantees by itself.
-
-## Trade-offs
-
-- A Host-owned actor reduces guest flexibility and makes platform adapters and trusted UI mandatory, but prevents a
-  compromised product from retaining spendable Chat material or approving its own payment.
-- Retiring method 11 requires a coordinated upgrade rather than a transparent compatibility shim. Keeping the raw
-  interface would preserve the custody violation this proposal is intended to remove.
-- Durable custody before ACK consumes storage and can delay transport progress. Acknowledging earlier trades that cost
-  for unrecoverable funds and is rejected.
-- `u64` native Chat amounts preserve the existing actor contract but require explicit checked adaptation to RFC 0017's
-  narrower dotUSD `Balance`.
-- Sharing the main purse gives users their ordinary wallet funds, but requires wallet-wide serialization and migration
-  instead of independent per-product coin allocators. Separate product purses remain the concern of RFC 0017.
-- Delivery and settlement are deliberately separate, so a product must show pending/recovery states. Optimistic “paid”
-  status based on an ACK is rejected.
+Cutover requires an agreed interoperable cheque encoding, peer support, authenticated recipient/receivable binding and
+checked asset/amount conversion. A caller-supplied receivable is not proof of a displayed contact identity. Pending
+native memos, reservations, claim plans and operation IDs must survive until settled or safely recovered. Do not
+reinterpret native messages as cheques, issue replacement payments silently, or add a second allocator.

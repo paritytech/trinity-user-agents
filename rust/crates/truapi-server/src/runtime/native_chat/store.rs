@@ -38,8 +38,10 @@ const MAGIC: &[u8; 4] = b"HCHS";
 const VERSION: u16 = 3;
 const HEADER_BYTES: usize = 4 + 2 + 24;
 const TAG_BYTES: usize = 16;
-const MAX_SNAPSHOT_BYTES: usize = 16 * 1024 * 1024;
-const MAX_DECODE_BYTES: usize = 32 * 1024 * 1024;
+// A retained legacy snapshot and a bounded (16 MiB) authenticated HOP handoff
+// can coexist during the explicit custody transfer. Neither bound is unbounded.
+const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
+const MAX_DECODE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_DECODE_DEPTH: u32 = 64;
 
 // Clean slots exist only while an open/store holds a lease. Uncertain slots

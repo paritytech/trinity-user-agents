@@ -290,10 +290,26 @@ pub trait Account: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-    /// Operate a Host-owned native Chat device and propose one-shot main-purse
-    /// payments. Transport private keys and spendable memos never leave the Host.
+    /// Use a non-exportable Host Chat device for native cryptographic operations
+    /// and reviewed main-purse payments. The product owns native lifecycle frames,
+    /// subscriptions, delivery, retries, history, and acknowledgments.
     ///
-    /// Method 11 (the former raw-crypto interface) is retired, not forwarded.
+    /// `Bind` resolves the peer independently. `Prepare` validates native plaintext
+    /// and returns signed ciphertext for product submission. `Open` authenticates
+    /// complete external statements and rejects reflected local output; it is not
+    /// an arbitrary decryption primitive. Incoming plaintext can contain incoming
+    /// bearer coin keys: persist the import intent securely and use generic payment
+    /// top-up before acknowledging. Wallet/device keys and outgoing main-purse
+    /// coin secrets never leave the Host.
+    ///
+    /// `Initialize` also advances private file transfers. Persist any legacy
+    /// migration view and ordinary prepared statements before `CommitMigration`.
+    /// `ContinueOpen` retrieves the next bounded page of an authenticated batch.
+    /// `ContinueState` retrieves remaining pages of a stable public state snapshot;
+    /// persist every page before committing its migration.
+    ///
+    /// Method 11 (the former raw-crypto interface) and method 12's former V1 actor
+    /// operations are retired, not forwarded. This boundary uses V2 payloads.
     ///
     /// ```ts
     /// const result = await truapi.account.deviceChat({ tag: "Initialize" });

@@ -11,6 +11,7 @@ import { errorMessage } from "./error.js";
 import type { ChainConnect, ChainConnection, HopConnect } from "./runtime.js";
 import type {
   ChainProvider,
+  CoinageWalletHost,
   HopProvider,
   JsonRpcConnection,
   NativeChatFilesHost,
@@ -147,6 +148,28 @@ export const unavailableHopProvider: Required<HopProvider> = {
     throw new Error("HOP provider is unavailable");
   },
 };
+
+/** Native exceptions may contain bearer material; preserve only typed failure values. */
+export function coinageWalletHostAdapter(
+  host: Required<CoinageWalletHost> | undefined,
+): Required<CoinageWalletHost> | undefined {
+  if (host === undefined) return undefined;
+  let nativeCoinage: Required<CoinageWalletHost>["nativeCoinage"];
+  try {
+    nativeCoinage = host.nativeCoinage.bind(host);
+  } catch {
+    throw new Error("Native Coinage wallet callback is unavailable");
+  }
+  return {
+    async nativeCoinage(request) {
+      try {
+        return await nativeCoinage(request);
+      } catch {
+        throw new Error("Native Coinage wallet operation failed");
+      }
+    },
+  };
+}
 
 /** Optional SDK embeddings must fail closed, never invent successful file handles. */
 export const unavailableNativeChatFilesHost: Required<NativeChatFilesHost> = {

@@ -156,6 +156,7 @@ pub struct HostNativeChatAcknowledgment {
 
 /// Payment direction relative to the current wallet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 pub enum HostNativeChatPaymentDirection {
     /// An explicitly approved debit from the user's main purse.
     Outgoing,
@@ -165,6 +166,7 @@ pub enum HostNativeChatPaymentDirection {
 
 /// Durable payment state. Delivery and on-chain clearing are deliberately distinct.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 pub enum HostNativeChatPaymentState {
     /// Approved inputs are reserved; required split/unload work is in progress.
     Preparing,
@@ -192,6 +194,7 @@ pub enum HostNativeChatPaymentState {
 
 /// Public, non-secret payment failure categories.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 pub enum HostNativeChatPaymentFailure {
     /// No transaction or memo was accepted and the operation was cancelled.
     Cancelled,
@@ -207,6 +210,7 @@ pub enum HostNativeChatPaymentFailure {
 
 /// A product-visible payment card; it contains no spendable memo material.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 pub struct HostNativeChatPayment {
     /// Durable, product-scoped operation identifier.
     pub operation_id: [u8; 32],

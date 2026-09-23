@@ -26,6 +26,8 @@ import {
   CoreStorageKey,
   NativeChatFileExportRequest,
   NativeChatFilePickRequest,
+  NativeCoinageRequest,
+  NativeCoinageResponse,
 } from "../generated/host-callbacks.js";
 import type {
   AuthState as AuthStateValue,
@@ -184,6 +186,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
         permissionStatus: false,
         pocket: false,
         identityBackend: false,
+        coinageWallet: false,
       },
       debuggerUrl: null,
     });
@@ -357,6 +360,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       permissionStatus: false,
       pocket: false,
       identityBackend: false,
+      coinageWallet: false,
     });
   });
 
@@ -379,6 +383,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       permissionStatus: false,
       pocket: true,
       identityBackend: false,
+      coinageWallet: false,
     });
   });
 
@@ -440,6 +445,197 @@ describe("createWebWorkerPairingHostRuntime", () => {
       await expect(
         callbacks.identityUsernameCandidates!("unavailable", genesis),
       ).rejects.toThrow("authenticated search unavailable");
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it("does not register a product wallet when the runtime uses the Rust wallet", async () => {
+    const worker = new FakeWorker();
+    const runtimePromise = createWebWorkerSigningHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks(),
+      {
+        hostConfig: {
+          ...hostConfigFromRuntimeConfig(runtimeConfig()),
+          networkSuffix: "paseo",
+        },
+      },
+    );
+    worker.emit({ kind: "loaded" });
+    const capabilities = lastMessageOfKind(worker, "init")
+      .capabilities as OptionalCapabilities;
+    worker.emit({ kind: "ready" });
+    const runtime = await runtimePromise;
+    let productWalletCalls = 0;
+    try {
+      const providerPromise = runtime.createProvider(
+        { productId: "chat.dot" },
+        makeHostCallbacks({
+          coinageWallet: {
+            nativeCoinage: async () => {
+              productWalletCalls++;
+              return { tag: "Done" };
+            },
+          },
+        }),
+      );
+      const productCapabilities = lastMessageOfKind(worker, "createCore")
+        .capabilities as OptionalCapabilities;
+      worker.emit({ kind: "coreReady", coreId: 1 });
+      await providerPromise;
+      const bridge = {
+        async callbackRequest() {
+          throw new Error("An absent wallet must not issue a callback");
+        },
+      } satisfies Pick<WorkerCallbackBridge, "callbackRequest">;
+      for (const registration of [capabilities, productCapabilities]) {
+        const callbacks = createWorkerRawCallbacks(
+          bridge as WorkerCallbackBridge,
+          registration,
+        ) as unknown as RawCallbacks;
+        expect(callbacks.nativeCoinage).toBeUndefined();
+      }
+      // Even a stale or forged product-scoped request cannot invoke its wallet.
+      worker.emit({
+        kind: "callbackRequest",
+        requestId: 1,
+        coreId: 1,
+        name: "nativeCoinage",
+        args: [],
+      });
+      await settle();
+      expect(lastMessageOfKind(worker, "callbackResponse").ok).toBe(false);
+      expect(productWalletCalls).toBe(0);
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it("keeps native wallet ownership and secrets on the runtime callback route", async () => {
+    const worker = new FakeWorker();
+    const runtimePromise = createWebWorkerSigningHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks({
+        coinageWallet: {
+          nativeCoinage: async (request) => {
+            if (request.operation.tag === "Denomination")
+              return { tag: "Failed", value: { reason: "Unavailable" } };
+            throw new Error("private native memo bearer material");
+          },
+        },
+      }),
+      {
+        hostConfig: {
+          ...hostConfigFromRuntimeConfig(runtimeConfig()),
+          networkSuffix: "paseo",
+        },
+      },
+    );
+    worker.emit({ kind: "loaded" });
+    const capabilities = lastMessageOfKind(worker, "init")
+      .capabilities as OptionalCapabilities;
+    worker.emit({ kind: "ready" });
+    const runtime = await runtimePromise;
+    let productWalletCalls = 0;
+    const providerPromise = runtime.createProvider(
+      { productId: "chat.dot" },
+      makeHostCallbacks({
+        coinageWallet: {
+          nativeCoinage: async () => {
+            productWalletCalls++;
+            return { tag: "Done" };
+          },
+        },
+      }),
+    );
+    worker.emit({ kind: "coreReady", coreId: 1 });
+    await providerPromise;
+    const scope = {
+      rootPublicKey: new Uint8Array(32),
+      genesisHash: new Uint8Array(32),
+    };
+    try {
+      let coreId = 1;
+      const bridge = {
+        async callbackRequest(name, args) {
+          worker.emit({
+            kind: "callbackRequest",
+            requestId: 1,
+            coreId,
+            name,
+            args,
+          });
+          await settle();
+          const response = lastMessageOfKind(worker, "callbackResponse");
+          if (!response.ok) throw new Error(String(response.error));
+          return response.value;
+        },
+      } satisfies Pick<WorkerCallbackBridge, "callbackRequest">;
+      const native = createWorkerRawCallbacks(
+        bridge as WorkerCallbackBridge,
+        capabilities,
+      ) as unknown as RawCallbacks;
+      await expect(
+        native.nativeCoinage!(
+          NativeCoinageRequest.enc({ scope, operation: { tag: "Reconcile" } }),
+        ),
+      ).rejects.toThrow();
+      worker.emit({
+        kind: "callbackRequest",
+        requestId: 2,
+        coreId: 1,
+        name: "nativeCoinage",
+        args: [
+          NativeCoinageRequest.enc({
+            scope,
+            operation: { tag: "Denomination" },
+          }),
+        ],
+      });
+      await settle();
+      expect(
+        NativeCoinageResponse.dec(
+          lastMessageOfKind(worker, "callbackResponse").value as Uint8Array,
+        ),
+      ).toEqual({ tag: "Failed", value: { reason: "Unavailable" } });
+      worker.emit({
+        kind: "callbackRequest",
+        requestId: 3,
+        name: "nativeCoinage",
+        args: [
+          NativeCoinageRequest.enc({ scope, operation: { tag: "Reconcile" } }),
+        ],
+      });
+      await settle();
+      const failure = lastMessageOfKind(worker, "callbackResponse");
+      expect(failure.ok).toBe(false);
+      expect(failure.error).not.toContain("bearer material");
+      // Recreating product execution callbacks after failure keeps the runtime owner.
+      const recreatedProvider = runtime.createProvider(
+        { productId: "chat.dot" },
+        makeHostCallbacks(),
+      );
+      const productCapabilities = lastMessageOfKind(worker, "createCore")
+        .capabilities as OptionalCapabilities;
+      coreId = 2;
+      worker.emit({ kind: "coreReady", coreId });
+      await recreatedProvider;
+      const recreated = createWorkerRawCallbacks(
+        bridge as WorkerCallbackBridge,
+        productCapabilities,
+      ) as unknown as RawCallbacks;
+      expect(
+        NativeCoinageResponse.dec(
+          await recreated.nativeCoinage!(
+            NativeCoinageRequest.enc({
+              scope,
+              operation: { tag: "Denomination" },
+            }),
+          ),
+        ),
+      ).toEqual({ tag: "Failed", value: { reason: "Unavailable" } });
+      expect(productWalletCalls).toBe(0);
     } finally {
       runtime.dispose();
     }

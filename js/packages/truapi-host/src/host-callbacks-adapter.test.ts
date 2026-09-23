@@ -27,6 +27,8 @@ import {
   NativeChatFilePickRequest,
   NativeChatFileExportRequest,
   NativeChatPickedFile,
+  NativeCoinageRequest,
+  NativeCoinageResponse,
   ProductContext,
   ProductExecutionKind,
   UserConfirmationReview,
@@ -109,6 +111,70 @@ const SIGN_PAYLOAD: HostSignPayloadData = {
 };
 
 describe("createWasmRawCallbacks", () => {
+  it("leaves the native callback absent for the built-in Rust wallet", () => {
+    const raw = createWasmRawCallbacks(makeHostCallbacks());
+    expect(raw.nativeCoinage).toBeUndefined();
+  });
+
+  it("rejects malformed native registration rather than enabling the Rust wallet", () => {
+    for (const coinageWallet of [null, false, {}, { nativeCoinage: 1 }]) {
+      expect(() =>
+        createWasmRawCallbacks({
+          ...makeHostCallbacks(),
+          coinageWallet: coinageWallet as never,
+        }),
+      ).toThrow();
+    }
+  });
+
+  it("keeps the registered native wallet after rejection or infrastructure failure", async () => {
+    const host = makeHostCallbacks({
+      coinageWallet: {
+        nativeCoinage: async (request) => {
+          if (request.operation.tag === "Reconcile")
+            throw new Error("private native memo bearer material");
+          return { tag: "Failed", value: { reason: "Unavailable" } };
+        },
+      },
+    });
+    const native = createWasmRawCallbacks(host);
+    const request = NativeCoinageRequest.enc({
+      scope: {
+        rootPublicKey: new Uint8Array(32),
+        genesisHash: new Uint8Array(32),
+      },
+      operation: { tag: "Denomination" },
+    });
+    expect(
+      NativeCoinageResponse.dec(await native.nativeCoinage!(request)),
+    ).toEqual({
+      tag: "Failed",
+      value: { reason: "Unavailable" },
+    });
+    const infrastructureFailure = native.nativeCoinage!(
+      NativeCoinageRequest.enc({
+        scope: {
+          rootPublicKey: new Uint8Array(32),
+          genesisHash: new Uint8Array(32),
+        },
+        operation: { tag: "Reconcile" },
+      }),
+    );
+    await expect(infrastructureFailure).rejects.toThrow();
+    await infrastructureFailure.catch((error: Error) => {
+      expect(error.message).not.toContain("bearer material");
+    });
+    // Neither mutation of the source group nor failure changes the captured service.
+    host.coinageWallet!.nativeCoinage = async () => ({ tag: "Done" });
+    host.coinageWallet = undefined;
+    expect(
+      NativeCoinageResponse.dec(await native.nativeCoinage!(request)),
+    ).toEqual({
+      tag: "Failed",
+      value: { reason: "Unavailable" },
+    });
+  });
+
   it("fails every file operation closed when the embedding has no custody backend", async () => {
     const raw = createWasmRawCallbacks(makeHostCallbacks());
     const context = {

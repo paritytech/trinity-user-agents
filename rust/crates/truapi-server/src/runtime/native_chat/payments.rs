@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Wallet-owned native Coinage payments. Products receive only public cards;
-//! entropy, memos, approval bindings and recovery evidence stay in the Host.
+//! Wallet-owned Coinage custody. Outgoing memos and approval bindings remain
+//! private; generic incoming imports share this allocator and recovery store.
 
 mod engine;
 mod inventory;
 #[cfg(test)]
 mod tests;
+mod top_up;
 
 use super::NativeChatContext;
-use crate::runtime::{
-    chat_device, coinage_chain::HostCoinageChain, coinage_store::HostCoinageStore,
-};
+use crate::runtime::{coinage_chain::HostCoinageChain, coinage_store::HostCoinageStore};
 use engine::Engine;
 use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode};
@@ -27,6 +26,27 @@ use truapi_coinage::{
 use truapi_platform::{MainPurseChatPaymentReview, UserConfirmationReview, async_trait};
 use zeroize::{Zeroize, Zeroizing};
 
+/// Metadata lookup has no allocator, inventory scan, signer, or transfer service.
+pub(super) async fn coinage_cents_unit(context: &NativeChatContext) -> Result<u128, Error> {
+    live(context)?;
+    let denominations = HostCoinageChain::selected_denomination_context(
+        &*context.services.platform,
+        context.genesis_hash,
+        context.coinage_instance_id,
+        &*context.session_valid,
+        context.services.spawner.clone(),
+    )
+    .await;
+    live(context)?;
+    let unit = denominations
+        .map_err(|_| Error::NetworkUnavailable)?
+        .asset_unit;
+    if unit == 0 {
+        return Err(Error::NetworkUnavailable);
+    }
+    Ok(unit)
+}
+
 const OPERATION_MAGIC: &[u8; 4] = b"HCP1";
 
 #[derive(Clone, PartialEq, Eq, Encode, Decode)]
@@ -42,7 +62,7 @@ pub(crate) struct PaymentIntent {
 pub(crate) trait PaymentTransport: Send + Sync {
     /// Idempotently take durable custody of this exact operation's encrypted,
     /// signed native message. An error certifies NO durable acceptance; uncertain
-    /// storage/submission MUST return success and retain the message for retry.
+    /// storage MUST return success and retain the message for product handoff.
     async fn accept(&self, payment: &HostNativeChatPayment, memo: TransferMemo) -> Result<(), ()>;
 }
 
@@ -121,6 +141,17 @@ impl WalletCoinage {
     pub(crate) async fn open(
         context: &NativeChatContext,
     ) -> Result<Arc<Self>, latest::HostProductDeviceChatError> {
+        Self::open_with_mode(context, false).await
+    }
+
+    pub(super) async fn open_existing(context: &NativeChatContext) -> Result<Arc<Self>, Error> {
+        Self::open_with_mode(context, true).await
+    }
+
+    async fn open_with_mode(
+        context: &NativeChatContext,
+        require_existing: bool,
+    ) -> Result<Arc<Self>, Error> {
         live(context)?;
         let key = storage_key(context);
         let store = HostCoinageStore::open(
@@ -129,6 +160,7 @@ impl WalletCoinage {
             context.genesis_hash,
             key,
             context.services.spawner.clone(),
+            require_existing,
         )
         .await
         .map_err(|_| Error::StorageUnavailable)?;
@@ -457,268 +489,6 @@ impl WalletCoinage {
         operation.phase = Phase::Accepted;
         let _ = self.save(&operation).await;
         Ok(())
-    }
-
-    pub(crate) async fn receive_batch(
-        self: &Arc<Self>,
-        context: &NativeChatContext,
-        product_id: &str,
-        peer_identity: [u8; 32],
-        request_id: &str,
-        memos: Vec<chat_device::PaymentMemo>,
-    ) -> Result<Vec<HostNativeChatPayment>, Error> {
-        self.check(context)?;
-        let wallet = self.clone();
-        let context = context.clone();
-        let product_id = product_id.to_owned();
-        let request_id = request_id.to_owned();
-        let (tx, rx) = futures::channel::oneshot::channel();
-        (context.services.spawner.clone())(Box::pin(async move {
-            let result = wallet
-                .receive_batch_once(&context, product_id, peer_identity, request_id, memos)
-                .await;
-            let accepted = result.is_ok();
-            let _ = tx.send(result);
-            // Every secret and complete claim plan is durable before ACK.
-            // Claiming survives a disconnected receive caller.
-            if accepted {
-                let _ = wallet.reconcile_once(&context).await;
-            }
-        }));
-        rx.await.map_err(|_| Error::StorageUnavailable)?
-    }
-
-    async fn receive_batch_once(
-        &self,
-        context: &NativeChatContext,
-        product_id: String,
-        peer_identity: [u8; 32],
-        request_id: String,
-        incoming: Vec<chat_device::PaymentMemo>,
-    ) -> Result<Vec<HostNativeChatPayment>, Error> {
-        let _gate = self.gate.lock().await;
-        self.check(context)?;
-        self.store
-            .reauthenticate()
-            .await
-            .map_err(|_| Error::StorageUnavailable)?;
-        if product_id.is_empty()
-            || product_id.len() > 1024
-            || request_id.is_empty()
-            || request_id.len() > 1024
-        {
-            return Err(Error::InvalidRequest);
-        }
-        struct Admission {
-            message_id: String,
-            timestamp: u64,
-            memo: TransferMemo,
-            public: Vec<[u8; 32]>,
-            fingerprint: [u8; 32],
-            existing: Option<usize>,
-            plan_ready: bool,
-        }
-        let existing = self.operations().await?;
-        let mut existing_sources = std::collections::BTreeMap::new();
-        let mut existing_messages = std::collections::BTreeMap::new();
-        for (index, operation) in existing
-            .iter()
-            .enumerate()
-            .filter(|(_, operation)| operation.card.direction == Direction::Incoming)
-        {
-            for key in &operation.source_public {
-                if existing_sources.insert(*key, index).is_some() {
-                    return Err(Error::StorageUnavailable);
-                }
-            }
-            if operation.product_id == product_id
-                && operation.card.peer_identity == peer_identity
-                && operation.card.request_id == request_id
-            {
-                existing_messages.insert(operation.card.message_id.as_str(), index);
-            }
-        }
-        let mut admissions: Vec<Admission> = Vec::with_capacity(incoming.len());
-        let mut batch_sources = std::collections::BTreeMap::new();
-        let mut batch_messages = std::collections::BTreeMap::new();
-        for incoming in incoming {
-            if incoming.message_id.is_empty()
-                || incoming.message_id.len() > 1024
-                || incoming.total_value == 0
-                || incoming.coin_keys.is_empty()
-                || incoming.coin_keys.len() > 4096
-            {
-                return Err(Error::InvalidRequest);
-            }
-            let entries = incoming
-                .coin_keys
-                .iter()
-                .map(|bytes| {
-                    <[u8; 64]>::try_from(bytes.as_slice())
-                        .map(MemoEntry)
-                        .map_err(|_| Error::InvalidRequest)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let memo = TransferMemo {
-                entries,
-                total_value: incoming.total_value,
-            };
-            let public = memo_public(&memo)?;
-            let fingerprint = source_fingerprint(&public);
-            let mut duplicate = batch_messages.get(&incoming.message_id).copied();
-            for key in &public {
-                if let Some(&index) = batch_sources.get(key) {
-                    if duplicate.is_some_and(|previous| previous != index) {
-                        return Err(Error::OperationConflict);
-                    }
-                    duplicate = Some(index);
-                }
-            }
-            if let Some(index) = duplicate {
-                let previous: &Admission = &admissions[index];
-                if previous.fingerprint != fingerprint
-                    || previous.memo.total_value != memo.total_value
-                {
-                    return Err(Error::OperationConflict);
-                }
-                batch_messages.insert(incoming.message_id, index);
-                continue;
-            }
-            let mut matched = existing_messages.get(incoming.message_id.as_str()).copied();
-            for key in &public {
-                if let Some(&index) = existing_sources.get(key) {
-                    if matched.is_some_and(|previous| previous != index) {
-                        return Err(Error::OperationConflict);
-                    }
-                    matched = Some(index);
-                }
-            }
-            let plan_ready = if let Some(index) = matched {
-                let operation = &existing[index];
-                let expected = operation
-                    .denominations
-                    .and_then(|d| d.0.checked_mul(u128::from(operation.card.amount_cents)));
-                if operation.source_fingerprint != Some(fingerprint)
-                    || expected != Some(memo.total_value)
-                    || operation.product_id != product_id
-                    || operation.card.peer_identity != peer_identity
-                {
-                    return Err(Error::OperationConflict);
-                }
-                let key = operation.memo_key.ok_or(Error::StorageUnavailable)?;
-                self.store
-                    .plan(&key)
-                    .await
-                    .map_err(|_| Error::StorageUnavailable)?
-                    .is_some()
-            } else {
-                false
-            };
-            let index = admissions.len();
-            for key in &public {
-                batch_sources.insert(*key, index);
-            }
-            batch_messages.insert(incoming.message_id.clone(), index);
-            admissions.push(Admission {
-                message_id: incoming.message_id,
-                timestamp: incoming.timestamp,
-                memo,
-                public,
-                fingerprint,
-                existing: matched,
-                plan_ready,
-            });
-        }
-        // Read chain denomination metadata before any custody/claim effects.
-        // A fully durable replay needs neither network access nor a new plan.
-        let engine = if admissions.iter().any(|entry| !entry.plan_ready) {
-            let engine = Engine::new(context, self.store.clone()).await?;
-            for entry in &admissions {
-                if engine.cents(entry.memo.total_value)? == 0 {
-                    return Err(Error::InvalidRequest);
-                }
-                if let Some(index) = entry.existing {
-                    if existing[index].denominations != Some(binding(&engine)) {
-                        return Err(Error::NetworkUnavailable);
-                    }
-                }
-            }
-            engine.synchronize(context, &self.store).await?;
-            Some(engine)
-        } else {
-            None
-        };
-        let mut cards = Vec::with_capacity(admissions.len());
-        for entry in admissions {
-            self.check(context)?;
-            let operation = if let Some(index) = entry.existing {
-                std::borrow::Cow::Borrowed(&existing[index])
-            } else {
-                let engine = engine.as_ref().ok_or(Error::StorageUnavailable)?;
-                let id = hash(
-                    &(
-                        b"truapi/main-purse/incoming/v1".as_slice(),
-                        self.root_public_key,
-                        self.genesis_hash,
-                        entry.fingerprint,
-                    )
-                        .encode(),
-                );
-                let operation = Operation {
-                    product_id: product_id.clone(),
-                    recipient_username: None,
-                    genesis_hash: self.genesis_hash,
-                    card: HostNativeChatPayment {
-                        operation_id: id,
-                        request_id: request_id.clone(),
-                        message_id: entry.message_id,
-                        timestamp: entry.timestamp,
-                        peer_identity,
-                        direction: Direction::Incoming,
-                        amount_cents: engine.cents(entry.memo.total_value)?,
-                        state: State::Claiming,
-                    },
-                    phase: Phase::Incoming,
-                    max_debit_cents: 0,
-                    denominations: Some(binding(engine)),
-                    source_exponents: vec![None; entry.public.len()],
-                    source_seen: vec![false; entry.public.len()],
-                    source_cleared: vec![false; entry.public.len()],
-                    source_public: entry.public,
-                    memo_key: Some(entry.memo.identifier()),
-                    source_fingerprint: Some(entry.fingerprint),
-                    detection_anchor: None,
-                    delivered: false,
-                    memo: entry.memo.scale_encoded(),
-                };
-                self.save(&operation).await?;
-                std::borrow::Cow::Owned(operation)
-            };
-            if !entry.plan_ready {
-                // Reordered retries retain the original memo's canonical plan.
-                let canonical;
-                let memo = if entry.existing.is_some() {
-                    canonical = TransferMemo::from_scale_encoded(&operation.memo)
-                        .map_err(|_| Error::StorageUnavailable)?;
-                    &canonical
-                } else {
-                    &entry.memo
-                };
-                engine
-                    .as_ref()
-                    .ok_or(Error::StorageUnavailable)?
-                    .claimer
-                    .prepare_memo(
-                        memo,
-                        truapi_coinage::external_claim_message_id(&memo.identifier()),
-                    )
-                    .await
-                    .map_err(|_| Error::NetworkUnavailable)?;
-            }
-            cards.push(operation.card.clone());
-        }
-        self.check(context)?;
-        Ok(cards)
     }
 
     pub(crate) async fn reconcile(
@@ -1157,7 +927,7 @@ impl WalletCoinage {
         self.save(&operation).await
     }
 
-    fn check(&self, context: &NativeChatContext) -> Result<(), Error> {
+    pub(super) fn check(&self, context: &NativeChatContext) -> Result<(), Error> {
         live(context)?;
         if context.coinage_instance_id != self.coinage_instance_id {
             return Err(Error::OperationConflict);
@@ -1200,7 +970,9 @@ impl WalletCoinage {
             .await
             .map_err(|_| Error::StorageUnavailable)?
             .into_iter()
-            .filter(|(id, _)| *id != inventory::progress_id())
+            .filter(|(id, bytes)| {
+                *id != inventory::progress_id() && !bytes.starts_with(top_up::OPERATION_MAGIC)
+            })
             .map(|(id, bytes)| {
                 let operation = decode_operation(&bytes)?;
                 if operation.card.operation_id != id {
@@ -1257,7 +1029,7 @@ fn new_outgoing(id: [u8; 32], genesis: [u8; 32], intent: PaymentIntent) -> Opera
     }
 }
 
-fn validate_intent(intent: &PaymentIntent) -> Result<(), Error> {
+pub(super) fn validate_intent(intent: &PaymentIntent) -> Result<(), Error> {
     if intent.amount_cents == 0
         || intent.product_id.is_empty()
         || intent.product_id.len() > 1024
@@ -1273,7 +1045,12 @@ fn validate_intent(intent: &PaymentIntent) -> Result<(), Error> {
     Ok(())
 }
 
-fn operation_id(root: [u8; 32], genesis: [u8; 32], product: &str, request: &str) -> [u8; 32] {
+pub(super) fn operation_id(
+    root: [u8; 32],
+    genesis: [u8; 32],
+    product: &str,
+    request: &str,
+) -> [u8; 32] {
     hash(
         &(
             b"truapi/main-purse/outgoing/v1".as_slice(),

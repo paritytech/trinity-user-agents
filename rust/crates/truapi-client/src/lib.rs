@@ -542,19 +542,26 @@ mod tests {
     }
 
     #[test]
-    fn native_chat_uses_method_twelve_with_v1_envelopes() {
-        use truapi::{v02 as dto, versioned::account};
+    fn native_chat_uses_method_twelve_with_v2_envelopes() {
+        use truapi::{latest as dto, versioned::account};
 
-        let request = account::HostProductDeviceChatRequest::V1(
+        let request = account::HostProductDeviceChatRequest::V2(
             dto::HostProductDeviceChatRequest::Initialize,
         );
         assert_eq!(
             encode_request::<AccountProductDeviceChat>("p:1", &request),
-            [12, b'p', b':', b'1', 2, 12, 0, 0, 0],
+            [12, b'p', b':', b'1', 2, 12, 0, 1, 0],
+        );
+        let denomination_request = account::HostProductDeviceChatRequest::V2(
+            dto::HostProductDeviceChatRequest::PaymentDenomination,
+        );
+        assert_eq!(
+            encode_request::<AccountProductDeviceChat>("p:1", &denomination_request),
+            [12, b'p', b':', b'1', 2, 12, 0, 1, 12],
         );
 
         let response =
-            account::HostProductDeviceChatResponse::V1(dto::HostProductDeviceChatResponse {
+            account::HostProductDeviceChatResponse::V2(dto::HostProductDeviceChatResponse {
                 device: dto::HostNativeChatDevice {
                     identity_account_id: [1; 32],
                     identity_chat_public_key: [2; 32],
@@ -566,15 +573,21 @@ mod tests {
                     chat_public_key: [4; 32],
                 },
                 peers: vec![],
-                invitations: vec![],
-                messages: vec![],
-                acknowledgments: vec![],
+                binding: None,
+                opened: vec![],
+                prepared: vec![],
                 payments: vec![],
                 rich_messages: vec![],
+                migration: None,
+                migration_id: None,
+                open_page: None,
+                migration_invitations: vec![],
+                state_page: None,
+                coinage_cents_unit: None,
             });
         let mut frame = vec![12, b'p', b':', b'1', 2, 12, 1, 0];
         response.encode_to(&mut frame);
-        assert_eq!(frame[8], 0, "response envelope is V1");
+        assert_eq!(frame[8], 1, "response envelope is V2");
         assert_eq!(
             decode_response::<AccountProductDeviceChat>(&frame),
             Ok(Decoded {

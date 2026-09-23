@@ -105,14 +105,6 @@ pub(super) struct IncomingRich {
     files: Vec<FileRecord>,
 }
 
-pub(super) fn has_pending(state: &State) -> bool {
-    state.files.iter().any(FileRecord::pending)
-        || state
-            .rich_messages
-            .iter()
-            .any(|message| !message.incoming && !message.selecting && !message.published)
-}
-
 pub(super) fn validate(state: &State) -> Result<(), Error> {
     if state.files.len() > MAX_FILES || state.rich_messages.len() > MAX_RICH_MESSAGES {
         return Err(Error::StorageUnavailable);
@@ -295,13 +287,14 @@ impl NativeChatActor {
         Ok(prepared)
     }
 
-    pub(in crate::runtime::native_chat) async fn send_attachments(
+    pub(in crate::runtime::native_chat) async fn prepare_attachments(
         self: &Arc<Self>,
         context: &NativeChatContext,
         peer: [u8; 32],
         request_id: String,
         text: Option<String>,
     ) -> Result<(), Error> {
+        self.require_migrated().await?;
         let _selection = self.file_selection_gate.lock().await;
         require_authorized(context, &self.product).await?;
         if request_id.is_empty()
@@ -330,7 +323,6 @@ impl NativeChatActor {
                 return Err(Error::OperationConflict);
             }
             if !existing.selecting {
-                self.start_delivery(context);
                 return Ok(());
             }
         }
@@ -502,7 +494,6 @@ impl NativeChatActor {
                 Ok(())
             })
             .await?;
-        self.start_delivery(context);
         Ok(())
     }
 
@@ -511,6 +502,7 @@ impl NativeChatActor {
         context: &NativeChatContext,
         id: [u8; 32],
     ) -> Result<(), Error> {
+        self.require_migrated().await?;
         let _export = self.file_export_gate.lock().await;
         require_authorized(context, &self.product).await?;
         let file = self.file(id).await?;

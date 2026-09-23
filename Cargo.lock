@@ -6338,14 +6338,6 @@ dependencies = [
  "truapi-verifiable",
  "unicode-normalization",
  "uniffi",
- "url",
- "verifiable",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "wasm-bindgen-test",
- "web-sys",
- "web-time",
- "x25519-dalek",
  "zeroize",
 ]
 

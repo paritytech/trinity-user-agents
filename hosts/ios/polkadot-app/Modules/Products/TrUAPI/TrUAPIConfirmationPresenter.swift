@@ -5,10 +5,10 @@ import TrUAPIHost
 protocol TrUAPIConfirmationPresenting: Sendable {
     /// Present an action review, using the bridge's requester name when the review omits it.
     func confirm(review: UserConfirmationReview, from requesterName: String) async -> Bool
-    func confirmPermission(
-        review: UserConfirmationReview,
-        from requesterName: String
-    ) async -> TrUAPIPermissionDecision
+    func confirmNativeCoinage(
+        review: MainPurseChatPaymentReview,
+        requiresPrivacyConfirmation: Bool
+    ) async -> Bool
 }
 
 /// Routes core-reviewed actions to the native confirmation surfaces exposed
@@ -41,26 +41,11 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
         }
     }
 
-    func confirmPermission(
-        review: UserConfirmationReview,
-        from _: String
-    ) async -> TrUAPIPermissionDecision {
-        switch review {
-        case let .identityDisclosure(identityReview):
-            await presentPermission(
-                promptMapper.makePermissionRequest(from: identityReview)
-            )
-        case let .accountAccess(accessReview):
-            await presentPermission(
-                promptMapper.makePermissionRequest(from: accessReview)
-            )
-        case let .accountAlias(aliasReview):
-            await presentPermission(
-                promptMapper.makePermissionRequest(from: aliasReview)
-            )
-        default:
-            .deny
-        }
+    func confirmNativeCoinage(
+        review: MainPurseChatPaymentReview,
+        requiresPrivacyConfirmation: Bool
+    ) async -> Bool {
+        await confirmMainPursePayment(review, requiresPrivacyConfirmation: requiresPrivacyConfirmation)
     }
 }
 
@@ -133,10 +118,16 @@ private extension TrUAPIConfirmationPresenter {
             return decision == .approved
         }
     }
-    func confirmMainPursePayment(_ review: MainPurseChatPaymentReview) async -> Bool {
+    func confirmMainPursePayment(
+        _ review: MainPurseChatPaymentReview,
+        requiresPrivacyConfirmation: Bool = false
+    ) async -> Bool {
         await awaitDecision { [routerFacade] in
             await withCheckedContinuation { continuation in
-                let context = MainPursePaymentConfirmationContext(review: review)
+                let context = MainPursePaymentConfirmationContext(
+                    review: review,
+                    requiresPrivacyConfirmation: requiresPrivacyConfirmation
+                )
                 context.setContinuation(continuation)
                 let prompt = MainPursePaymentPromptViewFactory.createView(context: context)
                 if !routerFacade.productsRouter.present(view: prompt) {

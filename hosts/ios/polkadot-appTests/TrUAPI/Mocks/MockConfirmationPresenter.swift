@@ -14,12 +14,10 @@ final class MockConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecked 
         return verdictToReturn
     }
 
-    func confirmPermission(
-        review: UserConfirmationReview,
-        from requesterName: String
-    ) async -> TrUAPIPermissionDecision {
-        receivedReview = review
-        receivedRequesterName = requesterName
-        return permissionDecisionToReturn
+    func confirmNativeCoinage(
+        review: MainPurseChatPaymentReview,
+        requiresPrivacyConfirmation _: Bool
+    ) async -> Bool {
+        await confirm(review: .mainPurseChatPayment(review), from: review.callingProductId)
     }
 }

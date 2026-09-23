@@ -10,10 +10,12 @@ import UIKitExt
 @MainActor
 final class MainPursePaymentConfirmationContext {
     let review: MainPurseChatPaymentReview
+    let requiresPrivacyConfirmation: Bool
     private var continuation: CheckedContinuation<Bool, Never>?
 
-    init(review: MainPurseChatPaymentReview) {
+    init(review: MainPurseChatPaymentReview, requiresPrivacyConfirmation: Bool = false) {
         self.review = review
+        self.requiresPrivacyConfirmation = requiresPrivacyConfirmation
     }
 
     deinit {
@@ -34,6 +36,9 @@ final class MainPursePaymentConfirmationContext {
 enum MainPursePaymentPromptViewFactory {
     static func createView(context: MainPursePaymentConfirmationContext) -> ControllerBackedProtocol {
         let review = context.review
+        let privacyWarning = context.requiresPrivacyConfirmation
+            ? "\n\nPrivacy warning: this payment spends funds that are still gaining privacy. Sending now reduces their privacy. Confirm only if you want to send anyway."
+            : ""
         // All identity fields come from the Host review. `.normal` is literal
         // text, not HTML/Markdown; product content cannot supply the prompt.
         let details = """
@@ -49,7 +54,7 @@ enum MainPursePaymentPromptViewFactory {
         Coinage asset: \(review.coinageInstanceId.map { "instance \($0)" } ?? "legacy single asset")
         Payment operation: 0x\(review.operationId.toHex())
 
-        Approve only this payment from your main purse. This does not grant permission for future payments.
+        Approve only this payment from your main purse. This does not grant permission for future payments.\(privacyWarning)
         """
         let viewModel = TitleDetailsSheetViewModel(
             graphics: UIImage(systemName: "creditcard"),

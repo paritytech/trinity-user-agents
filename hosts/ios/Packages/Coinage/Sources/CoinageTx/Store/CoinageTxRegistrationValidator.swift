@@ -43,6 +43,19 @@ public struct CoinageTxRegistrationValidator {
             throw CoinageTxError.inputAlreadyClaimed(key.toHex())
         }
     }
+
+    /// Both ordinary handoffs and native custody reject stale selections in their write transaction.
+    public func validateHandoff(
+        _ keys: Set<PublicKey>,
+        transaction: any CoinageTxValidationContextProtocol
+    ) throws {
+        if let key = try transaction.filterClaimed(keys).first {
+            throw CoinageTxError.handoffOfClaimedAsset(key.toHex())
+        }
+        if let key = try transaction.filterHandedOff(keys).first {
+            throw CoinageTxError.handoffAlreadyReserved(key.toHex())
+        }
+    }
 }
 
 private extension [PublicKey] {

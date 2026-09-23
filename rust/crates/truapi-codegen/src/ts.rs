@@ -888,8 +888,11 @@ fn method_is_included(
 ) -> Result<bool> {
 	wire_id_for_method(trait_def, method)?;
 
-	let wrapper_names = method_versioned_wrappers(method, wrappers);
-	Ok(wrapper_names.is_empty() || method_wire_version(method, wrappers, target_version)?.is_some())
+    let wrapper_names = method_versioned_wrappers(method, wrappers, true);
+    Ok(
+        wrapper_names.is_empty()
+            || method_wire_version(method, wrappers, target_version)?.is_some(),
+    )
 }
 
 fn wire_id_for_method(trait_def: &TraitDef, method: &MethodDef) -> Result<u8> {
@@ -902,25 +905,18 @@ fn wire_id_for_method(trait_def: &TraitDef, method: &MethodDef) -> Result<u8> {
 	})
 }
 
-/// Picks the wrapper variant the generated client emits on the wire for a
-/// given method. Returns the highest variant supported by every wrapper the
-/// method touches and that is ≤ `target_version`. Returns `None` when no
-/// shared variant exists at or below the cap (the method is not exposed by
-/// the client).
-///
-/// Picking the **highest** variant exposes the newest request/response shape
-/// the host is known to support. Hosts that only implement an older codec
-/// version still receive a wire envelope they understand because every
-/// wrapper keeps each `Vn` variant at `#[codec(index = n - 1)]`.
+/// Picks the highest common request/success variant at or below the client cap.
+/// Domain-error envelopes evolve independently and may retain an older version;
+/// each must have a variant at or below the selected request version.
 fn method_wire_version(
 	method: &MethodDef,
 	wrappers: &BTreeMap<String, VersionedWrapper>,
 	target_version: u32,
 ) -> Result<Option<u32>> {
-	let wrapper_names = method_versioned_wrappers(method, wrappers);
-	if wrapper_names.is_empty() {
-		return Ok(None);
-	}
+    let wrapper_names = method_versioned_wrappers(method, wrappers, false);
+    if wrapper_names.is_empty() {
+        return Ok(None);
+    }
 
 	let mut candidates: Option<Vec<u32>> = None;
 	for wrapper_name in wrapper_names {
@@ -941,65 +937,85 @@ fn method_wire_version(
 		});
 	}
 
-	Ok(candidates.and_then(|versions| versions.into_iter().max()))
+    let error = match &method.return_type {
+        ReturnType::Result { err, .. } => err,
+        ReturnType::Subscription { interrupt, .. } => interrupt,
+    };
+    let error_wrapper = versioned_wrapper_for(call_error_inner(error).unwrap_or(error), wrappers)
+        .map(|(_, wrapper)| wrapper);
+    Ok(candidates.and_then(|versions| {
+        versions.into_iter().rev().find(|version| {
+            error_wrapper
+                .is_none_or(|wrapper| wrapper.variants.range(..=*version).next_back().is_some())
+        })
+    }))
 }
 
-/// For each versioned wrapper, the set of wire versions the generated client
-/// actually emits. Each method picks one wire version via [`method_wire_version`];
-/// every wrapper it touches gets that version recorded here. Wrappers that no
-/// included method references end up absent from the map and can be elided
-/// from the emitted types altogether.
+/// Records each leg's actual selected version. Error wrappers can remain below
+/// the request/success version, without hiding the method or inventing variants.
+/// Wrappers unused by an included method can be elided from emitted types.
 fn versioned_wrapper_emit_versions(
 	api: &ApiDefinition,
 	wrappers: &BTreeMap<String, VersionedWrapper>,
 	target_version: u32,
 ) -> Result<BTreeMap<String, BTreeSet<u32>>> {
-	let mut emit: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
-	for trait_def in &api.traits {
-		for method in &trait_def.methods {
-			if !method_is_included(trait_def, method, wrappers, target_version)? {
-				continue;
-			}
-			let Some(wire_version) = method_wire_version(method, wrappers, target_version)? else {
-				continue;
-			};
-			for wrapper_name in method_versioned_wrappers(method, wrappers) {
-				emit.entry(wrapper_name).or_default().insert(wire_version);
-			}
-		}
-	}
-	Ok(emit)
+    let mut emit: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
+    for trait_def in &api.traits {
+        for method in &trait_def.methods {
+            if !method_is_included(trait_def, method, wrappers, target_version)? {
+                continue;
+            }
+            let Some(wire_version) = method_wire_version(method, wrappers, target_version)? else {
+                continue;
+            };
+            for wrapper_name in method_versioned_wrappers(method, wrappers, true) {
+                let selected = *wrappers[&wrapper_name]
+                    .variants
+                    .range(..=wire_version)
+                    .next_back()
+                    .expect("included method has a compatible version for every leg")
+                    .0;
+                emit.entry(wrapper_name).or_default().insert(selected);
+            }
+        }
+    }
+    Ok(emit)
 }
 
 fn method_versioned_wrappers(
-	method: &MethodDef,
-	wrappers: &BTreeMap<String, VersionedWrapper>,
+    method: &MethodDef,
+    wrappers: &BTreeMap<String, VersionedWrapper>,
+    include_errors: bool,
 ) -> Vec<String> {
-	let mut names = Vec::new();
-	for param in &method.params {
-		collect_type_versioned_wrappers(&param.type_ref, wrappers, &mut names);
-	}
-	match &method.return_type {
-		ReturnType::Result { ok, err } => {
-			collect_type_versioned_wrappers(ok, wrappers, &mut names);
-			collect_type_versioned_wrappers(
-				call_error_inner(err).unwrap_or(err),
-				wrappers,
-				&mut names,
-			);
-		},
-		ReturnType::Subscription { item, interrupt } => {
-			collect_type_versioned_wrappers(item, wrappers, &mut names);
-			collect_type_versioned_wrappers(
-				call_error_inner(interrupt).unwrap_or(interrupt),
-				wrappers,
-				&mut names,
-			);
-		},
-	}
-	names.sort();
-	names.dedup();
-	names
+    let mut names = Vec::new();
+    for param in &method.params {
+        collect_type_versioned_wrappers(&param.type_ref, wrappers, &mut names);
+    }
+    match &method.return_type {
+        ReturnType::Result { ok, err } => {
+            collect_type_versioned_wrappers(ok, wrappers, &mut names);
+            if include_errors {
+                collect_type_versioned_wrappers(
+                    call_error_inner(err).unwrap_or(err),
+                    wrappers,
+                    &mut names,
+                );
+            }
+        }
+        ReturnType::Subscription { item, interrupt } => {
+            collect_type_versioned_wrappers(item, wrappers, &mut names);
+            if include_errors {
+                collect_type_versioned_wrappers(
+                    call_error_inner(interrupt).unwrap_or(interrupt),
+                    wrappers,
+                    &mut names,
+                );
+            }
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
 }
 
 fn call_error_inner(ty: &TypeRef) -> Option<&TypeRef> {
@@ -1681,20 +1697,29 @@ fn emit_response(
 	wrappers: &BTreeMap<String, VersionedWrapper>,
 	wire_version: Option<u32>,
 ) -> Result<ResponseEmission> {
-	if let Some((wrapper_name, wrapper)) = versioned_wrapper_for(ty, wrappers) {
-		let version = wire_version.ok_or_else(|| {
-			anyhow::anyhow!("versioned wrapper `{wrapper_name}` has no selected wire version")
-		})?;
-		let wrapper = wrapper.variants.get(&version).ok_or_else(|| {
-			anyhow::anyhow!("versioned wrapper `{wrapper_name}` has no V{version} variant")
-		})?;
-		return match &wrapper.kind {
-			VersionedKind::Unit => Ok(ResponseEmission { inner_type_ts: "undefined".to_string() }),
-			VersionedKind::Tuple(inner) => {
-				Ok(ResponseEmission { inner_type_ts: ts_type_qualified(inner)? })
-			},
-		};
-	}
+    if let Some((wrapper_name, wrapper)) = versioned_wrapper_for(ty, wrappers) {
+        let version = wire_version.ok_or_else(|| {
+            anyhow::anyhow!("versioned wrapper `{wrapper_name}` has no selected wire version")
+        })?;
+        let wrapper = wrapper
+            .variants
+            .range(..=version)
+            .next_back()
+            .map(|(_, wrapper)| wrapper)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "versioned wrapper `{wrapper_name}` has no variant through V{version}"
+                )
+            })?;
+        return match &wrapper.kind {
+            VersionedKind::Unit => Ok(ResponseEmission {
+                inner_type_ts: "undefined".to_string(),
+            }),
+            VersionedKind::Tuple(inner) => Ok(ResponseEmission {
+                inner_type_ts: ts_type_qualified(inner)?,
+            }),
+        };
+    }
 
 	Ok(ResponseEmission { inner_type_ts: ts_type_qualified(ty)? })
 }

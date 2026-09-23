@@ -131,6 +131,7 @@
         <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="identifier" attributeType="String"/>
         <attribute name="outcomeTag" optional="YES" attributeType="String"/>
+        <attribute name="ownerId" optional="YES" attributeType="Binary"/>
         <attribute name="paymentId" attributeType="String"/>
         <attribute name="productId" attributeType="String"/>
         <fetchIndex name="byIncomingPaymentIdentifier">
@@ -272,7 +273,6 @@
     <entity name="CDCoin" representedClassName="CDCoin" syncable="YES" codeGenerationType="class">
         <attribute name="age" optional="YES" attributeType="Integer 16" usesScalarValueType="NO"/>
         <attribute name="derivationIndex" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
-        <attribute name="installationId" optional="YES" attributeType="String"/>
         <attribute name="exponent" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="handoffMark" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="hops" optional="YES" attributeType="Binary"/>
@@ -292,7 +292,6 @@
         <attribute name="enteredAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="exponent" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="identifier" attributeType="String"/>
-        <attribute name="installationId" optional="YES" attributeType="String"/>
         <attribute name="maxFungibilityCaptured" optional="NO" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
         <attribute name="maxRecyclerFungibility" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="onChainState" optional="YES" attributeType="Integer 16" usesScalarValueType="YES"/>
@@ -330,26 +329,6 @@
             <fetchIndexElement property="status" type="Binary" order="ascending"/>
         </fetchIndex>
     </entity>
-    <entity name="CDCoinageInstallation" representedClassName="CDCoinageInstallation" syncable="YES" codeGenerationType="class">
-        <attribute name="coinScanNextIndex" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
-        <attribute name="identifier" attributeType="String"/>
-        <attribute name="initialScanCompleted" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
-        <attribute name="isUserConfirmedCompletion" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
-        <attribute name="voucherScanNextIndex" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
-        <uniquenessConstraints>
-            <uniquenessConstraint>
-                <constraint value="identifier"/>
-            </uniquenessConstraint>
-        </uniquenessConstraints>
-    </entity>
-    <entity name="CDCurrentInstallation" representedClassName="CDCurrentInstallation" syncable="YES" codeGenerationType="class">
-        <attribute name="identifier" attributeType="String"/>
-        <uniquenessConstraints>
-            <uniquenessConstraint>
-                <constraint value="identifier"/>
-            </uniquenessConstraint>
-        </uniquenessConstraints>
-    </entity>
     <entity name="CDCoinageTxInput" representedClassName="CDCoinageTxInput" syncable="YES" codeGenerationType="class">
         <attribute name="receivedPubKey" optional="YES" attributeType="String"/>
         <relationship name="coin" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDCoin" inverseName="coinageTxInputs" inverseEntity="CDCoin"/>
@@ -360,5 +339,14 @@
         <relationship name="coin" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDCoin" inverseName="coinageTxOutput" inverseEntity="CDCoin"/>
         <relationship name="entry" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDDurableTx" inverseName="outputs" inverseEntity="CDDurableTx"/>
         <relationship name="voucher" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDVoucher" inverseName="coinageTxOutput" inverseEntity="CDVoucher"/>
+    </entity>
+    <entity name="CDNativeCoinageRecord" representedClassName="NSManagedObject" syncable="YES">
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="payload" attributeType="Binary"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="identifier"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
     </entity>
 </model>

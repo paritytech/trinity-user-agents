@@ -75,8 +75,46 @@ async fn try_open(storage: Arc<DurableSlot>) -> Result<Arc<HostCoinageStore>, St
         [2; 32],
         Zeroizing::new([3; 32]),
         crate::test_support::test_spawner(),
+        false,
     )
     .await
+}
+
+#[test]
+fn recovery_open_never_creates_a_missing_purse() {
+    block_on(async {
+        let storage = Arc::new(DurableSlot::default());
+        assert!(matches!(
+            HostCoinageStore::open_storage(
+                storage.clone(),
+                [1; 32],
+                [2; 32],
+                Zeroizing::new([3; 32]),
+                crate::test_support::test_spawner(),
+                true,
+            )
+            .await,
+            Err(StoreError::Missing)
+        ));
+        assert!(storage.values.lock().is_empty());
+        let store = open(storage.clone()).await;
+        store.bind_asset_instance(Some(4)).await.unwrap();
+        drop(store);
+        let restored = HostCoinageStore::open_storage(
+            storage,
+            [1; 32],
+            [2; 32],
+            Zeroizing::new([3; 32]),
+            crate::test_support::test_spawner(),
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            restored.bind_asset_instance(Some(5)).await,
+            Err(StoreError::Conflict)
+        ));
+    });
 }
 
 async fn reopen_after_owned_work(storage: Arc<DurableSlot>) -> Arc<HostCoinageStore> {
@@ -477,6 +515,7 @@ fn legacy_purse_snapshot_cannot_rebind_reserved_indices_to_current_keys() {
             [2; 32],
             Zeroizing::new([3; 32]),
             crate::test_support::test_spawner(),
+            false,
         )
         .await;
         assert!(matches!(restored, Err(StoreError::Version)));
@@ -550,6 +589,7 @@ fn authentication_binds_wallet_network_version_and_rejects_corruption() {
                     genesis,
                     Zeroizing::new(key),
                     crate::test_support::test_spawner(),
+                    false,
                 )
                 .await,
                 Err(observed) if observed == error
@@ -577,7 +617,8 @@ fn authenticated_but_inconsistent_and_unbounded_snapshots_fail_closed() {
                 [1; 32],
                 [2; 32],
                 Zeroizing::new([3; 32]),
-                crate::test_support::test_spawner()
+                crate::test_support::test_spawner(),
+                false,
             )
             .await,
             Err(StoreError::Corrupt)
@@ -696,7 +737,7 @@ fn post_replacement_failure_blocks_stale_reads_and_writes_until_recovery() {
         assert_eq!(store.read_operation([8; 32]).await.unwrap(), None);
         assert_eq!(store.get_next_index(IndexKind::Coin).await.unwrap(), 2);
         drop(store);
-        let restored = open(storage).await;
+        let restored = reopen_after_owned_work(storage).await;
         assert_eq!(CoinRepository::list(&*restored).await.unwrap(), coins);
         assert_eq!(
             restored.current_index(IndexKind::Coin).await.unwrap(),

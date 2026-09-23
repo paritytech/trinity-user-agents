@@ -76,9 +76,9 @@ pub(crate) struct HostChatDevice {
 pub(crate) enum OpenedDeviceExchange {
     /// A strictly decoded request retaining wire order and acknowledgement ID.
     Request {
-        /// Correlation ID to acknowledge only after durable Host processing.
+        /// Correlation ID to acknowledge only after durable product processing.
         request_id: String,
-        /// Ordered content; controls and payments must never be forwarded raw.
+        /// Ordered content, classified before the enclosing actor authorizes it.
         messages: Vec<OpenedDeviceMessage>,
     },
     /// Native response codes are raw bytes: zero succeeds, nonzero fails.
@@ -96,7 +96,7 @@ pub(crate) enum OpenedDeviceMessage {
     Ordinary(Vec<u8>),
     /// Host-owned device/session lifecycle change, not an authorized mutation.
     DeviceControl(DeviceControl),
-    /// Host-private spendable material; never a guest-visible payment event.
+    /// Incoming spendable material; outgoing memos remain Host-private.
     Payment(PaymentMemo),
     /// Private HOP reference; expand and classify before either kind of ACK.
     CompactedHistory(CompactedHistory),
@@ -149,7 +149,7 @@ pub(crate) struct PaymentMemo {
     pub(crate) timestamp: u64,
     /// Declared amount, which the Coinage engine must verify against the chain.
     pub(crate) total_value: u128,
-    /// Native 64-byte coin secrets, retained exclusively by the Host.
+    /// Native 64-byte incoming coin secrets, zeroized after authenticated handoff.
     pub(crate) coin_keys: Zeroizing<Vec<Vec<u8>>>,
 }
 
@@ -195,11 +195,23 @@ impl HostChatDevice {
     /// `sender` must come from the verified statement and Host-private roster,
     /// never an unauthenticated guest account/key pair. Nothing returns until the
     /// entire inner request has classified successfully; there is no raw fallback.
+    #[cfg(test)]
     pub(crate) fn open_multi_device(
         &self,
         sender: &PeerDevice,
         envelope_bytes: &[u8],
     ) -> Result<OpenedDeviceExchange, ChatDeviceError> {
+        self.open_multi_device_plaintext(sender, envelope_bytes)
+            .map(|(_, exchange)| exchange)
+    }
+
+    /// Return only a fully validated native inner frame. The enclosing actor
+    /// verifies an external signed incoming route before calling this method.
+    pub(crate) fn open_multi_device_plaintext(
+        &self,
+        sender: &PeerDevice,
+        envelope_bytes: &[u8],
+    ) -> Result<(Zeroizing<Vec<u8>>, OpenedDeviceExchange), ChatDeviceError> {
         preflight_envelope(envelope_bytes)?;
         let wrapping_key = self.pairwise_key(sender)?;
         let (is_request, encrypted, devices) =
@@ -241,15 +253,19 @@ impl HostChatDevice {
             chat::decrypt_multi_device_payload(one_shot_key, &encrypted)
                 .map_err(|_| ChatDeviceError::AuthenticationFailed)?,
         );
-        if is_request {
-            classify_request(&plaintext)
+        let exchange = if is_request {
+            classify_request(&plaintext)?
         } else {
             let response = decode_response(&plaintext)?;
-            Ok(OpenedDeviceExchange::Response {
+            OpenedDeviceExchange::Response {
                 request_id: response.request_id,
                 response_code: response.response_code,
-            })
-        }
+            }
+        };
+        let mut tagged = Zeroizing::new(Vec::with_capacity(plaintext.len() + 1));
+        tagged.push(if is_request { 0 } else { 1 });
+        tagged.extend_from_slice(&plaintext);
+        Ok((tagged, exchange))
     }
 
     /// Seal a Host-authorized request/response for an authenticated recipient roster.
@@ -345,34 +361,8 @@ impl HostChatDevice {
     }
 }
 
-/// Reject guest payment/control injection, unsupported variants, and attachments.
-///
-/// The allowlist is intentionally semantic, not a top-level byte denylist: the
-/// codec fully parses reply/edit rich text; this boundary rejects private file references.
-pub(crate) fn validate_guest_messages(messages: &[Vec<u8>]) -> Result<(), ChatDeviceError> {
-    if messages.len() > MAX_MESSAGES {
-        return Err(ChatDeviceError::LimitExceeded);
-    }
-    let mut total = 0usize;
-    for bytes in messages {
-        total = total
-            .checked_add(bytes.len())
-            .ok_or(ChatDeviceError::LimitExceeded)?;
-        check_size(total)?;
-        let (_, content_index, _) = message_header(bytes)?;
-        match content_index {
-            0 | 4 | 5 | 7 | 12 | 15 => {}
-            3 | 13 | 14 | 16 | 17 | 18 | 20 => return Err(ChatDeviceError::ForbiddenContent),
-            _ => return Err(ChatDeviceError::UnsupportedContent),
-        }
-        let message = chat::decode_message(bytes).map_err(|_| ChatDeviceError::InvalidEncoding)?;
-        validate_ordinary(&message.content)?;
-    }
-    Ok(())
-}
-
-/// Classify a Host-decrypted identity exchange without exporting its plaintext.
-/// The caller permits only the control messages valid for its handshake state.
+/// Classify a bounded native identity exchange. The caller enforces signed
+/// incoming direction or authorizes guest-authored outgoing lifecycle controls.
 pub(crate) fn open_identity_exchange(
     plaintext: &[u8],
 ) -> Result<OpenedDeviceExchange, ChatDeviceError> {
@@ -1060,78 +1050,26 @@ mod tests {
     }
 
     #[test]
-    fn guest_cannot_inject_payments_lifecycle_or_compacted_batches() {
-        let added = device(3);
-        let forbidden = [
-            payment(),
-            chat::encode_device_added_message("add", 1, &added.account_id, &added.public_key())
-                .unwrap(),
-            chat::encode_device_removed_message("remove", 1, &added.account_id).unwrap(),
-            chat::encode_chat_accepted_message("accept", 1, "request").unwrap(),
-            chat::encode_multi_chat_accepted_message(
-                "multi",
-                1,
-                "request",
-                &chat::V2PeerDevice {
-                    statement_account_id: added.account_id,
-                    encryption_public_key: added.public_key(),
-                },
-            )
-            .unwrap(),
-            chat::encode_contact_added_message("contact", 1).unwrap(),
-            chat::encode_left_chat_message("left", 1).unwrap(),
-        ];
-        let text = chat::encode_text_message("text", 1, "ordinary first").unwrap();
-        for message in forbidden {
-            assert_eq!(
-                validate_guest_messages(&[text.clone(), message]),
-                Err(ChatDeviceError::ForbiddenContent)
-            );
-        }
-        let compacted = chat::encode_compacted_messages_message(
-            "batch",
-            1,
-            &[1; 32],
-            &[2; 32],
-            &chat::V2NodeEndpoint::WssUrl("wss://example.invalid".into()),
-        )
-        .unwrap();
-        assert_eq!(
-            validate_guest_messages(&[compacted]),
-            Err(ChatDeviceError::UnsupportedContent)
-        );
-    }
-
-    #[test]
-    fn guest_ordinary_operations_are_parsed_fully_and_bounded() {
-        let ordinary = vec![
-            chat::encode_text_message("text", 1, "hello").unwrap(),
-            chat::encode_rich_text_message("rich", 2, Some("rich text"), None).unwrap(),
-            chat::encode_reply_message("reply", 3, "text", Some("reply")).unwrap(),
-            chat::encode_edited_message("edit", 4, "text", Some("edited")).unwrap(),
-            chat::encode_reacted_message("react", 5, "text", "ok").unwrap(),
-            chat::encode_reaction_removed_message("remove", 6, "text", "ok").unwrap(),
-        ];
-        assert_eq!(validate_guest_messages(&ordinary), Ok(()));
+    fn malformed_ordinary_content_is_rejected_before_classification() {
         let mut nested = chat::encode_reply_message("nested", 7, "text", Some("body")).unwrap();
-        *nested.last_mut().unwrap() = 1; // Unsupported attachments, not ordinary rich text.
+        *nested.last_mut().unwrap() = 1;
         nested.extend_from_slice(&payment());
-        assert_eq!(
-            validate_guest_messages(&[nested]),
+        assert!(matches!(
+            classify_message(&mut nested),
             Err(ChatDeviceError::InvalidEncoding)
-        );
-        let too_long =
+        ));
+        let mut too_long =
             chat::encode_text_message("long", 1, &"x".repeat(MAX_TEXT_BYTES + 1)).unwrap();
-        assert_eq!(
-            validate_guest_messages(&[too_long]),
+        assert!(matches!(
+            classify_message(&mut too_long),
             Err(ChatDeviceError::LimitExceeded)
-        );
-        let mut trailing = ordinary[0].clone();
+        ));
+        let mut trailing = chat::encode_text_message("text", 1, "safe").unwrap();
         trailing.extend_from_slice(&payment());
-        assert_eq!(
-            validate_guest_messages(&[trailing]),
+        assert!(matches!(
+            classify_message(&mut trailing),
             Err(ChatDeviceError::InvalidEncoding)
-        );
+        ));
     }
 
     #[test]
@@ -1158,7 +1096,6 @@ mod tests {
             trailing_payment,
             wrong_key_length,
         ] {
-            assert!(validate_guest_messages(&[invalid.clone()]).is_err());
             let messages = Zeroizing::new(vec![ordinary.clone(), payment(), invalid]);
             let body = Zeroizing::new(
                 chat::encode_message_exchange_request_plaintext("ack", &messages).unwrap(),

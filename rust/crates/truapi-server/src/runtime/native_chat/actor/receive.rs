@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Authenticate first, persist private claims and roster state, acknowledge last.
+//! Authenticate complete external native statements before exposing plaintext.
 
 use super::*;
 use crate::host_logic::statement_store::{
@@ -11,15 +11,16 @@ use crate::runtime::chat_device::{
 };
 use schnorrkel::{PublicKey, Signature};
 
+type OpenResult = (Vec<HostNativeChatOpened>, Option<HostNativeChatOpenPage>);
+
 impl NativeChatActor {
-    pub(in crate::runtime::native_chat) async fn receive(
+    pub(in crate::runtime::native_chat) async fn open_statement(
         self: &Arc<Self>,
         context: &NativeChatContext,
         registry: &NativeChatRegistry,
         statement: SignedStatement,
-    ) -> Result<(), Error> {
-        // This gate is never acquired by outgoing payment handoff. No store
-        // mutation lock is held while awaiting the wallet's claim/settlement gate.
+    ) -> Result<OpenResult, Error> {
+        self.require_migrated().await?;
         let _incoming = self.receiving.lock().await;
         context.require_current()?;
         if statement
@@ -34,19 +35,24 @@ impl NativeChatActor {
             signed_statement_to_scale(statement.clone()).map_err(|_| Error::InvalidStatement)?;
         let verified =
             decode_verified_statement_data(&encoded, None).map_err(|_| Error::InvalidStatement)?;
-        let now = current_unix_secs();
         if verified
             .expiry
-            .is_none_or(|expiry| statement_expiry_elapsed(expiry, now))
+            .is_none_or(|expiry| statement_expiry_elapsed(expiry, current_unix_secs()))
+            || verified.signer == self.public.account_id
+            || verified.signer == self.legacy_account
+            || verified.signer == self.public.identity_account_id
         {
+            // This check precedes EVERY decryption route. In particular, never
+            // return outgoing main-purse plaintext by reflecting Host output.
             return Err(Error::InvalidStatement);
         }
         if statement.topics.contains(&wire::chat_request_full_topic(
             &self.public.identity_account_id,
         )) {
-            return self
-                .receive_invitation(context, statement, verified.signer, verified.data)
-                .await;
+            let opened = self
+                .open_invitation(context, statement, verified.signer, verified.data)
+                .await?;
+            return Ok((vec![opened], None));
         }
         let channel = statement.channel.ok_or(Error::InvalidStatement)?;
         let peers = self.store.read(|state| state.peers.clone()).await?;
@@ -58,15 +64,48 @@ impl NativeChatActor {
                 &peer.identity,
                 &self.public.identity_account_id,
             );
-            if statement.topics.contains(&root_incoming)
-                && wire::chat_identity_request_topic(&root_incoming).ok() == Some(channel)
-            {
+            let root_request = statement.topics.contains(&root_incoming)
+                && wire::chat_identity_request_topic(&root_incoming).ok() == Some(channel);
+            let root_response = statement.topics.contains(&root_incoming)
+                && wire::chat_identity_response_topic(&root_incoming).ok() == Some(channel);
+            if root_request || root_response {
                 let plaintext = native_root_open(&root_shared, &verified.data)
                     .map_err(|_| Error::InvalidStatement)?;
                 let exchange =
                     open_identity_exchange(&plaintext).map_err(|_| Error::InvalidStatement)?;
+                let admitted = peer
+                    .active_devices()
+                    .into_iter()
+                    .find(|device| device.account_id == verified.signer);
+                let sender = admitted
+                    .or_else(|| match &exchange {
+                        OpenedDeviceExchange::Request { messages, .. } if root_request => {
+                            messages.iter().find_map(|message| match message {
+                                OpenedDeviceMessage::DeviceControl(DeviceControl {
+                                    content: DeviceLifecycle::MultiAccepted { request_id, device },
+                                    ..
+                                }) if peer.invitation.as_deref() == Some(request_id)
+                                    && device.account_id == verified.signer =>
+                                {
+                                    Some(*device)
+                                }
+                                _ => None,
+                            })
+                        }
+                        _ => None,
+                    })
+                    .ok_or(Error::InvalidStatement)?;
                 return self
-                    .receive_acceptance(context, registry, &peer, verified.signer, exchange)
+                    .open_exchange(
+                        context,
+                        registry,
+                        peer,
+                        sender,
+                        HostNativeChatRoute::Identity,
+                        root_request,
+                        plaintext,
+                        exchange,
+                    )
                     .await;
             }
             if !peer.established {
@@ -79,88 +118,231 @@ impl NativeChatActor {
             else {
                 continue;
             };
-            if statement.topics.contains(&root_incoming)
-                && wire::chat_identity_response_topic(&root_incoming).ok() == Some(channel)
-            {
-                let plaintext = native_root_open(&root_shared, &verified.data)
-                    .map_err(|_| Error::InvalidStatement)?;
-                return match open_identity_exchange(&plaintext)
-                    .map_err(|_| Error::InvalidStatement)?
-                {
-                    OpenedDeviceExchange::Response {
-                        request_id,
-                        response_code,
-                    } => {
-                        self.receive_acknowledgment(
-                            context,
-                            registry,
-                            peer.identity,
-                            sender.account_id,
-                            request_id,
-                            response_code,
-                        )
-                        .await
-                    }
-                    _ => Err(Error::InvalidStatement),
-                };
-            }
-            let incoming_shared = chat_shared_secret(&self.root_secret, &sender.public_key)
+            let shared = chat_shared_secret(&self.root_secret, &sender.public_key)
                 .map_err(|_| Error::InvalidStatement)?;
-            let incoming_session = chat_identity_session_id(
-                &incoming_shared,
+            let incoming = chat_identity_session_id(
+                &shared,
                 &sender.account_id,
                 &self.public.identity_account_id,
             );
-            let request_route = statement.topics.contains(&incoming_session)
-                && wire::chat_identity_request_topic(&incoming_session).ok() == Some(channel);
-            let response_route = statement.topics.contains(&incoming_session)
-                && wire::chat_identity_response_topic(&incoming_session).ok() == Some(channel);
-            if !request_route && !response_route {
+            let request = statement.topics.contains(&incoming)
+                && wire::chat_identity_request_topic(&incoming).ok() == Some(channel);
+            let response = statement.topics.contains(&incoming)
+                && wire::chat_identity_response_topic(&incoming).ok() == Some(channel);
+            if !request && !response {
                 continue;
             }
-            let plaintext = native_root_open(&incoming_shared, &verified.data)
-                .map_err(|_| Error::InvalidStatement)?;
-            let exchange = self
+            let envelope =
+                native_root_open(&shared, &verified.data).map_err(|_| Error::InvalidStatement)?;
+            let (plaintext, exchange) = self
                 .device
-                .open_multi_device(&sender, &plaintext)
+                .open_multi_device_plaintext(&sender, &envelope)
                 .map_err(|_| Error::InvalidStatement)?;
-            return match exchange {
-                OpenedDeviceExchange::Request {
-                    request_id,
-                    messages,
-                } if request_route => {
-                    self.receive_messages(
-                        context, registry, peer, sender, request_id, messages, false,
-                    )
-                    .await
-                }
-                OpenedDeviceExchange::Response {
-                    request_id,
-                    response_code,
-                } if response_route => {
-                    self.receive_acknowledgment(
-                        context,
-                        registry,
-                        peer.identity,
-                        sender.account_id,
-                        request_id,
-                        response_code,
-                    )
-                    .await
-                }
-                _ => Err(Error::InvalidStatement),
-            };
+            return self
+                .open_exchange(
+                    context,
+                    registry,
+                    peer,
+                    sender,
+                    HostNativeChatRoute::Device,
+                    request,
+                    plaintext,
+                    exchange,
+                )
+                .await;
         }
         Err(Error::InvalidStatement)
     }
 
-    async fn receive_invitation(
+    async fn open_exchange(
+        self: &Arc<Self>,
+        context: &NativeChatContext,
+        registry: &NativeChatRegistry,
+        peer: Peer,
+        sender: PeerDevice,
+        route: HostNativeChatRoute,
+        request_route: bool,
+        mut plaintext: Zeroizing<Vec<u8>>,
+        exchange: OpenedDeviceExchange,
+    ) -> Result<OpenResult, Error> {
+        self.validate_remote_device(&sender)?;
+        match exchange {
+            OpenedDeviceExchange::Response {
+                request_id,
+                response_code,
+            } if !request_route => {
+                self.receive_acknowledgment(
+                    context,
+                    registry,
+                    peer.identity,
+                    sender.account_id,
+                    request_id,
+                    response_code,
+                )
+                .await?;
+                Ok((
+                    vec![HostNativeChatOpened {
+                        peer_identity: peer.identity,
+                        sender_account_id: sender.account_id,
+                        route,
+                        plaintext: core::mem::take(&mut *plaintext),
+                    }],
+                    None,
+                ))
+            }
+            OpenedDeviceExchange::Request {
+                request_id,
+                messages,
+            } if request_route => {
+                let digest = exchange_digest(&messages)?;
+                let mut controls = Vec::new();
+                for message in messages {
+                    if let OpenedDeviceMessage::DeviceControl(control) = message {
+                        if !valid_peer_timestamp(control.timestamp, current_unix_secs()) {
+                            return Err(Error::InvalidStatement);
+                        }
+                        match &control.content {
+                            DeviceLifecycle::Added(device)
+                            | DeviceLifecycle::MultiAccepted { device, .. } => {
+                                self.validate_remote_device(device)?
+                            }
+                            _ => (),
+                        }
+                        controls.push(control);
+                    }
+                }
+                let has_controls = !controls.is_empty();
+                controls.sort_by(|a, b| {
+                    (a.timestamp, &a.message_id).cmp(&(b.timestamp, &b.message_id))
+                });
+                let admitted = peer.active_devices().contains(&sender);
+                let last_departure = controls
+                    .iter()
+                    .filter_map(|control| {
+                        matches!(control.content, DeviceLifecycle::LeftChat)
+                            .then_some(control.timestamp)
+                    })
+                    .max();
+                let original_revision = peer.revision;
+                let original_invitation = peer.invitation.clone();
+                let mut prospective = peer.clone();
+                for control in controls {
+                    apply_control(&mut prospective, control, &sender, admitted, last_departure)?;
+                }
+                if !admitted && (original_invitation.is_none() || prospective.invitation.is_some())
+                {
+                    return Err(Error::InvalidStatement);
+                }
+                if prospective.revision != original_revision {
+                    prospective.revocation_acks.clear();
+                    prospective.revocation_acked = false;
+                    prospective.revocation_request = None;
+                }
+                let identity = peer.identity;
+                let valid = context.session_valid.clone();
+                let receipt_id = request_id.clone();
+                self.store
+                    .update(move |state| {
+                        if !valid() {
+                            return Err(Error::NotConnected);
+                        }
+                        let now = current_unix_secs();
+                        state
+                            .boundary
+                            .incoming
+                            .retain(|entry| now <= entry.timestamp.saturating_add(LIFETIME));
+                        if state.boundary.incoming.iter().any(|entry| {
+                            entry.peer == identity
+                                && entry.request_id == receipt_id
+                                && entry.digest != digest
+                        }) {
+                            return Err(Error::InvalidStatement);
+                        }
+                        if !state.boundary.incoming.iter().any(|entry| {
+                            entry.peer == identity
+                                && entry.request_id == receipt_id
+                                && entry.sender == sender.account_id
+                                && entry.route == route
+                        }) {
+                            if state.boundary.incoming.len() >= MAX_RECEIPTS {
+                                return Err(Error::StorageUnavailable);
+                            }
+                            state.boundary.incoming.push(IncomingRequest {
+                                peer: identity,
+                                request_id: receipt_id.clone(),
+                                digest,
+                                sender: sender.account_id,
+                                key: sender.public_key,
+                                route,
+                                timestamp: now,
+                            });
+                        }
+                        if has_controls {
+                            if let Some(receipt) = state.received.iter().find(|entry| {
+                                entry.peer == identity && entry.request_id == receipt_id
+                            }) {
+                                if receipt.digest != digest {
+                                    return Err(Error::InvalidStatement);
+                                }
+                                return Ok(());
+                            }
+                            state.expire_receipts(current_unix_secs());
+                            if state.received.len() >= MAX_RECEIPTS {
+                                return Err(Error::StorageUnavailable);
+                            }
+                            let current = state.peer(&identity)?;
+                            if current.revision != original_revision
+                                || current.invitation != original_invitation
+                            {
+                                return Err(Error::InvalidStatement);
+                            }
+                            *state.peer_mut(&identity)? = prospective;
+                            state.received.push(Receipt {
+                                peer: identity,
+                                request_id: receipt_id,
+                                digest,
+                                timestamp: current_unix_secs(),
+                            });
+                        }
+                        Ok(())
+                    })
+                    .await?;
+                self.open_history(
+                    context,
+                    identity,
+                    sender.account_id,
+                    route,
+                    request_id,
+                    plaintext,
+                )
+                .await
+            }
+            _ => Err(Error::InvalidStatement),
+        }
+    }
+
+    pub(super) fn validate_remote_device(&self, device: &PeerDevice) -> Result<(), Error> {
+        if device.account_id == self.public.account_id
+            || device.account_id == self.legacy_account
+            || device.account_id == self.public.identity_account_id
+            || device.public_key == self.public.chat_public_key
+            || device.public_key == self.public.identity_chat_public_key
+        {
+            return Err(Error::InvalidStatement);
+        }
+        self.device
+            .identity_shared_secret(&device.public_key)
+            .map_err(|_| Error::InvalidStatement)?;
+        Ok(())
+    }
+
+    async fn open_invitation(
         self: &Arc<Self>,
         context: &NativeChatContext,
         statement: SignedStatement,
         signer: [u8; 32],
         data: Vec<u8>,
-    ) -> Result<(), Error> {
+    ) -> Result<HostNativeChatOpened, Error> {
         if wire::is_context_bound_chat_request_v2(&data) {
             return Err(Error::InvalidStatement);
         }
@@ -236,9 +418,14 @@ impl NativeChatActor {
             timestamp: message.timestamp,
             text: message.content.welcome_text.clone().unwrap_or_default(),
         };
+        self.validate_remote_device(&PeerDevice {
+            account_id: signer,
+            public_key: invitation.device_key,
+        })?;
+        let plaintext =
+            wire::encode_chat_request_v2(&request).map_err(|_| Error::InvalidStatement)?;
         let valid = context.session_valid.clone();
-        let auto_accept = self
-            .store
+        self.store
             .update(move |state| {
                 if !valid() {
                     return Err(Error::NotConnected);
@@ -251,7 +438,7 @@ impl NativeChatActor {
                     .find(|entry| entry.peer == peer_identity && entry.request_id == replay_id)
                 {
                     return if previous.digest == digest {
-                        Ok(false)
+                        Ok(())
                     } else {
                         Err(Error::InvalidStatement)
                     };
@@ -259,62 +446,10 @@ impl NativeChatActor {
                 if state.invitations.len() >= 16 || state.received.len() >= MAX_RECEIPTS {
                     return Err(Error::StorageUnavailable);
                 }
-                let auto_accept = state.peers.iter().any(|peer| {
-                    peer.identity == peer_identity
-                        && peer.established
-                        && peer.root_key == invitation.root_key
-                });
-                state.received.push(Receipt {
-                    peer: peer_identity,
-                    request_id: replay_id,
-                    digest,
-                    timestamp: now,
-                });
-                state.invitations.push(invitation);
-                Ok(auto_accept)
-            })
-            .await?;
-        if auto_accept {
-            self.accept_invitation(context, id).await?;
-        }
-        Ok(())
-    }
-
-    pub(in crate::runtime::native_chat) async fn accept(
-        self: &Arc<Self>,
-        context: &NativeChatContext,
-        invitation_id: [u8; 32],
-    ) -> Result<(), Error> {
-        let _incoming = self.receiving.lock().await;
-        self.accept_invitation(context, invitation_id).await
-    }
-
-    async fn accept_invitation(
-        self: &Arc<Self>,
-        context: &NativeChatContext,
-        invitation_id: [u8; 32],
-    ) -> Result<(), Error> {
-        let actor = self.clone();
-        let valid = context.session_valid.clone();
-        let delivery = self.delivery_gate.lock().await;
-        self.store
-            .update(move |state| {
-                if !valid() {
-                    return Err(Error::NotConnected);
-                }
-                let position = state
-                    .invitations
-                    .iter()
-                    .position(|invite| invite.id == invitation_id)
-                    .ok_or(Error::InvalidRequest)?;
-                let invitation = state.invitations[position].clone();
-                if !fresh(invitation.timestamp, current_unix_secs()) {
-                    return Err(Error::InvalidStatement);
-                }
                 if let Some(peer) = state
                     .peers
                     .iter()
-                    .find(|peer| peer.identity == invitation.peer)
+                    .find(|peer| peer.identity == peer_identity)
                 {
                     if peer.root_key != invitation.root_key {
                         return Err(Error::InvalidStatement);
@@ -323,434 +458,156 @@ impl NativeChatActor {
                     if state.peers.len() >= MAX_PEERS {
                         return Err(Error::StorageUnavailable);
                     }
-                    state.peers.push(Peer {
-                        identity: invitation.peer,
-                        root_key: invitation.root_key,
-                        username: invitation.username.clone(),
-                        devices: Vec::new(),
-                        invitation: None,
-                        invitation_timestamp: None,
-                        invitation_text: None,
-                        established: false,
-                        revocation_request: None,
-                        revocation_acked: false,
-                        revocation_acks: Vec::new(),
-                        revision: 0,
-                    });
+                    state.peers.push(Peer::new(
+                        peer_identity,
+                        invitation.root_key,
+                        invitation.username.clone(),
+                    ));
                 }
-                {
-                    let peer = state.peer_mut(&invitation.peer)?;
-                    admit_device(
-                        peer,
-                        PeerDevice {
-                            account_id: invitation.device_account,
-                            public_key: invitation.device_key,
-                        },
-                        invitation.timestamp,
-                        &invitation.message_id,
-                    )?;
-                    peer.established = true;
-                    if invitation.username.is_some() {
-                        peer.username = invitation.username.clone();
-                    }
-                }
-                let peer = state.peer(&invitation.peer)?.clone();
-                let now = current_unix_secs().saturating_mul(1000);
-                let accepted = wire::encode_multi_chat_accepted_message(
-                    &random_id()?,
-                    now,
-                    &invitation.message_id,
-                    &wire::V2PeerDevice {
-                        statement_account_id: actor.public.account_id,
-                        encryption_public_key: actor.public.chat_public_key,
-                    },
-                )
-                .map_err(|_| Error::InvalidRequest)?;
-                let request_id = random_id()?;
-                let plaintext = Zeroizing::new(
-                    wire::encode_transport_request_plaintext(&request_id, &[accepted])
-                        .map_err(|_| Error::InvalidRequest)?,
-                );
-                let shared = chat_shared_secret(&actor.root_secret, &peer.root_key)
-                    .map_err(|_| Error::InvalidStatement)?;
-                let topic = chat_identity_session_id(
-                    &shared,
-                    &actor.public.identity_account_id,
-                    &peer.identity,
-                );
-                let channel = wire::chat_identity_request_topic(&topic)
-                    .map_err(|_| Error::InvalidStatement)?;
-                let encrypted =
-                    native_root_seal(&shared, &plaintext).map_err(|_| Error::InvalidStatement)?;
-                let statement = actor.sign(state, channel, vec![topic], encrypted)?;
-                state.queue(Outgoing {
-                    peer: peer.identity,
-                    request_id,
-                    digest: hash(&plaintext),
-                    kind: OutgoingKind::Acceptance,
-                    roster_revision: peer.revision,
-                    statement,
-                    last_attempt: 0,
-                })?;
-                actor.queue_revocation(state, &peer.identity)?;
-                state.invitations.remove(position);
-                if !invitation.text.is_empty() {
-                    state.record_messages(HostNativeChatMessages {
-                        peer_identity: peer.identity,
-                        incoming: true,
-                        request_id: invitation.message_id.clone(),
-                        messages: vec![
-                            wire::encode_rich_text_message(
-                                &invitation.message_id,
-                                invitation.timestamp,
-                                Some(&invitation.text),
-                                None,
-                            )
-                            .map_err(|_| Error::InvalidStatement)?,
-                        ],
-                    });
-                }
+                state.received.push(Receipt {
+                    peer: peer_identity,
+                    request_id: replay_id,
+                    digest,
+                    timestamp: now,
+                });
+                // Only authentication evidence is retained. The product owns the
+                // visible invitation and decides whether to prepare an acceptance.
+                let mut invitation = invitation;
+                invitation.text.clear();
+                state.invitations.push(invitation);
                 Ok(())
             })
             .await?;
-        drop(delivery);
-        self.start_delivery(context);
-        self.flush(context).await
-    }
-
-    async fn receive_acceptance(
-        self: &Arc<Self>,
-        context: &NativeChatContext,
-        registry: &NativeChatRegistry,
-        peer: &Peer,
-        signer: [u8; 32],
-        exchange: OpenedDeviceExchange,
-    ) -> Result<(), Error> {
-        let OpenedDeviceExchange::Request {
-            request_id,
-            messages,
-        } = exchange
-        else {
-            return Err(Error::InvalidStatement);
-        };
-        // Root encryption authenticates the peer identity, not an arbitrary
-        // statement signer. An unadmitted device must bind itself to our pending
-        // invitation; neither ContactAdded nor DeviceAdded can authorize it.
-        let sender = peer
-            .devices
-            .iter()
-            .find(|device| device.active && device.account == signer)
-            .and_then(|device| {
-                device.key.map(|public_key| PeerDevice {
-                    account_id: signer,
-                    public_key,
-                })
-            })
-            .or_else(|| {
-                messages.iter().find_map(|message| match message {
-                    OpenedDeviceMessage::DeviceControl(DeviceControl {
-                        content: DeviceLifecycle::MultiAccepted { request_id, device },
-                        ..
-                    }) if peer.invitation.as_deref() == Some(request_id)
-                        && device.account_id == signer =>
-                    {
-                        Some(*device)
-                    }
-                    _ => None,
-                })
-            })
-            .ok_or(Error::InvalidStatement)?;
-        self.receive_messages(
-            context,
-            registry,
-            peer.clone(),
-            sender,
-            request_id,
-            messages,
-            true,
-        )
-        .await
-    }
-
-    fn queue_revocation(&self, state: &mut State, identity: &[u8; 32]) -> Result<(), Error> {
-        let peer = state.peer(identity)?.clone();
-        let devices = peer.active_devices();
-        if devices.is_empty() {
-            return Ok(());
-        }
-        let request_id = random_id()?;
-        let now = current_unix_secs().saturating_mul(1000);
-        let added = wire::encode_device_added_message(
-            &random_id()?,
-            now,
-            &self.public.account_id,
-            &self.public.chat_public_key,
-        )
-        .map_err(|_| Error::InvalidRequest)?;
-        let removed = wire::encode_device_removed_message(&random_id()?, now, &self.legacy_account)
-            .map_err(|_| Error::InvalidRequest)?;
-        let messages = vec![added, removed];
-        let digest = hash(&messages.encode());
-        let statement = self.multi_statement(state, &peer, &devices, &request_id, &messages)?;
-        state.outbox.retain(|entry| {
-            !(entry.peer == peer.identity && entry.kind == OutgoingKind::Revocation)
-        });
-        let current = state.peer_mut(identity)?;
-        current.revocation_request = Some(request_id.clone());
-        current.revocation_acked = false;
-        current.revocation_acks.clear();
-        state.queue(Outgoing {
-            peer: peer.identity,
-            request_id,
-            digest,
-            kind: OutgoingKind::Revocation,
-            roster_revision: peer.revision,
-            statement,
-            last_attempt: 0,
+        Ok(HostNativeChatOpened {
+            peer_identity,
+            sender_account_id: signer,
+            route: HostNativeChatRoute::Invitation,
+            plaintext,
         })
     }
 
-    fn queue_identity_ack(
+    pub(super) fn authorize_prepare(
         &self,
         state: &mut State,
-        peer: &Peer,
-        request_id: &str,
-    ) -> Result<(), Error> {
-        let shared = chat_shared_secret(&self.root_secret, &peer.root_key)
-            .map_err(|_| Error::InvalidStatement)?;
-        let session =
-            chat_identity_session_id(&shared, &self.public.identity_account_id, &peer.identity);
-        let plaintext = Zeroizing::new(
-            wire::encode_transport_response_plaintext(request_id, 0)
-                .map_err(|_| Error::InvalidRequest)?,
-        );
-        let encrypted =
-            native_root_seal(&shared, &plaintext).map_err(|_| Error::InvalidStatement)?;
-        let channel =
-            wire::chat_identity_response_topic(&session).map_err(|_| Error::InvalidStatement)?;
-        let statement = self.sign(state, channel, vec![session], encrypted)?;
-        state.queue(Outgoing {
-            peer: peer.identity,
-            request_id: request_id.to_owned(),
-            digest: hash(&plaintext),
-            kind: OutgoingKind::Acknowledgment,
-            roster_revision: peer.revision,
-            statement,
-            last_attempt: 0,
-        })
-    }
-
-    fn queue_device_ack(
-        &self,
-        state: &mut State,
-        peer: &Peer,
-        sender: &PeerDevice,
-        request_id: &str,
-    ) -> Result<(), Error> {
-        let plaintext = Zeroizing::new(
-            wire::encode_transport_response_plaintext(request_id, 0)
-                .map_err(|_| Error::InvalidRequest)?,
-        );
-        let inner = Zeroizing::new(
-            self.device
-                .seal_multi_device(&[*sender], &plaintext)
-                .map_err(|_| Error::InvalidStatement)?,
-        );
-        let shared = self
-            .device
-            .identity_shared_secret(&peer.root_key)
-            .map_err(|_| Error::InvalidStatement)?;
-        let session = chat_identity_session_id(&shared, &self.public.account_id, &peer.identity);
-        let encrypted = native_root_seal(&shared, &inner).map_err(|_| Error::InvalidStatement)?;
-        let channel =
-            wire::chat_identity_response_topic(&session).map_err(|_| Error::InvalidStatement)?;
-        let statement = self.sign(state, channel, vec![session], encrypted)?;
-        state.queue(Outgoing {
-            peer: peer.identity,
-            request_id: request_id.to_owned(),
-            digest: hash(&plaintext),
-            kind: OutgoingKind::Acknowledgment,
-            roster_revision: peer.revision,
-            statement,
-            last_attempt: 0,
-        })
-    }
-
-    async fn receive_messages(
-        self: &Arc<Self>,
-        context: &NativeChatContext,
-        registry: &NativeChatRegistry,
-        peer: Peer,
-        sender: PeerDevice,
-        request_id: String,
-        messages: Vec<OpenedDeviceMessage>,
-        identity_route: bool,
-    ) -> Result<(), Error> {
-        let digest = exchange_digest(&messages)?;
-        let previous = self
-            .store
-            .read(|state| {
-                state
-                    .received
-                    .iter()
-                    .find(|entry| entry.peer == peer.identity && entry.request_id == request_id)
-                    .cloned()
-            })
-            .await?;
-        if previous
-            .as_ref()
-            .is_some_and(|previous| previous.digest != digest)
-        {
-            return Err(Error::InvalidStatement);
-        }
-        let mut controls = Vec::new();
-        let mut content = Vec::new();
-        if previous.is_none() {
-            for message in messages {
-                match message {
-                    OpenedDeviceMessage::DeviceControl(control) => {
-                        if !valid_peer_timestamp(control.timestamp, current_unix_secs()) {
-                            return Err(Error::InvalidStatement);
-                        }
-                        controls.push(control);
-                    }
-                    other => content.push(other),
+        peer: &mut Peer,
+        route: HostNativeChatRoute,
+        plaintext: &[u8],
+    ) -> Result<bool, Error> {
+        let exchange = open_identity_exchange(plaintext).map_err(|_| Error::InvalidRequest)?;
+        let (request_id, messages) = match exchange {
+            OpenedDeviceExchange::Response { request_id, .. } => {
+                let authenticated = state.boundary.incoming.iter().any(|entry| {
+                    entry.peer == peer.identity
+                        && entry.request_id == request_id
+                        && entry.route == route
+                });
+                if !authenticated && (!peer.established || peer.active_devices().is_empty()) {
+                    return Err(Error::PeerNotReady);
                 }
+                return Ok(true);
+            }
+            OpenedDeviceExchange::Request {
+                request_id,
+                messages,
+            } => (request_id, messages),
+        };
+        if request_id.starts_with("pay-") {
+            return Err(Error::InvalidRequest);
+        }
+        let mut added = false;
+        let mut removed = false;
+        let mut accepted = false;
+        for message in messages {
+            match message {
+                OpenedDeviceMessage::DeviceControl(control) => {
+                    if !valid_peer_timestamp(control.timestamp, current_unix_secs()) {
+                        return Err(Error::InvalidRequest);
+                    }
+                    match control.content {
+                        DeviceLifecycle::Added(device) => {
+                            if device.account_id != self.public.account_id
+                                || device.public_key != self.public.chat_public_key
+                            {
+                                return Err(Error::InvalidRequest);
+                            }
+                            added = true;
+                        }
+                        DeviceLifecycle::Removed(account) => {
+                            if account != self.legacy_account {
+                                return Err(Error::InvalidRequest);
+                            }
+                            removed = true;
+                        }
+                        DeviceLifecycle::MultiAccepted { request_id, device } => {
+                            if route != HostNativeChatRoute::Identity
+                                || device.account_id != self.public.account_id
+                                || device.public_key != self.public.chat_public_key
+                            {
+                                return Err(Error::InvalidRequest);
+                            }
+                            let invitation = state
+                                .invitations
+                                .iter()
+                                .find(|invite| {
+                                    invite.peer == peer.identity && invite.message_id == request_id
+                                })
+                                .ok_or(Error::InvalidRequest)?;
+                            if invitation.root_key != peer.root_key {
+                                return Err(Error::InvalidStatement);
+                            }
+                            admit_device(
+                                peer,
+                                PeerDevice {
+                                    account_id: invitation.device_account,
+                                    public_key: invitation.device_key,
+                                },
+                                invitation.timestamp,
+                                &invitation.message_id,
+                            )?;
+                            peer.established = true;
+                            accepted = true;
+                        }
+                        DeviceLifecycle::LeftChat => {
+                            if !peer.established {
+                                return Err(Error::PeerNotReady);
+                            }
+                            peer.revocation_acked = false;
+                            peer.revocation_acks.clear();
+                            peer.revocation_request = None;
+                        }
+                        DeviceLifecycle::ContactAdded => {
+                            if !peer.established {
+                                return Err(Error::PeerNotReady);
+                            }
+                        }
+                        DeviceLifecycle::Accepted { .. } => return Err(Error::InvalidRequest),
+                    }
+                }
+                OpenedDeviceMessage::Ordinary(_) if route == HostNativeChatRoute::Device => {}
+                OpenedDeviceMessage::PushToken { timestamp, .. }
+                    if valid_peer_timestamp(timestamp, current_unix_secs()) => {}
+                // Outgoing main-purse memos and private file/history capabilities
+                // have dedicated trusted preparation. Guest bytes never inject them.
+                _ => return Err(Error::InvalidRequest),
             }
         }
-        controls.sort_by(|left, right| {
-            (left.timestamp, &left.message_id).cmp(&(right.timestamp, &right.message_id))
-        });
-        // Validate the entire control batch before accepting any spendable
-        // material. The receive gate serializes every roster admission.
-        let identity = peer.identity;
-        let previous_revision = peer.revision;
-        let previous_invitation = peer.invitation.clone();
-        let admitted_sender = peer.devices.iter().any(|device| {
-            device.active
-                && device.account == sender.account_id
-                && device.key == Some(sender.public_key)
-        });
-        let last_departure = controls
-            .iter()
-            .filter_map(|control| {
-                matches!(&control.content, DeviceLifecycle::LeftChat).then_some(control.timestamp)
-            })
-            .max();
-        let mut prospective = peer;
-        for control in controls {
-            apply_control(
-                &mut prospective,
-                control,
-                &sender,
-                admitted_sender,
-                last_departure,
-            )?;
+        if !peer.established || peer.active_devices().is_empty() {
+            return Err(Error::PeerNotReady);
         }
-        let accepted_invitation = previous_invitation
-            .as_ref()
-            .filter(|_| prospective.invitation.is_none())
-            .cloned();
-        if !admitted_sender && accepted_invitation.is_none() {
-            return Err(Error::InvalidStatement);
+        if route == HostNativeChatRoute::Identity && !accepted {
+            return Err(Error::InvalidRequest);
         }
-        let history::ExpandedHistory {
-            ordinary,
-            payments,
-            rich,
-            imports,
-        } = self.expand_history(context, identity, content).await?;
-        let rich = self
-            .prepare_rich(context, identity, &request_id, rich)
-            .await?;
-        if !payments.is_empty() {
-            // The wallet preflights the complete batch before effects. Success
-            // means every memo and claim plan is durable, not merely queued.
-            registry
-                .wallet(context)
-                .await?
-                .receive_batch(context, &self.product, identity, &request_id, payments)
-                .await?;
+        if added || removed {
+            if route != HostNativeChatRoute::Device || !added || !removed {
+                return Err(Error::InvalidRequest);
+            }
+            if peer.revocation_request.as_ref() != Some(&request_id) {
+                peer.revocation_request = Some(request_id);
+                peer.revocation_acked = false;
+                peer.revocation_acks.clear();
+            }
         }
-        let delivery = self.delivery_gate.lock().await;
-        let actor = self.clone();
-        let valid = context.session_valid.clone();
-        self.store
-            .update(move |state| {
-                if !valid() {
-                    return Err(Error::NotConnected);
-                }
-                let current = state.peer(&identity)?;
-                if current.revision != previous_revision
-                    || current.invitation != previous_invitation
-                    || (admitted_sender
-                        && !current.devices.iter().any(|device| {
-                            device.active
-                                && device.account == sender.account_id
-                                && device.key == Some(sender.public_key)
-                        }))
-                {
-                    return Err(Error::InvalidStatement);
-                }
-                let exists = state
-                    .received
-                    .iter()
-                    .find(|entry| entry.peer == identity && entry.request_id == request_id);
-                if let Some(existing) = exists {
-                    if existing.digest != digest {
-                        return Err(Error::InvalidStatement);
-                    }
-                } else {
-                    state.expire_receipts(current_unix_secs());
-                    if state.received.len() >= MAX_RECEIPTS {
-                        return Err(Error::StorageUnavailable);
-                    }
-                    let changed_roster = prospective.revision != previous_revision;
-                    *state.peer_mut(&identity)? = prospective;
-                    if let Some(invitation_id) = accepted_invitation {
-                        state.outbox.retain(|entry| {
-                            !(entry.peer == identity && entry.kind == OutgoingKind::Invitation)
-                        });
-                        if state.acknowledgments.len() == MAX_HISTORY_BATCHES {
-                            state.acknowledgments.remove(0);
-                        }
-                        state.acknowledgments.push(HostNativeChatAcknowledgment {
-                            peer_identity: identity,
-                            request_id: invitation_id,
-                            response_code: 0,
-                        });
-                        actor.queue_revocation(state, &identity)?;
-                    } else if changed_roster {
-                        actor.queue_revocation(state, &identity)?;
-                    }
-                    state.record_messages(HostNativeChatMessages {
-                        // The complete expansion is public only after every
-                        // private payment memo and claim plan is durable.
-                        peer_identity: identity,
-                        incoming: true,
-                        request_id: request_id.clone(),
-                        messages: ordinary,
-                    });
-                    state.history_imports.extend(imports);
-                    files::merge_received(state, rich)?;
-                    state.received.push(Receipt {
-                        peer: identity,
-                        request_id: request_id.clone(),
-                        digest,
-                        timestamp: current_unix_secs(),
-                    });
-                }
-                let current = state.peer(&identity)?.clone();
-                if identity_route {
-                    actor.queue_identity_ack(state, &current, &request_id)
-                } else {
-                    actor.queue_device_ack(state, &current, &sender, &request_id)
-                }
-            })
-            .await?;
-        drop(delivery);
-        self.start_delivery(context);
-        self.flush(context).await
+        Ok(false)
     }
 
     async fn receive_acknowledgment(
@@ -844,28 +701,6 @@ impl NativeChatActor {
                         }
                     }
                 }
-                let request_id = state
-                    .sent
-                    .iter()
-                    .find(|receipt| {
-                        receipt.peer == identity && receipt.wire_request_id == request_id
-                    })
-                    .map(|receipt| receipt.request_id.clone())
-                    .unwrap_or(request_id);
-                if !state.acknowledgments.iter().any(|ack| {
-                    ack.peer_identity == identity
-                        && ack.request_id == request_id
-                        && ack.response_code == response_code
-                }) {
-                    if state.acknowledgments.len() == MAX_HISTORY_BATCHES {
-                        state.acknowledgments.remove(0);
-                    }
-                    state.acknowledgments.push(HostNativeChatAcknowledgment {
-                        peer_identity: identity,
-                        request_id,
-                        response_code,
-                    });
-                }
                 Ok(())
             })
             .await?;
@@ -884,7 +719,10 @@ impl NativeChatActor {
         if pending.is_empty() {
             return Ok(());
         }
-        let wallet = registry.wallet(context).await?;
+        let wallet = registry
+            .existing_wallet(context, true)
+            .await?
+            .ok_or(Error::StorageUnavailable)?;
         for id in pending {
             wallet.note_delivery(context, &self.product, id).await?;
             let valid = context.session_valid.clone();

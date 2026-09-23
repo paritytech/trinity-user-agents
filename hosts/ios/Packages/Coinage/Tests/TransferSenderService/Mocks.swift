@@ -9,6 +9,7 @@ import BandersnatchApi
 import SubstrateOperation
 import AsyncExtensions
 import BackgroundExecution
+import os
 
 @testable import Coinage
 
@@ -22,6 +23,62 @@ extension TransferSenderServiceTests {
                 $0 + breakdownContext.valueInPlanks(for: $1.valueExponent)
             }
             return TransferMemo(entries: entries.map { _ in Data([0x00]) }, totalValue: totalValue)
+        }
+    }
+
+    struct FailingMemoBuilder: MemoBuilding {
+        func buildMemo(
+            from _: [PlannedMemoEntry],
+            breakdownContext _: DenominationBreakdownContext
+        ) throws -> TransferMemo {
+            throw StubError.boom
+        }
+    }
+
+    struct NativeMemoKeyFactory: CoinKeyDeriving {
+        func derivePublicKey(index: DerivationIndex) throws -> PublicKey {
+            Data(repeating: UInt8(truncatingIfNeeded: index), count: 32)
+        }
+
+        func derivePrivateKey(index: DerivationIndex) throws -> PrivateKey {
+            Data(repeating: UInt8(truncatingIfNeeded: index), count: 64)
+        }
+    }
+
+    final class NativeAuthorizationLease: @unchecked Sendable {
+        private let valid = OSAllocatedUnfairLock(initialState: true)
+
+        func revoke() {
+            valid.withLock { $0 = false }
+        }
+
+        func check() throws {
+            guard valid.withLock({ $0 }) else { throw StubError.boom }
+        }
+    }
+
+    actor NativeRegistrationGate {
+        private var paused = false
+        private var enteredContinuation: CheckedContinuation<Void, Never>?
+        private var resumeContinuation: CheckedContinuation<Void, Never>?
+
+        func pause() async {
+            await withCheckedContinuation { continuation in
+                resumeContinuation = continuation
+                paused = true
+                enteredContinuation?.resume()
+                enteredContinuation = nil
+            }
+        }
+
+        func waitUntilPaused() async {
+            if paused { return }
+            await withCheckedContinuation { enteredContinuation = $0 }
+        }
+
+        func resume() {
+            resumeContinuation?.resume()
+            resumeContinuation = nil
         }
     }
 

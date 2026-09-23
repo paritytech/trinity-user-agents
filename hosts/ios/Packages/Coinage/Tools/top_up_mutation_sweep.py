@@ -62,9 +62,9 @@ MUTANTS = [
      "        if try await store.fetch(groupId: groupId) != nil {",
      "        if false {"),
 
-    ("accept: a top-up of nothing is accepted", SERVICE,
-     "        guard amount > 0 else {",
-     "        guard true else {"),
+    ("accept: zero is accepted for a wallet source", SERVICE,
+     "            guard case .coins = descriptor else {",
+     "            guard true else {"),
 
     # --- one live claim per source ---
     ("accept: a busy source is accepted", SERVICE,
@@ -93,8 +93,8 @@ MUTANTS = [
      "        _ = payment.groupId"),
 
     ("settle: an unpersisted verdict still wipes the secret", SERVICE,
-     "failed to persist verdict: \\(error)\")\n            return",
-     "failed to persist verdict: \\(error)\")"),
+     "settlement interrupted: \\(error)\")\n            return",
+     "settlement interrupted: \\(error)\")"),
 
     # --- a secret that cannot be read is not a secret that is gone ---
     ("drive: an unreadable secret settles the payment", SERVICE,
@@ -111,7 +111,7 @@ MUTANTS = [
      "            await settle(payment: payment, finalStatus: .notClaimed)"),
 
     ("durability: what the group finalized is ignored", SERVICE,
-     "            let status = IncomingPaymentStatus(detection: detection)",
+     "            let status = IncomingPaymentStatus(detection: detection, amount: payment.amount)",
      "            let status = IncomingPaymentStatus.notClaimed"),
 
     ("subscribe: a recorded verdict is re-derived", SERVICE,

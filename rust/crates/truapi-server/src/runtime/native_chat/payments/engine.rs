@@ -252,13 +252,6 @@ impl Engine {
         live(context)
     }
 
-    pub fn cents(&self, amount: u128) -> Result<u64, Error> {
-        self.denominations
-            .cash_cents_from_planks(amount)
-            .and_then(|n| u64::try_from(n).ok())
-            .ok_or(Error::InvalidRequest)
-    }
-
     pub fn partial_cents(&self, amount: u128) -> Result<u64, Error> {
         let unit = self.denominations.asset_unit;
         if unit == 0 {

@@ -38,7 +38,10 @@ import type {
   SubscriptionName,
   WorkerToMain,
 } from "../worker-protocol.js";
-import { MAX_JSON_RPC_CONNECTIONS } from "../worker-protocol.js";
+import {
+  COINAGE_WALLET_CALLBACKS,
+  MAX_JSON_RPC_CONNECTIONS,
+} from "../worker-protocol.js";
 import { bytesToHex, Vector } from "@parity/truapi/scale";
 import { startRawSubscription } from "../generated/worker-callbacks.js";
 import { errorMessage, toError } from "../error.js";
@@ -586,8 +589,9 @@ function handleCallbackRequest(
   },
 ): void {
   if (state.disposed) return;
+  const hostWalletCallback = COINAGE_WALLET_CALLBACKS[msg.name] === true;
   const callbacks =
-    msg.coreId === undefined
+    msg.coreId === undefined || hostWalletCallback
       ? state.rawCallbacks
       : state.coreCallbacks.get(msg.coreId);
   const fn =
@@ -611,7 +615,11 @@ function handleCallbackRequest(
   Promise.resolve()
     .then(() => {
       if (state.disposed) throw new Error("Host runtime is unavailable");
-      if (msg.coreId !== undefined && !state.coreCallbacks.has(msg.coreId))
+      if (
+        !hostWalletCallback &&
+        msg.coreId !== undefined &&
+        !state.coreCallbacks.has(msg.coreId)
+      )
         throw new Error("Product callbacks are unavailable");
       return fn(...msg.args);
     })
@@ -662,9 +670,11 @@ function handleCallbackRequest(
             kind: "callbackResponse",
             requestId: msg.requestId,
             ok: false,
-            error: NATIVE_CHAT_FILE_CALLBACKS[msg.name]
-              ? "Native Chat file operation failed"
-              : errorMessage(err),
+            error: hostWalletCallback
+              ? "Native Coinage wallet operation failed"
+              : NATIVE_CHAT_FILE_CALLBACKS[msg.name]
+                ? "Native Chat file operation failed"
+                : errorMessage(err),
           } satisfies MainToWorker);
         } catch {
           teardown(
@@ -1465,6 +1475,7 @@ function createWebWorkerHostRuntime(
             permissionStatus: host.permissionStatus !== undefined,
             pocket: host.pocket !== undefined,
             identityBackend: host.identityBackend !== undefined,
+            coinageWallet: callbacks.nativeCoinage !== undefined,
           },
           debuggerUrl: debuggerDial,
           role: options.role,
@@ -1591,6 +1602,8 @@ function buildRuntime(
                     permissionStatus: callbacks.permissionStatus !== undefined,
                     pocket: callbacks.pocket !== undefined,
                     identityBackend: callbacks.identityBackend !== undefined,
+                    coinageWallet:
+                      state.rawCallbacks.nativeCoinage !== undefined,
                   },
                 }),
           } satisfies MainToWorker);

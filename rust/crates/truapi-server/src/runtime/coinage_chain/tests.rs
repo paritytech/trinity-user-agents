@@ -309,6 +309,143 @@ fn instance_runtime_never_guesses_an_asset_and_rejects_other_assets() {
 }
 
 #[test]
+fn read_only_denominations_use_the_selected_finalized_instance_and_reject_invalid_units() {
+    use crate::test_support::{StubPlatform, test_spawner};
+    use futures::executor::block_on;
+
+    block_on(async {
+        let snapshot = snapshot();
+        let metadata = frame_metadata::RuntimeMetadataPrefixed::decode(&mut &METADATA[..]).unwrap();
+        let frame_metadata::RuntimeMetadata::V16(runtime) = metadata.1 else {
+            panic!("V16 fixture")
+        };
+        let entry = runtime
+            .pallets
+            .iter()
+            .find(|p| p.name == "Coinage")
+            .unwrap()
+            .storage
+            .as_ref()
+            .unwrap()
+            .entries
+            .iter()
+            .find(|e| e.name == "Instances")
+            .unwrap();
+        let frame_metadata::v16::StorageEntryType::Map { value, .. } = &entry.ty else {
+            panic!("instance map")
+        };
+        let TypeDef::Composite(instance_fields) =
+            &runtime.types.resolve(value.id).unwrap().type_def
+        else {
+            panic!("instance record")
+        };
+        let instance_key = snapshot.instance_asset_key().unwrap().unwrap();
+        let minimum: i8 = constant(&snapshot.metadata, "Coinage", "MinimumExponent").unwrap();
+        let unit = 3u128
+            .checked_shl(if minimum < 0 {
+                u32::from(minimum.unsigned_abs())
+            } else {
+                1
+            })
+            .unwrap();
+        let platform = |unit: u128| {
+            // Encode the actual metadata's XCM asset and remaining fields, rather
+            // than assuming an asset ID integer or a fixed record layout.
+            let values =
+                ScaleValue::unnamed_composite(instance_fields.fields.iter().map(|field| {
+                    if field.name.as_deref() == Some("asset_unit") {
+                        ScaleValue::u128(unit)
+                    } else {
+                        default_value(&runtime.types, field.ty.id)
+                    }
+                }));
+            let mut fields = instance_fields
+                .fields
+                .iter()
+                .map(|field| Field::new(field.ty.id, field.name.as_deref()));
+            let mut row = Vec::new();
+            values
+                .encode_as_fields_to(&mut fields, &runtime.types, &mut row)
+                .unwrap();
+            Arc::new(StubPlatform {
+                rpc_method_responses: vec![
+                    ("chain_getBlockHash", json!(hex0x(&[4; 32])).to_string()),
+                    ("chain_getFinalizedHead", json!(hex0x(&[3; 32])).to_string()),
+                    ("chain_getHeader", json!({"number": "0x401"}).to_string()),
+                    (
+                        "state_getRuntimeVersion",
+                        json!({"specVersion": 3_000_000, "transactionVersion": 1}).to_string(),
+                    ),
+                    (
+                        "Metadata_metadata_at_version",
+                        json!(hex0x(&Some(METADATA.to_vec()).encode())).to_string(),
+                    ),
+                    (
+                        "state_queryStorageAt",
+                        json!([{
+                            "block": hex0x(&[3; 32]),
+                            "changes": [[hex0x(&instance_key), hex0x(&row)]],
+                        }])
+                        .to_string(),
+                    ),
+                ],
+                ..Default::default()
+            })
+        };
+        let source = platform(unit);
+        let denominations = HostCoinageChain::selected_denomination_context(
+            source.as_ref(),
+            [4; 32],
+            Some(0),
+            &|| true,
+            test_spawner(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(denominations.asset_unit, unit);
+        assert_eq!(denominations.cash_cents_from_planks(unit * 123), Some(123));
+        assert_eq!(denominations.cash_cents_from_planks(unit * 123 - 1), None);
+        assert_eq!(denominations.cash_cents_to_planks(u128::MAX), None);
+        // Selecting a different instance must not reuse instance zero's unit.
+        assert!(
+            HostCoinageChain::selected_denomination_context(
+                source.as_ref(),
+                [4; 32],
+                Some(1),
+                &|| true,
+                test_spawner(),
+            )
+            .await
+            .is_err()
+        );
+        for invalid_unit in [0, u128::MAX] {
+            assert!(
+                HostCoinageChain::selected_denomination_context(
+                    platform(invalid_unit).as_ref(),
+                    [4; 32],
+                    Some(0),
+                    &|| true,
+                    test_spawner(),
+                )
+                .await
+                .is_err()
+            );
+        }
+        assert!(matches!(
+            HostCoinageChain::selected_denomination_context(
+                source.as_ref(),
+                [4; 32],
+                Some(0),
+                &|| false,
+                test_spawner(),
+            )
+            .await,
+            Err(_)
+        ));
+    });
+}
+
+#[test]
 fn presence_only_recycler_runtime_is_rejected_before_queries_or_spending() {
     // This older snapshot predates RecyclerAliasStates entirely. Treating its
     // missing lock-state map as empty would make unsafe recovery decisions.

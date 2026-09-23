@@ -10,7 +10,10 @@ import type {
   SubscriptionName,
   WorkerToMain,
 } from "./worker-protocol.js";
-import { MAX_JSON_RPC_CONNECTIONS } from "./worker-protocol.js";
+import {
+  COINAGE_WALLET_CALLBACKS,
+  MAX_JSON_RPC_CONNECTIONS,
+} from "./worker-protocol.js";
 import type { GenericError } from "@parity/truapi";
 import { TRUAPI_CODEC_VERSION } from "@parity/truapi";
 import {
@@ -262,7 +265,12 @@ function buildRawCallbacks(
   return {
     ...createWorkerRawCallbacks(
       {
-        callbackRequest: (name, args) => callbackRequest(name, args, coreId),
+        callbackRequest: (name, args) =>
+          callbackRequest(
+            name,
+            args,
+            COINAGE_WALLET_CALLBACKS[name] ? undefined : coreId,
+          ),
         startSubscription: (name, payload, sendItem, sendError) =>
           startSubscription(name, payload, sendItem, sendError, coreId),
         chainConnect,

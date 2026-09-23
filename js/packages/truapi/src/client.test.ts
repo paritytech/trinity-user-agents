@@ -250,6 +250,69 @@ describe("generated client transport", () => {
         expect(toHex(fixture.sent[0])).toBe(toHex(expectedFrame));
     });
 
+    it("keeps V2 methods callable with V1 domain errors", async () => {
+        const fixture = providerFixture();
+        const client = createClient(createTransport(fixture.provider));
+        const ids = { trait: 2, method: 12 };
+        const responseCodec = S.Result(
+            T.VersionedHostProductDeviceChatResponse,
+            S.CallError(T.VersionedHostProductDeviceChatError),
+        );
+        const denied = client.account.deviceChat({ tag: "PaymentDenomination" });
+        expect(fixture.sent[0]).toEqual(
+            wireFrame("p:1", ids, MESSAGE_TYPE_REQUEST, new Uint8Array([1, 12])),
+        );
+        const reason = { tag: "V1", value: "StorageUnavailable" } as const;
+        fixture.receive(
+            wireFrame(
+                "p:1",
+                ids,
+                MESSAGE_TYPE_RESPONSE,
+                responseCodec.enc({
+                    success: false,
+                    value: { tag: "Domain", value: reason },
+                }),
+            ),
+        );
+        expect((await denied)._unsafeUnwrapErr()).toEqual({ tag: "Domain", value: reason });
+
+        const restored = client.account.deviceChat({ tag: "PaymentDenomination" });
+        const key = `0x${"00".repeat(32)}` as const;
+        fixture.receive(
+            wireFrame(
+                "p:2",
+                ids,
+                MESSAGE_TYPE_RESPONSE,
+                responseCodec.enc({
+                    success: true,
+                    value: {
+                        tag: "V2",
+                        value: {
+                            device: {
+                                identityAccountId: key,
+                                identityChatPublicKey: key,
+                                productAccount: {
+                                    dotNsIdentifier: "chat.dot",
+                                    derivationIndex: { tag: "Index", value: 1 },
+                                },
+                                accountId: key,
+                                chatPublicKey: key,
+                            },
+                            peers: [],
+                            opened: [],
+                            prepared: [],
+                            payments: [],
+                            richMessages: [],
+                            migrationInvitations: [],
+                            coinageCentsUnit: 10000n,
+                        },
+                    },
+                }),
+            ),
+        );
+        expect((await restored)._unsafeUnwrap().coinageCentsUnit).toBe(10000n);
+    });
+
     it("resolves a request from its versioned response envelope", async () => {
         const fixture = providerFixture();
         const transport = createTransport(fixture.provider);

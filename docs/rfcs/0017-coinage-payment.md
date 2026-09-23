@@ -579,6 +579,15 @@ specified here. Supporting it therefore does not establish RFC 0017 compliance. 
 the Host-selected Coinage asset; conversion to this RFC's `Balance = u32` requires both a checked range conversion and
 the actual dotUSD denomination. A test-network pUSD amount must not be silently relabeled dotUSD.
 
+The Chat-specific payment API is transitional. The intended Chat product integration uses
+`create_receivable(MAIN_PURSE)`, `create_cheque` from `MAIN_PURSE`, and `deposit` into the receivable's associated main
+purse; products transport encrypted cheques while Hosts retain payment secrets and settlement authority. This does not
+require a separate Chat purse. It does require interoperable cheque encoding and peer support: choosing the same purse
+does not make existing native Chat payment messages RFC 0017 cheques. The
+[native Chat transition plan](native-chat-main-purse.md#planned-transition-to-rfc-0017) also requires preservation of
+pending custody and authenticated recipient bindings. This is an intended migration, not an assertion that these APIs or
+that migration are implemented.
+
 ### Relationship to Product Payment Layers
 
 Merchant checkout, POS, ecommerce, and reconciliation flows can be implemented as product-specific layers on top of this

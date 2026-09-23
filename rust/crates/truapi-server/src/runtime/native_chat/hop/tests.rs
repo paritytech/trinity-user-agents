@@ -323,7 +323,6 @@ fn chunk_download_resumes_from_durable_offset_and_rejects_wrong_final_size() {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(second_chunk.offset, 3);
         assert_eq!(&*second_chunk.data, b"de");
         assert!(second_chunk.next_progress.is_complete(&descriptor).unwrap());
         assert!(

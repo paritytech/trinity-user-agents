@@ -92,7 +92,7 @@ impl NativeChatFilesHost for Files {
 }
 
 async fn authorize_upload(platform: &StubPlatform) {
-    set_background_grants(platform, PermissionAuthorizationStatus::Authorized).await;
+    set_product_grants(platform, PRODUCT, PermissionAuthorizationStatus::Authorized).await;
     crate::host_logic::permissions::PermissionsService::new(platform, platform, PRODUCT)
         .set_authorization_status(
             &PermissionAuthorizationRequest::Remote(RemotePermissionRequest {
@@ -105,7 +105,7 @@ async fn authorize_upload(platform: &StubPlatform) {
 }
 
 #[test]
-fn attachment_acceptance_loss_reuses_ciphertext_and_download_ack_survives_restart() {
+fn attachment_preparation_retries_exact_upload_and_restores_download_custody() {
     block_on(async {
         let bytes: Vec<_> = (0..hop::HOP_CHUNK_BYTES + 173)
             .map(|i| (i % 251) as u8)
@@ -113,7 +113,7 @@ fn attachment_acceptance_loss_reuses_ciphertext_and_download_ack_survives_restar
         let files = Arc::new(Files::new(bytes));
         let pool = Pool::default();
         let platform = Arc::new(StubPlatform {
-            chain_connect_error: Some("attachment fixture has no chain RPC"),
+            chain_connect_error: Some("attachment fixture has no Chat or chain RPC"),
             native_chat_files: Some(files.clone()),
             hop_provider: Some(Arc::new(pool.clone())),
             ..Default::default()
@@ -121,7 +121,6 @@ fn attachment_acceptance_loss_reuses_ciphertext_and_download_ack_survives_restar
         authorize_upload(&platform).await;
         let fixture = Fixture::on_platform(platform.clone());
         let actor = fixture.actor().await;
-        actor.delivering.store(true, Ordering::SeqCst);
         let identity = IdentityFixture::new();
         let peer = DeviceFixture::new(1);
         seed_peer(&actor, &identity, &[&peer]).await;
@@ -133,7 +132,7 @@ fn attachment_acceptance_loss_reuses_ciphertext_and_download_ack_survives_restar
         assert_ne!(allowance.public.to_bytes(), actor.public.account_id);
         *pool.0.expected_sender.lock() = Some(allowance.public.to_bytes());
         actor
-            .send_attachments(
+            .prepare_attachments(
                 &fixture.context,
                 identity.account,
                 "stable-file".into(),
@@ -151,9 +150,8 @@ fn attachment_acceptance_loss_reuses_ciphertext_and_download_ack_survives_restar
         drop(actor);
         let resumed = Fixture::on_platform(platform.clone());
         let actor = resumed.actor().await;
-        actor.delivering.store(true, Ordering::SeqCst);
         actor
-            .send_attachments(
+            .prepare_attachments(
                 &resumed.context,
                 identity.account,
                 "stable-file".into(),
@@ -164,14 +162,14 @@ fn attachment_acceptance_loss_reuses_ciphertext_and_download_ack_survives_restar
         assert_eq!(files.picks.load(Ordering::SeqCst), 1);
         assert_eq!(
             actor
-                .send_attachments(
+                .prepare_attachments(
                     &resumed.context,
                     identity.account,
                     "stable-file".into(),
-                    Some("changed".into())
+                    Some("changed".into()),
                 )
                 .await,
-            Err(Error::OperationConflict)
+            Err(Error::OperationConflict),
         );
         for _ in 0..8 {
             actor.drive_files(&resumed.context).await.unwrap();
@@ -189,25 +187,28 @@ fn attachment_acceptance_loss_reuses_ciphertext_and_download_ack_survives_restar
             .unwrap();
         assert!(files.completed.load(Ordering::SeqCst));
         assert_eq!(*files.output.lock(), files.bytes);
-        let outgoing = actor
-            .store
-            .read(|state| {
-                state
-                    .outbox
-                    .iter()
-                    .find(|entry| matches!(entry.kind, OutgoingKind::Rich(_)))
-                    .cloned()
-                    .unwrap()
-            })
-            .await
-            .unwrap();
+        assert_eq!(view.prepared.len(), 1);
+        let prepared = &view.prepared[0];
+        assert_eq!(prepared.peer_identity, identity.account);
+        assert!(prepared.requires_ack);
+        // Upload completion returns opaque native ciphertext for guest delivery;
+        // the unavailable Chat network does not participate in file progress.
+        assert_eq!(
+            actor
+                .public_view(&resumed.context, vec![])
+                .await
+                .unwrap()
+                .prepared,
+            view.prepared,
+        );
         let wire::V2StatementTransportData::MultiRequest(multi) =
-            open_output(&actor, &identity, &outgoing.statement, false, false)
+            open_output(&actor, &identity, &prepared.statement, false, false)
         else {
             panic!("not a native multi request")
         };
         let body = open_body(&actor, &peer, &multi.encrypted_request, &multi.devices_info);
         let exchange = wire::decode_message_exchange_request_plaintext(&body).unwrap();
+        assert_eq!(exchange.request_id, prepared.request_id);
         let decoded = wire::decode_message(&exchange.messages[0]).unwrap();
         let wire::V2ChatMessageContent::RichText {
             attachments: Some(references),
@@ -227,50 +228,70 @@ fn attachment_acceptance_loss_reuses_ciphertext_and_download_ack_survives_restar
         }
         assert!(
             actor
-                .send(
+                .prepare(
                     &resumed.context,
                     identity.account,
-                    "raw-capability".into(),
-                    exchange.messages.clone()
+                    HostNativeChatRoute::Device,
+                    wire::encode_transport_request_plaintext("raw-capability", &exchange.messages)
+                        .unwrap(),
                 )
                 .await
                 .is_err()
         );
 
-        // An independent native peer forwards the authenticated capability. All
-        // incoming cache bytes must survive ACK and reopening without pool data.
+        // An independent native peer forwards the authenticated capability.
+        // Open records only trusted file custody; explicit steps download it.
         let output = Arc::new(Files::new(Vec::new()));
         let receiver_platform = Arc::new(StubPlatform {
-            chain_connect_error: Some("receiver fixture has no chain RPC"),
+            chain_connect_error: Some("receiver fixture has no Chat or chain RPC"),
             native_chat_files: Some(output.clone()),
             hop_provider: Some(Arc::new(pool.clone())),
             ..Default::default()
         });
-        set_background_grants(
+        set_product_grants(
             &receiver_platform,
+            PRODUCT,
             PermissionAuthorizationStatus::Authorized,
         )
         .await;
         let receiver = Fixture::on_platform(receiver_platform.clone());
         let receiving = receiver.actor().await;
-        receiving.delivering.store(true, Ordering::SeqCst);
         seed_peer(&receiving, &identity, &[&peer]).await;
         let registry = NativeChatRegistry::default();
+        let forwarded_packet = request(
+            &receiving,
+            &identity,
+            &peer,
+            "native-forward",
+            &exchange.messages,
+        );
+        let opened = receiving
+            .open_statement(&receiver.context, &registry, forwarded_packet.clone())
+            .await
+            .unwrap();
+        assert!(opened.1.is_none());
+        assert_eq!(opened.0.len(), 1);
+        assert_eq!(opened.0[0].peer_identity, identity.account);
+        assert_eq!(opened.0[0].sender_account_id, peer.account());
+        assert_eq!(opened.0[0].route, HostNativeChatRoute::Device);
+        assert_eq!(
+            opened.0[0].plaintext,
+            wire::encode_transport_request_plaintext("native-forward", &exchange.messages).unwrap(),
+        );
         assert_eq!(
             receiving
-                .receive(
-                    &receiver.context,
-                    &registry,
-                    request(
-                        &receiving,
-                        &identity,
-                        &peer,
-                        "native-forward",
-                        &exchange.messages
-                    )
-                )
-                .await,
-            Err(Error::NetworkUnavailable)
+                .open_statement(&receiver.context, &registry, forwarded_packet)
+                .await
+                .unwrap(),
+            opened,
+        );
+        assert!(
+            receiving
+                .public_view(&receiver.context, vec![])
+                .await
+                .unwrap()
+                .prepared
+                .is_empty()
         );
         assert_eq!(pool.0.claims.load(Ordering::SeqCst), 0);
         receiving.drive_files(&receiver.context).await.unwrap(); // root custody, no ACK yet
@@ -279,7 +300,6 @@ fn attachment_acceptance_loss_reuses_ciphertext_and_download_ack_survives_restar
         drop(receiving);
         let receiver = Fixture::on_platform(receiver_platform.clone());
         let receiving = receiver.actor().await;
-        receiving.delivering.store(true, Ordering::SeqCst);
         for _ in 0..6 {
             receiving.drive_files(&receiver.context).await.unwrap();
         }
@@ -291,6 +311,7 @@ fn attachment_acceptance_loss_reuses_ciphertext_and_download_ack_survives_restar
             .unwrap();
         let attachment = &view.rich_messages[0].attachments[0];
         assert_eq!(attachment.state, HostNativeChatAttachmentState::Ready);
+        assert!(view.prepared.is_empty());
         receiving
             .open_attachment(&receiver.context, attachment.attachment_id)
             .await
@@ -305,30 +326,46 @@ fn attachment_acceptance_loss_reuses_ciphertext_and_download_ack_survives_restar
             Some(references),
         )
         .unwrap();
+        let (opened, page) = receiving
+            .open_statement(
+                &receiver.context,
+                &registry,
+                request(
+                    &receiving,
+                    &identity,
+                    &peer,
+                    "another-forward",
+                    &[forwarded.clone()],
+                ),
+            )
+            .await
+            .unwrap();
+        assert!(page.is_none());
         assert_eq!(
-            receiving
-                .receive(
-                    &receiver.context,
-                    &registry,
-                    request(
-                        &receiving,
-                        &identity,
-                        &peer,
-                        "another-forward",
-                        &[forwarded]
-                    )
-                )
-                .await,
-            Err(Error::NetworkUnavailable)
+            opened[0].plaintext,
+            wire::encode_transport_request_plaintext("another-forward", &[forwarded]).unwrap(),
         );
         receiving.drive_files(&receiver.context).await.unwrap();
+        assert_eq!(pool.0.claims.load(Ordering::SeqCst), claims);
+        // Reopen after pool reclamation: export must use authenticated durable
+        // cache bytes, never re-claim the deleted native root or chunks.
+        receiver.tasks.stop();
+        drop(receiving);
+        let receiver = Fixture::on_platform(receiver_platform);
+        let receiving = receiver.actor().await;
+        receiving
+            .open_attachment(&receiver.context, attachment.attachment_id)
+            .await
+            .unwrap();
+        assert!(output.completed.load(Ordering::SeqCst));
+        assert_eq!(*output.output.lock(), files.bytes);
         assert_eq!(pool.0.claims.load(Ordering::SeqCst), claims);
         receiver.tasks.stop();
         assert_eq!(
             receiving
                 .open_attachment(&receiver.context, attachment.attachment_id)
                 .await,
-            Err(Error::NotConnected)
+            Err(Error::NotConnected),
         );
     });
 }

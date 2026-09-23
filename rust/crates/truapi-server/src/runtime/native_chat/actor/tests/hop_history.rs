@@ -212,70 +212,53 @@ fn encoded_payment(id: &str, timestamp: u64, memo: &TransferMemo) -> Vec<u8> {
 }
 
 #[test]
-fn nested_history_keeps_all_claim_plans_before_ack_and_survives_pool_deletion() {
+fn nested_history_pages_survive_reopen_until_product_prepares_native_ack() {
     block_on(async {
         let pool = Pool::default();
         let platform = Arc::new(StubPlatform {
-            chain_connect_error: Some("history fixture has no Coinage RPC"),
+            chain_connect_error: Some("history fixture has no Coinage or Chat RPC"),
             hop_provider: Some(Arc::new(pool.clone())),
             ..Default::default()
         });
         let fixture = Fixture::on_platform(platform.clone());
-        set_background_grants(&platform, PermissionAuthorizationStatus::Authorized).await;
+        set_product_grants(
+            &platform,
+            PRODUCT,
+            PermissionAuthorizationStatus::Authorized,
+        )
+        .await;
         let actor = fixture.actor().await;
         let identity = IdentityFixture::new();
         let peer = DeviceFixture::new(1);
         seed_peer(&actor, &identity, &[&peer]).await;
         let registry = NativeChatRegistry::default();
-        let wallet = registry.wallet(&fixture.context).await.unwrap();
-        let mut first = memo();
-        first.total_value = 240;
+        let wallet = rust_wallet(&registry, &fixture.context).await;
+        let first = memo();
         let second = TransferMemo {
             entries: vec![MemoEntry(keypair(0x33).secret.to_bytes())],
             total_value: 80,
         };
-        wallet
-            .seed_incoming_for_test(
-                &fixture.context,
-                PRODUCT,
-                identity.account,
-                "original-first",
-                "first-payment",
-                fixture.timestamp,
-                &first,
-                true,
-            )
-            .await
-            .unwrap();
-        wallet
-            .seed_incoming_for_test(
-                &fixture.context,
-                PRODUCT,
-                identity.account,
-                "original-second",
-                "second-payment",
-                fixture.timestamp,
-                &second,
-                false,
-            )
-            .await
-            .unwrap();
         let before =
             wire::encode_text_message("before", fixture.timestamp, "Before history").unwrap();
-        let middle =
-            wire::encode_text_message("middle", fixture.timestamp, "Nested history").unwrap();
         let after = wire::encode_text_message("after", fixture.timestamp, "After history").unwrap();
+        let first_payment = encoded_payment("first-payment", fixture.timestamp, &first);
+        let second_payment = encoded_payment("second-payment", fixture.timestamp, &second);
+        // The small frames force the 256-frame limit independently of the byte
+        // limit. The later large frames force multiple 256-KiB pages.
+        let mut child_messages: Vec<_> = (0..300)
+            .map(|index| {
+                wire::encode_text_message(
+                    &format!("small-{index}"),
+                    fixture.timestamp,
+                    "Nested history",
+                )
+                .unwrap()
+            })
+            .collect();
+        child_messages.insert(128, second_payment.clone());
         let child_ticket = FileTicket::from_bytes(&[0xac; 32]).unwrap();
         let child = pool
-            .compact(
-                "child",
-                fixture.timestamp,
-                &child_ticket,
-                &[
-                    middle.clone(),
-                    encoded_payment("second-payment", fixture.timestamp, &second),
-                ],
-            )
+            .compact("child", fixture.timestamp, &child_ticket, &child_messages)
             .await;
         let unauthorized_device = DeviceFixture::new(9);
         let historical_control = wire::encode_device_added_message(
@@ -285,21 +268,34 @@ fn nested_history_keeps_all_claim_plans_before_ack_and_survives_pool_deletion() 
             &unauthorized_device.public_key(),
         )
         .unwrap();
+        let large_messages: Vec<_> = (0..70)
+            .map(|index| {
+                wire::encode_text_message(
+                    &format!("large-{index}"),
+                    fixture.timestamp,
+                    &"x".repeat(8 * 1024),
+                )
+                .unwrap()
+            })
+            .collect();
+        let mut root_messages = vec![
+            before.clone(),
+            child,
+            first_payment.clone(),
+            historical_control,
+        ];
+        root_messages.extend(large_messages.clone());
+        root_messages.push(after.clone());
         let root_ticket = FileTicket::from_bytes(&[0xab; 32]).unwrap();
         let compacted = pool
-            .compact(
-                "root",
-                fixture.timestamp,
-                &root_ticket,
-                &[
-                    before.clone(),
-                    child,
-                    encoded_payment("first-payment", fixture.timestamp, &first),
-                    historical_control,
-                    after.clone(),
-                ],
-            )
+            .compact("root", fixture.timestamp, &root_ticket, &root_messages)
             .await;
+        let mut expected = vec![before];
+        expected.extend(child_messages);
+        expected.push(first_payment);
+        expected.extend(large_messages);
+        expected.push(after);
+        assert!(expected.iter().map(Vec::len).sum::<usize>() > 256 * 1024);
         let packet = request(
             &actor,
             &identity,
@@ -307,50 +303,71 @@ fn nested_history_keeps_all_claim_plans_before_ack_and_survives_pool_deletion() 
             "history-request",
             &[compacted.clone()],
         );
+        let first_page = actor
+            .open_statement(&fixture.context, &registry, packet.clone())
+            .await
+            .unwrap();
+        let open_id = first_page.1.as_ref().unwrap().open_id;
         assert_eq!(
             actor
-                .receive(&fixture.context, &registry, packet.clone())
-                .await,
-            Err(Error::NetworkUnavailable)
-        );
-        assert_eq!(pool.0.acknowledgments.load(Ordering::SeqCst), 0);
-        assert!(
-            actor
-                .store
-                .read(|state| state.outbox.is_empty() && state.messages.is_empty())
+                .open_statement(&fixture.context, &registry, packet.clone())
                 .await
-                .unwrap()
+                .unwrap(),
+            first_page,
         );
-
-        wallet
-            .persist_incoming_plan_for_test(&second)
-            .await
-            .unwrap();
-        // Statement delivery remains offline, but HOP custody now commits.
-        assert_eq!(
-            actor.receive(&fixture.context, &registry, packet).await,
-            Err(Error::NetworkUnavailable)
-        );
-        actor.acknowledge_history(&fixture.context).await.unwrap();
-        assert_eq!(pool.0.acknowledgments.load(Ordering::SeqCst), 2);
-        assert!(pool.0.entries.lock().is_empty());
-        let view = actor
-            .public_view(&fixture.context, wallet.views(PRODUCT).await.unwrap())
-            .await
-            .unwrap();
-        assert_eq!(view.messages[0].messages, vec![before, middle, after]);
-        assert_eq!(view.payments.len(), 2);
-        let public_bytes = view.encode();
-        assert!(
-            !public_bytes
-                .windows(32)
-                .any(|part| part == root_ticket.as_bytes() || part == child_ticket.as_bytes())
-        );
-        for memo in [&first, &second] {
-            for source in &memo.entries {
-                assert!(!public_bytes.windows(64).any(|part| part == source.0));
+        let mut pages = Vec::new();
+        let mut recovered = Vec::new();
+        let mut cursor = 0;
+        loop {
+            let page = actor
+                .continue_open(&fixture.context, open_id, cursor)
+                .await
+                .unwrap();
+            assert_eq!(
+                actor
+                    .continue_open(&fixture.context, open_id, cursor)
+                    .await
+                    .unwrap(),
+                page,
+            );
+            assert_eq!(page.0.len(), 1);
+            let opened = &page.0[0];
+            assert_eq!(opened.peer_identity, identity.account);
+            assert_eq!(opened.sender_account_id, peer.account());
+            assert_eq!(opened.route, HostNativeChatRoute::Device);
+            assert!(opened.plaintext.len() <= 256 * 1024);
+            let wire::V2StatementTransportData::Request {
+                request_id,
+                messages,
+            } = wire::decode_transport_plaintext(&opened.plaintext).unwrap()
+            else {
+                panic!("history page is not a native request")
+            };
+            assert_eq!(request_id, "history-request");
+            assert!(messages.len() <= 256);
+            if cursor == 0 {
+                assert_eq!(messages.len(), 256);
             }
+            recovered.extend(messages);
+            let metadata = page.1.as_ref().unwrap();
+            assert_eq!(metadata.open_id, open_id);
+            assert_eq!(metadata.cursor, cursor);
+            let next = metadata.next_cursor;
+            pages.push(page);
+            let Some(next) = next else { break };
+            cursor = next;
         }
+        // Exact frames include both incoming bearer memos, in their original
+        // positions. Historical device control cannot grant live authority.
+        assert_eq!(recovered, expected);
+        assert!(pages.len() >= 3);
+        assert_eq!(pool.0.claims.load(Ordering::SeqCst), 2);
+        assert_eq!(pool.0.acknowledgments.load(Ordering::SeqCst), 0);
+        assert_eq!(pool.0.entries.lock().len(), 2);
+        assert!(wallet.views(PRODUCT).await.unwrap().is_empty());
+        let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
+        assert!(view.prepared.is_empty());
+        assert!(view.migration.is_none());
         assert_eq!(
             actor
                 .store
@@ -361,9 +378,21 @@ fn nested_history_keeps_all_claim_plans_before_ack_and_survives_pool_deletion() 
                     .len())
                 .await
                 .unwrap(),
-            1
+            1,
         );
-        let claims = pool.0.claims.load(Ordering::SeqCst);
+        let unauthorized = request(
+            &actor,
+            &identity,
+            &unauthorized_device,
+            "historical-authority",
+            &[wire::encode_text_message("forged", fixture.timestamp, "not admitted").unwrap()],
+        );
+        assert_eq!(
+            actor
+                .open_statement(&fixture.context, &registry, unauthorized)
+                .await,
+            Err(Error::InvalidStatement),
+        );
         fixture.tasks.stop();
         drop(wallet);
         drop(actor);
@@ -371,7 +400,90 @@ fn nested_history_keeps_all_claim_plans_before_ack_and_survives_pool_deletion() 
         let restarted = Fixture::on_platform(platform);
         let actor = restarted.actor().await;
         let registry = NativeChatRegistry::default();
-        // A refreshed outer request must not fetch or re-ACK a deleted HOP entry.
+        assert_eq!(
+            actor
+                .open_statement(&restarted.context, &registry, packet)
+                .await
+                .unwrap(),
+            first_page,
+        );
+        for page in &pages {
+            assert_eq!(
+                actor
+                    .continue_open(&restarted.context, open_id, page.1.as_ref().unwrap().cursor,)
+                    .await
+                    .unwrap(),
+                *page,
+            );
+        }
+        assert_eq!(pool.0.claims.load(Ordering::SeqCst), 2);
+        assert_eq!(pool.0.acknowledgments.load(Ordering::SeqCst), 0);
+        assert!(
+            registry
+                .wallet(&restarted.context)
+                .await
+                .unwrap()
+                .views(&restarted.context, PRODUCT)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // A rejection is not a successful native ACK and cannot reclaim HOP.
+        actor
+            .prepare(
+                &restarted.context,
+                identity.account,
+                HostNativeChatRoute::Device,
+                wire::encode_transport_response_plaintext("history-request", 1).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(pool.0.acknowledgments.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            actor
+                .continue_open(&restarted.context, open_id, 0)
+                .await
+                .unwrap(),
+            first_page,
+        );
+        let prepared = actor
+            .prepare(
+                &restarted.context,
+                identity.account,
+                HostNativeChatRoute::Device,
+                wire::encode_transport_response_plaintext("history-request", 0).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(prepared.len(), 1);
+        assert_eq!(prepared[0].peer_identity, identity.account);
+        assert_eq!(prepared[0].request_id, "history-request");
+        assert!(!prepared[0].requires_ack);
+        let wire::V2StatementTransportData::MultiResponse(multi) =
+            open_output(&actor, &identity, &prepared[0].statement, true, false)
+        else {
+            panic!("not a native multi response")
+        };
+        let body = open_body(
+            &actor,
+            &peer,
+            &multi.encrypted_response,
+            &multi.devices_info,
+        );
+        assert_eq!(
+            wire::decode_message_exchange_response_plaintext(&body).unwrap(),
+            wire::V2MessageExchangeResponse {
+                request_id: "history-request".into(),
+                response_code: 0
+            },
+        );
+        assert_eq!(pool.0.acknowledgments.load(Ordering::SeqCst), 2);
+        assert!(pool.0.entries.lock().is_empty());
+        assert_eq!(
+            actor.continue_open(&restarted.context, open_id, 0).await,
+            Err(Error::OperationNotFound),
+        );
+        // A refreshed statement cannot fetch or re-ACK a deleted HOP entry.
         let replay = request(
             &actor,
             &identity,
@@ -379,20 +491,24 @@ fn nested_history_keeps_all_claim_plans_before_ack_and_survives_pool_deletion() 
             "refreshed-history-request",
             &[compacted],
         );
+        let (opened, continuation) = actor
+            .open_statement(&restarted.context, &registry, replay)
+            .await
+            .unwrap();
+        assert!(continuation.is_none());
         assert_eq!(
-            actor.receive(&restarted.context, &registry, replay).await,
-            Err(Error::NetworkUnavailable)
+            opened[0].plaintext,
+            wire::encode_transport_request_plaintext("refreshed-history-request", &[]).unwrap(),
         );
-        actor.acknowledge_history(&restarted.context).await.unwrap();
-        assert_eq!(pool.0.claims.load(Ordering::SeqCst), claims);
+        assert_eq!(pool.0.claims.load(Ordering::SeqCst), 2);
         assert_eq!(pool.0.acknowledgments.load(Ordering::SeqCst), 2);
-        assert_eq!(
+        assert!(
             actor
                 .public_view(&restarted.context, vec![])
                 .await
                 .unwrap()
-                .messages,
-            view.messages
+                .prepared
+                .is_empty()
         );
     });
 }

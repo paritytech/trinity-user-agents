@@ -199,6 +199,12 @@ fn emit_wasm_adapter(
     {
         support_imports.insert("unavailableNativeChatFilesHost".to_string());
     }
+    if traits
+        .iter()
+        .any(|trait_def| trait_def.name == "CoinageWalletHost")
+    {
+        support_imports.insert("coinageWalletHostAdapter".to_string());
+    }
     for trait_def in &traits {
         for method in &trait_def.methods {
             for param in &method.params {
@@ -317,7 +323,15 @@ fn emit_wasm_adapter(
     // narrowed reference rather than re-reading a possibly-absent member.
     for name in &optional_traits {
         let namespace = callback_namespace(name);
-        writeln!(out, "  const {namespace} = callbacks.{namespace};").unwrap();
+        if name == "CoinageWalletHost" {
+            writeln!(
+                out,
+                "  const {namespace} = coinageWalletHostAdapter(callbacks.{namespace});"
+            )
+            .unwrap();
+        } else {
+            writeln!(out, "  const {namespace} = callbacks.{namespace};").unwrap();
+        }
     }
     // HOP remains a required Rust capability. Older JS embeddings get its
     // explicit unavailable implementation, not a phantom working transport.
@@ -527,7 +541,7 @@ fn emit_worker_callbacks(
             /**
              * Optional capabilities the main-thread host actually serves. A
              * capability left out here is not proxied into the worker, so the
-             * core answers its product calls with `Unsupported`.
+             * core applies that capability's absence behavior.
              */
             export interface OptionalCapabilities {{
             {members}
@@ -1615,7 +1629,7 @@ fn emit_host_callback_composites(
         );
     }
     // A host may leave out an optional capability entirely; the core then
-    // answers the matching product calls with `Unsupported`.
+    // applies that capability's absence behavior.
     // Required Rust capabilities with explicit unavailable embedding backends.
     let mark = |trait_name: &String| {
         if optional_traits.contains(trait_name)

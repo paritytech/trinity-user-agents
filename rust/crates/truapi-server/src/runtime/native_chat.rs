@@ -1,4 +1,4 @@
-//! Host-owned native Chat transport and main-purse payment authority.
+//! Non-exportable native Chat crypto and shared main-purse payment custody.
 //!
 //! A dropped product call never cancels an already-started durable operation.
 //! The registry is wallet/network scoped, not product storage, and keeps one
@@ -10,7 +10,9 @@ mod hop;
 mod hop_access;
 mod identity;
 mod payments;
+mod state_pages;
 mod store;
+mod wallet;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -29,6 +31,7 @@ use zeroize::Zeroizing;
 use super::{authority::AuthoritySession, services::RuntimeServices};
 use actor::NativeChatActor;
 use payments::WalletCoinage;
+use wallet::{SelectedWallet, WalletBinding};
 
 /// Authority captured for one product call, rechecked before every new effect.
 #[derive(Clone)]
@@ -59,14 +62,15 @@ type DeviceKey = (WalletKey, String);
 struct SessionCache {
     // Hold initialization gates across open; owned work retains this cache
     // after release, but cannot repopulate the next session's cache.
-    wallets: Mutex<HashMap<WalletKey, Arc<WalletCoinage>>>,
+    wallets: Mutex<HashMap<WalletKey, Arc<SelectedWallet>>>,
     chats: Mutex<HashMap<DeviceKey, Arc<NativeChatActor>>>,
+    state_pages: state_pages::StatePages,
 }
 
 #[derive(Default)]
 struct RegistryState {
     cache: parking_lot::Mutex<Arc<SessionCache>>,
-    receivers: parking_lot::Mutex<HashMap<DeviceKey, background::Receiver>>,
+    recoveries: parking_lot::Mutex<HashMap<WalletKey, background::Recovery>>,
     // Nonsecret uncertainty must survive session cache eviction.
     products: Mutex<HashSet<WalletKey>>,
 }
@@ -78,86 +82,11 @@ pub(crate) struct NativeChatRegistry {
 }
 
 impl NativeChatRegistry {
-    /// Stop network ownership immediately on logout or session replacement.
-    /// Already-owned durable commits retain their existing completion semantics.
-    pub(crate) fn stop_receiving(&self) {
-        self.state.receivers.lock().clear();
-    }
-
     /// Release session secrets without cancelling already-owned durable work.
     /// Store ownership excludes a new allocator until that work ends.
     pub(crate) fn release(&self) {
-        self.stop_receiving();
+        self.state.recoveries.lock().clear();
         *self.state.cache.lock() = Arc::default();
-    }
-
-    /// Restore only previously initialized, currently authorized products.
-    pub(crate) fn resume_receiving(&self, context: NativeChatContext) {
-        let registry = self.clone();
-        let spawner = context.services.spawner.clone();
-        spawner(Box::pin(async move {
-            let mut retry = std::time::Duration::from_secs(1);
-            loop {
-                match registry.restore_receiving(&context).await {
-                    Ok(()) | Err(ChatError::NotConnected) => break,
-                    Err(error) => {
-                        tracing::warn!(?error, "native Chat receiver restoration failed");
-                    }
-                }
-                futures_timer::Delay::new(retry).await;
-                retry = (retry * 2).min(background::MAX_RETRY);
-                if context.require_current().is_err() {
-                    break;
-                }
-            }
-        }));
-    }
-
-    async fn restore_receiving(&self, context: &NativeChatContext) -> Result<(), ChatError> {
-        let mut uncertain = self.state.products.lock().await;
-        let products = self.load_products(context).await?;
-        let mut failure = None;
-        if uncertain.contains(&(context.session.public_key, context.genesis_hash)) {
-            failure = self
-                .persist_products(context, &products, &mut uncertain)
-                .await
-                .err();
-        }
-        for product in products {
-            context.require_current()?;
-            // One bad device/grant must not suppress unrelated valid products.
-            let restored = async {
-                background::require_authorized(context, &product).await?;
-                // Restoration must never generate a replacement for a lost device.
-                if context
-                    .services
-                    .platform
-                    .read_core_storage(CoreStorageKey::NativeChatDevice {
-                        root_public_key: context.session.public_key,
-                        genesis_hash: context.genesis_hash,
-                        product_id: product.clone(),
-                    })
-                    .await
-                    .map_err(|_| ChatError::StorageUnavailable)?
-                    .is_none()
-                {
-                    return Err(ChatError::StorageUnavailable);
-                }
-                let actor = self.chat(context, &product).await?;
-                self.ensure_receiving(context, &product, actor).await;
-                Ok(())
-            }
-            .await;
-            match restored {
-                Ok(()) | Err(ChatError::AccessNotGranted) => {}
-                Err(ChatError::NotConnected) => return Err(ChatError::NotConnected),
-                Err(error) => {
-                    tracing::warn!(?error, %product, "native Chat product restoration failed");
-                    failure.get_or_insert(error);
-                }
-            }
-        }
-        failure.map_or(Ok(()), Err)
     }
 
     fn products_key(context: &NativeChatContext) -> CoreStorageKey {
@@ -215,29 +144,6 @@ impl NativeChatRegistry {
         Ok(())
     }
 
-    async fn remember_product(
-        &self,
-        context: &NativeChatContext,
-        product: &str,
-    ) -> Result<(), ChatError> {
-        let mut uncertain = self.state.products.lock().await;
-        let mut products = self.load_products(context).await?;
-        match products.binary_search_by(|value| value.as_str().cmp(product)) {
-            Ok(_) if !uncertain.contains(&(context.session.public_key, context.genesis_hash)) => {
-                return Ok(());
-            }
-            Ok(_) => {}
-            Err(index) => {
-                if products.len() >= 256 {
-                    return Err(ChatError::StorageUnavailable);
-                }
-                products.insert(index, product.to_owned());
-            }
-        }
-        self.persist_products(context, &products, &mut uncertain)
-            .await
-    }
-
     /// Forgetting owns its write even if the host administration call is dropped.
     pub(crate) async fn forget_product(
         &self,
@@ -250,9 +156,8 @@ impl NativeChatRegistry {
         let spawner = context.services.spawner.clone();
         let (send, receive) = oneshot::channel();
         spawner(Box::pin(async move {
-            // Rebind unrelated products even if the index operation fails or
-            // its caller disappears; no second cold-restoration loop is needed.
-            registry.rebind_receiving(&context, &product).await;
+            // Product revocation does not abandon accepted wallet custody.
+            registry.resume_wallet_recovery(context.clone());
             let result = registry.forget_product_owned(&context, &product).await;
             let _ = send.send(result);
         }));
@@ -265,10 +170,13 @@ impl NativeChatRegistry {
         product: &str,
     ) -> Result<(), ChatError> {
         let mut uncertain = self.state.products.lock().await;
-        self.state.receivers.lock().remove(&(
+        let cache = self.state.cache.lock().clone();
+        let key = (
             (context.session.public_key, context.genesis_hash),
             product.to_owned(),
-        ));
+        );
+        cache.chats.lock().await.remove(&key);
+        cache.state_pages.forget(&key).await;
         let mut products = self.load_products(context).await?;
         match products.binary_search_by(|value| value.as_str().cmp(product)) {
             Ok(index) => {
@@ -281,6 +189,45 @@ impl NativeChatRegistry {
         }
         self.persist_products(context, &products, &mut uncertain)
             .await
+    }
+
+    /// Generic incoming coin import shares the wallet's allocator and recovery
+    /// store, but neither creates a Chat device nor requires Chat permission.
+    pub(crate) fn top_up(
+        &self,
+        context: NativeChatContext,
+        product: String,
+        request: truapi::v01::HostPaymentTopUpRequest,
+    ) -> impl Future<Output = Result<(), truapi::v01::HostPaymentTopUpError>> + Send + '_ {
+        // Construct the guard before returning the future, including when the
+        // caller cancels it without ever polling wallet initialization.
+        let request = crate::host_logic::sso::messages::PaymentTopUpRequest {
+            calling_product_id: product,
+            payload: truapi::versioned::payment::HostPaymentTopUpRequest::V1(request),
+        };
+        async move {
+            let truapi::versioned::payment::HostPaymentTopUpRequest::V1(payload) = &request.payload;
+            if payload
+                .into
+                .is_some_and(|purse| purse != truapi::v01::MAIN_PURSE)
+                || !matches!(
+                    &payload.source,
+                    truapi::v01::PaymentTopUpSource::Coins { .. }
+                )
+            {
+                return Err(truapi::v01::HostPaymentTopUpError::InvalidSource);
+            }
+            let wallet = self.wallet(&context).await.map_err(|_| {
+                truapi::v01::HostPaymentTopUpError::Unknown {
+                    reason: "Wallet custody is unavailable".into(),
+                }
+            })?;
+            // Install recovery before yielding ownership to the claim task:
+            // a caller may disappear while that task commits its first memo.
+            self.resume_wallet_recovery(context.clone());
+            let (product, request) = request.into_parts();
+            wallet.top_up(&context, &product, request).await
+        }
     }
 
     pub(crate) async fn execute(
@@ -328,67 +275,166 @@ impl NativeChatRegistry {
         Ok(opened)
     }
 
+    async fn denomination(&self, context: &NativeChatContext) -> Result<u128, ChatError> {
+        context.require_current()?;
+        if context.services.native_wallet.is_some() {
+            self.wallet(context).await?.denomination(context).await
+        } else {
+            payments::coinage_cents_unit(context).await
+        }
+    }
+
     pub(super) async fn wallet(
         &self,
         context: &NativeChatContext,
-    ) -> Result<Arc<WalletCoinage>, ChatError> {
+    ) -> Result<Arc<SelectedWallet>, ChatError> {
         let key = (context.session.public_key, context.genesis_hash);
         let cache = self.state.cache.lock().clone();
         let mut wallets = cache.wallets.lock().await;
         context.require_current()?;
         if let Some(wallet) = wallets.get(&key) {
+            wallet.check(context)?;
             return Ok(wallet.clone());
         }
         if wallets.len() >= 16 {
             return Err(ChatError::StorageUnavailable);
         }
         context.require_current()?;
-        let wallet = WalletCoinage::open(context).await?;
+        let wallet = match &context.services.native_wallet {
+            Some(native_wallet) => {
+                SelectedWallet::native(WalletBinding::new(context, native_wallet.clone()))
+            }
+            None => SelectedWallet::Rust(WalletCoinage::open(context).await?),
+        };
+        let wallet = Arc::new(wallet);
         context.require_current()?;
         wallets.insert(key, wallet.clone());
         Ok(wallet)
+    }
+
+    /// Only absence of native custody permits probing the guarded Rust store.
+    /// Native recovery always reaches the native service, even before Chat opens.
+    pub(super) async fn existing_wallet(
+        &self,
+        context: &NativeChatContext,
+        required: bool,
+    ) -> Result<Option<Arc<SelectedWallet>>, ChatError> {
+        let key = (context.session.public_key, context.genesis_hash);
+        context.require_current()?;
+        if context.services.native_wallet.is_some() {
+            return self.wallet(context).await.map(Some);
+        }
+        let cache = self.state.cache.lock().clone();
+        let mut wallets = cache.wallets.lock().await;
+        context.require_current()?;
+        if let Some(wallet) = wallets.get(&key) {
+            wallet.check(context)?;
+            return Ok(Some(wallet.clone()));
+        }
+        let stored = context
+            .services
+            .platform
+            .read_core_storage(CoreStorageKey::MainPurseCoinage {
+                root_public_key: context.session.public_key,
+                genesis_hash: context.genesis_hash,
+            })
+            .await;
+        context.require_current()?;
+        match stored {
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) if !required => return Ok(None),
+            Ok(None) | Err(_) => return Err(ChatError::StorageUnavailable),
+        }
+        if wallets.len() >= 16 {
+            return Err(ChatError::StorageUnavailable);
+        }
+        // Open authenticates before exposing any durable payments. Never replace
+        // unreadable existing custody with an empty purse or a successful claim.
+        let wallet = Arc::new(SelectedWallet::Rust(
+            WalletCoinage::open_existing(context).await?,
+        ));
+        context.require_current()?;
+        wallets.insert(key, wallet.clone());
+        Ok(Some(wallet))
     }
 
     async fn execute_owned(
         &self,
         context: NativeChatContext,
         product: String,
-        request: Request,
+        mut request: Request,
     ) -> Result<Response, ChatError> {
         context.require_current()?;
+        let requires_wallet = matches!(
+            &request,
+            Request::SendPayment { .. }
+                | Request::PaymentStatus { .. }
+                | Request::ReconcilePayments
+                | Request::PaymentDenomination
+        );
+        let cache = self.state.cache.lock().clone();
+        let key = (
+            (context.session.public_key, context.genesis_hash),
+            product.clone(),
+        );
+        if let Request::ContinueState { state_id, cursor } = &request {
+            let response = cache.state_pages.read(&key, *state_id, *cursor).await?;
+            context.require_current()?;
+            return Ok(response);
+        }
         let chat = self.chat(&context, &product).await?;
-        self.remember_product(&context, &product).await?;
-        context.require_current()?;
+        let mut binding = None;
+        let mut opened = Vec::new();
+        let mut prepared = Vec::new();
+        let mut open_page = None;
+        let mut coinage_cents_unit = None;
         let operation = async {
-            match request {
-                Request::Initialize => {}
-                Request::Invite { username, text } => chat.invite(&context, username, text).await?,
-                Request::Receive { statement } => chat.receive(&context, self, statement).await?,
-                Request::AcceptInvitation { invitation_id } => {
-                    chat.accept(&context, invitation_id).await?;
+            match &mut request {
+                Request::Initialize => {
+                    chat.drive_files(&context).await?;
                 }
-                Request::RejectInvitation { invitation_id } => {
-                    chat.reject(&context, invitation_id).await?
+                Request::Bind { username } => {
+                    binding = Some(chat.bind(&context, std::mem::take(username)).await?);
                 }
-                Request::Send {
+                Request::Prepare {
                     peer_identity,
-                    request_id,
-                    messages,
+                    route,
+                    plaintext,
                 } => {
-                    chat.send(&context, peer_identity, request_id, messages)
+                    prepared = chat
+                        .prepare(&context, *peer_identity, *route, std::mem::take(plaintext))
                         .await?;
                 }
-                Request::SendAttachments {
+                Request::Open { statement } => {
+                    let statement = truapi::latest::SignedStatement {
+                        proof: statement.proof.clone(),
+                        decryption_key: statement.decryption_key.take(),
+                        expiry: statement.expiry.take(),
+                        channel: statement.channel.take(),
+                        topics: std::mem::take(&mut statement.topics),
+                        data: statement.data.take(),
+                    };
+                    (opened, open_page) = chat.open_statement(&context, self, statement).await?;
+                }
+                Request::ContinueOpen { open_id, cursor } => {
+                    (opened, open_page) = chat.continue_open(&context, *open_id, *cursor).await?;
+                }
+                Request::PrepareAttachments {
                     peer_identity,
                     request_id,
                     text,
                 } => {
                     background::require_upload_authorized(&context, &product).await?;
-                    chat.send_attachments(&context, peer_identity, request_id, text)
-                        .await?;
+                    chat.prepare_attachments(
+                        &context,
+                        *peer_identity,
+                        std::mem::take(request_id),
+                        text.take(),
+                    )
+                    .await?;
                 }
                 Request::OpenAttachment { attachment_id } => {
-                    chat.open_attachment(&context, attachment_id).await?;
+                    chat.open_attachment(&context, *attachment_id).await?;
                 }
                 Request::SendPayment {
                     peer_identity,
@@ -396,49 +442,70 @@ impl NativeChatRegistry {
                     amount_cents,
                 } => {
                     let (intent, transport) = chat
-                        .payment(&context, peer_identity, request_id, amount_cents)
+                        .payment(
+                            &context,
+                            *peer_identity,
+                            std::mem::take(request_id),
+                            *amount_cents,
+                        )
                         .await?;
                     self.wallet(&context)
                         .await?
                         .send(&context, intent, transport)
                         .await?;
-                    chat.flush(&context).await?;
                 }
                 Request::PaymentStatus { operation_id } => {
                     let wallet = self.wallet(&context).await?;
                     if !wallet
-                        .views(&product)
+                        .views(&context, &product)
                         .await?
                         .iter()
-                        .any(|view| view.operation_id == operation_id)
+                        .any(|view| view.operation_id == *operation_id)
                     {
                         return Err(ChatError::OperationNotFound);
                     }
                 }
-                Request::Reconcile => {
-                    chat.reconcile(&context, self).await?;
+                Request::ReconcilePayments => chat.reconcile(&context, self).await?,
+                Request::PaymentDenomination => {
+                    coinage_cents_unit = Some(self.denomination(&context).await?);
                 }
+                Request::CommitMigration { migration_id } => {
+                    chat.commit_migration(&context, *migration_id).await?;
+                }
+                Request::ContinueState { .. } => unreachable!("handled before actor dispatch"),
             }
             Ok::<(), ChatError>(())
         }
         .await;
-        // Even a transport error can follow a durable peer/roster mutation.
-        // Refresh ownership and topics before returning that error to a guest.
-        self.ensure_receiving(&context, &product, chat.clone())
-            .await;
-        operation?;
-        context.require_current()?;
-        let cache = self.state.cache.lock().clone();
         let wallet = cache
             .wallets
             .lock()
             .await
             .get(&(context.session.public_key, context.genesis_hash))
             .cloned();
+        if wallet.is_some() {
+            self.resume_wallet_recovery(context.clone());
+        }
+        operation?;
+        context.require_current()?;
         let payments = match wallet {
-            Some(wallet) => wallet.views(&product).await?,
+            Some(wallet) => match wallet.views(&context, &product).await {
+                Ok(views) => views,
+                Err(ChatError::StorageUnavailable) if !requires_wallet && wallet.is_native() => {
+                    Vec::new()
+                }
+                Err(error) => return Err(error),
+            },
             None => Vec::new(),
         };
-        chat.public_view(&context, payments).await
+        let mut response = chat.public_view(&context, payments).await?;
+        response.binding = binding;
+        response.opened = opened;
+        response.prepared.extend(prepared);
+        response.open_page = open_page;
+        response.coinage_cents_unit = coinage_cents_unit;
+        let response = cache.state_pages.start(key, response).await?;
+        context.require_current()?;
+        Ok(response)
     }
 }

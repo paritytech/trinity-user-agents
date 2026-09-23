@@ -90,7 +90,11 @@ impl HostCoinageChain {
     }
 
     fn ensure_session(&self) -> Result<(), String> {
-        if (self.inner.session_valid)() {
+        Self::ensure_current(&*self.inner.session_valid)
+    }
+
+    fn ensure_current(session_valid: &(dyn Fn() -> bool + Send + Sync)) -> Result<(), String> {
+        if session_valid() {
             Ok(())
         } else {
             Err("Coinage signing session expired".into())
@@ -98,24 +102,37 @@ impl HostCoinageChain {
     }
 
     async fn connect(&self) -> Result<RpcClient, String> {
-        self.ensure_session()?;
-        let connection: Arc<dyn JsonRpcConnection> = self
-            .inner
-            .platform
-            .connect(self.inner.genesis_hash)
+        Self::connect_configured(
+            &*self.inner.platform,
+            self.inner.genesis_hash,
+            &*self.inner.session_valid,
+            self.inner.spawner.clone(),
+        )
+        .await
+    }
+
+    async fn connect_configured(
+        platform: &dyn Platform,
+        genesis_hash: [u8; 32],
+        session_valid: &(dyn Fn() -> bool + Send + Sync),
+        spawner: Spawner,
+    ) -> Result<RpcClient, String> {
+        Self::ensure_current(session_valid)?;
+        let connection: Arc<dyn JsonRpcConnection> = platform
+            .connect(genesis_hash)
             .await
             .map_err(|_| "configured Coinage chain unavailable")?
             .into();
-        if let Err(error) = self.ensure_session() {
+        if let Err(error) = Self::ensure_current(session_valid) {
             connection.close();
             return Err(error);
         }
-        let rpc = RpcClient::new(HostRpcClient::new(connection, self.inner.spawner.clone()));
+        let rpc = RpcClient::new(HostRpcClient::new(connection, spawner));
         let genesis = rpc::hash_value(&rpc::call(&rpc, "chain_getBlockHash", json!([0])).await?)?;
-        if genesis != self.inner.genesis_hash {
+        if genesis != genesis_hash {
             return Err("Coinage chain genesis does not match configured network".into());
         }
-        self.ensure_session()?;
+        Self::ensure_current(session_valid)?;
         Ok(rpc)
     }
 
@@ -124,37 +141,61 @@ impl HostCoinageChain {
         rpc: &RpcClient,
         at: [u8; 32],
     ) -> Result<transaction::Snapshot, String> {
+        Self::snapshot_configured(
+            rpc,
+            at,
+            self.inner.genesis_hash,
+            self.inner.coinage_instance_id,
+            &*self.inner.session_valid,
+            Some(&mut *self.inner.runtime.lock().await),
+        )
+        .await
+    }
+
+    async fn snapshot_configured(
+        rpc: &RpcClient,
+        at: [u8; 32],
+        genesis_hash: [u8; 32],
+        coinage_instance_id: Option<u32>,
+        session_valid: &(dyn Fn() -> bool + Send + Sync),
+        cached: Option<&mut Option<transaction::Snapshot>>,
+    ) -> Result<transaction::Snapshot, String> {
+        Self::ensure_current(session_valid)?;
         let (version, number) = futures::try_join!(
             rpc::call(rpc, "state_getRuntimeVersion", json!([hex0x(&at)])),
             rpc::block_number(rpc, at),
         )?;
+        Self::ensure_current(session_valid)?;
         let spec = u32::try_from(rpc::number(&version["specVersion"])?)
             .map_err(|_| "invalid runtime spec version")?;
         let tx = u32::try_from(rpc::number(&version["transactionVersion"])?)
             .map_err(|_| "invalid runtime transaction version")?;
-        let mut snapshot = {
-            let mut cached = self.inner.runtime.lock().await;
-            if let Some(snapshot) = cached.as_ref().filter(|snapshot| {
+        let mut snapshot = if let Some(snapshot) = cached
+            .as_deref()
+            .and_then(Option::as_ref)
+            .filter(|snapshot| {
                 snapshot.state.spec_version == spec && snapshot.state.transaction_version == tx
             }) {
-                let mut snapshot = snapshot.clone();
-                snapshot.at = at;
-                snapshot.number = number;
-                snapshot
-            } else {
-                let metadata = rpc::metadata(rpc, at).await?;
-                let snapshot = transaction::Snapshot::new(
-                    metadata,
-                    at,
-                    number,
-                    self.inner.genesis_hash,
-                    spec,
-                    tx,
-                    self.inner.coinage_instance_id,
-                )?;
+            let mut snapshot = snapshot.clone();
+            snapshot.at = at;
+            snapshot.number = number;
+            snapshot
+        } else {
+            let metadata = rpc::metadata(rpc, at).await?;
+            Self::ensure_current(session_valid)?;
+            let snapshot = transaction::Snapshot::new(
+                metadata,
+                at,
+                number,
+                genesis_hash,
+                spec,
+                tx,
+                coinage_instance_id,
+            )?;
+            if let Some(cached) = cached {
                 *cached = Some(snapshot.clone());
-                snapshot
             }
+            snapshot
         };
         if let Some(key) = snapshot.instance_asset_key()? {
             let row = rpc::query(rpc, &[key], at)
@@ -162,10 +203,11 @@ impl HostCoinageChain {
                 .pop()
                 .flatten()
                 .ok_or("configured Coinage asset instance does not exist")?;
+            Self::ensure_current(session_valid)?;
             snapshot.bind_instance_asset(&row)?;
         }
         snapshot.denomination_context()?;
-        self.ensure_session()?;
+        Self::ensure_current(session_valid)?;
         Ok(snapshot)
     }
 
@@ -200,6 +242,31 @@ impl HostCoinageChain {
         let context = self.bind_denominations(&self.snapshot(&rpc, at).await?)?;
         self.ensure_session()?;
         Ok(context)
+    }
+
+    /// Read selected-chain denomination metadata without wallet secrets or custody storage.
+    pub(crate) async fn selected_denomination_context(
+        platform: &dyn Platform,
+        genesis_hash: [u8; 32],
+        coinage_instance_id: Option<u32>,
+        session_valid: &(dyn Fn() -> bool + Send + Sync),
+        spawner: Spawner,
+    ) -> Result<DenominationBreakdownContext, String> {
+        let rpc = Self::connect_configured(platform, genesis_hash, session_valid, spawner).await?;
+        Self::ensure_current(session_valid)?;
+        let at = rpc::finalized(&rpc).await?;
+        Self::ensure_current(session_valid)?;
+        let snapshot = Self::snapshot_configured(
+            &rpc,
+            at,
+            genesis_hash,
+            coinage_instance_id,
+            session_valid,
+            None,
+        )
+        .await?;
+        Self::ensure_current(session_valid)?;
+        snapshot.denomination_context()
     }
 
     /// Runtime-enforced upper bound for one voucher consolidation group.
