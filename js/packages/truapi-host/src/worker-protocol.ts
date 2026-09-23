@@ -156,11 +156,6 @@ export type MainToWorker =
     }
   | { kind: "resetSessionState"; requestId: number }
   | {
-      kind: "activateLocalSession";
-      requestId: number;
-      secret: Uint8Array;
-    }
-  | {
       kind: "activateLocalSessionWithIdentity";
       requestId: number;
       secret: Uint8Array;

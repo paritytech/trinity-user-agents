@@ -30,7 +30,6 @@ import type {
   WasmModuleShape,
   WorkerHostRuntime,
   WorkerPairingHostRuntime,
-  WorkerSigningHostRuntime,
   WorkerProductRuntime,
   WorkerSigningHostRuntime,
 } from "./wasm-module.js";

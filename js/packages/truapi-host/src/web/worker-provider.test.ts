@@ -28,6 +28,7 @@ import {
   NativeChatFilePickRequest,
   NativeCoinageRequest,
   NativeCoinageResponse,
+  ProductContext,
 } from "../generated/host-callbacks.js";
 import type {
   AuthState as AuthStateValue,
@@ -180,7 +181,9 @@ describe("createWebWorkerPairingHostRuntime", () => {
       kind: "init",
       logLevel: "debug",
       hostConfig: hostConfigFromRuntimeConfig(config),
-      runtimeKind: "pairing",
+      // A host that asks for no role sends none: the worker reads absent as
+      // "pairing", so the message stays what it was before the field existed.
+      role: undefined,
       capabilities: {
         chat: false,
         permissionStatus: false,

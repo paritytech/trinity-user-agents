@@ -26,6 +26,7 @@ import {
 import {
   NativeChatPickedFile,
   PermissionAuthorizationRequest as PermissionAuthorizationRequestCodec,
+  ProductContext as ProductContextCodec,
 } from "../generated/host-callbacks.js";
 import { createWasmRawCallbacks } from "../generated/host-callbacks-adapter.js";
 import type { RawCallbacks } from "../generated/host-callbacks-adapter.js";
@@ -246,6 +247,25 @@ interface RuntimeState {
   chainConnections: Map<number, RpcConnectionEntry>;
   chatFileExports: Set<string>;
   disposeNativeChatFiles: () => void;
+  /**
+   * Open `worker.beginOperation` holds. A non-empty set defers `dispose()`.
+   * Worker-wide rather than per-core, since a `callbackRequest` carries no core
+   * id, so entries are product-scoped: `OperationId` is only unique per product
+   * and two products sharing this worker may be handed the same id.
+   */
+  openOperations: Set<string>;
+  /** A dispose() arrived while operations were open; run it once they drain. */
+  disposePending: boolean;
+  /**
+   * Fires if those operations never drain. A worker that never sends its
+   * `endOperation` would otherwise keep the core running for a product the
+   * user has closed, still free to raise host prompts, with no way for the
+   * caller to force teardown.
+   */
+  disposeGraceTimer: ReturnType<typeof setTimeout> | undefined;
+  /** How long `dispose()` waits for open operations before forcing teardown. */
+  operationGraceMs: number;
+  chainConnections: Map<number, RpcConnectionEntry>;
   pendingDisconnects: Map<
     number,
     { resolve: () => void; reject: (error: Error) => void }
@@ -579,6 +599,35 @@ async function discardChatFileCallback(
   }
 }
 
+/**
+ * Read the host-assigned id out of a `beginOperation` response. Returns null if
+ * the response will not decode, so a hold that cannot be keyed is dropped
+ * rather than escaping and leaving the worker's call unanswered.
+ */
+function operationIdFrom(value: unknown): number | null {
+  if (!(value instanceof Uint8Array)) return null;
+  try {
+    return HostWorkerBeginOperationResponseCodec.dec(value).id;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Key one pending-operation hold. `OperationId` is unique per product, not per
+ * worker, so the product a `beginOperation`/`endOperation` arrived for has to be
+ * part of the key. Returns null if the encoded product will not decode, which
+ * drops the hold rather than letting it pin the worker forever.
+ */
+function operationHold(encodedProduct: unknown, id: number): string | null {
+  if (!(encodedProduct instanceof Uint8Array)) return null;
+  try {
+    return `${ProductContextCodec.dec(encodedProduct).productId}\u0000${id}`;
+  } catch {
+    return null;
+  }
+}
+
 function handleCallbackRequest(
   state: RuntimeState,
   msg: {
@@ -628,6 +677,23 @@ function handleCallbackRequest(
         if (state.disposed) {
           await discardChatFileCallback(state, msg.name, value);
           return;
+        }
+        // Tracked in the success arm only: a rejected begin must not leave a
+        // hold that nothing will ever release.
+        if (msg.name === "beginOperation") {
+          const id = operationIdFrom(value);
+          const hold = id === null ? null : operationHold(msg.args[0], id);
+          if (hold !== null) state.openOperations.add(hold);
+        } else if (msg.name === "endOperation") {
+          const id = msg.args[1];
+          const hold =
+            typeof id === "number" ? operationHold(msg.args[0], id) : null;
+          if (hold !== null) state.openOperations.delete(hold);
+          if (state.openOperations.size === 0 && state.disposePending) {
+            state.disposePending = false;
+            clearDisposeGrace(state);
+            teardown(state, new Error("runtime disposed"), false);
+          }
         }
         if (msg.name === "beginChatFileExport" && typeof value === "string") {
           state.chatFileExports.add(value);
@@ -1179,12 +1245,10 @@ interface CreateWebWorkerHostRuntimeOptions {
 
 export interface CreateWebWorkerPairingHostRuntimeOptions extends CreateWebWorkerHostRuntimeOptions {
   hostConfig: WebWorkerHostConfig;
-  runtimeKind?: "pairing";
 }
 
 export interface CreateWebWorkerSigningHostRuntimeOptions extends CreateWebWorkerHostRuntimeOptions {
   hostConfig: WebWorkerSigningHostConfig;
-  runtimeKind?: "signing";
 }
 
 export type WebWorkerHostCallbacks = RequiredHostCallbacks;
@@ -1194,10 +1258,10 @@ export function createWebWorkerPairingHostRuntime(
   host: WebWorkerHostCallbacks,
   options: CreateWebWorkerPairingHostRuntimeOptions,
 ): Promise<WorkerPairingHostRuntime> {
-  return createWebWorkerHostRuntime(worker, host, {
-    ...options,
-    runtimeKind: "pairing",
-  });
+  // No role default: a host that asks for none must put exactly what it put
+  // on the wire before the field existed, and the worker reads absent as
+  // "pairing".
+  return createWebWorkerHostRuntime(worker, host, options);
 }
 
 export function createWebWorkerSigningHostRuntime(
@@ -1207,7 +1271,7 @@ export function createWebWorkerSigningHostRuntime(
 ): Promise<WorkerSigningHostRuntime> {
   return createWebWorkerHostRuntime(worker, host, {
     ...options,
-    runtimeKind: "signing",
+    role: options.role ?? "signing",
   });
 }
 
@@ -1477,8 +1541,7 @@ function createWebWorkerHostRuntime(
             identityBackend: host.identityBackend !== undefined,
             coinageWallet: callbacks.nativeCoinage !== undefined,
           },
-          debuggerUrl: debuggerDial,
-          role: options.role,
+          debuggerUrl: debuggerEnablement.url,
         } satisfies MainToWorker);
       } else if (msg.kind === "ready") {
         state.coreWireSchemaHash = msg.schema;
@@ -1755,13 +1818,6 @@ function buildRuntime(
       return sendSessionActivationRequest(state, (requestId) => ({
         kind: "resetSessionState",
         requestId,
-      }));
-    },
-    activateLocalSession(secret: Uint8Array): Promise<void> {
-      return sendSessionActivationRequest(state, (requestId) => ({
-        kind: "activateLocalSession",
-        requestId,
-        secret,
       }));
     },
     activateLocalSessionWithIdentity(

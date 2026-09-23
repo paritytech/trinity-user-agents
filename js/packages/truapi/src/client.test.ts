@@ -276,41 +276,21 @@ describe("generated client transport", () => {
         );
         expect((await denied)._unsafeUnwrapErr()).toEqual({ tag: "Domain", value: reason });
 
-        const restored = client.account.deviceChat({ tag: "PaymentDenomination" });
-        const key = `0x${"00".repeat(32)}` as const;
-        fixture.receive(
-            wireFrame(
-                "p:2",
-                ids,
-                MESSAGE_TYPE_RESPONSE,
-                responseCodec.enc({
-                    success: true,
-                    value: {
-                        tag: "V2",
-                        value: {
-                            device: {
-                                identityAccountId: key,
-                                identityChatPublicKey: key,
-                                productAccount: {
-                                    dotNsIdentifier: "chat.dot",
-                                    derivationIndex: { tag: "Index", value: 1 },
-                                },
-                                accountId: key,
-                                chatPublicKey: key,
-                            },
-                            peers: [],
-                            opened: [],
-                            prepared: [],
-                            payments: [],
-                            richMessages: [],
-                            migrationInvitations: [],
-                            coinageCentsUnit: 10000n,
-                        },
-                    },
-                }),
-            ),
-        );
-        expect((await restored)._unsafeUnwrap().coinageCentsUnit).toBe(10000n);
+        void client.system.handshake();
+
+        const expectedPayload = T.VersionedHostHandshakeRequest.enc({
+            tag: "V1",
+            value: { codecVersion: TRUAPI_CODEC_VERSION },
+        });
+        // Second request on this client, so the handshake carries id `p:2`.
+        const expectedFrame = new Uint8Array(str.enc("p:2").length + 3 + expectedPayload.length);
+        expectedFrame.set(str.enc("p:2"), 0);
+        expectedFrame[str.enc("p:2").length] = 1; // system trait
+        expectedFrame[str.enc("p:2").length + 1] = 0; // handshake
+        expectedFrame[str.enc("p:2").length + 2] = MESSAGE_TYPE_REQUEST;
+        expectedFrame.set(expectedPayload, str.enc("p:2").length + 3);
+
+        expect(toHex(fixture.sent[fixture.sent.length - 1])).toBe(toHex(expectedFrame));
     });
 
     it("resolves a request from its versioned response envelope", async () => {
