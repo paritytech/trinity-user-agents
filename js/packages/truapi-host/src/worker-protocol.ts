@@ -143,19 +143,6 @@ export type MainToWorker =
       granted: boolean;
     }
   | {
-      kind: "setSubmitPreimagesLocally";
-      requestId: number;
-      /** Keep preimage submissions in the core instead of the Bulletin chain. */
-      local: boolean;
-    }
-  | {
-      kind: "setWithheldResources";
-      requestId: number;
-      /** Resource tags answered as refused, replacing any earlier set. */
-      tags: string[];
-    }
-  | { kind: "resetSessionState"; requestId: number }
-  | {
       kind: "activateLocalSessionWithIdentity";
       requestId: number;
       secret: Uint8Array;
