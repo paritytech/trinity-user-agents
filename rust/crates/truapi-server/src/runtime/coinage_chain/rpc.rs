@@ -286,10 +286,8 @@ impl HostCoinageChain {
             .iter()
             .enumerate()
         {
-            if hex_bytes(value)? == submitted {
-                if index.replace(i as u32).is_some() {
-                    return Err("duplicate submitted extrinsic in block".into());
-                }
+            if hex_bytes(value)? == submitted && index.replace(i as u32).is_some() {
+                return Err("duplicate submitted extrinsic in block".into());
             }
         }
         let index = index.ok_or("finalized block does not contain submitted extrinsic")?;

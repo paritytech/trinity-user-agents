@@ -30,3 +30,5 @@ hex = "0.4"
 default = ["std"]
 std = ["dep:getrandom"]
 wasm = ["std"]
+
+[lints]

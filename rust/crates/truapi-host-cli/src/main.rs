@@ -1785,6 +1785,7 @@ async fn start_signing_host(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_signing_runtime(
     network: NetworkConfig,
     coinage_instance_id: Option<u32>,

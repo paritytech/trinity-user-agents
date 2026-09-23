@@ -24,9 +24,11 @@ const PRODUCT: &str = "chat.dot";
 
 // Persistence tasks belong to the fixture session and are aborted and joined
 // at logout/drop, including on assertion failure.
+type SessionTask = (AbortHandle, std::thread::JoinHandle<()>);
+
 struct SessionTasks {
     live: Arc<AtomicBool>,
-    tasks: Arc<Mutex<Vec<(AbortHandle, std::thread::JoinHandle<()>)>>>,
+    tasks: Arc<Mutex<Vec<SessionTask>>>,
 }
 
 impl SessionTasks {
@@ -598,7 +600,13 @@ fn unsigned_routing_changes_are_rejected_before_plaintext_is_returned() {
         let message =
             wire::encode_rich_text_message("text", fixture.timestamp, Some("authenticated"), None)
                 .unwrap();
-        let packet = request(&actor, &identity, &peer, "routing", &[message.clone()]);
+        let packet = request(
+            &actor,
+            &identity,
+            &peer,
+            "routing",
+            std::slice::from_ref(&message),
+        );
         let mut changed_topic = packet.clone();
         changed_topic.topics = vec![[0x99; 32]];
         let mut changed_channel = packet.clone();
@@ -746,7 +754,7 @@ fn ordinary_polling_and_opening_do_not_activate_an_absent_or_guarded_purse() {
                             &identity,
                             &peer,
                             "ordinary",
-                            &[message.clone()],
+                            std::slice::from_ref(&message),
                         ),
                     },
                 )
@@ -830,8 +838,11 @@ fn prepare_ordinary_preserves_native_plaintext_without_retaining_history_or_deli
             None,
         )
         .unwrap();
-        let plaintext =
-            wire::encode_transport_request_plaintext("guest-request", &[message.clone()]).unwrap();
+        let plaintext = wire::encode_transport_request_plaintext(
+            "guest-request",
+            std::slice::from_ref(&message),
+        )
+        .unwrap();
         let prepared = actor
             .prepare(
                 &fixture.context,
@@ -1220,8 +1231,11 @@ fn legacy_scale_snapshot_migrates_once_without_losing_keys_custody_or_files() {
                 &fixture.context,
                 identity.account,
                 HostNativeChatRoute::Device,
-                wire::encode_transport_request_plaintext("legacy-outgoing", &[message.clone()])
-                    .unwrap(),
+                wire::encode_transport_request_plaintext(
+                    "legacy-outgoing",
+                    std::slice::from_ref(&message),
+                )
+                .unwrap(),
             )
             .await
             .unwrap()

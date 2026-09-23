@@ -947,7 +947,7 @@ impl RegularCoinTransferService {
                     .submitter
                     .prepare_unload_groups(&drafts)
                     .await
-                    .map_err(|error| RegularTransferError::Planning(error))?;
+                    .map_err(RegularTransferError::Planning)?;
                 if prepared.len() != drafts.len()
                     || prepared
                         .iter()

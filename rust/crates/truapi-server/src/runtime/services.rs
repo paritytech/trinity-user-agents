@@ -108,6 +108,7 @@ impl RuntimeServices {
     }
 
     /// Same as [`Self::new`], with optional Chat and native wallet dependencies.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn with_chat_platform(
         platform: Arc<dyn Platform>,
         host_info: HostInfo,

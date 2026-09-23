@@ -22,7 +22,7 @@ inclusion here is neither release availability nor deployment evidence. It does 
 [RFC 0017](0017-coinage-payment.md) receivables, encrypted cheques, and deposits using `MAIN_PURSE`, not a separate Chat
 purse. Native memos are not RFC 0017 cheques, and this implementation does not supply that RFC's general payment API.
 
-## Motivation and trust boundary
+## Motivation
 
 Ordinary Chat orchestration does not require a Host-owned conversation actor. Outgoing payments do require a stronger
 boundary: a compromised product must not obtain outgoing bearer secrets, select wallet inputs, authenticate its own
@@ -48,6 +48,8 @@ The Host device secret cannot be exported merely because ordinary Chat moved int
 ciphertext uses that device's key agreement; exporting it would expose outgoing payment memos. `Open` therefore accepts
 an authenticated complete external statement, not an arbitrary ciphertext/key pair. Own-signer reflections, invalid
 routes, and unadmitted senders must be rejected before any plaintext is returned.
+
+## Detailed Design
 
 ## API and compatibility
 

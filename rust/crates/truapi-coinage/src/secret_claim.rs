@@ -769,6 +769,25 @@ async fn fetch_exact(
     Ok(rows)
 }
 
+/// Secret-preserving claim operation; implementations do not expose memo bytes
+/// through a product or transport API.
+#[async_trait]
+pub trait ExternalMemoClaiming: Send + Sync {
+    /// Execute or resume a durable memo-keyed claim into this wallet.
+    async fn claim_external_memo(
+        &self,
+        memo: TransferMemo,
+        message_id: String,
+    ) -> Result<u128, String>;
+}
+
+/// Recover locally spent coins whose finalized on-chain value remains owned.
+#[async_trait]
+pub trait SpentCoinsRecovering: Send + Sync {
+    /// Reconcile and recover the supplied spent inventory.
+    async fn recover_spent_coins(&self, spent: Vec<Coin>) -> Result<u128, String>;
+}
+
 #[cfg(test)]
 mod tests {
     use parking_lot::Mutex as StdMutex;
@@ -1627,23 +1646,4 @@ mod tests {
         assert!(error.contains("non-spent"));
         assert!(rig.backend.transfers.lock().is_empty());
     }
-}
-
-/// Secret-preserving claim operation; implementations do not expose memo bytes
-/// through a product or transport API.
-#[async_trait]
-pub trait ExternalMemoClaiming: Send + Sync {
-    /// Execute or resume a durable memo-keyed claim into this wallet.
-    async fn claim_external_memo(
-        &self,
-        memo: TransferMemo,
-        message_id: String,
-    ) -> Result<u128, String>;
-}
-
-/// Recover locally spent coins whose finalized on-chain value remains owned.
-#[async_trait]
-pub trait SpentCoinsRecovering: Send + Sync {
-    /// Reconcile and recover the supplied spent inventory.
-    async fn recover_spent_coins(&self, spent: Vec<Coin>) -> Result<u128, String>;
 }

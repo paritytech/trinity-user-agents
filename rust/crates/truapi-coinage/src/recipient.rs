@@ -85,12 +85,11 @@ impl TransferRecipientService {
         direction: Direction,
     ) -> AbortHandle {
         let service = Arc::clone(self);
-        let handle = crate::tasks::spawn_abortable(&self.spawner, async move {
+        crate::tasks::spawn_abortable(&self.spawner, async move {
             while let Some(message) = messages.recv().await {
                 service.dispatch(message, direction);
             }
-        });
-        handle
+        })
     }
 
     fn dispatch(self: &Arc<Self>, message: CoinageSendMessage, direction: Direction) {

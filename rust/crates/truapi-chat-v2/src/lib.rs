@@ -218,6 +218,7 @@ pub fn context_bound_decrypt(
 }
 
 /// X25519 agreement followed by context-bound encryption.
+#[allow(clippy::too_many_arguments)]
 pub fn x25519_context_bound_encrypt_with_nonce(
     private_key: &[u8; 32],
     peer_public_key: &[u8; 32],
@@ -1519,6 +1520,7 @@ pub fn open_chat_request_v2(
 }
 /// Seal a first-contact request with explicit product, account, route, and
 /// direction binding. The clear header is authenticated as AEAD context.
+#[allow(clippy::too_many_arguments)]
 pub fn seal_context_bound_chat_request_v2_with_nonce(
     ephemeral_private_key: &[u8; 32],
     peer_public_key: &[u8; 32],
@@ -2127,13 +2129,12 @@ fn validate_file_node(node: &V2NodeEndpoint) -> Result<(), ChatError> {
         }
         port
     };
-    if let Some(port) = port {
-        if port.is_empty()
+    if let Some(port) = port
+        && (port.is_empty()
             || !port.bytes().all(|byte| byte.is_ascii_digit())
-            || port.parse::<u16>().is_err()
-        {
-            return Err(invalid());
-        }
+            || port.parse::<u16>().is_err())
+    {
+        return Err(invalid());
     }
     Ok(())
 }

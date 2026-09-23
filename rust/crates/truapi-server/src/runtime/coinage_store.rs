@@ -436,6 +436,7 @@ impl HostCoinageStore {
 
     /// Commit one native recovery scan batch, its horizon, and monotonic
     /// derivation counters together. Existing reservations always win.
+    #[allow(clippy::too_many_arguments)]
     pub async fn commit_inventory_batch(
         &self,
         progress_id: [u8; 32],

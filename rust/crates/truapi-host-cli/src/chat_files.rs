@@ -360,13 +360,13 @@ impl Export {
                 .sync_all()
                 .map_err(|_| error("Could not synchronize Chat export"))?;
         }
-        if let Some(file) = self.temporary.take() {
-            if let Err(cause) = file.persist_noclobber(&self.destination) {
-                self.temporary = Some(cause.file);
-                return Err(error(
-                    "Could not publish Chat export without overwriting an existing file",
-                ));
-            }
+        if let Some(file) = self.temporary.take()
+            && let Err(cause) = file.persist_noclobber(&self.destination)
+        {
+            self.temporary = Some(cause.file);
+            return Err(error(
+                "Could not publish Chat export without overwriting an existing file",
+            ));
         }
         // If this sync fails, retain the published state: cancellation may only
         // remove a staging file, never the completed user destination.

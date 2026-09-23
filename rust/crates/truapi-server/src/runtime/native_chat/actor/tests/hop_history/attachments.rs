@@ -335,7 +335,7 @@ fn attachment_preparation_retries_exact_upload_and_restores_download_custody() {
                     &identity,
                     &peer,
                     "another-forward",
-                    &[forwarded.clone()],
+                    std::slice::from_ref(&forwarded),
                 ),
             )
             .await

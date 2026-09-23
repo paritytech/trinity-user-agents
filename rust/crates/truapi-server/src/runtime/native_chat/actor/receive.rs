@@ -154,6 +154,7 @@ impl NativeChatActor {
         Err(Error::InvalidStatement)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn open_exchange(
         self: &Arc<Self>,
         context: &NativeChatContext,
@@ -684,21 +685,20 @@ impl NativeChatActor {
                     .outbox
                     .iter()
                     .find(|entry| entry.peer == identity && entry.request_id == request_id)
+                    && response_code == 0
                 {
-                    if response_code == 0 {
-                        if let OutgoingKind::Payment(id) = entry.kind {
-                            if !state.payment_acknowledgments.contains(&id) {
-                                if state.payment_acknowledgments.len() >= MAX_RECEIPTS {
-                                    return Err(Error::StorageUnavailable);
-                                }
-                                state.payment_acknowledgments.push(id);
-                            }
+                    if let OutgoingKind::Payment(id) = entry.kind
+                        && !state.payment_acknowledgments.contains(&id)
+                    {
+                        if state.payment_acknowledgments.len() >= MAX_RECEIPTS {
+                            return Err(Error::StorageUnavailable);
                         }
-                        if entry.kind != OutgoingKind::Revocation || revocation_ready {
-                            state.outbox.retain(|entry| {
-                                !(entry.peer == identity && entry.request_id == request_id)
-                            });
-                        }
+                        state.payment_acknowledgments.push(id);
+                    }
+                    if entry.kind != OutgoingKind::Revocation || revocation_ready {
+                        state.outbox.retain(|entry| {
+                            !(entry.peer == identity && entry.request_id == request_id)
+                        });
                     }
                 }
                 Ok(())
@@ -941,7 +941,7 @@ fn exchange_digest(messages: &[OpenedDeviceMessage]) -> Result<[u8; 32], Error> 
                     key.encode_to(&mut *bytes);
                 }
                 hasher.update(&(bytes.len() as u32).to_le_bytes());
-                hasher.update(&*bytes);
+                hasher.update(&bytes);
                 continue;
             }
             OpenedDeviceMessage::CompactedHistory(reference) => {

@@ -278,7 +278,6 @@ impl QueryScan {
 /// another device using an index inside an earlier empty gap. Only new hits
 /// near the frontier extend it; passive refreshes do not add 2,000 indices.
 /// Calls at an already completed finalized head reuse the existing outcome.
-
 pub(super) async fn refresh_or_resume(
     store: Arc<HostCoinageStore>,
     chain: Arc<HostCoinageChain>,

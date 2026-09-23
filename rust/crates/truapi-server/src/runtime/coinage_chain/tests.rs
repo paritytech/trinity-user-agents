@@ -431,7 +431,7 @@ fn read_only_denominations_use_the_selected_finalized_instance_and_reject_invali
                 .is_err()
             );
         }
-        assert!(matches!(
+        assert!(
             HostCoinageChain::selected_denomination_context(
                 source.as_ref(),
                 [4; 32],
@@ -439,9 +439,9 @@ fn read_only_denominations_use_the_selected_finalized_instance_and_reject_invali
                 &|| false,
                 test_spawner(),
             )
-            .await,
-            Err(_)
-        ));
+            .await
+            .is_err()
+        );
     });
 }
 

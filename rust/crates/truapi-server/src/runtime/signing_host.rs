@@ -397,10 +397,10 @@ impl SigningHost {
         self.session_state.set_session(session);
         drop(state);
         self.native_chat.release();
-        if let Some(session) = self.current_local_session() {
-            if let Ok(context) = self.native_chat_context(&session) {
-                self.native_chat.resume_wallet_recovery(context);
-            }
+        if let Some(session) = self.current_local_session()
+            && let Ok(context) = self.native_chat_context(&session)
+        {
+            self.native_chat.resume_wallet_recovery(context);
         }
     }
 

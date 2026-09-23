@@ -418,17 +418,17 @@ impl TransferStateCommitter for HostCoinageStore {
         let vouchers = vouchers.to_vec();
         self.mutate(move |state| {
             for index in coins {
-                if let Some(coin) = state.coins.get_mut(&index) {
-                    if coin.state == CoinState::PendingTransfer {
-                        coin.state = CoinState::Available;
-                    }
+                if let Some(coin) = state.coins.get_mut(&index)
+                    && coin.state == CoinState::PendingTransfer
+                {
+                    coin.state = CoinState::Available;
                 }
             }
             for index in vouchers {
-                if let Some(voucher) = state.vouchers.get_mut(&index) {
-                    if voucher.local_state == VoucherLocalState::PendingTransfer {
-                        voucher.local_state = VoucherLocalState::Available;
-                    }
+                if let Some(voucher) = state.vouchers.get_mut(&index)
+                    && voucher.local_state == VoucherLocalState::PendingTransfer
+                {
+                    voucher.local_state = VoucherLocalState::Available;
                 }
             }
             Ok(())

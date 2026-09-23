@@ -15,10 +15,11 @@ use truapi_platform::{
 
 // Scripts own only the native service side. Rust storage remains guarded, and
 // encrypted transport acceptance/restart runs against the actual Host stores.
+type NativeCall =
+    dyn Fn(&NativeCoinageRequest) -> Result<Response, truapi::v01::GenericError> + Send + Sync;
+
 struct NativeService {
-    call: Box<
-        dyn Fn(&NativeCoinageRequest) -> Result<Response, truapi::v01::GenericError> + Send + Sync,
-    >,
+    call: Box<NativeCall>,
 }
 
 impl NativeService {
@@ -356,7 +357,13 @@ fn locked_native_wallet_never_falls_back_and_ordinary_chat_stays_available() {
                 fixture.context.clone(),
                 PRODUCT.into(),
                 HostProductDeviceChatRequest::Open {
-                    statement: request(&actor, &identity, &peer, "ordinary", &[text.clone()]),
+                    statement: request(
+                        &actor,
+                        &identity,
+                        &peer,
+                        "ordinary",
+                        std::slice::from_ref(&text),
+                    ),
                 },
             )
             .await

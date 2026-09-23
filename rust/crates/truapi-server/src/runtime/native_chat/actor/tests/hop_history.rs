@@ -301,7 +301,7 @@ fn nested_history_pages_survive_reopen_until_product_prepares_native_ack() {
             &identity,
             &peer,
             "history-request",
-            &[compacted.clone()],
+            std::slice::from_ref(&compacted),
         );
         let first_page = actor
             .open_statement(&fixture.context, &registry, packet.clone())

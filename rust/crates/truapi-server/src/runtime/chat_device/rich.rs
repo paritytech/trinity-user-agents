@@ -46,10 +46,10 @@ pub(crate) fn validate_metadata(metadata: &Metadata) -> Result<(), ChatDeviceErr
         }
         Kind::Video { thumbnail, .. } => thumbnail.as_ref(),
     };
-    if let Some(bytes) = thumbnail {
-        if bytes.len() > 4096 || core::str::from_utf8(bytes).is_err() {
-            return Err(ChatDeviceError::InvalidEncoding);
-        }
+    if let Some(bytes) = thumbnail
+        && (bytes.len() > 4096 || core::str::from_utf8(bytes).is_err())
+    {
+        return Err(ChatDeviceError::InvalidEncoding);
     }
     Ok(())
 }

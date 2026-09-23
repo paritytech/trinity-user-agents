@@ -19,6 +19,12 @@ use truapi_platform::async_trait;
 const PEOPLE: &[u8; 32] = b"pop:polkadot.network/people     ";
 const PEOPLE_LITE: &[u8; 32] = b"pop:polkadot.network/people-lite";
 
+type SplitDestinations = (
+    Vec<truapi_coinage::pallet::SplitDestination>,
+    Vec<[u8; 32]>,
+    u128,
+);
+
 impl HostCoinageChain {
     async fn person_proof(
         &self,
@@ -232,14 +238,7 @@ impl HostCoinageChain {
         &self,
         coins: &[&Coin],
         snapshot: &Snapshot,
-    ) -> Result<
-        (
-            Vec<truapi_coinage::pallet::SplitDestination>,
-            Vec<[u8; 32]>,
-            u128,
-        ),
-        String,
-    > {
+    ) -> Result<SplitDestinations, String> {
         if coins.is_empty() {
             return Err("Coinage transfer has no destinations".into());
         }

@@ -519,10 +519,11 @@ fn completed_send_retry_repairs_transport_custody_offline_without_review() {
             .await
             .unwrap();
         assert_eq!(card, operation.card);
-        let attempts = transport.attempts.lock();
-        assert_eq!(attempts.len(), 1);
-        assert!(attempts[0].1.as_slice() == operation.memo.as_slice());
-        drop(attempts);
+        {
+            let attempts = transport.attempts.lock();
+            assert_eq!(attempts.len(), 1);
+            assert!(attempts[0].1.as_slice() == operation.memo.as_slice());
+        }
         assert_eq!(
             wallet
                 .pending_handoffs(&context, "chat.dot", &[])

@@ -181,6 +181,7 @@ impl NativeChatActor {
         Ok(bytes)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn prepare_entry(
         &self,
         context: &NativeChatContext,
@@ -611,10 +612,10 @@ impl NativeChatActor {
                     if record.published && position.is_none() {
                         return Ok(());
                     }
-                    if let Some(position) = position {
-                        if state.outbox[position].digest != digest {
-                            return Err(Error::OperationConflict);
-                        }
+                    if let Some(position) = position
+                        && state.outbox[position].digest != digest
+                    {
+                        return Err(Error::OperationConflict);
                     }
                     let statement = actor.multi_statement(
                         state,

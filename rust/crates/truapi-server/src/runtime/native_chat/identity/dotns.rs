@@ -90,15 +90,14 @@ impl Directory {
         // Gateway-issued lite names retain the original AccountId32 even before
         // the person maps a Revive address. This is a metadata-directed exact
         // lookup, and still must agree with the live forward registry owner.
-        if is_lite_username(username) {
-            if let Some(key) = self.schema.lite_owner_key(username)? {
-                if let Some(encoded) = self.snapshot.storage_value(&key).await? {
-                    return Ok(Some(Owner {
-                        account: Some(account_for_owner(&encoded, &owner)?),
-                        address: owner,
-                    }));
-                }
-            }
+        if is_lite_username(username)
+            && let Some(key) = self.schema.lite_owner_key(username)?
+            && let Some(encoded) = self.snapshot.storage_value(&key).await?
+        {
+            return Ok(Some(Owner {
+                account: Some(account_for_owner(&encoded, &owner)?),
+                address: owner,
+            }));
         }
         // ReviveApi_account_id is the canonical mapped H160 -> AccountId32
         // conversion used by dotns-cli's get_substrate_address. Never pad a
