@@ -14,8 +14,9 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
   deadlines, multi-touch input, and image clipboard output (#540)
 - let browser signing hosts request personhood-backed Statement Store
   allowances for products instead of reporting the allocator as native-only
-- migrate the generic runtime and Rust client to SDK 0.16's scoped wire codec 2;
-  product guests must be rebuilt rather than sending codec-1 frames
+- migrate the generic runtime and Rust client to SDK 0.16's scoped wire codec 3;
+  the handshake requires an exact codec match, so product guests built against
+  an earlier codec must be rebuilt
 
 ### Added
 
@@ -23,7 +24,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
   payment review and durable receipt state; keep Chat cryptography inside the
   Host rather than product or platform adapters (#709).
 
-- Add `account.productDeviceChat` for host-private Chat v2 identity binding and
+- Add `account.deviceChat` for host-private Chat v2 identity binding and
   identity-route sealing/opening through local or paired account authorities,
   guarded by a dedicated, product-scoped Chat-authority permission.
 - report local-wallet registration stages and retryable chain-read errors through

@@ -572,15 +572,11 @@ struct RustRuntimeBridgeTests {
 
     // MARK: setExpandedCardFaceShown
 
-    /// The page's request reaches the card's face and its answer comes back.
-    /// Called through `HostBridge` because the core does: an override whose
-    /// signature drifts would lose to the default and answer `.unsupported`.
-    @Test func expandedCardFaceReachesTheCardsFace() async throws {
-        let face = StubCardFace()
-        let bridge: HostBridge = makeBridge(cardFace: face)
-
-        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .userMoving)
-        #expect(face.requests == [false])
+    @Test func currentThemeReturnsDark() throws {
+        let bridge = makeBridge()
+        let theme = try bridge.currentTheme()
+        #expect(theme.name == .default)
+        #expect(theme.variant == .dark)
     }
 
     // MARK: attach

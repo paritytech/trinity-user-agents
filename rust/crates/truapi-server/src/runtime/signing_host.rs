@@ -4526,10 +4526,18 @@ mod tests {
         service: &super::sso_service::SigningHostSsoService,
         payload: SsoProductDeviceChatOperation,
     ) -> ProductDeviceChatResponse {
+        sso_chat_as(service, "myapp.dot", payload).await
+    }
+
+    async fn sso_chat_as(
+        service: &super::sso_service::SigningHostSsoService,
+        calling_product_id: &str,
+        payload: SsoProductDeviceChatOperation,
+    ) -> ProductDeviceChatResponse {
         let message = RemoteMessage::request(
             "chat-consent".to_string(),
             ProductRequest {
-                calling_product_id: "myapp.dot".to_string(),
+                calling_product_id: calling_product_id.to_string(),
                 payload,
             },
         );
@@ -4637,6 +4645,65 @@ mod tests {
                 ))
             );
             assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
+        });
+    }
+
+    #[test]
+    fn sso_chat_keys_consent_and_device_on_the_attested_product() {
+        futures::executor::block_on(async {
+            let platform = Arc::new(StubPlatform {
+                chat_authority_confirmed: true,
+                ..StubPlatform::default()
+            });
+            let (_, activation) = signing_runtime_with_platform(platform.clone());
+            activation
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let service = super::sso_service::SigningHostSsoService::new(activation);
+            PermissionsService::new(platform.as_ref(), platform.as_ref(), "refused.dot")
+                .set_authorization_status(
+                    &PermissionAuthorizationRequest::ChatAuthority,
+                    PermissionAuthorizationStatus::Denied,
+                )
+                .await
+                .unwrap();
+            let initialize = SsoProductDeviceChatOperation::V3(
+                truapi::latest::HostProductDeviceChatRequest::Initialize,
+            );
+
+            assert_eq!(
+                sso_chat_as(&service, "refused.dot", initialize.clone()).await,
+                Err(HostProductDeviceChatError::V1(
+                    truapi::latest::HostProductDeviceChatError::AccessNotGranted,
+                ))
+            );
+            assert!(platform.chat_authority_reviews.lock().is_empty());
+
+            let HostProductDeviceChatResponse::V2(approved) =
+                sso_chat_as(&service, "approved.dot", initialize.clone())
+                    .await
+                    .unwrap();
+            assert_eq!(
+                approved.device.product_account.dot_ns_identifier,
+                "approved.dot"
+            );
+            let HostProductDeviceChatResponse::V2(other) =
+                sso_chat_as(&service, "other.dot", initialize)
+                    .await
+                    .unwrap();
+            assert_eq!(other.device.product_account.dot_ns_identifier, "other.dot");
+            assert_ne!(approved.device.account_id, other.device.account_id);
+            assert_eq!(
+                platform
+                    .chat_authority_reviews
+                    .lock()
+                    .iter()
+                    .map(|review| review.product_id.as_str())
+                    .collect::<Vec<_>>(),
+                ["approved.dot", "other.dot"],
+                "each attested product is prompted under its own identity"
+            );
         });
     }
 

@@ -182,7 +182,7 @@ struct TrUAPINativeCoinageTests {
     }
 
     @Test func incomingPartialKeepsRawPrecisionAndUnfinalizedStatusesStayPending() {
-        let credited = BigUInt("340282366920938463463374607431768211")!
+        let credited: BigUInt = "340282366920938463463374607431768211"
         #expect(TrUAPINativeCoinage.topUpOutcome(.claimedPartially(actualClaimed: credited)) == .partial(creditedAmountRaw: String(credited)))
         #expect(TrUAPINativeCoinage.topUpOutcome(.detecting) == .pending)
         #expect(TrUAPINativeCoinage.topUpOutcome(.claiming) == .pending)

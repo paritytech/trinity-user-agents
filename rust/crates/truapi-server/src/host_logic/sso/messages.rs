@@ -122,7 +122,10 @@ pub enum SsoRequestOutcome<T> {
 /// SCALE encodes the caller followed directly by the payload fields.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct ProductRequest<P> {
-    /// Product making the request.
+    /// Product making the request, as attested by the paired host.
+    ///
+    /// The signing host cannot observe the paired host's products, so it keys
+    /// permissions and product-derived keys on this attested identity.
     pub calling_product_id: String,
     /// Canonical payload sent to the signing host.
     pub payload: P,

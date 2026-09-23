@@ -634,6 +634,62 @@ fn unsigned_routing_changes_are_rejected_before_plaintext_is_returned() {
 }
 
 #[test]
+fn identity_route_rejects_first_contact_plaintext() {
+    block_on(async {
+        let fixture = Fixture::new();
+        let actor = fixture.actor().await;
+        let identity = IdentityFixture::new();
+        let peer = DeviceFixture::new(1);
+        seed_peer(&actor, &identity, &[&peer]).await;
+        let registry = NativeChatRegistry::default();
+        let invitation = wire::encode_chat_request_v2(&wire::V2ChatRequestV2 {
+            message: wire::V2ChatRequestMessageV2 {
+                message_id: "first-contact".into(),
+                timestamp: fixture.timestamp,
+                content: wire::V2ChatRequestContentV2 {
+                    identity_proof: wire::V2ChatRequestIdentityProof {
+                        identity_account_id: identity.account,
+                        proof: [0x08; 32],
+                    },
+                    device_enc_pub_key: peer.public_key(),
+                    push_token: None,
+                    welcome_text: None,
+                },
+            },
+            proof: wire::V2ChatRequestProof {
+                signature: vec![0x09; 64],
+                signer: peer.account().to_vec(),
+            },
+        })
+        .unwrap();
+        for response in [false, true] {
+            let packet = native_packet(&actor, &identity, &peer, &invitation, response, true);
+            assert_eq!(
+                actor
+                    .open_statement(&fixture.context, &registry, packet)
+                    .await,
+                Err(Error::InvalidStatement)
+            );
+        }
+        let message =
+            wire::encode_rich_text_message("text", fixture.timestamp, Some("root"), None).unwrap();
+        let packet = native_packet(
+            &actor,
+            &identity,
+            &peer,
+            &wire::encode_transport_request_plaintext("root", &[message]).unwrap(),
+            false,
+            true,
+        );
+        let (opened, _) = actor
+            .open_statement(&fixture.context, &registry, packet)
+            .await
+            .unwrap();
+        assert_eq!(opened.len(), 1);
+    });
+}
+
+#[test]
 fn incoming_payment_is_returned_intact_without_import_or_acknowledgment() {
     block_on(async {
         let fixture = Fixture::new();

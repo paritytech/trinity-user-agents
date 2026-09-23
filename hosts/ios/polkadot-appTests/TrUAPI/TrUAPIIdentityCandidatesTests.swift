@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import NovaCrypto
 import SubstrateSdk
 @testable import polkadot_app
 

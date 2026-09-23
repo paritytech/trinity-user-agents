@@ -2618,7 +2618,6 @@ impl<'a> Cursor<'a> {
         })?))
     }
 
-    #[cfg(feature = "std")]
     fn read_compact_u128(&mut self, field: &str) -> Result<u128, ChatError> {
         let first = self.read_u8(field)?;
         let mode = first & 0b11;
@@ -2680,33 +2679,7 @@ impl<'a> Cursor<'a> {
     }
 
     fn read_balance(&mut self, field: &str) -> Result<String, ChatError> {
-        let first = self.read_u8(field)?;
-        let mode = first & 0b11;
-        let value = match mode {
-            0b00 => u128::from(first >> 2),
-            0b01 => {
-                let next = self.read_exact(1, field)?[0];
-                u128::from(u16::from_le_bytes([first, next]) >> 2)
-            }
-            0b10 => {
-                let rest = self.read_exact(3, field)?;
-                u128::from(u32::from_le_bytes([first, rest[0], rest[1], rest[2]]) >> 2)
-            }
-            0b11 => {
-                let len = usize::from(first >> 2) + 4;
-                if len > 16 {
-                    return Err(ChatError::InvalidEncoding(format!(
-                        "{field}: balance exceeds u128"
-                    )));
-                }
-                let bytes = self.read_exact(len, field)?;
-                let mut padded = [0_u8; 16];
-                padded[..len].copy_from_slice(bytes);
-                u128::from_le_bytes(padded)
-            }
-            _ => unreachable!(),
-        };
-        Ok(value.to_string())
+        self.read_compact_u128(field).map(|value| value.to_string())
     }
 
     fn read_string(&mut self, field: &str) -> Result<String, ChatError> {
@@ -3216,6 +3189,35 @@ mod tests {
 
         let err = decode_message(&encoded).unwrap_err();
         assert!(err.to_string().contains("truncated at block_hash"));
+    }
+
+    #[test]
+    fn send_legacy_rejects_non_canonical_amount() {
+        let encode = |amount: &[u8]| {
+            let mut encoded = Vec::new();
+            encode_string(&mut encoded, "msg-send-legacy").unwrap();
+            encoded.extend_from_slice(&2001_u64.to_le_bytes());
+            encoded.push(0);
+            encoded.push(2);
+            encoded.extend_from_slice(amount);
+            encoded.extend_from_slice(&[0x11; 32]);
+            encoded.extend_from_slice(&[0x22; 32]);
+            encoded
+        };
+
+        assert!(decode_message(&encode(&[10 << 2])).is_ok());
+        for amount in [
+            &[(10 << 2) | 0b01, 0][..],
+            &[(10 << 2) | 0b10, 0, 0, 0][..],
+            &[0b11, 10, 0, 0, 0][..],
+            &[(1 << 2) | 0b11, 0, 0, 0, 0x40, 0][..],
+        ] {
+            let err = decode_message(&encode(amount)).unwrap_err();
+            assert!(
+                err.to_string().contains("non-canonical"),
+                "{amount:?}: {err}"
+            );
+        }
     }
 
     #[test]

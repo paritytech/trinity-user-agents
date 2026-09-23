@@ -98,6 +98,13 @@ identity/device plaintext uses tagged native request/response encoding. The prod
 timestamps. The Host validates legal own-device lifecycle advertisements and authenticates peer-controlled changes.
 `Prepare` must not become an outgoing payment-memo or private file/history capability injection path.
 
+Invitation and identity routes use the native peers' cipher suite: X25519, HKDF-SHA256 with empty salt and info, and
+ChaCha20-Poly1305 without associated data. Neither key nor ciphertext names its route, so a first-contact request
+sealed to an identity key also decrypts on the identity route. Each route therefore classifies its complete plaintext
+before returning anything, and first-contact plaintext is rejected on identity and device routes. The context-bound
+suite, which binds product, sender, recipient and channel into the authenticated data, stays disabled on native routes
+until native peers adopt it; enabling it before then would break interoperability with them.
+
 Native identifiers, content, recipients, storage and nested history remain bounded. Invalid input is rejected rather
 than treated as an opaque signing/decryption tunnel. Capacity exhaustion must not evict live custody or idempotency
 commitments.
@@ -135,7 +142,14 @@ errors. Failure or timeout is not payment cancellation.
 
 ## Authentication and permissions
 
-Calling-product identity comes from the Host connection/SSO context, not caller labels. Device state is scoped to
+On a local Host, calling-product identity comes from the Host connection, never from a product-supplied label. Over
+encrypted SSO, the signing Host cannot observe products running on the paired Host: the paired Host is the
+authenticated principal, and the `calling_product_id` in each request is its attestation of the calling product. The
+signing Host keys permission grants, Chat authority and product-derived keys on that attested identity, as it already
+does for every other SSO method, including AutoSigning's export of the product root key. A compromised paired Host is
+therefore outside this boundary: it can act as any product that host could already act as. Verifying product identity
+at the signing Host would need per-product attestation across all SSO methods and is not part of this design. Device
+state is scoped to
 wallet, network, product and installation; the allocator and imported source identity are wallet/network-wide. Handles
 and continuation IDs must not cross these boundaries.
 
