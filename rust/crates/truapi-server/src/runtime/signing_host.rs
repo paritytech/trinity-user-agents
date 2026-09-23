@@ -4661,7 +4661,12 @@ mod tests {
                 .await
                 .unwrap();
             let service = super::sso_service::SigningHostSsoService::new(activation);
-            PermissionsService::new(platform.as_ref(), platform.as_ref(), "refused.dot")
+            let refused = truapi_platform::ProductContext::new_with_execution(
+                "refused.dot".to_owned(),
+                truapi_platform::ProductExecutionKind::Worker,
+            )
+            .expect("test product id is valid");
+            PermissionsService::new(platform.as_ref(), platform.as_ref(), &refused)
                 .set_authorization_status(
                     &PermissionAuthorizationRequest::ChatAuthority,
                     PermissionAuthorizationStatus::Denied,
