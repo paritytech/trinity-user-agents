@@ -156,7 +156,15 @@ pub(super) async fn require_authorized(
 ) -> Result<(), ChatError> {
     context.require_current()?;
     let platform = context.services.platform.as_ref();
-    let permissions = PermissionsService::new(platform, platform, product);
+    // `PermissionsService` takes the full product context upstream, but a chat
+    // context serves several products over one session, so the product stays a
+    // per-call argument rather than context state. Permission lookups key only
+    // on `product_id`; `Worker` is the execution kind because it is the only
+    // one that may serve the Chat modality.
+    let product =
+        ProductContext::new_with_execution(product.to_owned(), ProductExecutionKind::Worker)
+            .map_err(|_| ChatError::AccessNotGranted)?;
+    let permissions = PermissionsService::new(platform, platform, &product);
     if permissions
         .authorization_status(&PermissionAuthorizationRequest::ChatAuthority)
         .await
@@ -175,7 +183,15 @@ pub(super) async fn require_upload_authorized(
 ) -> Result<(), ChatError> {
     require_authorized(context, product).await?;
     let platform = context.services.platform.as_ref();
-    let permissions = PermissionsService::new(platform, platform, product);
+    // `PermissionsService` takes the full product context upstream, but a chat
+    // context serves several products over one session, so the product stays a
+    // per-call argument rather than context state. Permission lookups key only
+    // on `product_id`; `Worker` is the execution kind because it is the only
+    // one that may serve the Chat modality.
+    let product =
+        ProductContext::new_with_execution(product.to_owned(), ProductExecutionKind::Worker)
+            .map_err(|_| ChatError::AccessNotGranted)?;
+    let permissions = PermissionsService::new(platform, platform, &product);
     if permissions
         .authorization_status(&PermissionAuthorizationRequest::Remote(
             RemotePermissionRequest {

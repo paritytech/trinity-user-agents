@@ -31,10 +31,10 @@ use truapi_platform::{
     MainPurseChatPaymentReview, NativeChatFileExportRequest, NativeChatFilePickRequest,
     NativeChatFilesHost, NativeChatPickedFile, Navigation as PlatformNavigation,
     Notifications as PlatformNotifications, PairingHostConfig, Permissions as PlatformPermissions,
-    PlatformInfo, PreimageHost, ProductContext, ProductStorage as PlatformProductStorage,
-    ProductSubtreeReview, ResourceAllocationReview, SignPayloadReview, SignRawReview,
-    SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
-    UserConfirmationReview,
+    PlatformInfo, PreimageHost, ProductContext, ProductOperations as PlatformProductOperations,
+    ProductStorage as PlatformProductStorage, ProductSubtreeReview, ResourceAllocationReview,
+    SignPayloadReview, SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost,
+    UserConfirmation, UserConfirmationReview,
 };
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
 

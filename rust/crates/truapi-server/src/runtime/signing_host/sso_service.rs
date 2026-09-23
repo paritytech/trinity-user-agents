@@ -6,9 +6,9 @@ use std::sync::Arc;
 use tracing::warn;
 use truapi::latest as api;
 use truapi_platform::{
-    CreateTransactionReview, PermissionAuthorizationStatus, ResourceAllocationReview,
-    SignPayloadReview, SignRawReview, StatementStoreProductSignReview, UserConfirmationReview,
-    normalize_product_identifier,
+    CreateTransactionReview, PermissionAuthorizationStatus, ProductContext, ProductExecutionKind,
+    ResourceAllocationReview, SignPayloadReview, SignRawReview, StatementStoreProductSignReview,
+    UserConfirmationReview, normalize_product_identifier,
 };
 
 use super::SigningHost;

@@ -3288,9 +3288,10 @@ mod tests {
         app.handle_event(UiEvent::Approval {
             action: "pay".to_string(),
             detail: String::new(),
+            kind: ApprovalKind::Action,
             response,
         });
-        assert!(!approval.blocking_recv().unwrap());
+        assert_eq!(approval.blocking_recv().unwrap(), PermissionDecision::Deny);
         app.handle_busy_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
         assert_eq!(answer.blocking_recv().unwrap(), None);
         assert!(!app.transcript_text().contains("/private/"));

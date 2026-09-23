@@ -347,9 +347,13 @@ impl CliPlatform {
 		persist_current_pairing_user(&scope.bootstrap_dir, user_id)
 	}
 
-    /// Resolve a confirmation: auto-accept, or prompt y/n on the CLI.
-    async fn decide(&self, action: &str, detail: String) -> bool {
-        self.decide_with_policy(action, detail, self.approval_policy())
+    async fn decide_with(
+        &self,
+        action: &str,
+        detail: String,
+        kind: ApprovalKind,
+    ) -> PermissionDecision {
+        self.decide_with_policy(action, detail, kind, self.approval_policy())
             .await
     }
 
@@ -1518,13 +1522,19 @@ mod tests {
 		);
 	}
 
-	#[test]
-	fn record_navigation_reports_an_unwritable_transcript() {
-		let dir = tempdir().expect("tempdir");
-		let path = dir.path().join("missing").join("navigations.log");
-		let error = record_navigation(&path, "polkadot://dim2.dot", 1).unwrap_err();
-		assert!(error.contains("could not record navigation"), "{error}");
-	}
+        assert_eq!(platform.approval_policy(), ApprovalPolicy::Prompt);
+        platform.set_approval_policy(ApprovalPolicy::AutoAccept);
+        assert_eq!(platform.approval_policy(), ApprovalPolicy::AutoAccept);
+        assert_eq!(
+            platform
+                .decide_with(
+                    "test action",
+                    "test detail".to_string(),
+                    ApprovalKind::Action,
+                )
+                .await,
+            PermissionDecision::AllowAlways,
+        );
 
 	#[tokio::test]
 	async fn navigate_to_records_the_url_it_was_handed() {

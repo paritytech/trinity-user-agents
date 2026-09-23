@@ -494,22 +494,23 @@ console.log(JSON.stringify({
 		let script = project.path().join("script.ts");
 		fs::write(&script, "console.log('hello');\n")?;
 
-		let command = command(
-			"ws://127.0.0.1:1234",
-			&ProductId::for_test("example.dot"),
-			&script,
-			ScriptHostRole::SigningHost,
-		)?;
+        let command = command(
+            "ws://127.0.0.1:1234",
+            "example.dot",
+            &script,
+            ScriptHostRole::SigningHost,
+        )?;
+        let project_directory = fs::canonicalize(project.path())?;
 
-		assert_eq!(
-			command
-				.as_std()
-				.get_envs()
-				.find_map(|(key, value)| { (key == "TRUAPI_SCRIPT_CWD").then_some(value) }),
-			Some(Some(project.path().as_os_str()))
-		);
-		Ok(())
-	}
+        assert_eq!(
+            command
+                .as_std()
+                .get_envs()
+                .find_map(|(key, value)| { (key == "TRUAPI_SCRIPT_CWD").then_some(value) }),
+            Some(Some(project_directory.as_os_str()))
+        );
+        Ok(())
+    }
 
 	#[test]
 	fn editor_command_accepts_quoted_arguments_without_a_shell() -> Result<()> {
