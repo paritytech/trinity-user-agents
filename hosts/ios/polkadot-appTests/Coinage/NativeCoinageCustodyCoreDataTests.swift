@@ -73,9 +73,11 @@ struct NativeCoinageCustodyCoreDataTests {
         #expect(try await ledger.getHandoffKeys().isEmpty)
     }
 
-    private func key(_ index: UInt64) -> Data { Data(repeating: UInt8(index), count: 32) }
+    private func key(_ index: CoinageKeyIndex) -> Data {
+        Data(repeating: UInt8(index.item), count: 32)
+    }
 
-    private func custody(id: String, indices: [UInt64]) -> NativeTransferCustody {
+    private func custody(id: String, indices: [CoinageKeyIndex]) -> NativeTransferCustody {
         NativeTransferCustody(custodyId: id, entries: indices.map {
             NativeTransferCustody.Entry(coinDerivationIndex: $0, valueExponent: 0, publicKey: key($0))
         })
@@ -88,7 +90,7 @@ struct NativeCoinageCustodyCoreDataTests {
                               outputs: [.coin(2, key(2))])
     }
 
-    private func seed(_ indices: [UInt64], facade: UserDataStorageTestFacade) async throws {
+    private func seed(_ indices: [CoinageKeyIndex], facade: UserDataStorageTestFacade) async throws {
         let repo = facade.makeRepo(mapper: CoinMapper())
         let coins = indices.map { Coin(exponent: 0, derivationIndex: $0, age: nil, publicKey: key($0)) }
         try await repo.saveOperation({ coins }, { [] }).asyncExecute()
