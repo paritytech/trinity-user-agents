@@ -79,7 +79,7 @@ pub use runtime::{
     AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
     PairingProposal, PairingProposalMetadata, ResponderExit,
 };
-pub use runtime::{LocalIdentity, LocalIdentityContext};
+pub use runtime::{LocalIdentity, LocalIdentityContext, WalletAllowanceSnapshot};
 pub use truapi_platform::{
     CoreStorageKeyDescription, CoreStorageKeyDescriptionError, HostRuntimeConfig,
     PairingHostConfig, PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform,

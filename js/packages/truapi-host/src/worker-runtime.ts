@@ -36,6 +36,10 @@ import type {
 import { errorMessage } from "./error.js";
 import { resolveLocalIdentity } from "./worker-local-identity.js";
 import {
+  validateAllowanceProductIds,
+  validateWalletAllowanceSnapshot,
+} from "./wallet-allowances.js";
+import {
   CHAT_ACTION_ENTRY_POINT,
   RENDERER_ACTION_ENTRY_POINT,
   handlePublishAction,
@@ -697,6 +701,62 @@ const renders: RenderSubscriptions = new Map();
 let wasm: WasmModuleShape | null = null;
 let identityAbort: AbortController | null = null;
 const identityOperations = new Set<Promise<void>>();
+let allowanceNetworkSuffix: string | null = null;
+let allowanceGeneration = 0;
+const allowanceOperations = new Set<Promise<void>>();
+
+function handleWalletAllowanceSnapshot(
+  requestId: number,
+  input: string[],
+): void {
+  const rt = runtime;
+  const generation = allowanceGeneration;
+  const operation = (async () => {
+    try {
+      if (!rt || !isSigningRuntime(rt) || allowanceNetworkSuffix === null) {
+        throw new Error(
+          "wallet allowance inspection requires a signing runtime",
+        );
+      }
+      const productIds = validateAllowanceProductIds(input);
+      const context = rt.localIdentityContext();
+      const snapshot = await rt.getWalletAllowanceSnapshot(
+        context.activationId,
+        productIds,
+      );
+      if (
+        runtime !== rt ||
+        generation !== allowanceGeneration ||
+        rt.localIdentityContext().activationId !== context.activationId
+      ) {
+        throw new Error(
+          "local identity activation changed during allowance inspection",
+        );
+      }
+      validateWalletAllowanceSnapshot(
+        snapshot,
+        context.identityAccountId,
+        allowanceNetworkSuffix,
+        productIds,
+      );
+      postToMain({
+        kind: "walletAllowanceSnapshotResponse",
+        requestId,
+        ok: true,
+        snapshot,
+      });
+    } catch (error) {
+      postToMain({
+        kind: "walletAllowanceSnapshotResponse",
+        requestId,
+        ok: false,
+        error: errorMessage(error),
+      });
+    }
+  })();
+  allowanceOperations.add(operation);
+  void operation.finally(() => allowanceOperations.delete(operation));
+}
 
 function handleLocalIdentity(
   requestId: number,
@@ -799,11 +859,34 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         });
       }
       try {
-        const callbacks = buildRawCallbacks(msg.capabilities);
-        runtime =
-          msg.runtimeKind === "signing"
-            ? new wasm.WasmSigningHostRuntime(callbacks, msg.hostConfig)
-            : new wasm.WasmPairingHostRuntime(callbacks, msg.hostConfig);
+        if (msg.role === "signing") {
+          // Only the `testing` bundle carries a signing host; the production
+          // `web` one is built without it, so say that rather than let an
+          // undefined constructor surface as a generic type error.
+          const SigningRuntime = wasm.WasmSigningHostRuntime;
+          if (!SigningRuntime) {
+            postToMain({
+              kind: "fatalError",
+              error:
+                "init: this WASM bundle has no signing host. Use the " +
+                "`testing` bundle, which is built with `wasm-signing-host`.",
+            });
+            break;
+          }
+          const hostConfig = msg.hostConfig as { networkSuffix?: unknown };
+          if (typeof hostConfig?.networkSuffix === "string") {
+            allowanceNetworkSuffix = hostConfig.networkSuffix;
+          }
+          runtime = new SigningRuntime(
+            buildRawCallbacks(msg.capabilities),
+            msg.hostConfig,
+          );
+        } else {
+          runtime = new wasm.WasmPairingHostRuntime(
+            buildRawCallbacks(msg.capabilities),
+            msg.hostConfig,
+          );
+        }
         postToMain({ kind: "ready", schema: coreWireSchemaHash(wasm) });
       } catch (err) {
         postToMain({ kind: "fatalError", error: `init: ${errorMessage(err)}` });
@@ -946,6 +1029,7 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
           signing.setGrantAllowancesUnchecked(granted);
           return Promise.resolve();
         },
+        false,
       );
       break;
     }
@@ -974,6 +1058,9 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       break;
     case "registerLocalLiteUsername":
       handleLocalIdentity(msg.requestId, msg);
+      break;
+    case "getWalletAllowanceSnapshot":
+      handleWalletAllowanceSnapshot(msg.requestId, msg.productIds);
       break;
     case "getPermissionAuthorizationStatus":
       void handleGetPermissionAuthorizationStatus(
@@ -1097,6 +1184,7 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       // down; free the captured handle after the cores finish disposing.
       const disposing = runtime;
       runtime = null;
+      allowanceGeneration++;
       identityAbort?.abort(new Error("runtime disposed"));
       connectionsDisposed = true;
       for (const settle of pendingCallbacks.values()) {
@@ -1112,6 +1200,7 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
           if (disposing && isSigningRuntime(disposing))
             await disposing.disconnectSession();
           await Promise.allSettled(identityOperations);
+          await Promise.allSettled(allowanceOperations);
           await Promise.all(
             [...cores.keys()].map((coreId) => disposeCore(coreId)),
           );
@@ -1173,6 +1262,7 @@ async function handleSessionActivation(
   requestId: number,
   label: string,
   activate: (runtime: WorkerHostRuntime) => Promise<void>,
+  changesIdentity = true,
 ): Promise<void> {
   if (!host) {
     postToMain({
@@ -1182,6 +1272,10 @@ async function handleSessionActivation(
       error: `${label} received before runtime is ready`,
     });
     return;
+  }
+  if (changesIdentity) {
+    allowanceGeneration++;
+    identityAbort?.abort(new Error("local identity activation changed"));
   }
   try {
     await activate(host);
@@ -1206,6 +1300,8 @@ async function handleDisconnectSession(requestId: number): Promise<void> {
     });
     return;
   }
+  allowanceGeneration++;
+  identityAbort?.abort(new Error("local identity disconnected"));
   try {
     await host.runtime.disconnectSession();
     postToMain({ kind: "disconnectSessionResponse", requestId, ok: true });

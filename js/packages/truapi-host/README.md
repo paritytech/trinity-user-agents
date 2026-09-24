@@ -7,28 +7,28 @@ provider, plus per-environment integration entry points. It is the counterpart t
 
 The package exposes tree-shakeable subpath exports — import only what your environment needs:
 
-| Import                               | Provides                                                                                                                             |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `@parity/truapi-host`                | Shared runtime types plus generated typed host callback contracts.                                                                   |
-| `@parity/truapi-host/web`            | Browser pairing and signing hosts: `createIframeHost`, `createWebWorkerPairingHostRuntime`, and `createWebWorkerSigningHostRuntime`. |
-| `@parity/truapi-host/worker-runtime` | Web Worker entrypoint (import with your bundler's `?worker` suffix) so the WASM core runs off the page main thread.                  |
-| `@parity/truapi-host/wasm/web`       | The raw browser `wasm-bindgen` glue, if you need to instantiate the core yourself.                                                   |
+| Import                                     | Provides                                                                                                                             |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `@parity/truapi-host`                      | Shared runtime types plus generated typed host callback contracts.                                                                   |
+| `@parity/truapi-host/web`                  | Browser pairing and signing hosts: `createIframeHost`, `createWebWorkerPairingHostRuntime`, and `createWebWorkerSigningHostRuntime`. |
+| `@parity/truapi-host/worker-runtime`       | Web Worker entrypoint (import with your bundler's `?worker` suffix) so the WASM core runs off the page main thread.                  |
+| `@parity/truapi-host/wasm/web`             | The raw browser `wasm-bindgen` glue, if you need to instantiate the core yourself.                                                   |
+| `@parity/truapi-host/testing`              | `createMockHost`: the in-memory host seam a product is tested against.                                                               |
+| `@parity/truapi-host/testing/playwright`   | Playwright fixture that boots the test host and embeds the product in an iframe.                                                     |
+| `@parity/truapi-host/testing/server`       | Node server that serves the host page and its bundle.                                                                                |
+| `@parity/truapi-host/testing/client`       | `createMockClient`: a product client over the mock with no iframe, for unit tests.                                                   |
+| `@parity/truapi-host/testing/dev-accounts` | Named dev accounts derived from fixed BIP-39 entropy, which sign for real.                                                           |
+| `@parity/truapi-host/testing/host-page`    | The browser half the fixture drives, for a suite that boots its own page.                                                            |
+| `@parity/truapi-host/wasm/testing`         | The raw glue for the signing-enabled bundle the test host runs on.                                                                   |
 
-The shipped WASM includes `WasmSigningHostRuntime`. Its configuration requires `runtimeConfig.networkSuffix`: the bare
-TLD (`dot`, `paseo`, or `testnet`) matching the People chain and the wallet's onboarding configuration.
-
-Signing hosts using instance-scoped Coinage must also supply `runtimeConfig.coinageInstanceId` (or
-`hostConfig.coinageInstanceId` in the worker factory) from trusted host/network configuration. It is an integer from `0`
-through `4294967295`, including zero; strings, fractions and out-of-range values are rejected. Omission preserves legacy
-Coinage support, but Coinage operations on an instance-scoped runtime fail closed without it. This asset instance is not
-a purse derivation identifier and is never selected by guest product code.
-
-The optional runtime-wide `callbacks.coinageWallet` group registers an existing native main-purse service through
-`nativeCoinage(request)`. Omitting the group uses Core's built-in Rust wallet; no explicit backend selector is needed. A
-registered native wallet remains authoritative when unavailable, locked, or failing: none of those states enables Rust
-custody. Registration is captured when the runtime is constructed and cannot be replaced by product callbacks. Malformed
-native groups reject initialization. Native request/response payloads, especially outgoing memos, are Host-private;
-infrastructure exceptions are sanitized at the adapter boundary.
+`scripts/build-wasm.mjs` builds two WASM bundles, both `--no-default-features`. `wasm/web` is the production browser
+host and excludes `WasmSigningHostRuntime`; `wasm/testing` adds the Rust `wasm-signing-host` and `test-host` features,
+which is what lets the test host hold keys and answer resource allocation as granted without allocating anything. A real
+browser wallet instead needs a web bundle built with `--no-default-features --features wasm-signing-host`, without
+`test-host`. That enables native signing and wallet administration without the testing-only allocation shortcuts.
+`ProductRuntimeConfig` configures the pairing host and requires no network suffix. The signing constructor's
+configuration requires `runtimeConfig.networkSuffix` in addition: the bare TLD (`dot`, `paseo`, or `testnet`) matching
+the People chain and the wallet's onboarding configuration.
 
 `runtimeConfig.assetHub` is required by both configurations, pairing and signing. It is the Asset Hub genesis hash, in
 the same shape as `runtimeConfig.people` and `runtimeConfig.bulletin`. Product manifests are read from the dotNS
@@ -60,6 +60,32 @@ Both methods return `LocalIdentity` (exported from `@parity/truapi-host/web`): t
 `identityAccountId` and an optional verified `liteUsername`. The backend must allow the worker's origin, or the host
 must provide an approved same-origin proxy. Secret material stays in the signing runtime. Disconnecting or replacing the
 local activation invalidates an in-flight identity operation; concurrent identity operations are rejected.
+
+### Read-only wallet allowance inspection
+
+After activating a local signing session, trusted shell code can call:
+
+```ts
+const snapshot = await runtime.getWalletAllowanceSnapshot(["example.paseo"]);
+```
+
+The result is a `WalletAllowanceSnapshot` exported from `@parity/truapi-host/web`. It reports Statement Store publishing
+slots, PGAS claim capacity and balances, and Bulletin claim capacity and storage quotas. This is a signing-host admin
+API, not a product protocol method. A bare local identity can inspect it without registering or refreshing a username.
+Inspection never allocates, renews, signs, or changes wallet storage.
+
+Pass at most 32 unique canonical product IDs from trusted shell state. An empty list still inspects wallet-wide slots
+and claims. PGAS balances cover each requested product's `Index(0)` account; Bulletin quotas use its distinct storage
+allowance account. Other products, derivations, spending and historical attribution are outside this snapshot.
+
+Each section is independently available or unavailable. Available values carry finalized chain provenance and chain
+time, with exact integer amounts and runtime-defined limits. PGAS claims also carry `membershipObservation` for the
+separate People membership source. Missing metadata stays unknown, and a nonmember's policy limit is not presented as
+usable capacity.
+
+Activation changes, disconnect, disposal and worker failure invalidate pending reads. The worker API rejects after 30
+seconds rather than leaving the caller pending; native read work may finish later, but cannot populate a replaced
+wallet. Shells must additionally fence their selected network/product context.
 
 ## Bundler requirements
 
@@ -220,53 +246,6 @@ The index crosses as a SCALE-encoded `DerivationIndex`, the same value a review 
 code behind it stays core-owned and a host never reconstructs it. `productAccountAddress` applies the prefix host-spec
 C.6 fixes, rather than leaving each host to choose one.
 
-### The same name in a test suite
-
-`@parity/truapi-host/testing/playwright` exports a second `productAccountAddress`.
-It is asynchronous, it takes the account and product to derive rather than a
-public key, and it loads the testing WASM bundle itself:
-
-```ts
-import { productAccountAddress } from "@parity/truapi-host/testing/playwright";
-
-const address = await productAccountAddress({
-  account: "bob", // a dev account name, or a `DevAccount`
-  productId: "tx-demo.dot",
-  index: 0, // optional, defaults to 0
-});
-```
-
-Which one to reach for:
-
-- `productAccountAddress(publicKey)` from `@parity/truapi-host/wasm/web` is
-  synchronous and formats a subtree-derived public key the host already holds.
-  This is the one a host ships.
-- `productAccountAddress(query)` from `@parity/truapi-host/testing/playwright`
-  is asynchronous and runs the whole derivation from a dev account's session
-  root. It needs the built testing bundle, so it is for suites only. Because
-  the address depends on nothing but the root, the product id and the index, a
-  suite can work it out in a `globalSetup` and fund it once rather than per
-  test.
-
-A running fixture answers the same address through
-`testHost.getProductAccountAddress(productId?, index?)`, which reads the session
-the host actually holds and so returns `undefined` while it is signed out.
-
-`contacts` needs both callbacks, or the group counts as absent. `pickContact`
-draws the picker and returns the chosen account, or `NoContacts` when there is
-nobody to show. `contacts({ handleKey, handles })` resolves the handles a
-transaction names: one entry per handle, in order, the account or `undefined`.
-A contact's handle is BLAKE2b-256 keyed with `handleKey` over its 32-byte
-account (`blake2b(account, { key: handleKey, dkLen: 32 })` in `@noble/hashes`).
-The core re-checks every account returned. It caches what it resolves, so call
-`notifyContactsChanged()` whenever a contact is removed or blocked. Omit blocked
-contacts from both. See the contacts RFC (`docs/rfcs/contacts-api.md`).
-
-`scanner.scanCode(product, request)` opens the host's viewfinder. The rules it
-follows are on `ScannerPlatform` in the generated callbacks. The mock test host
-serves a scanner only when created with `createMockHost({ scanner: answer })`,
-and `setScanAnswer(answer)` changes the next answer.
-
 ## Generated WASM artefacts
 
 The ignored bundle under `dist/wasm/web/` is built with host-owned chain access. Hosts wire their JSON-RPC provider
@@ -300,20 +279,6 @@ const secondProvider = await runtime.createProvider({
 `@parity/truapi-host/web` also exports `createIframeHost` for the protocol-iframe MessageChannel handshake. Host code
 creates one worker runtime and then opens one provider per product id.
 
-When UI callbacks capture a product label, pass that product's typed callbacks as the second argument to
-`runtime.createProvider(product, callbacks)`. The worker routes these callbacks to that execution without replacing the
-shared signing authority, main purse, native Chat authority, or private core storage. Wallet callbacks always use the
-runtime-wide bundle, even when a provider supplies overrides. Disposing a provider does not dispose the owner runtime. A
-signing host keeps one owner alive for wallet recovery, not ordinary Chat reception, and must not run independent
-signing runtimes against the same purse inventory.
-
-`createBrowserNativeChatFilesHost(sourceStore?)` accepts an optional `BrowserNativeChatFileSourceStore` with
-`putSources`, `readSource` and `releaseSource`. Use it when core custody spans host origins: immutable file sources must
-remain reachable wherever the persisted actor is restored. `putSources` must commit all supplied Blob snapshots durably
-before resolving; `readSource` returns that snapshot, not a mutable filesystem reference. Picker/export consent and
-bounded reads remain in the SDK. The default source store is origin-local IndexedDB with private immutable Blobs, not
-application encryption at rest. An embedder owns disposal of a file host it supplies.
-
 ## Session lifecycle
 
 The core owns the session; the host owns persistence. At boot the core restores the `AuthSession` slot on its own and
@@ -344,21 +309,18 @@ const provider = await runtime.createProvider({ productId: "first.dot" });
 
 ### Statement-store traffic of the host's own
 
-A host that runs its own statement-store traffic — P2P chat, device sync — signs
-with the account its device advertises in the pairing QR. The paired wallet
-registers that account's statement-store allowance while answering the
-handshake, so it is the only account whose statements the network accepts from
-this host. A locally minted key gets no allowance, and every submission fails
-with `no allowance set for account`.
+A host that runs its own statement-store traffic — P2P chat, device sync — signs with the account its device advertises
+in the pairing QR. The paired wallet registers that account's statement-store allowance while answering the handshake,
+so it is the only account whose statements the network accepts from this host. A locally minted key gets no allowance,
+and every submission fails with `no allowance set for account`.
 
 | Value                                    | Where                                  |
 | ---------------------------------------- | -------------------------------------- |
 | `SessionUiInfo.deviceStatementAccountId` | On every `AuthState.Connected`         |
 | `getDeviceStatementKey()`                | Runtime method, 64-byte sr25519 secret |
 
-Peers are told to address that same account, so it is also what a host derives
-its own statement topics from. Both are `undefined` without an active session,
-and the account is rotated per login: read it from the current session rather
+Peers are told to address that same account, so it is also what a host derives its own statement topics from. Both are
+`undefined` without an active session, and the account is rotated per login: read it from the current session rather
 than caching it across sign-ins.
 
 ## Worker lifecycle

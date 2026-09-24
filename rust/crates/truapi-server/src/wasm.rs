@@ -1584,6 +1584,23 @@ impl WasmSigningHostRuntime {
         js_sys::JSON::parse(&json)
     }
 
+    /// Read finalized allowance state for this activation; never allocate or sign.
+    #[wasm_bindgen(js_name = getWalletAllowanceSnapshot)]
+    pub async fn get_wallet_allowance_snapshot(
+        &self,
+        activation_id: String,
+        product_ids: Vec<String>,
+    ) -> Result<JsValue, JsValue> {
+        let snapshot = self
+            .runtime
+            .get_wallet_allowance_snapshot(&activation_id, product_ids)
+            .await
+            .map_err(generic_error_to_js)?;
+        let json = serde_json::to_string(&snapshot)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        js_sys::JSON::parse(&json)
+    }
+
     /// Revoke one product's grants from the current local activation.
     #[wasm_bindgen(js_name = clearProductState)]
     pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {

@@ -70,7 +70,7 @@ pub(crate) use signing_host::{
     establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
     respond_to_pairing, resume_pairing,
 };
-pub use signing_host::{LocalIdentity, LocalIdentityContext};
+pub use signing_host::{LocalIdentity, LocalIdentityContext, WalletAllowanceSnapshot};
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 #[cfg(any(test, not(target_arch = "wasm32")))]

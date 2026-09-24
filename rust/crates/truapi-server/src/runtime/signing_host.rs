@@ -19,6 +19,7 @@ pub(super) mod ring_vrf;
 mod sso_replay;
 mod sso_responder;
 mod sso_service;
+mod wallet_allowances;
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -27,6 +28,8 @@ use truapi::latest::{
     HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
 };
 
+pub use crate::runtime::statement_allowance::inspection::WalletAllowanceSnapshot;
+pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::{StatementRenewalTarget, TrackedStatementRenewalTarget};
 pub(crate) use local_activation::LocalActivation;

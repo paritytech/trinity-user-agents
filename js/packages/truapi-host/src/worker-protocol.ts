@@ -31,6 +31,7 @@
 
 import type { OptionalCapabilities } from "./generated/worker-callbacks.js";
 import type { LogLevel, PermissionAuthorizationStatus } from "./runtime.js";
+import type { WalletAllowanceSnapshot } from "./wallet-allowances.js";
 import type {
   CallbackName,
   SubscriptionName,
@@ -149,6 +150,11 @@ export type MainToWorker =
       liteUsername?: string;
     }
   | { kind: "refreshLocalIdentity"; requestId: number }
+  | {
+      kind: "getWalletAllowanceSnapshot";
+      requestId: number;
+      productIds: string[];
+    }
   | {
       kind: "registerLocalLiteUsername";
       requestId: number;
@@ -269,6 +275,18 @@ export type WorkerToMain =
     }
   | {
       kind: "localIdentityResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  | {
+      kind: "walletAllowanceSnapshotResponse";
+      requestId: number;
+      ok: true;
+      snapshot: WalletAllowanceSnapshot;
+    }
+  | {
+      kind: "walletAllowanceSnapshotResponse";
       requestId: number;
       ok: false;
       error: string;

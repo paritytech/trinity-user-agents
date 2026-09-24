@@ -51,7 +51,10 @@ impl SigningHost {
         })
     }
 
-    fn check_identity_activation(&self, activation_id: &str) -> Result<(), GenericError> {
+    pub(super) fn check_identity_activation(
+        &self,
+        activation_id: &str,
+    ) -> Result<(), GenericError> {
         let state = self
             .local_grants
             .lock()

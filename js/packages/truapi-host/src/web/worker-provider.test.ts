@@ -51,6 +51,7 @@ import type {
   CreateWebWorkerPairingHostRuntimeOptions,
   CreateWebWorkerSigningHostRuntimeOptions,
   LocalIdentityProgress,
+  WorkerSigningHostRuntime,
 } from "./index.js";
 
 function renderRequest(): ProductRendererRenderRequest {
@@ -2572,5 +2573,148 @@ describe("worker host role", () => {
     worker.emit({ kind: "ready" });
     await settle();
     await finishProviderReady(worker, providerPromise).catch(() => {});
+  });
+});
+
+describe("wallet allowance inspection isolation", () => {
+  const account = `0x${"11".repeat(32)}`;
+
+  async function resolvedRuntime(worker: FakeWorker) {
+    const runtime = await readySigningRuntime(worker);
+    const identity = runtime.refreshLocalIdentity();
+    worker.emit({
+      kind: "localIdentityResponse",
+      requestId: lastMessageOfKind(worker, "refreshLocalIdentity").requestId,
+      ok: true,
+      identity: { identityAccountId: account, liteUsername: "alice.paseo" },
+    });
+    await identity;
+    return runtime;
+  }
+
+  it("denies wallet-wide inspection to pairing hosts", async () => {
+    const pairingWorker = new FakeWorker();
+    const pairing = await readyRuntime(pairingWorker);
+    await expect(
+      (
+        pairing as unknown as WorkerSigningHostRuntime
+      ).getWalletAllowanceSnapshot([]),
+    ).rejects.toThrow("local signing identity");
+    expect(indexOfKind(pairingWorker, "getWalletAllowanceSnapshot")).toBe(-1);
+    pairing.dispose();
+  });
+
+  it("rejects an oversized or ambiguous product scope before dispatch", async () => {
+    const worker = new FakeWorker();
+    const runtime = await resolvedRuntime(worker);
+    for (const ids of [
+      ["a.dot", "a.dot"],
+      [""],
+      Array.from({ length: 33 }, (_, i) => `app${i}.dot`),
+    ]) {
+      await expect(runtime.getWalletAllowanceSnapshot(ids)).rejects.toThrow(
+        "product IDs",
+      );
+    }
+    expect(indexOfKind(worker, "getWalletAllowanceSnapshot")).toBe(-1);
+    runtime.dispose();
+  });
+
+  it.each(["dispose", "error", "messageerror"] as const)(
+    "settles pending reads when the worker closes through %s",
+    async (close) => {
+      const worker = new FakeWorker();
+      const runtime = await resolvedRuntime(worker);
+      const read = runtime.getWalletAllowanceSnapshot([]);
+      const rejected = read.catch((error: unknown) => error);
+      if (close === "dispose") runtime.dispose();
+      else if (close === "error") worker.emitError("worker stopped");
+      else worker.emitMessageError();
+      expect(await rejected).toBeInstanceOf(Error);
+      await expect(runtime.getWalletAllowanceSnapshot([])).rejects.toThrow();
+      runtime.dispose();
+    },
+  );
+
+  it("rejects an in-flight snapshot immediately when another wallet activates", async () => {
+    const worker = new FakeWorker();
+    const runtime = await resolvedRuntime(worker);
+    const read = runtime.getWalletAllowanceSnapshot([]);
+    const requestId = lastMessageOfKind(
+      worker,
+      "getWalletAllowanceSnapshot",
+    ).requestId;
+    const rejected = read.catch((error: unknown) => error);
+    const activation = runtime.activateLocalSession(new Uint8Array(32));
+    await expect(runtime.getWalletAllowanceSnapshot([])).rejects.toThrow(
+      "local signing identity",
+    );
+    expect(await rejected).toBeInstanceOf(Error);
+    worker.emit({
+      kind: "walletAllowanceSnapshotResponse",
+      requestId,
+      ok: true,
+      snapshot: {
+        schemaVersion: 1,
+        identityAccountId: account,
+        networkSuffix: "paseo",
+      },
+    });
+    worker.emit({
+      kind: "sessionActivationResponse",
+      requestId: lastMessageOfKind(worker, "activateLocalSession").requestId,
+      ok: true,
+    });
+    await activation;
+    runtime.dispose();
+  });
+
+  it("does not accept a late identity refresh from a different activation", async () => {
+    const worker = new FakeWorker();
+    const runtime = await readySigningRuntime(worker);
+    const identity = runtime.refreshLocalIdentity();
+    const rejected = identity.catch((error: unknown) => error);
+    const activation = runtime.activateLocalSession(new Uint8Array(32));
+    worker.emit({
+      kind: "localIdentityResponse",
+      requestId: lastMessageOfKind(worker, "refreshLocalIdentity").requestId,
+      ok: true,
+      identity: { identityAccountId: account },
+    });
+    worker.emit({
+      kind: "sessionActivationResponse",
+      requestId: lastMessageOfKind(worker, "activateLocalSession").requestId,
+      ok: true,
+    });
+    expect(await rejected).toBeInstanceOf(Error);
+    await activation;
+    runtime.dispose();
+  });
+
+  it("retains wallet binding when only the debug allocation policy changes", async () => {
+    const worker = new FakeWorker();
+    const runtime = await resolvedRuntime(worker);
+    const toggle = runtime.setGrantAllowancesUnchecked(false);
+    worker.emit({
+      kind: "sessionActivationResponse",
+      requestId: lastMessageOfKind(worker, "setGrantAllowancesUnchecked")
+        .requestId,
+      ok: true,
+    });
+    await toggle;
+    const read = runtime.getWalletAllowanceSnapshot([]);
+    worker.emit({
+      kind: "walletAllowanceSnapshotResponse",
+      requestId: lastMessageOfKind(worker, "getWalletAllowanceSnapshot")
+        .requestId,
+      ok: true,
+      snapshot: {
+        schemaVersion: 1,
+        identityAccountId: `0x${"22".repeat(32)}`,
+        networkSuffix: "paseo",
+      },
+    });
+    await expect(read).rejects.toThrow("current identity");
+    runtime.dispose();
   });
 });

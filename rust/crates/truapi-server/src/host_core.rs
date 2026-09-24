@@ -930,6 +930,17 @@ impl SigningHostRuntime {
             .await
     }
 
+    /// Inspect current wallet allowances without allocating or mutating identity.
+    pub async fn get_wallet_allowance_snapshot(
+        &self,
+        activation_id: &str,
+        product_ids: Vec<String>,
+    ) -> Result<crate::runtime::WalletAllowanceSnapshot, v01::GenericError> {
+        self.signing_host
+            .get_wallet_allowance_snapshot(activation_id, product_ids)
+            .await
+    }
+
     /// Answer a pairing host's handshake deeplink and serve the resulting SSO
     /// session until it ends.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.respond_to_pairing"))]
