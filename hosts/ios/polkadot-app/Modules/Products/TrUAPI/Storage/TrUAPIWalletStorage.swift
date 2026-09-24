@@ -63,7 +63,9 @@ final class TrUAPIWalletStorage: @unchecked Sendable {
                     if errno == EINTR { continue }
                     throw failure("write temporary snapshot")
                 }
-                guard written > 0 else { throw IOFailure(operation: "write temporary snapshot", code: EIO, ambiguous: false) }
+                guard written > 0 else {
+                    throw IOFailure(operation: "write temporary snapshot", code: EIO, ambiguous: false)
+                }
                 offset += written
             }
         }
@@ -97,13 +99,20 @@ final class TrUAPIWalletStorage: @unchecked Sendable {
     /// before Core can allocate or claim inventory owned by the native ledger.
     private func requireExclusiveCustody(_ key: Data) throws {
         guard key.first != 13 else {
-            throw HostRejection.Rejected(reason: "main-purse custody unavailable: native CoinageService owns this wallet")
+            throw HostRejection.Rejected(
+                reason: "main-purse custody unavailable: native CoinageService owns this wallet"
+            )
         }
     }
 
     private func fileURL(key: Data) throws -> URL {
         let manager = FileManager.default
-        let support = try manager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let support = try manager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
         var directory = support.appendingPathComponent("TrUAPIWalletState", isDirectory: true)
         try manager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [
             .posixPermissions: 0o700,

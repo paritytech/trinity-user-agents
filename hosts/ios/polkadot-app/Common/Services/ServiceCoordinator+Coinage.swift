@@ -132,22 +132,12 @@ private extension ServiceCoordinator {
             entropyManager: lifecycle
         )
 
-        let consumedTokenChecker = ConsumedTokenChecker(
+        let (unloadTokenResolver, viewFunctionFetcher) = createUnloadTokenDependencies(
+            chainRegistry: chainRegistry,
             operationQueue: operationQueue,
+            chainId: coinageChainId,
             connection: connection,
             runtimeCodingService: runtimeProvider
-        )
-        let viewFunctionFetcher = ViewFunctionFetcher(
-            executor: ViewFunctionExecutor(
-                chainRegistry: chainRegistry,
-                operationQueue: operationQueue
-            ),
-            chainId: coinageChainId
-        )
-        let unloadTokenResolver = UnloadTokenResolver(
-            runtimeCodingService: runtimeProvider,
-            viewFunctionFetcher: viewFunctionFetcher,
-            consumedTokenChecker: consumedTokenChecker
         )
 
         let coinageOriginFactory = CoinageOriginFactory(
@@ -219,6 +209,33 @@ private extension ServiceCoordinator {
             installation: installation,
             logger: logger
         )
+    }
+
+    private static func createUnloadTokenDependencies(
+        chainRegistry: ChainRegistryProtocol,
+        operationQueue: OperationQueue,
+        chainId: ChainModel.Id,
+        connection: ChainConnection,
+        runtimeCodingService: RuntimeProviderProtocol
+    ) -> (resolver: UnloadTokenResolver, fetcher: ViewFunctionFetcher) {
+        let consumedTokenChecker = ConsumedTokenChecker(
+            operationQueue: operationQueue,
+            connection: connection,
+            runtimeCodingService: runtimeCodingService
+        )
+        let viewFunctionFetcher = ViewFunctionFetcher(
+            executor: ViewFunctionExecutor(
+                chainRegistry: chainRegistry,
+                operationQueue: operationQueue
+            ),
+            chainId: chainId
+        )
+        let resolver = UnloadTokenResolver(
+            runtimeCodingService: runtimeCodingService,
+            viewFunctionFetcher: viewFunctionFetcher,
+            consumedTokenChecker: consumedTokenChecker
+        )
+        return (resolver, viewFunctionFetcher)
     }
 
     /// Registration and recovery of installations run against the `AccountDataStore` contract on

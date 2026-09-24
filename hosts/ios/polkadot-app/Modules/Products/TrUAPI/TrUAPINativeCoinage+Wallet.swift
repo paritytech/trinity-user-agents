@@ -7,7 +7,11 @@ extension TrUAPINativeCoinage {
     struct Wallet: @unchecked Sendable {
         let denomination: () async throws -> DenominationBreakdownContext
         let preview: (BigUInt) async throws -> TransferPreview
-        let prepare: (CoinSelectionResult, String, @escaping @Sendable () throws -> Void) async throws -> TransferMemo
+        let prepare: (
+            CoinSelectionResult,
+            String,
+            @escaping @Sendable () throws -> Void
+        ) async throws -> TransferMemo
         let retained: (String) async throws -> TransferMemo?
         /// Matches native subscribeStatuses: INPUT memo secrets; OUTPUT keyed by their derived public keys.
         let statuses: ([Data]) async throws -> [Data: CoinageTransferState]
@@ -46,7 +50,11 @@ extension TrUAPINativeCoinage {
         init(
             denomination: @escaping () async throws -> DenominationBreakdownContext,
             preview: @escaping (BigUInt) async throws -> TransferPreview,
-            prepare: @escaping (CoinSelectionResult, String, @escaping @Sendable () throws -> Void) async throws -> TransferMemo,
+            prepare: @escaping (
+                CoinSelectionResult,
+                String,
+                @escaping @Sendable () throws -> Void
+            ) async throws -> TransferMemo,
             retained: @escaping (String) async throws -> TransferMemo?,
             statuses: @escaping ([Data]) async throws -> [Data: CoinageTransferState],
             accept: @escaping (BigUInt, [Data], String, String) async throws -> Void,

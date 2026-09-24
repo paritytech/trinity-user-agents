@@ -85,8 +85,14 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             service: coinageService,
             storageFacade: storageFacade,
             scope: {
-                guard let boundScope,
-                      try Self.makeNativeCoinageScope(chainRegistry: chainRegistry, entropyManager: entropyManager) == boundScope else {
+                guard let boundScope else {
+                    throw HostRejection.Rejected(reason: "Native Coinage wallet session unavailable")
+                }
+                let currentScope = try Self.makeNativeCoinageScope(
+                    chainRegistry: chainRegistry,
+                    entropyManager: entropyManager
+                )
+                guard currentScope == boundScope else {
                     throw HostRejection.Rejected(reason: "Native Coinage wallet session unavailable")
                 }
                 return boundScope
@@ -181,8 +187,11 @@ extension TrUAPIHostRuntimeProvider {
             throw TrUAPIRuntimeConfigError.missingGenesisHash(chain: "coinage")
         }
         let wallet = DynamicDerivedWallet(derivationPath: nil, entropyManager: entropyManager)
-        return try NativeCoinageScope(rootPublicKey: wallet.getRawPublicKey(), genesisHash: Data(hexString: genesis),
-                                      coinageInstanceId: AppConfig.Coinage.instanceId)
+        return try NativeCoinageScope(
+            rootPublicKey: wallet.getRawPublicKey(),
+            genesisHash: Data(hexString: genesis),
+            coinageInstanceId: AppConfig.Coinage.instanceId
+        )
     }
 
     /// Assemble the immutable host-wide config. Genesis hashes are fetched from

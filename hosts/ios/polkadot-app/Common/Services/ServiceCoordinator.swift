@@ -183,58 +183,64 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
         allowanceRenewalService.setup()
 
         Task {
-            await chainStatusProvider.start()
-            guard isCurrentSetup(generation) else { return }
-            await signInHostCoordinator.setup()
-            guard isCurrentSetup(generation) else { return }
-            await setupDeviceSyncService()
-            guard isCurrentSetup(generation) else { return }
+            await setupServices(for: generation)
+        }
+    }
 
-            // Setup coinage service with main asset from chain
-            let chainRegistry = ChainRegistryFacade.sharedRegistry
-            let mainAssetId = AppConfig.Assets.mainAsset
+    private func setupServices(for generation: UUID) async {
+        await chainStatusProvider.start()
+        guard isCurrentSetup(generation) else { return }
+        await signInHostCoordinator.setup()
+        guard isCurrentSetup(generation) else { return }
+        await setupDeviceSyncService()
+        guard isCurrentSetup(generation) else { return }
+        guard await setupCoinage(for: generation) else { return }
 
-            guard
-                let chain = chainRegistry.getChain(for: mainAssetId.chainId),
-                let asset = chain.asset(for: mainAssetId.assetId)
-            else {
-                assertionFailure()
-                return
-            }
-            // Activate only this setup, before it starts root-bound background work. A throttle
-            // invalidates its operation generation even if an awaited setup subsequently resumes.
-            guard lifecycleLock.withLock({
-                guard lifecycleGeneration == generation else { return false }
-                return coinageService.setActive(true)
-            }) else { return }
-            do {
-                try await coinageService.setup(with: asset)
-            } catch {
-                lifecycleLock.withLock {
-                    if lifecycleGeneration == generation {
-                        coinageService.setActive(false)
-                    }
+        // Recovering backup 1st
+        await coinageTransferMonitor.setup()
+        guard isCurrentSetup(generation) else { return }
+        await w3sPaymentTracking.setup()
+        guard isCurrentSetup(generation) else { return }
+        await depositService.setup()
+    }
+
+    private func setupCoinage(for generation: UUID) async -> Bool {
+        let chainRegistry = ChainRegistryFacade.sharedRegistry
+        let mainAssetId = AppConfig.Assets.mainAsset
+        guard
+            let chain = chainRegistry.getChain(for: mainAssetId.chainId),
+            let asset = chain.asset(for: mainAssetId.assetId)
+        else {
+            assertionFailure()
+            return false
+        }
+
+        // Activate only this setup, before it starts root-bound background work. A throttle
+        // invalidates its operation generation even if an awaited setup subsequently resumes.
+        guard lifecycleLock.withLock({
+            guard lifecycleGeneration == generation else { return false }
+            return coinageService.setActive(true)
+        }) else { return false }
+        do {
+            try await coinageService.setup(with: asset)
+        } catch {
+            lifecycleLock.withLock {
+                if lifecycleGeneration == generation {
+                    coinageService.setActive(false)
                 }
-                logger.error("Coinage service setup failed")
-                return
             }
-            // Serialize activation with throttle so a superseded setup cannot reopen custody.
-            guard lifecycleLock.withLock({
-                guard lifecycleGeneration == generation else { return false }
-                guard coinageService.setActive(true) else { return false }
-                // Coinage setup releases provisional handoffs before the engine's first pass.
-                durableTransactionEngine.start()
-                truapiRuntimeProvider.setCoinageAvailable(true)
-                return true
-            }) else { return }
-            // Recovering backup 1st
-            await coinageBackupSyncService.setup()
-            guard isCurrentSetup(generation) else { return }
-            await coinageTransferMonitor.setup()
-            guard isCurrentSetup(generation) else { return }
-            await w3sPaymentTracking.setup()
-            guard isCurrentSetup(generation) else { return }
-            await depositService.setup()
+            logger.error("Coinage service setup failed")
+            return false
+        }
+
+        // Serialize activation with throttle so a superseded setup cannot reopen custody.
+        return lifecycleLock.withLock {
+            guard lifecycleGeneration == generation else { return false }
+            guard coinageService.setActive(true) else { return false }
+            // Coinage setup releases provisional handoffs before the engine's first pass.
+            durableTransactionEngine.start()
+            truapiRuntimeProvider.setCoinageAvailable(true)
+            return true
         }
     }
 

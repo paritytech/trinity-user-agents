@@ -37,7 +37,8 @@ enum MainPursePaymentPromptViewFactory {
     static func createView(context: MainPursePaymentConfirmationContext) -> ControllerBackedProtocol {
         let review = context.review
         let privacyWarning = context.requiresPrivacyConfirmation
-            ? "\n\nPrivacy warning: this payment spends funds that are still gaining privacy. Sending now reduces their privacy. Confirm only if you want to send anyway."
+            ? "\n\nPrivacy warning: this payment spends funds that are still gaining privacy. " +
+            "Sending now reduces their privacy. Confirm only if you want to send anyway."
             : ""
         // All identity fields come from the Host review. `.normal` is literal
         // text, not HTML/Markdown; product content cannot supply the prompt.

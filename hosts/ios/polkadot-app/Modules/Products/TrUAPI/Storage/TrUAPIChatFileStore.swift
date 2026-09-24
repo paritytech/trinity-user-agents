@@ -54,8 +54,11 @@ actor TrUAPIChatFileStore {
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                 var coordinationError: NSError?
                 var copyResult: Result<Void, Error>?
-                NSFileCoordinator(filePresenter: nil).coordinate(readingItemAt: url, options: .withoutChanges, error: &coordinationError) {
-                    coordinatedURL in
+                NSFileCoordinator(filePresenter: nil).coordinate(
+                    readingItemAt: url,
+                    options: .withoutChanges,
+                    error: &coordinationError
+                ) { coordinatedURL in
                     copyResult = Result {
                         _ = try self.fileSize(coordinatedURL)
                         try FileManager.default.copyItem(at: coordinatedURL, to: temporary)
@@ -96,9 +99,14 @@ actor TrUAPIChatFileStore {
         try result.withUnsafeMutableBytes { bytes in
             var done = 0
             while done < bytes.count {
-                let count = Darwin.pread(descriptor, bytes.baseAddress!.advanced(by: done), bytes.count - done, off_t(offset) + off_t(done))
+                let count = Darwin.pread(
+                    descriptor,
+                    bytes.baseAddress!.advanced(by: done),
+                    bytes.count - done,
+                    off_t(offset) + off_t(done)
+                )
                 if count < 0, errno == EINTR { continue }
-                guard count > 0 else { throw ChatFileFailure.io }
+                guard count > 0 else { throw ChatFileFailure.inputOutput }
                 done += count
             }
         }
@@ -120,7 +128,7 @@ actor TrUAPIChatFileStore {
         let descriptor = url.path.withCString {
             Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode_t(0o600))
         }
-        guard descriptor >= 0 else { throw ChatFileFailure.io }
+        guard descriptor >= 0 else { throw ChatFileFailure.inputOutput }
         Darwin.close(descriptor)
         do {
             try FileManager.default.setAttributes(
@@ -151,9 +159,14 @@ actor TrUAPIChatFileStore {
         try data.withUnsafeBytes { bytes in
             var done = 0
             while done < bytes.count {
-                let count = Darwin.pwrite(descriptor, bytes.baseAddress!.advanced(by: done), bytes.count - done, off_t(offset) + off_t(done))
+                let count = Darwin.pwrite(
+                    descriptor,
+                    bytes.baseAddress!.advanced(by: done),
+                    bytes.count - done,
+                    off_t(offset) + off_t(done)
+                )
                 if count < 0, errno == EINTR { continue }
-                guard count > 0 else { throw ChatFileFailure.io }
+                guard count > 0 else { throw ChatFileFailure.inputOutput }
                 done += count
             }
         }
@@ -203,7 +216,9 @@ actor TrUAPIChatFileStore {
         guard pendingExports[exportId]?.presenting != true else { return }
         try completeExport(exportId: exportId)
     }
+}
 
+private extension TrUAPIChatFileStore {
     private func prepare(_ store: AttachmentStoring?) throws -> AttachmentStoring {
         guard let store else { throw ChatFileFailure.unavailable }
         try store.createDirectoryIfNeeded()
@@ -228,7 +243,7 @@ actor TrUAPIChatFileStore {
 
     private func openRegular(_ url: URL, flags: Int32) throws -> Int32 {
         let descriptor = url.path.withCString { Darwin.open($0, flags | O_NOFOLLOW | O_NONBLOCK) }
-        guard descriptor >= 0 else { throw ChatFileFailure.io }
+        guard descriptor >= 0 else { throw ChatFileFailure.inputOutput }
         do {
             _ = try size(of: descriptor)
             return descriptor
@@ -262,20 +277,20 @@ actor TrUAPIChatFileStore {
         let descriptor = try openRegular(url, flags: O_WRONLY)
         defer { Darwin.close(descriptor) }
         guard Darwin.fsync(descriptor) == 0, Darwin.fcntl(descriptor, F_FULLFSYNC) == 0 else {
-            throw ChatFileFailure.io
+            throw ChatFileFailure.inputOutput
         }
     }
 
     private func syncDirectory(_ url: URL) throws {
         let descriptor = url.path.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW) }
-        guard descriptor >= 0 else { throw ChatFileFailure.io }
+        guard descriptor >= 0 else { throw ChatFileFailure.inputOutput }
         defer { Darwin.close(descriptor) }
-        guard Darwin.fsync(descriptor) == 0 else { throw ChatFileFailure.io }
+        guard Darwin.fsync(descriptor) == 0 else { throw ChatFileFailure.inputOutput }
     }
 
     private func removeIfPresent(_ url: URL) throws {
         let result = url.path.withCString { Darwin.unlink($0) }
-        guard result == 0 || errno == ENOENT else { throw ChatFileFailure.io }
+        guard result == 0 || errno == ENOENT else { throw ChatFileFailure.inputOutput }
     }
 
     private func metadata(for url: URL, size: UInt32) async -> HostNativeChatAttachmentMetadata {
@@ -295,9 +310,13 @@ actor TrUAPIChatFileStore {
         // Reuse the native Chat's bounded image downsampling and UTF-8 BlurHash
         // convention, but do not transcode or consult the mutable original.
         let thumbnail = UIImage.downsampleImage(
-            at: url, maxSideSize: BlurHashConfiguration.encodingMaximumSide, scale: 1
-        )?.blurHash(numberOfComponents: BlurHashConfiguration.components)
-            .flatMap { BlurHash($0) }?.toData()
+            at: url,
+            maxSideSize: BlurHashConfiguration.encodingMaximumSide,
+            scale: 1
+        )?
+            .blurHash(numberOfComponents: BlurHashConfiguration.components)
+            .flatMap { BlurHash($0) }?
+            .toData()
         return HostNativeChatAttachmentMetadata(
             mimeType: type.preferredMIMEType ?? "application/octet-stream",
             sizeBytes: size,
@@ -314,7 +333,8 @@ actor TrUAPIChatFileStore {
         guard let header, header.count >= 12,
               header[4..<8].elementsEqual([0x66, 0x74, 0x79, 0x70]) else { return nil }
         let mime: String
-        switch String(decoding: header[8..<12], as: UTF8.self) {
+        guard let brand = String(bytes: header[8..<12], encoding: .utf8) else { return nil }
+        switch brand {
         case "qt  ": mime = "video/quicktime"
         case "isom", "iso2", "iso4", "iso5", "iso6", "mp41", "mp42", "avc1", "M4V ", "M4VH", "M4VP":
             mime = "video/mp4"
@@ -341,12 +361,17 @@ actor TrUAPIChatFileStore {
                 if let image = try? await generator.image(at: .zero).image {
                     thumbnail = UIImage(cgImage: image)
                         .blurHash(numberOfComponents: BlurHashConfiguration.components)
-                        .flatMap { BlurHash($0) }?.toData()
+                        .flatMap { BlurHash($0) }?
+                        .toData()
                 }
                 try Task.checkCancellation()
                 return HostNativeChatAttachmentMetadata(
-                    mimeType: mime, sizeBytes: size,
-                    kind: .video(durationSeconds: UInt32(duration.seconds), thumbnail: thumbnail)
+                    mimeType: mime,
+                    sizeBytes: size,
+                    kind: .video(
+                        durationSeconds: UInt32(duration.seconds),
+                        thumbnail: thumbnail
+                    )
                 )
             }
             group.addTask {
@@ -371,6 +396,6 @@ enum ChatFileFailure: Error {
     case invalidHandle
     case invalidRange
     case invalidSize
-    case io
+    case inputOutput
     case userCancelled
 }
