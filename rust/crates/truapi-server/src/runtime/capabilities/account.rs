@@ -30,9 +30,7 @@ use truapi_platform::{
 
 use crate::host_logic::product_manifest::Granted;
 use crate::host_logic::sso::messages::ProductRequest;
-use crate::runtime::authority::{
-    AuthorityError, ProductDeviceChatAuthorityRequest, chat_requires_preimage_submit,
-};
+use crate::runtime::authority::AuthorityError;
 use crate::runtime::{
     ProductRuntimeHost, account_access_authorization, account_get_authority_error,
     product_device_chat_authority_error, remote_authority_call, remote_authority_context,
