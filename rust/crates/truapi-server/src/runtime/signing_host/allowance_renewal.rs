@@ -25,7 +25,9 @@ use tracing::debug;
 #[cfg(any(test, not(target_arch = "wasm32")))]
 use tracing::info;
 use tracing::warn;
-use truapi_platform::{CoreStorage, CoreStorageKey};
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use truapi_platform::CoreStorage;
+use truapi_platform::CoreStorageKey;
 
 use super::SigningHost;
 #[cfg(not(target_arch = "wasm32"))]
