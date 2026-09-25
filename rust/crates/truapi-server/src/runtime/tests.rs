@@ -1223,6 +1223,107 @@ fn pocket_is_denied_to_apps_and_sessionless_workers_and_unsupported_without_an_a
     ));
 }
 
+/// Records every profile presentation that reaches the host.
+#[derive(Default)]
+struct RecordingProfilePlatform {
+    presented: Mutex<Vec<(String, String)>>,
+}
+
+#[truapi::async_trait]
+impl truapi_platform::ProfilePlatform for RecordingProfilePlatform {
+    async fn present_profile(
+        &self,
+        product: &ProductContext,
+        request: truapi::latest::HostProfilePresentRequest,
+    ) -> Result<(), truapi::latest::HostProfilePresentError> {
+        self.presented
+            .lock()
+            .expect("presented mutex poisoned")
+            .push((product.product_id.clone(), request.reference));
+        Ok(())
+    }
+}
+
+fn profile_host(profile: Option<Arc<RecordingProfilePlatform>>) -> ProductRuntimeHost {
+    let (host_config, product) = runtime_config("egui-chat.dot");
+    let services = RuntimeServices::new(
+        stub_platform(),
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+    );
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+    adapters.profile_platform =
+        profile.map(|profile| profile as Arc<dyn truapi_platform::ProfilePlatform>);
+    ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
+}
+
+fn present_profile(
+    host: &ProductRuntimeHost,
+    reference: &str,
+) -> Result<HostProfilePresentResponse, CallError<HostProfilePresentError>> {
+    futures::executor::block_on(Profile::present(
+        host,
+        &CallContext::default(),
+        HostProfilePresentRequest::V1(v01::HostProfilePresentRequest {
+            reference: reference.to_string(),
+        }),
+    ))
+}
+
+#[test]
+fn profile_present_forwards_screened_references_and_is_unsupported_without_an_adapter() {
+    let profile = Arc::new(RecordingProfilePlatform::default());
+    let host = profile_host(Some(profile.clone()));
+    let reference = format!("bafkreitest#{}", "ab".repeat(44));
+    let longest = "a".repeat(2048);
+
+    assert_eq!(
+        present_profile(&host, &reference).expect("a screened reference is presented"),
+        HostProfilePresentResponse::V1
+    );
+    assert_eq!(
+        present_profile(&host, &longest).expect("the bound is inclusive"),
+        HostProfilePresentResponse::V1
+    );
+    // Anything that could render deceptively or carry a payload into host UI
+    // is refused in the core, whatever the host would have done with it.
+    for rejected in [
+        String::new(),
+        "a".repeat(2049),
+        "bafk ref#00".to_string(),
+        "bafk\u{202e}ref".to_string(),
+        "bafk\nref".to_string(),
+    ] {
+        assert!(matches!(
+            present_profile(&host, &rejected),
+            Err(CallError::Domain(HostProfilePresentError::V1(
+                v01::HostProfilePresentError::InvalidReference
+            )))
+        ));
+    }
+    assert_eq!(
+        profile
+            .presented
+            .lock()
+            .expect("presented mutex poisoned")
+            .as_slice(),
+        [
+            ("egui-chat.dot".to_string(), reference),
+            ("egui-chat.dot".to_string(), longest),
+        ],
+        "only screened references reach the host, attributed to the caller"
+    );
+
+    assert!(matches!(
+        present_profile(&profile_host(None), "bafkreitest#00"),
+        Err(CallError::Unsupported)
+    ));
+}
+
 #[test]
 fn chain_follow_ids_are_scoped_per_product_core() {
     let (host_config, product) = runtime_config("same.dot");

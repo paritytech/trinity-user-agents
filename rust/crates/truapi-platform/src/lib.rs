@@ -35,13 +35,13 @@ use truapi::latest::{
     HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
     HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-    HostChatRegisterBotResponse, HostDevicePermissionRequest,
-    HostFeatureSupportedRequest, HostFeatureSupportedResponse, HostLocalStorageChangeItem,
-    HostLocaleSubscribeItem, HostNativeChatAttachmentMetadata, HostNavigateToError,
-    HostPlatform, HostPocketListSubscribeItem, HostPocketRemoveCardError,
-    HostPocketRemoveCardRequest, HostPushNotificationRequest, HostPushNotificationResponse,
-    HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
-    HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
+    HostChatRegisterBotResponse, HostDevicePermissionRequest, HostFeatureSupportedRequest,
+    HostFeatureSupportedResponse, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
+    HostNativeChatAttachmentMetadata, HostNavigateToError, HostPlatform,
+    HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
+    HostProfilePresentError, HostProfilePresentRequest, HostPushNotificationRequest,
+    HostPushNotificationResponse, HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest,
+    HostSignRawRequest, HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
     HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
     NotificationId, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
     RemotePermission, RemotePermissionRequest, RingLocation,
@@ -3677,6 +3677,26 @@ pub trait PocketPlatform: Send + Sync {
     ) -> Result<(), HostPocketRemoveCardError>;
 }
 
+/// Host-implemented adapter that shows a product-referenced profile in
+/// host-owned UI. Optional: a host that omits it leaves Profile requests
+/// answered `Unsupported`. See [`OptionalPlatform`].
+///
+/// The reference is a bearer capability. The host resolves, decrypts and
+/// renders it; profile bytes and the reference's key never return to the
+/// product. The core screens only the reference's shape, so parsing it and
+/// deciding what it may fetch are the host's.
+#[async_trait]
+pub trait ProfilePlatform: Send + Sync {
+    /// Take one presentation and return once it is shown, never waiting for
+    /// the user to dismiss it. Report an unparseable reference as
+    /// `InvalidReference`; show load and fetch failures in the UI instead.
+    async fn present_profile(
+        &self,
+        product: &ProductContext,
+        request: HostProfilePresentRequest,
+    ) -> Result<(), HostProfilePresentError>;
+}
+
 /// What the operating system currently says about a device capability.
 ///
 /// Distinct from [`PermissionAuthorizationStatus`], which is the product-scoped
@@ -3767,7 +3787,12 @@ impl<T> Platform for T where
 /// selects the built-in Rust wallet. Codegen reads this list to emit each
 /// capability as an optional group on the host-callback surface.
 pub trait OptionalPlatform:
-    ChatPlatform + PermissionStatusHost + PocketPlatform + IdentityBackendHost + CoinageWalletHost
+    ChatPlatform
+    + PermissionStatusHost
+    + PocketPlatform
+    + ProfilePlatform
+    + IdentityBackendHost
+    + CoinageWalletHost
 {
 }
 
@@ -3775,6 +3800,7 @@ impl<T> OptionalPlatform for T where
     T: ChatPlatform
         + PermissionStatusHost
         + PocketPlatform
+        + ProfilePlatform
         + IdentityBackendHost
         + CoinageWalletHost
 {

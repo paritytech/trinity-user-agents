@@ -52,6 +52,7 @@ import type {
   HostPaymentTopUpStatusSubscribeItem,
   HostPocketListSubscribeItem,
   HostPocketRemoveCardRequest,
+  HostProfilePresentRequest,
   HostPushNotificationRequest,
   HostPushNotificationResponse,
   HostScannerScanRequest,
@@ -2569,25 +2570,25 @@ export interface ProductStorage {
 }
 
 /**
- * Host-owned viewfinder for QR codes and barcodes. Optional. The Swift and
- * Kotlin bridges and the JS `scanner` callbacks follow the same rules.
+ * Host-implemented adapter that shows a product-referenced profile in
+ * host-owned UI. Optional: a host that omits it leaves Profile requests
+ * answered `Unsupported`. See `OptionalPlatform`.
  *
- * - Title the viewfinder with the product id. Show `request.hint` under it as the product's words.
- * - Pass every code the camera reads to a `ScanFilter` built from `request`, and never follow a
- *   scanned link.
- * - Answer `HostScan::NotVisible` for an App or Widget that is not on screen. A Worker reaching
- *   the host already passed the core's tap check.
- * - Close the viewfinder when the core drops the future, and close any still open before opening
- *   another. A JS host is not told about a drop.
+ * The reference is a bearer capability. The host resolves, decrypts and
+ * renders it; profile bytes and the reference's key never return to the
+ * product. The core screens only the reference's shape, so parsing it and
+ * deciding what it may fetch are the host's.
  */
-export interface ScannerPlatform {
+export interface ProfilePlatform {
   /**
-   * Open the viewfinder on behalf of `product` and wait for the user.
+   * Take one presentation and return once it is shown, never waiting for
+   * the user to dismiss it. Report an unparseable reference as
+   * `InvalidReference`; show load and fetch failures in the UI instead.
    */
-  scanCode(
+  presentProfile(
     product: ProductContext,
-    request: HostScannerScanRequest,
-  ): Promise<HostScan>;
+    request: HostProfilePresentRequest,
+  ): Promise<void>;
 }
 
 /**
@@ -2681,7 +2682,7 @@ export interface HostCallbacks {
   identityBackend?: IdentityBackendHost;
   permissionStatus?: PermissionStatusHost;
   pocket?: PocketPlatform;
-  scanner?: ScannerPlatform;
+  profile?: ProfilePlatform;
 }
 
 export interface RequiredHostCallbacks {
@@ -2705,5 +2706,5 @@ export interface RequiredHostCallbacks {
   identityBackend?: Required<IdentityBackendHost>;
   permissionStatus?: Required<PermissionStatusHost>;
   pocket?: Required<PocketPlatform>;
-  scanner?: Required<ScannerPlatform>;
+  profile?: Required<ProfilePlatform>;
 }

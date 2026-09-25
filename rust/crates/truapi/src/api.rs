@@ -16,6 +16,7 @@ pub mod payment;
 pub mod permissions;
 pub mod pocket;
 pub mod preimage;
+pub mod profile;
 pub mod renderer;
 pub mod resource_allocation;
 pub mod scanner;
@@ -41,6 +42,7 @@ pub use payment::Payment;
 pub use permissions::Permissions;
 pub use pocket::Pocket;
 pub use preimage::Preimage;
+pub use profile::Profile;
 pub use renderer::Renderer;
 pub use resource_allocation::ResourceAllocation;
 pub use scanner::Scanner;
@@ -52,61 +54,53 @@ pub use worker::Worker;
 
 /// The unified TrUAPI contract.
 pub trait TrUApi:
-	Account
-	+ Chain
-	+ Chat
-	+ CoinPayment
-	+ Contacts
-	+ Entropy
-	+ ExpandedCard
-	+ Funding
-	+ Game
-	+ LocalStorage
-	+ Locale
-	+ Notifications
-	+ Payment
-	+ Permissions
-	+ Pocket
-	+ Preimage
-	+ Renderer
-	+ ResourceAllocation
-	+ Scanner
-	+ Signing
-	+ StatementStore
-	+ System
-	+ Theme
-	+ Worker
-	+ Send
-	+ Sync
+    Account
+    + Chain
+    + Chat
+    + CoinPayment
+    + Entropy
+    + LocalStorage
+    + Locale
+    + Notifications
+    + Payment
+    + Permissions
+    + Pocket
+    + Preimage
+    + Profile
+    + Renderer
+    + ResourceAllocation
+    + Signing
+    + StatementStore
+    + System
+    + Theme
+    + Worker
+    + Send
+    + Sync
 {
 }
 
 impl<T> TrUApi for T where
-	T: Account
-		+ Chain
-		+ Chat
-		+ CoinPayment
-		+ Contacts
-		+ Entropy
-		+ ExpandedCard
-		+ Funding
-		+ Game
-		+ LocalStorage
-		+ Locale
-		+ Notifications
-		+ Payment
-		+ Permissions
-		+ Pocket
-		+ Preimage
-		+ Renderer
-		+ ResourceAllocation
-		+ Scanner
-		+ Signing
-		+ StatementStore
-		+ System
-		+ Theme
-		+ Worker
-		+ Send
-		+ Sync
+    T: Account
+        + Chain
+        + Chat
+        + CoinPayment
+        + Entropy
+        + LocalStorage
+        + Locale
+        + Notifications
+        + Payment
+        + Permissions
+        + Pocket
+        + Preimage
+        + Profile
+        + Renderer
+        + ResourceAllocation
+        + Signing
+        + StatementStore
+        + System
+        + Theme
+        + Worker
+        + Send
+        + Sync
 {
 }

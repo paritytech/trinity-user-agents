@@ -157,9 +157,7 @@ const callbacks: HostCallbacks = {
   chat, // optional: leave it out and chat products get `Unsupported`
   permissionStatus, // optional: reports live OS permission state
   pocket, // optional: serves the host's Pocket card collection
-  game, // optional: holds the host's game reminders
-  contacts, // optional: leave it out and contacts calls get `Unsupported`
-  scanner, // optional: draws the host's QR and barcode viewfinder
+  profile, // optional: shows product-referenced profiles in host UI
 };
 ```
 
@@ -170,6 +168,11 @@ reading as usable. Omit it and a stored grant answers on its own.
 `pocket` serves the host's card collection. `subscribePocketCards` emits the calling product's cards and every later
 replacement, and `removePocketCard` takes one out. The host owns the collection: removing an absent card succeeds, and a
 card the host pins is refused with `Privileged`.
+
+`profile.presentProfile` shows the profile a product references in host-owned UI and resolves once it is shown, not
+when the user dismisses it. The reference is a bearer capability: the host fetches, decrypts and renders it, and the
+profile's bytes never return to the product. The core forwards only references that are non-empty, at most 2048 bytes
+and printable ASCII without whitespace; parsing the format is the host's.
 
 Under `createWebWorkerPairingHostRuntime` the presence of each optional group is reported to the worker in its `init`
 message, so the core sees the same capability set on both sides of the boundary.

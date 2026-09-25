@@ -46,6 +46,9 @@ pub(crate) struct RuntimeServices {
     /// Host Pocket adapter, installed once at startup by a host with a Pocket
     /// surface. Unset leaves every product Pocket call `Unsupported`.
     pocket_platform: OnceLock<Arc<dyn truapi_platform::PocketPlatform>>,
+    /// Host profile presenter, installed once at startup by a host that can
+    /// render profiles. Unset leaves every product Profile call `Unsupported`.
+    profile_platform: OnceLock<Arc<dyn truapi_platform::ProfilePlatform>>,
     /// Optional native authenticated username index; only supplies candidates.
     identity_backend: OnceLock<Arc<dyn truapi_platform::IdentityBackendHost>>,
     /// Asset Hub the dotNS contracts are deployed on. All-zero says this host
@@ -133,6 +136,7 @@ impl RuntimeServices {
             native_wallet,
             permission_status: OnceLock::new(),
             pocket_platform: OnceLock::new(),
+            profile_platform: OnceLock::new(),
             identity_backend: OnceLock::new(),
             asset_hub_chain_genesis_hash,
             worker_ledger: WorkerLedger::default(),
@@ -209,6 +213,39 @@ impl RuntimeServices {
     /// The host's Pocket adapter, when one is installed.
     pub(crate) fn pocket_platform(&self) -> Option<Arc<dyn truapi_platform::PocketPlatform>> {
         self.pocket_platform.get().cloned()
+    }
+
+    /// Install the host's profile presenter.
+    ///
+    /// Set-once, like every optional capability. Returns whether this call
+    /// installed it.
+    pub(crate) fn install_profile_platform(
+        &self,
+        platform: Arc<dyn truapi_platform::ProfilePlatform>,
+    ) -> bool {
+        self.profile_platform.set(platform).is_ok()
+    }
+
+    /// The host's profile presenter, when one is installed.
+    pub(crate) fn profile_platform(&self) -> Option<Arc<dyn truapi_platform::ProfilePlatform>> {
+        self.profile_platform.get().cloned()
+    }
+
+    /// Install the host's device-pairing observer.
+    ///
+    /// Set-once, like every optional capability, so the surface that announces
+    /// a new device cannot change hands between two pairings. Returns whether
+    /// this call installed it.
+    pub(crate) fn install_device_pairing_observer(
+        &self,
+        observer: Arc<dyn DevicePairingObserver>,
+    ) -> bool {
+        self.device_pairing_observer.set(observer).is_ok()
+    }
+
+    /// The host's device-pairing observer, when one is installed.
+    pub(crate) fn device_pairing_observer(&self) -> Option<Arc<dyn DevicePairingObserver>> {
+        self.device_pairing_observer.get().cloned()
     }
 
     /// This device's persisted X25519 encryption secret, created on first use.

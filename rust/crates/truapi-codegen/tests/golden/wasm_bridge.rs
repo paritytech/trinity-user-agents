@@ -62,6 +62,8 @@ pub(super) struct JsBridge {
     pub(super) read: Function,
     pub(super) write: Function,
     pub(super) clear: Function,
+    pub(super) subscribe_storage: Function,
+    pub(super) present_profile: Function,
     pub(super) subscribe_theme: Function,
     pub(super) confirm_user_action: Function,
     pub(super) chat_present: bool,
@@ -69,6 +71,7 @@ pub(super) struct JsBridge {
     pub(super) identity_backend_present: bool,
     pub(super) permission_status_present: bool,
     pub(super) pocket_present: bool,
+    pub(super) profile_present: bool,
 }
 
 impl JsBridge {
@@ -126,8 +129,8 @@ impl JsBridge {
             write: get_function(callbacks, "write")?,
             clear: get_function(callbacks, "clear")?,
             subscribe_storage: get_function(callbacks, "subscribeStorage")?,
-            scan_code: get_optional_function(callbacks, "scanCode")?
-                .unwrap_or_else(|| missing_callback("scanCode")),
+            present_profile: get_optional_function(callbacks, "presentProfile")?
+                .unwrap_or_else(|| missing_callback("presentProfile")),
             subscribe_theme: get_function(callbacks, "subscribeTheme")?,
             confirm_permission: get_function(callbacks, "confirmPermission")?,
             confirm_user_action: get_function(callbacks, "confirmUserAction")?,
@@ -146,7 +149,7 @@ impl JsBridge {
                 .is_some(),
             pocket_present: get_optional_function(callbacks, "subscribePocketCards")?.is_some()
                 && get_optional_function(callbacks, "removePocketCard")?.is_some(),
-            scanner_present: get_optional_function(callbacks, "scanCode")?.is_some(),
+            profile_present: get_optional_function(callbacks, "presentProfile")?.is_some(),
         })
     }
 
@@ -175,9 +178,9 @@ impl JsBridge {
         self.pocket_present
     }
 
-    /// Whether the host supplied every `scanner` callback.
-    pub fn has_scanner(&self) -> bool {
-        self.scanner_present
+    /// Whether the host supplied every `profile` callback.
+    pub(super) fn has_profile(&self) -> bool {
+        self.profile_present
     }
 }
 
@@ -745,28 +748,26 @@ impl crate::platform::ProductStorage for WasmPlatform {
     }
 }
 
-#[crate::platform::async_trait]
-impl crate::platform::ScannerPlatform for WasmPlatform {
-    async fn scan_code(
+#[truapi_platform::async_trait]
+impl truapi_platform::ProfilePlatform for WasmPlatform {
+    async fn present_profile(
         &self,
-        product: &crate::platform::ProductContext,
-        request: &latest::HostScannerScanRequest,
-    ) -> Result<crate::platform::HostScan, latest::GenericError> {
-        let bytes = invoke_bytes_return(
-            &self.bridge.scan_code,
+        product: &truapi_platform::ProductContext,
+        request: v01::HostProfilePresentRequest,
+    ) -> Result<(), v01::HostProfilePresentError> {
+        invoke_unit(
+            &self.bridge.present_profile,
             vec![
                 Uint8Array::from(product.encode().as_slice()).into(),
                 Uint8Array::from(request.encode().as_slice()).into(),
             ],
         )
         .await
-        .map_err(generic)?;
-        decode_bytes::<crate::platform::HostScan>(bytes, "scanCode response did not decode")
-            .map_err(generic)
+        .map_err(|reason| v01::HostProfilePresentError::Unknown { reason })
     }
 }
 
-impl crate::platform::ThemeHost for WasmPlatform {
+impl truapi_platform::ThemeHost for WasmPlatform {
     fn subscribe_theme(
         &self,
     ) -> BoxStream<'static, Result<latest::HostThemeSubscribeItem, latest::GenericError>> {

@@ -78,7 +78,7 @@ pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use signing_host::TrackedStatementRenewalTarget;
 use tracing::{instrument, warn};
-use truapi::api::{Chat, Pocket, Renderer};
+use truapi::api::{Chat, Pocket, Profile, Renderer};
 use truapi::versioned::account::{
     HostAccountGetError, HostAccountSignVrfError, HostProductDeviceChatError,
 };
@@ -94,6 +94,9 @@ use truapi::versioned::pocket::{
     HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPocketRemoveCardResponse,
 };
 use truapi::versioned::preimage::RemotePreimageSubmitError;
+use truapi::versioned::profile::{
+    HostProfilePresentError, HostProfilePresentRequest, HostProfilePresentResponse,
+};
 use truapi::versioned::renderer::{
     HostRendererActionSubscribeError, HostRendererActionSubscribeItem,
     HostRendererActionSubscribeRequest,
@@ -278,6 +281,7 @@ pub struct ProductRuntimeHost {
     chat: Arc<ActionChannel<HostChatActionSubscribeItem>>,
     renderer: Arc<ActionChannel<HostRendererActionSubscribeItem>>,
     pocket_platform: Option<Arc<dyn truapi_platform::PocketPlatform>>,
+    profile_platform: Option<Arc<dyn truapi_platform::ProfilePlatform>>,
     /// Host-assigned ids of this connection's open pending operations, each
     /// holding one worker reference until it ends or the connection is torn
     /// down.
@@ -323,6 +327,7 @@ impl ProductRuntimeHost {
             chat: adapters.chat,
             renderer: adapters.renderer,
             pocket_platform: adapters.pocket_platform,
+            profile_platform: adapters.profile_platform,
             open_operations: Mutex::new(HashSet::new()),
         }
     }
@@ -452,6 +457,7 @@ impl ProductRuntimeHost {
             chat,
             renderer,
             pocket_platform: None,
+            profile_platform: None,
             open_operations: Mutex::new(HashSet::new()),
         };
         (host, pairing_host)
@@ -1185,6 +1191,15 @@ impl ProductRuntimeHost {
         }
         self.pocket_platform.clone().ok_or(CallError::Unsupported)
     }
+
+    /// The host's profile presenter. Any product execution may ask the host to
+    /// show a profile: the host renders it in its own UI, attributed to the
+    /// calling product, and nothing returns to the product.
+    fn profile_platform<E>(
+        &self,
+    ) -> Result<Arc<dyn truapi_platform::ProfilePlatform>, CallError<E>> {
+        self.profile_platform.clone().ok_or(CallError::Unsupported)
+    }
 }
 
 #[truapi_platform::async_trait]
@@ -1361,6 +1376,43 @@ impl Pocket for ProductRuntimeHost {
             .map(|()| HostPocketRemoveCardResponse::V1)
             .map_err(|error| CallError::Domain(HostPocketRemoveCardError::V1(error)))
     }
+}
+
+/// Longest profile reference the core forwards. Seity blob references are
+/// about 150 bytes; the bound leaves room for other formats without letting a
+/// product push arbitrary payloads into host UI.
+const MAX_PROFILE_REFERENCE_BYTES: usize = 2048;
+
+#[truapi::async_trait]
+impl Profile for ProductRuntimeHost {
+    #[instrument(skip_all, fields(runtime.method = "profile.present"))]
+    async fn present(
+        &self,
+        _cx: &CallContext,
+        request: HostProfilePresentRequest,
+    ) -> Result<HostProfilePresentResponse, CallError<HostProfilePresentError>> {
+        let platform = self.profile_platform()?;
+        let HostProfilePresentRequest::V1(request) = request;
+        // The reference is opaque here; parsing it is the host's. The core
+        // screens only its shape: bounded, non-empty, printable ASCII without
+        // whitespace, so no control or bidi character reaches host code.
+        if !is_screened_profile_reference(&request.reference) {
+            return Err(CallError::Domain(HostProfilePresentError::V1(
+                v01::HostProfilePresentError::InvalidReference,
+            )));
+        }
+        platform
+            .present_profile(&self.product, request)
+            .await
+            .map(|()| HostProfilePresentResponse::V1)
+            .map_err(|error| CallError::Domain(HostProfilePresentError::V1(error)))
+    }
+}
+
+fn is_screened_profile_reference(reference: &str) -> bool {
+    !reference.is_empty()
+        && reference.len() <= MAX_PROFILE_REFERENCE_BYTES
+        && reference.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
 /// Report a rejected card id as a removal domain error.

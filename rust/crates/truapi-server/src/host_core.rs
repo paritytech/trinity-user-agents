@@ -21,7 +21,9 @@ use thiserror::Error;
 use tracing::{instrument, warn};
 use truapi::v01;
 use truapi::{CallContext, CancellationReason};
-use truapi_platform::{ChatPlatform, CoinageWalletHost, PermissionStatusHost, PocketPlatform};
+use truapi_platform::{
+    ChatPlatform, CoinageWalletHost, PermissionStatusHost, PocketPlatform, ProfilePlatform,
+};
 use truapi_platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
     PermissionAuthorizationStatus, Platform, ProductContext, SigningHostConfig,
@@ -287,6 +289,16 @@ impl PairingHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_pocket_platform"))]
     pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
         self.services.install_pocket_platform(platform)
+    }
+
+    /// Install the host's [`ProfilePlatform`], which renders product-referenced
+    /// profiles in host-owned UI.
+    ///
+    /// Set-once. Returns whether this call installed it. Call it before
+    /// serving any product runtime.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_profile_platform"))]
+    pub fn set_profile_platform(&self, platform: Arc<dyn ProfilePlatform>) -> bool {
+        self.services.install_profile_platform(platform)
     }
 
     /// Build a product-facing runtime from this pairing host.
@@ -662,6 +674,27 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_pocket_platform"))]
     pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
         self.services.install_pocket_platform(platform)
+    }
+
+    /// Install the host's [`ProfilePlatform`], which renders product-referenced
+    /// profiles in host-owned UI.
+    ///
+    /// Set-once. Returns whether this call installed it. Call it before
+    /// serving any product runtime.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_profile_platform"))]
+    pub fn set_profile_platform(&self, platform: Arc<dyn ProfilePlatform>) -> bool {
+        self.services.install_profile_platform(platform)
+    }
+
+    /// Install the host's [`DevicePairingObserver`], told whenever a device
+    /// finishes pairing with this signing host.
+    ///
+    /// Set-once, so the surface that announces a new device cannot change
+    /// hands between two pairings. Returns whether this call installed it.
+    /// Call it before answering any pairing deeplink.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_device_pairing_observer"))]
+    pub fn set_device_pairing_observer(&self, observer: Arc<dyn DevicePairingObserver>) -> bool {
+        self.services.install_device_pairing_observer(observer)
     }
 
     /// Build a product-facing runtime from this signing host.
@@ -1106,7 +1139,7 @@ impl SigningHostRuntime {
 /// host-fed action streams. Non-native connections use [`Self::from_services`].
 ///
 /// `pocket_platform` is the same kind of optional adapter for the card
-/// collection.
+/// collection, and `profile_platform` for host-rendered profiles.
 #[derive(Clone)]
 pub(crate) struct ConnectionAdapters {
     pub(crate) platform: Arc<dyn Platform>,
@@ -1120,6 +1153,7 @@ pub(crate) struct ConnectionAdapters {
     pub(crate) renderer:
         Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
     pub(crate) pocket_platform: Option<Arc<dyn PocketPlatform>>,
+    pub(crate) profile_platform: Option<Arc<dyn ProfilePlatform>>,
 }
 
 impl ConnectionAdapters {
@@ -1132,6 +1166,7 @@ impl ConnectionAdapters {
             chat: Arc::new(ActionChannel::chat()),
             renderer: Arc::new(ActionChannel::renderer()),
             pocket_platform: services.pocket_platform(),
+            profile_platform: services.profile_platform(),
         }
     }
 }

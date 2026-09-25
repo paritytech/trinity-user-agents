@@ -234,6 +234,16 @@ pub mod latest {
     pub type HostLocaleSubscribeItem = LatestOf<versioned::locale::HostLocaleSubscribeItem>;
     /// Navigation request error.
     pub type HostNavigateToError = LatestOf<versioned::system::HostNavigateToError>;
+    /// The calling product's Pocket cards.
+    pub type HostPocketListSubscribeItem = LatestOf<versioned::pocket::HostPocketListSubscribeItem>;
+    /// Pocket card removal request.
+    pub type HostPocketRemoveCardRequest = LatestOf<versioned::pocket::HostPocketRemoveCardRequest>;
+    /// Pocket card removal failure.
+    pub type HostPocketRemoveCardError = LatestOf<versioned::pocket::HostPocketRemoveCardError>;
+    /// Profile presentation request.
+    pub type HostProfilePresentRequest = LatestOf<versioned::profile::HostProfilePresentRequest>;
+    /// Profile presentation failure.
+    pub type HostProfilePresentError = LatestOf<versioned::profile::HostProfilePresentError>;
     /// Push notification scheduling request.
     pub type HostPushNotificationRequest =
         LatestOf<versioned::notifications::HostPushNotificationRequest>;

@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "ebd7116a965f60c9";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "c8972ad11436a788";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1633,7 +1633,87 @@ impl RequestMethod for PreimageSubmit {
     type Request = truapi::versioned::preimage::RemotePreimageSubmitRequest;
     type Response = truapi::versioned::preimage::RemotePreimageSubmitResponse;
     type Error = truapi::versioned::preimage::RemotePreimageSubmitError;
-    const RESPONSE_VERSIONED: bool = true;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `profile_present` method marker.
+pub struct ProfilePresent;
+impl ProfilePresent {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Profile",
+        method: "present",
+        wire_name: "profile_present",
+        request_type: "truapi::versioned::profile::HostProfilePresentRequest",
+        response_type: "truapi::versioned::profile::HostProfilePresentResponse",
+        error_type: Some("truapi::versioned::profile::HostProfilePresentError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 20,
+            method_id: 0,
+        }),
+    };
+}
+impl RequestMethod for ProfilePresent {
+    type Request = truapi::versioned::profile::HostProfilePresentRequest;
+    type Response = truapi::versioned::profile::HostProfilePresentResponse;
+    type Error = truapi::versioned::profile::HostProfilePresentError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `renderer_render` method marker.
+pub struct RendererRender;
+impl RendererRender {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Renderer",
+        method: "render",
+        wire_name: "renderer_render",
+        request_type: "truapi::versioned::renderer::ProductRendererRenderRequest",
+        response_type: "truapi::versioned::renderer::ProductRendererRenderItem",
+        error_type: Some("truapi::versioned::renderer::ProductRendererRenderError"),
+        kind: MethodKind::Subscription,
+        direction: Direction::HostToProduct,
+        required_execution: Some(ExecutionKind::Worker),
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 17,
+            method_id: 0,
+        }),
+    };
+}
+impl HostSubscriptionMethod for RendererRender {
+    type Request = truapi::versioned::renderer::ProductRendererRenderRequest;
+    type Error = truapi::versioned::renderer::ProductRendererRenderError;
+    type Item = truapi::versioned::renderer::ProductRendererRenderItem;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `renderer_action_subscribe` method marker.
+pub struct RendererActionSubscribe;
+impl RendererActionSubscribe {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Renderer",
+        method: "action_subscribe",
+        wire_name: "renderer_action_subscribe",
+        request_type: "truapi::versioned::renderer::HostRendererActionSubscribeRequest",
+        response_type: "truapi::versioned::renderer::HostRendererActionSubscribeItem",
+        error_type: Some("truapi::versioned::renderer::HostRendererActionSubscribeError"),
+        kind: MethodKind::Subscription,
+        direction: Direction::ProductToHost,
+        required_execution: Some(ExecutionKind::Worker),
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 17,
+            method_id: 1,
+        }),
+    };
+}
+impl SubscriptionMethod for RendererActionSubscribe {
+    type Request = truapi::versioned::renderer::HostRendererActionSubscribeRequest;
+    type Error = truapi::versioned::renderer::HostRendererActionSubscribeError;
+    type Item = truapi::versioned::renderer::HostRendererActionSubscribeItem;
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -2191,6 +2271,7 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     PermissionsRequestRemotePermission::DESCRIPTOR,
     PreimageLookupSubscribe::DESCRIPTOR,
     PreimageSubmit::DESCRIPTOR,
+    ProfilePresent::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,
     SigningCreateTransaction::DESCRIPTOR,
     SigningCreateTransactionWithLegacyAccount::DESCRIPTOR,
@@ -2262,6 +2343,7 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     PermissionsRequestRemotePermission::DESCRIPTOR,
     PreimageLookupSubscribe::DESCRIPTOR,
     PreimageSubmit::DESCRIPTOR,
+    ProfilePresent::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,
     SigningCreateTransaction::DESCRIPTOR,
     SigningCreateTransactionWithLegacyAccount::DESCRIPTOR,
@@ -2339,6 +2421,9 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     PermissionsRequestRemotePermission::DESCRIPTOR,
     PreimageLookupSubscribe::DESCRIPTOR,
     PreimageSubmit::DESCRIPTOR,
+    ProfilePresent::DESCRIPTOR,
+    RendererRender::DESCRIPTOR,
+    RendererActionSubscribe::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,
     SigningCreateTransaction::DESCRIPTOR,
     SigningCreateTransactionWithLegacyAccount::DESCRIPTOR,
