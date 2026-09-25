@@ -37,9 +37,13 @@ import {
   HostContactPick,
   PermissionDecision,
   ProductContext,
+  RequestRoute,
   UserConfirmationReview,
 } from "./host-callbacks.js";
-import type { RequiredHostCallbacks } from "./host-callbacks.js";
+import type {
+  CallbackOptions,
+  RequiredHostCallbacks,
+} from "./host-callbacks.js";
 
 import type { ChainConnect } from "../runtime.js";
 import { chainConnectAdapter, driveResultStream } from "../adapter-support.js";
@@ -89,10 +93,12 @@ export interface RawCallbacks {
   devicePermission(
     product: Uint8Array,
     request: Uint8Array,
+    options: CallbackOptions,
   ): Promise<Uint8Array>;
   remotePermission(
     product: Uint8Array,
     request: Uint8Array,
+    options: CallbackOptions,
   ): Promise<Uint8Array>;
   subscribePocketCards?(
     product: Uint8Array,
@@ -119,8 +125,18 @@ export interface RawCallbacks {
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
-  confirmPermission(review: Uint8Array): Promise<Uint8Array>;
-  confirmUserAction(review: Uint8Array): Promise<boolean>;
+  confirmPermission(
+    product: Uint8Array,
+    route: Uint8Array,
+    review: Uint8Array,
+    options: CallbackOptions,
+  ): Promise<Uint8Array>;
+  confirmUserAction(
+    product: Uint8Array,
+    route: Uint8Array,
+    review: Uint8Array,
+    options: CallbackOptions,
+  ): Promise<boolean>;
 }
 /** Adapt typed host callbacks into the raw SCALE callback surface the
  *  WASM core invokes. */
@@ -232,18 +248,20 @@ export function createWasmRawCallbacks(
             ),
         }
       : {}),
-    devicePermission: async (product, request) =>
+    devicePermission: async (product, request, options) =>
       PermissionDecision.enc(
         await callbacks.permissions.devicePermission(
           ProductContext.dec(product),
           HostDevicePermissionRequest.dec(request),
+          options,
         ),
       ),
-    remotePermission: async (product, request) =>
+    remotePermission: async (product, request, options) =>
       PermissionDecision.enc(
         await callbacks.permissions.remotePermission(
           ProductContext.dec(product),
           RemotePermissionRequest.dec(request),
+          options,
         ),
       ),
     ...(pocket
@@ -295,15 +313,21 @@ export function createWasmRawCallbacks(
         (item) => sendItem(HostThemeSubscribeItem.enc(item)),
         sendError,
       ),
-    confirmPermission: async (review) =>
+    confirmPermission: async (product, route, review, options) =>
       PermissionDecision.enc(
         await callbacks.userConfirmation.confirmPermission(
+          ProductContext.dec(product),
+          RequestRoute.dec(route),
           UserConfirmationReview.dec(review),
+          options,
         ),
       ),
-    confirmUserAction: async (review) =>
+    confirmUserAction: async (product, route, review, options) =>
       await callbacks.userConfirmation.confirmUserAction(
+        ProductContext.dec(product),
+        RequestRoute.dec(route),
         UserConfirmationReview.dec(review),
+        options,
       ),
   };
 }

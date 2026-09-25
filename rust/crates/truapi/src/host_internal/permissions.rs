@@ -35,10 +35,13 @@
 //! is authorized without reading or writing permission records and never
 //! reaches the prompt callback. Device permissions are never covered.
 
+use core::future::Future;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use futures::{FutureExt, pin_mut};
 use parity_scale_codec::{Decode, Encode};
+use truapi::CancellationToken;
 
 use crate::platform::{
     BLESSED_REMOTE_DOMAINS, CoreStorage, CoreStorageKey, DevicePermissionStatus,
@@ -152,6 +155,21 @@ impl TemporaryPermissions {
     }
 }
 
+/// The answer to `prompt`, or `None` once `withdrawal` is cancelled; an
+/// already cancelled `withdrawal` never starts the prompt.
+pub async fn prompt_unless_withdrawn<T>(
+    withdrawal: &CancellationToken,
+    prompt: impl Future<Output = T>,
+) -> Option<T> {
+    let prompt = prompt.fuse();
+    let withdrawn = withdrawal.cancelled().fuse();
+    pin_mut!(prompt, withdrawn);
+    futures::select_biased! {
+        _ = withdrawn => None,
+        answer = prompt => Some(answer),
+    }
+}
+
 /// Coordinates saved and one-use permissions with the platform's prompts.
 pub struct PermissionsService<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> {
     storage: &'a S,
@@ -164,6 +182,8 @@ pub struct PermissionsService<'a, S: CoreStorage + ?Sized, P: Permissions + ?Siz
     trusted_product: bool,
     /// One-use grants remain local to the execution that requested them.
     temporary_permissions: Arc<TemporaryPermissions>,
+    /// Withdraws a pending prompt when cancelled; see [`prompt_unless_withdrawn`].
+    withdrawal: CancellationToken,
 }
 
 impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a, S, P> {
@@ -180,7 +200,15 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
             status: None,
             trusted_product: has_trusted_remote_permissions(&product.product_id),
             temporary_permissions: Arc::default(),
+            withdrawal: CancellationToken::default(),
         }
+    }
+
+    /// Withdraw a pending prompt when `withdrawal` is cancelled, leaving the
+    /// call `NotDetermined`; an answer the user already gave is still recorded.
+    pub fn withdrawn_by(mut self, withdrawal: CancellationToken) -> Self {
+        self.withdrawal = withdrawal;
+        self
     }
 
     pub fn with_temporary_permissions(mut self, permissions: Arc<TemporaryPermissions>) -> Self {
@@ -503,13 +531,14 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         // Only a genuine user authorization is persisted. A prompt-callback
         // error is transient (dismissed UI, unavailable UI, IPC timeout), not
         // a denial, so leave the authorization ask/default.
-        let authorization = match self
-            .prompt
-            .device_permission(self.product, permission)
-            .await
+        let authorization = match prompt_unless_withdrawn(
+            &self.withdrawal,
+            self.prompt.device_permission(self.product, permission),
+        )
+        .await
         {
-            Ok(decision) => decision,
-            Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
+            Some(Ok(decision)) => decision,
+            Some(Err(_)) | None => return Ok(PermissionAuthorizationStatus::NotDetermined),
         };
         self.record_decision(key, authorization, consume).await
     }
@@ -553,9 +582,14 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
             }
             // See `check_or_prompt_device`: persist only a genuine user decision;
             // transient callback errors leave the authorization ask/default.
-            let authorization = match self.prompt.remote_permission(self.product, request).await {
-                Ok(decision) => decision,
-                Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
+            let authorization = match prompt_unless_withdrawn(
+                &self.withdrawal,
+                self.prompt.remote_permission(self.product, request),
+            )
+            .await
+            {
+                Some(Ok(decision)) => decision,
+                Some(Err(_)) | None => return Ok(PermissionAuthorizationStatus::NotDetermined),
             };
             return self.record_decision(key, authorization, consume).await;
         };
@@ -585,13 +619,15 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
             });
         }
 
-        let authorization = match self
-            .prompt
-            .remote_permission(self.product, remote_bundle_request(&undecided))
-            .await
+        let authorization = match prompt_unless_withdrawn(
+            &self.withdrawal,
+            self.prompt
+                .remote_permission(self.product, remote_bundle_request(&undecided)),
+        )
+        .await
         {
-            Ok(decision) => decision,
-            Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
+            Some(Ok(decision)) => decision,
+            Some(Err(_)) | None => return Ok(PermissionAuthorizationStatus::NotDetermined),
         };
         match authorization {
             // Each granted domain is independently reachable afterwards, and
@@ -776,6 +812,41 @@ mod tests {
 
     fn test_key(key: CoreStorageKey) -> String {
         hex::encode(key.encode())
+    }
+
+    #[test]
+    fn a_withdrawn_prompt_records_nothing_and_is_not_asked_again() {
+        futures::executor::block_on(async {
+            let storage = MemStorage::default();
+            let prompt = ScriptedPrompt::decisions(vec![PermissionDecision::AllowAlways], vec![]);
+            let withdrawal = CancellationToken::default();
+            let service = PermissionsService::new(&storage, &prompt, &PRODUCT)
+                .withdrawn_by(withdrawal.clone());
+            let pending_answer = prompt.device_answers.lock().await;
+            let mut request =
+                Box::pin(service.check_or_prompt_device(HostDevicePermissionRequest::Camera));
+            assert!(futures::poll!(&mut request).is_pending());
+
+            withdrawal.cancel();
+            assert_eq!(
+                request.await.unwrap(),
+                PermissionAuthorizationStatus::NotDetermined
+            );
+            drop(pending_answer);
+
+            assert_eq!(
+                (
+                    service
+                        .check_or_prompt_device(HostDevicePermissionRequest::Camera)
+                        .await
+                        .unwrap(),
+                    prompt.device_calls.load(Ordering::SeqCst),
+                    storage.inner.lock().await.len(),
+                ),
+                (PermissionAuthorizationStatus::NotDetermined, 1, 0),
+                "a withdrawn request never prompts and leaves the question open",
+            );
+        });
     }
 
     #[test]

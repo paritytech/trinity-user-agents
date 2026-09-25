@@ -19,6 +19,8 @@ import {
   AuthState,
   CoreStorageKey,
   ProductContext,
+  RequestRoute,
+  UserConfirmationReview,
 } from "../generated/host-callbacks.js";
 import type {
   AuthState as AuthStateValue,
@@ -714,7 +716,77 @@ describe("createWebWorkerPairingHostRuntime", () => {
       value: undefined,
     });
 
+    // A storage write the worker queued before it saw the disposal still lands.
     provider.dispose();
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 8,
+      name: "clearCoreStorage",
+      args: [authSessionKey],
+    });
+    await settle();
+    expect(clears).toBe(2);
+  });
+
+  it("withdraws a prompt callback when the worker aborts it", async () => {
+    const worker = new FakeWorker();
+    const signals: AbortSignal[] = [];
+    const products: unknown[] = [];
+    const providerPromise = createProviderFromRuntime(
+      asWorker(worker),
+      makeHostCallbacks({
+        userConfirmation: {
+          confirmUserAction: (product, _route, _review, { signal }) => {
+            products.push(product);
+            signals.push(signal);
+            return new Promise<boolean>((resolve) =>
+              signal.addEventListener("abort", () => resolve(false)),
+            );
+          },
+        },
+      }),
+      { runtimeConfig: runtimeConfig() },
+    );
+    worker.emit({ kind: "loaded" });
+    worker.emit({ kind: "ready" });
+    const provider = await finishProviderReady(worker, providerPromise);
+    const product = { productId: "dotli.dot", executionKind: "App" } as const;
+    const request = (requestId: number) => ({
+      kind: "callbackRequest",
+      requestId,
+      name: "confirmUserAction",
+      args: [
+        ProductContext.enc(product),
+        RequestRoute.enc({ tag: "Local" }),
+        UserConfirmationReview.enc({
+          tag: "PreimageSubmit",
+          value: { size: 1n },
+        }),
+      ],
+      withdrawable: true,
+    });
+
+    worker.emit(request(21));
+    await settle();
+    expect(products).toEqual([product]);
+    expect(signals[0]?.aborted).toBe(false);
+
+    worker.emit({ kind: "callbackAbort", requestId: 21 });
+    await settle();
+    expect(signals[0]?.aborted).toBe(true);
+
+    // A prompt still open when the runtime goes away is withdrawn with it.
+    worker.emit(request(22));
+    await settle();
+    expect(signals[1]?.aborted).toBe(false);
+    provider.dispose();
+    await settle();
+    expect(signals[1]?.aborted).toBe(true);
+
+    // A prompt the worker sent before it saw the disposal is never shown.
+    worker.emit(request(23));
+    await settle();
+    expect(products).toHaveLength(2);
   });
 
   it("reports unknown callback requests", async () => {

@@ -9,12 +9,16 @@ import Testing
 /// cross-platform contracts (Android `SsoMessageContent`, JS SDK).
 @Suite("APPersonhood Coding Tests")
 struct APPersonhoodCodingTests {
+    static let caller = PolkadotHostRemoteMessage.ProductCaller(productId: "caller.product", executionKind: .app)
+
     @Test("Alias request encodes at ContentV1 index 3 with the RFC field order")
     func aliasRequestMessageRoundtrip() throws {
-        let request = PolkadotHostRemoteMessage.AliasRequest(
-            callingProductId: "caller.product",
-            context: ProductProofContext(productId: "target.product", suffix: .index(0)),
-            ring: RingLocation(chainId: Data.random(of: 32)!, junctions: [.palletInstance(1)])
+        let request = PolkadotHostRemoteMessage.ProductRequest(
+            caller: Self.caller,
+            payload: PolkadotHostRemoteMessage.AliasRequest(
+                context: ProductProofContext(productId: "target.product", suffix: .index(0)),
+                ring: RingLocation(chainId: Data.random(of: 32)!, junctions: [.palletInstance(1)])
+            )
         )
 
         let content = PolkadotHostRemoteMessage.ContentV1.aliasRequest(request)
@@ -25,9 +29,7 @@ struct APPersonhoodCodingTests {
             return
         }
 
-        #expect(decodedRequest.callingProductId == request.callingProductId)
-        #expect(decodedRequest.context == request.context)
-        #expect(decodedRequest.ring == request.ring)
+        #expect(decodedRequest == request)
     }
 
     @Test("Alias response encodes at ContentV1 index 4")
@@ -51,14 +53,16 @@ struct APPersonhoodCodingTests {
 
     @Test("Create proof request encodes at ContentV1 index 12")
     func createProofRequestMessageRoundtrip() throws {
-        let request = PolkadotHostRemoteMessage.CreateProofRequest(
-            callingProductId: "caller.product",
-            context: ProductProofContext(productId: "target.product", suffix: .index(1)),
-            ring: RingLocation(
-                chainId: Data.random(of: 32)!,
-                junctions: [.collectionId(Data.random(of: 32)!)]
-            ),
-            message: Data.random(of: 64)!
+        let request = PolkadotHostRemoteMessage.ProductRequest(
+            caller: Self.caller,
+            payload: PolkadotHostRemoteMessage.CreateProofRequest(
+                context: ProductProofContext(productId: "target.product", suffix: .index(1)),
+                ring: RingLocation(
+                    chainId: Data.random(of: 32)!,
+                    junctions: [.collectionId(Data.random(of: 32)!)]
+                ),
+                message: Data.random(of: 64)!
+            )
         )
 
         let content = PolkadotHostRemoteMessage.ContentV1.createProofRequest(request)
@@ -69,10 +73,7 @@ struct APPersonhoodCodingTests {
             return
         }
 
-        #expect(decodedRequest.callingProductId == request.callingProductId)
-        #expect(decodedRequest.context == request.context)
-        #expect(decodedRequest.ring == request.ring)
-        #expect(decodedRequest.message == request.message)
+        #expect(decodedRequest == request)
     }
 
     @Test("Create proof response encodes at ContentV1 index 13")

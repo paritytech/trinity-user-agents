@@ -207,6 +207,18 @@ Two rules the core cannot check are the host's to keep: send a render context
 only for a surface the product's manifest `includes`, and publish a renderer
 action only from the current tree of an open render stream.
 
+## Prompts
+
+The callbacks that put a prompt in front of the user,
+`permissions.devicePermission`, `permissions.remotePermission`,
+`userConfirmation.confirmUserAction` and `userConfirmation.confirmPermission`,
+take a trailing `{ signal }`. The core aborts `signal` when it withdraws the
+request behind the prompt; the host should then dismiss the prompt.
+
+The confirmation callbacks take the asking product's `ProductContext` and a
+`RequestRoute`: `Local` when the product runs on this host, or `PairedHost`
+with the `PairedSsoPeer` a relayed SSO request arrived from.
+
 ## Product account addresses
 
 A host that stores the core's `ProductSubtree` slot can name the account a

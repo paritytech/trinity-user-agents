@@ -26,6 +26,7 @@ import {
   PermissionDecision,
   ProductContext,
   ProductExecutionKind,
+  RequestRoute,
   UserConfirmationReview,
 } from "./generated/host-callbacks.js";
 import { makeHostCallbacks, settle } from "./test-support.js";
@@ -36,6 +37,20 @@ import { makeHostCallbacks, settle } from "./test-support.js";
 // `Uint8Array`. Primitives, strings and byte blobs pass through unchanged.
 
 const GENESIS = `0x${"11".repeat(32)}` as `0x${string}`;
+const PAIRED: RequestRoute = {
+  tag: "PairedHost",
+  value: {
+    peer: {
+      statementAccountId: new Uint8Array(32).fill(7),
+      encryptionPublicKey: new Uint8Array(32).fill(8),
+    },
+  },
+};
+const PLAYGROUND: ProductContext = {
+  productId: "playground.dot",
+  executionKind: "App",
+};
+const withdrawal = () => ({ signal: new AbortController().signal });
 
 it("preserves one-use permission decisions across the WASM callback", async () => {
   const review = {
@@ -44,19 +59,41 @@ it("preserves one-use permission decisions across the WASM callback", async () =
   };
   for (const decision of ["AllowOnce", "AllowAlways", "Deny"] as const) {
     const reviews: UserConfirmationReview[] = [];
+    const products: ProductContext[] = [];
+    const routes: RequestRoute[] = [];
+    const options = withdrawal();
+    const signals: AbortSignal[] = [];
     const raw = createWasmRawCallbacks(makeHostCallbacks({
       userConfirmation: {
-        confirmPermission: async (request) => {
+        confirmPermission: async (product, route, request, { signal }) => {
+          products.push(product);
+          routes.push(route);
           reviews.push(request);
+          signals.push(signal);
           return decision;
         },
       },
     }));
-    const encoded = await raw.confirmPermission(UserConfirmationReview.enc(review));
-    expect({ decision: PermissionDecision.dec(encoded), reviews }).toEqual({
+    const encoded = await raw.confirmPermission(
+      ProductContext.enc(PLAYGROUND),
+      RequestRoute.enc(PAIRED),
+      UserConfirmationReview.enc(review),
+      options,
+    );
+    expect({
+      decision: PermissionDecision.dec(encoded),
+      products,
+      routes,
+      reviews,
+    }).toEqual({
       decision,
+      products: [PLAYGROUND],
+      routes: [PAIRED],
       reviews: [review],
     });
+    // `toEqual` would accept any signal: the host must get the core's own.
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toBe(options.signal);
   }
 });
 
@@ -167,6 +204,7 @@ describe("createWasmRawCallbacks", () => {
         await raw.devicePermission!(
           ProductContext.enc(worker),
           HostDevicePermissionRequest.enc("Camera"),
+          withdrawal(),
         ),
       ),
     ).toBe("AllowAlways");
@@ -177,6 +215,7 @@ describe("createWasmRawCallbacks", () => {
           RemotePermissionRequest.enc({
             permission: { tag: "ChainSubmit" },
           }),
+          withdrawal(),
         ),
       ),
     ).toBe("AllowOnce");
@@ -229,20 +268,19 @@ describe("createWasmRawCallbacks", () => {
           },
         },
         userConfirmation: {
-          confirmUserAction: async (review) => {
+          confirmUserAction: async (product, _route, review) => {
+            if (product.productId !== PLAYGROUND.productId) return false;
             switch (review.tag) {
               case "SignPayload":
                 return (
                   review.value.tag === "Product" &&
-                  review.value.value.callingProductId === "playground.dot" &&
-                  review.value.value.request.account.dotNsIdentifier ===
+                  review.value.value.account.dotNsIdentifier ===
                     "playground.dot" &&
-                  review.value.value.request.payload.method === "0x0102"
+                  review.value.value.payload.method === "0x0102"
                 );
               case "SignRaw":
                 return (
                   review.value.tag === "Product" &&
-                  review.value.value.callingProductId === "playground.dot" &&
                   review.value.value.watermarked === false &&
                   review.value.value.request.payload.tag === "Bytes" &&
                   review.value.value.request.payload.value.bytes === "0x0304"
@@ -250,21 +288,17 @@ describe("createWasmRawCallbacks", () => {
               case "CreateTransaction":
                 return (
                   review.value.tag === "Product" &&
-                  review.value.value.callingProductId === "playground.dot" &&
-                  review.value.value.payload.signer.derivationIndex.tag ===
-                    "Index" &&
-                  review.value.value.payload.callData === "0x0506"
+                  review.value.value.signer.derivationIndex.tag === "Index" &&
+                  review.value.value.callData === "0x0506"
                 );
               case "AccountAlias":
                 return (
-                  review.value.callingProductId === "playground.dot" &&
                   review.value.context.productId === "playground.dot" &&
                   review.value.ringLocation.junctions[0]?.tag ===
                     "PalletInstance"
                 );
               case "CreateProof":
                 return (
-                  review.value.callingProductId === "playground.dot" &&
                   review.value.context.suffix.tag === "Index" &&
                   review.value.message[0] === 7
                 );
@@ -319,29 +353,30 @@ describe("createWasmRawCallbacks", () => {
     await raw.clearCoreStorage!(authSessionKey);
     expect(
       await raw.confirmUserAction?.(
+        ProductContext.enc(PLAYGROUND),
+        RequestRoute.enc({ tag: "Local" }),
         UserConfirmationReview.enc({
           tag: "SignPayload",
           value: {
             tag: "Product",
             value: {
-              callingProductId: "playground.dot",
-              request: {
-                account: PRODUCT_ACCOUNT,
-                payload: SIGN_PAYLOAD,
-              },
+              account: PRODUCT_ACCOUNT,
+              payload: SIGN_PAYLOAD,
             },
           },
         }),
+        withdrawal(),
       ),
     ).toBe(true);
     expect(
       await raw.confirmUserAction?.(
+        ProductContext.enc(PLAYGROUND),
+        RequestRoute.enc({ tag: "Local" }),
         UserConfirmationReview.enc({
           tag: "SignRaw",
           value: {
             tag: "Product",
             value: {
-              callingProductId: "playground.dot",
               request: {
                 account: PRODUCT_ACCOUNT,
                 payload: {
@@ -353,56 +388,63 @@ describe("createWasmRawCallbacks", () => {
             },
           },
         }),
+        withdrawal(),
       ),
     ).toBe(true);
     expect(
       await raw.confirmUserAction?.(
+        ProductContext.enc(PLAYGROUND),
+        RequestRoute.enc({ tag: "Local" }),
         UserConfirmationReview.enc({
           tag: "CreateTransaction",
           value: {
             tag: "Product",
             value: {
-              callingProductId: "playground.dot",
-              payload: {
-                signer: PRODUCT_ACCOUNT,
-                genesisHash: GENESIS,
-                callData: "0x0506",
-                extensions: [],
-                txExtVersion: 0,
-                contacts: [],
-              },
+              signer: PRODUCT_ACCOUNT,
+              genesisHash: GENESIS,
+              callData: "0x0506",
+              extensions: [],
+              txExtVersion: 0,
+              contacts: [],
             },
           },
         }),
+        withdrawal(),
       ),
     ).toBe(true);
     expect(
       await raw.confirmUserAction?.(
+        ProductContext.enc(PLAYGROUND),
+        RequestRoute.enc({ tag: "Local" }),
         UserConfirmationReview.enc({
           tag: "AccountAlias",
           value: {
-            callingProductId: "playground.dot",
             context: PROOF_CONTEXT,
             ringLocation: RING_LOCATION,
           },
         }),
+        withdrawal(),
       ),
     ).toBe(true);
     expect(
       await raw.confirmUserAction?.(
+        ProductContext.enc(PLAYGROUND),
+        RequestRoute.enc({ tag: "Local" }),
         UserConfirmationReview.enc({
           tag: "CreateProof",
           value: {
-            callingProductId: "playground.dot",
             context: PROOF_CONTEXT,
             ringLocation: RING_LOCATION,
             message: new Uint8Array([7, 8]),
           },
         }),
+        withdrawal(),
       ),
     ).toBe(true);
     expect(
       await raw.confirmUserAction?.(
+        ProductContext.enc(PLAYGROUND),
+        RequestRoute.enc({ tag: "Local" }),
         UserConfirmationReview.enc({
           tag: "AccountAccess",
           value: {
@@ -410,25 +452,31 @@ describe("createWasmRawCallbacks", () => {
             targetProductId: "wallet.dot",
           },
         }),
+        withdrawal(),
       ),
     ).toBe(true);
     expect(
       await raw.confirmUserAction?.(
+        ProductContext.enc(PLAYGROUND),
+        RequestRoute.enc({ tag: "Local" }),
         UserConfirmationReview.enc({
           tag: "ResourceAllocation",
           value: {
-            callingProductId: "playground.dot",
             resources: [{ tag: "StatementStoreAllowance" }],
           },
         }),
+        withdrawal(),
       ),
     ).toBe(true);
     expect(
       await raw.confirmUserAction?.(
+        ProductContext.enc(PLAYGROUND),
+        RequestRoute.enc({ tag: "Local" }),
         UserConfirmationReview.enc({
           tag: "PreimageSubmit",
           value: { size: 42n },
         }),
+        withdrawal(),
       ),
     ).toBe(true);
 

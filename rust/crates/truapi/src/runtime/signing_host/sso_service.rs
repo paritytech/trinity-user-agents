@@ -4,8 +4,8 @@
 use std::sync::Arc;
 
 use crate::platform::{
-    CreateTransactionReview, ResourceAllocationReview, SignPayloadReview, SignRawReview,
-    UserConfirmationReview,
+    CreateTransactionReview, PairedSsoPeer, ProductContext, RequestRoute, ResourceAllocationReview,
+    SignPayloadReview, SignRawReview, UserConfirmationReview,
 };
 use futures::{FutureExt, pin_mut};
 use tracing::warn;
@@ -39,15 +39,21 @@ use crate::runtime::sso_service::{Dispatch, SsoReply, SsoRequestContext};
 /// posted, because a withdrawn request has no response.
 const WITHDRAWN: &str = "Withdrawn";
 
-/// SSO handlers served by a locally activated [`SigningHost`].
+/// SSO handlers served by a locally activated [`SigningHost`] for one paired
+/// host.
 pub struct SigningHostSsoService {
     signing_host: Arc<SigningHost>,
+    /// The paired host every request this service answers arrived from.
+    route: RequestRoute,
 }
 
 impl SigningHostSsoService {
-    /// Serve requests and prompt through the signing host's platform.
-    pub fn new(signing_host: Arc<SigningHost>) -> Self {
-        Self { signing_host }
+    /// Serve `peer`'s requests and prompt through the signing host's platform.
+    pub fn new(signing_host: Arc<SigningHost>, peer: PairedSsoPeer) -> Self {
+        Self {
+            signing_host,
+            route: RequestRoute::PairedHost { peer },
+        }
     }
 
     /// The signing session captured before dispatching one request.
@@ -77,17 +83,19 @@ impl SigningHostSsoService {
         }
     }
 
-    /// The person's answer to `review`, or `None` once the pairing host has
-    /// withdrawn the request, which leaves nothing authorized.
+    /// The person's answer to `review` of `caller`'s request, or `None` once
+    /// the pairing host has withdrawn the request, which leaves nothing
+    /// authorized.
     async fn prompt(
         &self,
         cx: &SsoRequestContext,
+        caller: &ProductContext,
         review: UserConfirmationReview,
     ) -> Option<Result<bool, api::GenericError>> {
         let answer = self
             .signing_host
             .platform
-            .confirm_user_action(review)
+            .confirm_user_action(caller, &self.route, review)
             .fuse();
         let withdrawn = cx.call.cancel().cancelled().fuse();
         pin_mut!(answer, withdrawn);
@@ -102,9 +110,10 @@ impl SigningHostSsoService {
     async fn confirm(
         &self,
         cx: &SsoRequestContext,
+        caller: &ProductContext,
         review: UserConfirmationReview,
     ) -> Result<(), String> {
-        match self.prompt(cx, review).await {
+        match self.prompt(cx, caller, review).await {
             Some(Ok(true)) => Ok(()),
             Some(Ok(false)) => Err("Rejected".to_string()),
             Some(Err(err)) => Err(format!("confirmation failed: {}", err.reason)),
@@ -115,38 +124,36 @@ impl SigningHostSsoService {
     async fn serve_sign(
         &self,
         cx: &SsoRequestContext,
-        request: SignRequest,
+        request: ProductRequest<SignRequest>,
     ) -> Result<api::HostSignPayloadResponse, String> {
-        match request {
+        let ProductRequest { caller, payload } = request;
+        match payload {
             SignRequest::Payload(request) => {
                 let request = *request;
                 self.confirm(
                     cx,
-                    UserConfirmationReview::SignPayload(SignPayloadReview::Product {
-                        // A relayed request carries no caller identity.
-                        calling_product_id: None,
-                        request: request.clone(),
-                    }),
+                    &caller,
+                    UserConfirmationReview::SignPayload(SignPayloadReview::Product(
+                        request.clone(),
+                    )),
                 )
                 .await?;
                 self.signing_host
                     .sign_payload(
                         &cx.call,
                         &cx.session,
-                        // A relayed request carries no caller identity, and
-                        // this role confirms every one of them anyway.
-                        None,
+                        &caller,
                         SignPayloadAuthorityRequest::Product(request),
                     )
                     .await
                     .map_err(|err| err.to_string())
             }
-            SignRequest::Raw(request) => self.serve_sign_raw(cx, request, true).await,
+            SignRequest::Raw(request) => self.serve_sign_raw(cx, &caller, request, true).await,
             SignRequest::RawUnwatermarkedDeprecated(request) => {
-                self.serve_sign_raw(cx, request, false).await
+                self.serve_sign_raw(cx, &caller, request, false).await
             }
             SignRequest::RawWithLegacyAccountUnwatermarkedDeprecated(request) => {
-                self.serve_sign_raw_with_legacy_account(cx, request, false)
+                self.serve_sign_raw_with_legacy_account(cx, &caller, request, false)
                     .await
             }
         }
@@ -155,13 +162,14 @@ impl SigningHostSsoService {
     async fn serve_sign_raw(
         &self,
         cx: &SsoRequestContext,
+        caller: &ProductContext,
         request: api::HostSignRawRequest,
         watermarked: bool,
     ) -> Result<api::HostSignPayloadResponse, String> {
         self.confirm(
             cx,
+            caller,
             UserConfirmationReview::SignRaw(SignRawReview::Product {
-                calling_product_id: None,
                 request: request.clone(),
                 watermarked,
             }),
@@ -171,7 +179,7 @@ impl SigningHostSsoService {
             .sign_raw(
                 &cx.call,
                 &cx.session,
-                None,
+                caller,
                 SignRawAuthorityRequest::Product(request),
                 watermarked,
             )
@@ -182,6 +190,7 @@ impl SigningHostSsoService {
     async fn serve_sign_raw_with_legacy_account(
         &self,
         cx: &SsoRequestContext,
+        caller: &ProductContext,
         request: SignRawWithLegacyAccountRequest,
         watermarked: bool,
     ) -> Result<api::HostSignPayloadResponse, String> {
@@ -191,6 +200,7 @@ impl SigningHostSsoService {
         };
         self.confirm(
             cx,
+            caller,
             UserConfirmationReview::SignRaw(SignRawReview::LegacyAccount {
                 request: public_request.clone(),
                 watermarked,
@@ -201,7 +211,7 @@ impl SigningHostSsoService {
             .sign_raw(
                 &cx.call,
                 &cx.session,
-                None,
+                caller,
                 SignRawAuthorityRequest::LegacyAccount {
                     account: request.account,
                     request: public_request,
@@ -215,13 +225,18 @@ impl SigningHostSsoService {
     async fn serve_create_transaction(
         &self,
         cx: &SsoRequestContext,
+        caller: &ProductContext,
         review: CreateTransactionReview,
         request: CreateTransactionAuthorityRequest,
     ) -> Result<Vec<u8>, String> {
-        self.confirm(cx, UserConfirmationReview::CreateTransaction(review))
-            .await?;
+        self.confirm(
+            cx,
+            caller,
+            UserConfirmationReview::CreateTransaction(review),
+        )
+        .await?;
         self.signing_host
-            .create_transaction(&cx.call, &cx.session, None, request)
+            .create_transaction(&cx.call, &cx.session, caller, request)
             .await
             .map(|response| response.transaction)
             .map_err(|err| err.to_string())
@@ -383,7 +398,11 @@ fn resource_allocation_outcome(
 #[truapi_macros::sso_service]
 impl SigningHostSsoService {
     /// Sign a payload or raw bytes with a product account.
-    async fn sign(&self, cx: &SsoRequestContext, request: SignRequest) -> SignResponse {
+    async fn sign(
+        &self,
+        cx: &SsoRequestContext,
+        request: ProductRequest<SignRequest>,
+    ) -> SignResponse {
         let payload = self.serve_sign(cx, request).await;
         if let Err(reason) = &payload {
             warn!(%reason, "sign request failed");
@@ -398,7 +417,7 @@ impl SigningHostSsoService {
         request: ProductRequest<api::HostAccountGetAliasRequest>,
     ) -> GetAccountAliasResponse {
         self.signing_host
-            .account_alias(&cx.call, &cx.session, request)
+            .account_alias_via(&cx.call, &cx.session, &self.route, request)
             .await
     }
 
@@ -406,15 +425,18 @@ impl SigningHostSsoService {
     async fn resource_allocation(
         &self,
         cx: &SsoRequestContext,
-        request: ResourceAllocationRequest,
+        request: ProductRequest<ResourceAllocationRequest>,
     ) -> ResourceAllocationResponse {
+        let ProductRequest {
+            caller,
+            payload: request,
+        } = request;
         let mut failures = Vec::new();
         let payload = async {
             let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
-                calling_product_id: request.calling_product_id.clone(),
                 resources: request.resources.clone(),
             });
-            match self.prompt(cx, review).await {
+            match self.prompt(cx, &caller, review).await {
                 Some(Ok(true)) => {}
                 Some(Ok(false)) => {
                     return Ok(vec![
@@ -440,7 +462,7 @@ impl SigningHostSsoService {
                 let outcome = self
                     .allocate(
                         &cx.session,
-                        &request.calling_product_id,
+                        &caller.product_id,
                         resource,
                         request.on_existing,
                     )
@@ -468,16 +490,14 @@ impl SigningHostSsoService {
     async fn create_transaction(
         &self,
         cx: &SsoRequestContext,
-        request: CreateTransactionRequest,
+        request: ProductRequest<CreateTransactionRequest>,
     ) -> CreateTransactionResponse {
-        let CreateTransactionPayload::V1(payload) = request.payload;
+        let CreateTransactionPayload::V1(payload) = request.payload.payload;
         let payload = payload.into_product_payload();
         self.serve_create_transaction(
             cx,
-            CreateTransactionReview::Product {
-                calling_product_id: None,
-                payload: payload.clone(),
-            },
+            &request.caller,
+            CreateTransactionReview::Product(payload.clone()),
             CreateTransactionAuthorityRequest::Product(payload),
         )
         .await
@@ -487,11 +507,12 @@ impl SigningHostSsoService {
     async fn create_transaction_with_legacy_account(
         &self,
         cx: &SsoRequestContext,
-        request: CreateTransactionWithLegacyAccountRequest,
+        request: ProductRequest<CreateTransactionWithLegacyAccountRequest>,
     ) -> CreateTransactionResponse {
-        let CreateTransactionLegacyPayload::V1(payload) = request.payload;
+        let CreateTransactionLegacyPayload::V1(payload) = request.payload.payload;
         self.serve_create_transaction(
             cx,
+            &request.caller,
             CreateTransactionReview::LegacyAccount(payload.clone()),
             CreateTransactionAuthorityRequest::IdentityAccount(payload),
         )
@@ -502,9 +523,9 @@ impl SigningHostSsoService {
     async fn sign_raw_with_legacy_account(
         &self,
         cx: &SsoRequestContext,
-        request: SignRawWithLegacyAccountRequest,
+        request: ProductRequest<SignRawWithLegacyAccountRequest>,
     ) -> SignRawWithLegacyAccountResponse {
-        self.serve_sign_raw_with_legacy_account(cx, request, true)
+        self.serve_sign_raw_with_legacy_account(cx, &request.caller, request.payload, true)
             .await
             .map(|response| response.signature)
     }
@@ -530,9 +551,9 @@ impl SigningHostSsoService {
             .sign_vrf_request(
                 &cx.call,
                 &cx.session,
-                request.calling_product_id,
+                &request.caller,
+                &self.route,
                 request.payload,
-                false,
             )
             .await
             .map_err(api::HostAccountSignVrfError::from)
@@ -568,7 +589,7 @@ impl SigningHostSsoService {
         request: ProductRequest<api::HostAccountListRingVrfKeysRequest>,
     ) -> ListRingVrfKeysResponse {
         self.signing_host
-            .list_ring_vrf_keys(&cx.call, &cx.session, request)
+            .list_ring_vrf_keys_via(&cx.call, &cx.session, &self.route, request)
             .await
     }
 

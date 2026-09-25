@@ -121,15 +121,7 @@ pub enum ResponderExit {
     SubscriptionEnded,
 }
 
-/// Public key material identifying one pairing host's resumable SSO session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
-pub struct PairedSsoPeer {
-    /// Pairing host's statement-store account id.
-    pub statement_account_id: [u8; 32],
-    /// Pairing host's X25519 public key.
-    pub encryption_public_key: [u8; 32],
-}
+pub use crate::platform::PairedSsoPeer;
 
 /// Peer-supplied description of the host proposing a pairing.
 ///
@@ -549,7 +541,11 @@ async fn serve_session(
     session: SsoSessionInfo,
     replay_scope: SsoReplayScope,
 ) -> Result<ResponderExit, String> {
-    let service = SigningHostSsoService::new(signing_host.clone());
+    let peer = PairedSsoPeer {
+        statement_account_id: replay_scope.peer_statement_account_id,
+        encryption_public_key: replay_scope.peer_encryption_public_key,
+    };
+    let service = SigningHostSsoService::new(signing_host.clone(), peer);
     let rpc_client = services
         .statement_store
         .client("sso-responder session")
@@ -1360,10 +1356,10 @@ mod tests {
         );
     }
     use crate::host_logic::statement_store::decode_verified_statement_data;
-    use crate::platform::{HostInfo, Platform, PlatformInfo, SigningHostConfig};
+    use crate::platform::{HostInfo, Platform, PlatformInfo, RequestRoute, SigningHostConfig};
     use crate::runtime::authority::ProductAuthority;
     use crate::runtime::services::RuntimeServices;
-    use crate::test_support::{StubPlatform, test_spawner};
+    use crate::test_support::{StubPlatform, test_product, test_spawner, test_sso_peer};
     use std::sync::Arc;
     use truapi::latest as api;
 
@@ -1877,7 +1873,7 @@ mod tests {
         message_id: &str,
         request: v1::RemoteMessage,
     ) -> v1::RemoteMessage {
-        let service = SigningHostSsoService::new(signing_host.clone());
+        let service = SigningHostSsoService::new(signing_host.clone(), test_sso_peer());
         let message = RemoteMessage {
             message_id: message_id.to_string(),
             data: RemoteMessageData::V1(request),
@@ -1893,7 +1889,7 @@ mod tests {
     #[test]
     fn dispatch_without_session_distinguishes_requests_responses_and_disconnects() {
         let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-        let service = SigningHostSsoService::new(signing_host);
+        let service = SigningHostSsoService::new(signing_host, test_sso_peer());
         let dispatch = |data| {
             futures::executor::block_on(service.dispatch(
                 None,
@@ -1973,17 +1969,19 @@ mod tests {
             chain_connect_error: Some("allocation node unavailable"),
             ..StubPlatform::default()
         }));
-        let service = SigningHostSsoService::new(signing_host);
+        let service = SigningHostSsoService::new(signing_host, test_sso_peer());
         let request = RemoteMessage::request(
             "allocation-1".to_string(),
-            sso_messages::ResourceAllocationRequest {
-                calling_product_id: "myapp.dot".to_string(),
-                resources: vec![
-                    api::AllocatableResource::AutoSigning,
-                    api::AllocatableResource::BulletinAllowance,
-                    api::AllocatableResource::StatementStoreAllowance,
-                ],
-                on_existing: OnExistingAllowancePolicy::Ignore,
+            sso_messages::ProductRequest {
+                caller: test_product("myapp.dot"),
+                payload: sso_messages::ResourceAllocationRequest {
+                    resources: vec![
+                        api::AllocatableResource::AutoSigning,
+                        api::AllocatableResource::BulletinAllowance,
+                        api::AllocatableResource::StatementStoreAllowance,
+                    ],
+                    on_existing: OnExistingAllowancePolicy::Ignore,
+                },
             },
         );
         let Dispatch::Response(answer) = futures::executor::block_on(service.answer(request))
@@ -2032,7 +2030,7 @@ mod tests {
             &signing_host,
             "alias-1",
             v1::RemoteMessage::GetAccountAliasRequest(sso_messages::ProductRequest {
-                calling_product_id: "myapp.dot".to_string(),
+                caller: test_product("myapp.dot"),
                 payload: api::HostAccountGetAliasRequest {
                     key_handle: api::ProductAccountId {
                         dot_ns_identifier: "peopl.dot".to_string(),
@@ -2056,6 +2054,148 @@ mod tests {
         assert_eq!(response.payload.unwrap_err(), RingVrfError::Rejected);
     }
 
+    /// Every SSO prompt names the paired host the request arrived from, not
+    /// this device, so the wallet can show where it came from.
+    #[test]
+    fn sso_prompts_name_the_relaying_paired_host() {
+        let requests = [
+            v1::RemoteMessage::SignVrfRequest(sso_messages::ProductRequest {
+                caller: test_product("myapp.dot"),
+                payload: api::HostAccountSignVrfRequest {
+                    account: api::ProductAccountId {
+                        dot_ns_identifier: "myapp.dot".to_string(),
+                        derivation_index: api::DerivationIndex::Index(0),
+                    },
+                    transcript_label: b"lottery".to_vec(),
+                    items: vec![],
+                },
+            }),
+            v1::RemoteMessage::GetAccountAliasRequest(sso_messages::ProductRequest {
+                caller: test_product("myapp.dot"),
+                payload: api::HostAccountGetAliasRequest {
+                    key_handle: api::ProductAccountId {
+                        dot_ns_identifier: "peopl.dot".to_string(),
+                        derivation_index: api::DerivationIndex::Index(0),
+                    },
+                    context: api::ProductProofContext {
+                        product_id: "myapp.dot".to_string(),
+                        suffix: api::DerivationIndex::Index(0),
+                    },
+                    ring_location: api::RingLocation {
+                        chain_id: [0; 32],
+                        junctions: vec![],
+                    },
+                },
+            }),
+            v1::RemoteMessage::ListRingVrfKeysRequest(sso_messages::ProductRequest {
+                caller: test_product("myapp.dot"),
+                payload: api::HostAccountListRingVrfKeysRequest {
+                    owner: "other.dot".to_string(),
+                    disclosure: api::RingVrfKeyDisclosure::PublicKey,
+                },
+            }),
+            v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ProductRequest {
+                caller: test_product("myapp.dot"),
+                payload: sso_messages::ResourceAllocationRequest {
+                    resources: vec![api::AllocatableResource::StatementStoreAllowance],
+                    on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
+                },
+            }),
+        ];
+        for request in requests {
+            let platform = Arc::new(StubPlatform::default());
+            let (_, signing_host) = signing_fixture(platform.clone());
+            let label = format!("{request:?}");
+
+            answer(&signing_host, "prompt-1", request);
+
+            let peer = test_sso_peer();
+            assert_eq!(
+                *platform.confirmation_routes.lock().unwrap(),
+                [RequestRoute::PairedHost { peer }],
+                "{label}"
+            );
+            assert_eq!(
+                *platform.confirmation_products.lock().unwrap(),
+                vec![test_product("myapp.dot")],
+                "{label}"
+            );
+        }
+    }
+
+    /// A request withdrawn before its account-access prompt answers without
+    /// prompting and files no decision, so the next request asks again.
+    #[test]
+    fn a_withdrawn_account_access_request_is_not_prompted_or_remembered() {
+        let alias = || sso_messages::ProductRequest {
+            caller: test_product("myapp.dot"),
+            payload: api::HostAccountGetAliasRequest {
+                key_handle: api::ProductAccountId {
+                    dot_ns_identifier: "peopl.dot".to_string(),
+                    derivation_index: api::DerivationIndex::Index(0),
+                },
+                context: api::ProductProofContext {
+                    product_id: "myapp.dot".to_string(),
+                    suffix: api::DerivationIndex::Index(0),
+                },
+                ring_location: api::RingLocation {
+                    chain_id: [0; 32],
+                    junctions: vec![],
+                },
+            },
+        };
+        let listing = || sso_messages::ProductRequest {
+            caller: test_product("myapp.dot"),
+            payload: api::HostAccountListRingVrfKeysRequest {
+                owner: "other.dot".to_string(),
+                disclosure: api::RingVrfKeyDisclosure::Anonymized,
+            },
+        };
+        let route = RequestRoute::PairedHost {
+            peer: test_sso_peer(),
+        };
+        let platform = Arc::new(StubPlatform::default());
+        let (_, signing_host) = signing_fixture(platform.clone());
+        let session = signing_host.current_session().expect("active session");
+        let cancel = truapi::CancellationToken::default();
+        cancel.cancel();
+        let withdrawn = truapi::CallContext::with_parts("withdrawn".to_string(), cancel);
+
+        let aliased = futures::executor::block_on(signing_host.account_alias_via(
+            &withdrawn,
+            &session,
+            &route,
+            alias(),
+        ));
+        let listed = futures::executor::block_on(signing_host.list_ring_vrf_keys_via(
+            &withdrawn,
+            &session,
+            &route,
+            listing(),
+        ));
+
+        assert_eq!(aliased.unwrap_err(), RingVrfError::Rejected);
+        assert_eq!(listed.unwrap_err(), RingVrfError::Rejected);
+        assert!(platform.confirmation_routes.lock().unwrap().is_empty());
+
+        let live = truapi::CallContext::default();
+        let aliased = futures::executor::block_on(signing_host.account_alias_via(
+            &live,
+            &session,
+            &route,
+            alias(),
+        ));
+        let listed = futures::executor::block_on(signing_host.list_ring_vrf_keys_via(
+            &live,
+            &session,
+            &route,
+            listing(),
+        ));
+        assert_eq!(aliased.unwrap_err(), RingVrfError::Rejected);
+        assert_eq!(listed.unwrap_err(), RingVrfError::Rejected);
+        assert_eq!(platform.confirmation_routes.lock().unwrap().len(), 2);
+    }
+
     #[test]
     fn resource_allocation_requires_confirmation_before_allocation() {
         let platform = Arc::new(StubPlatform::default());
@@ -2064,10 +2204,12 @@ mod tests {
         let response = answer(
             &signing_host,
             "alloc-1",
-            v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ResourceAllocationRequest {
-                calling_product_id: "myapp.dot".to_string(),
-                resources: vec![api::AllocatableResource::StatementStoreAllowance],
-                on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
+            v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ProductRequest {
+                caller: test_product("myapp.dot"),
+                payload: sso_messages::ResourceAllocationRequest {
+                    resources: vec![api::AllocatableResource::StatementStoreAllowance],
+                    on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
+                },
             }),
         );
 
@@ -2079,14 +2221,16 @@ mod tests {
             vec![SsoAllocationOutcome::Rejected]
         );
 
-        // The confirmation review names the beneficiary product so the user
-        // knows which product receives the delegated allowance key.
+        // The confirmation names the beneficiary product so the user knows
+        // which product receives the delegated allowance key.
         let reviews = platform
             .resource_allocation_reviews
             .lock()
             .expect("resource allocation review list mutex poisoned");
         assert_eq!(reviews.len(), 1);
-        assert_eq!(reviews[0].calling_product_id, "myapp.dot");
+        let products = platform.confirmation_products.lock().unwrap();
+        assert_eq!(products.len(), 1);
+        assert_eq!(products[0].product_id, "myapp.dot");
     }
 
     #[test]
@@ -2106,10 +2250,12 @@ mod tests {
         let response = answer(
             &signing_host,
             "alloc-auto-signing",
-            v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ResourceAllocationRequest {
-                calling_product_id: "myapp.dot".to_string(),
-                resources: vec![api::AllocatableResource::AutoSigning],
-                on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
+            v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ProductRequest {
+                caller: test_product("myapp.dot"),
+                payload: sso_messages::ResourceAllocationRequest {
+                    resources: vec![api::AllocatableResource::AutoSigning],
+                    on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
+                },
             }),
         );
 
@@ -2137,13 +2283,15 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform.clone());
-        let service = SigningHostSsoService::new(signing_host.clone());
+        let service = SigningHostSsoService::new(signing_host.clone(), test_sso_peer());
         let message = RemoteMessage::request(
             "alloc-stale".to_string(),
-            sso_messages::ResourceAllocationRequest {
-                calling_product_id: "myapp.dot".to_string(),
-                resources: vec![api::AllocatableResource::AutoSigning],
-                on_existing: OnExistingAllowancePolicy::Ignore,
+            sso_messages::ProductRequest {
+                caller: test_product("myapp.dot"),
+                payload: sso_messages::ResourceAllocationRequest {
+                    resources: vec![api::AllocatableResource::AutoSigning],
+                    on_existing: OnExistingAllowancePolicy::Ignore,
+                },
             },
         );
 
@@ -2182,10 +2330,12 @@ mod tests {
     fn allocation_request(message_id: &str) -> RemoteMessage {
         RemoteMessage::request(
             message_id.to_string(),
-            sso_messages::ResourceAllocationRequest {
-                calling_product_id: "myapp.dot".to_string(),
-                resources: vec![api::AllocatableResource::AutoSigning],
-                on_existing: OnExistingAllowancePolicy::Ignore,
+            sso_messages::ProductRequest {
+                caller: test_product("myapp.dot"),
+                payload: sso_messages::ResourceAllocationRequest {
+                    resources: vec![api::AllocatableResource::AutoSigning],
+                    on_existing: OnExistingAllowancePolicy::Ignore,
+                },
             },
         )
     }
@@ -2211,7 +2361,7 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform.clone());
-        let service = SigningHostSsoService::new(signing_host);
+        let service = SigningHostSsoService::new(signing_host, test_sso_peer());
         let allocation = service.answer(allocation_request("alloc-1"));
         futures::pin_mut!(allocation);
         assert!(allocation.as_mut().now_or_never().is_none());
@@ -2248,7 +2398,7 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform.clone());
-        let service = SigningHostSsoService::new(signing_host);
+        let service = SigningHostSsoService::new(signing_host, test_sso_peer());
 
         futures::executor::block_on(service.answer(cancel("cancel-1", "alloc-1")));
         let allocation = futures::executor::block_on(service.answer(allocation_request("alloc-1")));
@@ -2380,8 +2530,11 @@ mod tests {
             &signing_host,
             "legacy-tx-1",
             v1::RemoteMessage::CreateTransactionWithLegacyAccountRequest(
-                sso_messages::CreateTransactionWithLegacyAccountRequest {
-                    payload: sso_messages::CreateTransactionLegacyPayload::V1(payload),
+                sso_messages::ProductRequest {
+                    caller: test_product("myapp.dot"),
+                    payload: sso_messages::CreateTransactionWithLegacyAccountRequest {
+                        payload: sso_messages::CreateTransactionLegacyPayload::V1(payload),
+                    },
                 },
             ),
         );

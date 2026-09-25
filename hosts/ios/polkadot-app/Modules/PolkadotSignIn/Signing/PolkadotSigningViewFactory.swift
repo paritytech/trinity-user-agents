@@ -9,9 +9,11 @@ enum PolkadotSigningViewFactory {
         let interactor = PolkadotSigningInteractor(
             signingContext: signingContext
         )
+        let iconFactory: ProductIconViewModelMaking? = RootDependencyLocator.getDependency()
         let presenter = PolkadotSigningPresenter(
             interactor: interactor,
-            wireframe: wireframe
+            wireframe: wireframe,
+            requesterIcon: signingContext.requester.productId.flatMap { iconFactory?.createViewModel(for: $0) }
         )
         let view = PolkadotSigningViewController(presenter: presenter)
 

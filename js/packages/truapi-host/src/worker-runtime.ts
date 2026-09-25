@@ -14,9 +14,9 @@ import type { GenericError } from "@parity/truapi";
 import { TRUAPI_CODEC_VERSION } from "@parity/truapi";
 import {
   createWorkerRawCallbacks,
-  type CallbackName,
   type OptionalCapabilities,
 } from "./generated/worker-callbacks.js";
+import { createCallbackRequests } from "./worker-callback-requests.js";
 import {
   handleGetPermissionAuthorizationStatus,
   handleGetPermissionAuthorizationStatuses,
@@ -65,11 +65,7 @@ function postToMain(msg: WorkerToMain): void {
   ctx.postMessage(msg);
 }
 
-let nextRequestId = 0;
-const pendingCallbacks = new Map<
-  number,
-  (result: { ok: true; value: unknown } | { ok: false; error: string }) => void
->();
+const callbackRequests = createCallbackRequests(postToMain);
 
 let nextSubId = 0;
 const subscriptionListeners = new Map<number, SubscriptionListeners>();
@@ -78,20 +74,6 @@ let nextConnId = 0;
 type ChainConnectAck = { ok: true } | { ok: false; error: string };
 const chainConnectAcks = new Map<number, (ack: ChainConnectAck) => void>();
 const chainResponseListeners = new Map<number, (json: string) => void>();
-
-function callbackRequest(
-  name: CallbackName,
-  args: readonly unknown[],
-): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const requestId = ++nextRequestId;
-    pendingCallbacks.set(requestId, (r) => {
-      if (r.ok) resolve(r.value);
-      else reject(new Error(r.error));
-    });
-    postToMain({ kind: "callbackRequest", requestId, name, args });
-  });
-}
 
 function startSubscription<T>(
   name: SubscriptionName,
@@ -175,7 +157,7 @@ function buildRawCallbacks(capabilities: OptionalCapabilities) {
   return {
     ...createWorkerRawCallbacks(
       {
-        callbackRequest,
+        callbackRequest: callbackRequests.request,
         startSubscription,
         chainConnect,
       },
@@ -851,18 +833,14 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         msg.status,
       );
       break;
-    case "callbackResponse": {
-      const cb = pendingCallbacks.get(msg.requestId);
-      if (cb) {
-        pendingCallbacks.delete(msg.requestId);
-        cb(
-          msg.ok
-            ? { ok: true, value: msg.value }
-            : { ok: false, error: msg.error },
-        );
-      }
+    case "callbackResponse":
+      callbackRequests.settle(
+        msg.requestId,
+        msg.ok
+          ? { ok: true, value: msg.value }
+          : { ok: false, error: msg.error },
+      );
       break;
-    }
     case "subscriptionItem": {
       dispatchSubscriptionItem(
         msg.subId,

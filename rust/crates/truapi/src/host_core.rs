@@ -993,7 +993,8 @@ impl SigningHostRuntime {
             .map_err(|reason| v01::GenericError { reason })
     }
 
-    /// Answer one decrypted SSO remote message with this signing host.
+    /// Answer one decrypted SSO remote message `peer` sent to this signing
+    /// host. The confirmations it raises name `peer` as the paired host.
     ///
     /// Session control stays with the caller: `Disconnected` is reported as an
     /// outcome, never handled here. A `Cancel` withdraws the request it names,
@@ -1002,9 +1003,10 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
     pub async fn answer_sso_request(
         &self,
+        peer: PairedSsoPeer,
         message: RemoteMessage,
     ) -> SsoRequestOutcome {
-        let service = SigningHostSsoService::new(self.signing_host.clone());
+        let service = SigningHostSsoService::new(self.signing_host.clone(), peer);
         match service.answer(message).await {
             Dispatch::Response(answer) => SsoRequestOutcome::Response {
                 message: answer.message.encode(),
@@ -1887,7 +1889,9 @@ mod tests {
         x25519_public_key,
     };
     use crate::host_logic::worker::WorkerTransition;
-    use crate::test_support::{StubPlatform, runtime_config, test_spawner, wait_until};
+    use crate::test_support::{
+        StubPlatform, runtime_config, test_spawner, test_sso_peer, wait_until,
+    };
     use parity_scale_codec::Encode;
     use std::sync::atomic::Ordering;
     use truapi::api::Permissions;
@@ -3598,7 +3602,8 @@ mod tests {
             message_id: "m1".to_string(),
             data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
         };
-        let outcome = futures::executor::block_on(runtime.answer_sso_request(disconnected));
+        let outcome =
+            futures::executor::block_on(runtime.answer_sso_request(test_sso_peer(), disconnected));
         assert!(matches!(outcome, SsoRequestOutcome::Disconnected));
 
         let response_variant = RemoteMessage {
@@ -3610,7 +3615,9 @@ mod tests {
                 },
             )),
         };
-        let outcome = futures::executor::block_on(runtime.answer_sso_request(response_variant));
+        let outcome = futures::executor::block_on(
+            runtime.answer_sso_request(test_sso_peer(), response_variant),
+        );
         assert!(matches!(outcome, SsoRequestOutcome::Ignored));
     }
 
@@ -3650,7 +3657,8 @@ mod tests {
                 },
             )),
         };
-        let outcome = futures::executor::block_on(runtime.answer_sso_request(request));
+        let outcome =
+            futures::executor::block_on(runtime.answer_sso_request(test_sso_peer(), request));
         let SsoRequestOutcome::Response { message } = outcome else {
             panic!("expected a response outcome");
         };

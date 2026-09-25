@@ -3,11 +3,13 @@
 
 use super::*;
 use crate::host_internal::sso_messages::{
-    RemoteMessage, RemoteMessageData, SignRawWithLegacyAccountRequest, SignRequest, v1,
+    ProductRequest, RemoteMessage, RemoteMessageData, SignRawWithLegacyAccountRequest, SignRequest,
+    v1,
 };
-use crate::platform::SignRawReview;
+use crate::platform::{RequestRoute, SignRawReview};
 use crate::runtime::signing_host::sso_service::SigningHostSsoService;
 use crate::runtime::sso_service::Dispatch;
+use crate::test_support::{test_product, test_sso_peer};
 use parity_scale_codec::{Decode, Encode};
 use truapi::versioned::signing::{
     HostSignRawWithLegacyAccountRequest, HostSignRawWithLegacyAccountResponse,
@@ -100,7 +102,8 @@ fn paired_raw_signing_review_matches_the_signed_bytes_and_requires_confirmation(
             let (_, activation) = signing_runtime_with_platform(platform.clone());
             futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
                 .unwrap();
-            let service = SigningHostSsoService::new(activation);
+            let peer = test_sso_peer();
+            let service = SigningHostSsoService::new(activation, peer);
             let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
             let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
             let product = derive_product_keypair(&root, "myapp.dot", index_bytes(0)).unwrap();
@@ -110,9 +113,12 @@ fn paired_raw_signing_review_matches_the_signed_bytes_and_requires_confirmation(
             let message = if legacy && watermarked {
                 RemoteMessage::request(
                     "proof".into(),
-                    SignRawWithLegacyAccountRequest {
-                        account: identity.public.to_bytes(),
-                        data: payload,
+                    ProductRequest {
+                        caller: test_product("caller.dot"),
+                        payload: SignRawWithLegacyAccountRequest {
+                            account: identity.public.to_bytes(),
+                            data: payload,
+                        },
                     },
                 )
             } else {
@@ -146,7 +152,13 @@ fn paired_raw_signing_review_matches_the_signed_bytes_and_requires_confirmation(
                     }
                 );
                 let request = SignRequest::decode(&mut encoded.as_slice()).unwrap();
-                RemoteMessage::request("proof".into(), request)
+                RemoteMessage::request(
+                    "proof".into(),
+                    ProductRequest {
+                        caller: test_product("caller.dot"),
+                        payload: request,
+                    },
+                )
             };
             let Dispatch::Response(answer) = futures::executor::block_on(service.answer(message))
             else {
@@ -161,6 +173,16 @@ fn paired_raw_signing_review_matches_the_signed_bytes_and_requires_confirmation(
                 )) => response.payload,
                 _ => panic!("expected raw signing response"),
             };
+            assert_eq!(
+                std::mem::take(&mut *platform.confirmation_products.lock().unwrap()),
+                vec![test_product("caller.dot")],
+                "the prompt names the caller the pairing host attached",
+            );
+            assert_eq!(
+                std::mem::take(&mut *platform.confirmation_routes.lock().unwrap()),
+                vec![RequestRoute::PairedHost { peer }],
+                "and the paired host it arrived from",
+            );
             assert_review_watermark(&platform, legacy, watermarked);
             if confirmed {
                 let signature = schnorrkel::Signature::from_bytes(&signature.unwrap()).unwrap();
@@ -201,7 +223,6 @@ fn assert_review_watermark(platform: &StubPlatform, legacy: bool, watermarked: b
         SignRawReview::Product {
             request,
             watermarked,
-            ..
         } => (false, *watermarked, &request.payload),
         SignRawReview::LegacyAccount {
             request,

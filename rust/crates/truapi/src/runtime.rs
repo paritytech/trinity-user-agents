@@ -82,8 +82,9 @@ pub use vrf::ring_vrf_member;
 use crate::platform::{
     AccountAccessReview, ChatFieldError, IdentityDisclosureReview, PermissionAuthorizationRequest,
     PermissionAuthorizationStatus, PermissionDecision, Platform, ProductContext, ProductStorageKey,
-    SessionUiInfo, UserConfirmationReview, normalize_chat_identifier, normalize_product_identifier,
-    validate_chat_icon, validate_chat_message_content, validate_chat_name,
+    RequestRoute, SessionUiInfo, UserConfirmationReview, normalize_chat_identifier,
+    normalize_product_identifier, validate_chat_icon, validate_chat_message_content,
+    validate_chat_name,
 };
 pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
@@ -110,13 +111,15 @@ use truapi::versioned::renderer::{
     HostRendererActionSubscribeError, HostRendererActionSubscribeItem,
     HostRendererActionSubscribeRequest,
 };
-use truapi::{CallContext, CallError, CancellationReason, Subscription, v01};
+use truapi::{CallContext, CallError, CancellationReason, CancellationToken, Subscription, v01};
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
 use crate::chain_runtime::RuntimeFailure;
 use crate::host_internal::bulletin::preimage_key;
-use crate::host_internal::permissions::{PermissionsService, TemporaryPermissions};
+use crate::host_internal::permissions::{
+    PermissionsService, TemporaryPermissions, prompt_unless_withdrawn,
+};
 use crate::host_internal::product_manifest::Granted;
 use crate::host_internal::sso_messages::RingVrfError;
 use crate::host_logic::product_account::{
@@ -734,9 +737,10 @@ impl ProductRuntimeHost {
     #[instrument(skip_all, fields(runtime.method = "permissions.remote_authorization"))]
     async fn remote_permission_authorization(
         &self,
+        cx: &CallContext,
         permission: v01::RemotePermission,
     ) -> Result<PermissionAuthorizationStatus, String> {
-        let service = self.permissions_service();
+        let service = self.permissions_service().withdrawn_by(cx.cancel().clone());
         service
             .authorize_remote(v01::RemotePermissionRequest { permission })
             .await
@@ -744,13 +748,15 @@ impl ProductRuntimeHost {
     }
 
     /// Gate a remote call on `permission`, prompting the user when it is
-    /// undetermined. Anything short of `Authorized` fails with `denied_error`.
+    /// undetermined. Anything short of `Authorized` fails with `denied_error`;
+    /// cancelling `cx` withdraws the prompt.
     pub async fn require_remote_permission<E>(
         &self,
+        cx: &CallContext,
         permission: v01::RemotePermission,
         denied_error: E,
     ) -> Result<(), CallError<E>> {
-        match self.remote_permission_authorization(permission).await {
+        match self.remote_permission_authorization(cx, permission).await {
             Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
             Ok(
                 PermissionAuthorizationStatus::Denied
@@ -767,17 +773,24 @@ impl ProductRuntimeHost {
         if crate::platform::has_trusted_remote_permissions(&self.product_id()) {
             return Ok(true);
         }
-        self.platform.confirm_user_action(review).await
+        self.platform
+            .confirm_user_action(&self.product, &RequestRoute::Local, review)
+            .await
     }
 
-    async fn require_chain_submit<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
-        self.require_remote_permission(v01::RemotePermission::ChainSubmit, denied_error)
+    async fn require_chain_submit<E>(
+        &self,
+        cx: &CallContext,
+        denied_error: E,
+    ) -> Result<(), CallError<E>> {
+        self.require_remote_permission(cx, v01::RemotePermission::ChainSubmit, denied_error)
             .await
     }
 
     #[instrument(skip_all, fields(runtime.method = "permissions.identity_disclosure_authorization"))]
     async fn identity_disclosure_authorization(
         &self,
+        cx: &CallContext,
     ) -> Result<PermissionAuthorizationStatus, String> {
         let product_id = self.product_id();
         let request = PermissionAuthorizationRequest::IdentityDisclosure;
@@ -790,20 +803,24 @@ impl ProductRuntimeHost {
             return Ok(cached);
         }
 
-        // A dismissed/unavailable confirmation has no durable user decision.
-        // Fail the current disclosure request closed but keep authorization in
-        // the ask/default state so the next request can prompt again.
-        let decision = match self
-            .platform
-            .confirm_permission(UserConfirmationReview::IdentityDisclosure(
-                IdentityDisclosureReview {
+        // A dismissed, unavailable or withdrawn confirmation has no durable
+        // user decision. Fail the current disclosure request closed but keep
+        // authorization in the ask/default state so the next request can
+        // prompt again.
+        let decision = match prompt_unless_withdrawn(
+            cx.cancel(),
+            self.platform.confirm_permission(
+                &self.product,
+                &RequestRoute::Local,
+                UserConfirmationReview::IdentityDisclosure(IdentityDisclosureReview {
                     product_id: product_id.clone(),
-                },
-            ))
-            .await
+                }),
+            ),
+        )
+        .await
         {
-            Ok(decision) => decision,
-            Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
+            Some(Ok(decision)) => decision,
+            Some(Err(_)) | None => return Ok(PermissionAuthorizationStatus::NotDetermined),
         };
         let status = match decision {
             PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
@@ -850,11 +867,16 @@ impl ProductRuntimeHost {
     }
 }
 
+/// A prompt withdrawn because `withdrawal` was cancelled leaves the decision
+/// `NotDetermined`.
 async fn account_access_authorization(
     platform: &dyn Platform,
-    requesting_product_id: &str,
+    withdrawal: &CancellationToken,
+    requesting: &ProductContext,
+    route: &RequestRoute,
     target_product_id: &str,
 ) -> Result<PermissionAuthorizationStatus, AccountAccessAuthorizationError> {
+    let requesting_product_id = requesting.product_id.as_str();
     if requesting_product_id == target_product_id
         || crate::platform::normalizes_to_trusted_remote_permissions(requesting_product_id)
     {
@@ -881,13 +903,22 @@ async fn account_access_authorization(
         return Ok(cached);
     }
 
-    let decision = platform
-        .confirm_permission(UserConfirmationReview::AccountAccess(AccountAccessReview {
-            requesting_product_id: requesting_product_id.to_string(),
-            target_product_id: target_product_id.to_string(),
-        }))
-        .await
-        .map_err(AccountAccessAuthorizationError::Confirmation)?;
+    let Some(decision) = prompt_unless_withdrawn(
+        withdrawal,
+        platform.confirm_permission(
+            requesting,
+            route,
+            UserConfirmationReview::AccountAccess(AccountAccessReview {
+                requesting_product_id: requesting_product_id.to_string(),
+                target_product_id: target_product_id.to_string(),
+            }),
+        ),
+    )
+    .await
+    else {
+        return Ok(PermissionAuthorizationStatus::NotDetermined);
+    };
+    let decision = decision.map_err(AccountAccessAuthorizationError::Confirmation)?;
     let status = match decision {
         PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
         PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,

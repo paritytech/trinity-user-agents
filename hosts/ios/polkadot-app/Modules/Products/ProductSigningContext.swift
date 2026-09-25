@@ -14,7 +14,7 @@ final class ProductSigningContext: PolkadotSigningContextProtocol {
         requesterName: String,
         signingModel: PolkadotHostSigningModel
     ) {
-        requester = PolkadotSigningRequester(name: requesterName, iconUrl: nil)
+        requester = PolkadotSigningRequester(name: requesterName, productId: nil, pairedDeviceName: nil)
         self.signingModel = signingModel
     }
 

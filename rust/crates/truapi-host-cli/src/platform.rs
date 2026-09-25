@@ -25,8 +25,9 @@ use truapi::platform::{
     AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
     DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
     PermissionDecision, PermissionStatusHost, Permissions, PreimageHost, ProductContext,
-    ProductOperations, ProductStorage, ProductStorageKey, ProviderError, SessionUiInfo,
-    SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation, UserConfirmationReview,
+    ProductOperations, ProductStorage, ProductStorageKey, ProviderError, RequestRoute,
+    SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation,
+    UserConfirmationReview,
 };
 use truapi::v01;
 
@@ -436,6 +437,7 @@ async fn prompt_decision(action: &str, detail: &str, kind: ApprovalKind) -> Perm
     }
     let action = crate::terminal_ui::sanitize_terminal_text(action);
     let detail = crate::terminal_ui::sanitize_terminal_text(detail);
+    let mut withdrawn = WithdrawnNotice(Some(&action));
     let mut stdout = tokio::io::stdout();
     let _ = stdout
         .write_all(
@@ -448,10 +450,23 @@ async fn prompt_decision(action: &str, detail: &str, kind: ApprovalKind) -> Perm
     let _ = stdout.flush().await;
     let mut line = String::new();
     let mut reader = BufReader::new(tokio::io::stdin());
-    if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+    let read = reader.read_line(&mut line).await;
+    withdrawn.0 = None;
+    if read.unwrap_or(0) == 0 {
         return PermissionDecision::Deny;
     }
     kind.parse(&line).unwrap_or(PermissionDecision::Deny)
+}
+
+/// Tells the terminal user a prompt was dropped unanswered.
+struct WithdrawnNotice<'a>(Option<&'a str>);
+
+impl Drop for WithdrawnNotice<'_> {
+    fn drop(&mut self) {
+        if let Some(action) = self.0 {
+            println!("\n(withdrawn: {action})");
+        }
+    }
 }
 
 #[async_trait]
@@ -849,9 +864,11 @@ fn storage_user_id(info: &SessionUiInfo) -> Option<&str> {
 impl UserConfirmation for CliPlatform {
     async fn confirm_permission(
         &self,
+        product: &ProductContext,
+        route: &RequestRoute,
         review: UserConfirmationReview,
     ) -> Result<PermissionDecision, api::GenericError> {
-        let (action, detail) = approval_summary(&review);
+        let (action, detail) = approval_summary(product, route, &review);
         Ok(self
             .decide_with(action, detail, ApprovalKind::Permission)
             .await)
@@ -859,67 +876,66 @@ impl UserConfirmation for CliPlatform {
 
     async fn confirm_user_action(
         &self,
+        product: &ProductContext,
+        route: &RequestRoute,
         review: UserConfirmationReview,
     ) -> Result<bool, api::GenericError> {
-        let (action, detail) = approval_summary(&review);
+        let (action, detail) = approval_summary(product, route, &review);
         Ok(self.decide(action, detail).await)
     }
 }
 
-/// Names the product that asked, for the reviews that carry one. A relayed
-/// request carries no caller, and saying so is more use than naming nobody.
-fn asking(calling_product_id: Option<&str>) -> String {
-    match calling_product_id {
-        Some(product_id) => format!("Product {product_id}"),
-        None => "A paired host".to_string(),
-    }
-}
-
-fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
-    match review {
-        UserConfirmationReview::SignPayload(SignPayloadReview::Product {
-            calling_product_id,
-            request,
-        }) => (
+fn approval_summary(
+    product: &ProductContext,
+    route: &RequestRoute,
+    review: &UserConfirmationReview,
+) -> (&'static str, String) {
+    let product_id = &product.product_id;
+    let (action, mut detail) = match review {
+        UserConfirmationReview::SignPayload(SignPayloadReview::Product(request)) => (
             "sign payload",
             format!(
-                "{} requested a SCALE payload signature for the {} account.",
-                asking(calling_product_id.as_deref()),
+                "Product {product_id} requested a SCALE payload signature for the {} account.",
                 request.account.dot_ns_identifier,
             ),
         ),
         UserConfirmationReview::SignPayload(_) => (
             "sign payload",
-            "A product requested a SCALE payload signature.".to_string(),
+            format!("Product {product_id} requested a SCALE payload signature."),
         ),
         UserConfirmationReview::SignRaw(SignRawReview::Product {
-            calling_product_id,
             request,
             watermarked: true,
         }) => (
             "sign raw data",
             format!(
-                "{} requested a raw-data signature for the {} account. The payload is hidden here.",
-                asking(calling_product_id.as_deref()),
+                "Product {product_id} requested a raw-data signature for the {} account. The payload is hidden here.",
                 request.account.dot_ns_identifier,
             ),
         ),
         UserConfirmationReview::SignRaw(
-            SignRawReview::Product { watermarked: false, .. }
-            | SignRawReview::LegacyAccount { watermarked: false, .. },
+            SignRawReview::Product {
+                watermarked: false, ..
+            }
+            | SignRawReview::LegacyAccount {
+                watermarked: false, ..
+            },
         ) => (
             "sign unprotected data",
-            "Warning: this signature has no transaction-payload protection and may authorize transactions. The payload is hidden here.".to_string(),
+            format!(
+                "Product {product_id} requested a raw-data signature. Warning: this signature has no transaction-payload protection and may authorize transactions. The payload is hidden here."
+            ),
         ),
         UserConfirmationReview::SignRaw(_) => (
             "sign raw data",
-            "A product requested a raw-data signature. The payload is hidden here.".to_string(),
+            format!(
+                "Product {product_id} requested a raw-data signature. The payload is hidden here."
+            ),
         ),
         UserConfirmationReview::SignVrf(review) => (
             "sign VRF transcript",
             format!(
-                "Product {} requested a VRF signature for the {} account over {} transcript items.",
-                review.calling_product_id,
+                "Product {product_id} requested a VRF signature for the {} account over {} transcript items.",
                 review.request.account.dot_ns_identifier,
                 review.request.items.len()
             ),
@@ -927,39 +943,30 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
         UserConfirmationReview::StatementStoreProductSign(review) => (
             "sign statement proof",
             format!(
-                "{} requested a Statement Store proof signature for the {} account over a {}-byte payload.",
-                asking(review.calling_product_id.as_deref()),
+                "Product {product_id} requested a Statement Store proof signature for the {} account over a {}-byte payload.",
                 review.account.dot_ns_identifier,
                 review.payload.len()
             ),
         ),
-        UserConfirmationReview::CreateTransaction(CreateTransactionReview::Product {
-            calling_product_id,
-            payload,
-        }) => (
+        UserConfirmationReview::CreateTransaction(CreateTransactionReview::Product(payload)) => (
             "create transaction",
             format!(
-                "{} requested a transaction from the {} account.",
-                asking(calling_product_id.as_deref()),
+                "Product {product_id} requested a transaction from the {} account.",
                 payload.signer.dot_ns_identifier,
             ),
         ),
         UserConfirmationReview::CreateTransaction(_) => (
             "create transaction",
-            "A product requested a transaction from one of your accounts.".to_string(),
+            format!("Product {product_id} requested a transaction from one of your accounts."),
         ),
-        UserConfirmationReview::AccountAlias(review) => (
+        UserConfirmationReview::AccountAlias(_) => (
             "derive account alias",
-            format!(
-                "Product {} requested a contextual account alias.",
-                review.calling_product_id
-            ),
+            format!("Product {product_id} requested a contextual account alias."),
         ),
         UserConfirmationReview::CreateProof(review) => (
             "create account proof",
             format!(
-                "Product {} requested a contextual proof bound to {} bytes.",
-                review.calling_product_id,
+                "Product {product_id} requested a contextual proof bound to {} bytes.",
                 review.message.len()
             ),
         ),
@@ -972,12 +979,12 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
         ),
         UserConfirmationReview::ResourceAllocation(_) => (
             "allocate resources",
-            "A product requested host-managed resources.".to_string(),
+            format!("Product {product_id} requested host-managed resources."),
         ),
         UserConfirmationReview::PreimageSubmit(review) => (
             "submit preimage",
             format!(
-                "A product requested submission of a {}-byte preimage.",
+                "Product {product_id} requested submission of a {}-byte preimage.",
                 review.size
             ),
         ),
@@ -995,7 +1002,14 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
                 review.product_id
             ),
         ),
+    };
+    if let RequestRoute::PairedHost { peer } = route {
+        detail.push_str(&format!(
+            " Relayed by paired host 0x{}.",
+            hex::encode(&peer.statement_account_id[..4])
+        ));
     }
+    (action, detail)
 }
 
 impl ThemeHost for CliPlatform {
@@ -1441,6 +1455,10 @@ mod tests {
     }
     use tempfile::tempdir;
 
+    fn product(product_id: &str) -> ProductContext {
+        ProductContext::new(product_id.to_string()).expect("test product id is valid")
+    }
+
     #[test]
     fn record_approval_appends_one_line_per_decision() {
         let dir = tempdir().expect("tempdir");
@@ -1885,12 +1903,13 @@ mod tests {
                 size: 4_096,
             });
 
-        let (action, detail) = approval_summary(&review);
+        let (action, detail) =
+            approval_summary(&product("myapp.dot"), &RequestRoute::Local, &review);
 
         assert_eq!(action, "submit preimage");
         assert_eq!(
             detail,
-            "A product requested submission of a 4096-byte preimage."
+            "Product myapp.dot requested submission of a 4096-byte preimage."
         );
         assert!(!detail.contains("["));
     }
@@ -1901,7 +1920,6 @@ mod tests {
     fn statement_proof_approval_names_both_products_without_dumping_payload() {
         let review = UserConfirmationReview::StatementStoreProductSign(
             truapi::platform::StatementStoreProductSignReview {
-                calling_product_id: Some("dim2next.paseo".to_string()),
                 account: api::ProductAccountId {
                     dot_ns_identifier: "dim2.paseo".to_string(),
                     derivation_index: api::DerivationIndex::Index(0),
@@ -1910,7 +1928,8 @@ mod tests {
             },
         );
 
-        let (action, detail) = approval_summary(&review);
+        let (action, detail) =
+            approval_summary(&product("dim2next.paseo"), &RequestRoute::Local, &review);
 
         assert_eq!(action, "sign statement proof");
         assert_eq!(
@@ -1921,10 +1940,56 @@ mod tests {
         assert!(!detail.contains("[66"));
     }
 
+    /// The riskiest signature still says who asked for it.
+    #[test]
+    fn an_unprotected_signature_approval_names_the_product() {
+        let review = UserConfirmationReview::SignRaw(truapi::platform::SignRawReview::Product {
+            request: api::HostSignRawRequest {
+                account: api::ProductAccountId {
+                    dot_ns_identifier: "myapp.dot".to_string(),
+                    derivation_index: api::DerivationIndex::Index(0),
+                },
+                payload: api::RawPayload::Bytes {
+                    bytes: vec![0x42; 32],
+                },
+            },
+            watermarked: false,
+        });
+
+        let (action, detail) =
+            approval_summary(&product("caller.dot"), &RequestRoute::Local, &review);
+
+        assert_eq!(action, "sign unprotected data");
+        assert_eq!(
+            detail,
+            "Product caller.dot requested a raw-data signature. Warning: this signature has no transaction-payload protection and may authorize transactions. The payload is hidden here."
+        );
+    }
+
+    #[test]
+    fn a_relayed_approval_names_the_paired_host() {
+        let review =
+            UserConfirmationReview::PreimageSubmit(truapi::platform::PreimageSubmitReview {
+                size: 7,
+            });
+        let route = RequestRoute::PairedHost {
+            peer: truapi::platform::PairedSsoPeer {
+                statement_account_id: [0xab; 32],
+                encryption_public_key: [0; 32],
+            },
+        };
+
+        let (_, detail) = approval_summary(&product("myapp.dot"), &route, &review);
+
+        assert_eq!(
+            detail,
+            "Product myapp.dot requested submission of a 7-byte preimage. Relayed by paired host 0xabababab."
+        );
+    }
+
     #[test]
     fn vrf_approval_names_both_products_without_dumping_transcript_values() {
         let review = UserConfirmationReview::SignVrf(truapi::platform::SignVrfReview {
-            calling_product_id: "caller.dot".to_string(),
             request: truapi::v01::HostAccountSignVrfRequest {
                 account: truapi::v01::ProductAccountId {
                     dot_ns_identifier: "target.dot".to_string(),
@@ -1938,7 +2003,8 @@ mod tests {
             },
         });
 
-        let (action, detail) = approval_summary(&review);
+        let (action, detail) =
+            approval_summary(&product("caller.dot"), &RequestRoute::Local, &review);
 
         assert_eq!(action, "sign VRF transcript");
         assert_eq!(

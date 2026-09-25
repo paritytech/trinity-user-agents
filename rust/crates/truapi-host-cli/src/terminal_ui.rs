@@ -143,6 +143,8 @@ enum FeedItem {
         detail: String,
         kind: ApprovalKind,
         outcome: Option<PermissionDecision>,
+        /// The request was withdrawn before the user answered.
+        withdrawn: bool,
     },
     Request {
         key: String,
@@ -358,6 +360,8 @@ enum UiEvent {
         kind: ApprovalKind,
         response: oneshot::Sender<PermissionDecision>,
     },
+    /// A prompt ended; clear the pending modal if nobody waits for its answer.
+    ApprovalWithdrawn,
     Connection(String),
     Session {
         name: String,
@@ -669,7 +673,18 @@ impl UiHandle {
         {
             return PermissionDecision::Deny;
         }
+        let _withdraw = WithdrawOnDrop(self.sender.clone());
         answer.await.unwrap_or(PermissionDecision::Deny)
+    }
+}
+
+/// Clears the pending approval when its prompt is dropped unanswered. It fires
+/// after an answer too; the UI clears only a card whose answer nobody awaits.
+struct WithdrawOnDrop(mpsc::UnboundedSender<UiEvent>);
+
+impl Drop for WithdrawOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.send(UiEvent::ApprovalWithdrawn);
     }
 }
 
@@ -1601,12 +1616,14 @@ impl App {
                 self.session = name;
                 self.editor.set_session_names(available);
             }
+            UiEvent::ApprovalWithdrawn => self.withdraw_closed_approval(),
             UiEvent::Approval {
                 action,
                 detail,
                 kind,
                 response,
             } => {
+                self.withdraw_closed_approval();
                 if self.pending_approval.is_some() {
                     let _ = response.send(PermissionDecision::Deny);
                     self.notice(
@@ -1625,6 +1642,7 @@ impl App {
                     detail: sanitize_terminal_text(&detail),
                     kind,
                     outcome: None,
+                    withdrawn: false,
                 });
                 self.pending_approval = Some(PendingApproval {
                     id,
@@ -2116,6 +2134,7 @@ impl App {
     }
 
     fn handle_approval_key(&mut self, key: KeyEvent) {
+        self.withdraw_closed_approval();
         let Some(pending) = &self.pending_approval else {
             return;
         };
@@ -2151,6 +2170,26 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// Drop the pending approval if nobody waits for its answer any more.
+    fn withdraw_closed_approval(&mut self) {
+        let Some(pending) = self
+            .pending_approval
+            .take_if(|pending| pending.response.is_closed())
+        else {
+            return;
+        };
+        if let Some(FeedItem::Approval { withdrawn, .. }) = self
+            .entries
+            .iter_mut()
+            .rev()
+            .find(|entry| matches!(entry, FeedItem::Approval { id, .. } if *id == pending.id))
+        {
+            *withdrawn = true;
+        }
+        self.recalculate_retained();
+        self.editor.set_text(pending.saved_input);
     }
 
     fn answer_approval(&mut self, approved: PermissionDecision) {
@@ -2773,6 +2812,11 @@ fn feed_item_lines(item: &FeedItem, width: usize, height: usize) -> Vec<Line<'st
             state,
             ..
         } => activity_lines(*state, label, detail.as_deref()),
+        FeedItem::Approval {
+            action,
+            withdrawn: true,
+            ..
+        } => status_lines(NoticeTone::Info, &format!("Withdrawn: {action}"), None),
         FeedItem::Approval {
             action,
             detail,
@@ -4422,6 +4466,110 @@ mod tests {
         let (screen, _) = render_app(&mut app, 40, 10)?;
         assert!(screen.contains("Newest result"));
         Ok(())
+    }
+
+    /// A prompt the core withdrew clears its modal and gives back the draft.
+    #[test]
+    fn a_withdrawn_approval_clears_its_modal() {
+        let (sender, mut events) = mpsc::unbounded_channel();
+        let handle = UiHandle { sender };
+        let mut withdrawn = Box::pin(handle.decide(
+            "remote permission",
+            "access to api.example.com",
+            ApprovalKind::Permission,
+        ));
+        assert!(
+            futures::FutureExt::now_or_never(&mut withdrawn).is_none(),
+            "the prompt waits for an answer"
+        );
+        let mut app = test_app();
+        app.editor.set_text("/script draft.ts");
+        app.handle_event(events.try_recv().expect("the prompt reached the UI"));
+        assert!(app.pending_approval.is_some());
+
+        drop(withdrawn);
+        app.handle_event(events.try_recv().expect("the withdrawal reached the UI"));
+
+        assert!(app.pending_approval.is_none());
+        assert_eq!(app.editor.text(), "/script draft.ts");
+        assert!(
+            app.transcript_text()
+                .contains("Withdrawn: remote permission")
+        );
+    }
+
+    /// A withdrawal that has not reached the UI yet still frees the modal for
+    /// the next prompt.
+    #[test]
+    fn a_prompt_after_an_unannounced_withdrawal_is_not_overlapping() {
+        let mut app = test_app();
+        let (response, answer) = oneshot::channel();
+        app.handle_event(UiEvent::Approval {
+            action: "remote permission".to_string(),
+            detail: "access to api.example.com".to_string(),
+            kind: ApprovalKind::Permission,
+            response,
+        });
+        drop(answer);
+
+        let (response, mut answer) = oneshot::channel();
+        app.handle_event(UiEvent::Approval {
+            action: "sign request".to_string(),
+            detail: "payload".to_string(),
+            kind: ApprovalKind::Action,
+            response,
+        });
+
+        assert!(app.pending_approval.is_some());
+        assert!(answer.try_recv().is_err(), "the next prompt stays open");
+        assert!(
+            app.transcript_text()
+                .contains("Withdrawn: remote permission")
+        );
+    }
+
+    /// A key that lands before the withdrawal is handled records no decision.
+    #[test]
+    fn answering_a_withdrawn_approval_marks_it_withdrawn() {
+        let mut app = test_app();
+        let (response, answer) = oneshot::channel();
+        app.handle_event(UiEvent::Approval {
+            action: "sign request".to_string(),
+            detail: "payload".to_string(),
+            kind: ApprovalKind::Action,
+            response,
+        });
+        drop(answer);
+
+        app.handle_approval_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+        assert!(app.pending_approval.is_none());
+        let transcript = app.transcript_text();
+        assert!(
+            transcript.contains("Withdrawn: sign request"),
+            "{transcript}"
+        );
+        assert!(
+            !transcript.contains("Approved sign request"),
+            "{transcript}"
+        );
+    }
+
+    #[test]
+    fn a_stray_withdrawal_leaves_an_awaited_approval_open() {
+        let mut app = test_app();
+        let (response, _answer) = oneshot::channel();
+        app.handle_event(UiEvent::Approval {
+            action: "sign request".to_string(),
+            detail: "payload".to_string(),
+            kind: ApprovalKind::Action,
+            response,
+        });
+
+        app.handle_event(UiEvent::ApprovalWithdrawn);
+
+        assert!(app.pending_approval.is_some());
+        assert!(!app.transcript_text().contains("Withdrawn: sign request"));
     }
 
     #[test]

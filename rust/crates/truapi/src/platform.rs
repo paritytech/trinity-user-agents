@@ -1188,6 +1188,10 @@ pub enum PermissionDecision {
 /// Permission prompts. Device permissions (camera, mic, NFC, ...) are separate
 /// from remote permissions (domain access, chain submit, ...), so the platform
 /// surface mirrors that split.
+///
+/// The core drops a prompt's future when the product call behind it is
+/// cancelled or its connection closes, and an answer given afterwards reaches
+/// nobody. A host should dismiss its prompt when that happens.
 #[async_trait]
 pub trait Permissions: Send + Sync {
     /// Prompt the user for a device-level permission `product` requested.
@@ -2976,16 +2980,11 @@ pub trait AuthPresenter: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum SignPayloadReview {
-    /// Product-account signing request.
-    Product {
-        /// Product that asked, when the request carries a caller. Absent on a
-        /// relayed request, which carries no caller identity. A caller other
-        /// than the account's own product is acting under that product's
-        /// `context` grant, and the user is the one who has to see that.
-        calling_product_id: Option<String>,
-        /// Signing request.
-        request: HostSignPayloadRequest,
-    },
+    /// Product-account signing request. The account can belong to a product
+    /// other than the one the confirmation names, which is then acting under
+    /// that product's `context` grant, and the user is the one who has to see
+    /// that.
+    Product(HostSignPayloadRequest),
     /// Legacy-account signing request.
     LegacyAccount(HostSignPayloadWithLegacyAccountRequest),
 }
@@ -2998,10 +2997,8 @@ pub enum SignPayloadReview {
 pub enum SignRawReview {
     /// Product-account raw signing request.
     Product {
-        /// Product that asked, when the request carries a caller. See
-        /// [`SignPayloadReview::Product`].
-        calling_product_id: Option<String>,
-        /// Raw signing request.
+        /// Raw signing request. See [`SignPayloadReview::Product`] for an
+        /// account of another product.
         request: HostSignRawRequest,
         /// Whether the signer applies the `<Bytes>` transaction-payload protection.
         watermarked: bool,
@@ -3022,10 +3019,8 @@ pub enum SignRawReview {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct StatementStoreProductSignReview {
-    /// Product that asked, when the request carries a caller. See
-    /// [`SignPayloadReview::Product`].
-    pub calling_product_id: Option<String>,
-    /// Product account that will sign the statement payload.
+    /// Product account that will sign the statement payload. See
+    /// [`SignPayloadReview::Product`] for an account of another product.
     pub account: ProductAccountId,
     /// Exact unsigned statement payload to be signed.
     pub payload: Vec<u8>,
@@ -3035,14 +3030,9 @@ pub struct StatementStoreProductSignReview {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum CreateTransactionReview {
-    /// Product-account transaction request.
-    Product {
-        /// Product that asked, when the request carries a caller. See
-        /// [`SignPayloadReview::Product`].
-        calling_product_id: Option<String>,
-        /// Transaction request.
-        payload: ProductAccountTxPayload,
-    },
+    /// Product-account transaction request. See [`SignPayloadReview::Product`]
+    /// for an account of another product.
+    Product(ProductAccountTxPayload),
     /// Legacy-account transaction request.
     LegacyAccount(LegacyAccountTxPayload),
 }
@@ -3051,8 +3041,6 @@ pub enum CreateTransactionReview {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct AccountAliasReview {
-    /// Product requesting the alias.
-    pub calling_product_id: String,
     /// Product-scoped context the alias is bound to.
     pub context: ProductProofContext,
     /// Ring the alias is derived against.
@@ -3063,8 +3051,6 @@ pub struct AccountAliasReview {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct CreateProofReview {
-    /// Product requesting the proof.
-    pub calling_product_id: String,
     /// Product-scoped context the proof's alias is bound to.
     pub context: ProductProofContext,
     /// Ring the proof is generated against.
@@ -3077,20 +3063,15 @@ pub struct CreateProofReview {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct SignVrfReview {
-    /// Product making the request.
-    pub calling_product_id: String,
     /// Product account and exact ordered transcript.
     pub request: HostAccountSignVrfRequest,
 }
 
-/// Review shown before allocating resources for a product. Names the
-/// beneficiary product so the user knows which product receives the
-/// (signing-capable) allowance key they are approving.
+/// Review shown before allocating resources for a product. The requesting
+/// product receives the (signing-capable) allowance key being approved.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ResourceAllocationReview {
-    /// Product the allocation is requested for.
-    pub calling_product_id: String,
     /// Resources to allocate.
     pub resources: Vec<AllocatableResource>,
 }
@@ -3161,28 +3142,64 @@ pub enum UserConfirmationReview {
     ProductSubtree(ProductSubtreeReview),
 }
 
+/// Public key material identifying one pairing host's resumable SSO session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct PairedSsoPeer {
+    /// Pairing host's statement-store account id.
+    pub statement_account_id: [u8; 32],
+    /// Pairing host's X25519 public key.
+    pub encryption_public_key: [u8; 32],
+}
+
+/// How a request reached this host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum RequestRoute {
+    /// The product runs on this host.
+    Local,
+    /// A paired host relayed the request over SSO; a host names that paired
+    /// device beside the product.
+    PairedHost {
+        /// The pairing host the request arrived from.
+        peer: PairedSsoPeer,
+    },
+}
+
 /// Local user confirmation UI for sensitive core-owned operations.
 #[async_trait]
 pub trait UserConfirmation: Send + Sync {
-    /// Preserve the lifetime of consent for identity and account disclosures.
+    /// Preserve the lifetime of consent for identity and account disclosures
+    /// `product` asked for, reaching this host by `route`.
+    ///
+    /// The core drops this future when the request behind the review is
+    /// withdrawn, as it does for [`UserConfirmation::confirm_user_action`].
     async fn confirm_permission(
         &self,
+        product: &ProductContext,
+        route: &RequestRoute,
         review: UserConfirmationReview,
     ) -> Result<PermissionDecision, GenericError> {
-        Ok(if self.confirm_user_action(review).await? {
+        Ok(if self.confirm_user_action(product, route, review).await? {
             PermissionDecision::AllowAlways
         } else {
             PermissionDecision::Deny
         })
     }
 
-    /// Confirm a reviewed action before the core continues.
+    /// Confirm a reviewed action `product` asked for before the core continues.
+    ///
+    /// When `route` is [`RequestRoute::PairedHost`], `product` is the caller
+    /// that paired host named for its SSO request; otherwise it is a product
+    /// running on this host.
     ///
     /// The core drops this future when the request behind the review is
     /// withdrawn, and an answer given afterwards reaches nobody. A host should
     /// dismiss its prompt when that happens.
     async fn confirm_user_action(
         &self,
+        product: &ProductContext,
+        route: &RequestRoute,
         review: UserConfirmationReview,
     ) -> Result<bool, GenericError>;
 }
@@ -3542,3 +3559,11 @@ impl<T> OptionalPlatform for T where
     T: ChatPlatform + ContactsPlatform + PermissionStatusHost + PocketPlatform + GamePlatform
 {
 }
+
+/// Capability traits whose async callbacks put a prompt in front of the user.
+/// The core may withdraw such a prompt by dropping its future; codegen reads
+/// this list to give each of these callbacks an `AbortSignal` on the JS
+/// surface, aborted when that happens.
+pub trait PromptPlatform: Permissions + UserConfirmation {}
+
+impl<T> PromptPlatform for T where T: Permissions + UserConfirmation {}

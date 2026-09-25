@@ -2732,6 +2732,45 @@ fn permission_prompts_name_the_requesting_product_and_execution_kind() {
     );
 }
 
+/// A prompt withdrawn by a cancellation the host raised itself answers like
+/// an undecided question, never as `CallError::Cancelled`: only a call the
+/// peer withdrew may carry that variant, and the dispatcher supplies it.
+#[test]
+fn a_permission_withdrawn_without_a_cancel_frame_answers_undecided() {
+    let platform = stub_platform();
+    let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+    let cancel = truapi::CancellationToken::default();
+    cancel.cancel_with_reason(truapi::CancellationReason::TimedOut {
+        timeout: core::time::Duration::from_secs(30),
+    });
+    let cx = CallContext::with_parts("permission-timed-out".to_string(), cancel);
+
+    let device = futures::executor::block_on(host.request_device_permission(
+        &cx,
+        HostDevicePermissionRequest::V1(v01::HostDevicePermissionRequest::Camera),
+    ))
+    .expect("a withdrawn device prompt answers");
+    let remote = futures::executor::block_on(host.request_remote_permission(
+        &cx,
+        truapi::versioned::permissions::RemotePermissionRequest::V1(v01::RemotePermissionRequest {
+            permission: v01::RemotePermission::ChainSubmit,
+        }),
+    ))
+    .expect("a withdrawn remote prompt answers");
+
+    let HostDevicePermissionResponse::V1(device) = device;
+    let truapi::versioned::permissions::RemotePermissionResponse::V1(remote) = remote;
+    assert_eq!((device.granted, remote.granted), (false, false));
+    assert!(
+        platform
+            .permission_prompt_products
+            .lock()
+            .unwrap()
+            .is_empty(),
+        "a call already withdrawn never prompts",
+    );
+}
+
 #[test]
 fn navigate_to_rejects_invalid_input_without_prompting_or_calling_platform() {
     let platform = stub_platform();
@@ -3803,7 +3842,7 @@ fn get_account_alias_forwards_without_pairing_host_confirmation() {
     else {
         panic!("expected ring VRF alias request");
     };
-    assert_eq!(request.calling_product_id, "myapp.dot");
+    assert_eq!(request.caller.product_id, "myapp.dot");
     assert_eq!(request.payload.context.product_id, "myapp.dot");
     assert_eq!(request.payload.ring_location.chain_id, [1; 32]);
 }
@@ -3871,7 +3910,7 @@ fn create_account_proof_returns_sso_proof() {
     else {
         panic!("expected ring VRF proof request");
     };
-    assert_eq!(request.calling_product_id, "myapp.dot");
+    assert_eq!(request.caller.product_id, "myapp.dot");
     assert_eq!(request.payload.context.product_id, "myapp.dot");
     assert_eq!(request.payload.message, vec![4, 5, 6]);
 }
@@ -5130,8 +5169,9 @@ fn legacy_create_transaction_accepts_identity_account_then_routes_legacy_request
     else {
         panic!("expected identity transaction request");
     };
+    assert_eq!(request.caller.product_id, "myapp.dot");
     let crate::host_internal::sso_messages::CreateTransactionLegacyPayload::V1(payload) =
-        request.payload;
+        request.payload.payload;
     assert_eq!(payload.signer, identity);
 }
 
@@ -5185,7 +5225,9 @@ fn legacy_create_transaction_accepts_derived_key_then_returns_sso_response() {
     else {
         panic!("expected product transaction request");
     };
-    let crate::host_internal::sso_messages::CreateTransactionPayload::V1(payload) = request.payload;
+    assert_eq!(request.caller.product_id, "myapp.dot");
+    let crate::host_internal::sso_messages::CreateTransactionPayload::V1(payload) =
+        request.payload.payload;
     assert_eq!(
         payload.signer,
         v01::ProductAccountId {
@@ -5628,12 +5670,7 @@ fn a_signed_transaction_pays_the_account_the_handle_named() {
         .create_transaction_reviews
         .lock()
         .expect("create transaction review list mutex poisoned");
-    let [
-        crate::platform::CreateTransactionReview::Product {
-            payload: reviewed, ..
-        },
-    ] = reviews.as_slice()
-    else {
+    let [crate::platform::CreateTransactionReview::Product(reviewed)] = reviews.as_slice() else {
         panic!("one product transaction was reviewed, got {reviews:?}");
     };
     assert_eq!(
@@ -5695,12 +5732,7 @@ fn the_confirmation_shows_the_account_not_the_handle() {
         .create_transaction_reviews
         .lock()
         .expect("create transaction review list mutex poisoned");
-    let [
-        crate::platform::CreateTransactionReview::Product {
-            payload: reviewed, ..
-        },
-    ] = reviews.as_slice()
-    else {
+    let [crate::platform::CreateTransactionReview::Product(reviewed)] = reviews.as_slice() else {
         panic!("one product transaction was reviewed, got {reviews:?}");
     };
     assert_eq!(
@@ -7470,8 +7502,8 @@ mod signing;
 /// the one path with no coverage.
 ///
 /// Driven at the authority, which is where a pairing-wire request arrives:
-/// `sso_responder` hands `calling_product_id` and `key_handle` straight here,
-/// both decoded from the peer's message.
+/// `sso_responder` hands the caller and `key_handle` straight here, both
+/// decoded from the peer's message.
 #[test]
 fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
     let (host_config, product) = runtime_config("dim2.dot");
@@ -7497,7 +7529,7 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
         &CallContext::default(),
         &session,
         crate::host_internal::sso_messages::ProductRequest {
-            calling_product_id: "dim2.dot".to_string(),
+            caller: crate::test_support::test_product("dim2.dot"),
             payload: v01::HostAccountCreateProofRequest {
                 key_handle: v01::ProductAccountId {
                     dot_ns_identifier: "peopl.dot".to_string(),
@@ -7523,7 +7555,7 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
         &CallContext::default(),
         &session,
         crate::host_internal::sso_messages::ProductRequest {
-            calling_product_id: "dim2.dot".to_string(),
+            caller: crate::test_support::test_product("dim2.dot"),
             payload: v01::HostAccountRingVrfSignRequest {
                 key_handle: v01::ProductAccountId {
                     dot_ns_identifier: "peopl.dot".to_string(),

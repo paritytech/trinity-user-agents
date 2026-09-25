@@ -95,7 +95,7 @@ impl RemoteMessage {
 mod tests {
     use super::*;
     use crate::host_internal::sso_messages::{
-        CreateTransactionRequest, CreateTransactionWithLegacyAccountRequest,
+        CreateTransactionRequest, CreateTransactionWithLegacyAccountRequest, ProductRequest,
         SignRawWithLegacyAccountRequest,
     };
 
@@ -105,16 +105,25 @@ mod tests {
             responding_to: "m-1".to_string(),
             payload: Ok(vec![7]),
         };
-        let transaction = CreateTransactionRequest::response_into_message(response.clone());
+        let transaction =
+            ProductRequest::<CreateTransactionRequest>::response_into_message(response.clone());
         assert_eq!(transaction.name(), "CreateTransactionResponse");
         assert_eq!(
-            CreateTransactionWithLegacyAccountRequest::response_from_message(transaction.clone()),
+            ProductRequest::<CreateTransactionWithLegacyAccountRequest>::response_from_message(
+                transaction.clone()
+            ),
             Some(response.clone()),
         );
-        assert!(SignRawWithLegacyAccountRequest::response_from_message(transaction).is_none());
+        assert!(
+            ProductRequest::<SignRawWithLegacyAccountRequest>::response_from_message(transaction)
+                .is_none()
+        );
 
-        let signature = SignRawWithLegacyAccountRequest::response_into_message(response);
+        let signature =
+            ProductRequest::<SignRawWithLegacyAccountRequest>::response_into_message(response);
         assert_eq!(signature.name(), "SignRawWithLegacyAccountResponse");
-        assert!(CreateTransactionRequest::response_from_message(signature).is_none());
+        assert!(
+            ProductRequest::<CreateTransactionRequest>::response_from_message(signature).is_none()
+        );
     }
 }

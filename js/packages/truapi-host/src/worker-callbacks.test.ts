@@ -12,14 +12,22 @@ import type { RawCallbacks } from "./generated/host-callbacks-adapter.js";
 // and the core would route chat calls at a host that cannot answer them.
 
 function stubBridge() {
-  const requests: { name: string; args: readonly unknown[] }[] = [];
+  const requests: {
+    name: string;
+    args: readonly unknown[];
+    signal?: AbortSignal;
+  }[] = [];
   const subscriptions: { name: string; payload: Uint8Array | null }[] = [];
   return {
     requests,
     subscriptions,
     bridge: {
-      callbackRequest: async (name: string, args: readonly unknown[]) => {
-        requests.push({ name, args });
+      callbackRequest: async (
+        name: string,
+        args: readonly unknown[],
+        signal?: AbortSignal,
+      ) => {
+        requests.push(signal ? { name, args, signal } : { name, args });
         return new Uint8Array();
       },
       startSubscription: (name: string, payload: Uint8Array | null) => {
@@ -32,6 +40,27 @@ function stubBridge() {
 }
 
 describe("worker raw callbacks", () => {
+  it("hands a prompt's signal to the bridge, not to the main thread", async () => {
+    const { bridge, requests } = stubBridge();
+    const callbacks = createWorkerRawCallbacks(
+      bridge as unknown as Parameters<typeof createWorkerRawCallbacks>[0],
+    ) as unknown as RawCallbacks;
+    const product = new Uint8Array([1]);
+    const route = new Uint8Array([0]);
+    const review = new Uint8Array([2]);
+    const { signal } = new AbortController();
+
+    await callbacks.confirmUserAction(product, route, review, { signal });
+    await callbacks.readCoreStorage(new Uint8Array([3]));
+
+    expect(requests).toEqual([
+      { name: "confirmUserAction", args: [product, route, review], signal },
+      { name: "readCoreStorage", args: [new Uint8Array([3])] },
+    ]);
+    // `toEqual` would accept any signal: the bridge must get the caller's own.
+    expect(requests[0]?.signal).toBe(signal);
+  });
+
   it("omits the chat proxies when no chat capability is reported", () => {
     const { bridge } = stubBridge();
 

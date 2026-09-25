@@ -34,11 +34,11 @@ final class SSOCreateProofHandler: SSORequestHandling {
         let proofResult: PolkadotHostRemoteMessage.CreateProofResult
 
         do {
-            let handler = handlerFactory.makeCreateProofHandler(callingProductId: request.callingProductId)
+            let handler = handlerFactory.makeCreateProofHandler(callingProductId: request.caller.productId)
             let proof = try await handler.createProof(
-                context: request.context,
-                ring: request.ring,
-                message: request.message
+                context: request.payload.context,
+                ring: request.payload.ring,
+                message: request.payload.message
             )
             proofResult = .success(proof)
         } catch {

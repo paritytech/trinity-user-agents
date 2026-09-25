@@ -4,6 +4,8 @@ import { describe, expect, it } from "bun:test";
 
 import type { RemotePreimageLookupSubscribeItem } from "@parity/truapi";
 
+import type { ProductContext } from "../generated/host-callbacks.js";
+
 import { createMockClient } from "./create-mock-client.js";
 import { wasmIsBuilt } from "./require-wasm.js";
 
@@ -16,6 +18,40 @@ function hex(bytes: Uint8Array): `0x${string}` {
 }
 
 const suite = wasmIsBuilt("testing/truapi_server.js") ? describe : describe.skip;
+
+/** A prompt the core opened, held until its signal aborts. */
+interface HeldPrompt {
+  product: ProductContext;
+  signal: AbortSignal;
+}
+
+/**
+ * A prompt callback that never answers on its own: it resolves `answer` only
+ * once its signal aborts, and reports each prompt it opens.
+ */
+function holdPrompt<T>(answer: T) {
+  const prompts: HeldPrompt[] = [];
+  let opened: () => void = () => {};
+  const open = new Promise<void>((resolve) => {
+    opened = resolve;
+  });
+  // Prompt callbacks take different arguments, but their options come last.
+  const callback = (product: ProductContext, ...rest: unknown[]) =>
+    new Promise<T>((resolve) => {
+      const { signal } = rest[rest.length - 1] as { signal: AbortSignal };
+      prompts.push({ product, signal });
+      signal.addEventListener("abort", () => resolve(answer), { once: true });
+      opened();
+    });
+  return { prompts, open, callback };
+}
+
+async function eventually(condition: () => boolean, message: string) {
+  for (let attempt = 0; attempt < 200 && !condition(); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  expect(condition(), message).toBe(true);
+}
 
 suite("createMockClient", () => {
   it("round-trips a product call to the mock host", async () => {
@@ -83,6 +119,62 @@ suite("createMockClient", () => {
       );
 
       expect(item.value).toBe(hex(content));
+    } finally {
+      dispose();
+    }
+  });
+
+  it("names the product and withdraws a confirmation the product cancels", async () => {
+    const { client, host, dispose } = await createMockClient();
+    try {
+      const held = holdPrompt(false);
+      host.callbacks.userConfirmation.confirmUserAction = held.callback;
+      const call = new AbortController();
+      const pending = client.signing.signRaw(
+        {
+          account: {
+            dotNsIdentifier: "mock.dot",
+            derivationIndex: { tag: "Index", value: 0 },
+          },
+          payload: { tag: "Bytes", value: { bytes: "0x01" } },
+        },
+        { signal: call.signal },
+      );
+      await held.open;
+      expect(held.prompts.map(({ product }) => product)).toEqual([
+        { productId: "mock.dot", executionKind: "App" },
+      ]);
+      expect(held.prompts[0]?.signal.aborted).toBe(false);
+
+      call.abort();
+      await pending;
+      await eventually(
+        () => held.prompts[0]?.signal.aborted === true,
+        "cancelling the call must abort the prompt's signal",
+      );
+    } finally {
+      dispose();
+    }
+  });
+
+  it("withdraws a device permission prompt the product cancels", async () => {
+    const { client, host, dispose } = await createMockClient();
+    try {
+      const held = holdPrompt("Deny" as const);
+      host.callbacks.permissions.devicePermission = held.callback;
+      const call = new AbortController();
+      const pending = client.permissions.requestDevicePermission("Camera", {
+        signal: call.signal,
+      });
+      await held.open;
+      expect(held.prompts[0]?.signal.aborted).toBe(false);
+
+      call.abort();
+      await pending;
+      await eventually(
+        () => held.prompts[0]?.signal.aborted === true,
+        "cancelling the call must abort the prompt's signal",
+      );
     } finally {
       dispose();
     }

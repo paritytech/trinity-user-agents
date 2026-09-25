@@ -1446,6 +1446,17 @@
         }
       }
     },
+    "polkadot.signing.title.via" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(name)@ requires signature via %2$(device)@"
+          }
+        }
+      }
+    },
     "reactions.title" : {
       "extractionState" : "manual",
       "localizations" : {

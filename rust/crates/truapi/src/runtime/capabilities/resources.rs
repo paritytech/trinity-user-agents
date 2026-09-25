@@ -39,7 +39,6 @@ impl ResourceAllocation for ProductRuntimeHost {
             cx,
             self.confirm_product_action(UserConfirmationReview::ResourceAllocation(
                 ResourceAllocationReview {
-                    calling_product_id: self.product_id(),
                     resources: inner.resources.clone(),
                 },
             )),
@@ -69,7 +68,7 @@ impl ResourceAllocation for ProductRuntimeHost {
         remote_authority_call(
             &cx,
             self.authority
-                .allocate_resources(&cx, &session, self.product_id(), inner),
+                .allocate_resources(&cx, &session, &self.product, inner),
         )
         .await
         .map(HostRequestResourceAllocationResponse::V1)

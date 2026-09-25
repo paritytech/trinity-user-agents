@@ -354,7 +354,7 @@ The core's `Permissions` platform trait has two methods, and so does `HostCallba
 
 Both return `PermissionDecision`: `.allowOnce`, `.allowAlways`, or `.deny`. Preserve the user’s choice; the core keeps one-use grants in memory and consumes them at the authorized operation. OS refusal after app consent should throw instead of returning `.deny`, which records a product denial. The same typed values drive the `TrUAPIProductExecution` permission admin API (`permissionAuthorizationStatus`, `setPermissionAuthorizationStatus`), which reads and updates the persisted decisions without prompting.
 
-Identity and account access reviews use `confirmPermission(review:)`, which also returns `PermissionDecision`. Override it to preserve Allow once. Its compatibility default maps `confirmUserAction`'s Boolean approval to `.allowAlways`; signing and other single-action reviews continue to use that Boolean callback.
+Identity and account access reviews use `confirmPermission(product:route:review:)`, which also returns `PermissionDecision`. Override it to preserve Allow once. Its compatibility default maps `confirmUserAction(product:route:review:)`'s Boolean approval to `.allowAlways`; signing and other single-action reviews continue to use that Boolean callback. Both receive the `product` that asked and the `route` it reached this host by (`.local` or `.pairedHost(peer:)`). Cancellation means the core withdrew the request; dismiss the prompt.
 
 Fetch, XHR, WebSocket connections, notification scheduling, external navigation and existing remote-operation gates consume temporary grants. The shared container authorizes each `getUserMedia` call through `authorize_device_permission`, camera before microphone. Each approval consumes its one-use grant for that attempt: a later microphone denial or native capture failure does not restore the camera grant. The returned stream remains usable until stopped; another capture requires new authorization.
 
@@ -365,11 +365,11 @@ The container enforces product consent, while native media delegates resolve OS 
 `TrUAPIHostRuntime` exposes two methods for wallet-owned SSO sessions. Meaningful request answering requires `activateLocalSession` to have been called first; `prepareDisconnectRequest` needs no session.
 
 ```swift
-func handleSsoRequest(message: Data) async throws -> SsoRequestOutcome
+func handleSsoRequest(peer: PairedSsoPeer, message: Data) async throws -> SsoRequestOutcome
 func prepareDisconnectRequest() -> Data
 ```
 
-`handleSsoRequest(message:)` takes one SCALE-encoded `RemoteMessage` exactly as decrypted from the statement-store session and routes it through the Rust core. The returned `SsoRequestOutcome` is the generated UniFFI enum (no Swift mirror):
+`handleSsoRequest(peer:message:)` takes the paired host the message came from and one SCALE-encoded `RemoteMessage` exactly as decrypted from the statement-store session, and routes it through the Rust core. The confirmations it raises carry `peer` as their route. The returned `SsoRequestOutcome` is the generated UniFFI enum (no Swift mirror):
 
 - `.response(message:)` — SCALE-encoded reply; post it back over the same session.
 - `.disconnected` — the peer ended the session; tear down the transport and records on the wallet side.
@@ -535,13 +535,21 @@ final class MyBridge: HostBridge, @unchecked Sendable {
         /* close host connection */
     }
 
-    func confirmUserAction(review: UserConfirmationReview) async throws -> Bool {
+    func confirmUserAction(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview
+    ) async throws -> Bool {
         // Switch on the review variant (.signPayload, .createTransaction, ...)
         // to render the confirmation prompt with its typed fields.
         await MainActor.run { /* render review; */ false }
     }
 
-    func confirmPermission(review: UserConfirmationReview) async throws -> PermissionDecision {
+    func confirmPermission(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview
+    ) async throws -> PermissionDecision {
         await MainActor.run { /* render permission review; */ PermissionDecision.deny }
     }
 

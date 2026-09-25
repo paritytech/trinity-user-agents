@@ -4,15 +4,18 @@ import UIKitExt
 final class SSOSigningRequestHandler: SSORequestHandling {
     private let messageSender: any PolkadotHostMessageSending<PolkadotHostRemoteMessage>
     private let signingHandler: TransactionSigningHandling
+    private let pairedDeviceNames: PairedDeviceNameResolving
     private let logger: LoggerProtocol
 
     init(
         messageSender: any PolkadotHostMessageSending<PolkadotHostRemoteMessage>,
         signingHandler: TransactionSigningHandling,
+        pairedDeviceNames: PairedDeviceNameResolving = PairedDeviceNameResolver(),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.messageSender = messageSender
         self.signingHandler = signingHandler
+        self.pairedDeviceNames = pairedDeviceNames
         self.logger = logger
     }
 
@@ -29,11 +32,17 @@ final class SSOSigningRequestHandler: SSORequestHandling {
             return
         }
 
+        let pairedDeviceName = await pairedDeviceNames.deviceName(forStatementAccountId: host.accountId)
+
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let context = QueuedSsoSigningContext(
                 host: host,
+                requester: PolkadotSigningRequester(
+                    productId: value.caller.productId,
+                    pairedDeviceName: pairedDeviceName
+                ),
                 requestMessageId: message.messageId,
-                signingModel: .signingRequest(value),
+                signingModel: .signingRequest(value.payload),
                 messageSender: messageSender,
                 logger: logger,
                 onCompleted: { continuation.resume() }

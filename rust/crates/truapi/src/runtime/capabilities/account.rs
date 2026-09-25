@@ -4,7 +4,7 @@
 //! for alias, proof, and login operations.
 
 use crate::platform::{
-    PermissionAuthorizationStatus, ProductSubtreeReview, UserConfirmationReview,
+    PermissionAuthorizationStatus, ProductSubtreeReview, RequestRoute, UserConfirmationReview,
     normalize_product_identifier,
 };
 use futures::StreamExt;
@@ -61,7 +61,9 @@ impl Account for ProductRuntimeHost {
         if product_account_id.dot_ns_identifier != product_id {
             match account_access_authorization(
                 self.platform.as_ref(),
-                &product_id,
+                cx.cancel(),
+                &self.product,
+                &RequestRoute::Local,
                 &product_account_id.dot_ns_identifier,
             )
             .await
@@ -143,7 +145,7 @@ impl Account for ProductRuntimeHost {
             )));
         };
 
-        let calling_product_id = self.product_id();
+        let caller = self.product.clone();
         let cx = remote_authority_context(cx);
         remote_authority_call(
             &cx,
@@ -151,7 +153,7 @@ impl Account for ProductRuntimeHost {
                 &cx,
                 &session,
                 ProductRequest {
-                    calling_product_id,
+                    caller,
                     payload: request,
                 },
             ),
@@ -187,7 +189,7 @@ impl Account for ProductRuntimeHost {
             )));
         };
 
-        let calling_product_id = self.product_id();
+        let caller = self.product.clone();
         let cx = remote_authority_context(cx);
         // The grant lookup runs *before* `remote_authority_call`, under a bound of
         // its own. It can reach dotNS on the Asset Hub, several sequential chain
@@ -217,7 +219,7 @@ impl Account for ProductRuntimeHost {
             // logged. The wire answers one refusal for every
             // reason; this is the operator's copy.
             tracing::info!(
-                caller = %calling_product_id,
+                caller = %caller.product_id,
                 owner = %request.key_handle.dot_ns_identifier,
                 "cross-product ring-VRF access refused at the runtime frontend"
             );
@@ -232,7 +234,7 @@ impl Account for ProductRuntimeHost {
                 &cx,
                 &session,
                 ProductRequest {
-                    calling_product_id,
+                    caller,
                     payload: request,
                 },
             ),
@@ -257,7 +259,7 @@ impl Account for ProductRuntimeHost {
                 v01::HostAccountRegisterRingVrfKeyError::NotConnected,
             )));
         };
-        let calling_product_id = self.product_id();
+        let caller = self.product.clone();
         let cx = remote_authority_context(cx);
         remote_authority_call(
             &cx,
@@ -265,7 +267,7 @@ impl Account for ProductRuntimeHost {
                 &cx,
                 &session,
                 ProductRequest {
-                    calling_product_id,
+                    caller,
                     payload: request,
                 },
             ),
@@ -299,7 +301,7 @@ impl Account for ProductRuntimeHost {
                 },
             ))
         })?;
-        let calling_product_id = self.product_id();
+        let caller = self.product.clone();
         let cx = remote_authority_context(cx);
         remote_authority_call(
             &cx,
@@ -307,7 +309,7 @@ impl Account for ProductRuntimeHost {
                 &cx,
                 &session,
                 ProductRequest {
-                    calling_product_id,
+                    caller,
                     payload: request,
                 },
             ),
@@ -341,7 +343,7 @@ impl Account for ProductRuntimeHost {
                 v01::HostAccountRingVrfSignError::NotConnected,
             )));
         };
-        let calling_product_id = self.product_id();
+        let caller = self.product.clone();
         let cx = remote_authority_context(cx);
         // As in `create_account_proof`: the lookup is bounded before the authority
         // call rather than inside it, and the handle carried on is the normalized
@@ -360,7 +362,7 @@ impl Account for ProductRuntimeHost {
             // logged. The wire answers one refusal for every
             // reason; this is the operator's copy.
             tracing::info!(
-                caller = %calling_product_id,
+                caller = %caller.product_id,
                 owner = %request.key_handle.dot_ns_identifier,
                 "cross-product ring-VRF access refused at the runtime frontend"
             );
@@ -375,7 +377,7 @@ impl Account for ProductRuntimeHost {
                 &cx,
                 &session,
                 ProductRequest {
-                    calling_product_id,
+                    caller,
                     payload: request,
                 },
             ),
@@ -413,7 +415,7 @@ impl Account for ProductRuntimeHost {
         remote_authority_call(
             &cx,
             self.authority
-                .sign_vrf(&cx, &session, self.product_id(), request),
+                .sign_vrf(&cx, &session, &self.product, request),
         )
         .await
         .map(HostAccountSignVrfResponse::V1)
@@ -436,7 +438,7 @@ impl Account for ProductRuntimeHost {
     #[instrument(skip_all, fields(runtime.method = "account.get_user_id"))]
     async fn get_user_id(
         &self,
-        _cx: &CallContext,
+        cx: &CallContext,
         _request: HostGetUserIdRequest,
     ) -> Result<HostGetUserIdResponse, CallError<HostGetUserIdError>> {
         let Some(session) = self.authority.current_session() else {
@@ -445,7 +447,7 @@ impl Account for ProductRuntimeHost {
             )));
         };
 
-        match self.identity_disclosure_authorization().await {
+        match self.identity_disclosure_authorization(cx).await {
             Ok(PermissionAuthorizationStatus::Authorized) => {}
             Ok(
                 PermissionAuthorizationStatus::Denied

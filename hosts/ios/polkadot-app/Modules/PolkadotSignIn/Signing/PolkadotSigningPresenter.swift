@@ -7,6 +7,7 @@ final class PolkadotSigningPresenter {
 
     private let interactor: PolkadotSigningInteractorInputProtocol
     private let wireframe: PolkadotSigningWireframeProtocol
+    private let requesterIcon: (any ImageViewModelProtocol)?
 
     private var parsedResult: PolkadotParsedSigningRequestResult?
     private var isInProgress = false
@@ -14,10 +15,12 @@ final class PolkadotSigningPresenter {
 
     init(
         interactor: PolkadotSigningInteractorInputProtocol,
-        wireframe: PolkadotSigningWireframeProtocol
+        wireframe: PolkadotSigningWireframeProtocol,
+        requesterIcon: (any ImageViewModelProtocol)?
     ) {
         self.interactor = interactor
         self.wireframe = wireframe
+        self.requesterIcon = requesterIcon
     }
 }
 
@@ -100,9 +103,8 @@ private extension PolkadotSigningPresenter {
         } else if let parsedResult {
             view?.didReceive(viewModel: .result(.init(
                 hostName: parsedResult.requester.name,
-                iconViewModel: parsedResult.requester.iconUrl.map {
-                    RemoteImageViewModel(url: $0)
-                },
+                pairedDeviceName: parsedResult.requester.pairedDeviceName,
+                iconViewModel: requesterIcon,
                 transactionDescription: parsedResult.parsedRequest.descriptionText
             )))
         }

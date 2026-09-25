@@ -1,8 +1,17 @@
 package io.paritytech.polkadotapp.feature_products_api.model.signing
 
+import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+
 interface SigningContext {
     val requesterName: String
     val requesterIconUrl: String
+
+    /** The product that asked, when the request names one; the screen shows that product's icon. */
+    val requesterProduct: ProductId? get() = null
+
+    /** Name of the paired device that relayed the request, when it arrived over SSO. */
+    val pairedDeviceName: String? get() = null
+
     val signingRequestBody: SigningRequestBody
 
     /** The account this request signs with, resolved before the signing screen is shown. */

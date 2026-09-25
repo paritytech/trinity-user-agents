@@ -144,6 +144,24 @@ fn emit_host_callbacks(
         out.push('\n');
     }
 
+    if has_withdrawable_callbacks(definition) {
+        writedoc!(
+            out,
+            r#"
+            /** Options passed last to a callback that prompts the user. */
+            export interface {CALLBACK_OPTIONS} {{
+              /**
+               * Aborted when the core withdraws the request behind the prompt. An
+               * answer given afterwards reaches nobody, so dismiss the prompt.
+               */
+              signal: AbortSignal;
+            }}
+
+            "#,
+        )
+        .unwrap();
+    }
+
     for trait_def in &definition.traits {
         out.push_str(&emit_trait_interface(trait_def)?);
         out.push('\n');
@@ -265,12 +283,16 @@ fn emit_wasm_adapter(
         "./host-callbacks.js",
         &adapter_local_codec_types,
     );
+    let host_callback_types = if has_withdrawable_callbacks(definition) {
+        format!("  {CALLBACK_OPTIONS},\n  RequiredHostCallbacks,\n")
+    } else {
+        "  RequiredHostCallbacks,\n".to_string()
+    };
     writedoc!(
         out,
         r#"
         import type {{
-          RequiredHostCallbacks,
-        }} from "./host-callbacks.js";
+        {host_callback_types}}} from "./host-callbacks.js";
 
         "#,
     )
@@ -425,16 +447,24 @@ fn emit_worker_callbacks(
     out.push_str(&const_name_array("SUBSCRIPTION_NAMES", &all_subscriptions));
     out.push_str("export type SubscriptionName = typeof SUBSCRIPTION_NAMES[number];\n\n");
 
-    out.push_str("export interface WorkerCallbackBridge {\n");
-    out.push_str(
-        "  callbackRequest(name: CallbackName, args: readonly unknown[]): Promise<unknown>;\n",
-    );
-    out.push_str("  startSubscription<T>(\n");
-    out.push_str("    name: SubscriptionName,\n");
-    out.push_str("    payload: Uint8Array | string | null,\n");
-    out.push_str("    sendItem: (value: T) => void,\n");
-    out.push_str("    sendError: (error: GenericError) => void,\n");
-    out.push_str("  ): () => void;\n");
+    writedoc!(
+        out,
+        r#"
+        export interface WorkerCallbackBridge {{
+          /**
+           * Run a main-thread callback. `signal` accompanies a prompt callback;
+           * when it aborts, the bridge withdraws the prompt on the main thread.
+           */
+          callbackRequest(name: CallbackName, args: readonly unknown[], signal?: AbortSignal): Promise<unknown>;
+          startSubscription<T>(
+            name: SubscriptionName,
+            payload: Uint8Array | string | null,
+            sendItem: (value: T) => void,
+            sendError: (error: GenericError) => void,
+          ): () => void;
+        "#,
+    )
+    .unwrap();
     for (trait_def, method) in &trait_object_callbacks {
         writeln!(
             out,
@@ -649,6 +679,12 @@ fn emit_worker_callback_entry(method: &PlatformMethod) -> Result<String> {
     } else {
         format!("[{args}]")
     };
+    if method.withdrawable {
+        let params = with_callback_options(method, args, "options");
+        return Ok(format!(
+            "    {raw}: ({params}) =>\n      bridge.callbackRequest(\"{raw}\", {arg_array}, options.signal) as ReturnType<Required<RawCallbacks>[\"{raw}\"]>,\n"
+        ));
+    }
     if method.return_shape.is_async {
         Ok(format!(
             "    {raw}: ({args}) =>\n      bridge.callbackRequest(\"{raw}\", {arg_array}) as ReturnType<Required<RawCallbacks>[\"{raw}\"]>,\n"
@@ -878,6 +914,8 @@ fn raw_member(
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
+            let params =
+                with_callback_options(method, params, &format!("options: {CALLBACK_OPTIONS}"));
             let ok = match inner {
                 PlatformInner::Result { ok, .. } | PlatformInner::Plain(ok) => {
                     raw_ok_ts(ok, codec_types, local_codec_types)
@@ -1016,6 +1054,30 @@ fn adapter_arg(
             format!("{ty}.dec({name})")
         }
         _ => name,
+    }
+}
+
+/// Whether any composed callback takes the withdrawal options.
+fn has_withdrawable_callbacks(definition: &PlatformDefinition) -> bool {
+    definition
+        .traits
+        .iter()
+        .flat_map(|trait_def| &trait_def.methods)
+        .any(|method| method.withdrawable)
+}
+
+/// TS name of the options object a withdrawable callback receives last.
+const CALLBACK_OPTIONS: &str = "CallbackOptions";
+
+/// `params` followed by `options`, the trailing options parameter or argument
+/// a withdrawable callback takes.
+fn with_callback_options(method: &PlatformMethod, params: String, options: &str) -> String {
+    if !method.withdrawable {
+        params
+    } else if params.is_empty() {
+        options.to_string()
+    } else {
+        format!("{params}, {options}")
     }
 }
 
@@ -1181,13 +1243,14 @@ fn adapter_unary_impl(
     codec_types: &BTreeSet<String>,
     local_codec_types: &BTreeSet<String>,
 ) -> Result<String> {
-    let params = param_names(method);
+    let params = with_callback_options(method, param_names(method), "options");
     let args = method
         .params
         .iter()
         .map(|p| adapter_arg(p, codec_types, local_codec_types))
         .collect::<Vec<_>>()
         .join(", ");
+    let args = with_callback_options(method, args, "options");
     let call = format!("{host_method}({args})");
     let body = match ok {
         TypeRef::Named { name: ty, .. }
@@ -1469,6 +1532,7 @@ fn emit_method(method: &PlatformMethod) -> Result<String> {
         })
         .collect::<Result<Vec<_>>>()?
         .join(", ");
+    let params = with_callback_options(method, params, &format!("options: {CALLBACK_OPTIONS}"));
     let ret = format_return(&method.return_shape)?;
     let name = to_camel_case(&method.name);
     // A Rust default body makes the method optional for host implementations.
@@ -1839,6 +1903,7 @@ mod tests {
             }],
             super_trait: None,
             optional_super_trait: None,
+            prompt_super_trait: None,
         };
         let local_codec_types = ["SessionUiInfo".to_string()].into_iter().collect();
 
@@ -1863,6 +1928,7 @@ mod tests {
             types: Vec::new(),
             super_trait: None,
             optional_super_trait: None,
+            prompt_super_trait: None,
         }
     }
 
@@ -1883,6 +1949,7 @@ mod tests {
                 },
             },
             has_default: false,
+            withdrawable: false,
         }
     }
 
@@ -1903,6 +1970,7 @@ mod tests {
                 },
             },
             has_default: false,
+            withdrawable: false,
         }
     }
 

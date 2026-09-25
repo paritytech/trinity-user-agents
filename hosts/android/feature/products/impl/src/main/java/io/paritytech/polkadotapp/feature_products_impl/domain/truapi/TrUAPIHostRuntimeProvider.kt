@@ -46,6 +46,7 @@ import uniffi.truapi.RemotePermission
 import uniffi.truapi.AuthState
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.PermissionDecision
+import uniffi.truapi.RequestRoute
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostLocalStorageReadException
@@ -241,8 +242,12 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         ): PermissionDecision =
             PermissionDecision.DENY
 
-        override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
-            confirmationLauncher.decide(review, requesterFallback = HOST_REQUESTER)
+        override suspend fun confirmUserAction(
+            product: ProductExecutionConfig,
+            route: RequestRoute,
+            review: UserConfirmationReview,
+        ): Boolean =
+            confirmationLauncher.decide(review, requester = product.productId)
 
         override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
             when (request) {
@@ -274,7 +279,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
     private companion object {
         const val HOST_NAME = "Polkadot"
-        const val HOST_REQUESTER = "host"
 
         /**
          * Ceiling on resolving the network's dotNS TLD while booting the runtime.

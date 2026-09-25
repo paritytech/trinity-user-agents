@@ -27,20 +27,20 @@ extension PolkadotHostRemoteMessage {
 
     enum ContentV1 {
         case disconnected
-        case signingRequest(SigningRequest)
+        case signingRequest(ProductRequest<SigningRequest>)
         case signingResponse(requestMessageId: String, result: SigningResult)
-        case aliasRequest(AliasRequest)
+        case aliasRequest(ProductRequest<AliasRequest>)
         case aliasResponse(requestMessageId: String, result: AliasResult)
-        case resourceAllocationRequest(ResourceAllocationRequest)
+        case resourceAllocationRequest(ProductRequest<ResourceAllocationRequest>)
         case resourceAllocationResponse(requestMessageId: String, result: ResourceAllocationResult)
-        case createTransactionRequest(CreateTransactionRequest)
+        case createTransactionRequest(ProductRequest<CreateTransactionRequest>)
         case createTransactionResponse(requestMessageId: String, result: CreateTransactionResultAP)
-        case createTransactionLegacyRequest(CreateTransactionLegacyRequest)
-        case signRawLegacyRequest(SignRawLegacyRequest)
+        case createTransactionLegacyRequest(ProductRequest<CreateTransactionLegacyRequest>)
+        case signRawLegacyRequest(ProductRequest<SignRawLegacyRequest>)
         case signRawLegacyResponse(requestMessageId: String, result: SignRawLegacyResult)
-        case createProofRequest(CreateProofRequest)
+        case createProofRequest(ProductRequest<CreateProofRequest>)
         case createProofResponse(requestMessageId: String, result: CreateProofResult)
-        case signVrfRequest(SignVrfRequest)
+        case signVrfRequest(ProductRequest<SignVrfRequest>)
         case signVrfResponse(requestMessageId: String, result: SignVrfHostResult)
         case productSubtreeRequest(ProductSubtreeRequest)
         case productSubtreeResponse(requestMessageId: String, result: ProductSubtreeResult)
@@ -130,53 +130,45 @@ extension PolkadotHostRemoteMessage.ContentV1: MessageExchange.CodableMessage {
         case 0:
             self = .disconnected
         case 1:
-            let value = try PolkadotHostRemoteMessage.SigningRequest(scaleDecoder: scaleDecoder)
-            self = .signingRequest(value)
+            self = try .signingRequest(.init(scaleDecoder: scaleDecoder))
         case 2:
             let requestMessageId = try String(scaleDecoder: scaleDecoder)
             let result = try PolkadotHostRemoteMessage.SigningResult(scaleDecoder: scaleDecoder)
             self = .signingResponse(requestMessageId: requestMessageId, result: result)
         case 3:
-            let value = try PolkadotHostRemoteMessage.AliasRequest(scaleDecoder: scaleDecoder)
-            self = .aliasRequest(value)
+            self = try .aliasRequest(.init(scaleDecoder: scaleDecoder))
         case 4:
             let requestMessageId = try String(scaleDecoder: scaleDecoder)
             let result = try PolkadotHostRemoteMessage.AliasResult(scaleDecoder: scaleDecoder)
             self = .aliasResponse(requestMessageId: requestMessageId, result: result)
         case 5:
-            let value = try PolkadotHostRemoteMessage.ResourceAllocationRequest(scaleDecoder: scaleDecoder)
-            self = .resourceAllocationRequest(value)
+            self = try .resourceAllocationRequest(.init(scaleDecoder: scaleDecoder))
         case 6:
             let requestMessageId = try String(scaleDecoder: scaleDecoder)
             let result = try PolkadotHostRemoteMessage.ResourceAllocationResult(scaleDecoder: scaleDecoder)
             self = .resourceAllocationResponse(requestMessageId: requestMessageId, result: result)
         case 7:
-            let value = try PolkadotHostRemoteMessage.CreateTransactionRequest(scaleDecoder: scaleDecoder)
-            self = .createTransactionRequest(value)
+            self = try .createTransactionRequest(.init(scaleDecoder: scaleDecoder))
         case 8:
             let requestMessageId = try String(scaleDecoder: scaleDecoder)
             let result = try PolkadotHostRemoteMessage.CreateTransactionResultAP(scaleDecoder: scaleDecoder)
             self = .createTransactionResponse(requestMessageId: requestMessageId, result: result)
         case 9:
-            let value = try PolkadotHostRemoteMessage.CreateTransactionLegacyRequest(scaleDecoder: scaleDecoder)
-            self = .createTransactionLegacyRequest(value)
+            self = try .createTransactionLegacyRequest(.init(scaleDecoder: scaleDecoder))
         case 10:
-            let value = try PolkadotHostRemoteMessage.SignRawLegacyRequest(scaleDecoder: scaleDecoder)
-            self = .signRawLegacyRequest(value)
+            self = try .signRawLegacyRequest(.init(scaleDecoder: scaleDecoder))
         case 11:
             let requestMessageId = try String(scaleDecoder: scaleDecoder)
             let result = try PolkadotHostRemoteMessage.SignRawLegacyResult(scaleDecoder: scaleDecoder)
             self = .signRawLegacyResponse(requestMessageId: requestMessageId, result: result)
         case 12:
-            let value = try PolkadotHostRemoteMessage.CreateProofRequest(scaleDecoder: scaleDecoder)
-            self = .createProofRequest(value)
+            self = try .createProofRequest(.init(scaleDecoder: scaleDecoder))
         case 13:
             let requestMessageId = try String(scaleDecoder: scaleDecoder)
             let result = try PolkadotHostRemoteMessage.CreateProofResult(scaleDecoder: scaleDecoder)
             self = .createProofResponse(requestMessageId: requestMessageId, result: result)
         case 14:
-            let value = try PolkadotHostRemoteMessage.SignVrfRequest(scaleDecoder: scaleDecoder)
-            self = .signVrfRequest(value)
+            self = try .signVrfRequest(.init(scaleDecoder: scaleDecoder))
         case 15:
             let requestMessageId = try String(scaleDecoder: scaleDecoder)
             let result = try PolkadotHostRemoteMessage.SignVrfHostResult(scaleDecoder: scaleDecoder)

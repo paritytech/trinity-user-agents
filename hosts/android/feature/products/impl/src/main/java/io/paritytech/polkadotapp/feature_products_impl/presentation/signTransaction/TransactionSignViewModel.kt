@@ -11,10 +11,13 @@ import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.inBackground
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.withLoading
+import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
+import io.paritytech.polkadotapp.design.configs.colors.AvatarColorScheme
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.asDisplayString
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccount
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningContext
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningContextHolder
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductIconUrlUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.signTransaction.ParsedSigningContent
 import io.paritytech.polkadotapp.feature_products_impl.domain.signTransaction.TransactionSignInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -22,6 +25,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import timber.log.Timber
 import javax.inject.Inject
@@ -33,6 +37,7 @@ class TransactionSignViewModel @Inject constructor(
     private val interactor: TransactionSignInteractor,
     private val signingContextHolder: SigningContextHolder,
     private val signingContext: SigningContext,
+    private val productIconUrl: ProductIconUrlUseCase,
 ) : BaseViewModel(), TransactionSignContract {
     private val signing = MutableStateFlow(false)
     private val showingDetails = MutableStateFlow(false)
@@ -45,16 +50,22 @@ class TransactionSignViewModel @Inject constructor(
         interactor.humanReadableRepresentation()
     }
 
+    private val requesterIconUrlFlow = flow {
+        emit(signingContext.requesterProduct?.let { productIconUrl(it) } ?: signingContext.requesterIconUrl)
+    }
+
     override val state: StateFlow<LoadingState<TransactionSignUiState>> = combine(
         parsedSigningContentFlow,
         humanReadableFlow,
+        requesterIconUrlFlow,
         signing,
         showingDetails
-    ) { parsedResult, humanReadableResult, isSigning, isShowingDetails ->
+    ) { parsedResult, humanReadableResult, requesterIconUrl, isSigning, isShowingDetails ->
         combineResults(parsedResult, humanReadableResult) { parsed, humanReadable ->
             TransactionSignUiState(
                 requesterName = signingContext.requesterName,
-                requesterIconUrl = signingContext.requesterIconUrl,
+                pairedDeviceName = signingContext.pairedDeviceName,
+                requesterAvatar = requesterAvatar(signingContext.requesterName, requesterIconUrl),
                 content = parsed.toSigningContent(humanReadable),
                 signingAccount = interactor.account.toUi(),
                 signing = isSigning,
@@ -122,6 +133,14 @@ class TransactionSignViewModel @Inject constructor(
             SigningAccount.IdentityAccount -> SigningAccountUi.IdentityAccount
 
             is SigningAccount.Legacy -> SigningAccountUi.Legacy(accountId.toSubstrateAddress(GENERIC_SS58_PREFIX))
+        }
+    }
+
+    private fun requesterAvatar(name: String, iconUrl: String): AvatarUiModel {
+        return if (iconUrl.isBlank()) {
+            AvatarUiModel.Name(name, AvatarColorScheme.from(name.encodeToByteArray()))
+        } else {
+            AvatarUiModel.Image(iconUrl)
         }
     }
 

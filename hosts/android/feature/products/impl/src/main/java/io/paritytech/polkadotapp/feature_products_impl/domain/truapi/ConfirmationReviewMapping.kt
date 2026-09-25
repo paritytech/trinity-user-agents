@@ -41,7 +41,7 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
     is UserConfirmationReview.CreateTransaction ->
         TrUAPIConfirmation.Signing(callingProductId, v1.toSigningRequestBody())
     is UserConfirmationReview.SignVrf ->
-        TrUAPIConfirmation.Signing(v1.callingProductId, v1.toSigningRequestBody())
+        TrUAPIConfirmation.Signing(callingProductId, v1.toSigningRequestBody())
 
     is UserConfirmationReview.StatementStoreProductSign ->
         TrUAPIConfirmation.StatementSign(
@@ -51,14 +51,14 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
 
     is UserConfirmationReview.AccountAlias ->
         TrUAPIConfirmation.AccountAlias(
-            requesterProductId = v1.callingProductId,
+            requesterProductId = callingProductId,
             proofContext = v1.context.productId,
             ring = v1.ringLocation.describe(),
         )
 
     is UserConfirmationReview.CreateProof ->
         TrUAPIConfirmation.CreateProof(
-            requesterProductId = v1.callingProductId,
+            requesterProductId = callingProductId,
             proofContext = v1.context.productId,
             ring = v1.ringLocation.describe(),
             messageSize = v1.message.size,
@@ -69,7 +69,7 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
 
     is UserConfirmationReview.ResourceAllocation ->
         TrUAPIConfirmation.ResourceAllocation(
-            requesterProductId = v1.callingProductId,
+            requesterProductId = callingProductId,
             resources = v1.resources.map { it.describe() },
         )
 
@@ -129,7 +129,7 @@ private fun <Signer> HostSignPayloadData.toSignerPayloadJson(account: Signer) = 
 
 private fun SignPayloadReview.toSigningRequestBody(): SigningRequestBody = when (this) {
     is SignPayloadReview.Product ->
-        SigningRequestBody.Transaction(request.payload.toSignerPayloadJson(request.account.toDomain()))
+        SigningRequestBody.Transaction(v1.payload.toSignerPayloadJson(v1.account.toDomain()))
     is SignPayloadReview.LegacyAccount ->
         SigningRequestBody.TransactionLegacy(
             v1.payload.toSignerPayloadJson(v1.signer.parseLegacySigner().toDataByteArray()),
@@ -176,11 +176,11 @@ private fun TxPayloadExtension.toDomain() = EncodedTransactionExtensionValue(
 private fun CreateTransactionReview.toSigningRequestBody(): SigningRequestBody = when (this) {
     is CreateTransactionReview.Product -> SigningRequestBody.CreateTransaction(
         TxPayload(
-            signer = payload.signer.toDomain(),
-            genesisHash = payload.genesisHash.toDataByteArray(),
-            callData = payload.callData.toDataByteArray(),
-            extensions = payload.extensions.map { it.toDomain() },
-            txExtVersion = payload.txExtVersion,
+            signer = v1.signer.toDomain(),
+            genesisHash = v1.genesisHash.toDataByteArray(),
+            callData = v1.callData.toDataByteArray(),
+            extensions = v1.extensions.map { it.toDomain() },
+            txExtVersion = v1.txExtVersion,
         ),
     )
     is CreateTransactionReview.LegacyAccount -> SigningRequestBody.CreateTransactionLegacy(

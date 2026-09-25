@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.signTransaction
 
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
+import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import kotlinx.coroutines.flow.StateFlow
 
 interface TransactionSignContract {
@@ -29,7 +30,8 @@ sealed interface SigningAccountUi {
 
 data class TransactionSignUiState(
     val requesterName: String,
-    val requesterIconUrl: String,
+    val pairedDeviceName: String?,
+    val requesterAvatar: AvatarUiModel,
     val content: SigningContent,
     val signingAccount: SigningAccountUi,
     val signing: Boolean = false,

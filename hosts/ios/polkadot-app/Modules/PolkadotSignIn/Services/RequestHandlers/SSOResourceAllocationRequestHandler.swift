@@ -36,13 +36,13 @@ final class SSOResourceAllocationRequestHandler: SSORequestHandling {
 
         do {
             outcomes = try await accountManager.requestResourceAllocation(
-                for: request.callingProduct,
-                resources: request.resources,
-                policy: request.onExisting
+                for: request.caller.productId,
+                resources: request.payload.resources,
+                policy: request.payload.onExisting
             )
         } catch {
             logger.error("Failed to allocate resources: \(error)")
-            outcomes = request.resources.map { _ in .notAvailable }
+            outcomes = request.payload.resources.map { _ in .notAvailable }
         }
 
         let responseMessage = PolkadotHostRemoteMessage(

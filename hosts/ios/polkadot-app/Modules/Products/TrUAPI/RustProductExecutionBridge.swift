@@ -126,12 +126,24 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         }
     }
 
-    func confirmUserAction(review: UserConfirmationReview) async throws -> Bool {
-        await dependencies.confirmationPresenter.confirm(review: review, from: dependencies.productId)
+    func confirmUserAction(
+        product _: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview
+    ) async throws -> Bool {
+        await dependencies.confirmationPresenter.confirm(review: review, from: dependencies.productId, route: route)
     }
 
-    func confirmPermission(review: UserConfirmationReview) async throws -> TrUAPIPermissionDecision {
-        await dependencies.confirmationPresenter.confirmPermission(review: review, from: dependencies.productId)
+    func confirmPermission(
+        product _: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview
+    ) async throws -> TrUAPIPermissionDecision {
+        await dependencies.confirmationPresenter.confirmPermission(
+            review: review,
+            from: dependencies.productId,
+            route: route
+        )
     }
 
     func chainConnect(genesisHash: Data) throws -> UInt32? {

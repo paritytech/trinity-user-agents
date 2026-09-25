@@ -21,12 +21,12 @@ use crate::platform::{
     AccountAccessReview, AuthPresenter, AuthState, ChainProvider,
     CoreStorage as PlatformCoreStorage, CoreStorageKey, CreateTransactionReview,
     Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
-    Navigation as PlatformNavigation, Notifications as PlatformNotifications, PairingHostConfig,
-    Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext,
-    ProductOperations as PlatformProductOperations, ProductStorage as PlatformProductStorage,
-    ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
-    SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
-    UserConfirmationReview,
+    Navigation as PlatformNavigation, Notifications as PlatformNotifications, PairedSsoPeer,
+    PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
+    ProductContext, ProductOperations as PlatformProductOperations,
+    ProductStorage as PlatformProductStorage, ProductSubtreeReview, ProviderError, RequestRoute,
+    ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+    StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::Stream;
 use futures::stream::{self, BoxStream, StreamExt};
@@ -49,6 +49,19 @@ pub fn wait_until(mut condition: impl FnMut() -> bool, message: &str) {
     while !condition() {
         assert!(std::time::Instant::now() < deadline, "{message}");
         std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// An `App` product context for `product_id`, which must be a valid id.
+pub fn test_product(product_id: &str) -> ProductContext {
+    ProductContext::new(product_id.to_string()).expect("test product id is valid")
+}
+
+/// The paired host that SSO requests in tests arrive from.
+pub fn test_sso_peer() -> PairedSsoPeer {
+    PairedSsoPeer {
+        statement_account_id: [7; 32],
+        encryption_public_key: [8; 32],
     }
 }
 
@@ -85,6 +98,10 @@ pub struct StubPlatform {
     pub device_permission_requests: Mutex<Vec<v01::HostDevicePermissionRequest>>,
     /// Product passed to each permission prompt, in order.
     pub permission_prompt_products: Mutex<Vec<ProductContext>>,
+    /// Product passed to each user confirmation, in order.
+    pub confirmation_products: Mutex<Vec<ProductContext>>,
+    /// The route of every confirmation, in order.
+    pub confirmation_routes: Mutex<Vec<RequestRoute>>,
     pub remote_permission_denied: bool,
     pub remote_permission_decisions:
         Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
@@ -124,6 +141,9 @@ pub struct StubPlatform {
     pub sign_vrf_reviews: Arc<Mutex<Vec<SignVrfReview>>>,
     /// Every `StatementStoreProductSign` review passed to `confirm_user_action`, in order.
     pub statement_store_product_sign_reviews: Arc<Mutex<Vec<StatementStoreProductSignReview>>>,
+    /// Pause a statement-proof review until the test releases its confirmation.
+    pub statement_store_product_sign_confirmation_gate:
+        Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     pub create_transaction_confirmed: bool,
     /// Every `CreateTransaction` review passed to `confirm_user_action`, in
     /// order. Empty proves an AutoSigning grant suppressed the prompt.
@@ -1825,9 +1845,11 @@ impl AuthPresenter for StubPlatform {
 impl UserConfirmation for StubPlatform {
     async fn confirm_permission(
         &self,
+        product: &ProductContext,
+        route: &RequestRoute,
         review: UserConfirmationReview,
     ) -> Result<crate::platform::PermissionDecision, v01::GenericError> {
-        let confirmed = self.confirm_user_action(review).await?;
+        let confirmed = self.confirm_user_action(product, route, review).await?;
         Ok(self
             .permission_confirmation_decisions
             .lock()
@@ -1842,8 +1864,18 @@ impl UserConfirmation for StubPlatform {
 
     async fn confirm_user_action(
         &self,
+        product: &ProductContext,
+        route: &RequestRoute,
         review: UserConfirmationReview,
     ) -> Result<bool, v01::GenericError> {
+        self.confirmation_products
+            .lock()
+            .expect("confirmation product list mutex poisoned")
+            .push(product.clone());
+        self.confirmation_routes
+            .lock()
+            .expect("confirmation route list mutex poisoned")
+            .push(*route);
         let (error, confirmed) = match review {
             UserConfirmationReview::SignPayload(review) => {
                 self.sign_payload_reviews
@@ -1871,6 +1903,15 @@ impl UserConfirmation for StubPlatform {
                     .lock()
                     .expect("statement store product sign review list mutex poisoned")
                     .push(review);
+                let gate = self
+                    .statement_store_product_sign_confirmation_gate
+                    .lock()
+                    .expect("statement proof confirmation gate mutex poisoned")
+                    .take();
+                if let Some(gate) = gate {
+                    gate.await
+                        .expect("statement proof confirmation gate was released");
+                }
                 (self.sign_raw_error, self.sign_raw_confirmed)
             }
             UserConfirmationReview::CreateTransaction(review) => {

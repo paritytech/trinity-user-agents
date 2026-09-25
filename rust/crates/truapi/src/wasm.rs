@@ -421,6 +421,48 @@ fn invoke_optional_bytes_return(
     })
 }
 
+/// Run a prompt callback with a trailing `{ signal }` options argument. The
+/// signal aborts when the core drops the returned future before the callback
+/// settles, which is how the core withdraws a prompt; a settled call leaves it
+/// untouched.
+fn withdrawable<F>(
+    mut args: Vec<JsValue>,
+    invoke: impl FnOnce(Vec<JsValue>) -> F,
+) -> impl Future<Output = F::Output> + Send
+where
+    F: Future + Send,
+{
+    let controller = web_sys::AbortController::new()
+        .expect("AbortController is available in every supported JS runtime");
+    let options = js_sys::Object::new();
+    let _ = Reflect::set(&options, &JsValue::from_str("signal"), &controller.signal());
+    args.push(options.into());
+    let withdrawal = Withdrawal(Some(SendWrapper::new(controller)));
+    let call = invoke(args);
+    async move {
+        let output = call.await;
+        withdrawal.settle();
+        output
+    }
+}
+
+/// Aborts its controller on drop unless the call it guards settled first.
+struct Withdrawal(Option<SendWrapper<web_sys::AbortController>>);
+
+impl Withdrawal {
+    fn settle(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for Withdrawal {
+    fn drop(&mut self) {
+        if let Some(controller) = self.0.take() {
+            controller.abort();
+        }
+    }
+}
+
 fn decode_bytes<T: Decode>(bytes: Vec<u8>, message: &str) -> Result<T, String> {
     T::decode(&mut bytes.as_slice()).map_err(|_| message.to_string())
 }

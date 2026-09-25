@@ -56,10 +56,9 @@ struct TrUAPIReviewPromptMapperTests {
     @Test
     func mapsAccountAliasToContextProductAccountAccess() {
         let request = mapper.makePermissionRequest(from: AccountAliasReview(
-            callingProductId: "caller.dot",
             context: ProductProofContext(productId: "ring-owner.dot", suffix: .index(3)),
             ringLocation: Self.makeRingLocation()
-        ))
+        ), requester: "caller.dot")
 
         #expect(request == TrUAPIPermissionRequest(
             productId: "caller.dot",
@@ -72,11 +71,10 @@ struct TrUAPIReviewPromptMapperTests {
         let message = try Data.randomOrError(of: 24)
 
         let request = try mapper.makeCreateProofRequest(from: CreateProofReview(
-            callingProductId: "caller.dot",
             context: ProductProofContext(productId: "ring-owner.dot", suffix: .index(9)),
             ringLocation: Self.makeRingLocation(),
             message: message
-        ))
+        ), requester: "caller.dot")
 
         #expect(request.callingProductId == "caller.dot")
         #expect(request.onBehalfOfProductId == "ring-owner.dot")
@@ -89,11 +87,10 @@ struct TrUAPIReviewPromptMapperTests {
         let rawSuffix = try Data.randomOrError(of: 32)
 
         let request = try mapper.makeCreateProofRequest(from: CreateProofReview(
-            callingProductId: "caller.dot",
             context: ProductProofContext(productId: "ring-owner.dot", suffix: .raw(rawSuffix)),
             ringLocation: Self.makeRingLocation(),
             message: Data()
-        ))
+        ), requester: "caller.dot")
 
         #expect(request.suffix == rawSuffix)
     }
@@ -101,14 +98,13 @@ struct TrUAPIReviewPromptMapperTests {
     @Test
     func mapsAllowanceResources() throws {
         let request = try mapper.makeAllowanceRequest(from: ResourceAllocationReview(
-            callingProductId: "caller.dot",
             resources: [
                 .statementStoreAllowance,
                 .bulletinAllowance,
                 .smartContractAllowance(.index(4)),
                 .autoSigning
             ]
-        ))
+        ), requester: "caller.dot")
 
         #expect(request == TrUAPIAllowanceRequest(
             productId: "caller.dot",
@@ -128,7 +124,6 @@ struct TrUAPIReviewPromptMapperTests {
         let itemValue = try Data.randomOrError(of: 4)
 
         let request = try mapper.makeSignVrfRequest(from: SignVrfReview(
-            callingProductId: "caller.dot",
             request: TrUAPIHostSignVrfRequest(
                 account: TrUAPIHostProductAccountId(
                     dotNsIdentifier: "signer.dot",
@@ -137,7 +132,7 @@ struct TrUAPIReviewPromptMapperTests {
                 transcriptLabel: label,
                 items: [TrUAPIHostVrfTranscriptItem(label: itemLabel, value: itemValue)]
             )
-        ))
+        ), requester: "caller.dot")
 
         #expect(request.callingProductId == "caller.dot")
         #expect(request.payload == SignVrfPayload(
@@ -152,7 +147,6 @@ struct TrUAPIReviewPromptMapperTests {
         let payload = try Data.randomOrError(of: 48)
 
         let request = mapper.makeStatementSignRequest(from: StatementStoreProductSignReview(
-            callingProductId: nil,
             account: TrUAPIHostProductAccountId(
                 dotNsIdentifier: "signer.dot",
                 derivationIndex: .index(0)

@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Li
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RegisterRingVrfKeyError
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingVrfSignError
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.SignVrfError
+import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccount
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningContextHolder
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
@@ -75,10 +76,10 @@ class SsoService @Inject constructor(
 
         when (val content = request.content) {
             is SsoSessionRequest.Content.Disconnected -> handleDisconnected(request, sessionName)
-            is SsoSessionRequest.Content.SigningRequest -> handleSigningRequest(request, content.request, session.sessionData, sessionName)
-            is SsoSessionRequest.Content.CreateTransactionRequest -> handleSigningRequest(request, content.request, session.sessionData, sessionName)
-            is SsoSessionRequest.Content.CreateTransactionLegacyRequest -> handleLegacySigningRequest(request, content.request, session.sessionData, sessionName)
-            is SsoSessionRequest.Content.SignRawLegacyRequest -> handleLegacySigningRequest(request, content.request, session.sessionData, sessionName)
+            is SsoSessionRequest.Content.SigningRequest -> handleSigningRequest(request, content.request, content.callingProduct, session.sessionData, sessionName)
+            is SsoSessionRequest.Content.CreateTransactionRequest -> handleSigningRequest(request, content.request, content.callingProduct, session.sessionData, sessionName)
+            is SsoSessionRequest.Content.CreateTransactionLegacyRequest -> handleLegacySigningRequest(request, content.request, content.callingProduct, session.sessionData, sessionName)
+            is SsoSessionRequest.Content.SignRawLegacyRequest -> handleLegacySigningRequest(request, content.request, content.callingProduct, session.sessionData, sessionName)
             is SsoSessionRequest.Content.AliasRequest -> handleAliasRequest(request, content, sessionName)
             is SsoSessionRequest.Content.RegisterRingVrfKeyRequest -> handleRegisterRingVrfKeyRequest(request, content, sessionName)
             is SsoSessionRequest.Content.ListRingVrfKeysRequest -> handleListRingVrfKeysRequest(request, content, sessionName)
@@ -100,6 +101,7 @@ class SsoService @Inject constructor(
     private suspend fun handleSigningRequest(
         request: SsoSessionRequest,
         signingRequest: SigningRequestBody.ProductAccountSigning,
+        callingProduct: ProductId,
         sessionData: SsoSessionData,
         sessionName: String,
     ) {
@@ -109,6 +111,7 @@ class SsoService @Inject constructor(
             request = request,
             signingRequest = signingRequest,
             signingAccount = SigningAccount.Product(signingRequest.account),
+            callingProduct = callingProduct,
             sessionData = sessionData
         )
     }
@@ -120,11 +123,12 @@ class SsoService @Inject constructor(
     private suspend fun handleLegacySigningRequest(
         request: SsoSessionRequest,
         signingRequest: SigningRequestBody.LegacyAccountSigning,
+        callingProduct: ProductId,
         sessionData: SsoSessionData,
         sessionName: String,
     ) {
         productRequestAccountResolver.resolve(signingRequest.account)
-            .onSuccess { signingAccount -> openSigningScreen(request, signingRequest, signingAccount, sessionData) }
+            .onSuccess { signingAccount -> openSigningScreen(request, signingRequest, signingAccount, callingProduct, sessionData) }
             .onFailure { error ->
                 Timber.w(error, "Rejecting legacy signing request from $sessionName: account not resolved")
 
@@ -142,10 +146,12 @@ class SsoService @Inject constructor(
         request: SsoSessionRequest,
         signingRequest: SigningRequestBody,
         signingAccount: SigningAccount,
+        callingProduct: ProductId,
         sessionData: SsoSessionData,
     ) {
         val signingContext = SsoSigningContext(
-            sessionData = sessionData,
+            requesterProduct = callingProduct,
+            pairedDeviceName = sessionData.deviceName,
             request = request,
             ssoService = this,
             signingRequestBody = signingRequest,

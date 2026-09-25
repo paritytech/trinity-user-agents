@@ -16,6 +16,7 @@ final class QueuedCreateTransactionContext: PolkadotSigningContextProtocol {
 
     init(
         host: PolkadotSignInHost,
+        requester: PolkadotSigningRequester,
         requestMessageId: String,
         signingModel: PolkadotHostSigningModel,
         messageSender: any PolkadotHostMessageSending<PolkadotHostRemoteMessage>,
@@ -26,7 +27,7 @@ final class QueuedCreateTransactionContext: PolkadotSigningContextProtocol {
         self.signingModel = signingModel
         self.messageSender = messageSender
         self.onCompleted = onCompleted
-        requester = PolkadotSigningRequester(name: host.name, iconUrl: host.iconUrl)
+        self.requester = requester
     }
 
     deinit {

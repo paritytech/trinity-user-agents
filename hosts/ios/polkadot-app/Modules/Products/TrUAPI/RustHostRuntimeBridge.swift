@@ -78,13 +78,20 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         chainConnections.close(connectionId: connectionId)
     }
 
-    func confirmUserAction(review: UserConfirmationReview) async throws -> Bool {
-        // TODO: pass the real SSO host identity once it is available at host level.
-        await confirmationPresenter.confirm(review: review, from: "host")
+    func confirmUserAction(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview
+    ) async throws -> Bool {
+        await confirmationPresenter.confirm(review: review, from: product.productId, route: route)
     }
 
-    func confirmPermission(review: UserConfirmationReview) async throws -> TrUAPIPermissionDecision {
-        await confirmationPresenter.confirmPermission(review: review, from: "host")
+    func confirmPermission(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview
+    ) async throws -> TrUAPIPermissionDecision {
+        await confirmationPresenter.confirmPermission(review: review, from: product.productId, route: route)
     }
 
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {

@@ -1,26 +1,27 @@
 package io.paritytech.polkadotapp.feature_sso_impl.domain.signTransaction
 
 import io.paritytech.polkadotapp.common.utils.flatMap
+import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SignedTransaction
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccount
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningContext
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
 import io.paritytech.polkadotapp.feature_sso_impl.domain.SsoService
-import io.paritytech.polkadotapp.feature_sso_impl.domain.model.SsoSessionData
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionRequest
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionResponse
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionResponse.Companion.responseWith
 import timber.log.Timber
 
 class SsoSigningContext(
-    sessionData: SsoSessionData,
+    override val requesterProduct: ProductId,
+    override val pairedDeviceName: String?,
     private val request: SsoSessionRequest,
     private val ssoService: SsoService,
     override val signingRequestBody: SigningRequestBody,
     override val signingAccount: SigningAccount,
 ) : SigningContext {
-    override val requesterName: String = sessionData.name
-    override val requesterIconUrl: String = sessionData.icon
+    override val requesterName: String = requesterProduct.value
+    override val requesterIconUrl: String = ""
 
     override suspend fun approve(sign: suspend () -> Result<SignedTransaction>): Result<Unit> =
         sign().flatMap { signedTransaction -> deliverSignedResult(signedTransaction) }

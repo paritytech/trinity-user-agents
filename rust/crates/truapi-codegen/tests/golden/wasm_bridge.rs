@@ -14,6 +14,7 @@ use super::{
     WasmPlatform, call_js_function, decode_bytes, decode_js_item, generic, get_function,
     get_optional_function, invoke_bool, invoke_bytes_return, invoke_js_subscription,
     invoke_optional_bytes_return, invoke_unit, missing_callback, parse_optional_bytes_item,
+    withdrawable,
 };
 
 /// JS-side callbacks invoked by the wasm platform bridge. Methods with
@@ -464,12 +465,12 @@ impl crate::platform::Permissions for WasmPlatform {
         product: &crate::platform::ProductContext,
         request: v01::HostDevicePermissionRequest,
     ) -> Result<crate::platform::PermissionDecision, v01::GenericError> {
-        let bytes = invoke_bytes_return(
-            &self.bridge.device_permission,
+        let bytes = withdrawable(
             vec![
                 Uint8Array::from(product.encode().as_slice()).into(),
                 Uint8Array::from(request.encode().as_slice()).into(),
             ],
+            |args| invoke_bytes_return(&self.bridge.device_permission, args),
         )
         .await
         .map_err(generic)?;
@@ -485,12 +486,12 @@ impl crate::platform::Permissions for WasmPlatform {
         product: &crate::platform::ProductContext,
         request: v01::RemotePermissionRequest,
     ) -> Result<crate::platform::PermissionDecision, v01::GenericError> {
-        let bytes = invoke_bytes_return(
-            &self.bridge.remote_permission,
+        let bytes = withdrawable(
             vec![
                 Uint8Array::from(product.encode().as_slice()).into(),
                 Uint8Array::from(request.encode().as_slice()).into(),
             ],
+            |args| invoke_bytes_return(&self.bridge.remote_permission, args),
         )
         .await
         .map_err(generic)?;
@@ -647,11 +648,17 @@ impl crate::platform::ThemeHost for WasmPlatform {
 impl crate::platform::UserConfirmation for WasmPlatform {
     async fn confirm_permission(
         &self,
+        product: &crate::platform::ProductContext,
+        route: &crate::platform::RequestRoute,
         review: crate::platform::UserConfirmationReview,
     ) -> Result<crate::platform::PermissionDecision, v01::GenericError> {
-        let bytes = invoke_bytes_return(
-            &self.bridge.confirm_permission,
-            vec![Uint8Array::from(review.encode().as_slice()).into()],
+        let bytes = withdrawable(
+            vec![
+                Uint8Array::from(product.encode().as_slice()).into(),
+                Uint8Array::from(route.encode().as_slice()).into(),
+                Uint8Array::from(review.encode().as_slice()).into(),
+            ],
+            |args| invoke_bytes_return(&self.bridge.confirm_permission, args),
         )
         .await
         .map_err(generic)?;
@@ -664,11 +671,17 @@ impl crate::platform::UserConfirmation for WasmPlatform {
 
     async fn confirm_user_action(
         &self,
+        product: &crate::platform::ProductContext,
+        route: &crate::platform::RequestRoute,
         review: crate::platform::UserConfirmationReview,
     ) -> Result<bool, v01::GenericError> {
-        invoke_bool(
-            &self.bridge.confirm_user_action,
-            vec![Uint8Array::from(review.encode().as_slice()).into()],
+        withdrawable(
+            vec![
+                Uint8Array::from(product.encode().as_slice()).into(),
+                Uint8Array::from(route.encode().as_slice()).into(),
+                Uint8Array::from(review.encode().as_slice()).into(),
+            ],
+            |args| invoke_bool(&self.bridge.confirm_user_action, args),
         )
         .await
         .map_err(generic)

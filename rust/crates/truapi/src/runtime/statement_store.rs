@@ -10,6 +10,7 @@ use super::authority::{AuthorityError, StatementStoreAllowanceKey};
 use super::statement_store_rpc::{self, StatementStoreRpc};
 use super::{
     PERMISSION_DENIED_REASON, ProductRuntimeHost, remote_authority_call, remote_authority_context,
+    until_cancelled,
 };
 use crate::host_logic::statement_store::{
     MAX_MATCH_ALL_TOPICS, MAX_MATCH_ANY_TOPICS, TopicFilterKind, decode_signed_statement,
@@ -112,19 +113,26 @@ impl StatementStore for ProductRuntimeHost {
     ) -> Result<RemoteStatementStoreSubmitResponse, CallError<RemoteStatementStoreSubmitError>>
     {
         let RemoteStatementStoreSubmitRequest::V1(statement) = request;
+        let withdrawn = || {
+            cx.cancel().reason().map(|reason| {
+                CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError {
+                    reason: format!("statement submit {reason}"),
+                }))
+            })
+        };
+        if let Some(err) = withdrawn() {
+            return Err(err);
+        }
         self.require_remote_permission(
+            cx,
             latest::RemotePermission::StatementSubmit,
             RemoteStatementStoreSubmitError::V1(latest::GenericError {
                 reason: PERMISSION_DENIED_REASON.to_string(),
             }),
         )
         .await?;
-        if let Some(reason) = cx.cancel().reason() {
-            return Err(CallError::Domain(RemoteStatementStoreSubmitError::V1(
-                latest::GenericError {
-                    reason: format!("statement submit {reason}"),
-                },
-            )));
+        if let Some(err) = withdrawn() {
+            return Err(err);
         }
         let encoded = signed_statement_to_scale(statement.clone()).map_err(|reason| {
             CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError {
@@ -354,16 +362,18 @@ impl ProductRuntimeHost {
             .map_err(StatementProofFailure::UnableToSign)?;
         // A publisher's grant does not replace an ordinary caller's signature approval.
         if product_account_id.dot_ns_identifier != self.product_id() {
-            let confirmed = self
-                .confirm_product_action(UserConfirmationReview::StatementStoreProductSign(
+            let confirmed = until_cancelled(
+                cx,
+                self.confirm_product_action(UserConfirmationReview::StatementStoreProductSign(
                     StatementStoreProductSignReview {
-                        calling_product_id: Some(self.product_id()),
                         account: product_account_id.clone(),
                         payload: payload.clone(),
                     },
-                ))
-                .await
-                .map_err(|err| StatementProofFailure::UnableToSign(err.reason))?;
+                )),
+            )
+            .await
+            .map_err(statement_authority_failure)?
+            .map_err(|err| StatementProofFailure::UnableToSign(err.reason))?;
             if !confirmed {
                 return Err(StatementProofFailure::Refused);
             }
@@ -397,7 +407,7 @@ impl ProductRuntimeHost {
         let allowance = remote_authority_call(
             &cx,
             self.authority
-                .statement_store_allowance_key(&cx, &session, self.product_id()),
+                .statement_store_allowance_key(&cx, &session, &self.product),
         )
         .await
         .map_err(statement_authority_failure)?;
@@ -485,10 +495,10 @@ mod tests {
         sso_session_info, sso_success_response_script, statement, stub_platform,
         submitted_remote_message, subscribe_ack_frame, test_spawner,
     };
-    use futures::StreamExt;
+    use futures::{FutureExt as _, StreamExt};
     use parity_scale_codec::Encode;
     use schnorrkel::{ExpansionMode, MiniSecretKey, PublicKey, Signature};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     const ENTROPY: [u8; 16] = [0xAB; 16];
 
@@ -660,11 +670,61 @@ mod tests {
             .lock()
             .expect("statement store product sign review list mutex poisoned");
         assert_eq!(reviews.len(), 1, "the user saw the signature");
-        assert_eq!(
-            reviews[0].calling_product_id.as_deref(),
-            Some("dim2next.paseo"),
-            "and saw which product asked",
+        let asked: Vec<_> = platform
+            .confirmation_products
+            .lock()
+            .expect("confirmation product list mutex poisoned")
+            .iter()
+            .map(|product| product.product_id.clone())
+            .collect();
+        assert_eq!(asked, ["dim2next.paseo"], "and saw which product asked");
+    }
+
+    /// A product that withdraws a cross-product proof while its confirmation
+    /// is open stops waiting on the prompt, and nothing is signed.
+    #[test]
+    fn statement_store_create_proof_withdrawn_at_the_prompt_is_never_signed() {
+        let (_release, gate) = futures::channel::oneshot::channel();
+        let platform = Arc::new(StubPlatform {
+            sign_raw_confirmed: true,
+            statement_store_product_sign_confirmation_gate: Mutex::new(Some(gate)),
+            ..Default::default()
+        });
+        cache_context_grant(&platform, "dim2.paseo", "dim2next");
+        let (host, _signing_host) = signing_host_runtime_on("dim2next.paseo", platform.clone());
+        let cancel = truapi::CancellationToken::default();
+        let cx = CallContext::with_parts("proof-withdrawn".to_string(), cancel.clone());
+        let request = RemoteStatementStoreCreateProofRequest::V1(
+            latest::RemoteStatementStoreCreateProofRequest {
+                product_account_id: account_id("dim2.paseo", 0),
+                statement: statement(),
+            },
         );
+        let mut call = Box::pin(StatementStore::create_proof(&host, &cx, request));
+        assert!(call.as_mut().now_or_never().is_none());
+        assert_eq!(
+            platform
+                .statement_store_product_sign_reviews
+                .lock()
+                .expect("statement store product sign review list mutex poisoned")
+                .len(),
+            1,
+            "the prompt is open",
+        );
+
+        cancel.cancel();
+
+        let err = call
+            .as_mut()
+            .now_or_never()
+            .expect("a withdrawn call stops waiting on the prompt")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            CallError::Domain(RemoteStatementStoreCreateProofError::V1(
+                latest::RemoteStatementStoreCreateProofError::UnableToSign
+            ))
+        ));
     }
 
     #[test]
@@ -780,13 +840,13 @@ mod tests {
         else {
             panic!("expected resource allocation request");
         };
-        assert_eq!(request.calling_product_id, "myapp.dot");
+        assert_eq!(request.caller.product_id, "myapp.dot");
         assert_eq!(
-            request.on_existing,
+            request.payload.on_existing,
             crate::host_internal::sso_messages::OnExistingAllowancePolicy::Ignore
         );
         assert_eq!(
-            request.resources,
+            request.payload.resources,
             vec![truapi::latest::AllocatableResource::StatementStoreAllowance]
         );
     }

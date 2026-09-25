@@ -39,8 +39,8 @@ use crate::platform::async_trait;
 use crate::platform::{
     AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
     JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision, Permissions,
-    PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError, ThemeHost,
-    UserConfirmation, UserConfirmationReview,
+    PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError, RequestRoute,
+    ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -267,7 +267,7 @@ pub struct MockPlatform {
     navigations: Arc<Mutex<Vec<String>>>,
     notifications: Arc<Mutex<Vec<latest::HostPushNotificationRequest>>>,
     cancelled_notifications: Arc<Mutex<Vec<u32>>>,
-    reviews: Arc<Mutex<Vec<UserConfirmationReview>>>,
+    reviews: Arc<Mutex<Vec<(ProductContext, UserConfirmationReview)>>>,
     auth_states: Arc<Mutex<Vec<AuthState>>>,
     sent_rpc: Arc<Mutex<Vec<String>>>,
     /// Starts at 1: the id is what a product cancels by, and one that treats
@@ -374,7 +374,22 @@ impl MockPlatform {
     /// holds the bytes the product asked to have signed, so a test can assert
     /// *what* was put to the user rather than only that something was.
     pub fn reviews(&self) -> Vec<UserConfirmationReview> {
-        self.reviews.lock().expect("reviews poisoned").clone()
+        self.reviews
+            .lock()
+            .expect("reviews poisoned")
+            .iter()
+            .map(|(_, review)| review.clone())
+            .collect()
+    }
+
+    /// Products each confirmation named, in the order of [`MockPlatform::reviews`].
+    pub fn confirmation_products(&self) -> Vec<ProductContext> {
+        self.reviews
+            .lock()
+            .expect("reviews poisoned")
+            .iter()
+            .map(|(product, _)| product.clone())
+            .collect()
     }
 
     /// Confirmation kinds the core requested, in order.
@@ -386,7 +401,7 @@ impl MockPlatform {
             .lock()
             .expect("reviews poisoned")
             .iter()
-            .map(ConfirmKind::of)
+            .map(|(_, review)| ConfirmKind::of(review))
             .collect()
     }
 
@@ -1222,9 +1237,14 @@ impl AuthPresenter for MockPlatform {
 impl UserConfirmation for MockPlatform {
     async fn confirm_user_action(
         &self,
+        product: &ProductContext,
+        _route: &RequestRoute,
         review: UserConfirmationReview,
     ) -> Result<bool, latest::GenericError> {
-        self.reviews.lock().expect("reviews poisoned").push(review);
+        self.reviews
+            .lock()
+            .expect("reviews poisoned")
+            .push((product.clone(), review));
         if let Some(reason) = &self.config.faults.confirmation_error {
             return Err(latest::GenericError {
                 reason: reason.clone(),
@@ -1465,7 +1485,6 @@ mod tests {
 
     fn resource_review() -> UserConfirmationReview {
         UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
-            calling_product_id: "mock.dot".to_string(),
             resources: vec![],
         })
     }
@@ -1739,14 +1758,29 @@ mod tests {
     #[test]
     fn confirm_records_kind_and_answers() {
         let p = MockPlatform::new();
-        assert!(block_on(p.confirm_user_action(resource_review())).unwrap());
+        assert!(
+            block_on(p.confirm_user_action(
+                &mock_product(),
+                &RequestRoute::Local,
+                resource_review()
+            ))
+            .unwrap()
+        );
         assert_eq!(p.confirmations(), vec![ConfirmKind::ResourceAllocation]);
+        assert_eq!(p.confirmation_products(), vec![mock_product()]);
 
         let p2 = MockPlatform::with_config(MockConfig {
             confirm_user_actions: false,
             ..Default::default()
         });
-        assert!(!block_on(p2.confirm_user_action(resource_review())).unwrap());
+        assert!(
+            !block_on(p2.confirm_user_action(
+                &mock_product(),
+                &RequestRoute::Local,
+                resource_review()
+            ))
+            .unwrap()
+        );
     }
 
     #[test]
@@ -1876,10 +1910,9 @@ mod tests {
         assert_eq!(p.navigations(), vec!["z".to_string()]);
     }
 
-    fn allocation_review(product: &str) -> UserConfirmationReview {
+    fn allocation_review(resource: latest::AllocatableResource) -> UserConfirmationReview {
         UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
-            calling_product_id: product.to_string(),
-            resources: vec![],
+            resources: vec![resource],
         })
     }
 
@@ -1903,23 +1936,39 @@ mod tests {
         // recording cannot tell these apart, which is the whole reason the
         // payload log exists.
         let p = MockPlatform::new();
-        block_on(p.confirm_user_action(allocation_review("first.dot"))).unwrap();
-        block_on(p.confirm_user_action(allocation_review("second.dot"))).unwrap();
+        block_on(p.confirm_user_action(
+            &mock_product(),
+            &RequestRoute::Local,
+            allocation_review(latest::AllocatableResource::StatementStoreAllowance),
+        ))
+        .unwrap();
+        block_on(p.confirm_user_action(
+            &mock_product(),
+            &RequestRoute::Local,
+            allocation_review(latest::AllocatableResource::BulletinAllowance),
+        ))
+        .unwrap();
 
         assert_eq!(
             p.confirmations(),
             vec![ConfirmKind::ResourceAllocation; 2],
             "the kind view should see two identical kinds",
         );
-        let products: Vec<String> = p
+        let resources: Vec<Vec<latest::AllocatableResource>> = p
             .reviews()
             .into_iter()
             .map(|review| match review {
-                UserConfirmationReview::ResourceAllocation(inner) => inner.calling_product_id,
+                UserConfirmationReview::ResourceAllocation(inner) => inner.resources,
                 other => panic!("unexpected review {other:?}"),
             })
             .collect();
-        assert_eq!(products, vec!["first.dot", "second.dot"]);
+        assert_eq!(
+            resources,
+            vec![
+                vec![latest::AllocatableResource::StatementStoreAllowance],
+                vec![latest::AllocatableResource::BulletinAllowance],
+            ]
+        );
     }
 
     #[test]
@@ -2329,8 +2378,12 @@ mod tests {
             },
             ..MockConfig::default()
         });
-        let err = block_on(p.confirm_user_action(allocation_review("mock.dot")))
-            .expect_err("the confirmation fails");
+        let err = block_on(p.confirm_user_action(
+            &mock_product(),
+            &RequestRoute::Local,
+            allocation_review(latest::AllocatableResource::StatementStoreAllowance),
+        ))
+        .expect_err("the confirmation fails");
         assert_eq!(err.reason, "no UI available");
         // It still records what was asked, so a test can assert the prompt fired.
         assert_eq!(p.confirmations(), vec![ConfirmKind::ResourceAllocation]);
@@ -2408,7 +2461,12 @@ mod tests {
     fn reset_clears_recordings_and_restores_policy_fallback() {
         let p = MockPlatform::new();
         block_on(p.navigate_to("u".into())).unwrap();
-        block_on(p.confirm_user_action(allocation_review("mock.dot"))).unwrap();
+        block_on(p.confirm_user_action(
+            &mock_product(),
+            &RequestRoute::Local,
+            allocation_review(latest::AllocatableResource::StatementStoreAllowance),
+        ))
+        .unwrap();
         block_on(p.write("k".into(), vec![1])).unwrap();
         p.insert_preimage(vec![9]);
         p.auth_state_changed(AuthState::Disconnected);

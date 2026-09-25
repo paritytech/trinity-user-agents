@@ -10,15 +10,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.paritytech.polkadotapp.design.components.avatar.PolkadotAvatar
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
-import io.paritytech.polkadotapp.design.components.image.NovaAsyncImage
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -44,13 +42,9 @@ fun MainContent(
     ) {
         VerticalSpacer { mediumIncreased }
 
-        NovaAsyncImage(
-            modifier = Modifier
-                .size(64.dp)
-                .clip(PolkadotTheme.shapes.full),
-            model = state.requesterIconUrl,
-            contentDescription = state.requesterName,
-            contentScale = ContentScale.Crop
+        PolkadotAvatar(
+            model = state.requesterAvatar,
+            modifier = Modifier.size(64.dp),
         )
 
         VerticalSpacer { mediumIncreased }
@@ -58,7 +52,11 @@ fun MainContent(
         NovaText(
             modifier = Modifier.padding(horizontal = PolkadotTheme.spacings.extraLarge),
             textAlign = TextAlign.Center,
-            text = stringResource(RCommon.string.sign_transaction_title, state.requesterName),
+            text = if (state.pairedDeviceName == null) {
+                stringResource(RCommon.string.sign_transaction_title, state.requesterName)
+            } else {
+                stringResource(RCommon.string.sign_transaction_title_via, state.requesterName, state.pairedDeviceName)
+            },
             style = PolkadotTheme.typography.headline.small,
             color = PolkadotTheme.colors.fg.primary,
         )

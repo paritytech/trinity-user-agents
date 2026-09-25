@@ -4,7 +4,7 @@ import TrUAPIHost
 // MARK: - Runtime Abstraction
 
 protocol SSOTruAPIRuntimeHandling: AnyObject, Sendable {
-    func handleSsoRequest(message: Data) async throws -> SsoRequestOutcome
+    func handleSsoRequest(peer: PairedSsoPeer, message: Data) async throws -> SsoRequestOutcome
     func prepareDisconnectRequest() -> Data
 }
 
@@ -46,7 +46,8 @@ final class SSOTrUAPIRequestHandler: SSORequestHandling {
         }
 
         do {
-            let outcome = try await runtime.handleSsoRequest(message: message.rawBytes)
+            let peer = PairedSsoPeer(statementAccountId: host.accountId, encryptionPublicKey: host.publicKey)
+            let outcome = try await runtime.handleSsoRequest(peer: peer, message: message.rawBytes)
             await apply(outcome: outcome, messageId: messageId, to: host)
         } catch {
             logger.error("handleSsoRequest error for \(messageId): \(error)")

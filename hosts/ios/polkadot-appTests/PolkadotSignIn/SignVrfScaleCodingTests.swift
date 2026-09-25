@@ -8,15 +8,17 @@ import Testing
 
 @Suite("SignVrf SCALE Coding Tests")
 struct SignVrfScaleCodingTests {
-    let request = PolkadotHostRemoteMessage.SignVrfRequest(
-        callingProductId: "caller.product",
-        payload: SignVrfPayload(
-            account: ProductAccountId(productId: "target.product", derivationIndex: .index(3)),
-            transcriptLabel: Data("test:label".utf8),
-            items: [
-                VrfTranscriptItem(label: Data("domain".utf8), value: Data.random(of: 16)!),
-                VrfTranscriptItem(label: Data("signer".utf8), value: Data.random(of: 32)!)
-            ]
+    let request = PolkadotHostRemoteMessage.ProductRequest(
+        caller: PolkadotHostRemoteMessage.ProductCaller(productId: "caller.product", executionKind: .app),
+        payload: PolkadotHostRemoteMessage.SignVrfRequest(
+            payload: SignVrfPayload(
+                account: ProductAccountId(productId: "target.product", derivationIndex: .index(3)),
+                transcriptLabel: Data("test:label".utf8),
+                items: [
+                    VrfTranscriptItem(label: Data("domain".utf8), value: Data.random(of: 16)!),
+                    VrfTranscriptItem(label: Data("signer".utf8), value: Data.random(of: 32)!)
+                ]
+            )
         )
     )
 

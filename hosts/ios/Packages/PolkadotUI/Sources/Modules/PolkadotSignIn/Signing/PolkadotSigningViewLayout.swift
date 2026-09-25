@@ -111,15 +111,18 @@ private extension PolkadotSigningResultView {
 public extension PolkadotSigningResultView {
     struct ViewModel {
         let hostName: String
+        let pairedDeviceName: String?
         let iconViewModel: ImageViewModelProtocol?
         let transactionDescription: String
 
         public init(
             hostName: String,
+            pairedDeviceName: String?,
             iconViewModel: ImageViewModelProtocol?,
             transactionDescription: String
         ) {
             self.hostName = hostName
+            self.pairedDeviceName = pairedDeviceName
             self.iconViewModel = iconViewModel
             self.transactionDescription = transactionDescription
         }
@@ -133,9 +136,11 @@ public extension PolkadotSigningResultView {
             completion: nil
         )
 
-        labelsView.topLabel.text = .init(
-            localized: .polkadotSigningTitle(name: viewModel.hostName)
-        )
+        labelsView.topLabel.text = if let pairedDeviceName = viewModel.pairedDeviceName {
+            .init(localized: .polkadotSigningTitleVia(name: viewModel.hostName, device: pairedDeviceName))
+        } else {
+            .init(localized: .polkadotSigningTitle(name: viewModel.hostName))
+        }
 
         labelsView.bottomLabel.text = viewModel.transactionDescription
     }

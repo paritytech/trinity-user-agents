@@ -9,6 +9,7 @@ final class ProductsSignConfirmPresenter {
 
     private let interactor: ProductsSignConfirmInteractorInputProtocol
     private let wireframe: ProductsSignConfirmWireframeProtocol
+    private let requesterIcon: (any ImageViewModelProtocol)?
 
     private var model: ProductsSignConfirmModel?
     private var isInProgress = false
@@ -16,10 +17,12 @@ final class ProductsSignConfirmPresenter {
 
     init(
         interactor: ProductsSignConfirmInteractorInputProtocol,
-        wireframe: ProductsSignConfirmWireframeProtocol
+        wireframe: ProductsSignConfirmWireframeProtocol,
+        requesterIcon: (any ImageViewModelProtocol)?
     ) {
         self.interactor = interactor
         self.wireframe = wireframe
+        self.requesterIcon = requesterIcon
     }
 }
 
@@ -80,9 +83,8 @@ private extension ProductsSignConfirmPresenter {
         } else if let model {
             view?.didReceive(viewModel: .result(.init(
                 hostName: model.requester.name,
-                iconViewModel: model.requester.iconUrl.map {
-                    RemoteImageViewModel(url: $0)
-                },
+                pairedDeviceName: model.requester.pairedDeviceName,
+                iconViewModel: requesterIcon,
                 transactionDescription: model.descriptionText
             )))
         }

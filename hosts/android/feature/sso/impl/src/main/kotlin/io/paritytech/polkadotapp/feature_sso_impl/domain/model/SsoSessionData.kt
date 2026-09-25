@@ -25,6 +25,9 @@ data class SsoSessionData(
     val platformType: String? get() = metadata.platformType
     val platformVersion: String? get() = metadata.platformVersion
 
+    // The device model the paired device reported, as its details screen shows it.
+    val deviceName: String? get() = platformType?.takeIf { it.isNotBlank() }
+
     override val identifier: String
         get() = sharedSecretPublicKey.bytes.value.toHexString()
 }

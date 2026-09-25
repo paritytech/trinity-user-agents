@@ -1,7 +1,7 @@
 //! Product-facing signing capability adapters.
 
 use crate::platform::{
-    CreateTransactionReview, SignPayloadReview, SignRawReview, UserConfirmationReview,
+    CreateTransactionReview, RequestRoute, SignPayloadReview, SignRawReview, UserConfirmationReview,
 };
 use tracing::{debug, instrument};
 use truapi::api::Signing;
@@ -42,9 +42,10 @@ impl Signing for ProductRuntimeHost {
                 v01::HostSignPayloadError::PermissionDenied,
             ))
         })?;
-        self.require_chain_submit(HostSignPayloadError::V1(
-            v01::HostSignPayloadError::PermissionDenied,
-        ))
+        self.require_chain_submit(
+            cx,
+            HostSignPayloadError::V1(v01::HostSignPayloadError::PermissionDenied),
+        )
         .await?;
         let Some(session) = self.authority.current_session() else {
             return Err(CallError::Domain(HostSignPayloadError::V1(
@@ -68,10 +69,7 @@ impl Signing for ProductRuntimeHost {
             let confirmed = until_cancelled(
                 cx,
                 self.confirm_product_action(UserConfirmationReview::SignPayload(
-                    SignPayloadReview::Product {
-                        calling_product_id: Some(self.product_id()),
-                        request: inner.clone(),
-                    },
+                    SignPayloadReview::Product(inner.clone()),
                 )),
             )
             .await
@@ -91,7 +89,7 @@ impl Signing for ProductRuntimeHost {
             self.authority.sign_payload(
                 &cx,
                 &session,
-                Some(self.product_id().as_str()),
+                &self.product,
                 SignPayloadAuthorityRequest::Product(inner),
             ),
         )
@@ -134,9 +132,10 @@ impl Signing for ProductRuntimeHost {
                 v01::HostCreateTransactionError::PermissionDenied,
             ))
         })?;
-        self.require_chain_submit(HostCreateTransactionError::V1(
-            v01::HostCreateTransactionError::PermissionDenied,
-        ))
+        self.require_chain_submit(
+            cx,
+            HostCreateTransactionError::V1(v01::HostCreateTransactionError::PermissionDenied),
+        )
         .await?;
         let Some(session) = self.authority.current_session() else {
             return Err(CallError::Domain(HostCreateTransactionError::V1(
@@ -187,10 +186,7 @@ impl Signing for ProductRuntimeHost {
             let confirmed = until_cancelled(
                 cx,
                 self.confirm_product_action(UserConfirmationReview::CreateTransaction(
-                    CreateTransactionReview::Product {
-                        calling_product_id: Some(self.product_id()),
-                        payload: inner.clone(),
-                    },
+                    CreateTransactionReview::Product(inner.clone()),
                 )),
             )
             .await
@@ -210,7 +206,7 @@ impl Signing for ProductRuntimeHost {
             self.authority.create_transaction(
                 &cx,
                 &session,
-                Some(self.product_id().as_str()),
+                &self.product,
                 CreateTransactionAuthorityRequest::Product(inner),
             ),
         )
@@ -249,16 +245,20 @@ impl Signing for ProductRuntimeHost {
                 }),
             ));
         }
-        self.require_chain_submit(HostSignPayloadWithLegacyAccountError::V1(
-            v01::HostSignPayloadError::PermissionDenied,
-        ))
+        self.require_chain_submit(
+            cx,
+            HostSignPayloadWithLegacyAccountError::V1(v01::HostSignPayloadError::PermissionDenied),
+        )
         .await?;
         let confirmed = until_cancelled(
             cx,
-            self.platform
-                .confirm_user_action(UserConfirmationReview::SignPayload(
-                    SignPayloadReview::LegacyAccount(inner.clone()),
+            self.platform.confirm_user_action(
+                &self.product,
+                &RequestRoute::Local,
+                UserConfirmationReview::SignPayload(SignPayloadReview::LegacyAccount(
+                    inner.clone(),
                 )),
+            ),
         )
         .await
         .map_err(|reason| signing_call_error(HostSignPayloadWithLegacyAccountError::V1, reason))?
@@ -276,7 +276,7 @@ impl Signing for ProductRuntimeHost {
             self.authority.sign_payload(
                 &cx,
                 &session,
-                Some(self.product_id().as_str()),
+                &self.product,
                 SignPayloadAuthorityRequest::LegacyAccount {
                     product_account: v01::ProductAccountId {
                         dot_ns_identifier: self.product_id(),
@@ -343,16 +343,22 @@ impl Signing for ProductRuntimeHost {
                     },
                 ))
             })?;
-        self.require_chain_submit(HostCreateTransactionWithLegacyAccountError::V1(
-            v01::HostCreateTransactionError::PermissionDenied,
-        ))
+        self.require_chain_submit(
+            cx,
+            HostCreateTransactionWithLegacyAccountError::V1(
+                v01::HostCreateTransactionError::PermissionDenied,
+            ),
+        )
         .await?;
         let confirmed = until_cancelled(
             cx,
-            self.platform
-                .confirm_user_action(UserConfirmationReview::CreateTransaction(
-                    CreateTransactionReview::LegacyAccount(inner.clone()),
+            self.platform.confirm_user_action(
+                &self.product,
+                &RequestRoute::Local,
+                UserConfirmationReview::CreateTransaction(CreateTransactionReview::LegacyAccount(
+                    inner.clone(),
                 )),
+            ),
         )
         .await
         .map_err(|reason| {
@@ -381,12 +387,8 @@ impl Signing for ProductRuntimeHost {
         };
         remote_authority_call(
             &cx,
-            self.authority.create_transaction(
-                &cx,
-                &session,
-                Some(self.product_id().as_str()),
-                authority_request,
-            ),
+            self.authority
+                .create_transaction(&cx, &session, &self.product, authority_request),
         )
         .await
         .map(|response| {
@@ -431,9 +433,10 @@ impl ProductRuntimeHost {
                 v01::HostSignPayloadError::PermissionDenied,
             ))
         })?;
-        self.require_chain_submit(HostSignRawError::V1(
-            v01::HostSignPayloadError::PermissionDenied,
-        ))
+        self.require_chain_submit(
+            cx,
+            HostSignRawError::V1(v01::HostSignPayloadError::PermissionDenied),
+        )
         .await?;
         let Some(session) = self.authority.current_session() else {
             return Err(CallError::Domain(HostSignRawError::V1(
@@ -463,7 +466,6 @@ impl ProductRuntimeHost {
                 cx,
                 self.confirm_product_action(UserConfirmationReview::SignRaw(
                     SignRawReview::Product {
-                        calling_product_id: Some(self.product_id()),
                         request: inner.clone(),
                         watermarked,
                     },
@@ -486,7 +488,7 @@ impl ProductRuntimeHost {
             self.authority.sign_raw(
                 &cx,
                 &session,
-                Some(self.product_id().as_str()),
+                &self.product,
                 SignRawAuthorityRequest::Product(inner),
                 watermarked,
             ),
@@ -517,19 +519,21 @@ impl ProductRuntimeHost {
                     err.into_host_error(LEGACY_ACCOUNT_UNAVAILABLE_REASON),
                 ))
             })?;
-        self.require_chain_submit(HostSignRawWithLegacyAccountError::V1(
-            v01::HostSignPayloadError::PermissionDenied,
-        ))
+        self.require_chain_submit(
+            cx,
+            HostSignRawWithLegacyAccountError::V1(v01::HostSignPayloadError::PermissionDenied),
+        )
         .await?;
         let confirmed = until_cancelled(
             cx,
-            self.platform
-                .confirm_user_action(UserConfirmationReview::SignRaw(
-                    SignRawReview::LegacyAccount {
-                        request: inner.clone(),
-                        watermarked,
-                    },
-                )),
+            self.platform.confirm_user_action(
+                &self.product,
+                &RequestRoute::Local,
+                UserConfirmationReview::SignRaw(SignRawReview::LegacyAccount {
+                    request: inner.clone(),
+                    watermarked,
+                }),
+            ),
         )
         .await
         .map_err(|reason| signing_call_error(HostSignRawWithLegacyAccountError::V1, reason))?
@@ -557,13 +561,8 @@ impl ProductRuntimeHost {
         };
         remote_authority_call(
             &cx,
-            self.authority.sign_raw(
-                &cx,
-                &session,
-                Some(self.product_id().as_str()),
-                authority_request,
-                watermarked,
-            ),
+            self.authority
+                .sign_raw(&cx, &session, &self.product, authority_request, watermarked),
         )
         .await
         .map(HostSignRawWithLegacyAccountResponse::V1)

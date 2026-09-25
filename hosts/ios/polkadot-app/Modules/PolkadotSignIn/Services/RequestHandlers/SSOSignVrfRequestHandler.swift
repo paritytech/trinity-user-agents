@@ -36,8 +36,8 @@ final class SSOSignVrfRequestHandler: SSORequestHandling {
         let result: PolkadotHostRemoteMessage.SignVrfHostResult
 
         do {
-            let handler = handlerFactory.makeSignVrfHandler(callingProductId: request.callingProductId)
-            let signature = try await handler.signVrf(request.payload)
+            let handler = handlerFactory.makeSignVrfHandler(callingProductId: request.caller.productId)
+            let signature = try await handler.signVrf(request.payload.payload)
             result = .success(.init(signature: signature))
         } catch {
             logger.error("Failed to sign VRF: \(error)")

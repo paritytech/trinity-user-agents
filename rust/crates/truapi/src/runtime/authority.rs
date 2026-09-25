@@ -429,47 +429,45 @@ pub trait ProductAuthority: Send + Sync {
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        calling_product_id: String,
+        caller: &ProductContext,
         request: HostAccountSignVrfRequest,
     ) -> Result<VrfSignature, AuthorityError>;
 
     /// Sign a SCALE transaction payload for a product account.
     ///
-    /// `calling_product_id` is the product making the call, which is not always
-    /// the product the account belongs to; an authority that can serve the
-    /// account locally must bind the two before it does. `None` is a path that
-    /// carries no caller identity — the SSO relay — and an authority that
-    /// cannot identify the caller must not serve the account locally.
+    /// `caller` is the product making the call, which is not always the
+    /// product the account belongs to; an authority that can serve the account
+    /// locally must bind the two before it does.
     async fn sign_payload(
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        caller: &ProductContext,
         request: SignPayloadAuthorityRequest,
     ) -> Result<HostSignPayloadResponse, AuthorityError>;
 
     /// Sign arbitrary bytes for a product account.
     ///
-    /// `calling_product_id` carries the same binding obligation as
+    /// `caller` carries the same binding obligation as
     /// [`ProductAuthority::sign_payload`].
     async fn sign_raw(
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        caller: &ProductContext,
         request: SignRawAuthorityRequest,
         watermarked: bool,
     ) -> Result<HostSignPayloadResponse, AuthorityError>;
 
     /// Build a transaction for a product account, signed unless the request
     /// supplies its own V5 `VerifyMultiSignature` extension.
-    /// `calling_product_id` carries the same binding obligation as
+    /// `caller` carries the same binding obligation as
     /// [`ProductAuthority::sign_payload`].
     async fn create_transaction(
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        caller: &ProductContext,
         request: CreateTransactionAuthorityRequest,
     ) -> Result<HostCreateTransactionResponse, AuthorityError>;
 
@@ -524,7 +522,7 @@ pub trait ProductAuthority: Send + Sync {
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        product_id: String,
+        product: &ProductContext,
         request: HostRequestResourceAllocationRequest,
     ) -> Result<HostRequestResourceAllocationResponse, AuthorityError>;
 
@@ -533,7 +531,7 @@ pub trait ProductAuthority: Send + Sync {
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        product_id: String,
+        product: &ProductContext,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError>;
 
     /// Drop the product's cached statement-store allowance key if it is
@@ -546,7 +544,7 @@ pub trait ProductAuthority: Send + Sync {
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        product_id: String,
+        product: &ProductContext,
     ) -> Result<BulletinAllowanceKey, AuthorityError>;
 
     /// Evict any cached Bulletin allowance key for the product and allocate a
@@ -558,7 +556,7 @@ pub trait ProductAuthority: Send + Sync {
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        product_id: String,
+        product: &ProductContext,
     ) -> Result<BulletinAllowanceKey, AuthorityError>;
 
     /// Sign exact statement-store proof bytes with a product-derived account.

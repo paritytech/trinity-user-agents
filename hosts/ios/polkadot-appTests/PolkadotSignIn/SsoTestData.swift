@@ -23,7 +23,7 @@ enum SsoTestData {
     }
 
     static func makeRequester(name: String = "TestDApp") -> PolkadotSigningRequester {
-        PolkadotSigningRequester(name: name, iconUrl: nil)
+        PolkadotSigningRequester(name: name, productId: nil, pairedDeviceName: nil)
     }
 
     static func makeChain(genesisHash: String) -> ChainModel {

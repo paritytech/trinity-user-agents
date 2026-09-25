@@ -55,7 +55,7 @@ use crate::session_usernames::SessionUsernames;
 use crate::subscription::Spawner;
 
 use crate::platform::{
-    CoreStorageKey, PairingHostConfig, Platform, ProductContext, SignVrfReview,
+    CoreStorageKey, PairingHostConfig, Platform, ProductContext, RequestRoute, SignVrfReview,
     UserConfirmationReview, normalize_product_identifier,
 };
 use futures::StreamExt;
@@ -2128,11 +2128,11 @@ impl PairingHost {
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        calling_product_id: String,
+        caller: &ProductContext,
         request: v01::HostAccountSignVrfRequest,
     ) -> Result<v01::VrfSignature, AuthorityError> {
         let session = self.current_private_session(session)?;
-        if calling_product_id == request.account.dot_ns_identifier
+        if caller.product_id == request.account.dot_ns_identifier
             && let Some(auto_signing_key) = self
                 .auto_signing_key(&session, &request.account.dot_ns_identifier)
                 .await?
@@ -2155,16 +2155,18 @@ impl PairingHost {
             return Ok(v01::VrfSignature { pre_output, proof });
         }
         if !super::authority::is_blessed_owner(
-            &calling_product_id,
+            &caller.product_id,
             &request.account.dot_ns_identifier,
         ) {
             let confirmed = super::until_cancelled(
                 cx,
-                self.platform
-                    .confirm_user_action(UserConfirmationReview::SignVrf(SignVrfReview {
-                        calling_product_id: calling_product_id.clone(),
+                self.platform.confirm_user_action(
+                    caller,
+                    &RequestRoute::Local,
+                    UserConfirmationReview::SignVrf(SignVrfReview {
                         request: request.clone(),
-                    })),
+                    }),
+                ),
             )
             .await?
             .map_err(|err| AuthorityError::Unknown {
@@ -2174,33 +2176,37 @@ impl PairingHost {
                 return Err(AuthorityError::Rejected);
             }
         }
-        self.remote_sign_vrf(cx, &session, calling_product_id, request)
-            .await
+        self.remote_sign_vrf(cx, &session, caller, request).await
     }
 
     async fn sign_payload(
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        caller: &ProductContext,
         request: SignPayloadAuthorityRequest,
     ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
         let session = self.current_private_session(session)?;
         if let SignPayloadAuthorityRequest::Product(payload) = &request
             && let Some(keypair) = self
-                .local_product_signing_key(&session, calling_product_id, &payload.account)
+                .local_product_signing_key(
+                    &session,
+                    Some(caller.product_id.as_str()),
+                    &payload.account,
+                )
                 .await?
         {
             return Ok(sign_extrinsic_payload(&keypair, payload.payload.clone())?);
         }
-        self.remote_sign_payload(cx, &session, request).await
+        self.remote_sign_payload(cx, &session, caller, request)
+            .await
     }
 
     async fn sign_raw(
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        caller: &ProductContext,
         request: SignRawAuthorityRequest,
         watermarked: bool,
     ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
@@ -2210,7 +2216,11 @@ impl PairingHost {
         if watermarked
             && let SignRawAuthorityRequest::Product(payload) = &request
             && let Some(keypair) = self
-                .local_product_signing_key(&session, calling_product_id, &payload.account)
+                .local_product_signing_key(
+                    &session,
+                    Some(caller.product_id.as_str()),
+                    &payload.account,
+                )
                 .await?
         {
             let message = raw_payload_bytes(payload.payload.clone(), watermarked)?;
@@ -2223,7 +2233,7 @@ impl PairingHost {
                 signed_transaction: None,
             });
         }
-        self.remote_sign_raw(cx, &session, request, watermarked)
+        self.remote_sign_raw(cx, &session, caller, request, watermarked)
             .await
     }
 
@@ -2231,13 +2241,17 @@ impl PairingHost {
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        caller: &ProductContext,
         request: CreateTransactionAuthorityRequest,
     ) -> Result<v01::HostCreateTransactionResponse, AuthorityError> {
         let session = self.current_private_session(session)?;
         if let CreateTransactionAuthorityRequest::Product(payload) = &request
             && let Some(keypair) = self
-                .local_product_signing_key(&session, calling_product_id, &payload.signer)
+                .local_product_signing_key(
+                    &session,
+                    Some(caller.product_id.as_str()),
+                    &payload.signer,
+                )
                 .await?
         {
             // A payload this host cannot assemble is an error, not a
@@ -2265,7 +2279,8 @@ impl PairingHost {
             )
             .await?);
         }
-        self.remote_create_transaction(cx, &session, request).await
+        self.remote_create_transaction(cx, &session, caller, request)
+            .await
     }
 
     async fn account_alias(
@@ -2275,7 +2290,7 @@ impl PairingHost {
         request: ProductRequest<HostAccountGetAliasRequest>,
     ) -> Result<v01::ContextualAlias, RingVrfError> {
         let private_session = self.current_private_session(session)?;
-        if request.calling_product_id == request.payload.key_handle.dot_ns_identifier
+        if request.caller.product_id == request.payload.key_handle.dot_ns_identifier
             && let Some(entropy) = self
                 .local_ring_vrf_entropy_for_ring(
                     &private_session,
@@ -2307,7 +2322,7 @@ impl PairingHost {
         request: ProductRequest<HostAccountCreateProofRequest>,
     ) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
         let (key_handle, access) = self
-            .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+            .require_ring_vrf_key_access(&request.caller.product_id, &request.payload.key_handle)
             .await?;
         // A grant lets the caller act with the owner's key in the caller's own
         // context. It does not let it choose whose pseudonym to mint: the
@@ -2368,15 +2383,11 @@ impl PairingHost {
     ) -> Result<[u8; 32], RingVrfError> {
         let private_session = self.current_private_session(session)?;
         let handle = v01::ProductAccountId {
-            dot_ns_identifier: normalize_product_identifier(&request.calling_product_id).map_err(
-                |error| RingVrfError::Unknown {
-                    reason: error.to_string(),
-                },
-            )?,
+            dot_ns_identifier: request.caller.product_id.clone(),
             derivation_index: request.payload.index.clone(),
         };
         if let Some(auto_signing) = self
-            .auto_signing_key(&private_session, &request.calling_product_id)
+            .auto_signing_key(&private_session, &request.caller.product_id)
             .await
             .map_err(RingVrfError::from)?
         {
@@ -2427,7 +2438,7 @@ impl PairingHost {
                 reason: error.to_string(),
             }
         })?;
-        if request.calling_product_id == owner
+        if request.caller.product_id == owner
             && let Some(mut entries) = self
                 .ring_vrf_registry
                 .complete_owner_entries(private_session.public_key, &owner)
@@ -2439,7 +2450,7 @@ impl PairingHost {
         }
         let requested_disclosure = request.payload.disclosure;
         let mut remote_request = request;
-        if remote_request.calling_product_id == owner {
+        if remote_request.caller.product_id == owner {
             remote_request.payload.disclosure = v01::RingVrfKeyDisclosure::PublicKey;
         }
         let mut entries = self
@@ -2464,7 +2475,7 @@ impl PairingHost {
         request: ProductRequest<HostAccountRingVrfSignRequest>,
     ) -> Result<Vec<u8>, RingVrfError> {
         let (key_handle, _access) = self
-            .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+            .require_ring_vrf_key_access(&request.caller.product_id, &request.payload.key_handle)
             .await?;
         let private_session = self.current_private_session(session)?;
         if let Some(entropy) = self
@@ -2483,11 +2494,11 @@ impl PairingHost {
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        product_id: String,
+        product: &ProductContext,
         request: v01::HostRequestResourceAllocationRequest,
     ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
         let session = self.current_private_session(session)?;
-        self.remote_allocate_resources(cx, &session, product_id, request)
+        self.remote_allocate_resources(cx, &session, product, request)
             .await
     }
 
@@ -2495,10 +2506,10 @@ impl PairingHost {
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        product_id: String,
+        product: &ProductContext,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
         let session = self.current_private_session(session)?;
-        self.remote_statement_store_allowance_key(cx, &session, product_id)
+        self.remote_statement_store_allowance_key(cx, &session, product)
             .await
     }
 
@@ -2506,10 +2517,10 @@ impl PairingHost {
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        product_id: String,
+        product: &ProductContext,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
         let session = self.current_private_session(session)?;
-        self.remote_bulletin_allowance_key(cx, &session, product_id)
+        self.remote_bulletin_allowance_key(cx, &session, product)
             .await
     }
 
@@ -2517,10 +2528,10 @@ impl PairingHost {
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        product_id: String,
+        product: &ProductContext,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
         let session = self.current_private_session(session)?;
-        self.remote_refresh_bulletin_allowance_key(cx, &session, product_id)
+        self.remote_refresh_bulletin_allowance_key(cx, &session, product)
             .await
     }
 
@@ -2691,41 +2702,41 @@ impl ProductAuthority for PairingHost {
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        calling_product_id: String,
+        caller: &ProductContext,
         request: v01::HostAccountSignVrfRequest,
     ) -> Result<v01::VrfSignature, AuthorityError> {
-        PairingHost::sign_vrf(self, cx, session, calling_product_id, request).await
+        PairingHost::sign_vrf(self, cx, session, caller, request).await
     }
 
     async fn sign_payload(
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        caller: &ProductContext,
         request: SignPayloadAuthorityRequest,
     ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
-        PairingHost::sign_payload(self, cx, session, calling_product_id, request).await
+        PairingHost::sign_payload(self, cx, session, caller, request).await
     }
 
     async fn sign_raw(
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        caller: &ProductContext,
         request: SignRawAuthorityRequest,
         watermarked: bool,
     ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
-        PairingHost::sign_raw(self, cx, session, calling_product_id, request, watermarked).await
+        PairingHost::sign_raw(self, cx, session, caller, request, watermarked).await
     }
 
     async fn create_transaction(
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        caller: &ProductContext,
         request: CreateTransactionAuthorityRequest,
     ) -> Result<v01::HostCreateTransactionResponse, AuthorityError> {
-        PairingHost::create_transaction(self, cx, session, calling_product_id, request).await
+        PairingHost::create_transaction(self, cx, session, caller, request).await
     }
 
     async fn account_alias(
@@ -2777,37 +2788,37 @@ impl ProductAuthority for PairingHost {
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        product_id: String,
+        product: &ProductContext,
         request: v01::HostRequestResourceAllocationRequest,
     ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
-        PairingHost::allocate_resources(self, cx, session, product_id, request).await
+        PairingHost::allocate_resources(self, cx, session, product, request).await
     }
 
     async fn statement_store_allowance_key(
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        product_id: String,
+        product: &ProductContext,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        PairingHost::statement_store_allowance_key(self, cx, session, product_id).await
+        PairingHost::statement_store_allowance_key(self, cx, session, product).await
     }
 
     async fn bulletin_allowance_key(
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        product_id: String,
+        product: &ProductContext,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        PairingHost::bulletin_allowance_key(self, cx, session, product_id).await
+        PairingHost::bulletin_allowance_key(self, cx, session, product).await
     }
 
     async fn refresh_bulletin_allowance_key(
         &self,
         cx: &CallContext,
         session: &AuthoritySession,
-        product_id: String,
+        product: &ProductContext,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        PairingHost::refresh_bulletin_allowance_key(self, cx, session, product_id).await
+        PairingHost::refresh_bulletin_allowance_key(self, cx, session, product).await
     }
 
     async fn sign_statement_store_product_payload(

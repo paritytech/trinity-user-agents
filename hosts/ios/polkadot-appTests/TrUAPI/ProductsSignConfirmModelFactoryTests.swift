@@ -5,7 +5,7 @@ import TrUAPIHost
 @testable import polkadot_app
 
 struct ProductsSignConfirmModelFactoryTests {
-    private let requester = PolkadotSigningRequester(name: "test.product", iconUrl: nil)
+    private let requester = PolkadotSigningRequester(name: "test.product", productId: nil, pairedDeviceName: nil)
 
     private func makeFactory() -> ProductsSignConfirmModelFactory {
         ProductsSignConfirmModelFactory(chainRegistry: MockChainRegistry())
@@ -17,10 +17,7 @@ struct ProductsSignConfirmModelFactoryTests {
         let method = try Data.randomOrError(of: 12)
         let account = TrUAPIHostProductAccountId(dotNsIdentifier: "p.dot", derivationIndex: .index(0))
         let input = ProductsSignConfirmInput.signPayload(
-            .product(
-                callingProductId: "test.product",
-                request: HostSignPayloadRequest(account: account, payload: Self.makeHostSignPayloadData(method: method))
-            )
+            .product(HostSignPayloadRequest(account: account, payload: Self.makeHostSignPayloadData(method: method)))
         )
 
         let model = try await makeFactory().makeModel(from: input, requester: requester)
@@ -49,8 +46,7 @@ struct ProductsSignConfirmModelFactoryTests {
     @Test func createTransactionProductFallsBackToRawCall() async throws {
         let signer = TrUAPIHostProductAccountId(dotNsIdentifier: "p.dot", derivationIndex: .index(1))
         let input = try ProductsSignConfirmInput.createTransaction(.product(
-            callingProductId: "test.product",
-            payload: ProductAccountTxPayload(
+            ProductAccountTxPayload(
                 signer: signer,
                 genesisHash: Data.randomOrError(of: 32),
                 callData: Data.randomOrError(of: 20),
@@ -90,7 +86,6 @@ struct ProductsSignConfirmModelFactoryTests {
         let account = TrUAPIHostProductAccountId(dotNsIdentifier: "p.dot", derivationIndex: .index(0))
         let input = ProductsSignConfirmInput.signRaw(
             .product(
-                callingProductId: "test.product",
                 request: HostSignRawRequest(account: account, payload: .bytes(bytes: bytes)),
                 watermarked: true
             )
@@ -138,7 +133,6 @@ struct ProductsSignConfirmModelFactoryTests {
                 watermarked: false
             )
             : .product(
-                callingProductId: "test.product",
                 request: HostSignRawRequest(
                     account: TrUAPIHostProductAccountId(dotNsIdentifier: "p.dot", derivationIndex: .index(0)),
                     payload: .bytes(bytes: bytes)

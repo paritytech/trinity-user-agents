@@ -195,7 +195,7 @@ To disable WebRTC, call `execution.setPermissionAuthorizationStatus` with a remo
 
 The vendored Android host retains its native HTTP checks for fetch, XHR and subresources. Its installer adds `nativeHttp: true` to the private bootstrap configuration in every frame before the container runs, disabling duplicate JavaScript HTTP checks. Embedders without native HTTP enforcement must leave this flag unset.
 
-Identity and account access reviews use `confirmPermission(review)`, which also returns `PermissionDecision`. Override it to preserve Allow once. Its compatibility default maps `confirmUserAction`'s Boolean approval to `ALLOW_ALWAYS`; signing and other single-action reviews continue to use that Boolean callback.
+Identity and account access reviews use `confirmPermission(product, route, review)`, which also returns `PermissionDecision`. Override it to preserve Allow once. Its compatibility default maps `confirmUserAction(product, route, review)`'s Boolean approval to `ALLOW_ALWAYS`; signing and other single-action reviews continue to use that Boolean callback. Both receive the `product` that asked and the `route` it reached this host by (`RequestRoute.Local` or `RequestRoute.PairedHost`). Cancellation means the core withdrew the request; dismiss the prompt.
 
 ## Statement-store allowance renewal
 
@@ -296,6 +296,7 @@ import uniffi.truapi.ThemeName
 import uniffi.truapi.ThemeVariant
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.RemotePermission
+import uniffi.truapi.RequestRoute
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.HostPushNotificationRequest
@@ -380,11 +381,19 @@ class MyBridge(private val webView: WebView) : HostBridge {
     // Switch on the action review variant (SignPayload / SignRaw / CreateTransaction /
     // ResourceAllocation / PreimageSubmit / ...) to render the prompt with its
     // typed fields.
-    override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean {
+    override suspend fun confirmUserAction(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview,
+    ): Boolean {
         return withContext(Dispatchers.Main) { /* show prompt; */ false }
     }
 
-    override suspend fun confirmPermission(review: UserConfirmationReview): PermissionDecision {
+    override suspend fun confirmPermission(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview,
+    ): PermissionDecision {
         return withContext(Dispatchers.Main) { /* show permission prompt; */ PermissionDecision.DENY }
     }
 }

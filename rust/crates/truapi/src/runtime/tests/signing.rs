@@ -62,7 +62,8 @@ fn unwatermarked_signing_routes_product_and_legacy_accounts_without_downgrading(
         else {
             panic!("expected an explicit unwatermarked SignRequest");
         };
-        match request {
+        assert_eq!(request.caller.product_id, "myapp.dot");
+        match request.payload {
             SignRequest::RawUnwatermarkedDeprecated(request) => {
                 assert!(!legacy);
                 assert_eq!(request.account, account_id("myapp.dot", 0));
@@ -129,16 +130,16 @@ fn sign_vrf_forwards_cross_product_mobile_sso_request_and_response() {
             .lock()
             .expect("VRF signing review list mutex poisoned"),
         vec![crate::platform::SignVrfReview {
-            calling_product_id: "myapp.dot".to_string(),
             request: request.clone(),
         }]
     );
+    assert_confirmed_for(&platform, "myapp.dot");
     let message = submitted_remote_message(&platform, &session);
     let RemoteMessageData::V1(v1::RemoteMessage::SignVrfRequest(request_message)) = message.data
     else {
         panic!("expected VRF signing request");
     };
-    assert_eq!(request_message.calling_product_id, "myapp.dot");
+    assert_eq!(request_message.caller.product_id, "myapp.dot");
     assert_eq!(request_message.payload, request);
 }
 
@@ -195,11 +196,9 @@ fn sign_vrf_rejects_declined_pairing_host_confirmation_before_mobile_sso() {
             .sign_vrf_reviews
             .lock()
             .expect("VRF signing review list mutex poisoned"),
-        vec![crate::platform::SignVrfReview {
-            calling_product_id: "myapp.dot".to_string(),
-            request,
-        }]
+        vec![crate::platform::SignVrfReview { request }]
     );
+    assert_confirmed_for(&platform, "myapp.dot");
     assert!(
         platform
             .sent_rpc
@@ -348,7 +347,10 @@ fn sign_raw_accepts_confirmation_then_returns_sso_response() {
         &message.data,
         crate::host_internal::sso_messages::RemoteMessageData::V1(
             crate::host_internal::sso_messages::v1::RemoteMessage::SignRequest(
-                crate::host_internal::sso_messages::SignRequest::Raw(_)
+                crate::host_internal::sso_messages::ProductRequest {
+                    payload: crate::host_internal::sso_messages::SignRequest::Raw(_),
+                    ..
+                }
             )
         )
     ));
@@ -610,7 +612,10 @@ fn sign_payload_accepts_confirmation_then_returns_sso_response() {
         &message.data,
         crate::host_internal::sso_messages::RemoteMessageData::V1(
             crate::host_internal::sso_messages::v1::RemoteMessage::SignRequest(
-                crate::host_internal::sso_messages::SignRequest::Payload(_)
+                crate::host_internal::sso_messages::ProductRequest {
+                    payload: crate::host_internal::sso_messages::SignRequest::Payload(_),
+                    ..
+                }
             )
         )
     ));
@@ -906,7 +911,7 @@ fn legacy_sign_raw_accepts_derived_ss58_then_returns_sso_response() {
     else {
         panic!("expected product raw signing request");
     };
-    let crate::host_internal::sso_messages::SignRequest::Raw(request) = request else {
+    let crate::host_internal::sso_messages::SignRequest::Raw(request) = request.payload else {
         panic!("expected raw signing payload");
     };
     assert_eq!(
@@ -959,7 +964,7 @@ fn legacy_sign_raw_accepts_derived_hex_then_returns_sso_response() {
     else {
         panic!("expected product raw signing request");
     };
-    let crate::host_internal::sso_messages::SignRequest::Raw(request) = request else {
+    let crate::host_internal::sso_messages::SignRequest::Raw(request) = request.payload else {
         panic!("expected raw signing payload");
     };
     assert_eq!(
@@ -1007,7 +1012,8 @@ fn legacy_sign_raw_accepts_identity_ss58_then_routes_legacy_request() {
     else {
         panic!("expected legacy raw signing request");
     };
-    assert_eq!(request.account, identity);
+    assert_eq!(request.caller.product_id, "myapp.dot");
+    assert_eq!(request.payload.account, identity);
 }
 
 #[test]
@@ -1024,4 +1030,15 @@ fn create_transaction_rejects_invalid_product_account() {
             v01::HostCreateTransactionError::PermissionDenied
         ))
     ));
+}
+
+/// Asserts the pairing host confirmed exactly one prompt, for `product_id`, as a local request.
+fn assert_confirmed_for(platform: &StubPlatform, product_id: &str) {
+    let products = platform.confirmation_products.lock().unwrap();
+    let ids: Vec<&str> = products.iter().map(|p| p.product_id.as_str()).collect();
+    assert_eq!(ids, [product_id]);
+    assert_eq!(
+        *platform.confirmation_routes.lock().unwrap(),
+        [crate::platform::RequestRoute::Local]
+    );
 }
