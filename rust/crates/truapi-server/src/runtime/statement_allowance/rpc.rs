@@ -286,19 +286,23 @@ enum ExtrinsicStatus {
     Pending,
 }
 
+/// Classify one legacy `author_extrinsicUpdate` payload.
+///
+/// `TransactionStatus` serializes its unit variants (`future`, `ready`,
+/// `dropped`, `invalid`) as bare strings and the rest as single-key objects.
 fn extrinsic_status(status: &Value) -> ExtrinsicStatus {
+    if let Some(unit) = status.as_str() {
+        return match unit {
+            "dropped" | "invalid" => ExtrinsicStatus::Rejected(unit.to_string()),
+            _ => ExtrinsicStatus::Pending,
+        };
+    }
     for key in ["finalized", "inBlock"] {
         if let Some(hash) = status.get(key).and_then(Value::as_str) {
             return ExtrinsicStatus::Included(hash.to_string());
         }
     }
-    for key in [
-        "invalid",
-        "dropped",
-        "usurped",
-        "retracted",
-        "finalityTimeout",
-    ] {
+    for key in ["usurped", "retracted", "finalityTimeout"] {
         if status.get(key).is_some() {
             return ExtrinsicStatus::Rejected(key.to_string());
         }
@@ -531,14 +535,14 @@ mod tests {
     #[test]
     fn terminal_pool_statuses_reject_the_submission() {
         let statuses: Vec<ExtrinsicStatus> = [
-            "invalid",
-            "dropped",
-            "usurped",
-            "retracted",
-            "finalityTimeout",
+            json!("invalid"),
+            json!("dropped"),
+            json!({"usurped": "0x1234"}),
+            json!({"retracted": "0x1234"}),
+            json!({"finalityTimeout": "0x1234"}),
         ]
-        .into_iter()
-        .map(|key| extrinsic_status(&json!({key: "0x1234"})))
+        .iter()
+        .map(extrinsic_status)
         .collect();
 
         assert_eq!(
@@ -551,6 +555,21 @@ mod tests {
                 ExtrinsicStatus::Rejected("finalityTimeout".to_string()),
             ],
         );
+    }
+
+    #[test]
+    fn progress_statuses_keep_waiting() {
+        for status in [
+            json!("future"),
+            json!("ready"),
+            json!({"broadcast": ["12D3KooW"]}),
+        ] {
+            assert_eq!(
+                extrinsic_status(&status),
+                ExtrinsicStatus::Pending,
+                "{status}"
+            );
+        }
     }
 
     #[test]
