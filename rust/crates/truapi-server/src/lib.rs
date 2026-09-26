@@ -32,6 +32,7 @@ pub(crate) mod host_core;
 pub mod host_logic;
 pub(crate) mod host_rpc_client;
 pub mod logging;
+pub mod peer_transport;
 pub(crate) mod runtime;
 pub mod subscription;
 pub mod transport;

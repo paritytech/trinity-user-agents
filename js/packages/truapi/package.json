@@ -35,6 +35,10 @@
       "types": "./dist/internal.d.ts",
       "import": "./dist/internal.js"
     },
+    "./peer-transport": {
+      "types": "./dist/peer-transport.d.ts",
+      "import": "./dist/peer-transport.js"
+    },
     "./scale": {
       "types": "./dist/scale.d.ts",
       "import": "./dist/scale.js"

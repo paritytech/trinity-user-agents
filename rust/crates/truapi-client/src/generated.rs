@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "7eb6dbf2b5c734ff";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "4260ce2fcc2d5cfe";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1521,6 +1521,195 @@ impl RequestMethod for PaymentTopUp {
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
+/// `peer_transport_dial` method marker.
+pub struct PeerTransportDial;
+impl PeerTransportDial {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "PeerTransport",
+        method: "dial",
+        wire_name: "peer_transport_dial",
+        request_type: "truapi::versioned::peer_transport::HostPeerTransportDialRequest",
+        response_type: "truapi::versioned::peer_transport::HostPeerTransportDialResponse",
+        error_type: Some("truapi::versioned::peer_transport::HostPeerTransportDialError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 21,
+            method_id: 0,
+        }),
+    };
+}
+impl RequestMethod for PeerTransportDial {
+    type Request = truapi::versioned::peer_transport::HostPeerTransportDialRequest;
+    type Response = truapi::versioned::peer_transport::HostPeerTransportDialResponse;
+    type Error = truapi::versioned::peer_transport::HostPeerTransportDialError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `peer_transport_open` method marker.
+pub struct PeerTransportOpen;
+impl PeerTransportOpen {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "PeerTransport",
+        method: "open",
+        wire_name: "peer_transport_open",
+        request_type: "truapi::versioned::peer_transport::HostPeerTransportOpenRequest",
+        response_type: "truapi::versioned::peer_transport::HostPeerTransportOpenResponse",
+        error_type: Some("truapi::versioned::peer_transport::HostPeerTransportOpenError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 21,
+            method_id: 1,
+        }),
+    };
+}
+impl RequestMethod for PeerTransportOpen {
+    type Request = truapi::versioned::peer_transport::HostPeerTransportOpenRequest;
+    type Response = truapi::versioned::peer_transport::HostPeerTransportOpenResponse;
+    type Error = truapi::versioned::peer_transport::HostPeerTransportOpenError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `peer_transport_send` method marker.
+pub struct PeerTransportSend;
+impl PeerTransportSend {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "PeerTransport",
+        method: "send",
+        wire_name: "peer_transport_send",
+        request_type: "truapi::versioned::peer_transport::HostPeerTransportSendRequest",
+        response_type: "truapi::versioned::peer_transport::HostPeerTransportSendResponse",
+        error_type: Some("truapi::versioned::peer_transport::HostPeerTransportSendError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 21,
+            method_id: 2,
+        }),
+    };
+}
+impl RequestMethod for PeerTransportSend {
+    type Request = truapi::versioned::peer_transport::HostPeerTransportSendRequest;
+    type Response = truapi::versioned::peer_transport::HostPeerTransportSendResponse;
+    type Error = truapi::versioned::peer_transport::HostPeerTransportSendError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `peer_transport_recv` method marker.
+pub struct PeerTransportRecv;
+impl PeerTransportRecv {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "PeerTransport",
+        method: "recv",
+        wire_name: "peer_transport_recv",
+        request_type: "truapi::versioned::peer_transport::HostPeerTransportRecvRequest",
+        response_type: "truapi::versioned::peer_transport::HostPeerTransportRecvResponse",
+        error_type: Some("truapi::versioned::peer_transport::HostPeerTransportRecvError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 21,
+            method_id: 3,
+        }),
+    };
+}
+impl RequestMethod for PeerTransportRecv {
+    type Request = truapi::versioned::peer_transport::HostPeerTransportRecvRequest;
+    type Response = truapi::versioned::peer_transport::HostPeerTransportRecvResponse;
+    type Error = truapi::versioned::peer_transport::HostPeerTransportRecvError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `peer_transport_reset` method marker.
+pub struct PeerTransportReset;
+impl PeerTransportReset {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "PeerTransport",
+        method: "reset",
+        wire_name: "peer_transport_reset",
+        request_type: "truapi::versioned::peer_transport::HostPeerTransportResetRequest",
+        response_type: "truapi::versioned::peer_transport::HostPeerTransportResetResponse",
+        error_type: Some("truapi::versioned::peer_transport::HostPeerTransportResetError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 21,
+            method_id: 4,
+        }),
+    };
+}
+impl RequestMethod for PeerTransportReset {
+    type Request = truapi::versioned::peer_transport::HostPeerTransportResetRequest;
+    type Response = truapi::versioned::peer_transport::HostPeerTransportResetResponse;
+    type Error = truapi::versioned::peer_transport::HostPeerTransportResetError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `peer_transport_close` method marker.
+pub struct PeerTransportClose;
+impl PeerTransportClose {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "PeerTransport",
+        method: "close",
+        wire_name: "peer_transport_close",
+        request_type: "truapi::versioned::peer_transport::HostPeerTransportCloseRequest",
+        response_type: "truapi::versioned::peer_transport::HostPeerTransportCloseResponse",
+        error_type: Some("truapi::versioned::peer_transport::HostPeerTransportCloseError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 21,
+            method_id: 5,
+        }),
+    };
+}
+impl RequestMethod for PeerTransportClose {
+    type Request = truapi::versioned::peer_transport::HostPeerTransportCloseRequest;
+    type Response = truapi::versioned::peer_transport::HostPeerTransportCloseResponse;
+    type Error = truapi::versioned::peer_transport::HostPeerTransportCloseError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `peer_transport_events` method marker.
+pub struct PeerTransportEvents;
+impl PeerTransportEvents {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "PeerTransport",
+        method: "events",
+        wire_name: "peer_transport_events",
+        request_type: "truapi::versioned::peer_transport::HostPeerTransportEventsRequest",
+        response_type: "truapi::versioned::peer_transport::HostPeerTransportEventsResponse",
+        error_type: Some("truapi::versioned::peer_transport::HostPeerTransportEventsError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 21,
+            method_id: 6,
+        }),
+    };
+}
+impl RequestMethod for PeerTransportEvents {
+    type Request = truapi::versioned::peer_transport::HostPeerTransportEventsRequest;
+    type Response = truapi::versioned::peer_transport::HostPeerTransportEventsResponse;
+    type Error = truapi::versioned::peer_transport::HostPeerTransportEventsError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
 /// `permissions_request_device_permission` method marker.
 pub struct PermissionsRequestDevicePermission;
 impl PermissionsRequestDevicePermission {
@@ -2348,6 +2537,13 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     PaymentRequest::DESCRIPTOR,
     PaymentStatusSubscribe::DESCRIPTOR,
     PaymentTopUp::DESCRIPTOR,
+    PeerTransportDial::DESCRIPTOR,
+    PeerTransportOpen::DESCRIPTOR,
+    PeerTransportSend::DESCRIPTOR,
+    PeerTransportRecv::DESCRIPTOR,
+    PeerTransportReset::DESCRIPTOR,
+    PeerTransportClose::DESCRIPTOR,
+    PeerTransportEvents::DESCRIPTOR,
     PermissionsRequestDevicePermission::DESCRIPTOR,
     PermissionsRequestRemotePermission::DESCRIPTOR,
     PreimageLookupSubscribe::DESCRIPTOR,
@@ -2423,6 +2619,13 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     PaymentRequest::DESCRIPTOR,
     PaymentStatusSubscribe::DESCRIPTOR,
     PaymentTopUp::DESCRIPTOR,
+    PeerTransportDial::DESCRIPTOR,
+    PeerTransportOpen::DESCRIPTOR,
+    PeerTransportSend::DESCRIPTOR,
+    PeerTransportRecv::DESCRIPTOR,
+    PeerTransportReset::DESCRIPTOR,
+    PeerTransportClose::DESCRIPTOR,
+    PeerTransportEvents::DESCRIPTOR,
     PermissionsRequestDevicePermission::DESCRIPTOR,
     PermissionsRequestRemotePermission::DESCRIPTOR,
     PreimageLookupSubscribe::DESCRIPTOR,
@@ -2504,6 +2707,13 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     PaymentRequest::DESCRIPTOR,
     PaymentStatusSubscribe::DESCRIPTOR,
     PaymentTopUp::DESCRIPTOR,
+    PeerTransportDial::DESCRIPTOR,
+    PeerTransportOpen::DESCRIPTOR,
+    PeerTransportSend::DESCRIPTOR,
+    PeerTransportRecv::DESCRIPTOR,
+    PeerTransportReset::DESCRIPTOR,
+    PeerTransportClose::DESCRIPTOR,
+    PeerTransportEvents::DESCRIPTOR,
     PermissionsRequestDevicePermission::DESCRIPTOR,
     PermissionsRequestRemotePermission::DESCRIPTOR,
     PreimageLookupSubscribe::DESCRIPTOR,

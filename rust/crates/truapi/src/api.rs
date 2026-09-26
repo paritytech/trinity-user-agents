@@ -13,6 +13,7 @@ pub mod local_storage;
 pub mod locale;
 pub mod notifications;
 pub mod payment;
+pub mod peer_transport;
 pub mod permissions;
 pub mod pocket;
 pub mod preimage;
@@ -39,6 +40,7 @@ pub use local_storage::LocalStorage;
 pub use locale::Locale;
 pub use notifications::Notifications;
 pub use payment::Payment;
+pub use peer_transport::PeerTransport;
 pub use permissions::Permissions;
 pub use pocket::Pocket;
 pub use preimage::Preimage;
@@ -63,6 +65,7 @@ pub trait TrUApi:
     + Locale
     + Notifications
     + Payment
+    + PeerTransport
     + Permissions
     + Pocket
     + Preimage
@@ -89,6 +92,7 @@ impl<T> TrUApi for T where
         + Locale
         + Notifications
         + Payment
+        + PeerTransport
         + Permissions
         + Pocket
         + Preimage
