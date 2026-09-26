@@ -110,7 +110,7 @@ fn a_malformed_capability_is_refused_rather_than_ignored() {
     );
 }
 
-/// The frozen contract: namespace 21, methods 0..6 in this order, V1 payloads.
+/// The frozen contract: namespace 23, methods 0..6 in this order, V1 payloads.
 #[test]
 fn the_wire_ids_and_scale_layout_match_the_frozen_contract() {
     for (ids, method_id) in [
@@ -125,7 +125,7 @@ fn the_wire_ids_and_scale_layout_match_the_frozen_contract() {
         assert_eq!(
             ids,
             MethodIds {
-                trait_id: 21,
+                trait_id: 23,
                 method_id
             }
         );

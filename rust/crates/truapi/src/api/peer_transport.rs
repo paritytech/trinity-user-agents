@@ -17,7 +17,7 @@ use crate::{CallContext, CallError, v01, wire, wire_trait};
 /// verifies every byte it consumes. Access requires the manifest capability
 /// `capabilities.network.jam = { genesis }` and is granted only for that
 /// genesis. A grant is separate from account, signing and storage authority.
-#[wire_trait(id = 21)]
+#[wire_trait(id = 23)]
 #[crate::async_trait]
 pub trait PeerTransport: Send + Sync {
     /// Dial one peer. The host builds the ALPN from `genesis` and requires the
