@@ -1582,3 +1582,197 @@ fn state_decode_accepts_old_prefix_and_tagged_extension_but_rejects_corruption()
     assert!(State::decode(&mut truncated_extension.as_slice()).is_err());
     assert!(State::decode(&mut &legacy[..legacy.len() - 1]).is_err());
 }
+
+const PROFILE_REFERENCE: &str = "seity-contacts:v1:5c9584ba6e565351723d57394780b31b4c2156123e1269c4724ae5f01258bb535c9584ba6e565351723d57394780b31b4c2156123e1269c4724ae5f01258bb53";
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+#[test]
+fn a_disclosed_profile_reference_is_sealed_once_per_peer_and_withdrawn_on_retract() {
+    block_on(async {
+        use crate::runtime::profile::{Disclosure, clear_disclosure, write_disclosure};
+        let fixture = Fixture::new();
+        set_product_grants(
+            &fixture.platform,
+            PRODUCT,
+            truapi_platform::PermissionAuthorizationStatus::Authorized,
+        )
+        .await;
+        let actor = fixture.actor().await;
+        let identity = IdentityFixture::new();
+        let peer = DeviceFixture::new(1);
+        seed_peer(&actor, &identity, &[&peer]).await;
+        let profile_entries = |state: &State| {
+            state
+                .outbox
+                .iter()
+                .filter(|entry| matches!(entry.kind, OutgoingKind::ProfileReference(_)))
+                .count()
+        };
+
+        assert!(
+            !actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap(),
+            "nothing disclosed, nothing sent"
+        );
+
+        write_disclosure(
+            fixture.platform.as_ref(),
+            &Disclosure {
+                product_id: "seity.dot".into(),
+                reference: PROFILE_REFERENCE.into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap()
+        );
+        let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
+        assert_eq!(
+            view.prepared.len(),
+            1,
+            "one opaque statement for the product to submit"
+        );
+        assert_eq!(view.prepared[0].peer_identity, identity.account);
+        assert!(view.prepared[0].requires_ack);
+        assert!(
+            !contains(
+                &view.prepared[0].statement.encode(),
+                PROFILE_REFERENCE.as_bytes()
+            ),
+            "the product carries ciphertext, never the reference"
+        );
+        assert!(
+            !actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap(),
+            "the watermark stops a second send of the same disclosure"
+        );
+
+        write_disclosure(
+            fixture.platform.as_ref(),
+            &Disclosure {
+                product_id: "seity.dot".into(),
+                reference: format!("{PROFILE_REFERENCE}ff"),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            actor.store.read(profile_entries).await.unwrap(),
+            1,
+            "a replacement supersedes the queued disclosure"
+        );
+
+        clear_disclosure(fixture.platform.as_ref()).await.unwrap();
+        assert!(
+            actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap(),
+            "a holder is sent the withdrawal"
+        );
+        assert!(
+            actor
+                .store
+                .read(|state| state.profile_shared.is_empty())
+                .await
+                .unwrap()
+        );
+        assert!(
+            !actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap()
+        );
+    });
+}
+
+#[test]
+fn a_received_profile_reference_is_kept_by_the_host_and_cut_from_what_the_product_opens() {
+    block_on(async {
+        use crate::runtime::profile::received_reference;
+        let fixture = Fixture::new();
+        let actor = fixture.actor().await;
+        let identity = IdentityFixture::new();
+        let peer = DeviceFixture::new(1);
+        seed_peer(&actor, &identity, &[&peer]).await;
+        let registry = NativeChatRegistry::default();
+
+        let text = wire::encode_text_message("hello", fixture.timestamp, "hi").unwrap();
+        let frame = wire::encode_profile_reference_message(
+            "profile-1",
+            fixture.timestamp,
+            "seity.dot",
+            Some(PROFILE_REFERENCE),
+        )
+        .unwrap();
+        let plaintext =
+            wire::encode_transport_request_plaintext("incoming-profile", &[frame, text.clone()])
+                .unwrap();
+        let packet = native_packet(&actor, &identity, &peer, &plaintext, false, false);
+        let (opened, _) = actor
+            .open_statement(&fixture.context, &registry, packet)
+            .await
+            .unwrap();
+        assert_eq!(opened.len(), 1);
+        assert!(!contains(
+            &opened[0].plaintext,
+            PROFILE_REFERENCE.as_bytes()
+        ));
+        let wire::V2StatementTransportData::Request { messages, .. } =
+            wire::decode_transport_plaintext(&opened[0].plaintext).unwrap()
+        else {
+            panic!("the product still receives the request to acknowledge");
+        };
+        assert_eq!(
+            messages,
+            vec![text],
+            "ordinary content passes through untouched"
+        );
+        let held = received_reference(fixture.platform.as_ref(), PRODUCT, &identity.account)
+            .await
+            .unwrap()
+            .expect("the host keeps what the contact disclosed");
+        assert_eq!(held.reference, PROFILE_REFERENCE);
+        assert_eq!(held.discloser_product_id, "seity.dot");
+
+        let withdrawal = wire::encode_profile_reference_message(
+            "profile-2",
+            fixture.timestamp,
+            "seity.dot",
+            None,
+        )
+        .unwrap();
+        let plaintext =
+            wire::encode_transport_request_plaintext("incoming-withdrawal", &[withdrawal]).unwrap();
+        let packet = native_packet(&actor, &identity, &peer, &plaintext, false, false);
+        actor
+            .open_statement(&fixture.context, &registry, packet)
+            .await
+            .unwrap();
+        assert_eq!(
+            received_reference(fixture.platform.as_ref(), PRODUCT, &identity.account)
+                .await
+                .unwrap(),
+            None
+        );
+    });
+}

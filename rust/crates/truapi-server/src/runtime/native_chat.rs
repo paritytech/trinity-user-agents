@@ -392,6 +392,7 @@ impl NativeChatRegistry {
             match &mut request {
                 Request::Initialize => {
                     chat.drive_files(&context).await?;
+                    chat.publish_profile_reference(&context).await?;
                 }
                 Request::Bind { username } => {
                     binding = Some(chat.bind(&context, std::mem::take(username)).await?);

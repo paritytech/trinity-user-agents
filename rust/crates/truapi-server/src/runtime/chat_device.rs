@@ -105,6 +105,30 @@ pub(crate) enum OpenedDeviceMessage {
     /// Native notification metadata, never ordinary guest content. This Host has
     /// no mobile push provider; retain only ordering and replay evidence.
     PushToken { timestamp: u64, digest: [u8; 32] },
+    /// A profile reference the peer's host disclosed, or `None` withdrawing it.
+    /// Host-consumed: the reference is a bearer capability and never reaches
+    /// the product.
+    ProfileReference(ProfileReferenceFrame),
+}
+
+/// A screened profile reference frame.
+pub(crate) struct ProfileReferenceFrame {
+    /// Native message identifier.
+    pub(crate) message_id: String,
+    /// Sender timestamp.
+    pub(crate) timestamp: u64,
+    /// Product on the sender's side that disclosed the reference.
+    pub(crate) discloser_product_id: String,
+    /// The reference, or `None` for a withdrawal.
+    pub(crate) reference: Option<String>,
+}
+
+/// The same bound and alphabet the core screens a product's reference with.
+const MAX_PROFILE_REFERENCE_BYTES: usize = 2048;
+const MAX_PROFILE_PRODUCT_ID_BYTES: usize = 256;
+
+fn screened_ascii(value: &str, max: usize) -> bool {
+    !value.is_empty() && value.len() <= max && value.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
 /// Lifecycle metadata to validate against durable Host roster and replay state.
@@ -544,6 +568,27 @@ pub(crate) fn classify_message(
         }
         V2ChatMessageContent::ContactAdded => DeviceLifecycle::ContactAdded,
         V2ChatMessageContent::LeftChat => DeviceLifecycle::LeftChat,
+        V2ChatMessageContent::ProfileReference {
+            discloser_product_id,
+            reference,
+        } => {
+            validate_id(&message.message_id)?;
+            if !screened_ascii(&discloser_product_id, MAX_PROFILE_PRODUCT_ID_BYTES)
+                || reference.as_deref().is_some_and(|reference| {
+                    !screened_ascii(reference, MAX_PROFILE_REFERENCE_BYTES)
+                })
+            {
+                return Err(ChatDeviceError::InvalidEncoding);
+            }
+            return Ok(OpenedDeviceMessage::ProfileReference(
+                ProfileReferenceFrame {
+                    message_id: message.message_id,
+                    timestamp: message.timestamp,
+                    discloser_product_id,
+                    reference,
+                },
+            ));
+        }
         ordinary => {
             validate_ordinary(&ordinary)?;
             return Ok(OpenedDeviceMessage::Ordinary(core::mem::take(bytes)));

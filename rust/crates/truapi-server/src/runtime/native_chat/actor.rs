@@ -4,6 +4,7 @@
 
 mod files;
 mod history;
+mod profile;
 mod receive;
 #[cfg(test)]
 mod tests;
@@ -146,6 +147,8 @@ enum OutgoingKind {
     Payment([u8; 32]),
     Acknowledgment,
     Rich([u8; 32]),
+    /// Appended last so earlier snapshots still decode.
+    ProfileReference([u8; 32]),
 }
 
 #[derive(Clone, Encode, Decode)]
@@ -210,6 +213,8 @@ struct State {
     rich_messages: Vec<files::RichRecord>,
     marker: [u8; 4],
     boundary: BoundaryState,
+    /// Trailing, and absent from snapshots written before it existed.
+    profile_shared: Vec<profile::ProfileWatermark>,
 }
 
 impl State {
@@ -232,6 +237,7 @@ impl State {
             rich_messages: Vec::new(),
             marker: *b"HCN3",
             boundary: BoundaryState::default(),
+            profile_shared: Vec::new(),
         })
     }
     fn peer(&self, identity: &[u8; 32]) -> Result<&Peer, Error> {
@@ -303,6 +309,12 @@ impl Decode for State {
             }
             BoundaryState::decode(input)?
         };
+        // Added after the boundary state: a snapshot that ends here predates it.
+        let profile_shared = if input.remaining_len()? == Some(0) {
+            Vec::new()
+        } else {
+            <Vec<profile::ProfileWatermark>>::decode(input)?
+        };
         Ok(Self {
             secret,
             index,
@@ -321,6 +333,7 @@ impl Decode for State {
             rich_messages,
             marker: *b"HCN3",
             boundary,
+            profile_shared,
         })
     }
 }
@@ -625,7 +638,9 @@ impl NativeChatActor {
                         state.boundary.legacy_pending
                             || matches!(
                                 entry.kind,
-                                OutgoingKind::Payment(_) | OutgoingKind::Rich(_)
+                                OutgoingKind::Payment(_)
+                                    | OutgoingKind::Rich(_)
+                                    | OutgoingKind::ProfileReference(_)
                             )
                     })
                     .map(|entry| entry.prepared(state))
@@ -696,6 +711,9 @@ impl NativeChatActor {
                 state
                     .outbox
                     .retain(|entry| matches!(entry.kind, OutgoingKind::Payment(_)));
+                // Profile references queued before the migration are dropped with
+                // it, so forget what was sent and let the reconcile resend.
+                state.profile_shared.clear();
                 state.messages.clear();
                 state.acknowledgments.clear();
                 state.sent.clear();
@@ -1183,7 +1201,10 @@ impl NativeChatActor {
                     .filter(|entry| {
                         matches!(entry.kind, OutgoingKind::Payment(_))
                             || (!state.boundary.legacy_pending
-                                && matches!(entry.kind, OutgoingKind::Rich(_)))
+                                && matches!(
+                                    entry.kind,
+                                    OutgoingKind::Rich(_) | OutgoingKind::ProfileReference(_)
+                                ))
                     })
                     .cloned()
                     .collect::<Vec<_>>()

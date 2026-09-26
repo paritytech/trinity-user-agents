@@ -184,6 +184,10 @@ impl NativeChatActor {
         let mut rich = Vec::new();
         let mut bytes_seen = 0usize;
         let mut had_history = false;
+        // Profile references are the Host's, not the product's: collected here,
+        // stored after the open commits, and cut out of what the product sees.
+        let mut profile_references = Vec::new();
+        let mut stripped = false;
         while let Some((mut bytes, depth)) = work.pop() {
             context.require_current()?;
             bytes_seen = bytes_seen
@@ -279,6 +283,17 @@ impl NativeChatActor {
                         expanded.push(core::mem::take(&mut *bytes));
                     }
                 }
+                OpenedDeviceMessage::ProfileReference(frame) => {
+                    if !super::receive::valid_peer_timestamp(frame.timestamp, current_unix_secs()) {
+                        return Err(Error::InvalidStatement);
+                    }
+                    // Never forwarded, whatever the depth; only a live frame
+                    // updates what this Host holds, never compacted history.
+                    stripped = true;
+                    if depth == 0 {
+                        profile_references.push(frame);
+                    }
+                }
             }
         }
         let rich = self.prepare_rich(context, peer, &request_id, rich).await?;
@@ -292,9 +307,11 @@ impl NativeChatActor {
                     files::merge_received(state, rich)
                 })
                 .await?;
+            self.record_profile_references(context, peer, profile_references)
+                .await?;
             // Preserve the original canonical request when no HOP expansion was
             // needed, except references already transferred by legacy migration.
-            let plaintext = if had_history {
+            let plaintext = if had_history || stripped {
                 wire::encode_transport_request_plaintext(&request_id, &expanded)
                     .map_err(|_| Error::InvalidStatement)?
             } else {
@@ -362,7 +379,31 @@ impl NativeChatActor {
                 validate_deliveries(&state.boundary.history)
             })
             .await?;
+        self.record_profile_references(context, peer, profile_references)
+            .await?;
         self.continue_open(context, id, 0).await
+    }
+
+    /// Keep the newest profile reference each frame carries for `peer`, in
+    /// this product's received-reference slot. `None` withdraws it.
+    async fn record_profile_references(
+        &self,
+        context: &NativeChatContext,
+        peer: [u8; 32],
+        frames: Vec<crate::runtime::chat_device::ProfileReferenceFrame>,
+    ) -> Result<(), Error> {
+        for frame in frames {
+            crate::runtime::profile::record_received_reference(
+                &*context.services.platform,
+                &self.product,
+                peer,
+                frame.discloser_product_id,
+                frame.reference,
+            )
+            .await
+            .map_err(|_| Error::StorageUnavailable)?;
+        }
+        Ok(())
     }
 
     pub(in crate::runtime::native_chat) async fn continue_open(

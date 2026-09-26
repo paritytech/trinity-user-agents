@@ -377,6 +377,13 @@ pub enum V2ChatMessageContent {
         request_id: String,
         device: V2PeerDevice,
     },
+    /// A profile reference the sender's host discloses to this contact, or
+    /// `None` to withdraw it. Host-originated and host-consumed: products
+    /// never send or see it. V2 wire enum index 21.
+    ProfileReference {
+        discloser_product_id: String,
+        reference: Option<String>,
+    },
     /// The envelope was valid enough to recover id/timestamp, but the versioned
     /// content wrapper is not yet represented by this SDK surface.
     UnsupportedVersion { version_index: u8 },
@@ -977,6 +984,29 @@ pub fn encode_device_removed_message(
     })
 }
 
+/// Encode a v2 profile-reference message (content index 21).
+pub fn encode_profile_reference_message(
+    message_id: &str,
+    timestamp: u64,
+    discloser_product_id: &str,
+    reference: Option<&str>,
+) -> Result<Vec<u8>, ChatError> {
+    encode_message(message_id, timestamp, |out| {
+        out.push(21);
+        encode_string(out, discloser_product_id)?;
+        match reference {
+            Some(reference) => {
+                out.push(1);
+                encode_string(out, reference)
+            }
+            None => {
+                out.push(0);
+                Ok(())
+            }
+        }
+    })
+}
+
 /// Encode a v2 compacted-messages reference (content index 19).
 pub fn encode_compacted_messages_message(
     message_id: &str,
@@ -1270,6 +1300,23 @@ pub fn decode_message(data: &[u8]) -> Result<V2ChatMessage, ChatError> {
                     statement_account_id,
                     encryption_public_key,
                 },
+            }
+        }
+        21 => {
+            let discloser_product_id = cursor.read_string("discloser_product_id")?;
+            let reference = match cursor.read_u8("reference_option")? {
+                0 => None,
+                1 => Some(cursor.read_string("reference")?),
+                value => {
+                    return Err(ChatError::InvalidEncoding(format!(
+                        "invalid profile reference option {value}"
+                    )));
+                }
+            };
+            cursor.finish()?;
+            V2ChatMessageContent::ProfileReference {
+                discloser_product_id,
+                reference,
             }
         }
         index => V2ChatMessageContent::UnsupportedContent {
@@ -3598,6 +3645,38 @@ mod tests {
             }
         );
     }
+    #[test]
+    fn profile_reference_wire_roundtrips_disclosure_and_withdrawal() {
+        let disclosed = encode_profile_reference_message(
+            "profile",
+            5,
+            "seity.dot",
+            Some("seity-contacts:v1:00"),
+        )
+        .unwrap();
+        let decoded = decode_message(&disclosed).unwrap();
+        assert_eq!(decoded.message_id, "profile");
+        assert_eq!(
+            decoded.content,
+            V2ChatMessageContent::ProfileReference {
+                discloser_product_id: "seity.dot".into(),
+                reference: Some("seity-contacts:v1:00".into()),
+            }
+        );
+        let withdrawn = encode_profile_reference_message("profile", 6, "seity.dot", None).unwrap();
+        assert_eq!(
+            decode_message(&withdrawn).unwrap().content,
+            V2ChatMessageContent::ProfileReference {
+                discloser_product_id: "seity.dot".into(),
+                reference: None,
+            }
+        );
+        // A malformed option byte is refused, not guessed at.
+        let mut bad = withdrawn.clone();
+        *bad.last_mut().unwrap() = 7;
+        assert!(decode_message(&bad).is_err());
+    }
+
     #[test]
     fn current_multi_device_wire_roundtrips() {
         let added = encode_device_added_message("add", 1, &[1; 32], &[2; 32]).unwrap();

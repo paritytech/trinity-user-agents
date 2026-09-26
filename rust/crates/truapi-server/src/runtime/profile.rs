@@ -32,7 +32,6 @@ enum StoredReferences {
 }
 
 /// A contact roster is bounded; so is what the host keeps for it.
-#[allow(dead_code, reason = "written by the chat relay, which lands next")]
 const MAX_RECEIVED_REFERENCES: usize = 4096;
 
 fn storage_error(error: impl core::fmt::Debug) -> String {
@@ -105,7 +104,6 @@ pub(crate) async fn received_reference(
 
 /// Record what a contact's host sent: the newest reference replaces the old
 /// one, and `None` (a retraction) removes it.
-#[allow(dead_code, reason = "written by the chat relay, which lands next")]
 pub(crate) async fn record_received_reference(
     storage: &(impl CoreStorage + ?Sized),
     product_id: &str,
