@@ -1324,6 +1324,236 @@ fn profile_present_forwards_screened_references_and_is_unsupported_without_an_ad
     ));
 }
 
+/// A product runtime on a shared platform, so several products see one core
+/// storage the way they do on a real host.
+fn profile_host_on(
+    platform: Arc<crate::test_support::StubPlatform>,
+    product: ProductContext,
+    profile: Option<Arc<RecordingProfilePlatform>>,
+) -> ProductRuntimeHost {
+    let (host_config, _) = runtime_config(&product.product_id);
+    let services = RuntimeServices::new(
+        platform,
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+    );
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+    adapters.profile_platform =
+        profile.map(|profile| profile as Arc<dyn truapi_platform::ProfilePlatform>);
+    ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
+}
+
+fn disclose(
+    host: &ProductRuntimeHost,
+    reference: &str,
+) -> Result<HostProfileDiscloseResponse, CallError<HostProfileDiscloseError>> {
+    futures::executor::block_on(Profile::disclose(
+        host,
+        &CallContext::default(),
+        HostProfileDiscloseRequest::V1(v01::HostProfileDiscloseRequest {
+            reference: reference.to_string(),
+        }),
+    ))
+}
+
+fn retract(
+    host: &ProductRuntimeHost,
+) -> Result<HostProfileRetractResponse, CallError<HostProfileRetractError>> {
+    futures::executor::block_on(Profile::retract(
+        host,
+        &CallContext::default(),
+        HostProfileRetractRequest::V1,
+    ))
+}
+
+fn present_contact(
+    host: &ProductRuntimeHost,
+    peer_identity: [u8; 32],
+) -> Result<HostProfilePresentContactResponse, CallError<HostProfilePresentContactError>> {
+    futures::executor::block_on(Profile::present_contact(
+        host,
+        &CallContext::default(),
+        HostProfilePresentContactRequest::V1(v01::HostProfilePresentContactRequest {
+            peer_identity,
+        }),
+    ))
+}
+
+const CONTACTS_REFERENCE: &str = "seity-contacts:v1:5c9584ba6e565351723d57394780b31b4c2156123e1269c4724ae5f01258bb535c9584ba6e565351723d57394780b31b4c2156123e1269c4724ae5f01258bb53";
+
+#[test]
+fn profile_disclose_stores_the_reference_and_only_its_discloser_may_retract_it() {
+    let platform = stub_platform();
+    let seity = profile_host_on(
+        platform.clone(),
+        ProductContext::new("seity.dot".to_string()).expect("valid product"),
+        None,
+    );
+    let other = profile_host_on(
+        platform.clone(),
+        ProductContext::new("other.dot".to_string()).expect("valid product"),
+        None,
+    );
+
+    assert_eq!(
+        disclose(&seity, CONTACTS_REFERENCE).expect("an App discloses a screened reference"),
+        HostProfileDiscloseResponse::V1
+    );
+    let stored = futures::executor::block_on(profile::read_disclosure(platform.as_ref()))
+        .expect("readable")
+        .expect("stored");
+    assert_eq!(stored.product_id, "seity.dot");
+    assert_eq!(stored.reference, CONTACTS_REFERENCE);
+
+    assert!(matches!(
+        retract(&other),
+        Err(CallError::Domain(HostProfileRetractError::V1(
+            v01::HostProfileRetractError::NotDiscloser
+        )))
+    ));
+    assert_eq!(
+        retract(&seity).expect("the discloser retracts"),
+        HostProfileRetractResponse::V1
+    );
+    assert_eq!(
+        futures::executor::block_on(profile::read_disclosure(platform.as_ref())).expect("readable"),
+        None
+    );
+    assert_eq!(
+        retract(&seity).expect("retracting nothing is not an error"),
+        HostProfileRetractResponse::V1
+    );
+}
+
+#[test]
+fn profile_disclose_is_for_apps_and_screened_references_only() {
+    let platform = stub_platform();
+    let worker = profile_host_on(
+        platform.clone(),
+        ProductContext::new_with_execution(
+            "seity.dot".to_string(),
+            truapi_platform::ProductExecutionKind::Worker,
+        )
+        .expect("valid product"),
+        None,
+    );
+    assert!(matches!(
+        disclose(&worker, CONTACTS_REFERENCE),
+        Err(CallError::Denied)
+    ));
+    assert!(matches!(retract(&worker), Err(CallError::Denied)));
+
+    let app = profile_host_on(
+        platform.clone(),
+        ProductContext::new("seity.dot".to_string()).expect("valid product"),
+        None,
+    );
+    for rejected in [
+        String::new(),
+        "a".repeat(2049),
+        "seity contacts".to_string(),
+    ] {
+        assert!(matches!(
+            disclose(&app, &rejected),
+            Err(CallError::Domain(HostProfileDiscloseError::V1(
+                v01::HostProfileDiscloseError::InvalidReference
+            )))
+        ));
+    }
+    assert_eq!(
+        futures::executor::block_on(profile::read_disclosure(platform.as_ref())).expect("readable"),
+        None,
+        "nothing unscreened is stored"
+    );
+}
+
+#[test]
+fn profile_present_contact_substitutes_the_reference_the_contact_sent() {
+    let platform = stub_platform();
+    let presented = Arc::new(RecordingProfilePlatform::default());
+    let chat = profile_host_on(
+        platform.clone(),
+        ProductContext::new("egui-chat.dot".to_string()).expect("valid product"),
+        Some(presented.clone()),
+    );
+    let alice = [0xa1; 32];
+    let bob = [0xb0; 32];
+    // What the relay does when Alice's host sends her reference.
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(),
+        "egui-chat.dot",
+        alice,
+        "seity.dot".to_string(),
+        Some(CONTACTS_REFERENCE.to_string()),
+    ))
+    .expect("recorded");
+
+    assert_eq!(
+        present_contact(&chat, alice).expect("a contact who shared is presented"),
+        HostProfilePresentContactResponse::V1
+    );
+    assert_eq!(
+        presented
+            .presented
+            .lock()
+            .expect("presented mutex poisoned")
+            .as_slice(),
+        [("egui-chat.dot".to_string(), CONTACTS_REFERENCE.to_string())],
+        "the host presents the stored reference, attributed to the caller"
+    );
+    assert!(matches!(
+        present_contact(&chat, bob),
+        Err(CallError::Domain(HostProfilePresentContactError::V1(
+            v01::HostProfilePresentContactError::NotShared
+        )))
+    ));
+
+    // Another product's contacts are not this product's.
+    let other = profile_host_on(
+        platform.clone(),
+        ProductContext::new("other-chat.dot".to_string()).expect("valid product"),
+        Some(presented.clone()),
+    );
+    assert!(matches!(
+        present_contact(&other, alice),
+        Err(CallError::Domain(HostProfilePresentContactError::V1(
+            v01::HostProfilePresentContactError::NotShared
+        )))
+    ));
+
+    // A retraction from Alice's host removes what this host holds.
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(),
+        "egui-chat.dot",
+        alice,
+        "seity.dot".to_string(),
+        None,
+    ))
+    .expect("recorded");
+    assert!(matches!(
+        present_contact(&chat, alice),
+        Err(CallError::Domain(HostProfilePresentContactError::V1(
+            v01::HostProfilePresentContactError::NotShared
+        )))
+    ));
+
+    assert!(matches!(
+        present_contact(
+            &profile_host_on(
+                platform,
+                ProductContext::new("egui-chat.dot".to_string()).expect("valid product"),
+                None,
+            ),
+            alice,
+        ),
+        Err(CallError::Unsupported)
+    ));
+}
+
 #[test]
 fn chain_follow_ids_are_scoped_per_product_core() {
     let (host_config, product) = runtime_config("same.dot");

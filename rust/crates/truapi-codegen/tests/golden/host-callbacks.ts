@@ -272,7 +272,19 @@ export type CoreStorageKey =
   | {
       tag: "NativeChatProducts";
       value: { rootPublicKey: Uint8Array; genesisHash: Uint8Array };
-    };
+    }
+  /**
+   * The profile reference the user disclosed to their chat contacts, with
+   * the product that disclosed it. Wallet-owned: one per user, whichever
+   * product wrote it. The reference is a bearer capability.
+   */
+  | { tag: "ProfileDisclosure"; value?: undefined }
+  /**
+   * Profile references this product's chat contacts disclosed, newest per
+   * contact. Product-indexed, like the roster they belong to, so clearing
+   * the product clears them. The references are bearer capabilities.
+   */
+  | { tag: "ProfileReferencesReceived"; value: { productId: string } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -1271,6 +1283,10 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         rootPublicKey: S.Bytes(32),
         genesisHash: S.Bytes(32),
       }) as S.Codec<{ rootPublicKey: Uint8Array; genesisHash: Uint8Array }>,
+      ProfileDisclosure: S._void,
+      ProfileReferencesReceived: S.Struct({ productId: S.str }) as S.Codec<{
+        productId: string;
+      }>,
     }),
 );
 

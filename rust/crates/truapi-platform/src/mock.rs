@@ -827,6 +827,10 @@ fn core_key(key: &CoreStorageKey) -> String {
             hex_key(root_public_key),
             hex_key(genesis_hash)
         ),
+        CoreStorageKey::ProfileDisclosure => "core:profile-disclosure".to_string(),
+        CoreStorageKey::ProfileReferencesReceived { product_id } => {
+            format!("core:profile-references-received:{product_id}")
+        }
         CoreStorageKey::NativeChatFileChunk {
             root_public_key,
             genesis_hash,

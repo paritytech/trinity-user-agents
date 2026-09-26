@@ -1866,6 +1866,19 @@ pub enum CoreStorageKey {
         /// Host-selected Chat network.
         genesis_hash: [u8; 32],
     },
+    /// The profile reference the user disclosed to their chat contacts, with
+    /// the product that disclosed it. Wallet-owned: one per user, whichever
+    /// product wrote it. The reference is a bearer capability.
+    #[codec(index = 17)]
+    ProfileDisclosure,
+    /// Profile references this product's chat contacts disclosed, newest per
+    /// contact. Product-indexed, like the roster they belong to, so clearing
+    /// the product clears them. The references are bearer capabilities.
+    #[codec(index = 18)]
+    ProfileReferencesReceived {
+        /// Chat product whose contacts sent the references.
+        product_id: String,
+    },
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1922,6 +1935,10 @@ pub fn describe_core_storage_key(
         CoreStorageKey::MainPurseCoinage { .. } => ("MainPurseCoinage", None),
         CoreStorageKey::NativeChatDevice { .. } => ("NativeChatDevice", None),
         CoreStorageKey::NativeChatProducts { .. } => ("NativeChatProducts", None),
+        CoreStorageKey::ProfileDisclosure => ("ProfileDisclosure", None),
+        CoreStorageKey::ProfileReferencesReceived { product_id } => {
+            ("ProfileReferencesReceived", Some(product_id))
+        }
         CoreStorageKey::NativeChatFileChunk { product_id, .. } => {
             ("NativeChatFileChunk", Some(product_id))
         }

@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "c8972ad11436a788";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "5e0d5318926dc17f";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1663,6 +1663,87 @@ impl RequestMethod for ProfilePresent {
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
+/// `profile_disclose` method marker.
+pub struct ProfileDisclose;
+impl ProfileDisclose {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Profile",
+        method: "disclose",
+        wire_name: "profile_disclose",
+        request_type: "truapi::versioned::profile::HostProfileDiscloseRequest",
+        response_type: "truapi::versioned::profile::HostProfileDiscloseResponse",
+        error_type: Some("truapi::versioned::profile::HostProfileDiscloseError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 20,
+            method_id: 1,
+        }),
+    };
+}
+impl RequestMethod for ProfileDisclose {
+    type Request = truapi::versioned::profile::HostProfileDiscloseRequest;
+    type Response = truapi::versioned::profile::HostProfileDiscloseResponse;
+    type Error = truapi::versioned::profile::HostProfileDiscloseError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `profile_retract` method marker.
+pub struct ProfileRetract;
+impl ProfileRetract {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Profile",
+        method: "retract",
+        wire_name: "profile_retract",
+        request_type: "truapi::versioned::profile::HostProfileRetractRequest",
+        response_type: "truapi::versioned::profile::HostProfileRetractResponse",
+        error_type: Some("truapi::versioned::profile::HostProfileRetractError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 20,
+            method_id: 2,
+        }),
+    };
+}
+impl RequestMethod for ProfileRetract {
+    type Request = truapi::versioned::profile::HostProfileRetractRequest;
+    type Response = truapi::versioned::profile::HostProfileRetractResponse;
+    type Error = truapi::versioned::profile::HostProfileRetractError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `profile_present_contact` method marker.
+pub struct ProfilePresentContact;
+impl ProfilePresentContact {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Profile",
+        method: "present_contact",
+        wire_name: "profile_present_contact",
+        request_type: "truapi::versioned::profile::HostProfilePresentContactRequest",
+        response_type: "truapi::versioned::profile::HostProfilePresentContactResponse",
+        error_type: Some("truapi::versioned::profile::HostProfilePresentContactError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 20,
+            method_id: 3,
+        }),
+    };
+}
+impl RequestMethod for ProfilePresentContact {
+    type Request = truapi::versioned::profile::HostProfilePresentContactRequest;
+    type Response = truapi::versioned::profile::HostProfilePresentContactResponse;
+    type Error = truapi::versioned::profile::HostProfilePresentContactError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
 /// `renderer_render` method marker.
 pub struct RendererRender;
 impl RendererRender {
@@ -2272,6 +2353,9 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     PreimageLookupSubscribe::DESCRIPTOR,
     PreimageSubmit::DESCRIPTOR,
     ProfilePresent::DESCRIPTOR,
+    ProfileDisclose::DESCRIPTOR,
+    ProfileRetract::DESCRIPTOR,
+    ProfilePresentContact::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,
     SigningCreateTransaction::DESCRIPTOR,
     SigningCreateTransactionWithLegacyAccount::DESCRIPTOR,
@@ -2344,6 +2428,9 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     PreimageLookupSubscribe::DESCRIPTOR,
     PreimageSubmit::DESCRIPTOR,
     ProfilePresent::DESCRIPTOR,
+    ProfileDisclose::DESCRIPTOR,
+    ProfileRetract::DESCRIPTOR,
+    ProfilePresentContact::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,
     SigningCreateTransaction::DESCRIPTOR,
     SigningCreateTransactionWithLegacyAccount::DESCRIPTOR,
@@ -2422,6 +2509,9 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     PreimageLookupSubscribe::DESCRIPTOR,
     PreimageSubmit::DESCRIPTOR,
     ProfilePresent::DESCRIPTOR,
+    ProfileDisclose::DESCRIPTOR,
+    ProfileRetract::DESCRIPTOR,
+    ProfilePresentContact::DESCRIPTOR,
     RendererRender::DESCRIPTOR,
     RendererActionSubscribe::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,

@@ -28,6 +28,7 @@ mod native_chat;
 mod pairing_host;
 pub(crate) mod product_manifest;
 mod product_subtree;
+mod profile;
 mod renderer;
 mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
@@ -95,7 +96,11 @@ use truapi::versioned::pocket::{
 };
 use truapi::versioned::preimage::RemotePreimageSubmitError;
 use truapi::versioned::profile::{
-    HostProfilePresentError, HostProfilePresentRequest, HostProfilePresentResponse,
+    HostProfileDiscloseError, HostProfileDiscloseRequest, HostProfileDiscloseResponse,
+    HostProfilePresentContactError, HostProfilePresentContactRequest,
+    HostProfilePresentContactResponse, HostProfilePresentError, HostProfilePresentRequest,
+    HostProfilePresentResponse, HostProfileRetractError, HostProfileRetractRequest,
+    HostProfileRetractResponse,
 };
 use truapi::versioned::renderer::{
     HostRendererActionSubscribeError, HostRendererActionSubscribeItem,
@@ -1406,6 +1411,112 @@ impl Profile for ProductRuntimeHost {
             .await
             .map(|()| HostProfilePresentResponse::V1)
             .map_err(|error| CallError::Domain(HostProfilePresentError::V1(error)))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "profile.disclose"))]
+    async fn disclose(
+        &self,
+        _cx: &CallContext,
+        request: HostProfileDiscloseRequest,
+    ) -> Result<HostProfileDiscloseResponse, CallError<HostProfileDiscloseError>> {
+        // The user's own profile is disclosed from where they manage it, an
+        // App, not from a background Worker.
+        if self.product.execution_kind != truapi_platform::ProductExecutionKind::App {
+            return Err(CallError::Denied);
+        }
+        let HostProfileDiscloseRequest::V1(request) = request;
+        if !is_screened_profile_reference(&request.reference) {
+            return Err(CallError::Domain(HostProfileDiscloseError::V1(
+                v01::HostProfileDiscloseError::InvalidReference,
+            )));
+        }
+        let disclosure = profile::Disclosure {
+            product_id: self.product_id(),
+            reference: request.reference,
+        };
+        profile::write_disclosure(self.platform.as_ref(), &disclosure)
+            .await
+            .map(|()| HostProfileDiscloseResponse::V1)
+            .map_err(|reason| {
+                CallError::Domain(HostProfileDiscloseError::V1(
+                    v01::HostProfileDiscloseError::Unknown { reason },
+                ))
+            })
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "profile.retract"))]
+    async fn retract(
+        &self,
+        _cx: &CallContext,
+        _request: HostProfileRetractRequest,
+    ) -> Result<HostProfileRetractResponse, CallError<HostProfileRetractError>> {
+        if self.product.execution_kind != truapi_platform::ProductExecutionKind::App {
+            return Err(CallError::Denied);
+        }
+        let unknown = |reason| {
+            CallError::Domain(HostProfileRetractError::V1(
+                v01::HostProfileRetractError::Unknown { reason },
+            ))
+        };
+        let storage = self.platform.as_ref();
+        match profile::read_disclosure(storage).await.map_err(unknown)? {
+            None => Ok(HostProfileRetractResponse::V1),
+            // One product may not withdraw what another disclosed.
+            Some(disclosure) if disclosure.product_id != self.product_id() => {
+                Err(CallError::Domain(HostProfileRetractError::V1(
+                    v01::HostProfileRetractError::NotDiscloser,
+                )))
+            }
+            Some(_) => profile::clear_disclosure(storage)
+                .await
+                .map(|()| HostProfileRetractResponse::V1)
+                .map_err(unknown),
+        }
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "profile.present_contact"))]
+    async fn present_contact(
+        &self,
+        _cx: &CallContext,
+        request: HostProfilePresentContactRequest,
+    ) -> Result<HostProfilePresentContactResponse, CallError<HostProfilePresentContactError>> {
+        let platform = self.profile_platform()?;
+        let HostProfilePresentContactRequest::V1(request) = request;
+        let domain = |error| CallError::Domain(HostProfilePresentContactError::V1(error));
+        let received = profile::received_reference(
+            self.platform.as_ref(),
+            &self.product_id(),
+            &request.peer_identity,
+        )
+        .await
+        .map_err(|reason| domain(v01::HostProfilePresentContactError::Unknown { reason }))?
+        .ok_or_else(|| domain(v01::HostProfilePresentContactError::NotShared))?;
+        // A stored reference passed the same screen when it arrived; check
+        // again rather than trust storage.
+        if !is_screened_profile_reference(&received.reference) {
+            return Err(domain(
+                v01::HostProfilePresentContactError::InvalidReference,
+            ));
+        }
+        platform
+            .present_profile(
+                &self.product,
+                v01::HostProfilePresentRequest {
+                    reference: received.reference,
+                },
+            )
+            .await
+            .map(|()| HostProfilePresentContactResponse::V1)
+            .map_err(|error| {
+                domain(match error {
+                    v01::HostProfilePresentError::InvalidReference => {
+                        v01::HostProfilePresentContactError::InvalidReference
+                    }
+                    v01::HostProfilePresentError::Unknown { reason } => {
+                        v01::HostProfilePresentContactError::Unknown { reason }
+                    }
+                })
+            })
     }
 }
 

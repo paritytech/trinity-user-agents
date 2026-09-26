@@ -28,6 +28,7 @@ mod network;
 mod platform;
 mod pocket;
 mod product_config;
+mod profile;
 mod qr_scanner;
 mod register_name;
 mod scanner;
@@ -1236,61 +1237,58 @@ async fn run_pairing_host(
 	log_controller: LogController,
 	debugger: Option<DebuggerSwitch>,
 ) -> Result<()> {
-	let script_projects = script_project_directory(args.base_path.clone());
-	let interactive = args.script.is_none();
-	if interactive && !terminal_ui::is_interactive_terminal() {
-		invalid_invocation(
-			"interactive pairing-host requires a TTY; use pairing-host --script <path>",
-		);
-	}
-	let network = args.network.cli_config()?;
-	let base_path = state_base_path(args.base_path);
-	let product =
-		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context())?;
-	let product_id = product.current();
-	let storage_paths = CliStoragePaths::pairing(base_path.join(network.id));
-	let (terminal_ui, ui_handle) = if interactive {
-		let (ui, handle) =
-			TerminalUi::new_pairing(network.id, product_id.clone(), initial_log_filter);
-		(Some(ui.enter()?), Some(handle))
-	} else {
-		(None, None)
-	};
-	let platform = CliPlatform::new(
-		network,
-		Some(storage_paths),
-		approval_policy(args.auto_accept),
-		ui_handle,
-	);
-	// SSO runs over the real People chain. Usernames resolve from the dotNS
-	// contracts on Asset Hub.
-	let config = PairingHostConfig::new(
-		host_info("Headless Pairing Host"),
-		platform_info(),
-		network.people_genesis,
-		network.bulletin_genesis,
-		network.asset_hub_genesis,
-		DEEPLINK_SCHEME.to_string(),
-	)
-	.context("invalid pairing host config")?;
-	let storage_platform = platform.clone();
-	let chat_host = args.execution_kind.chat_host();
-	let pocket_host = args.execution_kind.pocket_host();
-	let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
-	let pairing_runtime = Arc::new(PairingHostRuntime::with_chat_platform(
-		platform,
-		config,
-		tokio_spawner(),
-		chat_host.map(|chat| chat as Arc<dyn ChatPlatform>),
-	));
-	pairing_runtime.set_permission_status_host(status_host);
-	if let Some(pocket) = pocket_host {
-		pairing_runtime.set_pocket_platform(pocket);
-	}
-	pairing_runtime.set_game_platform(Arc::new(game::CliGameHost));
-	pairing_runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
-	pairing_runtime
-		.set_contacts_platform(contacts::CliContactsHost::from_env(storage_platform.clone()));
+    let script_projects = script_project_directory(args.base_path.clone());
+    let interactive = args.script.is_none();
+    if interactive && !terminal_ui::is_interactive_terminal() {
+        invalid_invocation(
+            "interactive pairing-host requires a TTY; use pairing-host --script <path>",
+        );
+    }
+    let network = args.network.config();
+    let base_path = state_base_path(args.base_path);
+    let product =
+        frame_server::ProductSelection::new(args.product_id, args.execution_kind.context())?;
+    let product_id = product.current();
+    let storage_paths = CliStoragePaths::pairing(base_path.join(network.id));
+    let (terminal_ui, ui_handle) = if interactive {
+        let (ui, handle) =
+            TerminalUi::new_pairing(network.id, product_id.clone(), initial_log_filter);
+        (Some(ui.enter()?), Some(handle))
+    } else {
+        (None, None)
+    };
+    let platform = CliPlatform::new(
+        network,
+        Some(storage_paths),
+        approval_policy(args.auto_accept),
+        ui_handle,
+    );
+    // SSO runs over the real People chain. Usernames resolve from the dotNS
+    // contracts on Asset Hub.
+    let config = PairingHostConfig::new(
+        host_info("Headless Pairing Host"),
+        platform_info(),
+        network.people_genesis,
+        network.bulletin_genesis,
+        network.asset_hub_genesis,
+        DEEPLINK_SCHEME.to_string(),
+    )
+    .context("invalid pairing host config")?;
+    let storage_platform = platform.clone();
+    let chat_host = args.execution_kind.chat_host();
+    let pocket_host = args.execution_kind.pocket_host();
+    let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
+    let pairing_runtime = Arc::new(PairingHostRuntime::with_chat_platform(
+        platform,
+        config,
+        tokio_spawner(),
+        chat_host.map(|chat| chat as Arc<dyn ChatPlatform>),
+    ));
+    pairing_runtime.set_permission_status_host(status_host);
+    if let Some(pocket) = pocket_host {
+        pairing_runtime.set_pocket_platform(pocket);
+    }
+    pairing_runtime.set_profile_platform(profile::CliProfileHost::from_env());
 
 	// Resolved before the port is bound, so a bad URL still fails on the argument
 	// rather than half-way through startup - but reported below, once the UI
@@ -1827,6 +1825,7 @@ fn build_signing_runtime(
     if let Some(pocket) = pocket {
         runtime.set_pocket_platform(pocket);
     }
+    runtime.set_profile_platform(profile::CliProfileHost::from_env());
     runtime.start_statement_allowance_renewal();
     Ok((runtime, platform))
 }
