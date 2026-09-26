@@ -277,6 +277,9 @@ export type CoreStorageKey =
    * The profile reference the user disclosed to their chat contacts, with
    * the product that disclosed it. Wallet-owned: one per user, whichever
    * product wrote it. The reference is a bearer capability.
+   *
+   * Known gap (docs/rfcs/profile-disclosure.md): one slot, so the last product to disclose replaces
+   * the others.
    */
   | { tag: "ProfileDisclosure"; value?: undefined }
   /**

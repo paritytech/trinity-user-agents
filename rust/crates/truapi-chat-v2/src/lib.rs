@@ -380,6 +380,8 @@ pub enum V2ChatMessageContent {
     /// A profile reference the sender's host discloses to this contact, or
     /// `None` to withdraw it. Host-originated and host-consumed: products
     /// never send or see it. V2 wire enum index 21.
+    ///
+    /// Known gap (docs/rfcs/profile-disclosure.md): index 21 is not yet agreed with native Chat.
     ProfileReference {
         discloser_product_id: String,
         reference: Option<String>,

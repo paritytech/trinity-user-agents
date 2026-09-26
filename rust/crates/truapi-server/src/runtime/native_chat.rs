@@ -392,6 +392,8 @@ impl NativeChatRegistry {
             match &mut request {
                 Request::Initialize => {
                     chat.drive_files(&context).await?;
+                    // Known gap (docs/rfcs/profile-disclosure.md): the relay runs here only, not when
+                    // `disclose` returns, and only on this device.
                     chat.publish_profile_reference(&context).await?;
                 }
                 Request::Bind { username } => {

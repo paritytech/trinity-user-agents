@@ -1421,6 +1421,7 @@ impl Profile for ProductRuntimeHost {
     ) -> Result<HostProfileDiscloseResponse, CallError<HostProfileDiscloseError>> {
         // The user's own profile is disclosed from where they manage it, an
         // App, not from a background Worker.
+        // Known gap (docs/rfcs/profile-disclosure.md): no consent prompt yet.
         if self.product.execution_kind != truapi_platform::ProductExecutionKind::App {
             return Err(CallError::Denied);
         }

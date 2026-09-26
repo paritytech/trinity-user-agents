@@ -7,6 +7,9 @@
 //! the initial share, a new contact, a replacement and a withdrawal are one
 //! reconcile: every peer whose watermark differs from the disclosure is sent
 //! the disclosure. The watermark advances when the message is queued.
+//!
+//! Known gap (docs/rfcs/profile-disclosure.md): advancing at queue time means a message that never
+//! arrives is not resent until the disclosure changes.
 
 use super::*;
 use crate::runtime::native_chat::background::require_authorized;
