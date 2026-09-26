@@ -40,7 +40,7 @@ The design has four parts:
 ### Trait
 
 ```rust
-#[wire_trait(id = 20)]
+#[wire_trait(id = 22)]
 #[crate::async_trait]
 pub trait Profile: Send + Sync {
     /// Show the referenced profile in host-owned UI.

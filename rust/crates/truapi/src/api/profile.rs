@@ -14,7 +14,7 @@ use crate::{wire, wire_trait};
 ///
 /// The product hands over an opaque reference; the host resolves, decrypts and
 /// renders it. Profile bytes never return to the product.
-#[wire_trait(id = 20)]
+#[wire_trait(id = 22)]
 #[crate::async_trait]
 pub trait Profile: Send + Sync {
     /// Show the referenced profile in host-owned UI.
