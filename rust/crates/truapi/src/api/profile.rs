@@ -83,7 +83,7 @@ pub trait Profile: Send + Sync {
     ///
     /// ```ts
     /// const result = await truapi.profile.presentContact({
-    ///   peerIdentity: new Uint8Array(32),
+    ///   peerIdentity: "0x0000000000000000000000000000000000000000000000000000000000000000",
     /// });
     /// console.log("contact profile presentation:", result);
     /// ```
