@@ -50,7 +50,8 @@ struct TrustedRemoteProductPermissionRequesterTests {
             .deviceCapability(.camera),
             .accountAccess(targetProductId: "other.dot"),
             .balanceAccess,
-            .userIdentityAccess
+            .userIdentityAccess,
+            .chatAuthority
         ] {
             let (sut, wrapped) = makeSUT()
 
