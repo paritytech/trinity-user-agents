@@ -90,7 +90,7 @@ use truapi::versioned::chat::{
     HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
     HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
 };
-use truapi::versioned::peer_transport::HostPeerTransportDialError;
+use truapi::versioned::jam_peer_transport::HostJamPeerTransportDialError;
 use truapi::versioned::pocket::{
     HostPocketListSubscribeError, HostPocketListSubscribeItem, HostPocketListSubscribeRequest,
     HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPocketRemoveCardResponse,
@@ -729,7 +729,7 @@ impl ProductRuntimeHost {
             .await
     }
 
-    /// Gate `PeerTransport::dial` on
+    /// Gate `JamPeerTransport::dial` on
     /// [`RemotePermission::JamPeers`](v01::RemotePermission::JamPeers) for
     /// `genesis`, before anything connects.
     ///
@@ -744,14 +744,14 @@ impl ProductRuntimeHost {
         not(test),
         expect(
             dead_code,
-            reason = "the core has no native PeerTransport yet; its dial must call this first"
+            reason = "the core has no native JamPeerTransport yet; its dial must call this first"
         )
     )]
-    #[instrument(skip_all, fields(runtime.method = "peer_transport.require_jam_peers"))]
+    #[instrument(skip_all, fields(runtime.method = "jam_peer_transport.require_jam_peers"))]
     pub(crate) async fn require_jam_peers(
         &self,
         genesis: [u8; 32],
-    ) -> Result<(), CallError<HostPeerTransportDialError>> {
+    ) -> Result<(), CallError<HostJamPeerTransportDialError>> {
         let request = v01::RemotePermissionRequest {
             permission: v01::RemotePermission::JamPeers { genesis },
         };
@@ -764,8 +764,8 @@ impl ProductRuntimeHost {
             Ok(
                 PermissionAuthorizationStatus::Denied
                 | PermissionAuthorizationStatus::NotDetermined,
-            ) => Err(CallError::Domain(HostPeerTransportDialError::V1(
-                v01::HostPeerTransportDialError::NotGranted,
+            ) => Err(CallError::Domain(HostJamPeerTransportDialError::V1(
+                v01::HostJamPeerTransportDialError::NotGranted,
             ))),
             Err(err) => Err(CallError::HostFailure {
                 reason: format!("permission storage failed: {err:?}"),

@@ -3,24 +3,24 @@ import * as S from "./scale.js";
 import * as T from "./generated/types.js";
 import { TRUAPI_CODEC_VERSION } from "./generated/client.js";
 import {
-  PEER_TRANSPORT_CLOSE,
-  PEER_TRANSPORT_DIAL,
-  PEER_TRANSPORT_EVENTS,
-  PEER_TRANSPORT_OPEN,
-  PEER_TRANSPORT_RECV,
-  PEER_TRANSPORT_SEND,
+  JAM_PEER_TRANSPORT_CLOSE,
+  JAM_PEER_TRANSPORT_DIAL,
+  JAM_PEER_TRANSPORT_EVENTS,
+  JAM_PEER_TRANSPORT_OPEN,
+  JAM_PEER_TRANSPORT_RECV,
+  JAM_PEER_TRANSPORT_SEND,
   SYSTEM_HANDSHAKE,
 } from "./generated/wire-table.js";
 import { decodeWireMessage, encodeWireMessage, MESSAGE_TYPE_CANCEL, MESSAGE_TYPE_REQUEST, type MethodIds } from "./transport.js";
 import {
-  createPeerTransportSession,
+  createJamPeerTransportSession,
   frameTraitId,
   peerUrl,
-  PEER_TRANSPORT_MAX_MESSAGE_BYTES,
-  type PeerTransportSession,
+  JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES,
+  type JamPeerTransportSession,
   type WebTransportBidirectionalStreamLike,
   type WebTransportLike,
-} from "./peer-transport.js";
+} from "./jam-peer-transport.js";
 
 const GENESIS = "0x353963b9cedfe4ea22038081052a5c151b06b55a4a026a97522cd0320cabf49f";
 const P256 = "0x028874174c8f469438a1b1bab2fde75f9c4999461382ec6d47e9b3b4511294c607";
@@ -110,20 +110,20 @@ function decodeReply<V>(bytes: Uint8Array, codec: S.Codec<V>): V {
   return codec.dec(response.value.payload.value);
 }
 
-async function call<V>(session: PeerTransportSession, ids: MethodIds, request: Uint8Array, codec: S.Codec<V>): Promise<V> {
+async function call<V>(session: JamPeerTransportSession, ids: MethodIds, request: Uint8Array, codec: S.Codec<V>): Promise<V> {
   return decodeReply(await session.handleFrame(frame(ids, request)), codec);
 }
 
-const dialCodec = S.Result(T.VersionedHostPeerTransportDialResponse, S.CallError(T.VersionedHostPeerTransportDialError));
-const openCodec = S.Result(T.VersionedHostPeerTransportOpenResponse, S.CallError(T.VersionedHostPeerTransportOpenError));
-const sendCodec = S.Result(T.VersionedHostPeerTransportSendResponse, S.CallError(T.VersionedHostPeerTransportSendError));
-const recvCodec = S.Result(T.VersionedHostPeerTransportRecvResponse, S.CallError(T.VersionedHostPeerTransportRecvError));
-const closeCodec = S.Result(T.VersionedHostPeerTransportCloseResponse, S.CallError(T.VersionedHostPeerTransportCloseError));
-const eventsCodec = S.Result(T.VersionedHostPeerTransportEventsResponse, S.CallError(T.VersionedHostPeerTransportEventsError));
+const dialCodec = S.Result(T.VersionedHostJamPeerTransportDialResponse, S.CallError(T.VersionedHostJamPeerTransportDialError));
+const openCodec = S.Result(T.VersionedHostJamPeerTransportOpenResponse, S.CallError(T.VersionedHostJamPeerTransportOpenError));
+const sendCodec = S.Result(T.VersionedHostJamPeerTransportSendResponse, S.CallError(T.VersionedHostJamPeerTransportSendError));
+const recvCodec = S.Result(T.VersionedHostJamPeerTransportRecvResponse, S.CallError(T.VersionedHostJamPeerTransportRecvError));
+const closeCodec = S.Result(T.VersionedHostJamPeerTransportCloseResponse, S.CallError(T.VersionedHostJamPeerTransportCloseError));
+const eventsCodec = S.Result(T.VersionedHostJamPeerTransportEventsResponse, S.CallError(T.VersionedHostJamPeerTransportEventsError));
 const handshakeCodec = S.Result(T.VersionedHostHandshakeResponse, S.CallError(T.VersionedHostHandshakeError));
 
-function dialRequest(overrides: Partial<T.HostPeerTransportDialRequest> = {}): Uint8Array {
-  return T.VersionedHostPeerTransportDialRequest.enc({
+function dialRequest(overrides: Partial<T.HostJamPeerTransportDialRequest> = {}): Uint8Array {
+  return T.VersionedHostJamPeerTransportDialRequest.enc({
     tag: "V1",
     value: { genesis: GENESIS, ip: LOOPBACK, port: 43000, ed25519: `0x${"11".repeat(32)}`, p256: P256, ...overrides },
   });
@@ -139,9 +139,9 @@ async function negotiated(
     authorize?: (genesis: string) => Promise<boolean>;
     dialTimeoutMs?: number;
   } = {},
-): Promise<{ session: PeerTransportSession; transports: FakeTransport[] }> {
+): Promise<{ session: JamPeerTransportSession; transports: FakeTransport[] }> {
   const transports: FakeTransport[] = [];
-  const session = createPeerTransportSession({
+  const session = createJamPeerTransportSession({
     authorize: options.authorize ?? (async (genesis) => genesis === GENESIS),
     now: () => 1_790_380_800,
     dialTimeoutMs: options.dialTimeoutMs,
@@ -156,9 +156,9 @@ async function negotiated(
   return { session, transports };
 }
 
-async function dialed(): Promise<{ session: PeerTransportSession; transport: FakeTransport; conn: number }> {
+async function dialed(): Promise<{ session: JamPeerTransportSession; transport: FakeTransport; conn: number }> {
   const { session, transports } = await negotiated();
-  const dial = await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec);
+  const dial = await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec);
   if (!dial.success) throw new Error("dial failed");
   return { session, transport: transports[0]!, conn: dial.value.value.conn };
 }
@@ -180,14 +180,14 @@ describe("peerUrl", () => {
 describe("authorization", () => {
   test("dial before the handshake is NotGranted and asks nothing", async () => {
     const asked: string[] = [];
-    const session = createPeerTransportSession({
+    const session = createJamPeerTransportSession({
       authorize: async (genesis) => {
         asked.push(genesis);
         return true;
       },
       connect: () => fakeTransport("", []),
     });
-    const dial = await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec);
+    const dial = await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec);
     expect(dial).toEqual(NOT_GRANTED);
     expect(asked).toEqual([]);
   });
@@ -201,7 +201,7 @@ describe("authorization", () => {
       },
     });
     for (let i = 0; i < 3; i++) {
-      expect((await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
+      expect((await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
     }
     expect(asked).toEqual([GENESIS]);
     expect(transports).toHaveLength(3);
@@ -217,8 +217,8 @@ describe("authorization", () => {
       },
     });
     for (let i = 0; i < 2; i++) {
-      expect(await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).toEqual(NOT_GRANTED);
-      expect(await call(session, PEER_TRANSPORT_DIAL, dialRequest({ genesis: OTHER_GENESIS }), dialCodec)).toEqual(NOT_GRANTED);
+      expect(await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).toEqual(NOT_GRANTED);
+      expect(await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest({ genesis: OTHER_GENESIS }), dialCodec)).toEqual(NOT_GRANTED);
     }
     expect(asked).toEqual([GENESIS, OTHER_GENESIS]);
     expect(transports).toHaveLength(0);
@@ -235,8 +235,8 @@ describe("authorization", () => {
         return promise;
       },
     });
-    const granted = [0, 1, 2].map(() => call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec));
-    const refused = [0, 1].map(() => call(session, PEER_TRANSPORT_DIAL, dialRequest({ genesis: OTHER_GENESIS }), dialCodec));
+    const granted = [0, 1, 2].map(() => call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec));
+    const refused = [0, 1].map(() => call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest({ genesis: OTHER_GENESIS }), dialCodec));
     await tick();
     expect(asked).toEqual([GENESIS, OTHER_GENESIS]);
     expect(transports).toHaveLength(0);
@@ -252,7 +252,7 @@ describe("authorization", () => {
   test("closing the session answers a dial still waiting for its decision, and connects nothing", async () => {
     const { promise, resolve } = Promise.withResolvers<boolean>();
     const { session, transports } = await negotiated({ authorize: () => promise });
-    const dial = call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec);
+    const dial = call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec);
     await tick();
     session.close();
     expect(await dial).toEqual({ success: false, value: { tag: "Denied" } });
@@ -263,7 +263,7 @@ describe("authorization", () => {
 
   test("a granted dial without p256 is Unreachable in the browser", async () => {
     const { session, transports } = await negotiated();
-    const quicOnly = await call(session, PEER_TRANSPORT_DIAL, dialRequest({ p256: undefined }), dialCodec);
+    const quicOnly = await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest({ p256: undefined }), dialCodec);
     expect(quicOnly).toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "Unreachable" } } });
     expect(transports).toHaveLength(0);
   });
@@ -291,18 +291,18 @@ describe("dial", () => {
 
   test("a rejected handshake is Refused and holds no connection slot", async () => {
     const { session } = await negotiated({ ready: () => "fail" });
-    const dial = await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec);
+    const dial = await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec);
     expect(dial).toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "Refused" } } });
-    const close = await call(session, PEER_TRANSPORT_CLOSE, T.VersionedHostPeerTransportCloseRequest.enc({ tag: "V1", value: { conn: 1 } }), closeCodec);
+    const close = await call(session, JAM_PEER_TRANSPORT_CLOSE, T.VersionedHostJamPeerTransportCloseRequest.enc({ tag: "V1", value: { conn: 1 } }), closeCodec);
     expect(close.success).toBe(false);
   });
 
   test("the ninth connection hits Limit", async () => {
     const { session } = await negotiated();
     for (let i = 0; i < 8; i++) {
-      expect((await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
+      expect((await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
     }
-    const ninth = await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec);
+    const ninth = await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec);
     expect(ninth).toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "Limit" } } });
   });
 });
@@ -310,10 +310,10 @@ describe("dial", () => {
 describe("withdrawn dials", () => {
   const UNREACHABLE = { success: false, value: { tag: "Domain", value: { tag: "V1", value: "Unreachable" } } };
   const CANCELLED = { success: false, value: { tag: "Cancelled" } };
-  const cancel = (session: PeerTransportSession, requestId: string): Promise<Uint8Array> =>
-    session.handleFrame(frame(PEER_TRANSPORT_DIAL, new Uint8Array(), requestId, MESSAGE_TYPE_CANCEL));
-  const events = async (session: PeerTransportSession): Promise<unknown> =>
-    call(session, PEER_TRANSPORT_EVENTS, T.VersionedHostPeerTransportEventsRequest.enc({ tag: "V1", value: undefined }), eventsCodec);
+  const cancel = (session: JamPeerTransportSession, requestId: string): Promise<Uint8Array> =>
+    session.handleFrame(frame(JAM_PEER_TRANSPORT_DIAL, new Uint8Array(), requestId, MESSAGE_TYPE_CANCEL));
+  const events = async (session: JamPeerTransportSession): Promise<unknown> =>
+    call(session, JAM_PEER_TRANSPORT_EVENTS, T.VersionedHostJamPeerTransportEventsRequest.enc({ tag: "V1", value: undefined }), eventsCodec);
 
   test("a prompt outlasting the guest's wait opens nothing, and the retry reuses the answer", async () => {
     const asked: string[] = [];
@@ -325,23 +325,23 @@ describe("withdrawn dials", () => {
         return decision.promise;
       },
     });
-    expect(await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).toEqual(UNREACHABLE);
+    expect(await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).toEqual(UNREACHABLE);
     // The user answers after the guest stopped waiting: that dial opens nothing.
     decision.resolve(true);
     await tick();
     expect(transports).toHaveLength(0);
 
-    expect((await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
+    expect((await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
     expect(asked).toEqual([GENESIS]);
     expect(transports).toHaveLength(1);
   });
 
   test("a handshake outlasting the deadline is closed and frees its slot", async () => {
     const { session, transports } = await negotiated({ dialTimeoutMs: 20, ready: (index) => (index === 0 ? "hang" : "ok") });
-    expect(await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).toEqual(UNREACHABLE);
+    expect(await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).toEqual(UNREACHABLE);
     expect(transports[0]!.closedByHost).toBe(true);
     for (let i = 0; i < 8; i++) {
-      expect((await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
+      expect((await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
     }
     expect(await events(session)).toEqual({ success: true, value: { tag: "V1", value: { events: [] } } });
   });
@@ -349,7 +349,7 @@ describe("withdrawn dials", () => {
   test("a CANCEL during the prompt answers Cancelled and opens nothing", async () => {
     const decision = Promise.withResolvers<boolean>();
     const { session, transports } = await negotiated({ authorize: () => decision.promise });
-    const dial = session.handleFrame(frame(PEER_TRANSPORT_DIAL, dialRequest(), "d1"));
+    const dial = session.handleFrame(frame(JAM_PEER_TRANSPORT_DIAL, dialRequest(), "d1"));
     await tick();
     expect(await cancel(session, "d1")).toEqual(new Uint8Array());
     expect(decodeReply(await dial, dialCodec)).toEqual(CANCELLED);
@@ -358,23 +358,23 @@ describe("withdrawn dials", () => {
     expect(transports).toHaveLength(0);
     // A CANCEL naming nothing in flight lost the race and changes nothing.
     expect(await cancel(session, "d1")).toEqual(new Uint8Array());
-    expect((await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
+    expect((await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
   });
 
   test("a CANCEL during the handshake closes the connection without consuming the cap", async () => {
     const { session, transports } = await negotiated({ ready: (index) => (index === 7 ? "hang" : "ok") });
     for (let i = 0; i < 7; i++) {
-      expect((await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
+      expect((await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
     }
-    const eighth = session.handleFrame(frame(PEER_TRANSPORT_DIAL, dialRequest(), "d8"));
+    const eighth = session.handleFrame(frame(JAM_PEER_TRANSPORT_DIAL, dialRequest(), "d8"));
     await tick();
     expect(transports).toHaveLength(8);
     await cancel(session, "d8");
     expect(decodeReply(await eighth, dialCodec)).toEqual(CANCELLED);
     expect(transports[7]!.closedByHost).toBe(true);
 
-    expect((await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
-    expect(await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).toEqual({
+    expect((await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
+    expect(await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).toEqual({
       success: false,
       value: { tag: "Domain", value: { tag: "V1", value: "Limit" } },
     });
@@ -383,7 +383,7 @@ describe("withdrawn dials", () => {
 
   test("a CANCEL for a completed or unknown dial leaves its connection open", async () => {
     const { session, transports } = await negotiated();
-    const reply = decodeReply(await session.handleFrame(frame(PEER_TRANSPORT_DIAL, dialRequest(), "d1")), dialCodec);
+    const reply = decodeReply(await session.handleFrame(frame(JAM_PEER_TRANSPORT_DIAL, dialRequest(), "d1")), dialCodec);
     expect(reply.success).toBe(true);
     expect(await cancel(session, "d1")).toEqual(new Uint8Array());
     expect(await cancel(session, "unknown")).toEqual(new Uint8Array());
@@ -395,10 +395,10 @@ describe("withdrawn dials", () => {
 describe("streams", () => {
   test("open sends the kind byte; send frames with a u32-LE prefix; recv unframes", async () => {
     const { session, transport, conn } = await dialed();
-    const open = await call(session, PEER_TRANSPORT_OPEN, T.VersionedHostPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 128 } }), openCodec);
+    const open = await call(session, JAM_PEER_TRANSPORT_OPEN, T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 128 } }), openCodec);
     if (!open.success) throw new Error("open failed");
     const stream = open.value.value.stream;
-    const send = await call(session, PEER_TRANSPORT_SEND, T.VersionedHostPeerTransportSendRequest.enc({ tag: "V1", value: { stream, message: "0x0102", fin: true } }), sendCodec);
+    const send = await call(session, JAM_PEER_TRANSPORT_SEND, T.VersionedHostJamPeerTransportSendRequest.enc({ tag: "V1", value: { stream, message: "0x0102", fin: true } }), sendCodec);
     expect(send.success).toBe(true);
     const wire = transport.streams[0]!;
     expect(wire.sent.map((c) => S.bytesToHex(c))).toEqual(["0x80", "0x020000000102"]);
@@ -407,33 +407,33 @@ describe("streams", () => {
     wire.peerWrite(new Uint8Array([3, 0, 0, 0, 0xaa]));
     wire.peerWrite(new Uint8Array([0xbb, 0xcc, 1, 0, 0]));
     await tick();
-    const early = await call(session, PEER_TRANSPORT_RECV, T.VersionedHostPeerTransportRecvRequest.enc({ tag: "V1", value: { stream, max: 1 << 20 } }), recvCodec);
+    const early = await call(session, JAM_PEER_TRANSPORT_RECV, T.VersionedHostJamPeerTransportRecvRequest.enc({ tag: "V1", value: { stream, max: 1 << 20 } }), recvCodec);
     expect(early).toEqual({ success: true, value: { tag: "V1", value: { message: "0xaabbcc", fin: false, reset: false } } });
     wire.peerWrite(new Uint8Array([0, 0xdd]));
     wire.peerFin();
     await tick();
     await tick();
-    const second = await call(session, PEER_TRANSPORT_RECV, T.VersionedHostPeerTransportRecvRequest.enc({ tag: "V1", value: { stream, max: 1 << 20 } }), recvCodec);
+    const second = await call(session, JAM_PEER_TRANSPORT_RECV, T.VersionedHostJamPeerTransportRecvRequest.enc({ tag: "V1", value: { stream, max: 1 << 20 } }), recvCodec);
     expect(second).toEqual({ success: true, value: { tag: "V1", value: { message: "0xdd", fin: true, reset: false } } });
-    const drained = await call(session, PEER_TRANSPORT_RECV, T.VersionedHostPeerTransportRecvRequest.enc({ tag: "V1", value: { stream, max: 1 << 20 } }), recvCodec);
+    const drained = await call(session, JAM_PEER_TRANSPORT_RECV, T.VersionedHostJamPeerTransportRecvRequest.enc({ tag: "V1", value: { stream, max: 1 << 20 } }), recvCodec);
     expect(drained).toEqual({ success: true, value: { tag: "V1", value: { message: undefined, fin: true, reset: false } } });
-    const consumed = await call(session, PEER_TRANSPORT_RECV, T.VersionedHostPeerTransportRecvRequest.enc({ tag: "V1", value: { stream, max: 1 << 20 } }), recvCodec);
+    const consumed = await call(session, JAM_PEER_TRANSPORT_RECV, T.VersionedHostJamPeerTransportRecvRequest.enc({ tag: "V1", value: { stream, max: 1 << 20 } }), recvCodec);
     expect(consumed).toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "Closed" } } });
-    const events = await call(session, PEER_TRANSPORT_EVENTS, T.VersionedHostPeerTransportEventsRequest.enc({ tag: "V1" }), eventsCodec);
+    const events = await call(session, JAM_PEER_TRANSPORT_EVENTS, T.VersionedHostJamPeerTransportEventsRequest.enc({ tag: "V1" }), eventsCodec);
     expect(events).toEqual({ success: true, value: { tag: "V1", value: { events: [{ tag: "StreamFin", value: { stream } }] } } });
   });
 
   test("oversized send is TooLarge and a message above the caller's max resets the stream", async () => {
     const { session, transport, conn } = await dialed();
-    const open = await call(session, PEER_TRANSPORT_OPEN, T.VersionedHostPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 0 } }), openCodec);
+    const open = await call(session, JAM_PEER_TRANSPORT_OPEN, T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 0 } }), openCodec);
     if (!open.success) throw new Error("open failed");
     const stream = open.value.value.stream;
-    const big = `0x${"00".repeat(PEER_TRANSPORT_MAX_MESSAGE_BYTES + 1)}` as const;
-    const send = await call(session, PEER_TRANSPORT_SEND, T.VersionedHostPeerTransportSendRequest.enc({ tag: "V1", value: { stream, message: big, fin: false } }), sendCodec);
+    const big = `0x${"00".repeat(JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES + 1)}` as const;
+    const send = await call(session, JAM_PEER_TRANSPORT_SEND, T.VersionedHostJamPeerTransportSendRequest.enc({ tag: "V1", value: { stream, message: big, fin: false } }), sendCodec);
     expect(send).toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "TooLarge" } } });
     transport.streams[0]!.peerWrite(new Uint8Array([2, 0, 0, 0, 1, 2]));
     await tick();
-    const recv = await call(session, PEER_TRANSPORT_RECV, T.VersionedHostPeerTransportRecvRequest.enc({ tag: "V1", value: { stream, max: 1 } }), recvCodec);
+    const recv = await call(session, JAM_PEER_TRANSPORT_RECV, T.VersionedHostJamPeerTransportRecvRequest.enc({ tag: "V1", value: { stream, max: 1 } }), recvCodec);
     expect(recv).toEqual({ success: true, value: { tag: "V1", value: { message: undefined, fin: false, reset: true } } });
   });
 
@@ -443,25 +443,25 @@ describe("streams", () => {
     incoming.peerWrite(new Uint8Array([0, 2, 0, 0, 0, 9, 9]));
     await tick();
     await tick();
-    const events = await call(session, PEER_TRANSPORT_EVENTS, T.VersionedHostPeerTransportEventsRequest.enc({ tag: "V1" }), eventsCodec);
+    const events = await call(session, JAM_PEER_TRANSPORT_EVENTS, T.VersionedHostJamPeerTransportEventsRequest.enc({ tag: "V1" }), eventsCodec);
     expect(events).toEqual({ success: true, value: { tag: "V1", value: { events: [{ tag: "Accepted", value: { conn, stream: 1, kind: 0 } }] } } });
-    const recv = await call(session, PEER_TRANSPORT_RECV, T.VersionedHostPeerTransportRecvRequest.enc({ tag: "V1", value: { stream: 1, max: 1 << 20 } }), recvCodec);
+    const recv = await call(session, JAM_PEER_TRANSPORT_RECV, T.VersionedHostJamPeerTransportRecvRequest.enc({ tag: "V1", value: { stream: 1, max: 1 << 20 } }), recvCodec);
     expect(recv).toEqual({ success: true, value: { tag: "V1", value: { message: "0x0909", fin: false, reset: false } } });
   });
 
   test("a peer close reports ConnClosed and invalidates streams; session close denies everything", async () => {
     const { session, transport, conn } = await dialed();
-    const open = await call(session, PEER_TRANSPORT_OPEN, T.VersionedHostPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 0 } }), openCodec);
+    const open = await call(session, JAM_PEER_TRANSPORT_OPEN, T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 0 } }), openCodec);
     if (!open.success) throw new Error("open failed");
     transport.peerClose();
     await tick();
     await tick();
-    const events = await call(session, PEER_TRANSPORT_EVENTS, T.VersionedHostPeerTransportEventsRequest.enc({ tag: "V1" }), eventsCodec);
+    const events = await call(session, JAM_PEER_TRANSPORT_EVENTS, T.VersionedHostJamPeerTransportEventsRequest.enc({ tag: "V1" }), eventsCodec);
     expect(events).toEqual({ success: true, value: { tag: "V1", value: { events: [{ tag: "ConnClosed", value: { conn } }] } } });
-    const send = await call(session, PEER_TRANSPORT_SEND, T.VersionedHostPeerTransportSendRequest.enc({ tag: "V1", value: { stream: open.value.value.stream, message: "0x00", fin: false } }), sendCodec);
+    const send = await call(session, JAM_PEER_TRANSPORT_SEND, T.VersionedHostJamPeerTransportSendRequest.enc({ tag: "V1", value: { stream: open.value.value.stream, message: "0x00", fin: false } }), sendCodec);
     expect(send).toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "Closed" } } });
     session.close();
-    const response = decodeWireMessage(await session.handleFrame(frame(PEER_TRANSPORT_DIAL, dialRequest())));
+    const response = decodeWireMessage(await session.handleFrame(frame(JAM_PEER_TRANSPORT_DIAL, dialRequest())));
     expect(response.isOk() && S.Result(S._void, S.CallError(S._void)).dec(response.value.payload.value)).toEqual({ success: false, value: { tag: "Denied" } });
   });
 });

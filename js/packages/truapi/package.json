@@ -35,9 +35,9 @@
       "types": "./dist/internal.d.ts",
       "import": "./dist/internal.js"
     },
-    "./peer-transport": {
-      "types": "./dist/peer-transport.d.ts",
-      "import": "./dist/peer-transport.js"
+    "./jam-peer-transport": {
+      "types": "./dist/jam-peer-transport.d.ts",
+      "import": "./dist/jam-peer-transport.js"
     },
     "./scale": {
       "types": "./dist/scale.d.ts",

@@ -1687,9 +1687,9 @@ fn jam_peers(genesis: [u8; 32]) -> v01::RemotePermissionRequest {
     }
 }
 
-fn jam_peers_not_granted() -> CallError<HostPeerTransportDialError> {
-    CallError::Domain(HostPeerTransportDialError::V1(
-        v01::HostPeerTransportDialError::NotGranted,
+fn jam_peers_not_granted() -> CallError<HostJamPeerTransportDialError> {
+    CallError::Domain(HostJamPeerTransportDialError::V1(
+        v01::HostJamPeerTransportDialError::NotGranted,
     ))
 }
 

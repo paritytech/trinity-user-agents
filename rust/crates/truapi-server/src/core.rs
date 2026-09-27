@@ -188,7 +188,7 @@ mod tests {
     use crate::test_support::{StubPlatform, runtime_config, test_spawner};
 
     #[test]
-    fn a_published_product_has_no_implicit_peer_transport_grant() {
+    fn a_published_product_has_no_implicit_jam_peer_transport_grant() {
         let (host_config, product) = runtime_config("dotli.dot");
         let core = TrUApiCore::from_platform_with_config(
             Arc::new(StubPlatform::default()),
@@ -196,15 +196,15 @@ mod tests {
             product,
             test_spawner(),
         );
-        let ids = request_ids("peer_transport_dial").expect("registered peer transport");
+        let ids = request_ids("jam_peer_transport_dial").expect("registered peer transport");
         let frame = ProtocolMessage {
             request_id: "p:peer".into(),
             payload: Payload {
                 trait_id: ids.trait_id,
                 method_id: ids.method_id,
                 message_type: crate::frame::MESSAGE_TYPE_REQUEST,
-                value: truapi::versioned::peer_transport::HostPeerTransportDialRequest::V1(
-                    truapi::latest::HostPeerTransportDialRequest {
+                value: truapi::versioned::jam_peer_transport::HostJamPeerTransportDialRequest::V1(
+                    truapi::latest::HostJamPeerTransportDialRequest {
                         genesis: [0x35; 32],
                         ip: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1],
                         port: 43000,
@@ -222,10 +222,10 @@ mod tests {
                 .unwrap()
                 .payload
                 .value,
-            Err::<truapi::versioned::peer_transport::HostPeerTransportDialResponse, _>(
+            Err::<truapi::versioned::jam_peer_transport::HostJamPeerTransportDialResponse, _>(
                 truapi::CallError::Domain(
-                    truapi::versioned::peer_transport::HostPeerTransportDialError::V1(
-                        truapi::latest::HostPeerTransportDialError::NotGranted,
+                    truapi::versioned::jam_peer_transport::HostJamPeerTransportDialError::V1(
+                        truapi::latest::HostJamPeerTransportDialError::NotGranted,
                     ),
                 ),
             )

@@ -1,4 +1,4 @@
-//! JAMNP-S helpers for hosts that implement `PeerTransport`.
+//! JAMNP-S helpers for hosts that implement `JamPeerTransport`.
 //!
 //! Peer access is a runtime permission, not a manifest capability: before a
 //! `dial` connects, the host requires
@@ -6,11 +6,11 @@
 //! for the requested genesis, reading the product's stored decision, prompting
 //! when it is undetermined and persisting the answer per product and genesis.
 //! Anything short of a grant answers
-//! [`NotGranted`](truapi::latest::HostPeerTransportDialError::NotGranted).
+//! [`NotGranted`](truapi::latest::HostJamPeerTransportDialError::NotGranted).
 //!
 //! The host also owns the transport: it builds the JAMNP-S ALPN from the
 //! genesis ([`alpn`]), verifies the peer certificate against the identity the
-//! guest named, frames messages and enforces the `PEER_TRANSPORT_MAX_*` caps
+//! guest named, frames messages and enforces the `JAM_PEER_TRANSPORT_MAX_*` caps
 //! from `truapi::latest`.
 
 use core::fmt;

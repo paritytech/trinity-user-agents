@@ -141,8 +141,9 @@ enum RemotePermission {
   // remote_statement_store_submit.
   StatementSubmit,
   // Read-only JAMNP-S QUIC/WebTransport peer access to the validators of
-  // one JAM chain via peer_transport_dial. The product names the endpoints;
-  // every byte received is untrusted. Decided per product and genesis.
+  // one JAM chain via jam_peer_transport_dial. The product names the
+  // endpoints; every byte received is untrusted. Decided per product and
+  // genesis.
   JamPeers { genesis: [u8; 32] }
 }
 ```
@@ -242,7 +243,7 @@ The following business methods gate on a specific permission and MUST internally
 | `remote_chain_transaction_broadcast` | `RemotePermission::ChainSubmit`           |
 | `remote_preimage_submit`             | `RemotePermission::PreimageSubmit`        |
 | `remote_statement_store_submit`      | `RemotePermission::StatementSubmit`       |
-| `peer_transport_dial`                | `RemotePermission::JamPeers { genesis }`  |
+| `jam_peer_transport_dial`            | `RemotePermission::JamPeers { genesis }`  |
 | `host_navigate_to`                   | `DevicePermission::OpenUrl`               |
 | `send_push_notification`             | `DevicePermission::Notifications`         |
 

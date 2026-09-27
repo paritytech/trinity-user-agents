@@ -2,13 +2,13 @@ import * as S from "./scale.js";
 import * as T from "./generated/types.js";
 import { TRUAPI_CODEC_VERSION } from "./generated/client.js";
 import {
-  PEER_TRANSPORT_CLOSE,
-  PEER_TRANSPORT_DIAL,
-  PEER_TRANSPORT_EVENTS,
-  PEER_TRANSPORT_OPEN,
-  PEER_TRANSPORT_RECV,
-  PEER_TRANSPORT_RESET,
-  PEER_TRANSPORT_SEND,
+  JAM_PEER_TRANSPORT_CLOSE,
+  JAM_PEER_TRANSPORT_DIAL,
+  JAM_PEER_TRANSPORT_EVENTS,
+  JAM_PEER_TRANSPORT_OPEN,
+  JAM_PEER_TRANSPORT_RECV,
+  JAM_PEER_TRANSPORT_RESET,
+  JAM_PEER_TRANSPORT_SEND,
   SYSTEM_HANDSHAKE,
 } from "./generated/wire-table.js";
 import {
@@ -20,33 +20,33 @@ import {
   type MethodIds,
   type ProtocolMessage,
 } from "./transport.js";
-import { webTransportCertificateHashes } from "./peer-transport-cert.js";
+import { webTransportCertificateHashes } from "./jam-peer-transport-cert.js";
 
-/** Caps mirrored from `truapi::v01::peer_transport`. */
-export const PEER_TRANSPORT_MAX_CONNECTIONS = 8;
-export const PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION = 16;
-export const PEER_TRANSPORT_MAX_MESSAGE_BYTES = 1 << 20;
-export const PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION = 4 << 20;
+/** Caps mirrored from `truapi::v01::jam_peer_transport`. */
+export const JAM_PEER_TRANSPORT_MAX_CONNECTIONS = 8;
+export const JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION = 16;
+export const JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES = 1 << 20;
+export const JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION = 4 << 20;
 /** Largest request frame: a `send` of a maximal message plus SCALE and wire overhead. */
-export const PEER_TRANSPORT_MAX_FRAME_BYTES = PEER_TRANSPORT_MAX_MESSAGE_BYTES + 4096;
+export const JAM_PEER_TRANSPORT_MAX_FRAME_BYTES = JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES + 4096;
 const MAX_PENDING_EVENTS = 1024;
 /**
  * Bound on one `dial`, from its arrival to its reply, the permission decision
  * included. A guest that waits at least this long for a dial reply never
  * misses one, and anything a dial would open after it is closed instead.
  */
-export const PEER_TRANSPORT_DIAL_TIMEOUT_MS = 10_000;
+export const JAM_PEER_TRANSPORT_DIAL_TIMEOUT_MS = 10_000;
 const textEncoder = new TextEncoder();
 
 const handshakeResult = S.Result(T.VersionedHostHandshakeResponse, S.CallError(T.VersionedHostHandshakeError));
 const frameworkResult = S.Result(S._void, S.CallError(S._void));
-const dialResult = S.Result(T.VersionedHostPeerTransportDialResponse, S.CallError(T.VersionedHostPeerTransportDialError));
-const openResult = S.Result(T.VersionedHostPeerTransportOpenResponse, S.CallError(T.VersionedHostPeerTransportOpenError));
-const sendResult = S.Result(T.VersionedHostPeerTransportSendResponse, S.CallError(T.VersionedHostPeerTransportSendError));
-const recvResult = S.Result(T.VersionedHostPeerTransportRecvResponse, S.CallError(T.VersionedHostPeerTransportRecvError));
-const resetResult = S.Result(T.VersionedHostPeerTransportResetResponse, S.CallError(T.VersionedHostPeerTransportResetError));
-const closeResult = S.Result(T.VersionedHostPeerTransportCloseResponse, S.CallError(T.VersionedHostPeerTransportCloseError));
-const eventsResult = S.Result(T.VersionedHostPeerTransportEventsResponse, S.CallError(T.VersionedHostPeerTransportEventsError));
+const dialResult = S.Result(T.VersionedHostJamPeerTransportDialResponse, S.CallError(T.VersionedHostJamPeerTransportDialError));
+const openResult = S.Result(T.VersionedHostJamPeerTransportOpenResponse, S.CallError(T.VersionedHostJamPeerTransportOpenError));
+const sendResult = S.Result(T.VersionedHostJamPeerTransportSendResponse, S.CallError(T.VersionedHostJamPeerTransportSendError));
+const recvResult = S.Result(T.VersionedHostJamPeerTransportRecvResponse, S.CallError(T.VersionedHostJamPeerTransportRecvError));
+const resetResult = S.Result(T.VersionedHostJamPeerTransportResetResponse, S.CallError(T.VersionedHostJamPeerTransportResetError));
+const closeResult = S.Result(T.VersionedHostJamPeerTransportCloseResponse, S.CallError(T.VersionedHostJamPeerTransportCloseError));
+const eventsResult = S.Result(T.VersionedHostJamPeerTransportEventsResponse, S.CallError(T.VersionedHostJamPeerTransportEventsError));
 const cancelledReply = frameworkResult.enc({ success: false, value: { tag: "Cancelled" } });
 
 /** Minimal WebTransport surface the session needs; lets tests inject a fake. */
@@ -63,7 +63,7 @@ export interface WebTransportBidirectionalStreamLike {
   readonly writable: WritableStream<Uint8Array>;
 }
 
-export interface PeerTransportOptions {
+export interface JamPeerTransportOptions {
   /**
    * Decide whether this execution may dial peers of `genesis`, a `0x`-prefixed
    * lower-case 32-byte genesis header hash: the host's check of the
@@ -76,12 +76,12 @@ export interface PeerTransportOptions {
   connect?: (url: string, certificateHashes: Uint8Array[]) => WebTransportLike;
   /** Unix seconds used to select certificate validity periods; defaults to the wall clock. */
   now?: () => number;
-  /** Dial deadline in milliseconds; defaults to {@link PEER_TRANSPORT_DIAL_TIMEOUT_MS}. */
+  /** Dial deadline in milliseconds; defaults to {@link JAM_PEER_TRANSPORT_DIAL_TIMEOUT_MS}. */
   dialTimeoutMs?: number;
 }
 
 /** Execution-local peer endpoint. It provides no account or signing authority. */
-export interface PeerTransportSession {
+export interface JamPeerTransportSession {
   /** Handle one request frame; CANCEL frames return zero bytes. */
   handleFrame(frame: Uint8Array): Promise<Uint8Array>;
   /** Close every connection on stop or replacement and refuse further requests. */
@@ -104,7 +104,7 @@ function exact<V>(codec: S.Codec<V>, bytes: Uint8Array): V {
 }
 
 function decodeFrame(bytes: Uint8Array): ProtocolMessage {
-  if (!(bytes instanceof Uint8Array) || bytes.length > PEER_TRANSPORT_MAX_FRAME_BYTES) {
+  if (!(bytes instanceof Uint8Array) || bytes.length > JAM_PEER_TRANSPORT_MAX_FRAME_BYTES) {
     throw new Error("Invalid or oversized peer-transport frame");
   }
   const decoded = decodeWireMessage(bytes);
@@ -176,7 +176,7 @@ interface PeerConnection {
 }
 
 /**
- * Create the browser PeerTransport endpoint for one execution. Every `dial`
+ * Create the browser JamPeerTransport endpoint for one execution. Every `dial`
  * is authorized for its genesis through `options.authorize` before anything
  * connects; the other methods act only on connections an authorized dial
  * opened. A dial answers within its deadline, prompt included: one still
@@ -186,7 +186,7 @@ interface PeerConnection {
  * again. The host must fence late replies against execution stop or
  * replacement.
  */
-export function createPeerTransportSession(options: PeerTransportOptions): PeerTransportSession {
+export function createJamPeerTransportSession(options: JamPeerTransportOptions): JamPeerTransportSession {
   const decisions = new Map<string, Promise<boolean>>();
   const authorized = (genesis: string): Promise<boolean> => {
     let decision = decisions.get(genesis);
@@ -209,7 +209,7 @@ export function createPeerTransportSession(options: PeerTransportOptions): PeerT
         serverCertificateHashes: hashes.map((value) => ({ algorithm: "sha-256", value: value as Uint8Array<ArrayBuffer> })),
       }) as unknown as WebTransportLike);
   const now = options.now ?? ((): number => Math.floor(Date.now() / 1000));
-  const dialTimeoutMs = options.dialTimeoutMs ?? PEER_TRANSPORT_DIAL_TIMEOUT_MS;
+  const dialTimeoutMs = options.dialTimeoutMs ?? JAM_PEER_TRANSPORT_DIAL_TIMEOUT_MS;
   /** In-flight dials by request id; CANCEL or `close` withdraws one with its reply. */
   const pendingDials = new Map<string, (reply: Uint8Array) => void>();
   let closed = false;
@@ -218,9 +218,9 @@ export function createPeerTransportSession(options: PeerTransportOptions): PeerT
   let nextStream = 1;
   const connections = new Map<number, PeerConnection>();
   const streams = new Map<number, PeerStream>();
-  const events: T.PeerTransportEvent[] = [];
+  const events: T.JamPeerTransportEvent[] = [];
 
-  const pushEvent = (event: T.PeerTransportEvent): void => {
+  const pushEvent = (event: T.JamPeerTransportEvent): void => {
     if (events.length < MAX_PENDING_EVENTS) events.push(event);
   };
 
@@ -251,7 +251,7 @@ export function createPeerTransportSession(options: PeerTransportOptions): PeerT
     while (stream.rx.length >= 4) {
       const view = new DataView(stream.rx.buffer, stream.rx.byteOffset, stream.rx.byteLength);
       const length = view.getUint32(0, true);
-      if (length > PEER_TRANSPORT_MAX_MESSAGE_BYTES) {
+      if (length > JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES) {
         stream.reset = true;
         void stream.writer.abort().catch(() => undefined);
         void stream.reader.cancel().catch(() => undefined);
@@ -313,7 +313,7 @@ export function createPeerTransportSession(options: PeerTransportOptions): PeerT
       while (!conn.closed) {
         const { value: bidi, done } = await incoming.read();
         if (done || conn.closed) break;
-        if (conn.streams.size >= PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION) {
+        if (conn.streams.size >= JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION) {
           void bidi.writable.abort().catch(() => undefined);
           void bidi.readable.cancel().catch(() => undefined);
           continue;
@@ -339,12 +339,12 @@ export function createPeerTransportSession(options: PeerTransportOptions): PeerT
    * deadline passes; the guest then no longer waits for what this dial opens,
    * so nothing it opens outlives it or holds a connection slot.
    */
-  const dial = async (request: T.HostPeerTransportDialRequest, withdrawn: Promise<Uint8Array>): Promise<Uint8Array> => {
+  const dial = async (request: T.HostJamPeerTransportDialRequest, withdrawn: Promise<Uint8Array>): Promise<Uint8Array> => {
     const granted = await Promise.race([authorized(request.genesis), withdrawn]);
     if (granted instanceof Uint8Array) return granted;
     if (!granted) return domain(dialResult, "NotGranted");
     if (closed) return frameworkResult.enc({ success: false, value: { tag: "Denied" } });
-    if (connections.size >= PEER_TRANSPORT_MAX_CONNECTIONS) return domain(dialResult, "Limit");
+    if (connections.size >= JAM_PEER_TRANSPORT_MAX_CONNECTIONS) return domain(dialResult, "Limit");
     // Browsers only expose WebTransport; JAMNP-S QUIC needs the P-256 identity.
     if (request.p256 === undefined) return domain(dialResult, "Unreachable");
     const p256 = S.hexToBytes(request.p256);
@@ -385,7 +385,7 @@ export function createPeerTransportSession(options: PeerTransportOptions): PeerT
   };
 
   /** Run one dial frame: register it for CANCEL and arm its deadline. */
-  const dialFrame = async (requestId: string, request: T.HostPeerTransportDialRequest): Promise<Uint8Array> => {
+  const dialFrame = async (requestId: string, request: T.HostJamPeerTransportDialRequest): Promise<Uint8Array> => {
     // Executor form: this package's lib target predates Promise.withResolvers.
     let withdraw!: (reply: Uint8Array) => void;
     const withdrawn = new Promise<Uint8Array>((resolve) => {
@@ -401,10 +401,10 @@ export function createPeerTransportSession(options: PeerTransportOptions): PeerT
     }
   };
 
-  const open = async (request: T.HostPeerTransportOpenRequest): Promise<Uint8Array> => {
+  const open = async (request: T.HostJamPeerTransportOpenRequest): Promise<Uint8Array> => {
     const conn = connections.get(request.conn);
     if (conn === undefined || conn.closed) return domain(openResult, "Closed");
-    if (conn.streams.size >= PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION) return domain(openResult, "Limit");
+    if (conn.streams.size >= JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION) return domain(openResult, "Limit");
     try {
       const bidi = await conn.transport.createBidirectionalStream();
       const stream = register(conn, bidi, new Uint8Array());
@@ -415,14 +415,14 @@ export function createPeerTransportSession(options: PeerTransportOptions): PeerT
     }
   };
 
-  const send = async (request: T.HostPeerTransportSendRequest): Promise<Uint8Array> => {
+  const send = async (request: T.HostJamPeerTransportSendRequest): Promise<Uint8Array> => {
     const stream = streams.get(request.stream);
     if (stream === undefined || stream.txClosed || stream.reset || stream.conn.closed) return domain(sendResult, "Closed");
     const message = S.hexToBytes(request.message);
-    if (message.length > PEER_TRANSPORT_MAX_MESSAGE_BYTES) return domain(sendResult, "TooLarge");
+    if (message.length > JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES) return domain(sendResult, "TooLarge");
     let pending = 0;
     for (const other of stream.conn.streams.values()) pending += other.txPending;
-    if (pending + message.length + 4 > PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION) return domain(sendResult, "Limit");
+    if (pending + message.length + 4 > JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION) return domain(sendResult, "Limit");
     const frame = new Uint8Array(4 + message.length);
     new DataView(frame.buffer).setUint32(0, message.length, true);
     frame.set(message, 4);
@@ -442,7 +442,7 @@ export function createPeerTransportSession(options: PeerTransportOptions): PeerT
     }
   };
 
-  const recv = (request: T.HostPeerTransportRecvRequest): Uint8Array => {
+  const recv = (request: T.HostJamPeerTransportRecvRequest): Uint8Array => {
     const stream = streams.get(request.stream);
     if (stream === undefined || stream.rxConsumed) return domain(recvResult, "Closed");
     const next = stream.messages[0];
@@ -468,14 +468,14 @@ export function createPeerTransportSession(options: PeerTransportOptions): PeerT
     return ok(recvResult, { tag: "V1", value: { message, fin, reset } });
   };
 
-  const reset = (request: T.HostPeerTransportResetRequest): Uint8Array => {
+  const reset = (request: T.HostJamPeerTransportResetRequest): Uint8Array => {
     const stream = streams.get(request.stream);
     if (stream === undefined) return domain(resetResult, "Closed");
     dropStream(stream, true);
     return ok(resetResult, { tag: "V1" });
   };
 
-  const close = (request: T.HostPeerTransportCloseRequest): Uint8Array => {
+  const close = (request: T.HostJamPeerTransportCloseRequest): Uint8Array => {
     const conn = connections.get(request.conn);
     if (conn === undefined || conn.closed) return domain(closeResult, "Closed");
     dropConnection(conn);
@@ -486,13 +486,13 @@ export function createPeerTransportSession(options: PeerTransportOptions): PeerT
     async handleFrame(bytes) {
       const request = decodeFrame(bytes);
       if (request.payload.messageType === MESSAGE_TYPE_CANCEL) {
-        if (request.payload.traitId !== PEER_TRANSPORT_DIAL.trait || request.payload.value.length !== 0) {
+        if (request.payload.traitId !== JAM_PEER_TRANSPORT_DIAL.trait || request.payload.value.length !== 0) {
           throw new Error("Invalid cancellation frame");
         }
         // Only a dial can outlast one host tick: it may wait on a permission
         // prompt and a handshake. The dial itself answers `Cancelled`; a
         // CANCEL naming nothing in flight lost the race and is dropped.
-        if (hasIds(request, PEER_TRANSPORT_DIAL)) pendingDials.get(request.requestId)?.(cancelledReply);
+        if (hasIds(request, JAM_PEER_TRANSPORT_DIAL)) pendingDials.get(request.requestId)?.(cancelledReply);
         return new Uint8Array();
       }
       if (request.payload.messageType !== MESSAGE_TYPE_REQUEST) {
@@ -512,42 +512,42 @@ export function createPeerTransportSession(options: PeerTransportOptions): PeerT
         negotiated = true;
         return reply(request, handshakeResult.enc({ success: true, value: { tag: "V1" } }));
       }
-      if (request.payload.traitId !== PEER_TRANSPORT_DIAL.trait) {
+      if (request.payload.traitId !== JAM_PEER_TRANSPORT_DIAL.trait) {
         return reply(request, frameworkResult.enc({ success: false, value: { tag: "Denied" } }));
       }
       const malformed = (): Uint8Array =>
         reply(request, frameworkResult.enc({ success: false, value: { tag: "MalformedFrame", value: { reason: "invalid peer-transport request" } } }));
       try {
-        if (hasIds(request, PEER_TRANSPORT_DIAL)) {
-          const value = exact(T.VersionedHostPeerTransportDialRequest, request.payload.value).value;
+        if (hasIds(request, JAM_PEER_TRANSPORT_DIAL)) {
+          const value = exact(T.VersionedHostJamPeerTransportDialRequest, request.payload.value).value;
           if (!negotiated) return reply(request, domain(dialResult, "NotGranted"));
           // Two live dials sharing an id leave neither addressable by CANCEL;
           // like the core dispatcher, the second is dropped unanswered.
           if (pendingDials.has(request.requestId)) return new Uint8Array();
           return reply(request, await dialFrame(request.requestId, value));
         }
-        if (hasIds(request, PEER_TRANSPORT_OPEN)) {
-          const value = exact(T.VersionedHostPeerTransportOpenRequest, request.payload.value).value;
+        if (hasIds(request, JAM_PEER_TRANSPORT_OPEN)) {
+          const value = exact(T.VersionedHostJamPeerTransportOpenRequest, request.payload.value).value;
           return reply(request, negotiated ? await open(value) : domain(openResult, "NotGranted"));
         }
-        if (hasIds(request, PEER_TRANSPORT_SEND)) {
-          const value = exact(T.VersionedHostPeerTransportSendRequest, request.payload.value).value;
+        if (hasIds(request, JAM_PEER_TRANSPORT_SEND)) {
+          const value = exact(T.VersionedHostJamPeerTransportSendRequest, request.payload.value).value;
           return reply(request, negotiated ? await send(value) : domain(sendResult, "Closed"));
         }
-        if (hasIds(request, PEER_TRANSPORT_RECV)) {
-          const value = exact(T.VersionedHostPeerTransportRecvRequest, request.payload.value).value;
+        if (hasIds(request, JAM_PEER_TRANSPORT_RECV)) {
+          const value = exact(T.VersionedHostJamPeerTransportRecvRequest, request.payload.value).value;
           return reply(request, negotiated ? recv(value) : domain(recvResult, "Closed"));
         }
-        if (hasIds(request, PEER_TRANSPORT_RESET)) {
-          const value = exact(T.VersionedHostPeerTransportResetRequest, request.payload.value).value;
+        if (hasIds(request, JAM_PEER_TRANSPORT_RESET)) {
+          const value = exact(T.VersionedHostJamPeerTransportResetRequest, request.payload.value).value;
           return reply(request, negotiated ? reset(value) : domain(resetResult, "Closed"));
         }
-        if (hasIds(request, PEER_TRANSPORT_CLOSE)) {
-          const value = exact(T.VersionedHostPeerTransportCloseRequest, request.payload.value).value;
+        if (hasIds(request, JAM_PEER_TRANSPORT_CLOSE)) {
+          const value = exact(T.VersionedHostJamPeerTransportCloseRequest, request.payload.value).value;
           return reply(request, negotiated ? close(value) : domain(closeResult, "Closed"));
         }
-        if (hasIds(request, PEER_TRANSPORT_EVENTS)) {
-          exact(T.VersionedHostPeerTransportEventsRequest, request.payload.value);
+        if (hasIds(request, JAM_PEER_TRANSPORT_EVENTS)) {
+          exact(T.VersionedHostJamPeerTransportEventsRequest, request.payload.value);
           if (!negotiated) return reply(request, domain(eventsResult, "NotGranted"));
           return reply(request, ok(eventsResult, { tag: "V1", value: { events: events.splice(0, events.length) } }));
         }

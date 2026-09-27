@@ -55,7 +55,7 @@ pub enum HostDevicePermissionRequest {
 ///
 /// `ChainSubmit`, `PreimageSubmit`, `StatementSubmit` and `JamPeers` are also
 /// triggered implicitly by the corresponding business calls when not yet
-/// granted (`PeerTransport::dial` for `JamPeers`).
+/// granted (`JamPeerTransport::dial` for `JamPeers`).
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum RemotePermission {
@@ -89,7 +89,7 @@ pub enum RemotePermission {
     #[display("submit statements")]
     StatementSubmit,
     /// Read-only peer access over JAMNP-S QUIC/WebTransport to the validators
-    /// of one JAM chain, through the `PeerTransport` service.
+    /// of one JAM chain, through the `JamPeerTransport` service.
     ///
     /// The app names the endpoints it dials; the grant covers only peers of
     /// `genesis`. Every byte received is untrusted, and the grant carries no

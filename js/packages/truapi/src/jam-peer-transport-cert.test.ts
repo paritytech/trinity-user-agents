@@ -10,7 +10,7 @@ import {
   webTransportCertificateDer,
   webTransportCertificateHash,
   webTransportCertificateHashes,
-} from "./peer-transport-cert.js";
+} from "./jam-peer-transport-cert.js";
 
 // Vectors produced by rcgen 0.14.8 / p256 0.13.2 (the PolkaJAM dd9af78
 // lockfile versions) following PolkaJAM's `net/cert.rs`, at unix time
