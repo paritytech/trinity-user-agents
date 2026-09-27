@@ -84,6 +84,9 @@ impl WalletCoinage {
             let result = wallet
                 .top_up_once(&context, &product_id, memo, public)
                 .await;
+            // Release the store lease before the caller can observe the
+            // result, so closing and reopening the wallet never conflicts.
+            drop(wallet);
             let _ = tx.send(result);
         }));
         let credited = rx
@@ -300,7 +303,9 @@ impl WalletCoinage {
         let context = context.clone();
         let (tx, rx) = futures::channel::oneshot::channel();
         (context.services.spawner.clone())(Box::pin(async move {
-            let _ = tx.send(wallet.reconcile_top_ups_once(&context).await);
+            let result = wallet.reconcile_top_ups_once(&context).await;
+            drop(wallet);
+            let _ = tx.send(result);
         }));
         rx.await.map_err(|_| Error::StorageUnavailable)?
     }
