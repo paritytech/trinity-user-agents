@@ -116,9 +116,11 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         product _: ProductExecutionConfig,
         request: RemotePermission
     ) async throws -> TrUAPIPermissionDecision {
-        try await dependencies.permissionGuard.requestPermissionsDecision(
+        // This app has no JAM peer transport, so it has nothing to grant.
+        guard let domainRequest = request.toDomainRequest() else { return .deny }
+        return try await dependencies.permissionGuard.requestPermissionsDecision(
             productId: dependencies.productId,
-            permissions: request.toDomainPermissions()
+            permissions: domainRequest.toDomainPermissions()
         ).hostDecision
     }
 
@@ -333,15 +335,16 @@ extension HostDevicePermissionRequest {
 }
 
 extension RemotePermission {
-    /// The Products permissions the guard asks the user about.
-    func toDomainPermissions() -> [ProductPermission] {
+    /// Maps the TrUAPI remote permission to the Products domain request, or
+    /// `nil` for one this app has no surface for.
+    func toDomainRequest() -> Products.RemotePermissionRequest? {
         switch self {
-        case let .remote(domains): Products.RemotePermissionRequest.remote(domains: domains).toDomainPermissions()
-        case .webRtc: Products.RemotePermissionRequest.webRTC.toDomainPermissions()
-        case .chainSubmit: Products.RemotePermissionRequest.chainSubmit.toDomainPermissions()
-        case .preimageSubmit: Products.RemotePermissionRequest.preimageSubmit.toDomainPermissions()
-        case .statementSubmit: Products.RemotePermissionRequest.statementSubmit.toDomainPermissions()
-        case .balanceAccess: [.balanceAccess]
+        case let .remote(domains): .remote(domains: domains)
+        case .webRtc: .webRTC
+        case .chainSubmit: .chainSubmit
+        case .preimageSubmit: .preimageSubmit
+        case .statementSubmit: .statementSubmit
+        case .jamPeers: nil
         }
     }
 }

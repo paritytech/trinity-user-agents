@@ -114,10 +114,15 @@ function dialRequest(overrides: Partial<T.HostPeerTransportDialRequest> = {}): U
   });
 }
 
-async function negotiated(options: { failReady?: boolean } = {}): Promise<{ session: PeerTransportSession; transports: FakeTransport[] }> {
+const OTHER_GENESIS = `0x${"ab".repeat(32)}`;
+const NOT_GRANTED = { success: false, value: { tag: "Domain", value: { tag: "V1", value: "NotGranted" } } };
+
+async function negotiated(
+  options: { failReady?: boolean; authorize?: (genesis: string) => Promise<boolean> } = {},
+): Promise<{ session: PeerTransportSession; transports: FakeTransport[] }> {
   const transports: FakeTransport[] = [];
   const session = createPeerTransportSession({
-    genesis: GENESIS,
+    authorize: options.authorize ?? (async (genesis) => genesis === GENESIS),
     now: () => 1_790_380_800,
     connect: (url, hashes) => {
       const transport = fakeTransport(url, hashes, options.failReady);
@@ -151,17 +156,91 @@ describe("peerUrl", () => {
   });
 });
 
-describe("grant", () => {
-  test("dial before the handshake is NotGranted", async () => {
-    const session = createPeerTransportSession({ genesis: GENESIS, connect: () => fakeTransport("", []) });
+describe("authorization", () => {
+  test("dial before the handshake is NotGranted and asks nothing", async () => {
+    const asked: string[] = [];
+    const session = createPeerTransportSession({
+      authorize: async (genesis) => {
+        asked.push(genesis);
+        return true;
+      },
+      connect: () => fakeTransport("", []),
+    });
     const dial = await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec);
-    expect(dial).toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "NotGranted" } } });
+    expect(dial).toEqual(NOT_GRANTED);
+    expect(asked).toEqual([]);
   });
 
-  test("dial for another genesis is NotGranted; without p256 it is Unreachable", async () => {
+  test("a granted genesis is asked once for the whole session", async () => {
+    const asked: string[] = [];
+    const { session, transports } = await negotiated({
+      authorize: async (genesis) => {
+        asked.push(genesis);
+        return true;
+      },
+    });
+    for (let i = 0; i < 3; i++) {
+      expect((await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
+    }
+    expect(asked).toEqual([GENESIS]);
+    expect(transports).toHaveLength(3);
+  });
+
+  test("a denied or failed decision is NotGranted, remembered, and connects nothing", async () => {
+    const asked: string[] = [];
+    const { session, transports } = await negotiated({
+      authorize: async (genesis) => {
+        asked.push(genesis);
+        if (genesis === OTHER_GENESIS) throw new Error("prompt dismissed");
+        return false;
+      },
+    });
+    for (let i = 0; i < 2; i++) {
+      expect(await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).toEqual(NOT_GRANTED);
+      expect(await call(session, PEER_TRANSPORT_DIAL, dialRequest({ genesis: OTHER_GENESIS }), dialCodec)).toEqual(NOT_GRANTED);
+    }
+    expect(asked).toEqual([GENESIS, OTHER_GENESIS]);
+    expect(transports).toHaveLength(0);
+  });
+
+  test("concurrent dials share one pending decision per genesis", async () => {
+    const asked: string[] = [];
+    const pending = new Map<string, (granted: boolean) => void>();
+    const { session, transports } = await negotiated({
+      authorize: (genesis) => {
+        asked.push(genesis);
+        const { promise, resolve } = Promise.withResolvers<boolean>();
+        pending.set(genesis, resolve);
+        return promise;
+      },
+    });
+    const granted = [0, 1, 2].map(() => call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec));
+    const refused = [0, 1].map(() => call(session, PEER_TRANSPORT_DIAL, dialRequest({ genesis: OTHER_GENESIS }), dialCodec));
+    await tick();
+    expect(asked).toEqual([GENESIS, OTHER_GENESIS]);
+    expect(transports).toHaveLength(0);
+
+    pending.get(GENESIS)!(true);
+    pending.get(OTHER_GENESIS)!(false);
+    expect((await Promise.all(granted)).map((dial) => dial.success)).toEqual([true, true, true]);
+    expect(await Promise.all(refused)).toEqual([NOT_GRANTED, NOT_GRANTED]);
+    expect(asked).toEqual([GENESIS, OTHER_GENESIS]);
+    expect(transports).toHaveLength(3);
+  });
+
+  test("a session closed while the decision is pending connects nothing", async () => {
+    const { promise, resolve } = Promise.withResolvers<boolean>();
+    const { session, transports } = await negotiated({ authorize: () => promise });
+    const dial = call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec);
+    await tick();
+    session.close();
+    resolve(true);
+    expect(await dial).toEqual({ success: false, value: { tag: "Denied" } });
+    expect(transports).toHaveLength(0);
+  });
+
+  test("a granted dial without p256 is Unreachable in the browser", async () => {
     const { session, transports } = await negotiated();
-    const other = await call(session, PEER_TRANSPORT_DIAL, dialRequest({ genesis: `0x${"ab".repeat(32)}` }), dialCodec);
-    expect(other).toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "NotGranted" } } });
     const quicOnly = await call(session, PEER_TRANSPORT_DIAL, dialRequest({ p256: undefined }), dialCodec);
     expect(quicOnly).toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "Unreachable" } } });
     expect(transports).toHaveLength(0);

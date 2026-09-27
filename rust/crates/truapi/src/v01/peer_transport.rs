@@ -13,7 +13,8 @@ pub const PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION: u32 = 4 << 20;
 /// Failure to dial a JAM peer.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostPeerTransportDialError {
-    /// This execution has no peer-transport grant for the requested genesis.
+    /// The product holds no `RemotePermission::JamPeers` grant for the
+    /// requested genesis, or this host offers no peer transport.
     NotGranted,
     /// The peer refused the connection or presented a certificate that does
     /// not match the requested identity.
@@ -28,7 +29,7 @@ pub enum HostPeerTransportDialError {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostPeerTransportDialRequest {
     /// Genesis header hash; the host derives the ALPN from it and requires a
-    /// matching manifest grant.
+    /// `RemotePermission::JamPeers` grant for it.
     pub genesis: [u8; 32],
     /// Peer IP address, IPv6 or v4-mapped IPv6.
     pub ip: [u8; 16],

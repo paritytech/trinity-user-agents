@@ -57,13 +57,15 @@ export interface WebTransportBidirectionalStreamLike {
   readonly writable: WritableStream<Uint8Array>;
 }
 
-/** A host-owned grant for one JAM genesis; the guest can neither create nor widen it. */
-export interface PeerTransportGrant {
-  /** `0x`-prefixed lower-case 32-byte genesis header hash. */
-  genesis: string;
-}
-
-export interface PeerTransportOptions extends PeerTransportGrant {
+export interface PeerTransportOptions {
+  /**
+   * Decide whether this execution may dial peers of `genesis`, a `0x`-prefixed
+   * lower-case 32-byte genesis header hash: the host's check of the
+   * `RemotePermission::JamPeers` runtime permission. The session asks at most
+   * once per genesis and concurrent dials share the pending answer; `false` or
+   * a rejection answers `NotGranted` for the rest of the session.
+   */
+  authorize(genesis: string): Promise<boolean>;
   /** Host transport injection; defaults to the browser `WebTransport` constructor. */
   connect?: (url: string, certificateHashes: Uint8Array[]) => WebTransportLike;
   /** Unix seconds used to select certificate validity periods; defaults to the wall clock. */
@@ -74,17 +76,8 @@ export interface PeerTransportOptions extends PeerTransportGrant {
 export interface PeerTransportSession {
   /** Handle one request frame; CANCEL frames return zero bytes. */
   handleFrame(frame: Uint8Array): Promise<Uint8Array>;
-  /** Revoke the grant and close every connection on stop or replacement. */
+  /** Close every connection on stop or replacement and refuse further requests. */
   close(): void;
-}
-
-/** Validate and normalize the manifest `capabilities.network.jam.genesis` value. */
-export function validatePeerTransportGenesis(genesis: string): string {
-  const hex = genesis.startsWith("0x") ? genesis.slice(2) : genesis;
-  if (!/^[0-9a-f]{64}$/.test(hex)) {
-    throw new Error("JAM genesis must be a 32-byte lower-case hex header hash");
-  }
-  return `0x${hex}`;
 }
 
 /** Trait id of a request frame, or `undefined` when it does not decode. */
@@ -175,12 +168,28 @@ interface PeerConnection {
 }
 
 /**
- * Create the browser PeerTransport endpoint for one execution. The host must
- * have checked the manifest grant before calling this constructor and must
- * fence late replies against execution stop or replacement.
+ * Create the browser PeerTransport endpoint for one execution. Every `dial`
+ * is authorized for its genesis through `options.authorize` before anything
+ * connects; the other methods act only on connections an authorized dial
+ * opened. The host must fence late replies against execution stop or
+ * replacement.
  */
 export function createPeerTransportSession(options: PeerTransportOptions): PeerTransportSession {
-  const genesis = validatePeerTransportGenesis(options.genesis);
+  const decisions = new Map<string, Promise<boolean>>();
+  const authorized = (genesis: string): Promise<boolean> => {
+    let decision = decisions.get(genesis);
+    if (decision === undefined) {
+      decision = (async (): Promise<boolean> => {
+        try {
+          return (await options.authorize(genesis)) === true;
+        } catch {
+          return false;
+        }
+      })();
+      decisions.set(genesis, decision);
+    }
+    return decision;
+  };
   const connect =
     options.connect ??
     ((url, hashes): WebTransportLike =>
@@ -311,7 +320,8 @@ export function createPeerTransportSession(options: PeerTransportOptions): PeerT
   };
 
   const dial = async (request: T.HostPeerTransportDialRequest): Promise<Uint8Array> => {
-    if (request.genesis !== genesis) return domain(dialResult, "NotGranted");
+    if (!(await authorized(request.genesis))) return domain(dialResult, "NotGranted");
+    if (closed) return frameworkResult.enc({ success: false, value: { tag: "Denied" } });
     if (connections.size >= PEER_TRANSPORT_MAX_CONNECTIONS) return domain(dialResult, "Limit");
     // Browsers only expose WebTransport; JAMNP-S QUIC needs the P-256 identity.
     if (request.p256 === undefined) return domain(dialResult, "Unreachable");

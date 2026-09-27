@@ -420,7 +420,7 @@ impl MockPlatform {
     ///
     /// The key is the permission's SCALE variant tag -- `"Camera"`, or
     /// `"Remote"` for a [`latest::RemotePermission::Remote`] whatever domains
-    /// it names.
+    /// it names, `"JamPeers"` whatever genesis.
     pub fn grant_permission(&self, permission: impl Into<String>) {
         self.permission_decisions
             .lock()
@@ -1109,6 +1109,7 @@ fn remote_permission_key(permission: &latest::RemotePermission) -> &'static str 
         Permission::ChainSubmit => "ChainSubmit",
         Permission::PreimageSubmit => "PreimageSubmit",
         Permission::StatementSubmit => "StatementSubmit",
+        Permission::JamPeers { .. } => "JamPeers",
     }
 }
 

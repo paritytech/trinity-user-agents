@@ -90,6 +90,7 @@ use truapi::versioned::chat::{
     HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
     HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
 };
+use truapi::versioned::peer_transport::HostPeerTransportDialError;
 use truapi::versioned::pocket::{
     HostPocketListSubscribeError, HostPocketListSubscribeItem, HostPocketListSubscribeRequest,
     HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPocketRemoveCardResponse,
@@ -726,6 +727,50 @@ impl ProductRuntimeHost {
     async fn require_chain_submit<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
         self.require_remote_permission(v01::RemotePermission::ChainSubmit, denied_error)
             .await
+    }
+
+    /// Gate `PeerTransport::dial` on
+    /// [`RemotePermission::JamPeers`](v01::RemotePermission::JamPeers) for
+    /// `genesis`, before anything connects.
+    ///
+    /// Like [`Self::require_remote_permission`], this reads the product's
+    /// stored decision, prompts only while it is undetermined and persists the
+    /// answer per product and genesis. Unlike it, a one-use grant is not spent
+    /// by the first dial: it lives as long as the execution's one-use grants,
+    /// so a light client dialing several validators of one chain is asked once
+    /// per genesis. Anything short of a grant, including a dismissed prompt,
+    /// is `NotGranted`.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the core has no native PeerTransport yet; its dial must call this first"
+        )
+    )]
+    #[instrument(skip_all, fields(runtime.method = "peer_transport.require_jam_peers"))]
+    pub(crate) async fn require_jam_peers(
+        &self,
+        genesis: [u8; 32],
+    ) -> Result<(), CallError<HostPeerTransportDialError>> {
+        let request = v01::RemotePermissionRequest {
+            permission: v01::RemotePermission::JamPeers { genesis },
+        };
+        match self
+            .permissions_service()
+            .check_or_prompt_remote(request)
+            .await
+        {
+            Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
+            Ok(
+                PermissionAuthorizationStatus::Denied
+                | PermissionAuthorizationStatus::NotDetermined,
+            ) => Err(CallError::Domain(HostPeerTransportDialError::V1(
+                v01::HostPeerTransportDialError::NotGranted,
+            ))),
+            Err(err) => Err(CallError::HostFailure {
+                reason: format!("permission storage failed: {err:?}"),
+            }),
+        }
     }
 
     #[instrument(skip_all, fields(runtime.method = "permissions.identity_disclosure_authorization"))]

@@ -14,9 +14,13 @@ use crate::{CallContext, CallError, v01, wire, wire_trait};
 /// Host-terminated QUIC/WebTransport streams to JAM peers (JAMNP-S).
 ///
 /// The host owns TLS, certificate verification and length framing; the guest
-/// verifies every byte it consumes. Access requires the manifest capability
-/// `capabilities.network.jam = { genesis }` and is granted only for that
-/// genesis. A grant is separate from account, signing and storage authority.
+/// verifies every byte it consumes. Access is a runtime permission, not a
+/// manifest declaration: `dial` requires
+/// [`RemotePermission::JamPeers`](crate::v01::RemotePermission::JamPeers) for
+/// its `genesis`, checking the product's stored decision, prompting when it is
+/// undetermined and persisting the answer per product and genesis. The other
+/// methods act only on connections a granted `dial` opened. A grant is
+/// separate from account, signing and storage authority.
 #[wire_trait(id = 23)]
 #[crate::async_trait]
 pub trait PeerTransport: Send + Sync {

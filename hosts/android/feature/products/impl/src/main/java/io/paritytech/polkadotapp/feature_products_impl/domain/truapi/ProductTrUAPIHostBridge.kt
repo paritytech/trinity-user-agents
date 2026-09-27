@@ -211,13 +211,14 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override suspend fun remotePermission(
             product: ProductExecutionConfig,
             request: RemotePermission,
-        ): TrUAPIPermissionDecision =
-            when (request) {
-                RemotePermission.BalanceAccess -> hostApiInteractor.requestBalanceAccessDecision(callingProductId)
-                else -> hostApiInteractor.requestRemotePermissionDecision(callingProductId, request.toRemoteAccessRequest())
-            }
+        ): TrUAPIPermissionDecision {
+            // This app has no JAM peer transport, so it has nothing to grant.
+            val domainRequest = request.toDomain() ?: return TrUAPIPermissionDecision.DENY
+            return hostApiInteractor
+                .requestRemotePermissionDecision(callingProductId, domainRequest)
                 .getOrElse { throw it }
                 .toNative()
+        }
 
         /**
          * Answered from the same snapshot [chainConnect] dials rather than the
@@ -395,17 +396,14 @@ private fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = w
     HostDevicePermissionRequest.MOTION -> DeviceCapabilityType.Motion
 }
 
-/**
- * The request this host's remote-access prompt shows for `this`. Balance access
- * has its own prompt (`ProductPermission.BalanceAccess`) and never reaches here.
- */
-private fun RemotePermission.toRemoteAccessRequest(): RemotePermissionRequest = when (this) {
+/** The Products domain request, or `null` for a permission this app has no surface for. */
+private fun RemotePermission.toDomain(): RemotePermissionRequest? = when (this) {
     is RemotePermission.Remote -> RemotePermissionRequest.Remote(domains)
     RemotePermission.WebRtc -> RemotePermissionRequest.WebRtc
     RemotePermission.ChainSubmit -> RemotePermissionRequest.ChainSubmit
     RemotePermission.PreimageSubmit -> RemotePermissionRequest.PreimageSubmit
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
-    RemotePermission.BalanceAccess -> error("balance access has its own prompt")
+    is RemotePermission.JamPeers -> null
 }
 
 private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this) {

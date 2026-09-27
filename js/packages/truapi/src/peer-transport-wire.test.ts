@@ -12,7 +12,7 @@ import {
 } from "./generated/wire-table.js";
 import { decodeWireMessage, encodeWireMessage } from "./transport.js";
 
-// The same bytes `rust/crates/truapi-server/tests/peer_transport_grant.rs`
+// The same bytes `rust/crates/truapi-server/tests/peer_transport_contract.rs`
 // pins for the Rust SCALE codec: both sides must agree on the frozen V1 layout.
 const GENESIS = "0x353963b9cedfe4ea22038081052a5c151b06b55a4a026a97522cd0320cabf49f" as const;
 const LOOPBACK_V4_MAPPED = "0x00000000000000000000ffff7f000001" as const;
@@ -25,6 +25,14 @@ test("PeerTransport is namespace 23 with methods 0..6 in contract order", () => 
     expect(id.method).toBe(method);
     expect(id.kind).toBe("request");
   });
+});
+
+test("the JamPeers permission is RemotePermission index 5 carrying the genesis, as in Rust", () => {
+  const permission = { tag: "JamPeers", value: { genesis: GENESIS } } as const;
+  const encoded = T.RemotePermission.enc(permission);
+  expect([...encoded]).toEqual([5, ...S.hexToBytes(GENESIS)]);
+  expect(T.RemotePermission.dec(encoded)).toEqual(permission);
+  expect([...T.RemotePermission.enc({ tag: "StatementSubmit" })]).toEqual([4]);
 });
 
 test("dial request encodes genesis, v4-mapped ip, port, ed25519 and optional p256 as Rust does", () => {

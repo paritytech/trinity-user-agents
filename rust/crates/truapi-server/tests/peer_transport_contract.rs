@@ -1,113 +1,69 @@
-use parity_scale_codec::Encode;
+//! PeerTransport contract regression test.
+//!
+//! Pins the frozen trait-23 wire ids and SCALE layouts, the `JamPeers`
+//! permission's place in `RemotePermission`, and the genesis/ALPN helpers a
+//! host uses on dial.
+
+use parity_scale_codec::{Decode, Encode};
 use truapi::latest;
 use truapi::versioned::peer_transport;
 use truapi_server::generated::wire_table::{
     MethodIds, PEER_TRANSPORT_CLOSE, PEER_TRANSPORT_DIAL, PEER_TRANSPORT_EVENTS,
     PEER_TRANSPORT_OPEN, PEER_TRANSPORT_RECV, PEER_TRANSPORT_RESET, PEER_TRANSPORT_SEND,
 };
-use truapi_server::peer_transport::{PeerTransportGrant, PeerTransportGrantError, alpn};
+use truapi_server::peer_transport::{InvalidGenesis, alpn, parse_genesis};
 
 const GENESIS_HEX: &str = "353963b9cedfe4ea22038081052a5c151b06b55a4a026a97522cd0320cabf49f";
 
 fn genesis() -> [u8; 32] {
-    truapi_server::peer_transport::parse_genesis(GENESIS_HEX).unwrap()
-}
-
-fn manifest(capabilities: &str) -> Vec<u8> {
-    format!(
-        r#"{{"$v":2,"kind":"app","appVersion":[0,1,0],"runtime":{{"kind":"polkavm","abiVersion":1,"entrypoint":"app.polkavm"}},"capabilities":{capabilities}}}"#
-    )
-    .into_bytes()
+    parse_genesis(GENESIS_HEX).unwrap()
 }
 
 #[test]
-fn the_manifest_capability_grants_exactly_its_genesis() {
-    let grant = PeerTransportGrant::from_manifest(&manifest(&format!(
-        r#"{{"graphics":{{"abiVersion":1,"profile":"framebuffer"}},"network":{{"jam":{{"genesis":"{GENESIS_HEX}"}}}}}}"#
-    )))
-    .unwrap()
-    .expect("capability present");
-    assert_eq!(grant.genesis, genesis());
-    assert!(grant.permits(&genesis()));
-    assert!(!grant.permits(&[0; 32]));
-    assert_eq!(grant.alpn(), "jamnp-s/1/353963b9");
+fn a_genesis_has_one_spelling_and_names_its_alpn() {
+    assert_eq!(parse_genesis(&format!("0x{GENESIS_HEX}")), Ok(genesis()));
+    assert_eq!(genesis()[..4], [0x35, 0x39, 0x63, 0xb9]);
+    assert_eq!(alpn(&genesis()), "jamnp-s/1/353963b9");
     assert_eq!(alpn(&[0xab; 32]), "jamnp-s/1/abababab");
-    assert_eq!(grant.to_string(), format!("jam:{GENESIS_HEX}"));
-
-    let prefixed = PeerTransportGrant::from_manifest(&manifest(&format!(
-        r#"{{"network":{{"jam":{{"genesis":"0x{GENESIS_HEX}"}}}}}}"#
-    )))
-    .unwrap();
-    assert_eq!(prefixed, Some(grant));
-}
-
-#[test]
-fn a_manifest_without_the_capability_grants_nothing() {
-    for capabilities in [
-        r#"{"graphics":{"abiVersion":1,"profile":"framebuffer"}}"#,
-        r#"{"network":{}}"#,
-        r#"{"network":{"http":{"origins":["https://example.invalid"]}}}"#,
+    for text in [
+        GENESIS_HEX[..62].to_string(),
+        GENESIS_HEX.to_uppercase(),
+        format!("{GENESIS_HEX}0"),
+        format!("0X{GENESIS_HEX}"),
+        format!("{}zz", &GENESIS_HEX[..62]),
+        String::new(),
     ] {
-        assert_eq!(
-            PeerTransportGrant::from_manifest(&manifest(capabilities)).unwrap(),
-            None,
-            "{capabilities}"
-        );
+        assert_eq!(parse_genesis(&text), Err(InvalidGenesis), "{text}");
     }
 }
 
+/// `JamPeers` is appended last, so every earlier permission keeps the SCALE
+/// index stored decisions and older peers already use.
 #[test]
-fn a_malformed_capability_is_refused_rather_than_ignored() {
-    for (capabilities, error) in [
+fn jam_peers_is_the_last_remote_permission_and_names_its_genesis() {
+    for (permission, index) in [
         (
-            r#"{"network":{"jam":true}}"#.to_string(),
-            PeerTransportGrantError::InvalidCapability,
+            latest::RemotePermission::Remote {
+                domains: Vec::new(),
+            },
+            0u8,
         ),
-        (
-            r#"{"network":{"jam":{}}}"#.to_string(),
-            PeerTransportGrantError::InvalidCapability,
-        ),
-        (
-            r#"{"network":{"jam":{"genesis":7}}}"#.to_string(),
-            PeerTransportGrantError::InvalidGenesis,
-        ),
-        (
-            format!(
-                r#"{{"network":{{"jam":{{"genesis":"{}"}}}}}}"#,
-                &GENESIS_HEX[..62]
-            ),
-            PeerTransportGrantError::InvalidGenesis,
-        ),
-        (
-            format!(
-                r#"{{"network":{{"jam":{{"genesis":"{}"}}}}}}"#,
-                GENESIS_HEX.to_uppercase()
-            ),
-            PeerTransportGrantError::InvalidGenesis,
-        ),
-        (
-            format!(r#"{{"network":{{"jam":{{"genesis":"{GENESIS_HEX}0"}}}}}}"#),
-            PeerTransportGrantError::InvalidGenesis,
-        ),
+        (latest::RemotePermission::WebRtc, 1),
+        (latest::RemotePermission::ChainSubmit, 2),
+        (latest::RemotePermission::PreimageSubmit, 3),
+        (latest::RemotePermission::StatementSubmit, 4),
     ] {
-        assert_eq!(
-            PeerTransportGrant::from_manifest(&manifest(&capabilities)),
-            Err(error),
-            "{capabilities}"
-        );
+        assert_eq!(permission.encode()[0], index, "{permission:?}");
     }
+    let jam = latest::RemotePermission::JamPeers { genesis: genesis() };
+    let mut expected = vec![5u8];
+    expected.extend_from_slice(&genesis());
+    assert_eq!(jam.encode(), expected);
     assert_eq!(
-        PeerTransportGrant::from_manifest(br#"{"$v":1,"trustedProducts":{}}"#),
-        Err(PeerTransportGrantError::InvalidManifest)
+        latest::RemotePermission::decode(&mut &expected[..]),
+        Ok(jam.clone())
     );
-    assert_eq!(
-        PeerTransportGrant::from_manifest(b"[]"),
-        Err(PeerTransportGrantError::InvalidManifest)
-    );
-    assert_eq!(
-        PeerTransportGrant::from_manifest(b"{"),
-        Err(PeerTransportGrantError::InvalidManifest)
-    );
+    assert_eq!(jam.to_string(), "connections to JAM network 0x353963b9…");
 }
 
 /// The frozen contract: namespace 23, methods 0..6 in this order, V1 payloads.

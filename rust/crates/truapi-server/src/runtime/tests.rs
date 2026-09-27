@@ -1681,6 +1681,130 @@ fn permission_prompts_name_the_requesting_product_and_execution_kind() {
     );
 }
 
+fn jam_peers(genesis: [u8; 32]) -> v01::RemotePermissionRequest {
+    v01::RemotePermissionRequest {
+        permission: v01::RemotePermission::JamPeers { genesis },
+    }
+}
+
+fn jam_peers_not_granted() -> CallError<HostPeerTransportDialError> {
+    CallError::Domain(HostPeerTransportDialError::V1(
+        v01::HostPeerTransportDialError::NotGranted,
+    ))
+}
+
+#[test]
+fn jam_peer_dials_follow_the_stored_decision_without_prompting() {
+    futures::executor::block_on(async {
+        let platform = stub_platform();
+        let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        for (genesis, status) in [
+            ([0x11; 32], PermissionAuthorizationStatus::Authorized),
+            ([0x22; 32], PermissionAuthorizationStatus::Denied),
+        ] {
+            host.set_permission_authorization_status(
+                PermissionAuthorizationRequest::Remote(jam_peers(genesis)),
+                status,
+            )
+            .await
+            .unwrap();
+        }
+
+        assert_eq!(
+            (
+                host.require_jam_peers([0x11; 32]).await,
+                host.require_jam_peers([0x22; 32]).await,
+                platform.remote_permission_requests.lock().unwrap().clone(),
+            ),
+            (Ok(()), Err(jam_peers_not_granted()), vec![]),
+        );
+    });
+}
+
+#[test]
+fn an_undetermined_genesis_prompts_once_per_execution() {
+    futures::executor::block_on(async {
+        let genesis = [0x35; 32];
+        let platform = Arc::new(StubPlatform {
+            remote_permission_decisions: Mutex::new(
+                [
+                    PermissionDecision::AllowOnce,
+                    PermissionDecision::AllowAlways,
+                ]
+                .into(),
+            ),
+            ..Default::default()
+        });
+        // A light client dialing six validators at once is asked once, and a
+        // one-use answer covers the rest of the execution.
+        let first = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        let dials =
+            futures::future::join_all((0..6).map(|_| first.require_jam_peers(genesis))).await;
+        assert_eq!(dials, vec![Ok(()); 6]);
+        assert_eq!(first.require_jam_peers(genesis).await, Ok(()));
+
+        // The next execution holds no one-use grant, so it asks again; a
+        // lasting answer is persisted for the product and not asked again.
+        let second = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        assert_eq!(second.require_jam_peers(genesis).await, Ok(()));
+        let third = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        assert_eq!(third.require_jam_peers(genesis).await, Ok(()));
+
+        assert_eq!(
+            platform.remote_permission_requests.lock().unwrap().clone(),
+            vec![jam_peers(genesis), jam_peers(genesis)],
+        );
+    });
+}
+
+#[test]
+fn each_genesis_is_a_separate_jam_peers_decision() {
+    futures::executor::block_on(async {
+        let (granted, refused) = ([0x35; 32], [0x36; 32]);
+        let platform = Arc::new(StubPlatform {
+            remote_permission_decisions: Mutex::new(
+                [PermissionDecision::AllowAlways, PermissionDecision::Deny].into(),
+            ),
+            ..Default::default()
+        });
+        let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+
+        assert_eq!(host.require_jam_peers(granted).await, Ok(()));
+        // A grant for one chain says nothing about another: it prompts, and
+        // the refusal is persisted for that genesis alone.
+        assert_eq!(
+            host.require_jam_peers(refused).await,
+            Err(jam_peers_not_granted())
+        );
+        assert_eq!(
+            host.require_jam_peers(refused).await,
+            Err(jam_peers_not_granted())
+        );
+        assert_eq!(host.require_jam_peers(granted).await, Ok(()));
+
+        let statuses = host
+            .permission_authorization_statuses(vec![
+                PermissionAuthorizationRequest::Remote(jam_peers(granted)),
+                PermissionAuthorizationRequest::Remote(jam_peers(refused)),
+            ])
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                platform.remote_permission_requests.lock().unwrap().clone(),
+                statuses,
+            ),
+            (
+                vec![jam_peers(granted), jam_peers(refused)],
+                vec![
+                    PermissionAuthorizationStatus::Authorized,
+                    PermissionAuthorizationStatus::Denied,
+                ],
+            ),
+        );
+    });
+}
+
 #[test]
 fn navigate_to_rejects_invalid_input_without_prompting_or_calling_platform() {
     let platform = stub_platform();
