@@ -11,7 +11,7 @@ import {
   PEER_TRANSPORT_SEND,
   SYSTEM_HANDSHAKE,
 } from "./generated/wire-table.js";
-import { decodeWireMessage, encodeWireMessage, MESSAGE_TYPE_REQUEST, type MethodIds } from "./transport.js";
+import { decodeWireMessage, encodeWireMessage, MESSAGE_TYPE_CANCEL, MESSAGE_TYPE_REQUEST, type MethodIds } from "./transport.js";
 import {
   createPeerTransportSession,
   frameTraitId,
@@ -38,6 +38,8 @@ interface FakeTransport extends WebTransportLike {
   url: string;
   hashes: Uint8Array[];
   streams: FakeStream[];
+  /** Whether the session closed this transport. */
+  closedByHost: boolean;
   /** Simulate the peer opening a stream toward us. */
   peerOpen(): FakeStream;
   peerClose(): void;
@@ -56,15 +58,20 @@ function fakeStream(): FakeStream {
   };
 }
 
-function fakeTransport(url: string, hashes: Uint8Array[], failReady = false): FakeTransport {
+/** `ready` settles as named; `"hang"` models a handshake that never completes. */
+type FakeReady = "ok" | "fail" | "hang";
+
+function fakeTransport(url: string, hashes: Uint8Array[], ready: FakeReady = "ok"): FakeTransport {
   let incoming!: ReadableStreamDefaultController<WebTransportBidirectionalStreamLike>;
   const closed = Promise.withResolvers<void>();
   const streams: FakeStream[] = [];
-  return {
+  const transport: FakeTransport = {
     url,
     hashes,
     streams,
-    ready: failReady ? Promise.reject(new Error("refused")) : Promise.resolve(),
+    closedByHost: false,
+    ready:
+      ready === "ok" ? Promise.resolve() : ready === "fail" ? Promise.reject(new Error("refused")) : new Promise(() => undefined),
     closed: closed.promise,
     incomingBidirectionalStreams: new ReadableStream({ start: (c) => (incoming = c) }),
     async createBidirectionalStream() {
@@ -72,7 +79,10 @@ function fakeTransport(url: string, hashes: Uint8Array[], failReady = false): Fa
       streams.push(stream);
       return stream.local;
     },
-    close: () => closed.resolve(),
+    close: () => {
+      transport.closedByHost = true;
+      closed.resolve();
+    },
     peerOpen() {
       const stream = fakeStream();
       streams.push(stream);
@@ -81,22 +91,27 @@ function fakeTransport(url: string, hashes: Uint8Array[], failReady = false): Fa
     },
     peerClose: () => closed.resolve(),
   };
+  return transport;
 }
 
 let requestCounter = 0;
-function frame(ids: MethodIds, value: Uint8Array): Uint8Array {
+function frame(ids: MethodIds, value: Uint8Array, requestId = `t${requestCounter++}`, messageType = MESSAGE_TYPE_REQUEST): Uint8Array {
   const encoded = encodeWireMessage({
-    requestId: `t${requestCounter++}`,
-    payload: { traitId: ids.trait, methodId: ids.method, messageType: MESSAGE_TYPE_REQUEST, value },
+    requestId,
+    payload: { traitId: ids.trait, methodId: ids.method, messageType, value },
   });
   if (encoded.isErr()) throw encoded.error;
   return encoded.value;
 }
 
-async function call<V>(session: PeerTransportSession, ids: MethodIds, request: Uint8Array, codec: S.Codec<V>): Promise<V> {
-  const response = decodeWireMessage(await session.handleFrame(frame(ids, request)));
+function decodeReply<V>(bytes: Uint8Array, codec: S.Codec<V>): V {
+  const response = decodeWireMessage(bytes);
   if (response.isErr()) throw response.error;
   return codec.dec(response.value.payload.value);
+}
+
+async function call<V>(session: PeerTransportSession, ids: MethodIds, request: Uint8Array, codec: S.Codec<V>): Promise<V> {
+  return decodeReply(await session.handleFrame(frame(ids, request)), codec);
 }
 
 const dialCodec = S.Result(T.VersionedHostPeerTransportDialResponse, S.CallError(T.VersionedHostPeerTransportDialError));
@@ -118,14 +133,20 @@ const OTHER_GENESIS = `0x${"ab".repeat(32)}`;
 const NOT_GRANTED = { success: false, value: { tag: "Domain", value: { tag: "V1", value: "NotGranted" } } };
 
 async function negotiated(
-  options: { failReady?: boolean; authorize?: (genesis: string) => Promise<boolean> } = {},
+  options: {
+    /** How the handshake of the `index`-th transport settles. */
+    ready?: (index: number) => FakeReady;
+    authorize?: (genesis: string) => Promise<boolean>;
+    dialTimeoutMs?: number;
+  } = {},
 ): Promise<{ session: PeerTransportSession; transports: FakeTransport[] }> {
   const transports: FakeTransport[] = [];
   const session = createPeerTransportSession({
     authorize: options.authorize ?? (async (genesis) => genesis === GENESIS),
     now: () => 1_790_380_800,
+    dialTimeoutMs: options.dialTimeoutMs,
     connect: (url, hashes) => {
-      const transport = fakeTransport(url, hashes, options.failReady);
+      const transport = fakeTransport(url, hashes, options.ready?.(transports.length));
       transports.push(transport);
       return transport;
     },
@@ -228,14 +249,15 @@ describe("authorization", () => {
     expect(transports).toHaveLength(3);
   });
 
-  test("a session closed while the decision is pending connects nothing", async () => {
+  test("closing the session answers a dial still waiting for its decision, and connects nothing", async () => {
     const { promise, resolve } = Promise.withResolvers<boolean>();
     const { session, transports } = await negotiated({ authorize: () => promise });
     const dial = call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec);
     await tick();
     session.close();
-    resolve(true);
     expect(await dial).toEqual({ success: false, value: { tag: "Denied" } });
+    resolve(true);
+    await tick();
     expect(transports).toHaveLength(0);
   });
 
@@ -268,7 +290,7 @@ describe("dial", () => {
   });
 
   test("a rejected handshake is Refused and holds no connection slot", async () => {
-    const { session } = await negotiated({ failReady: true });
+    const { session } = await negotiated({ ready: () => "fail" });
     const dial = await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec);
     expect(dial).toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "Refused" } } });
     const close = await call(session, PEER_TRANSPORT_CLOSE, T.VersionedHostPeerTransportCloseRequest.enc({ tag: "V1", value: { conn: 1 } }), closeCodec);
@@ -282,6 +304,91 @@ describe("dial", () => {
     }
     const ninth = await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec);
     expect(ninth).toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "Limit" } } });
+  });
+});
+
+describe("withdrawn dials", () => {
+  const UNREACHABLE = { success: false, value: { tag: "Domain", value: { tag: "V1", value: "Unreachable" } } };
+  const CANCELLED = { success: false, value: { tag: "Cancelled" } };
+  const cancel = (session: PeerTransportSession, requestId: string): Promise<Uint8Array> =>
+    session.handleFrame(frame(PEER_TRANSPORT_DIAL, new Uint8Array(), requestId, MESSAGE_TYPE_CANCEL));
+  const events = async (session: PeerTransportSession): Promise<unknown> =>
+    call(session, PEER_TRANSPORT_EVENTS, T.VersionedHostPeerTransportEventsRequest.enc({ tag: "V1", value: undefined }), eventsCodec);
+
+  test("a prompt outlasting the guest's wait opens nothing, and the retry reuses the answer", async () => {
+    const asked: string[] = [];
+    const decision = Promise.withResolvers<boolean>();
+    const { session, transports } = await negotiated({
+      dialTimeoutMs: 20,
+      authorize: (genesis) => {
+        asked.push(genesis);
+        return decision.promise;
+      },
+    });
+    expect(await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).toEqual(UNREACHABLE);
+    // The user answers after the guest stopped waiting: that dial opens nothing.
+    decision.resolve(true);
+    await tick();
+    expect(transports).toHaveLength(0);
+
+    expect((await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
+    expect(asked).toEqual([GENESIS]);
+    expect(transports).toHaveLength(1);
+  });
+
+  test("a handshake outlasting the deadline is closed and frees its slot", async () => {
+    const { session, transports } = await negotiated({ dialTimeoutMs: 20, ready: (index) => (index === 0 ? "hang" : "ok") });
+    expect(await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).toEqual(UNREACHABLE);
+    expect(transports[0]!.closedByHost).toBe(true);
+    for (let i = 0; i < 8; i++) {
+      expect((await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
+    }
+    expect(await events(session)).toEqual({ success: true, value: { tag: "V1", value: { events: [] } } });
+  });
+
+  test("a CANCEL during the prompt answers Cancelled and opens nothing", async () => {
+    const decision = Promise.withResolvers<boolean>();
+    const { session, transports } = await negotiated({ authorize: () => decision.promise });
+    const dial = session.handleFrame(frame(PEER_TRANSPORT_DIAL, dialRequest(), "d1"));
+    await tick();
+    expect(await cancel(session, "d1")).toEqual(new Uint8Array());
+    expect(decodeReply(await dial, dialCodec)).toEqual(CANCELLED);
+    decision.resolve(true);
+    await tick();
+    expect(transports).toHaveLength(0);
+    // A CANCEL naming nothing in flight lost the race and changes nothing.
+    expect(await cancel(session, "d1")).toEqual(new Uint8Array());
+    expect((await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
+  });
+
+  test("a CANCEL during the handshake closes the connection without consuming the cap", async () => {
+    const { session, transports } = await negotiated({ ready: (index) => (index === 7 ? "hang" : "ok") });
+    for (let i = 0; i < 7; i++) {
+      expect((await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
+    }
+    const eighth = session.handleFrame(frame(PEER_TRANSPORT_DIAL, dialRequest(), "d8"));
+    await tick();
+    expect(transports).toHaveLength(8);
+    await cancel(session, "d8");
+    expect(decodeReply(await eighth, dialCodec)).toEqual(CANCELLED);
+    expect(transports[7]!.closedByHost).toBe(true);
+
+    expect((await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
+    expect(await call(session, PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).toEqual({
+      success: false,
+      value: { tag: "Domain", value: { tag: "V1", value: "Limit" } },
+    });
+    expect(await events(session)).toEqual({ success: true, value: { tag: "V1", value: { events: [] } } });
+  });
+
+  test("a CANCEL for a completed or unknown dial leaves its connection open", async () => {
+    const { session, transports } = await negotiated();
+    const reply = decodeReply(await session.handleFrame(frame(PEER_TRANSPORT_DIAL, dialRequest(), "d1")), dialCodec);
+    expect(reply.success).toBe(true);
+    expect(await cancel(session, "d1")).toEqual(new Uint8Array());
+    expect(await cancel(session, "unknown")).toEqual(new Uint8Array());
+    expect(transports[0]!.closedByHost).not.toBe(true);
+    expect(await events(session)).toEqual({ success: true, value: { tag: "V1", value: { events: [] } } });
   });
 });
 
