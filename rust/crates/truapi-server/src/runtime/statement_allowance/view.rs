@@ -107,10 +107,10 @@ async fn read_u32(
         }));
     }
     let id = definition.id;
-    if at.is_none() {
-        if let Some(value) = metadata.cached_view_u32(&id) {
-            return Ok(value);
-        }
+    if at.is_none()
+        && let Some(value) = metadata.cached_view_u32(&id)
+    {
+        return Ok(value);
     }
 
     let output = execute_no_args(rpc, pallet, function, id, at).await?;
