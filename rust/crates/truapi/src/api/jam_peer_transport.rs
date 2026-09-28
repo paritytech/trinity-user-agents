@@ -25,7 +25,7 @@ use crate::{CallContext, CallError, v01, wire, wire_trait};
 /// undetermined and persisting the answer per product and genesis. The other
 /// methods act only on connections a granted `dial` opened. A grant is
 /// separate from account, signing and storage authority.
-#[wire_trait(id = 23)]
+#[wire_trait(id = 111)]
 #[crate::async_trait]
 pub trait JamPeerTransport: Send + Sync {
     /// Dial one peer. The host builds the ALPN from `genesis` and requires the

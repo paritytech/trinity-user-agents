@@ -1,6 +1,6 @@
 //! JamPeerTransport contract regression test.
 //!
-//! Pins the frozen trait-23 wire ids and SCALE layouts, the `JamPeers`
+//! Pins the frozen trait-111 wire ids and SCALE layouts, the `JamPeers`
 //! permission's place in `RemotePermission`, and the genesis/ALPN helpers a
 //! host uses on dial.
 
@@ -67,7 +67,7 @@ fn jam_peers_is_the_last_remote_permission_and_names_its_genesis() {
     assert_eq!(jam.to_string(), "connections to JAM network 0x353963b9…");
 }
 
-/// The frozen contract: namespace 23, methods 0..6 in this order, V1 payloads.
+/// The frozen contract: namespace 111, methods 0..6 in this order, V1 payloads.
 #[test]
 fn the_wire_ids_and_scale_layout_match_the_frozen_contract() {
     for (ids, method_id) in [
@@ -82,7 +82,7 @@ fn the_wire_ids_and_scale_layout_match_the_frozen_contract() {
         assert_eq!(
             ids,
             MethodIds {
-                trait_id: 23,
+                trait_id: 111,
                 method_id
             }
         );

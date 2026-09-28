@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "11e5fe21ba1c8220";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "03ed2f7272b4248c";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1244,7 +1244,7 @@ impl JamPeerTransportDial {
         direction: Direction::ProductToHost,
         required_execution: None,
         wire: MethodWire::Request(MethodIds {
-            trait_id: 23,
+            trait_id: 111,
             method_id: 0,
         }),
     };
@@ -1271,7 +1271,7 @@ impl JamPeerTransportOpen {
         direction: Direction::ProductToHost,
         required_execution: None,
         wire: MethodWire::Request(MethodIds {
-            trait_id: 23,
+            trait_id: 111,
             method_id: 1,
         }),
     };
@@ -1298,7 +1298,7 @@ impl JamPeerTransportSend {
         direction: Direction::ProductToHost,
         required_execution: None,
         wire: MethodWire::Request(MethodIds {
-            trait_id: 23,
+            trait_id: 111,
             method_id: 2,
         }),
     };
@@ -1325,7 +1325,7 @@ impl JamPeerTransportRecv {
         direction: Direction::ProductToHost,
         required_execution: None,
         wire: MethodWire::Request(MethodIds {
-            trait_id: 23,
+            trait_id: 111,
             method_id: 3,
         }),
     };
@@ -1352,7 +1352,7 @@ impl JamPeerTransportReset {
         direction: Direction::ProductToHost,
         required_execution: None,
         wire: MethodWire::Request(MethodIds {
-            trait_id: 23,
+            trait_id: 111,
             method_id: 4,
         }),
     };
@@ -1379,7 +1379,7 @@ impl JamPeerTransportClose {
         direction: Direction::ProductToHost,
         required_execution: None,
         wire: MethodWire::Request(MethodIds {
-            trait_id: 23,
+            trait_id: 111,
             method_id: 5,
         }),
     };
@@ -1406,7 +1406,7 @@ impl JamPeerTransportEvents {
         direction: Direction::ProductToHost,
         required_execution: None,
         wire: MethodWire::Request(MethodIds {
-            trait_id: 23,
+            trait_id: 111,
             method_id: 6,
         }),
     };

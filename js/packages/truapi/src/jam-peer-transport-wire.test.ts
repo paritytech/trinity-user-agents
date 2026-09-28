@@ -17,11 +17,11 @@ import { decodeWireMessage, encodeWireMessage } from "./transport.js";
 const GENESIS = "0x353963b9cedfe4ea22038081052a5c151b06b55a4a026a97522cd0320cabf49f" as const;
 const LOOPBACK_V4_MAPPED = "0x00000000000000000000ffff7f000001" as const;
 
-test("JamPeerTransport is namespace 23 with methods 0..6 in contract order", () => {
+test("JamPeerTransport is namespace 111 with methods 0..6 in contract order", () => {
   const ids = [JAM_PEER_TRANSPORT_DIAL, JAM_PEER_TRANSPORT_OPEN, JAM_PEER_TRANSPORT_SEND, JAM_PEER_TRANSPORT_RECV,
     JAM_PEER_TRANSPORT_RESET, JAM_PEER_TRANSPORT_CLOSE, JAM_PEER_TRANSPORT_EVENTS];
   ids.forEach((id, method) => {
-    expect(id.trait).toBe(23);
+    expect(id.trait).toBe(111);
     expect(id.method).toBe(method);
     expect(id.kind).toBe("request");
   });
@@ -86,9 +86,9 @@ test("send, recv and events payloads match the Rust SCALE bytes", () => {
 test("a NotGranted dial response decodes from a host frame", () => {
   const resultCodec = S.Result(T.VersionedHostJamPeerTransportDialResponse, S.CallError(T.VersionedHostJamPeerTransportDialError));
   const value = resultCodec.enc({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "NotGranted" } } });
-  const frame = encodeWireMessage({ requestId: "p", payload: { traitId: 23, methodId: 0, messageType: 1, value } });
+  const frame = encodeWireMessage({ requestId: "p", payload: { traitId: 111, methodId: 0, messageType: 1, value } });
   if (frame.isErr()) throw frame.error;
-  expect([...frame.value]).toEqual([4, 112, 23, 0, 1, 1, 0, 0, 0]);
+  expect([...frame.value]).toEqual([4, 112, 111, 0, 1, 1, 0, 0, 0]);
   const decoded = decodeWireMessage(frame.value);
   if (decoded.isErr()) throw decoded.error;
   expect(decoded.value.requestId).toBe("p");
