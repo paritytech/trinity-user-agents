@@ -1173,6 +1173,10 @@ pub enum PermissionAuthorizationRequest {
         /// `None` selects the legacy allowance account; `Some` selects a product account.
         derivation_index: Option<DerivationIndex>,
     },
+    /// Product-scoped permission to disclose a profile reference to the user's
+    /// Chat contacts.
+    #[codec(index = 6)]
+    ProfileDisclosure,
 }
 
 /// Authorization status for a permission request.
@@ -1866,19 +1870,30 @@ pub enum CoreStorageKey {
         /// Host-selected Chat network.
         genesis_hash: [u8; 32],
     },
-    /// The profile reference the user disclosed to their chat contacts, with
-    /// the product that disclosed it. Wallet-owned: one per user, whichever
-    /// product wrote it. The reference is a bearer capability.
+    /// The profile reference the user disclosed to their chat contacts on one
+    /// Chat network, with the product that disclosed it. Wallet-owned: one per
+    /// wallet and network, whichever product wrote it. The reference is a
+    /// bearer capability.
     ///
     /// Known gap (docs/rfcs/profile-disclosure.md): one slot, so the last product to disclose replaces
     /// the others.
     #[codec(index = 17)]
-    ProfileDisclosure,
-    /// Profile references this product's chat contacts disclosed, newest per
-    /// contact. Product-indexed, like the roster they belong to, so clearing
+    ProfileDisclosure {
+        /// Wallet whose user disclosed the reference.
+        root_public_key: [u8; 32],
+        /// Host-selected Chat network the reference is relayed on.
+        genesis_hash: [u8; 32],
+    },
+    /// Profile references the contacts on one Chat product's roster disclosed,
+    /// the newest per contact, withdrawals included. Scoped like the
+    /// `NativeChatDevice` roster it shadows, and product-indexed so clearing
     /// the product clears them. The references are bearer capabilities.
     #[codec(index = 18)]
     ProfileReferencesReceived {
+        /// Wallet owning the Chat identity the references were sent to.
+        root_public_key: [u8; 32],
+        /// Host-selected Chat network.
+        genesis_hash: [u8; 32],
         /// Chat product whose contacts sent the references.
         product_id: String,
     },
@@ -1938,8 +1953,8 @@ pub fn describe_core_storage_key(
         CoreStorageKey::MainPurseCoinage { .. } => ("MainPurseCoinage", None),
         CoreStorageKey::NativeChatDevice { .. } => ("NativeChatDevice", None),
         CoreStorageKey::NativeChatProducts { .. } => ("NativeChatProducts", None),
-        CoreStorageKey::ProfileDisclosure => ("ProfileDisclosure", None),
-        CoreStorageKey::ProfileReferencesReceived { product_id } => {
+        CoreStorageKey::ProfileDisclosure { .. } => ("ProfileDisclosure", None),
+        CoreStorageKey::ProfileReferencesReceived { product_id, .. } => {
             ("ProfileReferencesReceived", Some(product_id))
         }
         CoreStorageKey::NativeChatFileChunk { product_id, .. } => {
@@ -2027,6 +2042,15 @@ impl CoreStorageKey {
         Self::PermissionAuthorization {
             product_id: product_id.to_string(),
             request: PermissionAuthorizationRequest::StatementStoreAllowance { derivation_index },
+        }
+    }
+
+    /// Persisted authorization key for disclosing a profile reference to the
+    /// user's Chat contacts.
+    pub fn profile_disclosure_authorization(product_id: &str) -> Self {
+        Self::PermissionAuthorization {
+            product_id: product_id.to_string(),
+            request: PermissionAuthorizationRequest::ProfileDisclosure,
         }
     }
 }
@@ -3503,6 +3527,16 @@ pub struct ChatAuthorityReview {
     pub product_id: String,
 }
 
+/// Review shown before a product first discloses a profile reference to the
+/// user's Chat contacts. The host relays it to every contact, so the prompt
+/// names the product, never the contacts or the reference.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+pub struct ProfileDisclosureReview {
+    /// Product asking to disclose the profile.
+    pub product_id: String,
+}
+
 /// Exact Host-resolved payment reviewed before debiting the user's main purse.
 ///
 /// This review never grants a reusable spending permission. Chat authority and
@@ -3578,6 +3612,9 @@ pub enum UserConfirmationReview {
     ChatAuthority(ChatAuthorityReview),
     /// Confirm this exact main-purse payment; never eligible for auto-approval.
     MainPurseChatPayment(MainPurseChatPaymentReview),
+    /// Allow a product to disclose a profile reference to the user's Chat
+    /// contacts.
+    ProfileDisclosure(ProfileDisclosureReview),
 }
 
 /// Local user confirmation UI for sensitive core-owned operations.

@@ -60,6 +60,11 @@ impl fmt::Debug for HostProfileDiscloseRequest {
 pub enum HostProfileDiscloseError {
     /// The reference is empty, too long, or not printable ASCII.
     InvalidReference,
+    /// The user declined to let this product disclose a profile to their
+    /// chat contacts.
+    PermissionDenied,
+    /// No user is signed in, so there are no contacts to disclose to.
+    NotConnected,
     /// Catch-all.
     Unknown {
         /// Human-readable reason.
@@ -73,6 +78,8 @@ pub enum HostProfileDiscloseError {
 pub enum HostProfileRetractError {
     /// Another product disclosed the reference the host holds.
     NotDiscloser,
+    /// No user is signed in.
+    NotConnected,
     /// Catch-all.
     Unknown {
         /// Human-readable reason.
@@ -100,6 +107,8 @@ pub enum HostProfilePresentContactError {
     NotShared,
     /// The host holds a reference it cannot parse.
     InvalidReference,
+    /// No user is signed in.
+    NotConnected,
     /// Catch-all.
     Unknown {
         /// Human-readable reason.

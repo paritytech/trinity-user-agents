@@ -41,8 +41,10 @@ pub trait Profile: Send + Sync {
     ///
     /// The host stores it as the user's own and relays it to each contact,
     /// replacing whatever it sent before; the product never learns who they
-    /// are. App executions only. A reference this core cannot screen is
-    /// `InvalidReference`.
+    /// are. App executions only. The first disclosure asks the user once for
+    /// this product; a refusal, then or remembered, is `PermissionDenied`. A
+    /// reference this core cannot screen is `InvalidReference`, and with no
+    /// user signed in the call is `NotConnected`.
     ///
     /// ```ts
     /// const result = await truapi.profile.disclose({

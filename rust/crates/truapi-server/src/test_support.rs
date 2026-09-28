@@ -32,9 +32,9 @@ use truapi_platform::{
     NativeChatFilesHost, NativeChatPickedFile, Navigation as PlatformNavigation,
     Notifications as PlatformNotifications, PairingHostConfig, Permissions as PlatformPermissions,
     PlatformInfo, PreimageHost, ProductContext, ProductOperations as PlatformProductOperations,
-    ProductStorage as PlatformProductStorage, ProductSubtreeReview, ResourceAllocationReview,
-    SignPayloadReview, SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost,
-    UserConfirmation, UserConfirmationReview,
+    ProductStorage as PlatformProductStorage, ProductSubtreeReview, ProfileDisclosureReview,
+    ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+    StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
 
@@ -104,6 +104,8 @@ pub(crate) struct StubPlatform {
     pub(crate) chat_authority_confirmed: bool,
     pub(crate) chat_authority_error: Option<&'static str>,
     pub(crate) chat_authority_reviews: Arc<parking_lot::Mutex<Vec<ChatAuthorityReview>>>,
+    pub(crate) profile_disclosure_confirmed: bool,
+    pub(crate) profile_disclosure_reviews: Arc<Mutex<Vec<ProfileDisclosureReview>>>,
     /// One-shot payment decisions are independent of every reusable permission.
     /// The derived default denies spending.
     pub(crate) main_purse_chat_payment_confirmed: bool,
@@ -1830,6 +1832,13 @@ impl UserConfirmation for StubPlatform {
                     .expect("product subtree review list mutex poisoned")
                     .push(review);
                 (None, !self.product_subtree_denied)
+            }
+            UserConfirmationReview::ProfileDisclosure(review) => {
+                self.profile_disclosure_reviews
+                    .lock()
+                    .expect("profile disclosure review list mutex poisoned")
+                    .push(review);
+                (None, self.profile_disclosure_confirmed)
             }
         };
         if let Some(reason) = error {

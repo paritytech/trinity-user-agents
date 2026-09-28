@@ -274,20 +274,32 @@ export type CoreStorageKey =
       value: { rootPublicKey: Uint8Array; genesisHash: Uint8Array };
     }
   /**
-   * The profile reference the user disclosed to their chat contacts, with
-   * the product that disclosed it. Wallet-owned: one per user, whichever
-   * product wrote it. The reference is a bearer capability.
+   * The profile reference the user disclosed to their chat contacts on one
+   * Chat network, with the product that disclosed it. Wallet-owned: one per
+   * wallet and network, whichever product wrote it. The reference is a
+   * bearer capability.
    *
    * Known gap (docs/rfcs/profile-disclosure.md): one slot, so the last product to disclose replaces
    * the others.
    */
-  | { tag: "ProfileDisclosure"; value?: undefined }
+  | {
+      tag: "ProfileDisclosure";
+      value: { rootPublicKey: Uint8Array; genesisHash: Uint8Array };
+    }
   /**
-   * Profile references this product's chat contacts disclosed, newest per
-   * contact. Product-indexed, like the roster they belong to, so clearing
+   * Profile references the contacts on one Chat product's roster disclosed,
+   * the newest per contact, withdrawals included. Scoped like the
+   * `NativeChatDevice` roster it shadows, and product-indexed so clearing
    * the product clears them. The references are bearer capabilities.
    */
-  | { tag: "ProfileReferencesReceived"; value: { productId: string } };
+  | {
+      tag: "ProfileReferencesReceived";
+      value: {
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
+        productId: string;
+      };
+    };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -885,7 +897,12 @@ export type PermissionAuthorizationRequest =
   | {
       tag: "StatementStoreAllowance";
       value: { derivationIndex?: DerivationIndex };
-    };
+    }
+  /**
+   * Product-scoped permission to disclose a profile reference to the user's
+   * Chat contacts.
+   */
+  | { tag: "ProfileDisclosure"; value?: undefined };
 
 /**
  * Authorization status for a permission request.
@@ -943,6 +960,18 @@ export type ProductExecutionKind = "App" | "Widget" | "Worker";
 export interface ProductSubtreeReview {
   /**
    * Product resolving its own account.
+   */
+  productId: string;
+}
+
+/**
+ * Review shown before a product first discloses a profile reference to the
+ * user's Chat contacts. The host relays it to every contact, so the prompt
+ * names the product, never the contacts or the reference.
+ */
+export interface ProfileDisclosureReview {
+  /**
+   * Product asking to disclose the profile.
    */
   productId: string;
 }
@@ -1156,7 +1185,12 @@ export type UserConfirmationReview =
   /**
    * Confirm this exact main-purse payment; never eligible for auto-approval.
    */
-  | { tag: "MainPurseChatPayment"; value: MainPurseChatPaymentReview };
+  | { tag: "MainPurseChatPayment"; value: MainPurseChatPaymentReview }
+  /**
+   * Allow a product to disclose a profile reference to the user's Chat
+   * contacts.
+   */
+  | { tag: "ProfileDisclosure"; value: ProfileDisclosureReview };
 
 /**
  * Review shown before a product asks to access another product account.
@@ -1286,8 +1320,17 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         rootPublicKey: S.Bytes(32),
         genesisHash: S.Bytes(32),
       }) as S.Codec<{ rootPublicKey: Uint8Array; genesisHash: Uint8Array }>,
-      ProfileDisclosure: S._void,
-      ProfileReferencesReceived: S.Struct({ productId: S.str }) as S.Codec<{
+      ProfileDisclosure: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+      }) as S.Codec<{ rootPublicKey: Uint8Array; genesisHash: Uint8Array }>,
+      ProfileReferencesReceived: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+        productId: S.str,
+      }) as S.Codec<{
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
         productId: string;
       }>,
     }),
@@ -1708,6 +1751,7 @@ export const PermissionAuthorizationRequest: S.Codec<PermissionAuthorizationRequ
         StatementStoreAllowance: S.Struct({
           derivationIndex: S.Option(DerivationIndex),
         }) as S.Codec<{ derivationIndex?: DerivationIndex }>,
+        ProfileDisclosure: S._void,
       }),
   );
 
@@ -1765,6 +1809,16 @@ export const ProductExecutionKind: S.Codec<ProductExecutionKind> = S.lazy(
 export const ProductSubtreeReview: S.Codec<ProductSubtreeReview> = S.lazy(
   (): S.Codec<ProductSubtreeReview> =>
     S.Struct({ productId: S.str }) as S.Codec<ProductSubtreeReview>,
+);
+
+/**
+ * Review shown before a product first discloses a profile reference to the
+ * user's Chat contacts. The host relays it to every contact, so the prompt
+ * names the product, never the contacts or the reference.
+ */
+export const ProfileDisclosureReview: S.Codec<ProfileDisclosureReview> = S.lazy(
+  (): S.Codec<ProfileDisclosureReview> =>
+    S.Struct({ productId: S.str }) as S.Codec<ProfileDisclosureReview>,
 );
 
 /**
@@ -1890,6 +1944,7 @@ export const UserConfirmationReview: S.Codec<UserConfirmationReview> = S.lazy(
       ProductSubtree: ProductSubtreeReview,
       ChatAuthority: ChatAuthorityReview,
       MainPurseChatPayment: MainPurseChatPaymentReview,
+      ProfileDisclosure: ProfileDisclosureReview,
     }),
 );
 

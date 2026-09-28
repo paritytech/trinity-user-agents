@@ -6,23 +6,43 @@
 //! A per-peer watermark records what this Host last queued for that peer, so
 //! the initial share, a new contact, a replacement and a withdrawal are one
 //! reconcile: every peer whose watermark differs from the disclosure is sent
-//! the disclosure. The watermark advances when the message is queued.
+//! the disclosure. The watermark advances when the message is queued. Each
+//! frame to a peer is timestamped later than the one before it, so the peer's
+//! host keeps the newest whatever order it opens them in.
+//!
+//! Delivery is best effort. References have their own outbox budget, one per
+//! peer, so they never take a slot user traffic needs; a reference that finds
+//! no room is left for a later reconcile. A queued reference is offered for one
+//! statement lifetime and then dropped rather than re-signed: a host that does
+//! not know the content type never acknowledges it, and would otherwise hold
+//! the slot for good.
 //!
 //! Known gap (docs/rfcs/profile-disclosure.md): advancing at queue time means a message that never
 //! arrives is not resent until the disclosure changes.
 
 use super::*;
 use crate::runtime::native_chat::background::require_authorized;
-use crate::runtime::profile::{Disclosure, read_disclosure};
+use crate::runtime::profile::{Disclosure, ProfileOwner, read_disclosure};
 
 /// What this Host last queued to one peer.
 #[derive(Clone, PartialEq, Eq, Encode, Decode)]
 pub(super) struct ProfileWatermark {
     pub(super) peer: [u8; 32],
-    /// Digest of the disclosure sent, identifying it without keeping it.
-    pub(super) digest: [u8; 32],
+    /// Digest of the disclosure sent, identifying it without keeping it;
+    /// `None` once a withdrawal was sent.
+    pub(super) digest: Option<[u8; 32]>,
     /// Product that disclosed it, repeated on a withdrawal.
     pub(super) discloser_product_id: String,
+    /// Timestamp of the frame sent. The next frame to this peer is later.
+    pub(super) timestamp: u64,
+}
+
+/// The wallet and Chat network the user's disclosure belongs to.
+pub(super) fn profile_owner(context: &NativeChatContext) -> ProfileOwner {
+    ProfileOwner {
+        root_public_key: context.session.public_key,
+        genesis_hash: context.genesis_hash,
+    }
 }
 
 fn disclosure_digest(disclosure: &Disclosure) -> [u8; 32] {
@@ -45,7 +65,7 @@ fn wanted(
     match (disclosure, current) {
         (Some(disclosure), current) => {
             let digest = disclosure_digest(disclosure);
-            if current.is_some_and(|watermark| watermark.digest == digest) {
+            if current.is_some_and(|watermark| watermark.digest == Some(digest)) {
                 return None;
             }
             Some((
@@ -54,14 +74,26 @@ fn wanted(
                 Some(digest),
             ))
         }
-        (None, Some(watermark)) => Some((watermark.discloser_product_id.clone(), None, None)),
-        (None, None) => None,
+        (None, Some(watermark)) if watermark.digest.is_some() => {
+            Some((watermark.discloser_product_id.clone(), None, None))
+        }
+        (None, _) => None,
     }
+}
+
+/// A queued reference whose statement lifetime is over.
+fn lapsed(entry: &Outgoing, now: u64) -> bool {
+    matches!(entry.kind, OutgoingKind::ProfileReference(_))
+        && entry
+            .statement
+            .expiry
+            .is_none_or(|expiry| (expiry >> 32) <= now)
 }
 
 impl NativeChatActor {
     /// Queue a profile reference (or withdrawal) for every ready peer whose
-    /// watermark differs from the user's current disclosure.
+    /// watermark differs from the user's current disclosure, as far as the
+    /// outbox has room. `true` when anything was queued.
     pub(in crate::runtime::native_chat) async fn publish_profile_reference(
         self: &Arc<Self>,
         context: &NativeChatContext,
@@ -74,7 +106,8 @@ impl NativeChatActor {
         {
             return Ok(false);
         }
-        let disclosure = read_disclosure(&*context.services.platform)
+        self.retire_lapsed_profile_references(context).await?;
+        let disclosure = read_disclosure(&*context.services.platform, profile_owner(context))
             .await
             .map_err(|_| Error::StorageUnavailable)?;
         let stale = self
@@ -109,6 +142,8 @@ impl NativeChatActor {
                 if !valid() {
                     return Err(Error::NotConnected);
                 }
+                let now = current_unix_secs().saturating_mul(1000);
+                let mut queued = false;
                 for identity in stale {
                     let peer = state.peer(&identity)?.clone();
                     if !peer.ready() {
@@ -122,11 +157,16 @@ impl NativeChatActor {
                     else {
                         continue;
                     };
-                    let tag = hash(&(identity, &discloser, &reference).encode());
+                    // Later than anything sent to this peer before, even
+                    // after the clock steps back, so its host can order them.
+                    let timestamp = current.map_or(now, |watermark| {
+                        now.max(watermark.timestamp.saturating_add(1))
+                    });
+                    let tag = hash(&(identity, &discloser, &reference, timestamp).encode());
                     let request_id = format!("profile-{}", hex::encode(&tag[..8]));
                     let bytes = wire::encode_profile_reference_message(
                         &request_id,
-                        current_unix_secs().saturating_mul(1000),
+                        timestamp,
                         &discloser,
                         reference.as_deref(),
                     )
@@ -144,7 +184,7 @@ impl NativeChatActor {
                         entry.peer != identity
                             || !matches!(entry.kind, OutgoingKind::ProfileReference(_))
                     });
-                    state.queue(Outgoing {
+                    match state.queue(Outgoing {
                         peer: identity,
                         request_id,
                         digest: hash(&messages.encode()),
@@ -152,22 +192,54 @@ impl NativeChatActor {
                         roster_revision: peer.revision,
                         statement,
                         last_attempt: 0,
-                    })?;
+                    }) {
+                        Ok(()) => queued = true,
+                        // No room: this peer and the rest keep their
+                        // watermarks, so a later reconcile retries them.
+                        Err(Error::StorageUnavailable) => break,
+                        Err(error) => return Err(error),
+                    }
                     state
                         .profile_shared
                         .retain(|watermark| watermark.peer != identity);
-                    if let Some(digest) = digest {
-                        state.profile_shared.push(ProfileWatermark {
-                            peer: identity,
-                            digest,
-                            discloser_product_id: discloser,
-                        });
-                    }
+                    state.profile_shared.push(ProfileWatermark {
+                        peer: identity,
+                        digest,
+                        discloser_product_id: discloser,
+                        timestamp,
+                    });
                 }
+                Ok(queued)
+            })
+            .await
+    }
+
+    /// Drop queued references whose statement lifetime is over. Their
+    /// watermarks stay, so the same disclosure is not queued again: a peer
+    /// that did not acknowledge it in a lifetime is not helped by another
+    /// signature, only a changed disclosure is sent again.
+    pub(super) async fn retire_lapsed_profile_references(
+        &self,
+        context: &NativeChatContext,
+    ) -> Result<(), Error> {
+        let now = current_unix_secs();
+        if !self
+            .store
+            .read(move |state| state.outbox.iter().any(|entry| lapsed(entry, now)))
+            .await?
+        {
+            return Ok(());
+        }
+        let valid = context.session_valid.clone();
+        self.store
+            .update(move |state| {
+                if !valid() {
+                    return Err(Error::NotConnected);
+                }
+                state.outbox.retain(|entry| !lapsed(entry, now));
                 Ok(())
             })
-            .await?;
-        Ok(true)
+            .await
     }
 }
 
@@ -187,8 +259,9 @@ mod tests {
         let current = disclosure("seity-contacts:v1:aa");
         let held = ProfileWatermark {
             peer: [1; 32],
-            digest: disclosure_digest(&current),
+            digest: Some(disclosure_digest(&current)),
             discloser_product_id: "seity.dot".into(),
+            timestamp: 1,
         };
         assert!(wanted(Some(&current), Some(&held)).is_none());
         let (_, reference, _) = wanted(Some(&disclosure("seity-contacts:v1:bb")), Some(&held))
@@ -199,6 +272,18 @@ mod tests {
         assert_eq!(
             (discloser.as_str(), reference, digest),
             ("seity.dot", None, None)
+        );
+        let withdrawn = ProfileWatermark {
+            digest: None,
+            ..held
+        };
+        assert!(
+            wanted(None, Some(&withdrawn)).is_none(),
+            "a withdrawal is sent once"
+        );
+        assert!(
+            wanted(Some(&current), Some(&withdrawn)).is_some(),
+            "a withdrawn peer is sent a new disclosure"
         );
         assert!(
             wanted(None, None).is_none(),

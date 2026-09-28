@@ -1385,25 +1385,52 @@ fn present_contact(
 
 const CONTACTS_REFERENCE: &str = "seity-contacts:v1:5c9584ba6e565351723d57394780b31b4c2156123e1269c4724ae5f01258bb535c9584ba6e565351723d57394780b31b4c2156123e1269c4724ae5f01258bb53";
 
+const WALLET: [u8; 32] = [0x57; 32];
+
+/// Sign `host` in as the wallet with root key `root_public_key`.
+fn signed_in(host: ProductRuntimeHost, root_public_key: [u8; 32]) -> ProductRuntimeHost {
+    host.test_session_state()
+        .set_session(crate::host_logic::session::SessionInfo {
+            public_key: root_public_key,
+            ..session_info()
+        });
+    host
+}
+
+fn app_host(platform: &Arc<StubPlatform>, product_id: &str) -> ProductRuntimeHost {
+    signed_in(
+        profile_host_on(
+            platform.clone(),
+            ProductContext::new(product_id.to_string()).expect("valid product"),
+            None,
+        ),
+        WALLET,
+    )
+}
+
+fn owner_of(host: &ProductRuntimeHost) -> profile::ProfileOwner {
+    host.profile_owner().expect("signed in")
+}
+
+fn consenting_platform() -> Arc<StubPlatform> {
+    Arc::new(StubPlatform {
+        profile_disclosure_confirmed: true,
+        ..Default::default()
+    })
+}
+
 #[test]
 fn profile_disclose_stores_the_reference_and_only_its_discloser_may_retract_it() {
-    let platform = stub_platform();
-    let seity = profile_host_on(
-        platform.clone(),
-        ProductContext::new("seity.dot".to_string()).expect("valid product"),
-        None,
-    );
-    let other = profile_host_on(
-        platform.clone(),
-        ProductContext::new("other.dot".to_string()).expect("valid product"),
-        None,
-    );
+    let platform = consenting_platform();
+    let seity = app_host(&platform, "seity.dot");
+    let other = app_host(&platform, "other.dot");
+    let owner = owner_of(&seity);
 
     assert_eq!(
         disclose(&seity, CONTACTS_REFERENCE).expect("an App discloses a screened reference"),
         HostProfileDiscloseResponse::V1
     );
-    let stored = futures::executor::block_on(profile::read_disclosure(platform.as_ref()))
+    let stored = futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner))
         .expect("readable")
         .expect("stored");
     assert_eq!(stored.product_id, "seity.dot");
@@ -1420,7 +1447,8 @@ fn profile_disclose_stores_the_reference_and_only_its_discloser_may_retract_it()
         HostProfileRetractResponse::V1
     );
     assert_eq!(
-        futures::executor::block_on(profile::read_disclosure(platform.as_ref())).expect("readable"),
+        futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner))
+            .expect("readable"),
         None
     );
     assert_eq!(
@@ -1430,16 +1458,71 @@ fn profile_disclose_stores_the_reference_and_only_its_discloser_may_retract_it()
 }
 
 #[test]
-fn profile_disclose_is_for_apps_and_screened_references_only() {
-    let platform = stub_platform();
-    let worker = profile_host_on(
-        platform.clone(),
-        ProductContext::new_with_execution(
-            "seity.dot".to_string(),
-            truapi_platform::ProductExecutionKind::Worker,
-        )
-        .expect("valid product"),
+fn profile_disclose_asks_once_per_product_and_a_refusal_stores_nothing() {
+    let platform = Arc::new(StubPlatform::default());
+    // The first product is refused, the second allowed, each asked once.
+    platform
+        .permission_confirmation_decisions
+        .lock()
+        .expect("permission confirmation mutex poisoned")
+        .extend([
+            truapi_platform::PermissionDecision::Deny,
+            truapi_platform::PermissionDecision::AllowAlways,
+        ]);
+    let refused = app_host(&platform, "refused.dot");
+    let allowed = app_host(&platform, "seity.dot");
+    let owner = owner_of(&refused);
+    let denied =
+        |result: Result<HostProfileDiscloseResponse, CallError<HostProfileDiscloseError>>| {
+            matches!(
+                result,
+                Err(CallError::Domain(HostProfileDiscloseError::V1(
+                    v01::HostProfileDiscloseError::PermissionDenied
+                )))
+            )
+        };
+
+    assert!(denied(disclose(&refused, CONTACTS_REFERENCE)));
+    assert!(
+        denied(disclose(&refused, CONTACTS_REFERENCE)),
+        "the refusal is remembered"
+    );
+    assert_eq!(
+        futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner))
+            .expect("readable"),
         None,
+        "a refused product discloses nothing"
+    );
+
+    disclose(&allowed, CONTACTS_REFERENCE).expect("the user allowed it");
+    disclose(&allowed, CONTACTS_REFERENCE).expect("and is not asked again");
+    assert_eq!(
+        platform
+            .profile_disclosure_reviews
+            .lock()
+            .expect("profile disclosure review list mutex poisoned")
+            .iter()
+            .map(|review| review.product_id.as_str())
+            .collect::<Vec<_>>(),
+        ["refused.dot", "seity.dot"],
+        "one prompt per product, naming it"
+    );
+}
+
+#[test]
+fn profile_disclose_is_for_apps_and_screened_references_only() {
+    let platform = consenting_platform();
+    let worker = signed_in(
+        profile_host_on(
+            platform.clone(),
+            ProductContext::new_with_execution(
+                "seity.dot".to_string(),
+                truapi_platform::ProductExecutionKind::Worker,
+            )
+            .expect("valid product"),
+            None,
+        ),
+        WALLET,
     );
     assert!(matches!(
         disclose(&worker, CONTACTS_REFERENCE),
@@ -1447,11 +1530,7 @@ fn profile_disclose_is_for_apps_and_screened_references_only() {
     ));
     assert!(matches!(retract(&worker), Err(CallError::Denied)));
 
-    let app = profile_host_on(
-        platform.clone(),
-        ProductContext::new("seity.dot".to_string()).expect("valid product"),
-        None,
-    );
+    let app = app_host(&platform, "seity.dot");
     for rejected in [
         String::new(),
         "a".repeat(2049),
@@ -1465,32 +1544,124 @@ fn profile_disclose_is_for_apps_and_screened_references_only() {
         ));
     }
     assert_eq!(
-        futures::executor::block_on(profile::read_disclosure(platform.as_ref())).expect("readable"),
+        futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner_of(&app)))
+            .expect("readable"),
         None,
         "nothing unscreened is stored"
     );
+    assert!(
+        platform
+            .profile_disclosure_reviews
+            .lock()
+            .expect("profile disclosure review list mutex poisoned")
+            .is_empty(),
+        "nor is the user asked about it"
+    );
+
+    let signed_out = profile_host_on(
+        platform.clone(),
+        ProductContext::new("seity.dot".to_string()).expect("valid product"),
+        None,
+    );
+    assert!(matches!(
+        disclose(&signed_out, CONTACTS_REFERENCE),
+        Err(CallError::Domain(HostProfileDiscloseError::V1(
+            v01::HostProfileDiscloseError::NotConnected
+        )))
+    ));
+    assert!(matches!(
+        retract(&signed_out),
+        Err(CallError::Domain(HostProfileRetractError::V1(
+            v01::HostProfileRetractError::NotConnected
+        )))
+    ));
+}
+
+#[test]
+fn profile_state_belongs_to_the_signed_in_wallet() {
+    let platform = consenting_platform();
+    let presented = Arc::new(RecordingProfilePlatform::default());
+    let first = app_host(&platform, "seity.dot");
+    let second = signed_in(
+        profile_host_on(
+            platform.clone(),
+            ProductContext::new("seity.dot".to_string()).expect("valid product"),
+            Some(presented.clone()),
+        ),
+        [0x58; 32],
+    );
+    disclose(&first, CONTACTS_REFERENCE).expect("disclosed");
+    assert_eq!(
+        futures::executor::block_on(profile::read_disclosure(
+            platform.as_ref(),
+            owner_of(&second)
+        ))
+        .expect("readable"),
+        None,
+        "another wallet has disclosed nothing"
+    );
+    assert_eq!(
+        retract(&second).expect("nothing to retract"),
+        HostProfileRetractResponse::V1
+    );
+    assert!(
+        futures::executor::block_on(profile::read_disclosure(
+            platform.as_ref(),
+            owner_of(&first)
+        ))
+        .expect("readable")
+        .is_some(),
+        "and cannot withdraw the first wallet's"
+    );
+
+    // What one wallet's contact sent is not another wallet's.
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(),
+        owner_of(&first),
+        "seity.dot",
+        [0xa1; 32],
+        "seity.dot".to_string(),
+        1,
+        Some(CONTACTS_REFERENCE.to_string()),
+    ))
+    .expect("recorded");
+    assert!(matches!(
+        present_contact(&second, [0xa1; 32]),
+        Err(CallError::Domain(HostProfilePresentContactError::V1(
+            v01::HostProfilePresentContactError::NotShared
+        )))
+    ));
 }
 
 #[test]
 fn profile_present_contact_substitutes_the_reference_the_contact_sent() {
     let platform = stub_platform();
     let presented = Arc::new(RecordingProfilePlatform::default());
-    let chat = profile_host_on(
-        platform.clone(),
-        ProductContext::new("egui-chat.dot".to_string()).expect("valid product"),
-        Some(presented.clone()),
+    let chat = signed_in(
+        profile_host_on(
+            platform.clone(),
+            ProductContext::new("egui-chat.dot".to_string()).expect("valid product"),
+            Some(presented.clone()),
+        ),
+        WALLET,
     );
+    let owner = owner_of(&chat);
     let alice = [0xa1; 32];
     let bob = [0xb0; 32];
-    // What the relay does when Alice's host sends her reference.
-    futures::executor::block_on(profile::record_received_reference(
-        platform.as_ref(),
-        "egui-chat.dot",
-        alice,
-        "seity.dot".to_string(),
-        Some(CONTACTS_REFERENCE.to_string()),
-    ))
-    .expect("recorded");
+    let record = |timestamp, reference: Option<&str>| {
+        // What the relay does when Alice's host sends her a frame.
+        futures::executor::block_on(profile::record_received_reference(
+            platform.as_ref(),
+            owner,
+            "egui-chat.dot",
+            alice,
+            "seity.dot".to_string(),
+            timestamp,
+            reference.map(str::to_string),
+        ))
+        .expect("recorded");
+    };
+    record(1, Some(CONTACTS_REFERENCE));
 
     assert_eq!(
         present_contact(&chat, alice).expect("a contact who shared is presented"),
@@ -1513,10 +1684,13 @@ fn profile_present_contact_substitutes_the_reference_the_contact_sent() {
     ));
 
     // Another product's contacts are not this product's.
-    let other = profile_host_on(
-        platform.clone(),
-        ProductContext::new("other-chat.dot".to_string()).expect("valid product"),
-        Some(presented.clone()),
+    let other = signed_in(
+        profile_host_on(
+            platform.clone(),
+            ProductContext::new("other-chat.dot".to_string()).expect("valid product"),
+            Some(presented.clone()),
+        ),
+        WALLET,
     );
     assert!(matches!(
         present_contact(&other, alice),
@@ -1525,15 +1699,8 @@ fn profile_present_contact_substitutes_the_reference_the_contact_sent() {
         )))
     ));
 
-    // A retraction from Alice's host removes what this host holds.
-    futures::executor::block_on(profile::record_received_reference(
-        platform.as_ref(),
-        "egui-chat.dot",
-        alice,
-        "seity.dot".to_string(),
-        None,
-    ))
-    .expect("recorded");
+    // A retraction from Alice's host withdraws what this host holds.
+    record(2, None);
     assert!(matches!(
         present_contact(&chat, alice),
         Err(CallError::Domain(HostProfilePresentContactError::V1(
@@ -1544,9 +1711,25 @@ fn profile_present_contact_substitutes_the_reference_the_contact_sent() {
     assert!(matches!(
         present_contact(
             &profile_host_on(
-                platform,
+                platform.clone(),
                 ProductContext::new("egui-chat.dot".to_string()).expect("valid product"),
-                None,
+                Some(presented),
+            ),
+            alice,
+        ),
+        Err(CallError::Domain(HostProfilePresentContactError::V1(
+            v01::HostProfilePresentContactError::NotConnected
+        )))
+    ));
+    assert!(matches!(
+        present_contact(
+            &signed_in(
+                profile_host_on(
+                    platform,
+                    ProductContext::new("egui-chat.dot".to_string()).expect("valid product"),
+                    None,
+                ),
+                WALLET,
             ),
             alice,
         ),

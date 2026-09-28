@@ -174,6 +174,11 @@ when the user dismisses it. The reference is a bearer capability: the host fetch
 profile's bytes never return to the product. The core forwards only references that are non-empty, at most 2048 bytes
 and printable ASCII without whitespace; parsing the format is the host's.
 
+`profile.disclose` needs no `profile` group, but the first call from a product asks the user through
+`userConfirmation.confirmPermission` with a `ProfileDisclosure` review naming that product: every Chat contact receives
+the reference. The answer is kept like any other permission, as `ProfileDisclosure`. A host that cannot render the
+review should reject the call rather than answer `Deny`: the product is refused, but no refusal is remembered.
+
 Under `createWebWorkerPairingHostRuntime` the presence of each optional group is reported to the worker in its `init`
 message, so the core sees the same capability set on both sides of the boundary.
 

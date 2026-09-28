@@ -8,17 +8,17 @@ status: draft
 
 ## Summary
 
-A product hands the host one opaque profile reference for the user's chat contacts. The host relays it to each
-contact over Chat v2 and keeps the references contacts relay back. A chat product then asks the host to show a
-contact's profile by naming the contact, and the host presents the reference that contact disclosed through the
-existing `profile.present` path. No product holds another user's reference.
+A product hands the host one opaque profile reference for the user's chat contacts. The host relays it to each contact
+over Chat v2 and keeps the references contacts relay back. A chat product then asks the host to show a contact's profile
+by naming the contact, and the host presents the reference that contact disclosed through the existing `profile.present`
+path. No product holds another user's reference.
 
 ## Motivation
 
-`profile.present` shows a profile from a reference the calling product already holds. A chat product has no honest
-way to hold one for a contact: the reference is a bearer capability, so a product that carries it can read, keep and
-forward the profile, and can show any reference against any contact. The reference has to travel host to host and stay
-inside the hosts, and Chat v2 leaves ordinary delivery to products.
+`profile.present` shows a profile from a reference the calling product already holds. A chat product has no honest way
+to hold one for a contact: the reference is a bearer capability, so a product that carries it can read, keep and forward
+the profile, and can show any reference against any contact. The reference has to travel host to host and stay inside
+the hosts, and Chat v2 leaves ordinary delivery to products.
 
 ## Requirements
 
@@ -30,9 +30,10 @@ inside the hosts, and Chat v2 leaves ordinary delivery to products.
 
 ## Approach
 
-The design has four parts:
+The design has five parts:
 
 - The `Profile` trait gains `disclose`, `retract` and `present_contact`.
+- `disclose` asks the user once per product before anything is stored.
 - Core storage holds the user's disclosure and the references received per chat product.
 - The Chat v2 actor relays disclosures through its host-private outbox.
 - `present_contact` substitutes the stored reference into `present`.
@@ -91,12 +92,18 @@ pub struct HostProfileDiscloseRequest {
 pub enum HostProfileDiscloseError {
     /// The reference is empty, too long, or not printable ASCII.
     InvalidReference,
+    /// The user declined, now or earlier, to let this product disclose a profile.
+    PermissionDenied,
+    /// No user is signed in.
+    NotConnected,
     /// Catch-all.
     Unknown { reason: String },
 }
 pub enum HostProfileRetractError {
     /// Another product disclosed the reference the host holds.
     NotDiscloser,
+    /// No user is signed in.
+    NotConnected,
     /// Catch-all.
     Unknown { reason: String },
 }
@@ -109,17 +116,28 @@ pub enum HostProfilePresentContactError {
     NotShared,
     /// The stored reference no longer passes screening.
     InvalidReference,
+    /// No user is signed in.
+    NotConnected,
     /// Catch-all.
     Unknown { reason: String },
 }
 ```
 
+### Consent
+
+Every contact receives the reference, so a product may disclose only once the user has allowed it. The first `disclose`
+from a product raises `UserConfirmationReview::ProfileDisclosure { product_id }` through the host's
+`confirm_permission`, beside `ChatAuthority`; the answer is remembered per product as
+`PermissionAuthorizationRequest::ProfileDisclosure`, and a refusal, then or remembered, is `PermissionDenied` with
+nothing stored. `retract` never asks: withdrawing only narrows what contacts hold.
+
 ### Storage
 
-Two core-storage slots hold references, and neither is visible to products. `ProfileDisclosure` is wallet-owned and
-holds the disclosing product id and the reference. `ProfileReferencesReceived { product_id }` holds, per chat product,
-the newest reference each contact disclosed with its discloser; clearing the product clears it with the roster it
-belongs to. Hosts treat both as secret material.
+Two core-storage slots hold references, and neither is visible to products. Both are scoped to the signed-in wallet and
+the Chat network, as the Chat roster is. `ProfileDisclosure { root_public_key, genesis_hash }` holds the disclosing
+product id and the reference. `ProfileReferencesReceived { root_public_key, genesis_hash, product_id }` holds, per chat
+product, what each contact's host last sent: its discloser, its frame timestamp, and the reference, or `None` once
+withdrawn. Clearing the product clears it. Hosts treat both as secret material.
 
 ### Relay
 
@@ -130,6 +148,16 @@ prepare the content type itself. A per-peer watermark records what was last sent
 disclosure to every peer whose watermark differs, which covers the first share, a new contact, a replacement and a
 withdrawal. On receipt the host screens the frame, stores it for that peer and removes it from the plaintext returned to
 the product. Frames from compacted history are dropped.
+
+The product decides the order it opens statements in, so frames are ordered by their timestamp, not by arrival. Each
+frame a host sends a peer is timestamped later than the one before it, even if its clock steps back. The receiving host
+applies a frame only if it is strictly newer than the one it holds, and keeps a withdrawal as a row rather than deleting
+it, so a disclosure opened after its own withdrawal cannot bring the reference back.
+
+Delivery is best effort. References have their own outbox budget, one per peer, so they never take a slot payments or
+rich files need, and a reference that finds no room waits for a later reconcile rather than failing the chat product's
+initialization. A queued reference is offered for one statement lifetime and then dropped without being re-signed: a
+host that predates the content type rejects the whole statement and never acknowledges it.
 
 Stability comes from the reference format rather than the relay: a reference that names a mutable record, such as a
 registry slot, keeps working when the record changes, so a relay happens only when the reference itself changes.
@@ -143,8 +171,8 @@ registry slot, keeps working when the record changes, so a relay happens only wh
 
 - One reference for all contacts, so withdrawing it from one contact means rotating it for all of them.
 - A retraction cannot make a contact's host forget a reference it already resolved.
-- The watermark advances when the message is queued, so a message that never arrives is not resent until the
-  disclosure changes.
+- The watermark advances when the message is queued, so a message that never arrives, or that a peer's host does not
+  acknowledge within one statement lifetime, is not resent until the disclosure changes.
 - Dropped: carrying the reference in ordinary chat content, which puts a bearer capability in product hands.
 
 ## Open questions
@@ -153,9 +181,9 @@ registry slot, keeps working when the record changes, so a relay happens only wh
 - Several disclosing products. There is one `ProfileDisclosure` slot, so the last product to disclose replaces the
   others and the earlier one can no longer retract. The alternative is one slot per product, with the host relaying the
   one from a product the user designates, as RFC 0024 designates a personhood provider.
-- Consent. `disclose` has no prompt; the alternative is a prompt-once authorization beside `ChatAuthority`.
+- Consent covers the product, not the reference: once allowed, a product may replace its disclosure without asking.
 - Devices. Only the host that took `disclose` knows the disclosure, so contacts that reach the user's other devices are
   not sent it.
 - Reconcile timing. The relay runs when the chat product initializes, not when `disclose` returns.
-- Resolution. Hosts parse references today; a shared resolver in the core would need the reference format specified
-  here rather than by the publishing product.
+- Resolution. Hosts parse references today; a shared resolver in the core would need the reference format specified here
+  rather than by the publishing product.

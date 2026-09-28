@@ -791,6 +791,19 @@ impl ProductRuntimeHost {
             .map_err(|err| format!("permission storage failed: {err:?}"))
     }
 
+    #[instrument(
+        skip_all,
+        fields(runtime.method = "permissions.profile_disclosure_authorization")
+    )]
+    async fn profile_disclosure_authorization(
+        &self,
+    ) -> Result<PermissionAuthorizationStatus, String> {
+        self.permissions_service()
+            .check_or_prompt_profile_disclosure()
+            .await
+            .map_err(|err| format!("permission storage failed: {err:?}"))
+    }
+
     async fn classify_legacy_address_signer(
         &self,
         cx: &CallContext,
@@ -1250,6 +1263,17 @@ impl ProductRuntimeHost {
     ) -> Result<Arc<dyn truapi_platform::ProfilePlatform>, CallError<E>> {
         self.profile_platform.clone().ok_or(CallError::Unsupported)
     }
+
+    /// The signed-in wallet on the Chat network, which owns the user's
+    /// disclosure and what their contacts sent back: the same wallet and
+    /// network the Chat actor relays for. `None` with no one signed in.
+    fn profile_owner(&self) -> Option<profile::ProfileOwner> {
+        let session = self.authority.session_state().current()?;
+        Some(profile::ProfileOwner {
+            root_public_key: session.public_key,
+            genesis_hash: self.services.people_chain_genesis_hash,
+        })
+    }
 }
 
 #[truapi_platform::async_trait]
@@ -1466,28 +1490,37 @@ impl Profile for ProductRuntimeHost {
     ) -> Result<HostProfileDiscloseResponse, CallError<HostProfileDiscloseError>> {
         // The user's own profile is disclosed from where they manage it, an
         // App, not from a background Worker.
-        // Known gap (docs/rfcs/profile-disclosure.md): no consent prompt yet.
         if self.product.execution_kind != truapi_platform::ProductExecutionKind::App {
             return Err(CallError::Denied);
         }
+        let domain = |error| CallError::Domain(HostProfileDiscloseError::V1(error));
         let HostProfileDiscloseRequest::V1(request) = request;
         if !is_screened_profile_reference(&request.reference) {
-            return Err(CallError::Domain(HostProfileDiscloseError::V1(
-                v01::HostProfileDiscloseError::InvalidReference,
-            )));
+            return Err(domain(v01::HostProfileDiscloseError::InvalidReference));
+        }
+        let owner = self
+            .profile_owner()
+            .ok_or_else(|| domain(v01::HostProfileDiscloseError::NotConnected))?;
+        // Every contact receives the reference, so the user decides once per
+        // product whether it may hand one over.
+        match self.profile_disclosure_authorization().await {
+            Ok(PermissionAuthorizationStatus::Authorized) => {}
+            Ok(
+                PermissionAuthorizationStatus::Denied
+                | PermissionAuthorizationStatus::NotDetermined,
+            ) => {
+                return Err(domain(v01::HostProfileDiscloseError::PermissionDenied));
+            }
+            Err(reason) => return Err(domain(v01::HostProfileDiscloseError::Unknown { reason })),
         }
         let disclosure = profile::Disclosure {
             product_id: self.product_id(),
             reference: request.reference,
         };
-        profile::write_disclosure(self.platform.as_ref(), &disclosure)
+        profile::write_disclosure(self.platform.as_ref(), owner, &disclosure)
             .await
             .map(|()| HostProfileDiscloseResponse::V1)
-            .map_err(|reason| {
-                CallError::Domain(HostProfileDiscloseError::V1(
-                    v01::HostProfileDiscloseError::Unknown { reason },
-                ))
-            })
+            .map_err(|reason| domain(v01::HostProfileDiscloseError::Unknown { reason }))
     }
 
     #[instrument(skip_all, fields(runtime.method = "profile.retract"))]
@@ -1499,21 +1532,22 @@ impl Profile for ProductRuntimeHost {
         if self.product.execution_kind != truapi_platform::ProductExecutionKind::App {
             return Err(CallError::Denied);
         }
-        let unknown = |reason| {
-            CallError::Domain(HostProfileRetractError::V1(
-                v01::HostProfileRetractError::Unknown { reason },
-            ))
-        };
+        let domain = |error| CallError::Domain(HostProfileRetractError::V1(error));
+        let unknown = |reason| domain(v01::HostProfileRetractError::Unknown { reason });
+        let owner = self
+            .profile_owner()
+            .ok_or_else(|| domain(v01::HostProfileRetractError::NotConnected))?;
         let storage = self.platform.as_ref();
-        match profile::read_disclosure(storage).await.map_err(unknown)? {
+        match profile::read_disclosure(storage, owner)
+            .await
+            .map_err(unknown)?
+        {
             None => Ok(HostProfileRetractResponse::V1),
             // One product may not withdraw what another disclosed.
             Some(disclosure) if disclosure.product_id != self.product_id() => {
-                Err(CallError::Domain(HostProfileRetractError::V1(
-                    v01::HostProfileRetractError::NotDiscloser,
-                )))
+                Err(domain(v01::HostProfileRetractError::NotDiscloser))
             }
-            Some(_) => profile::clear_disclosure(storage)
+            Some(_) => profile::clear_disclosure(storage, owner)
                 .await
                 .map(|()| HostProfileRetractResponse::V1)
                 .map_err(unknown),
@@ -1529,28 +1563,28 @@ impl Profile for ProductRuntimeHost {
         let platform = self.profile_platform()?;
         let HostProfilePresentContactRequest::V1(request) = request;
         let domain = |error| CallError::Domain(HostProfilePresentContactError::V1(error));
-        let received = profile::received_reference(
+        let owner = self
+            .profile_owner()
+            .ok_or_else(|| domain(v01::HostProfilePresentContactError::NotConnected))?;
+        let reference = profile::received_reference(
             self.platform.as_ref(),
+            owner,
             &self.product_id(),
             &request.peer_identity,
         )
         .await
         .map_err(|reason| domain(v01::HostProfilePresentContactError::Unknown { reason }))?
+        .and_then(|received| received.reference)
         .ok_or_else(|| domain(v01::HostProfilePresentContactError::NotShared))?;
         // A stored reference passed the same screen when it arrived; check
         // again rather than trust storage.
-        if !is_screened_profile_reference(&received.reference) {
+        if !is_screened_profile_reference(&reference) {
             return Err(domain(
                 v01::HostProfilePresentContactError::InvalidReference,
             ));
         }
         platform
-            .present_profile(
-                &self.product,
-                v01::HostProfilePresentRequest {
-                    reference: received.reference,
-                },
-            )
+            .present_profile(&self.product, v01::HostProfilePresentRequest { reference })
             .await
             .map(|()| HostProfilePresentContactResponse::V1)
             .map_err(|error| {

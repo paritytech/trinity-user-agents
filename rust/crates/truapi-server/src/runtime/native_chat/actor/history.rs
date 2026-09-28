@@ -385,7 +385,8 @@ impl NativeChatActor {
     }
 
     /// Keep the newest profile reference each frame carries for `peer`, in
-    /// this product's received-reference slot. `None` withdraws it.
+    /// this product's received-reference slot. `None` withdraws it, and a
+    /// frame older than the one held changes nothing.
     async fn record_profile_references(
         &self,
         context: &NativeChatContext,
@@ -395,9 +396,11 @@ impl NativeChatActor {
         for frame in frames {
             crate::runtime::profile::record_received_reference(
                 &*context.services.platform,
+                super::profile::profile_owner(context),
                 &self.product,
                 peer,
                 frame.discloser_product_id,
+                frame.timestamp,
                 frame.reference,
             )
             .await

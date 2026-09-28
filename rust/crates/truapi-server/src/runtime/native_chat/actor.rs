@@ -37,6 +37,8 @@ use crate::runtime::{
 type Error = HostProductDeviceChatError;
 const MAX_PEERS: usize = 256;
 const MAX_OUTBOX: usize = 256;
+/// Profile references are budgeted apart from other traffic, one per peer.
+const MAX_PROFILE_OUTBOX: usize = MAX_PEERS;
 const MAX_RECEIPTS: usize = 4096;
 const MAX_HISTORY_BATCHES: usize = 256;
 const LIFETIME: u64 = 2 * 86_400;
@@ -269,11 +271,25 @@ impl State {
             }
             return Ok(());
         }
-        if self.outbox.len() >= MAX_OUTBOX {
+        let profile = matches!(outgoing.kind, OutgoingKind::ProfileReference(_));
+        let limit = if profile {
+            MAX_PROFILE_OUTBOX
+        } else {
+            MAX_OUTBOX
+        };
+        if self.outbox_used(profile) >= limit {
             return Err(Error::StorageUnavailable);
         }
         self.outbox.push(outgoing);
         Ok(())
+    }
+    /// Entries in one outbox budget: profile references, or all other
+    /// traffic. Neither can crowd out the other.
+    fn outbox_used(&self, profile: bool) -> usize {
+        self.outbox
+            .iter()
+            .filter(|entry| matches!(entry.kind, OutgoingKind::ProfileReference(_)) == profile)
+            .count()
     }
 }
 
@@ -441,7 +457,8 @@ impl NativeChatActor {
     fn validate_state(&self, state: &State) -> Result<(), Error> {
         if state.peers.len() > MAX_PEERS
             || state.invitations.len() > 16
-            || state.outbox.len() > MAX_OUTBOX
+            || state.outbox_used(false) > MAX_OUTBOX
+            || state.outbox_used(true) > MAX_PROFILE_OUTBOX
             || state.received.len() > MAX_RECEIPTS
             || state.sent.len() > MAX_RECEIPTS
             || state.accepted_payments.len() > MAX_RECEIPTS
@@ -1190,6 +1207,8 @@ impl NativeChatActor {
             }
             wallet.reconcile(context).await?;
         }
+        // Profile references are not renewed: one lifetime, then dropped.
+        self.retire_lapsed_profile_references(context).await?;
         // Only expiry may be renewed on a durable opaque payment handoff. The
         // product submits/retries the resulting statement; Host never delivers.
         let pending = self
@@ -1201,10 +1220,7 @@ impl NativeChatActor {
                     .filter(|entry| {
                         matches!(entry.kind, OutgoingKind::Payment(_))
                             || (!state.boundary.legacy_pending
-                                && matches!(
-                                    entry.kind,
-                                    OutgoingKind::Rich(_) | OutgoingKind::ProfileReference(_)
-                                ))
+                                && matches!(entry.kind, OutgoingKind::Rich(_)))
                     })
                     .cloned()
                     .collect::<Vec<_>>()

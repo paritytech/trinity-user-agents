@@ -62,13 +62,21 @@ private extension TrUAPIConfirmationPresenter {
             await confirmStatementSign(
                 promptMapper.makeStatementSignRequest(from: statementReview)
             )
+        case let .preimageSubmit(preimageReview):
+            await confirmAction(
+                promptMapper.makeActionRequest(from: preimageReview, requester: requesterName)
+            )
+        case let .productSubtree(subtreeReview):
+            await confirmAction(promptMapper.makeActionRequest(from: subtreeReview))
+        // No prompt exists for profile disclosure yet, so `confirmPermission`
+        // refuses it.
         case .identityDisclosure,
              .chatAuthority,
              .preimageSubmit,
              .accountAccess,
-             .productSubtree,
-             .accountAlias:
-            try await confirmPermissionReview(review)
+             .accountAlias,
+             .profileDisclosure:
+            await confirmPermission(review: review, from: requesterName) != .deny
         case let .createProof(proofReview):
             try await confirmCreateProof(
                 promptMapper.makeCreateProofRequest(from: proofReview)
