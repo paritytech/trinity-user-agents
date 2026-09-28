@@ -44,7 +44,7 @@ The design has six parts:
 ### Trait
 
 ```rust
-#[wire_trait(id = 22)]
+#[wire_trait(id = 69)]
 #[crate::async_trait]
 pub trait Profile: Send + Sync {
     /// Show the referenced profile in host-owned UI.
@@ -247,6 +247,7 @@ read it.
 
 ## Open questions
 
+- The wire trait id. The prototype uses 69, clear of the sequential range, and moves to the next free id when it lands.
 - The content-type index. The prototype uses V2 index 21, which native Chat has to agree to.
 - Several disclosing products. There is one `ProfileDisclosure` slot, so the last product to disclose replaces the
   others and the earlier one can no longer retract. The alternative is one slot per product, with the host relaying the
