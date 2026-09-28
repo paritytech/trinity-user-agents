@@ -67,6 +67,54 @@ pub(crate) fn immediate_spawner() -> Spawner {
     Arc::new(futures::executor::block_on)
 }
 
+/// A profile host that records every contact avatar placement it is handed,
+/// by product, and answers each with `answer`, `Ok` when unset.
+#[derive(Default)]
+pub(crate) struct RecordingAvatarHost {
+    pub(crate) placed: Mutex<Vec<(String, truapi_platform::PlacedAvatars)>>,
+    pub(crate) answer: Option<v01::HostProfilePlaceContactAvatarsError>,
+}
+
+impl RecordingAvatarHost {
+    /// Every placement handed over so far, oldest first.
+    pub(crate) fn placements(&self) -> Vec<(String, truapi_platform::PlacedAvatars)> {
+        self.placed.lock().expect("placed mutex poisoned").clone()
+    }
+
+    /// Block until the host has been handed `count` placements, then return
+    /// them. Redraws and clears run on background tasks.
+    pub(crate) fn wait_for(&self, count: usize) -> Vec<(String, truapi_platform::PlacedAvatars)> {
+        wait_until(
+            || self.placements().len() >= count,
+            "the host was not handed the expected avatar placements",
+        );
+        self.placements()
+    }
+}
+
+#[truapi_platform::async_trait]
+impl truapi_platform::ProfilePlatform for RecordingAvatarHost {
+    async fn present_profile(
+        &self,
+        _product: &ProductContext,
+        _request: v01::HostProfilePresentRequest,
+    ) -> Result<(), v01::HostProfilePresentError> {
+        Ok(())
+    }
+
+    async fn place_contact_avatars(
+        &self,
+        product: &ProductContext,
+        placed: truapi_platform::PlacedAvatars,
+    ) -> Result<(), v01::HostProfilePlaceContactAvatarsError> {
+        self.placed
+            .lock()
+            .expect("placed mutex poisoned")
+            .push((product.product_id.clone(), placed));
+        self.answer.clone().map_or(Ok(()), Err)
+    }
+}
+
 /// Test hook invoked after each recorded auth state.
 pub type AuthStateHook = Arc<dyn Fn(&AuthState) + Send + Sync>;
 /// Test hook invoked after an auth-session write is recorded.

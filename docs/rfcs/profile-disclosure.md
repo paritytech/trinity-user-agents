@@ -11,7 +11,8 @@ status: draft
 A product hands the host one opaque profile reference for the user's chat contacts. The host relays it to each contact
 over Chat v2 and keeps the references contacts relay back. A chat product then asks the host to show a contact's profile
 by naming the contact, and the host presents the reference that contact disclosed through the existing `profile.present`
-path. No product holds another user's reference.
+path. A chat product may also tell the host where it draws contacts' avatars, and the host draws each sharing contact's
+photo and mood ring there on its own layer. No product holds another user's reference, and none learns who shared one.
 
 ## Motivation
 
@@ -27,16 +28,18 @@ the hosts, and Chat v2 leaves ordinary delivery to products.
 - **Bound:** a presented profile is the one that contact's host sent, not one a product chose.
 - **Stable:** a change to the referenced profile does not require relaying again.
 - **Withdrawable:** the discloser can retract, and contacts drop what they hold.
+- **Unobservable:** a product that shows contacts' avatars cannot tell which contacts shared a profile.
 
 ## Approach
 
-The design has five parts:
+The design has six parts:
 
-- The `Profile` trait gains `disclose`, `retract` and `present_contact`.
+- The `Profile` trait gains `disclose`, `retract`, `present_contact` and `place_contact_avatars`.
 - `disclose` asks the user once per product before anything is stored.
 - Core storage holds the user's disclosure and the references received per chat product.
 - The Chat v2 actor relays disclosures through its host-private outbox.
 - `present_contact` substitutes the stored reference into `present`.
+- `place_contact_avatars` substitutes stored references into a host-drawn avatar layer.
 
 ### Trait
 
@@ -83,6 +86,19 @@ pub trait Profile: Send + Sync {
     ) -> Result<HostProfilePresentContactResponse, CallError<HostProfilePresentContactError>> {
         Err(CallError::unavailable())
     }
+
+    /// Say where this product draws contacts' avatars. App executions only.
+    #[wire(id = 4)]
+    async fn place_contact_avatars(
+        &self,
+        _cx: &CallContext,
+        _request: HostProfilePlaceContactAvatarsRequest,
+    ) -> Result<
+        HostProfilePlaceContactAvatarsResponse,
+        CallError<HostProfilePlaceContactAvatarsError>,
+    > {
+        Err(CallError::unavailable())
+    }
 }
 
 pub struct HostProfileDiscloseRequest {
@@ -119,6 +135,32 @@ pub enum HostProfilePresentContactError {
     /// No user is signed in.
     NotConnected,
     /// Catch-all.
+    Unknown { reason: String },
+}
+pub struct HostProfilePlaceContactAvatarsRequest {
+    /// Surface size, in the units of every rect: framebuffer pixels for a PolkaVM product,
+    /// CSS pixels of the viewport for a web product. 1 to 16384 a side.
+    pub surface_width: u32,
+    pub surface_height: u32,
+    /// Replaces the product's previous placement; empty clears it. At most 64.
+    pub slots: Vec<ContactAvatarSlot>,
+}
+pub struct ContactAvatarSlot {
+    /// Product-chosen id, unique in the placement and stable for one on-screen avatar.
+    pub slot: u32,
+    pub peer_identity: [u8; 32],
+    /// The avatar circle's bounding box: square, 1 to 1024 a side.
+    pub rect: AvatarRect,
+    /// Visible region the avatar is cut to.
+    pub clip: AvatarRect,
+}
+pub struct AvatarRect { pub x: i32, pub y: i32, pub width: u32, pub height: u32 }
+pub enum HostProfilePlaceContactAvatarsError {
+    /// The host cannot draw over the product.
+    Unsupported,
+    /// No user is signed in.
+    NotConnected,
+    /// Catch-all, including a malformed placement.
     Unknown { reason: String },
 }
 ```
@@ -167,12 +209,40 @@ registry slot, keeps working when the record changes, so a relay happens only wh
 `present_contact` looks up the caller's received reference for the named peer, screens it again, and hands it to
 `ProfilePlatform::present_profile`. Host adapters are unchanged: they see a `present` whichever method produced it.
 
+### Placed avatars
+
+A chat product draws its own conversation list and header, so only it knows where each contact's avatar sits. It sends
+`place_contact_avatars` with its surface size and, per avatar, a slot id, the contact's peer identity, the circle's
+square bounding box and the region it is cut to, in surface units. Each call replaces the product's placement.
+
+The core keeps only the slots whose contact holds a current reference in the caller's `ProfileReferencesReceived`,
+withdrawals excluded, and hands them with those references to `ProfilePlatform::place_contact_avatars(product,
+PlacedAvatars { surface_width, surface_height, avatars })`. The host draws each contact's photo and mood ring, when
+they have one, on a layer over the product that lets pointer input through; a tap still reaches the product, which
+opens the profile with `present_contact`. The default callback draws nothing, so a host draws avatars only once it
+implements it.
+
+The core remembers the last placement per product connection, in memory. When a reference for that product arrives or
+is withdrawn it filters the same geometry again and calls the host again, so avatars appear and disappear without the
+product sending anything. Disposing the connection, or a placement made after the user signed out, clears what the host
+drew.
+
+No leak: the product must not learn who shared a profile. The core answers `Ok` to any well-formed placement from a
+signed-in user however many avatars, if any, are drawn; it returns nothing per slot, logs nothing about slots, and
+treats a host drawing failure as success, since it could depend on which avatars were drawn. Only what the product
+itself controls is refused: more than 64 slots, a surface side outside 1 to 16384, an avatar that is not square or is
+outside 1 to 1024 a side, or a repeated slot id. The one host answer passed on is `Unsupported`, a property of the host
+rather than of any contact. Nothing drawn is posted back to the product; the host renders it where the product cannot
+read it.
+
 ## Trade-offs
 
 - One reference for all contacts, so withdrawing it from one contact means rotating it for all of them.
 - A retraction cannot make a contact's host forget a reference it already resolved.
 - The watermark advances when the message is queued, so a message that never arrives, or that a peer's host does not
   acknowledge within one statement lifetime, is not resent until the disclosure changes.
+- The host layer covers the product's own drawing, so a product that animates or scrolls between placements shows the
+  avatar a frame late; the product re-sends its placement when the list moves.
 - Dropped: carrying the reference in ordinary chat content, which puts a bearer capability in product hands.
 
 ## Open questions

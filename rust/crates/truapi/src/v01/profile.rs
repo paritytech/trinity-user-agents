@@ -1,4 +1,5 @@
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 use parity_scale_codec::{Decode, Encode};
 
@@ -110,6 +111,70 @@ pub enum HostProfilePresentContactError {
     /// No user is signed in.
     NotConnected,
     /// Catch-all.
+    Unknown {
+        /// Human-readable reason.
+        reason: String,
+    },
+}
+
+/// Where a chat product draws contact avatars, so the host can draw the
+/// photo and mood ring each contact shared over them, on its own layer.
+///
+/// The product sends geometry only. The host decides which slots it can fill
+/// and never says which, so the product cannot learn who shared a profile.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+pub struct HostProfilePlaceContactAvatarsRequest {
+    /// Width of the product's drawing surface, in the units of every rect:
+    /// framebuffer pixels for a PolkaVM product, CSS pixels of its viewport
+    /// for a web product. 1 to 16384.
+    pub surface_width: u32,
+    /// Height of the drawing surface, in the same units. 1 to 16384.
+    pub surface_height: u32,
+    /// Replaces the product's previous placement entirely; empty clears it.
+    /// At most 64, each with its own `slot`.
+    pub slots: Vec<ContactAvatarSlot>,
+}
+
+/// One avatar the product draws for a chat contact.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+pub struct ContactAvatarSlot {
+    /// Product-chosen id, stable for one on-screen avatar (a list row, a
+    /// header). The host uses it only to keep what it draws stable across
+    /// updates.
+    pub slot: u32,
+    /// The contact's authenticated root identity, as the chat API names it.
+    pub peer_identity: [u8; 32],
+    /// Bounding box of the avatar circle: square, 1 to 1024 units a side.
+    pub rect: AvatarRect,
+    /// Visible region the avatar is cut to, such as the scroll area.
+    pub clip: AvatarRect,
+}
+
+/// A rectangle in surface units, relative to the surface's top-left corner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+pub struct AvatarRect {
+    /// Left edge.
+    pub x: i32,
+    /// Top edge.
+    pub y: i32,
+    /// Width.
+    pub width: u32,
+    /// Height.
+    pub height: u32,
+}
+
+/// Contact avatar placement failure. Says nothing about any one slot.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+pub enum HostProfilePlaceContactAvatarsError {
+    /// This host cannot draw over the product's surface.
+    Unsupported,
+    /// No user is signed in.
+    NotConnected,
+    /// Catch-all, including a malformed placement.
     Unknown {
         /// Human-readable reason.
         reason: String,

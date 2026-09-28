@@ -64,6 +64,7 @@ pub(super) struct JsBridge {
     pub(super) clear: Function,
     pub(super) subscribe_storage: Function,
     pub(super) present_profile: Function,
+    pub(super) place_contact_avatars: Function,
     pub(super) subscribe_theme: Function,
     pub(super) confirm_user_action: Function,
     pub(super) chat_present: bool,
@@ -131,6 +132,8 @@ impl JsBridge {
             subscribe_storage: get_function(callbacks, "subscribeStorage")?,
             present_profile: get_optional_function(callbacks, "presentProfile")?
                 .unwrap_or_else(|| missing_callback("presentProfile")),
+            place_contact_avatars: get_optional_function(callbacks, "placeContactAvatars")?
+                .unwrap_or_else(|| missing_callback("placeContactAvatars")),
             subscribe_theme: get_function(callbacks, "subscribeTheme")?,
             confirm_permission: get_function(callbacks, "confirmPermission")?,
             confirm_user_action: get_function(callbacks, "confirmUserAction")?,
@@ -149,7 +152,8 @@ impl JsBridge {
                 .is_some(),
             pocket_present: get_optional_function(callbacks, "subscribePocketCards")?.is_some()
                 && get_optional_function(callbacks, "removePocketCard")?.is_some(),
-            profile_present: get_optional_function(callbacks, "presentProfile")?.is_some(),
+            profile_present: get_optional_function(callbacks, "presentProfile")?.is_some()
+                && get_optional_function(callbacks, "placeContactAvatars")?.is_some(),
         })
     }
 
@@ -764,6 +768,22 @@ impl truapi_platform::ProfilePlatform for WasmPlatform {
         )
         .await
         .map_err(|reason| v01::HostProfilePresentError::Unknown { reason })
+    }
+
+    async fn place_contact_avatars(
+        &self,
+        product: &truapi_platform::ProductContext,
+        placed: truapi_platform::PlacedAvatars,
+    ) -> Result<(), v01::HostProfilePlaceContactAvatarsError> {
+        invoke_unit(
+            &self.bridge.place_contact_avatars,
+            vec![
+                Uint8Array::from(product.encode().as_slice()).into(),
+                Uint8Array::from(placed.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(|reason| v01::HostProfilePlaceContactAvatarsError::Unknown { reason })
     }
 }
 

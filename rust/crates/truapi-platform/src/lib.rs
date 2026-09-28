@@ -30,21 +30,22 @@ uniffi::use_remote_type!(truapi::Bytes32);
 
 use truapi::Bytes32;
 use truapi::latest::{
-    AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
-    ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, DerivationIndex, GenericError,
-    HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
+    AllocatableResource, AvatarRect, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage,
+    ChatFile, ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, DerivationIndex,
+    GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
     HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
     HostChatRegisterBotResponse, HostDevicePermissionRequest, HostFeatureSupportedRequest,
     HostFeatureSupportedResponse, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
     HostNativeChatAttachmentMetadata, HostNavigateToError, HostPlatform,
     HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
-    HostProfilePresentError, HostProfilePresentRequest, HostPushNotificationRequest,
-    HostPushNotificationResponse, HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest,
-    HostSignRawRequest, HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
-    HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
-    NotificationId, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
-    RemotePermission, RemotePermissionRequest, RingLocation,
+    HostProfilePlaceContactAvatarsError, HostProfilePresentError, HostProfilePresentRequest,
+    HostPushNotificationRequest, HostPushNotificationResponse, HostSignPayloadRequest,
+    HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
+    HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, HostWorkerBeginOperationResponse,
+    HostWorkerOperationError, LegacyAccountTxPayload, NotificationId, ProductAccountId,
+    ProductAccountTxPayload, ProductProofContext, RemotePermission, RemotePermissionRequest,
+    RingLocation,
 };
 use truapi::v01::HostAccountSignVrfRequest;
 use url::{Host, Url};
@@ -3765,6 +3766,65 @@ pub trait ProfilePlatform: Send + Sync {
         product: &ProductContext,
         request: HostProfilePresentRequest,
     ) -> Result<(), HostProfilePresentError>;
+
+    /// Draw the contact avatars a product placed, on the host's own layer over
+    /// the product's surface, replacing what was drawn for it before; an empty
+    /// `avatars` clears it. The layer must let pointer input through to the
+    /// product and must never tell the product what it drew.
+    ///
+    /// The core calls this again, with the product's last geometry, whenever
+    /// a contact on it shares or withdraws a profile, and with no avatars once
+    /// the product's connection goes away. Answer `Unsupported` if this host
+    /// cannot draw over the product; the product is told so. The default draws
+    /// nothing.
+    async fn place_contact_avatars(
+        &self,
+        product: &ProductContext,
+        placed: PlacedAvatars,
+    ) -> Result<(), HostProfilePlaceContactAvatarsError> {
+        let _ = (product, placed);
+        Ok(())
+    }
+}
+
+/// The avatars the core found drawable in one product's placement: the slots
+/// whose contact shared a profile with the user, each with the reference that
+/// contact disclosed.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+pub struct PlacedAvatars {
+    /// Width of the product's surface, in the units of every rect.
+    pub surface_width: u32,
+    /// Height of the product's surface, in the same units.
+    pub surface_height: u32,
+    /// Avatars to draw, in the product's slot order.
+    pub avatars: Vec<PlacedAvatar>,
+}
+
+/// One avatar to draw over a product.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+pub struct PlacedAvatar {
+    /// The product's id for this on-screen avatar, stable across updates.
+    pub slot: u32,
+    /// Bounding box of the avatar circle, in surface units.
+    pub rect: AvatarRect,
+    /// Visible region the avatar is cut to, in surface units.
+    pub clip: AvatarRect,
+    /// The profile reference the contact disclosed. A bearer capability, as
+    /// in [`ProfilePlatform::present_profile`].
+    pub reference: String,
+}
+
+impl core::fmt::Debug for PlacedAvatar {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PlacedAvatar")
+            .field("slot", &self.slot)
+            .field("rect", &self.rect)
+            .field("clip", &self.clip)
+            .field("reference", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// What the operating system currently says about a device capability.

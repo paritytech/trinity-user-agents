@@ -106,30 +106,19 @@ pub mod latest {
 	use crate::versioned::{self, Versioned};
 
     pub use crate::v01::{
-        AccountId, AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode,
-        BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction,
-        ChatActionLayout, ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile,
-        ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
-        ChatRoomRegistrationStatus, ColorToken, ColumnProps, ContentAlignment, ContextualAlias,
-        DerivationIndex, Dimensions, Effect, EffectProps, GenericError, HorizontalAlignment,
-        HostAccountCreateProofRequest, HostAccountGetAliasRequest,
-        HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
-        HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
-        HostJamPeerTransportCloseError, HostJamPeerTransportCloseRequest,
-        HostJamPeerTransportDialError, HostJamPeerTransportDialRequest,
-        HostJamPeerTransportDialResponse, HostJamPeerTransportEventsError,
-        HostJamPeerTransportEventsResponse, HostJamPeerTransportOpenError,
-        HostJamPeerTransportOpenRequest, HostJamPeerTransportOpenResponse,
-        HostJamPeerTransportRecvError, HostJamPeerTransportRecvRequest,
-        HostJamPeerTransportRecvResponse, HostJamPeerTransportResetError,
-        HostJamPeerTransportResetRequest, HostJamPeerTransportSendError,
-        HostJamPeerTransportSendRequest, HostPlatform, HostSignPayloadData,
-        HostWorkerOperationError, ImageFit, ImageProps, ImageSource,
-        JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION, JAM_PEER_TRANSPORT_MAX_CONNECTIONS,
-        JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES, JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION,
-        JamPeerTransportEvent, Modifier, NotificationId, OperationId, OperationStartedResult,
-        PocketCard, ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey,
-        RemotePermission, RemoteStatementStoreCreateProofError,
+        AccountId, AllocatableResource, AllocationOutcome, Arrangement, AvatarRect, Background,
+        BlendingMode, BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier,
+        ChatAction, ChatActionLayout, ChatActions, ChatBotRegistrationStatus, ChatCustomMessage,
+        ChatFile, ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, ChatRoom,
+        ChatRoomParticipation, ChatRoomRegistrationStatus, ColorToken, ColumnProps,
+        ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect, EffectProps,
+        GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
+        HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
+        HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
+        HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
+        HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier, NotificationId,
+        OperationId, OperationStartedResult, PocketCard, ProductAccountId, ProductProofContext,
+        RawPayload, RegisteredRingVrfKey, RemotePermission, RemoteStatementStoreCreateProofError,
         RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
         RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
         RendererNode, RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RingVrfPublicKey,
@@ -256,6 +245,9 @@ pub mod latest {
     pub type HostProfilePresentRequest = LatestOf<versioned::profile::HostProfilePresentRequest>;
     /// Profile presentation failure.
     pub type HostProfilePresentError = LatestOf<versioned::profile::HostProfilePresentError>;
+    /// Contact avatar placement failure.
+    pub type HostProfilePlaceContactAvatarsError =
+        LatestOf<versioned::profile::HostProfilePlaceContactAvatarsError>;
     /// Push notification scheduling request.
     pub type HostPushNotificationRequest =
         LatestOf<versioned::notifications::HostPushNotificationRequest>;

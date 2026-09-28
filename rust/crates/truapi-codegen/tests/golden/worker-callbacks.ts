@@ -43,6 +43,7 @@ export const CALLBACK_NAMES = [
   "write",
   "clear",
   "presentProfile",
+  "placeContactAvatars",
   "confirmPermission",
   "confirmUserAction",
 ] as const;
@@ -336,13 +337,18 @@ function pocketRawCallbacks(
 
 function profileRawCallbacks(
   bridge: WorkerCallbackBridge,
-): Required<Pick<RawCallbacks, "presentProfile">> {
+): Required<Pick<RawCallbacks, "presentProfile" | "placeContactAvatars">> {
   return {
     presentProfile: (product, request) =>
       bridge.callbackRequest("presentProfile", [
         product,
         request,
       ]) as ReturnType<Required<RawCallbacks>["presentProfile"]>,
+    placeContactAvatars: (product, placed) =>
+      bridge.callbackRequest("placeContactAvatars", [
+        product,
+        placed,
+      ]) as ReturnType<Required<RawCallbacks>["placeContactAvatars"]>,
   };
 }
 

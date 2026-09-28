@@ -15,4 +15,7 @@ truapi_macros::versioned_type! {
     pub enum HostProfilePresentContactRequest { V1 => v01::HostProfilePresentContactRequest }
     pub enum HostProfilePresentContactResponse { V1 }
     pub enum HostProfilePresentContactError { V1 => v01::HostProfilePresentContactError }
+    pub enum HostProfilePlaceContactAvatarsRequest { V1 => v01::HostProfilePlaceContactAvatarsRequest }
+    pub enum HostProfilePlaceContactAvatarsResponse { V1 }
+    pub enum HostProfilePlaceContactAvatarsError { V1 => v01::HostProfilePlaceContactAvatarsError }
 }

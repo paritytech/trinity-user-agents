@@ -41,6 +41,8 @@ import {
   NativeChatPickedFile,
   NativeCoinageRequest,
   NativeCoinageResponse,
+  PermissionDecision,
+  PlacedAvatars,
   ProductContext,
   UserConfirmationReview,
 } from "./host-callbacks.js";
@@ -151,6 +153,7 @@ export interface RawCallbacks {
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
   presentProfile?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  placeContactAvatars?(product: Uint8Array, placed: Uint8Array): Promise<void>;
   subscribeTheme(
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
@@ -366,6 +369,11 @@ export function createWasmRawCallbacks(
             await profile.presentProfile(
               ProductContext.dec(product),
               HostProfilePresentRequest.dec(request),
+            ),
+          placeContactAvatars: async (product, placed) =>
+            await profile.placeContactAvatars(
+              ProductContext.dec(product),
+              PlacedAvatars.dec(placed),
             ),
         }
       : {}),

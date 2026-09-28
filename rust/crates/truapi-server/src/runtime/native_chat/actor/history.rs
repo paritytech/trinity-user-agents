@@ -386,17 +386,20 @@ impl NativeChatActor {
 
     /// Keep the newest profile reference each frame carries for `peer`, in
     /// this product's received-reference slot. `None` withdraws it, and a
-    /// frame older than the one held changes nothing.
+    /// frame older than the one held changes nothing. Contact avatars placed
+    /// over this product are redrawn when anything changed.
     async fn record_profile_references(
         &self,
         context: &NativeChatContext,
         peer: [u8; 32],
         frames: Vec<crate::runtime::chat_device::ProfileReferenceFrame>,
     ) -> Result<(), Error> {
+        let owner = super::profile::profile_owner(context);
+        let mut changed = false;
         for frame in frames {
-            crate::runtime::profile::record_received_reference(
+            changed |= crate::runtime::profile::record_received_reference(
                 &*context.services.platform,
-                super::profile::profile_owner(context),
+                owner,
                 &self.product,
                 peer,
                 frame.discloser_product_id,
@@ -405,6 +408,13 @@ impl NativeChatActor {
             )
             .await
             .map_err(|_| Error::StorageUnavailable)?;
+        }
+        if changed {
+            context.services.contact_avatars.redraw(
+                owner,
+                &self.product,
+                &context.services.spawner,
+            );
         }
         Ok(())
     }

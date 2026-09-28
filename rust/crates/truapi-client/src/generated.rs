@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "034025152ab6b451";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "bb70fece291da443";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1933,6 +1933,33 @@ impl RequestMethod for ProfilePresentContact {
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
+/// `profile_place_contact_avatars` method marker.
+pub struct ProfilePlaceContactAvatars;
+impl ProfilePlaceContactAvatars {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Profile",
+        method: "place_contact_avatars",
+        wire_name: "profile_place_contact_avatars",
+        request_type: "truapi::versioned::profile::HostProfilePlaceContactAvatarsRequest",
+        response_type: "truapi::versioned::profile::HostProfilePlaceContactAvatarsResponse",
+        error_type: Some("truapi::versioned::profile::HostProfilePlaceContactAvatarsError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 22,
+            method_id: 4,
+        }),
+    };
+}
+impl RequestMethod for ProfilePlaceContactAvatars {
+    type Request = truapi::versioned::profile::HostProfilePlaceContactAvatarsRequest;
+    type Response = truapi::versioned::profile::HostProfilePlaceContactAvatarsResponse;
+    type Error = truapi::versioned::profile::HostProfilePlaceContactAvatarsError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
 /// `renderer_render` method marker.
 pub struct RendererRender;
 impl RendererRender {
@@ -2552,6 +2579,7 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     ProfileDisclose::DESCRIPTOR,
     ProfileRetract::DESCRIPTOR,
     ProfilePresentContact::DESCRIPTOR,
+    ProfilePlaceContactAvatars::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,
     SigningCreateTransaction::DESCRIPTOR,
     SigningCreateTransactionWithLegacyAccount::DESCRIPTOR,
@@ -2634,6 +2662,7 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     ProfileDisclose::DESCRIPTOR,
     ProfileRetract::DESCRIPTOR,
     ProfilePresentContact::DESCRIPTOR,
+    ProfilePlaceContactAvatars::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,
     SigningCreateTransaction::DESCRIPTOR,
     SigningCreateTransactionWithLegacyAccount::DESCRIPTOR,
@@ -2722,6 +2751,7 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     ProfileDisclose::DESCRIPTOR,
     ProfileRetract::DESCRIPTOR,
     ProfilePresentContact::DESCRIPTOR,
+    ProfilePlaceContactAvatars::DESCRIPTOR,
     RendererRender::DESCRIPTOR,
     RendererActionSubscribe::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,

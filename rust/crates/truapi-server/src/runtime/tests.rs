@@ -1737,6 +1737,385 @@ fn profile_present_contact_substitutes_the_reference_the_contact_sent() {
     ));
 }
 
+/// A connection from `product` on `platform`, with `avatars` as the host's
+/// profile adapter.
+fn avatar_host(
+    platform: &Arc<StubPlatform>,
+    product: ProductContext,
+    avatars: &Arc<RecordingAvatarHost>,
+) -> ProductRuntimeHost {
+    let (host_config, _) = runtime_config(&product.product_id);
+    let services = RuntimeServices::new(
+        platform.clone(),
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+    );
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+    adapters.profile_platform = Some(avatars.clone() as Arc<dyn truapi_platform::ProfilePlatform>);
+    ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
+}
+
+fn egui_chat() -> ProductContext {
+    ProductContext::new("egui-chat.dot".to_string()).expect("valid product")
+}
+
+fn avatar_rect(x: i32, y: i32, side: u32) -> v01::AvatarRect {
+    v01::AvatarRect {
+        x,
+        y,
+        width: side,
+        height: side,
+    }
+}
+
+const AVATAR_CLIP: v01::AvatarRect = v01::AvatarRect {
+    x: 0,
+    y: 64,
+    width: 360,
+    height: 576,
+};
+
+/// A 360 by 640 placement of one 44-unit avatar per `(slot, peer)`, one row
+/// apart.
+fn avatar_placement(slots: &[(u32, [u8; 32])]) -> v01::HostProfilePlaceContactAvatarsRequest {
+    v01::HostProfilePlaceContactAvatarsRequest {
+        surface_width: 360,
+        surface_height: 640,
+        slots: slots
+            .iter()
+            .map(|&(slot, peer_identity)| v01::ContactAvatarSlot {
+                slot,
+                peer_identity,
+                rect: avatar_rect(16, 80 + 56 * slot as i32, 44),
+                clip: AVATAR_CLIP,
+            })
+            .collect(),
+    }
+}
+
+/// What the host is handed for `slot` of [`avatar_placement`].
+fn placed_avatar(slot: u32, reference: &str) -> truapi_platform::PlacedAvatar {
+    truapi_platform::PlacedAvatar {
+        slot,
+        rect: avatar_rect(16, 80 + 56 * slot as i32, 44),
+        clip: AVATAR_CLIP,
+        reference: reference.to_string(),
+    }
+}
+
+fn placed_avatars(avatars: Vec<truapi_platform::PlacedAvatar>) -> truapi_platform::PlacedAvatars {
+    truapi_platform::PlacedAvatars {
+        surface_width: 360,
+        surface_height: 640,
+        avatars,
+    }
+}
+
+fn place_avatars(
+    host: &ProductRuntimeHost,
+    request: v01::HostProfilePlaceContactAvatarsRequest,
+) -> Result<HostProfilePlaceContactAvatarsResponse, CallError<HostProfilePlaceContactAvatarsError>>
+{
+    futures::executor::block_on(Profile::place_contact_avatars(
+        host,
+        &CallContext::default(),
+        HostProfilePlaceContactAvatarsRequest::V1(request),
+    ))
+}
+
+#[test]
+fn contact_avatars_are_drawn_only_for_contacts_sharing_with_this_product_and_the_answer_hides_which()
+ {
+    let platform = stub_platform();
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let chat = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+    let owner = owner_of(&chat);
+    let (alice, bob, carol, dave) = ([0xa1; 32], [0xb0; 32], [0xca; 32], [0xda; 32]);
+    let alice_reference = format!("{CONTACTS_REFERENCE}a1");
+    let record = |product_id: &str, peer, timestamp, reference: Option<&str>| {
+        futures::executor::block_on(profile::record_received_reference(
+            platform.as_ref(),
+            owner,
+            product_id,
+            peer,
+            "seity.dot".to_string(),
+            timestamp,
+            reference.map(str::to_string),
+        ))
+        .expect("recorded");
+    };
+    record("egui-chat.dot", alice, 1, Some(&alice_reference));
+    record("egui-chat.dot", bob, 1, Some(CONTACTS_REFERENCE));
+    record("egui-chat.dot", bob, 2, None);
+    // Shared with the user through another chat product only.
+    record("other-chat.dot", dave, 1, Some(CONTACTS_REFERENCE));
+
+    // Alice appears twice, as a list row and in the conversation header.
+    assert_eq!(
+        place_avatars(
+            &chat,
+            avatar_placement(&[(0, alice), (1, bob), (2, carol), (3, dave), (4, alice)]),
+        )
+        .expect("a well-formed placement is accepted"),
+        HostProfilePlaceContactAvatarsResponse::V1
+    );
+    // Nobody on screen shares a profile: the product is answered the same.
+    assert_eq!(
+        place_avatars(&chat, avatar_placement(&[(2, carol), (3, dave)]))
+            .expect("the answer does not depend on who shared"),
+        HostProfilePlaceContactAvatarsResponse::V1
+    );
+    assert_eq!(
+        place_avatars(&chat, avatar_placement(&[])).expect("an empty placement clears"),
+        HostProfilePlaceContactAvatarsResponse::V1
+    );
+    assert_eq!(
+        avatars.placements(),
+        vec![
+            (
+                "egui-chat.dot".to_string(),
+                placed_avatars(vec![
+                    placed_avatar(0, &alice_reference),
+                    placed_avatar(4, &alice_reference),
+                ]),
+            ),
+            ("egui-chat.dot".to_string(), placed_avatars(Vec::new())),
+            ("egui-chat.dot".to_string(), placed_avatars(Vec::new())),
+        ],
+        "only a current reference shared with this product is drawn, and a withdrawn one is not"
+    );
+}
+
+#[test]
+fn contact_avatars_surface_only_the_hosts_own_unsupported() {
+    let platform = stub_platform();
+    let alice = [0xa1; 32];
+    let owner = owner_of(&app_host(&platform, "egui-chat.dot"));
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(),
+        owner,
+        "egui-chat.dot",
+        alice,
+        "seity.dot".to_string(),
+        1,
+        Some(CONTACTS_REFERENCE.to_string()),
+    ))
+    .expect("recorded");
+    let answered = |answer| {
+        let avatars = Arc::new(RecordingAvatarHost {
+            answer: Some(answer),
+            ..Default::default()
+        });
+        place_avatars(
+            &signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET),
+            avatar_placement(&[(0, alice)]),
+        )
+    };
+
+    // A drawing failure could depend on which avatars the host was handed,
+    // so it does not reach the product.
+    assert_eq!(
+        answered(v01::HostProfilePlaceContactAvatarsError::Unknown {
+            reason: "avatar image failed to load".to_string(),
+        })
+        .expect("a host failure is not reported"),
+        HostProfilePlaceContactAvatarsResponse::V1
+    );
+    assert!(matches!(
+        answered(v01::HostProfilePlaceContactAvatarsError::Unsupported),
+        Err(CallError::Domain(HostProfilePlaceContactAvatarsError::V1(
+            v01::HostProfilePlaceContactAvatarsError::Unsupported
+        )))
+    ));
+}
+
+#[test]
+fn malformed_contact_avatar_placements_are_refused_before_the_host_sees_them() {
+    let platform = stub_platform();
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let chat = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+    let peer = [0xa1; 32];
+    let with_rect = |rect| {
+        let mut request = avatar_placement(&[(0, peer)]);
+        request.slots[0].rect = rect;
+        request
+    };
+    let with_surface = |surface_width, surface_height| v01::HostProfilePlaceContactAvatarsRequest {
+        surface_width,
+        surface_height,
+        ..avatar_placement(&[(0, peer)])
+    };
+    let slots =
+        |count: u32| avatar_placement(&(0..count).map(|slot| (slot, peer)).collect::<Vec<_>>());
+
+    let accepted = [
+        slots(64),
+        with_surface(1, 1),
+        with_surface(16384, 16384),
+        with_rect(avatar_rect(-20, -20, 1)),
+        with_rect(avatar_rect(0, 0, 1024)),
+    ];
+    let refused = [
+        slots(65),
+        with_surface(0, 640),
+        with_surface(360, 0),
+        with_surface(16385, 640),
+        with_surface(360, 16385),
+        with_rect(v01::AvatarRect {
+            x: 0,
+            y: 0,
+            width: 44,
+            height: 45,
+        }),
+        with_rect(avatar_rect(0, 0, 0)),
+        with_rect(avatar_rect(0, 0, 1025)),
+        avatar_placement(&[(3, peer), (3, [0xb0; 32])]),
+    ];
+    for request in accepted.clone() {
+        assert_eq!(
+            place_avatars(&chat, request).expect("the bounds are inclusive"),
+            HostProfilePlaceContactAvatarsResponse::V1
+        );
+    }
+    for request in refused {
+        assert!(matches!(
+            place_avatars(&chat, request),
+            Err(CallError::Domain(HostProfilePlaceContactAvatarsError::V1(
+                v01::HostProfilePlaceContactAvatarsError::Unknown { .. }
+            )))
+        ));
+    }
+    assert_eq!(
+        avatars.placements().len(),
+        accepted.len(),
+        "a refused placement never reaches the host"
+    );
+}
+
+#[test]
+fn contact_avatars_need_an_app_a_host_that_draws_them_and_a_signed_in_user() {
+    let platform = stub_platform();
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let worker = signed_in(
+        avatar_host(
+            &platform,
+            ProductContext::new_with_execution(
+                "egui-chat.dot".to_string(),
+                truapi_platform::ProductExecutionKind::Worker,
+            )
+            .expect("valid product"),
+            &avatars,
+        ),
+        WALLET,
+    );
+    assert!(matches!(
+        place_avatars(&worker, avatar_placement(&[])),
+        Err(CallError::Denied)
+    ));
+    assert!(matches!(
+        place_avatars(&app_host(&platform, "egui-chat.dot"), avatar_placement(&[])),
+        Err(CallError::Unsupported)
+    ));
+
+    let chat = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+    let alice = [0xa1; 32];
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(),
+        owner_of(&chat),
+        "egui-chat.dot",
+        alice,
+        "seity.dot".to_string(),
+        1,
+        Some(CONTACTS_REFERENCE.to_string()),
+    ))
+    .expect("recorded");
+    place_avatars(&chat, avatar_placement(&[(0, alice)])).expect("placed");
+    chat.test_session_state().clear_session();
+    assert!(matches!(
+        place_avatars(&chat, avatar_placement(&[(0, alice)])),
+        Err(CallError::Domain(HostProfilePlaceContactAvatarsError::V1(
+            v01::HostProfilePlaceContactAvatarsError::NotConnected
+        )))
+    ));
+    assert_eq!(
+        avatars.placements(),
+        vec![
+            (
+                "egui-chat.dot".to_string(),
+                placed_avatars(vec![placed_avatar(0, CONTACTS_REFERENCE)]),
+            ),
+            ("egui-chat.dot".to_string(), placed_avatars(Vec::new())),
+        ],
+        "avatars drawn for a wallet that signed out are cleared"
+    );
+}
+
+#[test]
+fn contact_avatars_are_redrawn_for_their_wallet_and_cleared_when_the_connection_goes() {
+    let platform = stub_platform();
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let chat = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+    let services = chat.services().clone();
+    let owner = owner_of(&chat);
+    let alice = [0xa1; 32];
+    place_avatars(&chat, avatar_placement(&[(0, alice)])).expect("placed");
+
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(),
+        owner,
+        "egui-chat.dot",
+        alice,
+        "seity.dot".to_string(),
+        1,
+        Some(CONTACTS_REFERENCE.to_string()),
+    ))
+    .expect("recorded");
+    // What another wallet's contacts share, or another product's, is not
+    // this placement's business.
+    let other_wallet = profile::ProfileOwner {
+        root_public_key: [0x99; 32],
+        ..owner
+    };
+    services
+        .contact_avatars
+        .redraw(other_wallet, "egui-chat.dot", &services.spawner);
+    services
+        .contact_avatars
+        .redraw(owner, "other-chat.dot", &services.spawner);
+    services
+        .contact_avatars
+        .redraw(owner, "egui-chat.dot", &services.spawner);
+    assert_eq!(
+        avatars.wait_for(2),
+        vec![
+            ("egui-chat.dot".to_string(), placed_avatars(Vec::new())),
+            (
+                "egui-chat.dot".to_string(),
+                placed_avatars(vec![placed_avatar(0, CONTACTS_REFERENCE)]),
+            ),
+        ]
+    );
+
+    drop(chat);
+    assert_eq!(
+        avatars.wait_for(3)[2],
+        ("egui-chat.dot".to_string(), placed_avatars(Vec::new())),
+        "a connection that goes away takes its avatars with it"
+    );
+    services
+        .contact_avatars
+        .redraw(owner, "egui-chat.dot", &services.spawner);
+    assert_eq!(
+        avatars.placements().len(),
+        3,
+        "nothing is redrawn for a connection that is gone"
+    );
+}
+
 #[test]
 fn chain_follow_ids_are_scoped_per_product_core() {
     let (host_config, product) = runtime_config("same.dot");

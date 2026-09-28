@@ -1708,6 +1708,8 @@ impl ProductRuntime {
         }
         self.admin.product_runtime.detach_chat();
         self.admin.product_runtime.detach_renderer();
+        self.admin.product_runtime.release_open_operations();
+        self.admin.product_runtime.release_contact_avatars();
         self.host_subscriptions.close();
         self.core.cancel_subscriptions();
     }

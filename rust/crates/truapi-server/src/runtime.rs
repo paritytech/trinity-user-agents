@@ -98,10 +98,11 @@ use truapi::versioned::pocket::{
 use truapi::versioned::preimage::RemotePreimageSubmitError;
 use truapi::versioned::profile::{
     HostProfileDiscloseError, HostProfileDiscloseRequest, HostProfileDiscloseResponse,
-    HostProfilePresentContactError, HostProfilePresentContactRequest,
-    HostProfilePresentContactResponse, HostProfilePresentError, HostProfilePresentRequest,
-    HostProfilePresentResponse, HostProfileRetractError, HostProfileRetractRequest,
-    HostProfileRetractResponse,
+    HostProfilePlaceContactAvatarsError, HostProfilePlaceContactAvatarsRequest,
+    HostProfilePlaceContactAvatarsResponse, HostProfilePresentContactError,
+    HostProfilePresentContactRequest, HostProfilePresentContactResponse, HostProfilePresentError,
+    HostProfilePresentRequest, HostProfilePresentResponse, HostProfileRetractError,
+    HostProfileRetractRequest, HostProfileRetractResponse,
 };
 use truapi::versioned::renderer::{
     HostRendererActionSubscribeError, HostRendererActionSubscribeItem,
@@ -308,6 +309,7 @@ pub struct ProductRuntimeHost {
 impl Drop for ProductRuntimeHost {
     fn drop(&mut self) {
         self.release_open_operations();
+        self.release_contact_avatars();
     }
 }
 
@@ -1214,6 +1216,14 @@ impl ProductRuntimeHost {
         }));
     }
 
+    /// Clear the contact avatars the host drew for this connection and stop
+    /// redrawing them.
+    pub(crate) fn release_contact_avatars(&self) {
+        self.services
+            .contact_avatars
+            .release(self.core_instance, &self.services.spawner);
+    }
+
     /// Drop the worker reference a pending operation held. An id that is not
     /// open releases nothing, which is what keeps `end_operation` idempotent.
     pub(crate) fn release_worker_for_operation(&self, id: u32) {
@@ -1597,6 +1607,50 @@ impl Profile for ProductRuntimeHost {
                     }
                 })
             })
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "profile.place_contact_avatars"))]
+    async fn place_contact_avatars(
+        &self,
+        _cx: &CallContext,
+        request: HostProfilePlaceContactAvatarsRequest,
+    ) -> Result<
+        HostProfilePlaceContactAvatarsResponse,
+        CallError<HostProfilePlaceContactAvatarsError>,
+    > {
+        // Contacts' avatars are drawn over what the user is looking at, an
+        // App, not a background Worker.
+        if self.product.execution_kind != truapi_platform::ProductExecutionKind::App {
+            return Err(CallError::Denied);
+        }
+        let platform = self.profile_platform()?;
+        let HostProfilePlaceContactAvatarsRequest::V1(request) = request;
+        let domain = |error| CallError::Domain(HostProfilePlaceContactAvatarsError::V1(error));
+        profile::avatars::validate(&request).map_err(|reason| {
+            domain(v01::HostProfilePlaceContactAvatarsError::Unknown { reason })
+        })?;
+        let placement = self
+            .services
+            .contact_avatars
+            .for_runtime(self.core_instance, || {
+                profile::avatars::ContactAvatarPlacement::new(
+                    platform,
+                    self.platform.clone(),
+                    self.product.clone(),
+                )
+            });
+        let Some(owner) = self.profile_owner() else {
+            // Avatars drawn for a wallet that signed out come down with it.
+            placement.clear().await;
+            return Err(domain(
+                v01::HostProfilePlaceContactAvatarsError::NotConnected,
+            ));
+        };
+        placement
+            .place(owner, request)
+            .await
+            .map(|()| HostProfilePlaceContactAvatarsResponse::V1)
+            .map_err(domain)
     }
 }
 

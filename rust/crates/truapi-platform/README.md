@@ -59,9 +59,11 @@ revokes the grant.
 - `PocketPlatform`: stream the product's Pocket card collection and remove a
   card from it. The host owns the collection and decides which cards are
   privileged.
-- `ProfilePlatform`: show a product-referenced profile in host-owned UI. The
-  host resolves, decrypts and renders the reference; nothing returns to the
-  product but acceptance.
+- `ProfilePlatform`: show a product-referenced profile in host-owned UI, and
+  draw the avatars of contacts who shared one over a chat product. The host
+  resolves, decrypts and renders each reference; nothing returns to the
+  product but acceptance. Drawing avatars is optional and draws nothing by
+  default.
 
 `Platform` is a blanket-implemented supertrait that combines the capability
 traits above except `ChatPlatform`, `PermissionStatusHost`, `PocketPlatform`

@@ -2,9 +2,11 @@
 //! contacts, and the references their contacts disclosed to them.
 //!
 //! Both are bearer capabilities. They live in core storage, never in product
-//! storage, and never cross back to a product: `present_contact` names a
-//! contact and the host substitutes the reference. Both belong to one wallet on
-//! one Chat network, like the roster they travel over.
+//! storage, and never cross back to a product: `present_contact` and placed
+//! contact avatars name a contact and the host substitutes the reference. Both
+//! belong to one wallet on one Chat network, like the roster they travel over.
+
+pub(crate) mod avatars;
 
 use parity_scale_codec::{Decode, Encode};
 use truapi_platform::{CoreStorage, CoreStorageKey};
@@ -142,6 +144,7 @@ pub(crate) async fn received_reference(
 /// Record a frame a contact's host sent, if it is newer than the one held:
 /// a reference replaces the old one, and `None` withdraws it. A frame that is
 /// not strictly newer is a replay or was overtaken, and changes nothing.
+/// `true` when the frame was kept.
 pub(crate) async fn record_received_reference(
     storage: &(impl CoreStorage + ?Sized),
     owner: ProfileOwner,
@@ -150,7 +153,7 @@ pub(crate) async fn record_received_reference(
     discloser_product_id: String,
     timestamp: u64,
     reference: Option<String>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let mut entries = read_received(storage, owner, product_id).await?;
     let received = ReceivedReference {
         peer_identity,
@@ -162,7 +165,7 @@ pub(crate) async fn record_received_reference(
         .iter()
         .position(|entry| entry.peer_identity == peer_identity)
     {
-        Some(index) if entries[index].timestamp >= timestamp => return Ok(()),
+        Some(index) if entries[index].timestamp >= timestamp => return Ok(false),
         Some(index) => entries[index] = received,
         None if entries.len() >= MAX_RECEIVED_REFERENCES => {
             return Err("too many contact profile references".to_string());
@@ -175,5 +178,6 @@ pub(crate) async fn record_received_reference(
             StoredReferences::V1(entries).encode(),
         )
         .await
-        .map_err(storage_error)
+        .map_err(storage_error)?;
+    Ok(true)
 }

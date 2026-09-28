@@ -2,10 +2,11 @@
 
 use crate::versioned::profile::{
     HostProfileDiscloseError, HostProfileDiscloseRequest, HostProfileDiscloseResponse,
-    HostProfilePresentContactError, HostProfilePresentContactRequest,
-    HostProfilePresentContactResponse, HostProfilePresentError, HostProfilePresentRequest,
-    HostProfilePresentResponse, HostProfileRetractError, HostProfileRetractRequest,
-    HostProfileRetractResponse,
+    HostProfilePlaceContactAvatarsError, HostProfilePlaceContactAvatarsRequest,
+    HostProfilePlaceContactAvatarsResponse, HostProfilePresentContactError,
+    HostProfilePresentContactRequest, HostProfilePresentContactResponse, HostProfilePresentError,
+    HostProfilePresentRequest, HostProfilePresentResponse, HostProfileRetractError,
+    HostProfileRetractRequest, HostProfileRetractResponse,
 };
 use crate::{CallContext, CallError};
 use crate::{wire, wire_trait};
@@ -95,6 +96,53 @@ pub trait Profile: Send + Sync {
         _cx: &CallContext,
         _request: HostProfilePresentContactRequest,
     ) -> Result<HostProfilePresentContactResponse, CallError<HostProfilePresentContactError>> {
+        Err(CallError::unavailable())
+    }
+
+    /// Tell the host where this product draws chat contacts' avatars, so it
+    /// can draw each contact's shared photo and mood ring over them on its own
+    /// layer.
+    ///
+    /// Each call replaces the product's placement; an empty `slots` clears it.
+    /// The host draws only for contacts who shared a profile with the user,
+    /// and keeps the placement current as they share or withdraw one, until
+    /// the product replaces it or goes away. The answer is the same whoever
+    /// shared: nothing about any slot, and no profile data, returns to the
+    /// product. Taps still reach the product, which opens a profile with
+    /// `presentContact`.
+    ///
+    /// App executions only. Rects are in the units of the surface size the
+    /// product gives: framebuffer pixels for a PolkaVM product, CSS pixels of
+    /// its viewport for a web product. A placement with more than 64 slots, a
+    /// surface side outside 1 to 16384, an avatar that is not square or is
+    /// outside 1 to 1024 a side, or a repeated `slot` is `Unknown`. A host that
+    /// cannot draw over the product is `Unsupported`; with no user signed in
+    /// the call is `NotConnected`.
+    ///
+    /// ```ts
+    /// const result = await truapi.profile.placeContactAvatars({
+    ///   surfaceWidth: 360,
+    ///   surfaceHeight: 640,
+    ///   slots: [
+    ///     {
+    ///       slot: 0,
+    ///       peerIdentity: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    ///       rect: { x: 16, y: 80, width: 44, height: 44 },
+    ///       clip: { x: 0, y: 64, width: 360, height: 576 },
+    ///     },
+    ///   ],
+    /// });
+    /// console.log("contact avatars placed:", result);
+    /// ```
+    #[wire(id = 4)]
+    async fn place_contact_avatars(
+        &self,
+        _cx: &CallContext,
+        _request: HostProfilePlaceContactAvatarsRequest,
+    ) -> Result<
+        HostProfilePlaceContactAvatarsResponse,
+        CallError<HostProfilePlaceContactAvatarsError>,
+    > {
         Err(CallError::unavailable())
     }
 }

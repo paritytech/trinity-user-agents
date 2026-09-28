@@ -8,6 +8,7 @@ import * as S from "@parity/truapi/scale";
 
 import {
   AllocatableResource,
+  AvatarRect,
   Bytes32,
   ChainIdentifier,
   DerivationIndex,
@@ -921,6 +922,64 @@ export type PermissionAuthorizationStatus =
 export type PermissionDecision = "AllowOnce" | "AllowAlways" | "Deny";
 
 /**
+ * One avatar to draw over a product.
+ */
+export interface PlacedAvatar {
+  /**
+   * The product's id for this on-screen avatar, stable across updates.
+   */
+  slot: number;
+
+  /**
+   * Bounding box of the avatar circle, in surface units.
+   */
+  rect: AvatarRect;
+
+  /**
+   * Visible region the avatar is cut to, in surface units.
+   */
+  clip: AvatarRect;
+
+  /**
+   * The profile reference the contact disclosed. A bearer capability, as
+   * in `ProfilePlatform::present_profile`.
+   */
+  reference: string;
+}
+
+/**
+ * The avatars the core found drawable in one product's placement: the slots
+ * whose contact shared a profile with the user, each with the reference that
+ * contact disclosed.
+ */
+export interface PlacedAvatars {
+  /**
+   * Width of the product's surface, in the units of every rect.
+   */
+  surfaceWidth: number;
+
+  /**
+   * Height of the product's surface, in the same units.
+   */
+  surfaceHeight: number;
+
+  /**
+   * Avatars to draw, in the product's slot order.
+   */
+  avatars: Array<PlacedAvatar>;
+}
+
+/**
+ * Review shown before a preimage is submitted.
+ */
+export interface PreimageSubmitReview {
+  /**
+   * Size of the preimage in bytes.
+   */
+  size: bigint;
+}
+
+/**
  * Product identity attached to one product-facing TrUAPI connection.
  *
  * A host may create multiple product runtimes from the same long-lived host
@@ -1773,6 +1832,41 @@ export const PermissionAuthorizationStatus: S.Codec<PermissionAuthorizationStatu
 export const PermissionDecision: S.Codec<PermissionDecision> = S.lazy(
   (): S.Codec<PermissionDecision> =>
     S.Status("AllowOnce", "AllowAlways", "Deny"),
+);
+
+/**
+ * One avatar to draw over a product.
+ */
+export const PlacedAvatar: S.Codec<PlacedAvatar> = S.lazy(
+  (): S.Codec<PlacedAvatar> =>
+    S.Struct({
+      slot: S.u32,
+      rect: AvatarRect,
+      clip: AvatarRect,
+      reference: S.str,
+    }) as S.Codec<PlacedAvatar>,
+);
+
+/**
+ * The avatars the core found drawable in one product's placement: the slots
+ * whose contact shared a profile with the user, each with the reference that
+ * contact disclosed.
+ */
+export const PlacedAvatars: S.Codec<PlacedAvatars> = S.lazy(
+  (): S.Codec<PlacedAvatars> =>
+    S.Struct({
+      surfaceWidth: S.u32,
+      surfaceHeight: S.u32,
+      avatars: S.Vector(PlacedAvatar),
+    }) as S.Codec<PlacedAvatars>,
+);
+
+/**
+ * Review shown before a preimage is submitted.
+ */
+export const PreimageSubmitReview: S.Codec<PreimageSubmitReview> = S.lazy(
+  (): S.Codec<PreimageSubmitReview> =>
+    S.Struct({ size: S.u64 }) as S.Codec<PreimageSubmitReview>,
 );
 
 /**
@@ -2662,6 +2756,23 @@ export interface ProfilePlatform {
   presentProfile(
     product: ProductContext,
     request: HostProfilePresentRequest,
+  ): Promise<void>;
+
+  /**
+   * Draw the contact avatars a product placed, on the host's own layer over
+   * the product's surface, replacing what was drawn for it before; an empty
+   * `avatars` clears it. The layer must let pointer input through to the
+   * product and must never tell the product what it drew.
+   *
+   * The core calls this again, with the product's last geometry, whenever
+   * a contact on it shares or withdraws a profile, and with no avatars once
+   * the product's connection goes away. Answer `Unsupported` if this host
+   * cannot draw over the product; the product is told so. The default draws
+   * nothing.
+   */
+  placeContactAvatars?(
+    product: ProductContext,
+    placed: PlacedAvatars,
   ): Promise<void>;
 }
 

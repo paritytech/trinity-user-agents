@@ -156,6 +156,7 @@ export function makeHostCallbacks(
       ? {
           profile: {
             presentProfile: async () => {},
+            placeContactAvatars: async () => {},
             ...overrides.profile,
           },
         }

@@ -1808,6 +1808,100 @@ fn a_received_profile_reference_is_kept_by_the_host_and_cut_from_what_the_produc
     });
 }
 
+#[test]
+fn contact_avatars_over_the_product_follow_what_the_contact_shares() {
+    block_on(async {
+        use crate::runtime::profile::avatars::ContactAvatarPlacement;
+        let fixture = Fixture::new();
+        let actor = fixture.actor().await;
+        let identity = IdentityFixture::new();
+        let peer = DeviceFixture::new(1);
+        seed_peer(&actor, &identity, &[&peer]).await;
+        let host = Arc::new(crate::test_support::RecordingAvatarHost::default());
+        let placement = fixture.context.services.contact_avatars.for_runtime(1, || {
+            ContactAvatarPlacement::new(
+                host.clone(),
+                fixture.platform.clone(),
+                truapi_platform::ProductContext::new(PRODUCT.to_string()).unwrap(),
+            )
+        });
+        let rect = truapi::v01::AvatarRect {
+            x: 16,
+            y: 80,
+            width: 44,
+            height: 44,
+        };
+        let clip = truapi::v01::AvatarRect {
+            x: 0,
+            y: 64,
+            width: 360,
+            height: 576,
+        };
+        placement
+            .place(
+                profile::profile_owner(&fixture.context),
+                truapi::v01::HostProfilePlaceContactAvatarsRequest {
+                    surface_width: 360,
+                    surface_height: 640,
+                    slots: vec![truapi::v01::ContactAvatarSlot {
+                        slot: 7,
+                        peer_identity: identity.account,
+                        rect,
+                        clip,
+                    }],
+                },
+            )
+            .await
+            .unwrap();
+        let placed = |avatars| {
+            (
+                PRODUCT.to_string(),
+                truapi_platform::PlacedAvatars {
+                    surface_width: 360,
+                    surface_height: 640,
+                    avatars,
+                },
+            )
+        };
+
+        // The product placed the avatar once, before the contact shared; the
+        // host redraws it when the reference arrives and when it is withdrawn.
+        open_profile_frame(
+            &fixture,
+            &actor,
+            &identity,
+            &peer,
+            "incoming-profile",
+            fixture.timestamp,
+            Some(PROFILE_REFERENCE),
+        )
+        .await;
+        assert_eq!(
+            host.wait_for(2),
+            vec![
+                placed(Vec::new()),
+                placed(vec![truapi_platform::PlacedAvatar {
+                    slot: 7,
+                    rect,
+                    clip,
+                    reference: PROFILE_REFERENCE.to_string(),
+                }]),
+            ]
+        );
+        open_profile_frame(
+            &fixture,
+            &actor,
+            &identity,
+            &peer,
+            "incoming-withdrawal",
+            fixture.timestamp + 1,
+            None,
+        )
+        .await;
+        assert_eq!(host.wait_for(3)[2], placed(Vec::new()));
+    });
+}
+
 /// Open one statement from `identity` carrying a single profile frame.
 async fn open_profile_frame(
     fixture: &Fixture,
