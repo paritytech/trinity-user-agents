@@ -37,6 +37,29 @@ pub(super) struct ProfileWatermark {
     pub(super) timestamp: u64,
 }
 
+/// A watermark as written before frames were ordered: peer, disclosure
+/// digest, discloser. No timestamp, and no way to record a withdrawal.
+type LegacyWatermark = ([u8; 32], [u8; 32], String);
+
+/// Decode the trailing watermark list of a Chat state snapshot, which is
+/// either the current layout or the legacy one.
+///
+/// Legacy watermarks are dropped rather than carried over. They were written
+/// when contacts' hosts kept received references in a slot that is no longer
+/// read, so no contact holds what they record, and the next reconcile has to
+/// send every contact the disclosure again. Each layout must consume the whole
+/// list; anything else is corruption.
+pub(super) fn decode_watermarks(
+    bytes: &[u8],
+) -> Result<Vec<ProfileWatermark>, parity_scale_codec::Error> {
+    use parity_scale_codec::DecodeAll;
+    if let Ok(current) = Vec::<ProfileWatermark>::decode_all(&mut &bytes[..]) {
+        return Ok(current);
+    }
+    Vec::<LegacyWatermark>::decode_all(&mut &bytes[..])?;
+    Ok(Vec::new())
+}
+
 /// The wallet and Chat network the user's disclosure belongs to.
 pub(super) fn profile_owner(context: &NativeChatContext) -> ProfileOwner {
     ProfileOwner {

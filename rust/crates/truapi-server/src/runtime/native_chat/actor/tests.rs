@@ -1583,6 +1583,90 @@ fn state_decode_accepts_old_prefix_and_tagged_extension_but_rejects_corruption()
     assert!(State::decode(&mut &legacy[..legacy.len() - 1]).is_err());
 }
 
+/// A snapshot written before frames were ordered carried watermarks without a
+/// timestamp or withdrawal marker. It still opens, keeps everything else, and
+/// the next publish sends the disclosure again.
+#[test]
+fn a_snapshot_with_legacy_profile_watermarks_opens_and_resends() {
+    block_on(async {
+        let fixture = Fixture::new();
+        set_product_grants(
+            &fixture.platform,
+            PRODUCT,
+            truapi_platform::PermissionAuthorizationStatus::Authorized,
+        )
+        .await;
+        let actor = fixture.actor().await;
+        let identity = IdentityFixture::new();
+        seed_peer(&actor, &identity, &[&DeviceFixture::new(1)]).await;
+        disclose_for(&fixture).await;
+        assert!(
+            actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap()
+        );
+        actor
+            .store
+            .update(|state| {
+                let current = state.encode();
+                let reopened = State::decode(&mut current.as_slice()).unwrap();
+                assert_eq!(
+                    reopened.profile_shared.len(),
+                    1,
+                    "the current layout keeps its watermarks"
+                );
+
+                // The same state with its watermarks in the legacy layout.
+                let trailing = state.profile_shared.encode();
+                let mut legacy = current[..current.len() - trailing.len()].to_vec();
+                legacy.extend(
+                    state
+                        .profile_shared
+                        .iter()
+                        .map(|watermark| {
+                            (
+                                watermark.peer,
+                                watermark.digest.expect("a disclosure was sent"),
+                                watermark.discloser_product_id.clone(),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .encode(),
+                );
+                let mut input = legacy.as_slice();
+                let decoded = State::decode(&mut input).unwrap();
+                assert!(input.is_empty());
+                assert!(decoded.profile_shared.is_empty());
+                assert_eq!(decoded.peers.len(), state.peers.len());
+                assert_eq!(decoded.outbox.len(), state.outbox.len());
+                assert_eq!(
+                    (decoded.secret.0, decoded.index, decoded.last_expiry),
+                    (state.secret.0, state.index, state.last_expiry)
+                );
+                assert!(!decoded.boundary.legacy_pending);
+
+                let mut corrupt = legacy.clone();
+                corrupt.push(0);
+                assert!(State::decode(&mut corrupt.as_slice()).is_err());
+
+                *state = decoded;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert!(
+            actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap(),
+            "the contact is sent the disclosure again"
+        );
+        let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
+        assert_eq!(view.prepared.len(), 1, "one reference, not two");
+    });
+}
+
 const PROFILE_REFERENCE: &str = "seity-contacts:v1:5c9584ba6e565351723d57394780b31b4c2156123e1269c4724ae5f01258bb535c9584ba6e565351723d57394780b31b4c2156123e1269c4724ae5f01258bb53";
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {

@@ -326,10 +326,16 @@ impl Decode for State {
             BoundaryState::decode(input)?
         };
         // Added after the boundary state: a snapshot that ends here predates it.
-        let profile_shared = if input.remaining_len()? == Some(0) {
-            Vec::new()
-        } else {
-            <Vec<profile::ProfileWatermark>>::decode(input)?
+        // What follows is the watermark list in its current layout or the one
+        // written before frames were ordered; see `profile::decode_watermarks`.
+        let profile_shared = match input.remaining_len()? {
+            Some(0) => Vec::new(),
+            Some(len) => {
+                let mut rest = vec![0; len];
+                input.read(&mut rest)?;
+                profile::decode_watermarks(&rest)?
+            }
+            None => return Err("unbounded Chat state".into()),
         };
         Ok(Self {
             secret,
