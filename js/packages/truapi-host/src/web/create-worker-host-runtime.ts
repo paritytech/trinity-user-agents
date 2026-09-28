@@ -1333,6 +1333,10 @@ function teardown(state: RuntimeState, error: Error, fault: boolean): void {
 interface CreateWebWorkerHostRuntimeOptions {
   logLevel?: LogLevel;
   hostConfig: WebWorkerHostConfig | WebWorkerSigningHostConfig;
+  /**
+   * Maximum inactivity during each worker startup phase. Loading the WASM and
+   * constructing the runtime each get a full interval. Defaults to 30s.
+   */
   initTimeoutMs?: number;
   runtimeKind?: "pairing" | "signing";
 }
@@ -1636,10 +1640,15 @@ function createWebWorkerHostRuntime(
       readDebuggerEnablement(options.debugger),
       options.debuggerIndicator,
     );
+    const timeoutMs = options.initTimeoutMs ?? 30_000;
+    let initPhase = "loading WASM";
+    let cancelInitTimeout = (): void => {};
 
     const onInitMessage = (ev: MessageEvent<WorkerToMain>): void => {
       const msg = ev.data;
       if (msg.kind === "loaded") {
+        initPhase = "initializing the runtime";
+        scheduleInitTimeout();
         worker.postMessage({
           kind: "init",
           logLevel: devLogLevelOverride ?? options.logLevel ?? "off",
@@ -1670,16 +1679,25 @@ function createWebWorkerHostRuntime(
     };
 
     const cleanupInit = (): void => {
-      clearTimeout(initTimeout);
+      cancelInitTimeout();
       worker.removeEventListener("error", onError);
       worker.removeEventListener("messageerror", onInitMessageError);
       worker.removeEventListener("message", onInitMessage);
     };
 
-    const timeoutMs = options.initTimeoutMs ?? 30_000;
-    const initTimeout = setTimeout(() => {
-      failInit(new Error(`worker init timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
+    const scheduleInitTimeout = (): void => {
+      cancelInitTimeout();
+      const timeout = setTimeout(() => {
+        failInit(
+          new Error(
+            `worker init timed out after ${timeoutMs}ms while ${initPhase}`,
+          ),
+        );
+      }, timeoutMs);
+      cancelInitTimeout = () => clearTimeout(timeout);
+    };
+
+    scheduleInitTimeout();
 
     worker.addEventListener("error", onError);
     worker.addEventListener("messageerror", onInitMessageError);
