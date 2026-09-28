@@ -945,6 +945,14 @@ export interface PlacedAvatar {
    * in `ProfilePlatform::present_profile`.
    */
   reference: string;
+
+  /**
+   * When the contact's host sent the share this reflects, in Unix
+   * milliseconds. A contact re-shares the same reference when the record
+   * behind it changes; a larger `shared_at` for the same reference means
+   * any cached copy of that profile is stale.
+   */
+  sharedAt: bigint;
 }
 
 /**
@@ -1844,6 +1852,7 @@ export const PlacedAvatar: S.Codec<PlacedAvatar> = S.lazy(
       rect: AvatarRect,
       clip: AvatarRect,
       reference: S.str,
+      sharedAt: S.u64,
     }) as S.Codec<PlacedAvatar>,
 );
 
@@ -2765,7 +2774,8 @@ export interface ProfilePlatform {
    * product and must never tell the product what it drew.
    *
    * The core calls this again, with the product's last geometry, whenever
-   * a contact on it shares or withdraws a profile, and with no avatars once
+   * a contact on it shares, re-shares or withdraws a profile, and with no
+   * avatars once
    * the product's connection goes away. Answer `Unsupported` if this host
    * cannot draw over the product; the product is told so. The default draws
    * nothing.

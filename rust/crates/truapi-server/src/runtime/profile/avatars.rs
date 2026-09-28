@@ -182,7 +182,7 @@ impl ContactAvatarPlacement {
     }
 
     /// The slots whose contact currently shares a profile with this product's
-    /// user, each with that contact's reference.
+    /// user, each with that contact's reference and when it was shared.
     async fn drawable(
         &self,
         owner: ProfileOwner,
@@ -191,14 +191,14 @@ impl ContactAvatarPlacement {
         if slots.is_empty() {
             return Ok(Vec::new());
         }
-        let shared: HashMap<[u8; 32], String> =
+        let shared: HashMap<[u8; 32], (String, u64)> =
             read_received(self.storage.as_ref(), owner, &self.product.product_id)
                 .await?
                 .into_iter()
                 .filter_map(|received| {
                     let reference = received.reference?;
                     is_screened_profile_reference(&reference)
-                        .then_some((received.peer_identity, reference))
+                        .then_some((received.peer_identity, (reference, received.timestamp)))
                 })
                 .collect();
         Ok(slots
@@ -206,11 +206,12 @@ impl ContactAvatarPlacement {
             .filter_map(|slot| {
                 shared
                     .get(&slot.peer_identity)
-                    .map(|reference| PlacedAvatar {
+                    .map(|(reference, shared_at)| PlacedAvatar {
                         slot: slot.slot,
                         rect: slot.rect,
                         clip: slot.clip,
                         reference: reference.clone(),
+                        shared_at: *shared_at,
                     })
             })
             .collect())

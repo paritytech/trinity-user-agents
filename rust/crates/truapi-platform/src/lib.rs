@@ -3773,7 +3773,8 @@ pub trait ProfilePlatform: Send + Sync {
     /// product and must never tell the product what it drew.
     ///
     /// The core calls this again, with the product's last geometry, whenever
-    /// a contact on it shares or withdraws a profile, and with no avatars once
+    /// a contact on it shares, re-shares or withdraws a profile, and with no
+    /// avatars once
     /// the product's connection goes away. Answer `Unsupported` if this host
     /// cannot draw over the product; the product is told so. The default draws
     /// nothing.
@@ -3814,6 +3815,11 @@ pub struct PlacedAvatar {
     /// The profile reference the contact disclosed. A bearer capability, as
     /// in [`ProfilePlatform::present_profile`].
     pub reference: String,
+    /// When the contact's host sent the share this reflects, in Unix
+    /// milliseconds. A contact re-shares the same reference when the record
+    /// behind it changes; a larger `shared_at` for the same reference means
+    /// any cached copy of that profile is stale.
+    pub shared_at: u64,
 }
 
 impl core::fmt::Debug for PlacedAvatar {
@@ -3823,6 +3829,7 @@ impl core::fmt::Debug for PlacedAvatar {
             .field("rect", &self.rect)
             .field("clip", &self.clip)
             .field("reference", &"[REDACTED]")
+            .field("shared_at", &self.shared_at)
             .finish()
     }
 }

@@ -1781,6 +1781,7 @@ fn a_disclosed_profile_reference_is_sealed_once_per_peer_and_withdrawn_on_retrac
             &Disclosure {
                 product_id: "seity.dot".into(),
                 reference: PROFILE_REFERENCE.into(),
+                revision: 1,
             },
         )
         .await
@@ -1821,6 +1822,7 @@ fn a_disclosed_profile_reference_is_sealed_once_per_peer_and_withdrawn_on_retrac
             &Disclosure {
                 product_id: "seity.dot".into(),
                 reference: format!("{PROFILE_REFERENCE}ff"),
+                revision: 1,
             },
         )
         .await
@@ -1874,6 +1876,7 @@ fn a_disclosed_profile_reference_is_sealed_once_per_peer_and_withdrawn_on_retrac
             &Disclosure {
                 product_id: "seity.dot".into(),
                 reference: PROFILE_REFERENCE.into(),
+                revision: 1,
             },
         )
         .await
@@ -1887,6 +1890,56 @@ fn a_disclosed_profile_reference_is_sealed_once_per_peer_and_withdrawn_on_retrac
         let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
         assert_eq!(view.prepared.len(), 1);
         assert_ne!(view.prepared[0].request_id, first_request);
+        let redisclosed_from = view.prepared[0].request_id.clone();
+        assert!(
+            !actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap(),
+            "an automatic publish does not resend the revision already sent"
+        );
+
+        // The user updates what contacts see: the same reference, a new
+        // disclose call. Every ready peer is sent a fresh frame.
+        write_disclosure(
+            fixture.platform.as_ref(),
+            owner,
+            &Disclosure {
+                product_id: "seity.dot".into(),
+                reference: PROFILE_REFERENCE.into(),
+                revision: 2,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap(),
+            "a new disclose of the same reference starts a new round"
+        );
+        let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
+        assert_eq!(view.prepared.len(), 1);
+        assert_ne!(view.prepared[0].request_id, redisclosed_from);
+        assert!(
+            actor
+                .store
+                .read(|state| state
+                    .profile_shared
+                    .iter()
+                    .all(|watermark| watermark.attempts == 1))
+                .await
+                .unwrap(),
+            "the new round starts its attempts afresh"
+        );
+        assert!(
+            !actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap(),
+            "and is sent once"
+        );
     });
 }
 
@@ -2028,17 +2081,35 @@ fn contact_avatars_over_the_product_follow_what_the_contact_shares() {
             Some(PROFILE_REFERENCE),
         )
         .await;
+        let avatar = |shared_at| truapi_platform::PlacedAvatar {
+            slot: 7,
+            rect,
+            clip,
+            reference: PROFILE_REFERENCE.to_string(),
+            shared_at,
+        };
         assert_eq!(
             host.wait_for(2),
             vec![
                 placed(Vec::new()),
-                placed(vec![truapi_platform::PlacedAvatar {
-                    slot: 7,
-                    rect,
-                    clip,
-                    reference: PROFILE_REFERENCE.to_string(),
-                }]),
+                placed(vec![avatar(fixture.timestamp)]),
             ]
+        );
+        // The contact re-shares the same reference (its record changed): the
+        // host is told, with the newer frame's time, so it drops its cache.
+        open_profile_frame(
+            &fixture,
+            &actor,
+            &identity,
+            &peer,
+            "incoming-reshare",
+            fixture.timestamp + 1,
+            Some(PROFILE_REFERENCE),
+        )
+        .await;
+        assert_eq!(
+            host.wait_for(3)[2],
+            placed(vec![avatar(fixture.timestamp + 1)])
         );
         open_profile_frame(
             &fixture,
@@ -2046,11 +2117,11 @@ fn contact_avatars_over_the_product_follow_what_the_contact_shares() {
             &identity,
             &peer,
             "incoming-withdrawal",
-            fixture.timestamp + 1,
+            fixture.timestamp + 2,
             None,
         )
         .await;
-        assert_eq!(host.wait_for(3)[2], placed(Vec::new()));
+        assert_eq!(host.wait_for(4)[3], placed(Vec::new()));
     });
 }
 
@@ -2179,6 +2250,7 @@ async fn disclose_for(fixture: &Fixture) {
         &crate::runtime::profile::Disclosure {
             product_id: "seity.dot".into(),
             reference: PROFILE_REFERENCE.into(),
+            revision: 1,
         },
     )
     .await
@@ -2397,6 +2469,7 @@ fn an_unacknowledged_reference_is_resent_a_bounded_number_of_times_per_disclosur
             &crate::runtime::profile::Disclosure {
                 product_id: "seity.dot".into(),
                 reference: format!("{PROFILE_REFERENCE}ff"),
+                revision: 1,
             },
         )
         .await
@@ -2566,6 +2639,7 @@ fn a_changed_disclosure_is_relayed_by_the_open_chats_of_its_wallet() {
             &Disclosure {
                 product_id: "seity.dot".into(),
                 reference: PROFILE_REFERENCE.into(),
+                revision: 1,
             },
         ))
         .unwrap();

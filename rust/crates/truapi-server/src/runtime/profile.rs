@@ -8,7 +8,7 @@
 
 pub(crate) mod avatars;
 
-use parity_scale_codec::{Decode, Encode};
+use parity_scale_codec::{Decode, DecodeAll, Encode};
 use truapi_platform::{CoreStorage, CoreStorageKey};
 
 /// The wallet and Chat network a disclosure, and what contacts sent back,
@@ -22,7 +22,7 @@ pub(crate) struct ProfileOwner {
 }
 
 impl ProfileOwner {
-    fn disclosure_key(&self) -> CoreStorageKey {
+    pub(crate) fn disclosure_key(&self) -> CoreStorageKey {
         CoreStorageKey::ProfileDisclosure {
             root_public_key: self.root_public_key,
             genesis_hash: self.genesis_hash,
@@ -43,6 +43,18 @@ impl ProfileOwner {
 pub(crate) struct Disclosure {
     pub(crate) product_id: String,
     pub(crate) reference: String,
+    /// Which `profile.disclose` call this is. Every call takes a larger
+    /// revision, so disclosing the same reference again (the record behind
+    /// it changed) starts a new round to every contact. `0` for a disclosure
+    /// stored before revisions existed.
+    pub(crate) revision: u64,
+}
+
+/// A disclosure as stored before revisions: product and reference only.
+#[derive(Decode)]
+struct UnrevisedDisclosure {
+    product_id: String,
+    reference: String,
 }
 
 /// What one contact's host last sent.
@@ -84,8 +96,18 @@ pub(crate) async fn read_disclosure(
     else {
         return Ok(None);
     };
-    Disclosure::decode(&mut raw.as_slice())
-        .map(Some)
+    let bytes = raw.as_slice();
+    if let Ok(current) = Disclosure::decode_all(&mut &bytes[..]) {
+        return Ok(Some(current));
+    }
+    UnrevisedDisclosure::decode_all(&mut &bytes[..])
+        .map(|old| {
+            Some(Disclosure {
+                product_id: old.product_id,
+                reference: old.reference,
+                revision: 0,
+            })
+        })
         .map_err(|error| format!("stored profile disclosure is unreadable: {error}"))
 }
 

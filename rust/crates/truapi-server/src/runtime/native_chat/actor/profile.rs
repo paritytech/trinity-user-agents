@@ -6,7 +6,10 @@
 //! A per-peer watermark records what this Host last queued for that peer, so
 //! the initial share, a new contact, a replacement and a withdrawal are one
 //! publish: every ready peer whose watermark differs from the disclosure is
-//! sent the disclosure. The watermark advances when the message is queued.
+//! sent the disclosure. Each `profile.disclose` call is a new revision, so
+//! disclosing the same reference again (its record changed) is sent to every
+//! ready peer anew; automatic publishes never resend a revision already sent.
+//! The watermark advances when the message is queued.
 //! Each frame to a peer is timestamped later than the one before it, so the
 //! peer's host keeps the newest whatever order it opens them in.
 //!
@@ -23,7 +26,7 @@
 //! offered to a ready peer for another lifetime, up to
 //! [`MAX_PROFILE_ATTEMPTS`] frames per peer and disclosure: a host that does
 //! not know the content type never acknowledges it, so it costs at most that
-//! many statements each time the disclosure changes.
+//! many statements each time the user discloses or retracts.
 
 use super::*;
 use crate::runtime::native_chat::background::require_authorized;
@@ -109,12 +112,27 @@ pub(super) fn profile_owner(context: &NativeChatContext) -> ProfileOwner {
     }
 }
 
+/// What a watermark records a disclosure by. Each `profile.disclose` call has
+/// its own revision and so its own digest, and starts a new round even for
+/// the same reference; automatic publishes of one disclosure share it. A
+/// disclosure stored before revisions keeps the digest it was sent under.
 fn disclosure_digest(disclosure: &Disclosure) -> [u8; 32] {
+    if disclosure.revision == 0 {
+        return hash(
+            &(
+                b"native-chat-profile-v1",
+                &disclosure.product_id,
+                &disclosure.reference,
+            )
+                .encode(),
+        );
+    }
     hash(
         &(
-            b"native-chat-profile-v1",
+            b"native-chat-profile-v2",
             &disclosure.product_id,
             &disclosure.reference,
+            disclosure.revision,
         )
             .encode(),
     )
@@ -401,6 +419,7 @@ mod tests {
         let disclosure = Disclosure {
             product_id: "seity.dot".into(),
             reference: reference.into(),
+            revision: 1,
         };
         let digest = disclosure_digest(&disclosure);
         (disclosure, digest)

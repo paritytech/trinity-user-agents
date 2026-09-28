@@ -177,9 +177,12 @@ and printable ASCII without whitespace; parsing the format is the host's.
 `profile.placeContactAvatars(product, placed)` draws contacts' avatars over a chat product. `placed` carries the
 product's surface size and, per avatar, the product's `slot` id, a square `rect`, the `clip` region it is cut to, all in
 surface units (framebuffer pixels for a PolkaVM product, CSS pixels of the viewport for a web product), and the
-`reference` that contact disclosed, so the host can draw their photo and mood ring. Each call replaces what was drawn
-for the product; an empty `avatars` clears it. The core calls it again with the same geometry when a contact shares or
-withdraws a profile, and with no avatars when the product's connection goes away. Draw on a layer the product cannot
+`reference` that contact disclosed, so the host can draw their photo and mood ring, with `sharedAt` (Unix ms, a
+`bigint`) of the share it came from. A contact re-shares the same reference when the record behind it changes, so a
+larger `sharedAt` for a reference the host has cached means the cached profile is stale. Each call replaces what was
+drawn for the product; an empty `avatars` clears it. The core calls it again with the same geometry when a contact
+shares, re-shares or withdraws a profile, and with no avatars when the product's connection goes away. Draw on a layer
+the product cannot
 read that lets pointer input through, and never tell the product what was drawn. The host runtimes take
 `RequiredHostCallbacks`, so a `profile` group implements it alongside `presentProfile`.
 

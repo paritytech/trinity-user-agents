@@ -1532,11 +1532,22 @@ impl Profile for ProductRuntimeHost {
             }
             Err(reason) => return Err(domain(v01::HostProfileDiscloseError::Unknown { reason })),
         }
+        let storage = self.platform.as_ref();
+        // A later revision than the stored one even when the reference is the
+        // same: the record behind it changed, and contacts are sent it again.
+        let previous = profile::read_disclosure(storage, owner)
+            .await
+            .ok()
+            .flatten()
+            .map_or(0, |disclosure| disclosure.revision);
+        let now = crate::host_logic::statement_store::current_unix_secs()
+            .saturating_mul(1000);
         let disclosure = profile::Disclosure {
             product_id: self.product_id(),
             reference: request.reference,
+            revision: now.max(previous.saturating_add(1)),
         };
-        profile::write_disclosure(self.platform.as_ref(), owner, &disclosure)
+        profile::write_disclosure(storage, owner, &disclosure)
             .await
             .map_err(|reason| domain(v01::HostProfileDiscloseError::Unknown { reason }))?;
         self.profile_disclosure_changed();

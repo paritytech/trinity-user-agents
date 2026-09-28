@@ -222,8 +222,13 @@ The host only prepares statements: the chat product submits them. A publish outs
 `disclose` or `retract`, queues the reference while the chat actor is open, and it reaches the contact once the chat
 product next runs and submits what its responses offer.
 
-Stability comes from the reference format rather than the relay: a reference that names a mutable record, such as a
-registry slot, keeps working when the record changes, so a relay happens only when the reference itself changes.
+A reference may name a mutable record, such as a registry slot, and a discloser such as Seity re-shares the same
+reference when only the record behind it changes. Each `disclose` call therefore stores the disclosure with a new
+revision, later than the stored one, and the watermark records the disclosure by a digest that includes it. Disclosing
+the reference already held starts a new round to every ready peer: a new, later frame with its own request id and
+signature, and a fresh attempt count. Automatic publishes (initialize, reconcile, a peer becoming ready) compare the
+same revision and never resend a round already sent. A disclosure stored before revisions reads as revision 0 and keeps
+the digest it was sent under, so an upgrade sends nothing.
 
 ### Presentation
 
@@ -238,13 +243,15 @@ square bounding box and the region it is cut to, in surface units. Each call rep
 
 The core keeps only the slots whose contact holds a current reference in the caller's `ProfileReferencesReceived`,
 withdrawals excluded, and hands them with those references to `ProfilePlatform::place_contact_avatars(product,
-PlacedAvatars { surface_width, surface_height, avatars })`. The host draws each contact's photo and mood ring, when
+PlacedAvatars { surface_width, surface_height, avatars })`. Each avatar carries `shared_at`, the sender timestamp (Unix ms) of
+the frame its reference came from: a newer frame with the same reference means the contact updated the record behind
+it, and the host should drop any profile it cached for that reference. The host draws each contact's photo and mood ring, when
 they have one, on a layer over the product that lets pointer input through; a tap still reaches the product, which
 opens the profile with `present_contact`. The default callback draws nothing, so a host draws avatars only once it
 implements it.
 
-The core remembers the last placement per product connection, in memory. When a reference for that product arrives or
-is withdrawn it filters the same geometry again and calls the host again, so avatars appear and disappear without the
+The core remembers the last placement per product connection, in memory. When a reference for that product arrives, is
+re-shared in a newer frame or is withdrawn it filters the same geometry again and calls the host again, so avatars appear and disappear without the
 product sending anything. Disposing the connection, or a placement made after the user signed out, clears what the host
 drew.
 

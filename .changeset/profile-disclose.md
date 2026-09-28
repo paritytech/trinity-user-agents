@@ -16,13 +16,17 @@ product opens them in. Both live in wallet- and network-scoped core storage (`Pr
 response to a Chat request in which a contact became ready, and, without delaying the call, as soon as `disclose` or
 `retract` changes it while a Chat of the same wallet is open; the chat product still has to run to submit it. Delivery
 is best effort: relayed references never take outbox room from other Chat traffic, and one that lapses unacknowledged
-after a statement lifetime is signed again for a ready contact, at most three frames per contact and disclosure.
+after a statement lifetime is signed again for a ready contact, at most three frames per contact and disclosure. Every
+`disclose` call is a new disclosure, even with the reference already held: a profile whose record changed behind the
+same reference is sent to every ready contact again, with a fresh attempt count.
 
 Add `profile.placeContactAvatars`. A chat App tells the host where it draws contacts' avatars (surface size and, per
 avatar, a slot id, peer identity, square rect and clip), and the host draws the photo and mood ring of each contact who
 shared a profile with it on its own layer. The core filters the placement to contacts with a current reference, hands
-them with their references to the new `ProfilePlatform.placeContactAvatars(product, placed)` callback, and
-redraws the remembered placement when a reference arrives or is withdrawn; it clears it when the connection goes away.
+them with their references and `sharedAt` (Unix ms of the contact's share) to the new
+`ProfilePlatform.placeContactAvatars(product, placed)` callback, and redraws the remembered placement when a reference
+arrives, is re-shared or is withdrawn; a larger `sharedAt` for the same reference tells the host its cached profile is
+stale; it clears it when the connection goes away.
 The product is answered `Ok` whoever shared; only a malformed placement (more than 64 slots, a surface side outside 1 to
 16384, a non-square avatar or one outside 1 to 1024 a side, a repeated slot) is refused, and a host that cannot draw
 answers `Unsupported`. A JS host that supplies a `profile` group must implement the callback; the Rust trait's default

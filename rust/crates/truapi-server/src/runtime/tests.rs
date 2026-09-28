@@ -1436,6 +1436,15 @@ fn profile_disclose_stores_the_reference_and_only_its_discloser_may_retract_it()
     assert_eq!(stored.product_id, "seity.dot");
     assert_eq!(stored.reference, CONTACTS_REFERENCE);
 
+    // Disclosing the same reference again (its record changed) is a new
+    // revision, so contacts are sent it again.
+    disclose(&seity, CONTACTS_REFERENCE).expect("re-disclosing is allowed");
+    let again = futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner))
+        .expect("readable")
+        .expect("stored");
+    assert_eq!(again.reference, CONTACTS_REFERENCE);
+    assert!(again.revision > stored.revision);
+
     assert!(matches!(
         retract(&other),
         Err(CallError::Domain(HostProfileRetractError::V1(
@@ -1454,6 +1463,31 @@ fn profile_disclose_stores_the_reference_and_only_its_discloser_may_retract_it()
     assert_eq!(
         retract(&seity).expect("retracting nothing is not an error"),
         HostProfileRetractResponse::V1
+    );
+}
+
+#[test]
+fn a_disclosure_stored_before_revisions_still_reads() {
+    use parity_scale_codec::Encode;
+    use truapi_platform::CoreStorage;
+    let platform = consenting_platform();
+    let seity = app_host(&platform, "seity.dot");
+    let owner = owner_of(&seity);
+    futures::executor::block_on(platform.write_core_storage(
+        owner.disclosure_key(),
+        ("seity.dot".to_string(), CONTACTS_REFERENCE.to_string()).encode(),
+    ))
+    .unwrap();
+    let stored = futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner))
+        .expect("the old layout decodes")
+        .expect("stored");
+    assert_eq!(
+        stored,
+        profile::Disclosure {
+            product_id: "seity.dot".into(),
+            reference: CONTACTS_REFERENCE.into(),
+            revision: 0,
+        }
     );
 }
 
@@ -1797,12 +1831,14 @@ fn avatar_placement(slots: &[(u32, [u8; 32])]) -> v01::HostProfilePlaceContactAv
     }
 }
 
-/// What the host is handed for `slot` of [`avatar_placement`].
+/// What the host is handed for `slot` of [`avatar_placement`], shared by a
+/// frame sent at time 1.
 fn placed_avatar(slot: u32, reference: &str) -> truapi_platform::PlacedAvatar {
     truapi_platform::PlacedAvatar {
         slot,
         rect: avatar_rect(16, 80 + 56 * slot as i32, 44),
         clip: AVATAR_CLIP,
+        shared_at: 1,
         reference: reference.to_string(),
     }
 }
