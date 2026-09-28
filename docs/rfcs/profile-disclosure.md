@@ -186,10 +186,23 @@ withdrawn. Clearing the product clears it. Hosts treat both as secret material.
 A disclosure travels as a new Chat v2 content type, `ProfileReference { discloser_product_id, reference: Option }`,
 where `None` withdraws. The Chat actor seals it to each ready peer's devices through the same host-private outbox that
 carries payments and rich files, so the chat product submits and retries opaque ciphertext it cannot read, and cannot
-prepare the content type itself. A per-peer watermark records what was last sent; each reconcile sends the current
-disclosure to every peer whose watermark differs, which covers the first share, a new contact, a replacement and a
+prepare the content type itself. A per-peer watermark records what was last sent; each publish sends the current
+disclosure to every ready peer whose watermark differs, which covers the first share, a new contact, a replacement and a
 withdrawal. On receipt the host screens the frame, stores it for that peer and removes it from the plaintext returned to
 the product. Frames from compacted history are dropped.
+
+A Chat actor publishes:
+
+- when the chat product initializes;
+- at the start of each reconcile, which heals any trigger that was missed;
+- after any Chat request in which a peer became ready, such as the acknowledgement that completes a device handover, so
+  that request's response already carries the reference;
+- when `disclose` or `retract` changes the disclosure while the chat is open. The core stores the change, answers the
+  call, and asks every open Chat actor of the same wallet and network, whatever its product, to publish on a task of its
+  own, so the call never waits on it.
+
+Publishes on one actor run one at a time, so one that read an older disclosure never queues it after a newer one.
+Without a new disclosure and with nothing lapsed, a publish reads the disclosure and checks watermarks, nothing more.
 
 The product decides the order it opens statements in, so frames are ordered by their timestamp, not by arrival. Each
 frame a host sends a peer is timestamped later than the one before it, even if its clock steps back. The receiving host
@@ -197,9 +210,17 @@ applies a frame only if it is strictly newer than the one it holds, and keeps a 
 it, so a disclosure opened after its own withdrawal cannot bring the reference back.
 
 Delivery is best effort. References have their own outbox budget, one per peer, so they never take a slot payments or
-rich files need, and a reference that finds no room waits for a later reconcile rather than failing the chat product's
-initialization. A queued reference is offered for one statement lifetime and then dropped without being re-signed: a
-host that predates the content type rejects the whole statement and never acknowledges it.
+rich files need, and a reference that finds no room waits for a later publish rather than failing the chat product's
+initialization. A queued reference is offered for one statement lifetime. If it lapses unacknowledged and the peer is
+still ready, it is signed again as a new, later frame and offered for another lifetime, up to three frames per peer and
+disclosure; then the host stops until the disclosure changes, which starts a fresh count. A host that predates the
+content type rejects the whole statement and never acknowledges it, so it costs at most three statements per disclosure.
+The watermark records the attempts and whether the last frame lapsed; state written before it recorded them counts as
+one attempt that did not lapse.
+
+The host only prepares statements: the chat product submits them. A publish outside the product's own requests, after
+`disclose` or `retract`, queues the reference while the chat actor is open, and it reaches the contact once the chat
+product next runs and submits what its responses offer.
 
 Stability comes from the reference format rather than the relay: a reference that names a mutable record, such as a
 registry slot, keeps working when the record changes, so a relay happens only when the reference itself changes.
@@ -239,8 +260,11 @@ read it.
 
 - One reference for all contacts, so withdrawing it from one contact means rotating it for all of them.
 - A retraction cannot make a contact's host forget a reference it already resolved.
-- The watermark advances when the message is queued, so a message that never arrives, or that a peer's host does not
-  acknowledge within one statement lifetime, is not resent until the disclosure changes.
+- The watermark advances when the message is queued. A message that never arrives is sent again only when it lapses
+  unacknowledged, three frames at most per disclosure, so a contact whose host misses all three is not sent it again
+  until the disclosure changes.
+- The chat product must run to submit what the host prepares. A disclosure changed while no chat product runs is relayed
+  when one next initializes.
 - The host layer covers the product's own drawing, so a product that animates or scrolls between placements shows the
   avatar a frame late; the product re-sends its placement when the list moves.
 - Dropped: carrying the reference in ordinary chat content, which puts a bearer capability in product hands.
@@ -255,6 +279,5 @@ read it.
 - Consent covers the product, not the reference: once allowed, a product may replace its disclosure without asking.
 - Devices. Only the host that took `disclose` knows the disclosure, so contacts that reach the user's other devices are
   not sent it.
-- Reconcile timing. The relay runs when the chat product initializes, not when `disclose` returns.
 - Resolution. Hosts parse references today; a shared resolver in the core would need the reference format specified here
   rather than by the publishing product.

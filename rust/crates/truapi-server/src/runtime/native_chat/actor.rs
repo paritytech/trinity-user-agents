@@ -402,6 +402,7 @@ pub(super) struct NativeChatActor {
     file_transfer_gate: futures::lock::Mutex<()>,
     file_export_gate: futures::lock::Mutex<()>,
     file_cursor: AtomicUsize,
+    profile_gate: futures::lock::Mutex<()>,
 }
 
 impl NativeChatActor {
@@ -452,6 +453,7 @@ impl NativeChatActor {
             file_transfer_gate: futures::lock::Mutex::new(()),
             file_export_gate: futures::lock::Mutex::new(()),
             file_cursor: AtomicUsize::new(0),
+            profile_gate: futures::lock::Mutex::new(()),
         });
         actor
             .store
@@ -1181,6 +1183,9 @@ impl NativeChatActor {
     ) -> Result<(), Error> {
         context.require_current()?;
         self.store.reauthenticate().await?;
+        // Heals a relay trigger that was missed. With nothing due it reads the
+        // disclosure and checks watermarks, nothing more.
+        self.relay_profile_reference(context).await;
         let (accepted, required) = self
             .store
             .read(|state| {
@@ -1213,8 +1218,6 @@ impl NativeChatActor {
             }
             wallet.reconcile(context).await?;
         }
-        // Profile references are not renewed: one lifetime, then dropped.
-        self.retire_lapsed_profile_references(context).await?;
         // Only expiry may be renewed on a durable opaque payment handoff. The
         // product submits/retries the resulting statement; Host never delivers.
         let pending = self

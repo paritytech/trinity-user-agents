@@ -1284,6 +1284,15 @@ impl ProductRuntimeHost {
             genesis_hash: self.services.people_chain_genesis_hash,
         })
     }
+
+    /// Tell the authority the disclosure changed, so open Chats relay it now
+    /// rather than when their product next initializes. Never waits for the
+    /// relay.
+    fn profile_disclosure_changed(&self) {
+        if let Some(session) = self.authority.current_session() {
+            self.authority.profile_disclosure_changed(&session);
+        }
+    }
 }
 
 #[truapi_platform::async_trait]
@@ -1529,8 +1538,9 @@ impl Profile for ProductRuntimeHost {
         };
         profile::write_disclosure(self.platform.as_ref(), owner, &disclosure)
             .await
-            .map(|()| HostProfileDiscloseResponse::V1)
-            .map_err(|reason| domain(v01::HostProfileDiscloseError::Unknown { reason }))
+            .map_err(|reason| domain(v01::HostProfileDiscloseError::Unknown { reason }))?;
+        self.profile_disclosure_changed();
+        Ok(HostProfileDiscloseResponse::V1)
     }
 
     #[instrument(skip_all, fields(runtime.method = "profile.retract"))]
@@ -1557,10 +1567,13 @@ impl Profile for ProductRuntimeHost {
             Some(disclosure) if disclosure.product_id != self.product_id() => {
                 Err(domain(v01::HostProfileRetractError::NotDiscloser))
             }
-            Some(_) => profile::clear_disclosure(storage, owner)
-                .await
-                .map(|()| HostProfileRetractResponse::V1)
-                .map_err(unknown),
+            Some(_) => {
+                profile::clear_disclosure(storage, owner)
+                    .await
+                    .map_err(unknown)?;
+                self.profile_disclosure_changed();
+                Ok(HostProfileRetractResponse::V1)
+            }
         }
     }
 

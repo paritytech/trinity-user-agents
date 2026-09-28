@@ -1252,6 +1252,12 @@ impl ProductAuthority for SigningHost {
             .map_err(PaymentTopUpAuthorityError::Domain)
     }
 
+    fn profile_disclosure_changed(&self, session: &AuthoritySession) {
+        if let Ok(context) = self.native_chat_context(session) {
+            self.native_chat.relay_profile_disclosure(context);
+        }
+    }
+
     async fn allocate_resources(
         &self,
         _cx: &CallContext,

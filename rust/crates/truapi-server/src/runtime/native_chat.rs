@@ -191,6 +191,31 @@ impl NativeChatRegistry {
             .await
     }
 
+    /// Relay a changed profile disclosure through every open Chat of the
+    /// wallet on this network, whichever product it belongs to. Returns at
+    /// once: the relay runs on its own task, after the disclosure is stored,
+    /// and the call that changed it never waits for it. A Chat that is not
+    /// open relays when its product next initializes.
+    pub(crate) fn relay_profile_disclosure(&self, context: NativeChatContext) {
+        let registry = self.clone();
+        let spawner = context.services.spawner.clone();
+        spawner(Box::pin(async move {
+            let wallet = (context.session.public_key, context.genesis_hash);
+            let cache = registry.state.cache.lock().clone();
+            let chats: Vec<_> = cache
+                .chats
+                .lock()
+                .await
+                .iter()
+                .filter(|((key, _), _)| *key == wallet)
+                .map(|(_, chat)| chat.clone())
+                .collect();
+            for chat in chats {
+                chat.relay_profile_reference(&context).await;
+            }
+        }));
+    }
+
     /// Generic incoming coin import shares the wallet's allocator and recovery
     /// store, but neither creates a Chat device nor requires Chat permission.
     pub(crate) fn top_up(
@@ -383,6 +408,9 @@ impl NativeChatRegistry {
             return Ok(response);
         }
         let chat = self.chat(&context, &product).await?;
+        // A peer this request makes ready is sent the user's profile in it.
+        // An unreadable store is left to the operation to report or repair.
+        let unready = chat.unready_peers().await.unwrap_or_default();
         let mut binding = None;
         let mut opened = Vec::new();
         let mut prepared = Vec::new();
@@ -392,8 +420,6 @@ impl NativeChatRegistry {
             match &mut request {
                 Request::Initialize => {
                     chat.drive_files(&context).await?;
-                    // Known gap (docs/rfcs/profile-disclosure.md): the relay runs here only, not when
-                    // `disclose` returns, and only on this device.
                     chat.publish_profile_reference(&context).await?;
                 }
                 Request::Bind { username } => {
@@ -480,6 +506,7 @@ impl NativeChatRegistry {
             Ok::<(), ChatError>(())
         }
         .await;
+        chat.relay_to_newly_ready(&context, &unready).await;
         let wallet = cache
             .wallets
             .lock()

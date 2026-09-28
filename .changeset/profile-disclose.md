@@ -12,8 +12,11 @@ once through `userConfirmation.confirmPermission` with a new `ProfileDisclosure`
 This change includes the Chat relay. The host sends the disclosure to every ready Chat v2 contact as a host-private
 message and keeps, per contact, the newest frame their host sent back, withdrawals included, whatever order the chat
 product opens them in. Both live in wallet- and network-scoped core storage (`ProfileDisclosure`,
-`ProfileReferencesReceived`). Delivery is best effort: relayed references never take outbox room from other Chat traffic
-and are dropped, not re-signed, after one statement lifetime.
+`ProfileReferencesReceived`). The host queues the disclosure when the chat product initializes or reconciles, in the
+response to a Chat request in which a contact became ready, and, without delaying the call, as soon as `disclose` or
+`retract` changes it while a Chat of the same wallet is open; the chat product still has to run to submit it. Delivery
+is best effort: relayed references never take outbox room from other Chat traffic, and one that lapses unacknowledged
+after a statement lifetime is signed again for a ready contact, at most three frames per contact and disclosure.
 
 Add `profile.placeContactAvatars`. A chat App tells the host where it draws contacts' avatars (surface size and, per
 avatar, a slot id, peer identity, square rect and clip), and the host draws the photo and mood ring of each contact who
