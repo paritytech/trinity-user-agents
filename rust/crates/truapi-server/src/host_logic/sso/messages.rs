@@ -1086,7 +1086,7 @@ mod tests {
         };
         let request = RemoteMessage::request("request".to_string(), chat_request);
         let encoded_request = request.encode();
-        assert_eq!(encoded_request[9], 24);
+        assert_eq!(encoded_request[9], 200);
         assert_eq!(
             RemoteMessage::decode(&mut encoded_request.as_slice()).unwrap(),
             request
@@ -1107,7 +1107,7 @@ mod tests {
             )),
         };
         let encoded_response = response.encode();
-        assert_eq!(encoded_response[10], 25);
+        assert_eq!(encoded_response[10], 201);
         assert_eq!(
             RemoteMessage::decode(&mut encoded_response.as_slice()).unwrap(),
             response
@@ -1164,7 +1164,7 @@ mod tests {
         };
         let request = RemoteMessage::request("request".to_string(), request_payload);
         let encoded_request = request.encode();
-        assert_eq!(encoded_request[9], 26);
+        assert_eq!(encoded_request[9], 202);
         assert_eq!(
             RemoteMessage::decode(&mut encoded_request.as_slice()).unwrap(),
             request
@@ -1181,7 +1181,7 @@ mod tests {
             )),
         };
         let encoded_response = response.encode();
-        assert_eq!(encoded_response[10], 27);
+        assert_eq!(encoded_response[10], 203);
         let RemoteMessageData::V1(data) = response.data;
         assert_eq!(
             StatementStoreProductSignRequest::response_from_message(data),
@@ -1207,7 +1207,7 @@ mod tests {
             },
         );
         let encoded = Zeroizing::new(request.encode());
-        assert_eq!(&encoded[..3], &[0, 0, 28]);
+        assert_eq!(&encoded[..3], &[0, 0, 204]);
         assert_eq!(decode_remote_message(&encoded).unwrap(), request);
         let response = Response {
             responding_to: "top-up".to_string(),
@@ -1216,7 +1216,7 @@ mod tests {
             )),
         };
         let response = PaymentTopUpRequest::response_into_message(response);
-        assert_eq!(response.encode()[0], 29);
+        assert_eq!(response.encode()[0], 205);
         assert!(ProductSubtreeRequest::response_from_message(response.clone()).is_none());
         assert_eq!(
             PaymentTopUpRequest::response_from_message(response)
