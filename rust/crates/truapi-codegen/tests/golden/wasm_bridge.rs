@@ -64,6 +64,7 @@ pub(super) struct JsBridge {
     pub(super) clear: Function,
     pub(super) subscribe_storage: Function,
     pub(super) present_profile: Function,
+    pub(super) present_contact_profile: Function,
     pub(super) place_contact_avatars: Function,
     pub(super) subscribe_theme: Function,
     pub(super) confirm_user_action: Function,
@@ -132,6 +133,8 @@ impl JsBridge {
             subscribe_storage: get_function(callbacks, "subscribeStorage")?,
             present_profile: get_optional_function(callbacks, "presentProfile")?
                 .unwrap_or_else(|| missing_callback("presentProfile")),
+            present_contact_profile: get_optional_function(callbacks, "presentContactProfile")?
+                .unwrap_or_else(|| missing_callback("presentContactProfile")),
             place_contact_avatars: get_optional_function(callbacks, "placeContactAvatars")?
                 .unwrap_or_else(|| missing_callback("placeContactAvatars")),
             subscribe_theme: get_function(callbacks, "subscribeTheme")?,
@@ -153,6 +156,7 @@ impl JsBridge {
             pocket_present: get_optional_function(callbacks, "subscribePocketCards")?.is_some()
                 && get_optional_function(callbacks, "removePocketCard")?.is_some(),
             profile_present: get_optional_function(callbacks, "presentProfile")?.is_some()
+                && get_optional_function(callbacks, "presentContactProfile")?.is_some()
                 && get_optional_function(callbacks, "placeContactAvatars")?.is_some(),
         })
     }
@@ -764,6 +768,22 @@ impl truapi_platform::ProfilePlatform for WasmPlatform {
             vec![
                 Uint8Array::from(product.encode().as_slice()).into(),
                 Uint8Array::from(request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(|reason| v01::HostProfilePresentError::Unknown { reason })
+    }
+
+    async fn present_contact_profile(
+        &self,
+        product: &truapi_platform::ProductContext,
+        presented: truapi_platform::PresentedContactProfile,
+    ) -> Result<(), v01::HostProfilePresentError> {
+        invoke_unit(
+            &self.bridge.present_contact_profile,
+            vec![
+                Uint8Array::from(product.encode().as_slice()).into(),
+                Uint8Array::from(presented.encode().as_slice()).into(),
             ],
         )
         .await

@@ -1600,7 +1600,9 @@ impl Profile for ProductRuntimeHost {
         let owner = self
             .profile_owner()
             .ok_or_else(|| domain(v01::HostProfilePresentContactError::NotConnected))?;
-        let reference = profile::received_reference(
+        // Stored only when it arrived over the authenticated Chat channel from
+        // this peer, so the peer is who shared it.
+        let (reference, shared_at) = profile::received_reference(
             self.platform.as_ref(),
             owner,
             &self.product_id(),
@@ -1608,7 +1610,11 @@ impl Profile for ProductRuntimeHost {
         )
         .await
         .map_err(|reason| domain(v01::HostProfilePresentContactError::Unknown { reason }))?
-        .and_then(|received| received.reference)
+        .and_then(|received| {
+            received
+                .reference
+                .map(|reference| (reference, received.timestamp))
+        })
         .ok_or_else(|| domain(v01::HostProfilePresentContactError::NotShared))?;
         // A stored reference passed the same screen when it arrived; check
         // again rather than trust storage.
@@ -1618,7 +1624,14 @@ impl Profile for ProductRuntimeHost {
             ));
         }
         platform
-            .present_profile(&self.product, v01::HostProfilePresentRequest { reference })
+            .present_contact_profile(
+                &self.product,
+                truapi_platform::PresentedContactProfile {
+                    reference,
+                    peer_identity: request.peer_identity,
+                    shared_at,
+                },
+            )
             .await
             .map(|()| HostProfilePresentContactResponse::V1)
             .map_err(|error| {

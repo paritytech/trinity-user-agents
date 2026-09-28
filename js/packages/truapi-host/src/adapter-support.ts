@@ -15,6 +15,7 @@ import type {
   HopProvider,
   JsonRpcConnection,
   NativeChatFilesHost,
+  ProfilePlatform,
 } from "./generated/host-callbacks.js";
 
 type WireResult<T, E> =
@@ -168,6 +169,25 @@ export function coinageWalletHostAdapter(
         throw new Error("Native Coinage wallet operation failed");
       }
     },
+  };
+}
+
+/**
+ * A profile host built before `presentContactProfile` still shows a contact's
+ * profile: without it, the contact's reference is presented as
+ * `presentProfile` would, the core's own default, rather than failing.
+ */
+export function profileHostAdapter(
+  host: Required<ProfilePlatform> | undefined,
+): Required<ProfilePlatform> | undefined {
+  if (host === undefined || typeof host.presentContactProfile === "function")
+    return host;
+  return {
+    presentProfile: (product, request) => host.presentProfile(product, request),
+    presentContactProfile: (product, presented) =>
+      host.presentProfile(product, { reference: presented.reference }),
+    placeContactAvatars: (product, placed) =>
+      host.placeContactAvatars(product, placed),
   };
 }
 

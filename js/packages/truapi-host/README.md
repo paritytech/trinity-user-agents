@@ -174,6 +174,13 @@ when the user dismisses it. The reference is a bearer capability: the host fetch
 profile's bytes never return to the product. The core forwards only references that are non-empty, at most 2048 bytes
 and printable ASCII without whitespace; parsing the format is the host's.
 
+`profile.presentContactProfile(product, presented)` shows the profile a Chat contact shared when a chat product calls
+`profile.presentContact`. `presented` carries the `reference`, the `peerIdentity` of the contact whose authenticated
+Chat device delivered it and the `sharedAt` (Unix ms, a `bigint`) of that share, so the drawer can say who shared it
+rather than which product asked. It names who sent the reference, not whose profile it is: the record is not signed by
+its owner, and a contact can forward someone else's. Same contract as `presentProfile` otherwise. A `profile` group
+without it, from a host built before it, has contacts' profiles presented through `presentProfile`.
+
 `profile.placeContactAvatars(product, placed)` draws contacts' avatars over a chat product. `placed` carries the
 product's surface size and, per avatar, the product's `slot` id, a square `rect`, the `clip` region it is cut to, all in
 surface units (framebuffer pixels for a PolkaVM product, CSS pixels of the viewport for a web product), and the
@@ -184,7 +191,7 @@ drawn for the product; an empty `avatars` clears it. The core calls it again wit
 shares, re-shares or withdraws a profile, and with no avatars when the product's connection goes away. Draw on a layer
 the product cannot
 read that lets pointer input through, and never tell the product what was drawn. The host runtimes take
-`RequiredHostCallbacks`, so a `profile` group implements it alongside `presentProfile`.
+`RequiredHostCallbacks`, so a `profile` group implements it and `presentContactProfile` alongside `presentProfile`.
 
 `profile.disclose` needs no `profile` group, but the first call from a product asks the user through
 `userConfirmation.confirmPermission` with a `ProfileDisclosure` review naming that product: every Chat contact receives

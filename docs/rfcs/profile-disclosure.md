@@ -38,7 +38,7 @@ The design has six parts:
 - `disclose` asks the user once per product before anything is stored.
 - Core storage holds the user's disclosure and the references received per chat product.
 - The Chat v2 actor relays disclosures through its host-private outbox.
-- `present_contact` substitutes the stored reference into `present`.
+- `present_contact` hands the host the stored reference and the contact who sent it.
 - `place_contact_avatars` substitutes stored references into a host-drawn avatar layer.
 
 ### Trait
@@ -233,7 +233,19 @@ the digest it was sent under, so an upgrade sends nothing.
 ### Presentation
 
 `present_contact` looks up the caller's received reference for the named peer, screens it again, and hands it to
-`ProfilePlatform::present_profile`. Host adapters are unchanged: they see a `present` whichever method produced it.
+`ProfilePlatform::present_contact_profile(product, PresentedContactProfile { reference, peer_identity, shared_at })`,
+where `shared_at` is the sender timestamp (Unix ms) of the frame the reference came from. The default calls
+`present_profile` with the reference alone, so a host that does not implement it shows the profile as before.
+
+### Provenance
+
+The host stores a received reference only when it arrives over the authenticated Chat v2 channel from that peer's own
+device, so when `present_contact` opens the drawer the host knows who sent it: it can say "shared with you by <contact>
+over Chat" and name that contact, not the product that asked. That is all it guarantees. The contacts record behind the
+reference is not signed by its owner, so the reference proves who delivered it, not whose profile it is: a contact can
+forward another person's reference as their own. Nor can copies be erased: a reference is a bearer capability, so
+whoever received it, directly or forwarded, keeps it and what it resolved; a retraction only stops a receiving host from
+presenting it.
 
 ### Placed avatars
 

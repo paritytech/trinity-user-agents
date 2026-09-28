@@ -3767,6 +3767,32 @@ pub trait ProfilePlatform: Send + Sync {
         request: HostProfilePresentRequest,
     ) -> Result<(), HostProfilePresentError>;
 
+    /// Show a profile a Chat contact shared with the user, for the product
+    /// that asked with `profile.presentContact`. Same contract as
+    /// [`ProfilePlatform::present_profile`]: return once it is shown, and
+    /// report an unparseable reference as `InvalidReference`.
+    ///
+    /// The core holds this reference because it arrived over the
+    /// authenticated Chat channel from `peer_identity`'s own device, so the
+    /// host can name that contact as who shared it, rather than the product
+    /// that asked. It cannot vouch for more: the record behind the reference
+    /// is not signed by its owner, so a contact can forward someone else's
+    /// reference. The default presents it as
+    /// [`ProfilePlatform::present_profile`] would, without the contact.
+    async fn present_contact_profile(
+        &self,
+        product: &ProductContext,
+        presented: PresentedContactProfile,
+    ) -> Result<(), HostProfilePresentError> {
+        self.present_profile(
+            product,
+            HostProfilePresentRequest {
+                reference: presented.reference,
+            },
+        )
+        .await
+    }
+
     /// Draw the contact avatars a product placed, on the host's own layer over
     /// the product's surface, replacing what was drawn for it before; an empty
     /// `avatars` clears it. The layer must let pointer input through to the
@@ -3785,6 +3811,32 @@ pub trait ProfilePlatform: Send + Sync {
     ) -> Result<(), HostProfilePlaceContactAvatarsError> {
         let _ = (product, placed);
         Ok(())
+    }
+}
+
+/// A profile a Chat contact shared with the user, with the contact who sent
+/// it.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+pub struct PresentedContactProfile {
+    /// The profile reference the contact disclosed. A bearer capability, as
+    /// in [`ProfilePlatform::present_profile`].
+    pub reference: String,
+    /// The contact whose authenticated Chat device delivered the reference:
+    /// who shared it, not necessarily whose profile it is.
+    pub peer_identity: [u8; 32],
+    /// When the contact's host sent the share, in Unix milliseconds, as in
+    /// [`PlacedAvatar::shared_at`].
+    pub shared_at: u64,
+}
+
+impl core::fmt::Debug for PresentedContactProfile {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PresentedContactProfile")
+            .field("reference", &"[REDACTED]")
+            .field("peer_identity", &self.peer_identity)
+            .field("shared_at", &self.shared_at)
+            .finish()
     }
 }
 

@@ -199,11 +199,10 @@ fn emit_wasm_adapter(
     {
         support_imports.insert("unavailableNativeChatFilesHost".to_string());
     }
-    if traits
-        .iter()
-        .any(|trait_def| trait_def.name == "CoinageWalletHost")
-    {
-        support_imports.insert("coinageWalletHostAdapter".to_string());
+    for trait_def in &traits {
+        if let Some(adapter) = optional_host_adapter(&trait_def.name) {
+            support_imports.insert(adapter.to_string());
+        }
     }
     for trait_def in &traits {
         for method in &trait_def.methods {
@@ -323,14 +322,13 @@ fn emit_wasm_adapter(
     // narrowed reference rather than re-reading a possibly-absent member.
     for name in &optional_traits {
         let namespace = callback_namespace(name);
-        if name == "CoinageWalletHost" {
-            writeln!(
+        match optional_host_adapter(name) {
+            Some(adapter) => writeln!(
                 out,
-                "  const {namespace} = coinageWalletHostAdapter(callbacks.{namespace});"
+                "  const {namespace} = {adapter}(callbacks.{namespace});"
             )
-            .unwrap();
-        } else {
-            writeln!(out, "  const {namespace} = callbacks.{namespace};").unwrap();
+            .unwrap(),
+            None => writeln!(out, "  const {namespace} = callbacks.{namespace};").unwrap(),
         }
     }
     // HOP remains a required Rust capability. Older JS embeddings get its
@@ -373,6 +371,20 @@ fn emit_wasm_adapter(
     }
     out.push_str("  };\n}\n");
     Ok(out)
+}
+
+/// The hand-written `adapter-support` wrapper an optional capability group
+/// passes through before the adapter binds it, if it has one.
+///
+/// `ProfilePlatform`'s wrapper applies `present_contact_profile`'s Rust default
+/// for a host built before that callback, so the core never reaches a missing
+/// function for it.
+fn optional_host_adapter(trait_name: &str) -> Option<&'static str> {
+    match trait_name {
+        "CoinageWalletHost" => Some("coinageWalletHostAdapter"),
+        "ProfilePlatform" => Some("profileHostAdapter"),
+        _ => None,
+    }
 }
 
 /// Emit the generated callback metadata/proxy used by the Web Worker bridge.

@@ -1244,6 +1244,41 @@ impl truapi_platform::ProfilePlatform for RecordingProfilePlatform {
     }
 }
 
+/// Records contact presentations separately from product-referenced ones, as a
+/// host that names who shared a profile does.
+#[derive(Default)]
+struct RecordingContactProfilePlatform {
+    presented: Mutex<Vec<String>>,
+    contacts: Mutex<Vec<(String, truapi_platform::PresentedContactProfile)>>,
+}
+
+#[truapi::async_trait]
+impl truapi_platform::ProfilePlatform for RecordingContactProfilePlatform {
+    async fn present_profile(
+        &self,
+        _product: &ProductContext,
+        request: truapi::latest::HostProfilePresentRequest,
+    ) -> Result<(), truapi::latest::HostProfilePresentError> {
+        self.presented
+            .lock()
+            .expect("presented mutex poisoned")
+            .push(request.reference);
+        Ok(())
+    }
+
+    async fn present_contact_profile(
+        &self,
+        product: &ProductContext,
+        presented: truapi_platform::PresentedContactProfile,
+    ) -> Result<(), truapi::latest::HostProfilePresentError> {
+        self.contacts
+            .lock()
+            .expect("contacts mutex poisoned")
+            .push((product.product_id.clone(), presented));
+        Ok(())
+    }
+}
+
 fn profile_host(profile: Option<Arc<RecordingProfilePlatform>>) -> ProductRuntimeHost {
     let (host_config, product) = runtime_config("egui-chat.dot");
     let services = RuntimeServices::new(
@@ -1329,7 +1364,7 @@ fn profile_present_forwards_screened_references_and_is_unsupported_without_an_ad
 fn profile_host_on(
     platform: Arc<crate::test_support::StubPlatform>,
     product: ProductContext,
-    profile: Option<Arc<RecordingProfilePlatform>>,
+    profile: Option<Arc<dyn truapi_platform::ProfilePlatform>>,
 ) -> ProductRuntimeHost {
     let (host_config, _) = runtime_config(&product.product_id);
     let services = RuntimeServices::new(
@@ -1342,8 +1377,7 @@ fn profile_host_on(
     );
     let pairing_host = PairingHost::new(services.clone(), host_config);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    adapters.profile_platform =
-        profile.map(|profile| profile as Arc<dyn truapi_platform::ProfilePlatform>);
+    adapters.profile_platform = profile;
     ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
 }
 
@@ -1708,7 +1742,7 @@ fn profile_present_contact_substitutes_the_reference_the_contact_sent() {
             .expect("presented mutex poisoned")
             .as_slice(),
         [("egui-chat.dot".to_string(), CONTACTS_REFERENCE.to_string())],
-        "the host presents the stored reference, attributed to the caller"
+        "a host without contact attribution presents the stored reference by default"
     );
     assert!(matches!(
         present_contact(&chat, bob),
@@ -1769,6 +1803,62 @@ fn profile_present_contact_substitutes_the_reference_the_contact_sent() {
         ),
         Err(CallError::Unsupported)
     ));
+}
+
+#[test]
+fn profile_present_contact_names_the_contact_who_shared_it() {
+    let platform = stub_platform();
+    let presenter = Arc::new(RecordingContactProfilePlatform::default());
+    let chat = signed_in(
+        profile_host_on(
+            platform.clone(),
+            ProductContext::new("egui-chat.dot".to_string()).expect("valid product"),
+            Some(presenter.clone()),
+        ),
+        WALLET,
+    );
+    let alice = [0xa1; 32];
+    let record = |timestamp| {
+        futures::executor::block_on(profile::record_received_reference(
+            platform.as_ref(),
+            owner_of(&chat),
+            "egui-chat.dot",
+            alice,
+            "seity.dot".to_string(),
+            timestamp,
+            Some(CONTACTS_REFERENCE.to_string()),
+        ))
+        .expect("recorded");
+    };
+    record(1_700_000_000_000);
+    // Alice re-shares after changing the record behind the same reference.
+    record(1_700_000_000_500);
+
+    present_contact(&chat, alice).expect("presented");
+    assert_eq!(
+        presenter
+            .contacts
+            .lock()
+            .expect("contacts mutex poisoned")
+            .as_slice(),
+        [(
+            "egui-chat.dot".to_string(),
+            truapi_platform::PresentedContactProfile {
+                reference: CONTACTS_REFERENCE.to_string(),
+                peer_identity: alice,
+                shared_at: 1_700_000_000_500,
+            }
+        )],
+        "the host learns who sent the reference and when their newest share was"
+    );
+    assert!(
+        presenter
+            .presented
+            .lock()
+            .expect("presented mutex poisoned")
+            .is_empty(),
+        "a contact presentation is not reported as a product-referenced one"
+    );
 }
 
 /// A connection from `product` on `platform`, with `avatars` as the host's

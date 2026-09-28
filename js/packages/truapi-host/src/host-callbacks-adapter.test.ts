@@ -29,6 +29,8 @@ import {
   NativeChatPickedFile,
   NativeCoinageRequest,
   NativeCoinageResponse,
+  PermissionDecision,
+  PresentedContactProfile,
   ProductContext,
   ProductExecutionKind,
   UserConfirmationReview,
@@ -894,6 +896,65 @@ describe("createWasmRawCallbacks", () => {
     expect(received).toEqual([]);
     expect(closes).toBe(1);
     expect(returns).toBe(1);
+  });
+
+  describe("contact profile presentation", () => {
+    const product = ProductContext.enc({
+      productId: "egui-chat.dot",
+      executionKind: "App",
+    });
+    const presented = {
+      reference: "seity-contacts:v1:ab",
+      peerIdentity: new Uint8Array(32).fill(0xa1),
+      sharedAt: 1_700_000_000_500n,
+    };
+
+    it("hands the host the contact who shared the profile", async () => {
+      const contacts: (typeof presented)[] = [];
+      const references: string[] = [];
+      const raw = createWasmRawCallbacks(
+        makeHostCallbacks({
+          profile: {
+            presentProfile: async (_product, request) => {
+              references.push(request.reference);
+            },
+            presentContactProfile: async (_product, contact) => {
+              contacts.push(contact);
+            },
+          },
+        }),
+      );
+
+      await raw.presentContactProfile!(
+        product,
+        PresentedContactProfile.enc(presented),
+      );
+      expect(contacts).toEqual([presented]);
+      expect(references).toEqual([]);
+    });
+
+    it("presents the reference alone for a host built before it", async () => {
+      const references: string[] = [];
+      const legacy = {
+        async presentProfile(
+          _product: unknown,
+          request: { reference: string },
+        ) {
+          references.push(request.reference);
+        },
+        async placeContactAvatars() {},
+      };
+      const raw = createWasmRawCallbacks({
+        ...makeHostCallbacks(),
+        profile: legacy as never,
+      });
+
+      await raw.presentContactProfile!(
+        product,
+        PresentedContactProfile.enc(presented),
+      );
+      expect(references).toEqual([presented.reference]);
+    });
   });
 });
 

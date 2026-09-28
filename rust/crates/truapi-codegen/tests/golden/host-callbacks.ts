@@ -988,6 +988,30 @@ export interface PreimageSubmitReview {
 }
 
 /**
+ * A profile a Chat contact shared with the user, with the contact who sent
+ * it.
+ */
+export interface PresentedContactProfile {
+  /**
+   * The profile reference the contact disclosed. A bearer capability, as
+   * in `ProfilePlatform::present_profile`.
+   */
+  reference: string;
+
+  /**
+   * The contact whose authenticated Chat device delivered the reference:
+   * who shared it, not necessarily whose profile it is.
+   */
+  peerIdentity: Uint8Array;
+
+  /**
+   * When the contact's host sent the share, in Unix milliseconds, as in
+   * `PlacedAvatar::shared_at`.
+   */
+  sharedAt: bigint;
+}
+
+/**
  * Product identity attached to one product-facing TrUAPI connection.
  *
  * A host may create multiple product runtimes from the same long-lived host
@@ -1879,6 +1903,19 @@ export const PreimageSubmitReview: S.Codec<PreimageSubmitReview> = S.lazy(
 );
 
 /**
+ * A profile a Chat contact shared with the user, with the contact who sent
+ * it.
+ */
+export const PresentedContactProfile: S.Codec<PresentedContactProfile> = S.lazy(
+  (): S.Codec<PresentedContactProfile> =>
+    S.Struct({
+      reference: S.str,
+      peerIdentity: S.Bytes(32),
+      sharedAt: S.u64,
+    }) as S.Codec<PresentedContactProfile>,
+);
+
+/**
  * Product identity attached to one product-facing TrUAPI connection.
  *
  * A host may create multiple product runtimes from the same long-lived host
@@ -2765,6 +2802,25 @@ export interface ProfilePlatform {
   presentProfile(
     product: ProductContext,
     request: HostProfilePresentRequest,
+  ): Promise<void>;
+
+  /**
+   * Show a profile a Chat contact shared with the user, for the product
+   * that asked with `profile.presentContact`. Same contract as
+   * `ProfilePlatform::present_profile`: return once it is shown, and
+   * report an unparseable reference as `InvalidReference`.
+   *
+   * The core holds this reference because it arrived over the
+   * authenticated Chat channel from `peer_identity`'s own device, so the
+   * host can name that contact as who shared it, rather than the product
+   * that asked. It cannot vouch for more: the record behind the reference
+   * is not signed by its owner, so a contact can forward someone else's
+   * reference. The default presents it as
+   * `ProfilePlatform::present_profile` would, without the contact.
+   */
+  presentContactProfile?(
+    product: ProductContext,
+    presented: PresentedContactProfile,
   ): Promise<void>;
 
   /**

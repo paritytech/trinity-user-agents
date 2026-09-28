@@ -43,6 +43,7 @@ import {
   NativeCoinageResponse,
   PermissionDecision,
   PlacedAvatars,
+  PresentedContactProfile,
   ProductContext,
   UserConfirmationReview,
 } from "./host-callbacks.js";
@@ -54,6 +55,7 @@ import {
   coinageWalletHostAdapter,
   driveResultStream,
   hopConnectAdapter,
+  profileHostAdapter,
   unavailableHopProvider,
   unavailableNativeChatFilesHost,
 } from "../adapter-support.js";
@@ -153,6 +155,10 @@ export interface RawCallbacks {
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
   presentProfile?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  presentContactProfile?(
+    product: Uint8Array,
+    presented: Uint8Array,
+  ): Promise<void>;
   placeContactAvatars?(product: Uint8Array, placed: Uint8Array): Promise<void>;
   subscribeTheme(
     sendItem: (item?: Uint8Array) => void,
@@ -171,7 +177,7 @@ export function createWasmRawCallbacks(
   const identityBackend = callbacks.identityBackend;
   const permissionStatus = callbacks.permissionStatus;
   const pocket = callbacks.pocket;
-  const profile = callbacks.profile;
+  const profile = profileHostAdapter(callbacks.profile);
   const hop = callbacks.hop ?? unavailableHopProvider;
   const nativeChatFiles =
     callbacks.nativeChatFiles ?? unavailableNativeChatFilesHost;
@@ -369,6 +375,11 @@ export function createWasmRawCallbacks(
             await profile.presentProfile(
               ProductContext.dec(product),
               HostProfilePresentRequest.dec(request),
+            ),
+          presentContactProfile: async (product, presented) =>
+            await profile.presentContactProfile(
+              ProductContext.dec(product),
+              PresentedContactProfile.dec(presented),
             ),
           placeContactAvatars: async (product, placed) =>
             await profile.placeContactAvatars(
