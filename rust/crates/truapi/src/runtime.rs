@@ -94,8 +94,10 @@ pub use signing_host::{
     respond_to_pairing, resume_pairing,
 };
 pub use signing_host::{LocalIdentity, LocalIdentityContext, WalletAllowanceSnapshot};
+#[cfg(any(test, not(target_arch = "wasm32")))]
+pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
-pub use signing_host::{StatementRenewalTarget, TrackedStatementRenewalTarget};
+pub use signing_host::TrackedStatementRenewalTarget;
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
