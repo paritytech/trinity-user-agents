@@ -231,7 +231,10 @@ const env = {
 const bundles = process.argv.includes("--web-only")
   ? ["web"]
   : ["web", "testing"];
-await build("truapi", "truapi_server", "web", "web", ["runtime"], env);
+const webFeatures = process.argv.includes("--signing-host")
+  ? ["wasm-signing-host"]
+  : ["runtime"];
+await build("truapi", "truapi_server", "web", "web", webFeatures, env);
 if (bundles.includes("testing")) {
   await build(
     "truapi",

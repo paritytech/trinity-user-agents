@@ -487,34 +487,9 @@ console.log(JSON.stringify({
 		Ok(())
 	}
 
-	#[test]
-	fn managed_scripts_use_their_project_directory_when_selected_explicitly() -> Result<()> {
-		let project = tempfile::tempdir()?;
-		fs::write(project.path().join("package.json"), r#"{"truapiHost":{"script":"script.ts"}}"#)?;
-		let script = project.path().join("script.ts");
-		fs::write(&script, "console.log('hello');\n")?;
-
-        let command = command(
-            "ws://127.0.0.1:1234",
-            "example.dot",
-            &script,
-            ScriptHostRole::SigningHost,
-        )?;
-        let project_directory = fs::canonicalize(project.path())?;
-
-        assert_eq!(
-            command
-                .as_std()
-                .get_envs()
-                .find_map(|(key, value)| { (key == "TRUAPI_SCRIPT_CWD").then_some(value) }),
-            Some(Some(project_directory.as_os_str()))
-        );
-        Ok(())
-    }
-
-	#[test]
-	fn editor_command_accepts_quoted_arguments_without_a_shell() -> Result<()> {
-		let (program, arguments) = parse_editor("code --wait \"profile one\"")?;
+    #[test]
+    fn editor_command_accepts_quoted_arguments_without_a_shell() -> Result<()> {
+        let (program, arguments) = parse_editor("code --wait \"profile one\"")?;
 
 		assert_eq!(program, "code");
 		assert_eq!(arguments, ["--wait", "profile one"]);

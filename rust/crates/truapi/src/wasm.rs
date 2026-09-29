@@ -1212,21 +1212,44 @@ impl WasmSigningHostRuntime {
 		self.runtime.set_grant_allowances_unchecked(granted);
 	}
 
-	/// The product's hard-subtree public key, derived from the active session
-	/// root, or `undefined` while no session is active.
-	///
-	/// Paired with `deriveProductAccountPublicKey` and `productAccountAddress`
-	/// this gives a host the product's address without asking the product.
-	#[wasm_bindgen(js_name = productSubtreePublicKey)]
-	pub fn product_subtree_public_key(
-		&self,
-		product_id: String,
-	) -> Result<Option<Vec<u8>>, JsValue> {
-		self.runtime
-			.product_subtree_public_key(&product_id_from_js(&product_id)?)
-			.map(|key| key.map(|key| key.to_vec()))
-			.map_err(generic_error_to_js)
-	}
+    /// Build a shared signing runtime from host callbacks and host config.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        callbacks: JsValue,
+        host_config: JsValue,
+    ) -> Result<WasmSigningHostRuntime, JsValue> {
+        console_error_panic_hook::set_once();
+        crate::logging::init();
+        let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
+        let WasmPlatformAdapters {
+            platform,
+            chat_platform,
+            contacts_platform,
+            status_host,
+            pocket_platform,
+        } = wasm_platform(bridge);
+        let spawner: Spawner = Arc::new(|fut| {
+            wasm_bindgen_futures::spawn_local(fut);
+        });
+        let host_config = signing_host_config_from_js(&host_config)?;
+        let runtime = SigningHostRuntime::with_platforms(
+            platform,
+            host_config,
+            spawner,
+            chat_platform,
+            contacts_platform,
+        );
+        if let Some(status_host) = status_host {
+            runtime.set_permission_status_host(status_host);
+        }
+        if let Some(pocket_platform) = pocket_platform {
+            runtime.set_pocket_platform(pocket_platform);
+        }
+        install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
+        Ok(Self {
+            runtime: Rc::new(runtime),
+        })
+    }
 
 	/// Answer these resource tags as refused, replacing any earlier set.
 	///
