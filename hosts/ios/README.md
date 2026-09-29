@@ -97,6 +97,15 @@ xcodebuild test -project polkadot-app.xcodeproj -scheme polkadot-appTests \
   -destination 'platform=iOS Simulator,name=iPhone 16'
 ```
 
+The iOS CI test job runs `RUN_IN_CI=true bundle exec fastlane run_unit_tests`
+from `hosts/ios`. It retains the `.xcresult` bundle, raw xcodebuild log,
+simulator logs, and available crash reports in
+`test-artifacts-<run-id>-<attempt>` for three days, even when tests fail.
+The job log also contains the `xcresulttool` test summary and test list.
+Download the artifact from the workflow run and open its `.xcresult` in Xcode
+to inspect individual failures and diagnostics. `debug:true` adds raw console
+output without changing whether test failures fail the job.
+
 ## How it works
 
 Polkadot iOS is a self-custodial superapp: your keys are created on your phone, stay on your phone, and everything else — identity, chat, payments, apps — is built on top of them using Polkadot's public chains instead of company servers.
