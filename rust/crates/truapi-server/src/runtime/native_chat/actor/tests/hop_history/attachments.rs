@@ -274,9 +274,29 @@ fn attachment_preparation_retries_exact_upload_and_restores_download_custody() {
         assert_eq!(opened.0[0].peer_identity, identity.account);
         assert_eq!(opened.0[0].sender_account_id, peer.account());
         assert_eq!(opened.0[0].route, HostNativeChatRoute::Device);
+        // The rich frame carries the attachment capability, so it reaches the
+        // product only as public metadata, never as opened plaintext.
         assert_eq!(
             opened.0[0].plaintext,
-            wire::encode_transport_request_plaintext("native-forward", &exchange.messages).unwrap(),
+            wire::encode_transport_request_plaintext("native-forward", &exchange.messages[1..])
+                .unwrap(),
+        );
+        for secret in [&reference.claim_ticket, &reference.identifier] {
+            assert!(
+                !opened.0[0]
+                    .plaintext
+                    .windows(secret.len())
+                    .any(|window| window == secret)
+            );
+        }
+        assert_eq!(
+            receiving
+                .public_view(&receiver.context, vec![])
+                .await
+                .unwrap()
+                .rich_messages
+                .len(),
+            1
         );
         assert_eq!(
             receiving
@@ -343,7 +363,7 @@ fn attachment_preparation_retries_exact_upload_and_restores_download_custody() {
         assert!(page.is_none());
         assert_eq!(
             opened[0].plaintext,
-            wire::encode_transport_request_plaintext("another-forward", &[forwarded]).unwrap(),
+            wire::encode_transport_request_plaintext("another-forward", &[] as &[Vec<u8>]).unwrap(),
         );
         receiving.drive_files(&receiver.context).await.unwrap();
         assert_eq!(pool.0.claims.load(Ordering::SeqCst), claims);

@@ -654,7 +654,7 @@ describe("generated client transport", () => {
         expect(subscriptionFixture.sent).toHaveLength(2);
     });
 
-    it("logs a known pair's out-of-range message type but not a late response", () => {
+    it("logs a known pair's out-of-range message type", () => {
         const fixture = providerFixture();
         createTransport(fixture.provider);
 
@@ -666,15 +666,43 @@ describe("generated client transport", () => {
                     String(args[0]).includes("unexpected messageType 99"),
                 ),
             ).toBe(true);
-
-            warn.mockClear();
-            fixture.receive(wireFrame("unrelated:2", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
-            expect(warn).not.toHaveBeenCalled();
         } finally {
             warn.mockRestore();
         }
 
         expect(fixture.sent).toHaveLength(0);
+    });
+
+    it("ignores a late response to a timed-out request but logs one never sent", async () => {
+        jest.useFakeTimers();
+        const warn = spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            const fixture = providerFixture();
+            const transport = createTransport(fixture.provider, { requestTimeoutMs: 25 });
+            const outcome = Promise.resolve(
+                transport.request<undefined, CallErrorValue<never>>({
+                    ids: { ...W.LOCAL_STORAGE_READ, kind: "request" },
+                    payload: new Uint8Array(),
+                    decodeResponse: () => ({ success: true, value: undefined }),
+                }),
+            );
+            jest.advanceTimersByTime(26);
+            await expect(outcome).rejects.toBeInstanceOf(RequestTimeoutError);
+
+            fixture.receive(wireFrame("p:1", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
+            expect(warn).not.toHaveBeenCalled();
+
+            fixture.receive(wireFrame("p:1", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
+            fixture.receive(wireFrame("never:1", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
+            expect(
+                warn.mock.calls.filter((args) =>
+                    String(args[0]).includes("no such request was sent"),
+                ),
+            ).toHaveLength(2);
+        } finally {
+            warn.mockRestore();
+            jest.useRealTimers();
+        }
     });
 
     it("auto-responds to an inbound handshake with the versioned-result shape", () => {

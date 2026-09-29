@@ -35,11 +35,12 @@ export type { Subscription, TrUApiTransport };
 // Every method's request/response (or start/stop/interrupt/receive) frames
 // share one (trait, method) address: which leg of the exchange a frame
 // carries is the wire's own `messageType` byte, not part of the address. A
-// late or duplicate *answer*-leg frame (Response/Stop/Interrupt/Receive) for
-// a known method can legitimately arrive with no matching pending call or
-// subscription (e.g. after a request already timed out, or after
-// `unsubscribe`), so those are ignored rather than reported as a protocol
-// violation. A *request*-leg frame (Request/Start) with nothing to route to
+// late or duplicate *answer*-leg frame for a known method can legitimately
+// arrive with no matching pending call or subscription: a Stop/Interrupt/
+// Receive after `unsubscribe`, or a Response to a request that already timed
+// out. Those are ignored rather than reported as a protocol violation; a
+// Response to a request this side never sent is still reported. A
+// *request*-leg frame (Request/Start) with nothing to route to
 // is never expected — it means this build genuinely doesn't implement the
 // pair (no client was ever created, or the specific host-initiated method
 // has no registration) — so it still earns the same reply as an unknown
@@ -231,6 +232,10 @@ export function createTransport(
     detachAbort: () => void;
   };
   const pending = new Map<string, PendingRequest>();
+  // Sent requests abandoned at their deadline, oldest first. A response for
+  // one of these is a normal late answer; any other unmatched response is not.
+  const abandoned = new Set<string>();
+  const MAX_ABANDONED = 256;
   const subscriptions = new Map<
     string,
     {
@@ -563,15 +568,24 @@ export function createTransport(
     }
 
     if (KNOWN_WIRE_IDS.has(`${payload.traitId}:${payload.methodId}`)) {
+      if (payload.messageType === MESSAGE_TYPE_RESPONSE) {
+        // A late answer to a request this side abandoned at its deadline is
+        // normal. A response to a request this side never sent is not.
+        if (!abandoned.delete(requestId)) {
+          reportProtocolViolation(
+            `ignoring response for request ${requestId} on (${payload.traitId}, ${payload.methodId}): no such request was sent`,
+          );
+        }
+        return;
+      }
       if (
-        payload.messageType === MESSAGE_TYPE_RESPONSE ||
         payload.messageType === MESSAGE_TYPE_STOP ||
         payload.messageType === MESSAGE_TYPE_INTERRUPT ||
         payload.messageType === MESSAGE_TYPE_RECEIVE
       ) {
-        // A known method's answer-leg frame (Response/Stop/Interrupt/
-        // Receive) with nothing to route to: a normal late/stale frame, not
-        // a protocol violation.
+        // A known method's subscription-leg frame (Stop/Interrupt/Receive)
+        // with nothing to route to: a normal late/stale frame, not a
+        // protocol violation.
         return;
       }
       if (payload.messageType !== MESSAGE_TYPE_REQUEST) {
@@ -803,7 +817,13 @@ export function createTransport(
           // The host is told even though this side has stopped waiting: a
           // deadline that only rejects locally is exactly the leak the
           // `Cancel` leg exists to close.
-          if (entry.sent) sendCancel(requestId, ids);
+          if (entry.sent) {
+            sendCancel(requestId, ids);
+            abandoned.add(requestId);
+            if (abandoned.size > MAX_ABANDONED) {
+              abandoned.delete(abandoned.values().next().value as string);
+            }
+          }
           reject(
             isHandshake
               ? new Error(
