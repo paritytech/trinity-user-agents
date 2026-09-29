@@ -21,6 +21,7 @@
 /ios/                   @paritytech/host-sdk-team
 /hosts/android/         @paritytech/host-sdk-team
 /android/               @paritytech/host-sdk-team
+/hosts/web-signing/     @paritytech/host-sdk-team
 
 # The client, the playground and the explorer.
 /js/                    @paritytech/host-sdk-team
