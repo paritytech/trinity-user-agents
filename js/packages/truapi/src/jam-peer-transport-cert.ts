@@ -4,13 +4,20 @@ import { sha256 } from "@noble/hashes/sha2.js";
  * Deterministic WebTransport certificate hashes for a PolkaJAM peer.
  *
  * PolkaJAM (`crates/node/src/net/cert.rs`, `dd9af78`) serves an unsigned X.509
- * certificate for its P-256 peer key: serial 0, issuer and subject `CN=jam`,
- * one dNSName SAN equal to the peer-id text, Ed25519 signature algorithm with
- * an all-zero 64-byte signature, and a validity window derived from a fixed
- * 10-day period padded by one day on both sides. A client that knows the
- * peer's compressed P-256 key can therefore compute the certificate hashes
- * offline and pass them as `serverCertificateHashes`. These bytes mirror
- * PolkaJAM's `crates/node/src/net/cert.rs` generated with rcgen 0.14.8.
+ * certificate for its P-256 peer key: issuer and subject `CN=jam`, one dNSName
+ * SAN equal to the peer-id text, Ed25519 signature algorithm with an all-zero
+ * 64-byte signature, and a validity window derived from a fixed 10-day period
+ * padded by one day on both sides. A client that knows the peer's compressed
+ * P-256 key can therefore compute the certificate hashes offline and pass them
+ * as `serverCertificateHashes`. These bytes mirror PolkaJAM's
+ * `crates/node/src/net/cert.rs` generated with rcgen 0.14.8.
+ *
+ * Stock PolkaJAM gives every certificate serial 0. NSS (Firefox) rejects a
+ * second certificate with an issuer and serial it has already seen
+ * (`SEC_ERROR_REUSED_ISSUER_AND_SERIAL`), so such a browser reaches only one
+ * validator. Nodes built with jam-explore's
+ * `polkajam-webtransport-serial.patch` use {@link webTransportSerial} instead;
+ * clients pin both variants so they reach stock and patched nodes alike.
  */
 
 export const UNPADDED_VALIDITY_PERIOD_SECS = 10 * 24 * 3600;
@@ -133,6 +140,14 @@ function der(tag: number, ...parts: ArrayLike<number>[]): number[] {
   return header.concat(body);
 }
 
+/** Minimal DER encoding of a non-negative INTEGER. */
+function derUnsigned(v: bigint): number[] {
+  const bytes: number[] = [];
+  for (; v > 0n; v >>= 8n) bytes.unshift(Number(v & 0xffn));
+  if (bytes.length === 0 || bytes[0]! >= 0x80) bytes.unshift(0);
+  return der(0x02, bytes);
+}
+
 function utcTime(unixSecs: number): number[] {
   const date = new Date(unixSecs * 1000);
   const year = date.getUTCFullYear();
@@ -162,8 +177,32 @@ export function validityBounds(period: number): [number, number] {
   ];
 }
 
+/**
+ * Which serial a certificate carries: `distinct` ({@link webTransportSerial},
+ * patched nodes) or `legacy` (0, stock PolkaJAM).
+ */
+export type CertificateSerial = "distinct" | "legacy";
+
+/**
+ * Serial of the patched PolkaJAM certificate for `compressed` during
+ * `period`: the first 8 bytes of SHA-256(`compressed` ‖ period as a
+ * big-endian u64), read big-endian with the top bit cleared, or 1 if that
+ * is 0.
+ */
+export function webTransportSerial(compressed: Uint8Array, period: number): bigint {
+  const input = new Uint8Array(compressed.length + 8);
+  input.set(compressed);
+  input.set(bytesFromBigint(BigInt(period), 8), compressed.length);
+  const serial = bigintFromBytes(sha256(input).subarray(0, 8)) & ((1n << 63n) - 1n);
+  return serial === 0n ? 1n : serial;
+}
+
 /** DER certificate PolkaJAM presents for `compressed` during `period`. */
-export function webTransportCertificateDer(compressed: Uint8Array, period: number): Uint8Array {
+export function webTransportCertificateDer(
+  compressed: Uint8Array,
+  period: number,
+  serial: CertificateSerial,
+): Uint8Array {
   const point = decompressP256(compressed);
   const altName = peerIdText(compressed[0] === 3 ? "o" : "v", compressed.subarray(1));
   const [notBefore, notAfter] = validityBounds(period);
@@ -172,7 +211,7 @@ export function webTransportCertificateDer(compressed: Uint8Array, period: numbe
   const tbs = der(
     0x30,
     der(0xa0, der(0x02, [0x02])),
-    der(0x02, [0x00]),
+    derUnsigned(serial === "distinct" ? webTransportSerial(compressed, period) : 0n),
     ED25519_ALG,
     JAM_DN,
     der(0x30, utcTime(notBefore), utcTime(notAfter)),
@@ -184,18 +223,26 @@ export function webTransportCertificateDer(compressed: Uint8Array, period: numbe
 }
 
 /** SHA-256 of {@link webTransportCertificateDer}. */
-export function webTransportCertificateHash(compressed: Uint8Array, period: number): Uint8Array {
-  return sha256(webTransportCertificateDer(compressed, period));
+export function webTransportCertificateHash(
+  compressed: Uint8Array,
+  period: number,
+  serial: CertificateSerial,
+): Uint8Array {
+  return sha256(webTransportCertificateDer(compressed, period, serial));
 }
 
 /**
- * Hashes to pass as `serverCertificateHashes` at `unixSecs`: the current
- * period plus both neighbours, so a clock skew or a boundary crossing during
- * the handshake still matches whichever certificate the server picked.
+ * Hashes to pass as `serverCertificateHashes` at `unixSecs`: both serial
+ * variants for the current period plus both neighbours, so a clock skew or a
+ * boundary crossing during the handshake still matches whichever certificate
+ * a stock or patched server picked.
  */
 export function webTransportCertificateHashes(compressed: Uint8Array, unixSecs: number): Uint8Array[] {
   const period = validityPeriodAt(unixSecs);
   return [period - 1, period, period + 1]
     .filter((p) => p >= 0)
-    .map((p) => webTransportCertificateHash(compressed, p));
+    .flatMap((p) => [
+      webTransportCertificateHash(compressed, p, "distinct"),
+      webTransportCertificateHash(compressed, p, "legacy"),
+    ]);
 }

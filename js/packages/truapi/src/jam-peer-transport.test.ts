@@ -278,13 +278,16 @@ describe("authorization", () => {
 });
 
 describe("dial", () => {
-  test("connects to the peer URL with the three period certificate hashes", async () => {
+  test("connects to the peer URL with both serial variants of the three period certificate hashes", async () => {
     const { transport, conn } = await dialed();
     expect(conn).toBe(1);
     expect(transport.url).toBe("https://127.0.0.1:43000");
     expect(transport.hashes.map((h) => S.bytesToHex(h))).toEqual([
+      "0x51fc12ea78bc97eb7d969bd4ff221f2063f205111893cbff22cd9a1b5f8c8ad6",
       "0xccf30196b29007b42fca6f406363ce17781bab0f011bac47dcbe307e0e6a316d",
+      "0x7d89ee4abc9820e55e5f8c3b9cdfb10967391be26707f5d3397bf2bd46cdea08",
       "0xeb09b6b027f5953cb8ca2e8f296e21052c3423370876e67f1634180ddf99f1ec",
+      "0x505c184ed39a7dfa39876a5a1734d118f8fb9ad90932b78d7c90d3a062646224",
       "0x8bdfa3a2b7822822f5da33fadfa118d39d05b0a6b1086fc82a62a2209f6fae27",
     ]);
   });
