@@ -221,6 +221,7 @@ impl Snapshot {
             self.state.genesis_hash,
             call,
             &extensions,
+            self.metadata.extension_version(),
             self.subxt.clone(),
         )
         .map_err(|_| "Coinage transaction cannot be signed against runtime metadata".into())

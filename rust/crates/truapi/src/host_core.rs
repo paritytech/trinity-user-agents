@@ -9,46 +9,38 @@
 //! Target-specific shells such as wasm-bindgen, iOS FFI, or desktop IPC should
 //! keep their conversion code outside this module.
 
-use std::{
-	collections::HashMap,
-	sync::{
-		Arc, Mutex,
-		atomic::{AtomicBool, AtomicU64, Ordering},
-	},
-	time::Duration,
-};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::platform::{
-	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExpandedCardHost, FundingPlatform,
-	GamePlatform, PairingHostAdmin, PairingHostConfig, PaymentPlatform,
-	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
-	PocketPlatform, ProductContext, ProductExecutionKind, ProductId, ScannerPlatform,
-	SigningHostConfig, TopUpPlatform,
+    ChatPlatform, CoinageWalletHost, ContactsPlatform, PermissionStatusHost, PocketPlatform,
 };
-use futures::{
-	FutureExt, StreamExt,
-	future::{AbortHandle, Abortable},
-	pin_mut,
+use crate::platform::{
+    CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
+    PermissionAuthorizationStatus, Platform, ProductContext, SigningHostConfig,
+    normalize_product_identifier,
 };
 use parity_scale_codec::{Decode, Encode};
 use thiserror::Error;
 use tracing::{instrument, warn};
 use truapi::{CallContext, CancellationReason, v01};
 
-use crate::{
-	frame::ProtocolMessage,
-	host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome},
-	host_logic::worker::WorkerLedger,
-	runtime::{
-		ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
-		HostSession, LocalActivation, PairedSsoPeer, PairingHostRole, ProductAuthority,
-		ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices, SigningHostRole,
-		SigningHostSsoService, SsoResponderService, sso_service::Dispatch,
-	},
-	subscription::{HostInitiatedSubscriptionManager, Spawner},
-	transport::Transport,
-	truapi_core::TrUApiCore,
+use crate::frame::ProtocolMessage;
+use crate::host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome};
+use crate::host_logic::worker::WorkerLedger;
+use crate::runtime::sso_service::Dispatch;
+use crate::runtime::{
+    ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
+    LocalActivation, PairedSsoPeer, PairingHostRole, ProductAuthority, ProductRuntimeHost,
+    ResponderExit, RuntimeServices, SigningHostRole, SigningHostSsoService, disconnect_paired_host,
+    establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
+    respond_to_pairing, resume_pairing,
 };
+use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
+use crate::transport::Transport;
+use crate::truapi_core::TrUApiCore;
 
 /// Outgoing frame sink owned by a host adapter.
 ///
@@ -650,19 +642,30 @@ impl SigningHostRuntime {
 		self.signing_host.set_submit_preimages_locally(local);
 	}
 
-	/// The product's hard-subtree public key, derived from the active session
-	/// root, or `None` while no session is active.
-	///
-	/// A signing host holds the root, so it answers this locally where a
-	/// pairing host has to ask the Account Holder.
-	pub fn product_subtree_public_key(
-		&self,
-		product_id: &ProductId,
-	) -> Result<Option<[u8; 32]>, v01::GenericError> {
-		self.signing_host
-			.derive_subtree_public_key(product_id)
-			.map_err(|err| v01::GenericError { reason: err.to_string() })
-	}
+    /// Build a signing-host runtime that serves Chat through `chat_platform`.
+    ///
+    /// Native wallet custody is fixed at construction. `None` uses the built-in
+    /// Rust wallet; an injected native service never falls back on failure.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.with_chat_platform"))]
+    pub fn with_chat_platform<P>(
+        platform: Arc<P>,
+        config: SigningHostConfig,
+        spawner: Spawner,
+        chat_platform: Option<Arc<dyn ChatPlatform>>,
+        native_wallet: Option<Arc<dyn CoinageWalletHost>>,
+    ) -> Self
+    where
+        P: Platform + 'static,
+    {
+        Self::with_platforms(
+            platform,
+            config,
+            spawner,
+            chat_platform,
+            None,
+            native_wallet,
+        )
+    }
 
 	/// End funding session `intent` with `stage` as though its funds had
 	/// moved, so a test host can drive the flow with no chain behind it.
@@ -1149,140 +1152,25 @@ impl SigningHostRuntime {
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
-	/// Answer a pairing host's handshake deeplink and serve the resulting SSO
-	/// session until it ends.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.respond_to_pairing"))]
-	pub async fn respond_to_pairing(
-		&self,
-		deeplink: &str,
-	) -> Result<ResponderExit, v01::GenericError> {
-		self.sso_responder
-			.respond_to_pairing(deeplink)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
-	}
-
-	/// Tell a pairing host that allowance allocation is under way, so it leaves
-	/// its QR screen while the allocation runs.
-	///
-	/// Answering needs this host's own statement-store allowance, so register
-	/// the `WalletSso` renewal target before calling.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.notify_pairing_allowance_allocation"))]
-	pub async fn notify_pairing_allowance_allocation(
-		&self,
-		deeplink: &str,
-	) -> Result<crate::runtime::AnnouncedPairing, v01::GenericError> {
-		self.sso_responder
-			.notify_pairing_allowance_allocation(deeplink)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
-	}
-
-	/// Tell a pairing host that pairing failed, so it reports `reason` and
-	/// offers a retry.
-	///
-	/// Owed to any host that was sent
-	/// [`Self::notify_pairing_allowance_allocation`]: it has dropped its QR and
-	/// waits without a deadline. Takes that call's handle, so the notice is
-	/// signed by the account that already reached this host even if the signer
-	/// has rotated since.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.notify_pairing_failed"))]
-	pub async fn notify_pairing_failed(
-		&self,
-		announced: &crate::runtime::AnnouncedPairing,
-		reason: String,
-	) -> Result<(), v01::GenericError> {
-		self.sso_responder
-			.notify_pairing_failed(announced, reason)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
-	}
-
-	/// Answer a pairing host's handshake without entering its long-lived serve loop.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.establish_pairing"))]
-	pub async fn establish_pairing(&self, deeplink: &str) -> Result<(), v01::GenericError> {
-		self.sso_responder
-			.establish_pairing(deeplink)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
-	}
-
-	/// Resume a previously paired host from its persisted public peer keys.
-	///
-	/// Only [`ResponderExit::PeerDisconnected`] authorizes removing the durable
-	/// pairing. Retain it after [`ResponderExit::SubscriptionEnded`] or an error.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.resume_pairing"))]
-	pub async fn resume_pairing(
-		&self,
-		peer: PairedSsoPeer,
-	) -> Result<ResponderExit, v01::GenericError> {
-		self.sso_responder
-			.resume_pairing(peer)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
-	}
-
-	/// Notify a paired host that this signing host is ending their SSO session.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.disconnect_paired_host"))]
-	pub async fn disconnect_paired_host(
-		&self,
-		peer: PairedSsoPeer,
-	) -> Result<(), v01::GenericError> {
-		self.sso_responder
-			.disconnect_paired_host(peer)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
-	}
-
-	/// Answer one SSO request using this signing host.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
-	pub async fn answer_sso_request(&self, message: RemoteMessage) -> SsoRequestOutcome {
-		let service = SigningHostSsoService::new(self.signing_host.clone());
-		match service.answer(message).await {
-			Dispatch::Response(answer) => {
-				SsoRequestOutcome::Response { message: answer.message.encode() }
-			},
-			Dispatch::Disconnected => SsoRequestOutcome::Disconnected,
-			Dispatch::NotARequest(_) | Dispatch::Withdraw(_) | Dispatch::Withdrawn => {
-				SsoRequestOutcome::Ignored
-			},
-		}
-	}
-}
-
-/// The durable transaction engine over `db`, reading and submitting through
-/// the runtime's chain connections.
-#[cfg(not(target_arch = "wasm32"))]
-fn durable_engine(
-	services: &RuntimeServices,
-	db: crate::store::Db,
-) -> Arc<crate::durable::DurableTxEngine> {
-	use crate::durable::{DurableDeps, DurableRegistry, DurableTxEngine, RealTimer};
-
-	let chain = Arc::new(services.chain.clone());
-	DurableTxEngine::new(DurableDeps {
-		db,
-		registry: DurableRegistry::new(),
-		heads: chain.clone(),
-		blocks: chain.clone(),
-		validator: chain.clone(),
-		submitter: chain,
-		timer: Arc::new(RealTimer),
-		spawner: services.spawner.clone(),
-	})
-}
-
-/// Reports every change of the engine's pending work to the host observer,
-/// for as long as the engine lives.
-#[cfg(not(target_arch = "wasm32"))]
-fn forward_durable_work(services: &Arc<RuntimeServices>, engine: &crate::durable::DurableTxEngine) {
-	let services = Arc::downgrade(services);
-	engine.report_work_to(move |pending| {
-		let observer = services.upgrade().and_then(|services| services.durable_work_observer());
-		if let Some(observer) = observer {
-			observer.durable_work_changed(pending);
-		}
-	});
+    /// Answer one decrypted SSO remote message with this signing host.
+    ///
+    /// Session control stays with the caller: `Disconnected` is reported as an
+    /// outcome, never handled here. A `Cancel` withdraws the request it names,
+    /// even while that request is still being answered by another call, and a
+    /// withdrawn request is answered `Ignored`.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
+    pub async fn answer_sso_request(&self, message: RemoteMessage) -> SsoRequestOutcome {
+        let service = SigningHostSsoService::new(self.signing_host.clone());
+        match service.answer(message).await {
+            Dispatch::Response(answer) => SsoRequestOutcome::Response {
+                message: answer.message.encode(),
+            },
+            Dispatch::Disconnected => SsoRequestOutcome::Disconnected,
+            Dispatch::NotARequest(_) | Dispatch::Withdraw(_) | Dispatch::Withdrawn => {
+                SsoRequestOutcome::Ignored
+            }
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1389,21 +1277,18 @@ impl SigningHostRuntime {
 /// collection, and `game_platform` for the product's game reminder.
 #[derive(Clone)]
 pub struct ConnectionAdapters {
-	pub platform: Arc<dyn Platform>,
-	pub chat_platform: Option<Arc<dyn ChatPlatform>>,
-	/// Live OS permission state for this connection. It travels here rather
-	/// than on the host runtime because a native host builds one platform per
-	/// product execution, so the object that reports OS state has to be the
-	/// same one that presents the prompt.
-	pub permission_status: Option<Arc<dyn PermissionStatusHost>>,
-	/// SDK and internal network connections must share an execution's one-use grants.
-	pub permission_grants: Arc<crate::host_internal::permissions::TemporaryPermissions>,
-	pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
-	pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
-	pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
-	pub game_platform: Option<Arc<dyn GamePlatform>>,
-	/// Control of the card face above this connection's Widget, when the host draws one.
-	pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
+    pub platform: Arc<dyn Platform>,
+    pub chat_platform: Option<Arc<dyn ChatPlatform>>,
+    /// Live OS permission state for this connection. It travels here rather
+    /// than on the host runtime because a native host builds one platform per
+    /// product execution, so the object that reports OS state has to be the
+    /// same one that presents the prompt.
+    pub permission_status: Option<Arc<dyn PermissionStatusHost>>,
+    /// SDK and internal network connections must share an execution's one-use grants.
+    pub(crate) permission_grants: Arc<crate::host_internal::permissions::TemporaryPermissions>,
+    pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
+    pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
+    pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
 }
 
 impl ConnectionAdapters {
@@ -2118,1449 +2003,1570 @@ impl Transport for SinkTransport {
 
 #[cfg(test)]
 mod tests {
-	use super::*;
-	use crate::{
-		frame::{Payload, ProtocolMessage, request_ids, subscription_ids},
-		host_internal::sso_messages::{
-			RemoteMessage, RemoteMessageData, decode_incoming_sso_request, v1,
-		},
-		host_logic::{
-			product_account::derive_identity_keypair,
-			sso::pairing::{
-				PairingBootstrap, derive_x25519_keypair_from_entropy, establish_sso_session_info,
-				x25519_public_key,
-			},
-			worker::WorkerTransition,
-		},
-		test_support::{StubPlatform, runtime_config, test_spawner, wait_until},
-	};
-	use parity_scale_codec::Encode;
-	use std::sync::atomic::Ordering;
-	use truapi::{
-		api::Permissions,
-		latest::{RemotePermission, RemotePermissionRequest, RemotePermissionResponse},
-		versioned::permissions,
-	};
-
-	#[derive(Default)]
-	struct RecordingSink {
-		frames: Mutex<Vec<Vec<u8>>>,
-	}
-
-	impl FrameSink for RecordingSink {
-		fn emit_frame(&self, frame: Vec<u8>) {
-			self.frames.lock().expect("recording sink mutex poisoned").push(frame);
-		}
-	}
-
-	fn activated_signing_runtime(platform: Arc<StubPlatform>) -> SigningHostRuntime {
-		use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
-
-		let config = SigningHostConfig::new(
-			HostInfo {
-				name: "Polkadot Mobile".to_string(),
-				icon: None,
-				version: None,
-				platform: truapi::latest::HostPlatform::Unknown,
-			},
-			PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			// Distinct from its siblings so a transposition stays visible.
-			[0xcc; 32],
-			"testnet".to_string(),
-		)
-		.expect("signing host config is valid");
-		let runtime = SigningHostRuntime::new(platform, config, test_spawner());
-		futures::executor::block_on(runtime.activate_local_session(vec![0xab; 32]))
-			.expect("activation succeeds");
-		runtime
-	}
-
-	/// Install `session` once the boot reconcile has reported the empty
-	/// session store, so its clear cannot land on top of the session.
-	fn install_session_after_boot(
-		runtime: &PairingHostRuntime,
-		platform: &StubPlatform,
-		session: crate::host_logic::session::SessionInfo,
-	) {
-		wait_until(
-			|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
-			"the boot reconcile did not report the empty session store",
-		);
-		runtime.pairing_host.session().session_state().set_session(session);
-	}
-
-	fn assert_send<T: Send>(_: T) {}
-
-	fn assert_send_sync<T: Send + Sync>() {}
-
-	fn network_permission(domains: &[&str]) -> RemotePermissionRequest {
-		RemotePermissionRequest {
-			permission: RemotePermission::Remote {
-				domains: domains.iter().map(|domain| domain.to_string()).collect(),
-			},
-		}
-	}
-
-	#[test]
-	fn network_access_reuses_product_grants_and_prompts_only_for_new_domains() {
-		futures::executor::block_on(async {
-			let platform = Arc::new(StubPlatform::default());
-			let (config, _) = runtime_config("fetch.dot");
-			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
-			let admin = runtime.product_admin(product_context(&ProductId::for_test("fetch.dot")));
-			let cx = CallContext::default();
-			let request = network_permission(&["api.example.com"]);
-			let granted = admin
-				.product_runtime
-				.request_remote_permission(
-					&cx,
-					permissions::RemotePermissionRequest::V1(request.clone()),
-				)
-				.await
-				.unwrap();
-			let mut decisions = Vec::new();
-			for domain in ["API.EXAMPLE.COM.", "api.example.com", "Bücher.example"] {
-				decisions.push(
-					admin
-						.product_runtime
-						.authorize_remote_permission(
-							&cx,
-							permissions::RemotePermissionRequest::V1(network_permission(&[domain])),
-						)
-						.await
-						.unwrap(),
-				);
-			}
-			let saved = admin
-				.permission_authorization_status(PermissionAuthorizationRequest::Remote(
-					network_permission(&["xn--bcher-kva.example"]),
-				))
-				.await
-				.unwrap();
-			let prompted = platform.remote_permission_requests.lock().unwrap().clone();
-			let allowed = permissions::RemotePermissionResponse::V1(RemotePermissionResponse {
-				granted: true,
-			});
-			assert_eq!(
-				(granted, decisions, saved, prompted),
-				(
-					allowed.clone(),
-					vec![allowed; 3],
-					PermissionAuthorizationStatus::Authorized,
-					vec![request, network_permission(&["Bücher.example"])],
-				)
-			);
-		});
-	}
-
-	#[test]
-	fn remote_authorization_frames_consume_one_use_grants() {
-		use crate::platform::PermissionDecision;
-		use truapi::CallError;
-
-		futures::executor::block_on(async {
-			for request_upfront in [false, true] {
-				let platform = Arc::new(StubPlatform {
-					remote_permission_denied: true,
-					remote_permission_decisions: Mutex::new([PermissionDecision::AllowOnce].into()),
-					..Default::default()
-				});
-				let sink = Arc::new(RecordingSink::default());
-				let (config, product) = runtime_config("fetch.dot");
-				let runtime = ProductRuntime::from_platform_with_config(
-					platform.clone(),
-					config,
-					product,
-					test_spawner(),
-					sink.clone(),
-				);
-				let permission = network_permission(&["api.example.com"]);
-				let request = permissions::RemotePermissionRequest::V1(permission.clone()).encode();
-				let response = |granted| {
-					Ok::<_, CallError<permissions::RemotePermissionError>>(
-						permissions::RemotePermissionResponse::V1(RemotePermissionResponse {
-							granted,
-						}),
-					)
-					.encode()
-				};
-				let mut requests = Vec::new();
-				if request_upfront {
-					requests.push(("permissions_request_remote_permission", true));
-				}
-				requests.extend([
-					("permissions_authorize_remote_permission", true),
-					("permissions_authorize_remote_permission", false),
-				]);
-				let mut expected = Vec::new();
-				for (index, (method, granted)) in requests.into_iter().enumerate() {
-					let ids = crate::frame::request_ids(method).expect("known permission request");
-					let mut frame = ProtocolMessage {
-						request_id: format!("permission:{index}"),
-						payload: Payload {
-							trait_id: ids.trait_id,
-							method_id: ids.method_id,
-							message_type: crate::frame::MESSAGE_TYPE_REQUEST,
-							value: request.clone(),
-						},
-					};
-					runtime.receive_frame(frame.encode()).await.unwrap();
-					frame.payload.message_type = crate::frame::MESSAGE_TYPE_RESPONSE;
-					frame.payload.value = response(granted);
-					expected.push(frame.encode());
-				}
-				assert_eq!(
-					(
-						sink.frames.lock().unwrap().clone(),
-						platform.remote_permission_requests.lock().unwrap().clone(),
-					),
-					(expected, vec![permission.clone(), permission]),
-					"request_upfront={request_upfront}",
-				);
-			}
-		});
-	}
-
-	#[test]
-	fn network_access_honors_wildcard_precedence_revocation_and_product_isolation() {
-		futures::executor::block_on(async {
-			let platform =
-				Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
-			let (config, _) = runtime_config("fetch.dot");
-			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
-			let admin = runtime.product_admin(product_context(&ProductId::for_test("fetch.dot")));
-			let cx = CallContext::default();
-			admin
-				.set_permission_authorization_status(
-					PermissionAuthorizationRequest::Remote(network_permission(&["*.example.com"])),
-					PermissionAuthorizationStatus::Authorized,
-				)
-				.await
-				.unwrap();
-			let mut decisions = Vec::new();
-			for domain in ["api.example.com", "deep.api.example.com", "example.com"] {
-				decisions.push(
-					admin
-						.product_runtime
-						.authorize_remote_permission(
-							&cx,
-							permissions::RemotePermissionRequest::V1(network_permission(&[domain])),
-						)
-						.await
-						.unwrap(),
-				);
-			}
-			admin
-				.set_permission_authorization_status(
-					PermissionAuthorizationRequest::Remote(network_permission(&[
-						"api.example.com",
-					])),
-					PermissionAuthorizationStatus::Denied,
-				)
-				.await
-				.unwrap();
-			for domain in ["api.example.com", "other.example.com"] {
-				decisions.push(
-					admin
-						.product_runtime
-						.authorize_remote_permission(
-							&cx,
-							permissions::RemotePermissionRequest::V1(network_permission(&[domain])),
-						)
-						.await
-						.unwrap(),
-				);
-			}
-			let other = runtime.product_admin(product_context(&ProductId::for_test("other.dot")));
-			for _ in 0..2 {
-				decisions.push(
-					other
-						.product_runtime
-						.authorize_remote_permission(
-							&cx,
-							permissions::RemotePermissionRequest::V1(network_permission(&[
-								"other.example.com",
-							])),
-						)
-						.await
-						.unwrap(),
-				);
-			}
-			assert_eq!(
-				(decisions, platform.remote_permission_requests.lock().unwrap().clone(),),
-				(
-					[true, true, false, false, true, false, false]
-						.map(|granted| {
-							permissions::RemotePermissionResponse::V1(RemotePermissionResponse {
-								granted,
-							})
-						})
-						.to_vec(),
-					vec![
-						network_permission(&["example.com"]),
-						network_permission(&["other.example.com"]),
-					],
-				)
-			);
-		});
-	}
-
-	#[test]
-	fn network_access_trusted_products_ignore_recorded_denials() {
-		futures::executor::block_on(async {
-			let platform = Arc::new(StubPlatform::default());
-			let (config, _) = runtime_config("peopl.dot");
-			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
-			let admin = runtime.product_admin(product_context(&ProductId::for_test("peopl.dot")));
-			let cx = CallContext::default();
-			let request = network_permission(&["api.example.com"]);
-			let allowed = admin
-				.product_runtime
-				.authorize_remote_permission(
-					&cx,
-					permissions::RemotePermissionRequest::V1(request.clone()),
-				)
-				.await
-				.unwrap();
-			admin
-				.set_permission_authorization_status(
-					PermissionAuthorizationRequest::Remote(request.clone()),
-					PermissionAuthorizationStatus::Denied,
-				)
-				.await
-				.unwrap();
-			let after_denial = admin
-				.product_runtime
-				.authorize_remote_permission(&cx, permissions::RemotePermissionRequest::V1(request))
-				.await
-				.unwrap();
-			assert_eq!(
-				(
-					allowed,
-					after_denial,
-					platform.remote_permission_requests.lock().unwrap().clone(),
-				),
-				(
-					permissions::RemotePermissionResponse::V1(RemotePermissionResponse {
-						granted: true
-					}),
-					permissions::RemotePermissionResponse::V1(RemotePermissionResponse {
-						granted: true
-					}),
-					vec![],
-				)
-			);
-		});
-	}
-
-	#[test]
-	fn a_cached_subtree_answers_without_reaching_the_wallet() {
-		let platform = Arc::new(StubPlatform::default());
-		let (host_config, _) = runtime_config("myapp.dot");
-		let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
-		let session = crate::test_support::sso_session_info();
-		install_session_after_boot(&runtime, &platform, session.clone());
-		runtime.pairing_host.cache_product_subtree_for_test(
-			&session,
-			&crate::platform::ProductId::for_test("myapp.dot"),
-			[9; 32],
-		);
-
-		let key = futures::executor::block_on(
-			runtime.product_subtree_public_key(&ProductId::for_test("myapp.dot"), Some(1)),
-		)
-		.expect("a cached subtree resolves");
-		assert_eq!(key, Some([9; 32]));
-
-		// The cache comes before the wallet. A one-millisecond deadline means
-		// anything that reached for the wallet here would time out instead of
-		// answering, and no statement-store traffic says it did not try.
-		assert!(platform.sent_rpc.lock().expect("rpc list mutex poisoned").is_empty());
-	}
-
-	#[test]
-	fn a_timeout_bounds_the_wait_for_the_account_holder() {
-		let platform = Arc::new(StubPlatform::default());
-		let (host_config, _) = runtime_config("myapp.dot");
-		let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
-		install_session_after_boot(&runtime, &platform, crate::test_support::sso_session_info());
-
-		// Nothing answers the wallet request, and wait_for_sso_remote_response exits
-		// only on a peer answer, a disconnect, or the caller's token. Without
-		// the timeout cancelling that token the call never returns, so this
-		// test would hang rather than fail.
-		let error = futures::executor::block_on(
-			runtime.product_subtree_public_key(&ProductId::for_test("myapp.dot"), Some(1)),
-		)
-		.expect_err("an unanswered wallet request ends at its deadline");
-		assert!(error.reason.contains("timed out"), "expected a timeout, got {}", error.reason);
-	}
-
-	#[test]
-	fn product_runtime_and_dispatch_future_are_send() {
-		assert_send_sync::<ProductRuntime>();
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			Arc::new(StubPlatform::default()),
-			host_config,
-			product,
-			test_spawner(),
-			Arc::new(RecordingSink::default()),
-		);
-
-		assert_send(runtime.receive_frame(Vec::new()));
-	}
-
-	#[derive(Default)]
-	struct RecordingDebugSink {
-		events: Mutex<Vec<(ChannelId, FrameDirection, Vec<u8>)>>,
-	}
-
-	impl DebugSink for RecordingDebugSink {
-		fn emit(&self, event: DebugEvent) {
-			match event {
-				DebugEvent::Frame { channel_id, dir, bytes } => self
-					.events
-					.lock()
-					.expect("debug events mutex poisoned")
-					.push((channel_id, dir, bytes)),
-			}
-		}
-	}
-
-	#[test]
-	fn debug_sink_taps_frames_in_both_directions() {
-		let platform = Arc::new(StubPlatform::default());
-		let sink = Arc::new(RecordingSink::default());
-		let debug = Arc::new(RecordingDebugSink::default());
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			platform,
-			host_config,
-			product,
-			test_spawner(),
-			sink.clone(),
-		);
-		runtime.set_debug_sink(ChannelId("myapp.dot".to_string()), debug.clone());
-
-		let ids = subscription_ids("theme_subscribe").expect("known subscription");
-		let frame = ProtocolMessage {
-			request_id: "theme:1".to_string(),
-			payload: Payload {
-				trait_id: ids.trait_id,
-				method_id: ids.method_id,
-				message_type: crate::frame::MESSAGE_TYPE_START,
-				value: truapi::versioned::theme::HostThemeSubscribeRequest::V1.encode(),
-			},
-		};
-		let raw = frame.encode();
-		futures::executor::block_on(runtime.receive_frame(raw.clone())).unwrap();
-
-		// The subscription's first item is emitted asynchronously; wait for it,
-		// then let the tap (which runs right after delivery in `send`) settle.
-		let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-		while sink.frames.lock().expect("recording sink mutex poisoned").is_empty() &&
-			std::time::Instant::now() < deadline
-		{
-			std::thread::sleep(std::time::Duration::from_millis(5));
-		}
-		std::thread::sleep(std::time::Duration::from_millis(20));
-
-		// Snapshot into owned vecs (never hold a lock across an assertion).
-		let (inbound, outbound, channels): (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<ChannelId>) = {
-			let events = debug.events.lock().expect("debug events mutex poisoned");
-			(
-				events
-					.iter()
-					.filter(|(_, dir, _)| *dir == FrameDirection::In)
-					.map(|(_, _, bytes)| bytes.clone())
-					.collect(),
-				events
-					.iter()
-					.filter(|(_, dir, _)| *dir == FrameDirection::Out)
-					.map(|(_, _, bytes)| bytes.clone())
-					.collect(),
-				events.iter().map(|(cid, _, _)| cid.clone()).collect(),
-			)
-		};
-		let delivered = sink.frames.lock().expect("recording sink mutex poisoned").clone();
-
-		// Every event carries the installed channel id.
-		assert!(
-			channels.iter().all(|c| *c == ChannelId("myapp.dot".to_string())),
-			"every event carries its channel id"
-		);
-		// Inbound tapped once, untouched, before decode.
-		assert_eq!(inbound, vec![raw], "inbound frame tapped exactly once, untouched");
-		// Both directions fire, and every delivered outbound frame is tapped in
-		// order: the tap is in the path, not a fabricated side channel.
-		assert!(!outbound.is_empty(), "at least one outbound frame is tapped");
-		assert_eq!(outbound, delivered, "every delivered outbound frame is tapped, in order");
-	}
-
-	/// A sink whose `Drop` panics. `emit` is a no-op: the point is the destructor,
-	/// which `set_debug_sink` runs when it replaces this sink.
-	struct PanicOnDropSink;
-
-	impl DebugSink for PanicOnDropSink {
-		fn emit(&self, _event: DebugEvent) {}
-	}
-
-	impl Drop for PanicOnDropSink {
-		fn drop(&mut self) {
-			panic!("out-of-repo sink destructor");
-		}
-	}
-
-	/// Records how many frames the transport had already delivered at the moment
-	/// each outbound tap fired, which is what pins the deliver-THEN-tap ordering.
-	struct DeliveryOrderSink {
-		transport: Arc<RecordingSink>,
-		delivered_at_tap: Mutex<Vec<usize>>,
-	}
-
-	impl DebugSink for DeliveryOrderSink {
-		fn emit(&self, event: DebugEvent) {
-			let DebugEvent::Frame { dir, .. } = event;
-			if dir != FrameDirection::Out {
-				return;
-			}
-			let delivered =
-				self.transport.frames.lock().expect("recording sink mutex poisoned").len();
-			self.delivered_at_tap
-				.lock()
-				.expect("delivery order mutex poisoned")
-				.push(delivered);
-		}
-	}
-
-	#[test]
-	fn a_panicking_sink_destructor_does_not_poison_the_tap_for_later_frames() {
-		// `set_debug_sink` takes the previous sink out under the lock and drops it
-		// after releasing. If it dropped in place instead, this destructor's unwind
-		// would poison the debug mutex and - before the recovery below it - every
-		// subsequent frame would panic on that lock, killing a live host over a
-		// third-party sink's `Drop`. Both properties are asserted: the unwind
-		// surfaces to whoever INSTALLS a sink, and the tap keeps working after.
-		//
-		// This pins the two fixes as a PAIR, not individually: reverting only the
-		// drop-outside-the-guard change leaves the poison recovery to absorb it, and
-		// reverting only the recovery leaves no poisoner to trip it. Restoring both
-		// (the original code) fails here on the poisoned lock, which is the
-		// production shape being guarded against.
-		let platform = Arc::new(StubPlatform::default());
-		let transport = Arc::new(RecordingSink::default());
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			platform,
-			host_config,
-			product,
-			test_spawner(),
-			transport,
-		);
-		let channel = ChannelId("myapp.dot".to_string());
-		runtime.set_debug_sink(channel.clone(), Arc::new(PanicOnDropSink));
-
-		// Replacing it drops the panicking sink. The unwind lands HERE, on the
-		// installer, not on a later frame.
-		let replaced = Arc::new(RecordingDebugSink::default());
-		let installed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-			runtime.set_debug_sink(channel.clone(), replaced.clone());
-		}));
-		assert!(installed.is_err(), "the destructor's panic should surface to the installer");
-
-		// The mutex must not be poisoned: the new sink is reachable and taps.
-		let ids = subscription_ids("theme_subscribe").expect("known subscription");
-		let frame = ProtocolMessage {
-			request_id: "theme:1".to_string(),
-			payload: Payload {
-				trait_id: ids.trait_id,
-				method_id: ids.method_id,
-				message_type: crate::frame::MESSAGE_TYPE_START,
-				value: truapi::versioned::theme::HostThemeSubscribeRequest::V1.encode(),
-			},
-		};
-		futures::executor::block_on(runtime.receive_frame(frame.encode())).unwrap();
-		let tapped = replaced.events.lock().expect("debug events mutex poisoned").len();
-		assert!(tapped > 0, "the replacement sink should still receive frames after the panic");
-	}
-
-	/// The inbound tap runs BEFORE decode, so a frame the codec rejects is still
-	/// observed. Asserting a well-formed frame reaches the sink cannot see this -
-	/// it arrives either way. Only an undecodable frame can: the call must fail AND
-	/// the sink must still hold those exact bytes.
-	#[test]
-	fn a_corrupt_inbound_frame_is_tapped_even_though_decode_rejects_it() {
-		let platform = Arc::new(StubPlatform::default());
-		let transport = Arc::new(RecordingSink::default());
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			platform,
-			host_config,
-			product,
-			test_spawner(),
-			transport,
-		);
-		let debug = Arc::new(RecordingDebugSink::default());
-		runtime.set_debug_sink(ChannelId("myapp.dot".to_string()), debug.clone());
-
-		// Not a `ProtocolMessage`: the leading compact length claims far more
-		// bytes than follow, so decode fails before any field is read.
-		let corrupt = vec![0xff, 0xff, 0xff, 0xff];
-		let outcome = futures::executor::block_on(runtime.receive_frame(corrupt.clone()));
-		assert!(
-			matches!(outcome, Err(ProductRuntimeError::InvalidFrame { .. })),
-			"expected decode to reject the frame, got {outcome:?}"
-		);
-
-		let events = debug.events.lock().expect("debug events mutex poisoned");
-		assert_eq!(events.len(), 1, "a frame rejected by decode must still be tapped");
-		assert_eq!(events[0].1, FrameDirection::In);
-		assert_eq!(
-			events[0].2, corrupt,
-			"the tap must carry the original bytes, not a decoded form"
-		);
-	}
-
-	/// A sink whose destructor panics must not unwind the FRAME path.
-	///
-	/// `set_debug_sink` drops the previous sink outside the lock, which covers the
-	/// case where the installer holds the last reference. It does not cover this
-	/// one: the frame path clones its own `Arc` before tapping, so if the sink is
-	/// replaced while that tap is in flight, the frame path holds the last
-	/// reference and runs the destructor itself. `emit_debug` takes the clone by
-	/// value so that drop lands inside its `catch_unwind`; with `&dyn DebugSink`
-	/// the clone instead dies at the caller's scope end, outside the guard, and
-	/// unwinds a live dispatch.
-	#[test]
-	fn a_panicking_sink_destructor_does_not_unwind_the_frame_path() {
-		/// Blocks inside `emit` until the installer has released its reference, so
-		/// the frame path is provably the one that drops this sink.
-		struct HandoffSink {
-			tapped: std::sync::mpsc::SyncSender<()>,
-			release: Mutex<std::sync::mpsc::Receiver<()>>,
-		}
-		impl DebugSink for HandoffSink {
-			fn emit(&self, _event: DebugEvent) {
-				let _ = self.tapped.send(());
-				let _ = self.release.lock().expect("release receiver poisoned").recv();
-			}
-		}
-		impl Drop for HandoffSink {
-			fn drop(&mut self) {
-				panic!("out-of-repo sink destructor");
-			}
-		}
-
-		let platform = Arc::new(StubPlatform::default());
-		let transport = Arc::new(RecordingSink::default());
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = Arc::new(ProductRuntime::from_platform_with_config(
-			platform,
-			host_config,
-			product,
-			test_spawner(),
-			transport,
-		));
-		let channel = ChannelId("myapp.dot".to_string());
-
-		let (tapped_tx, tapped_rx) = std::sync::mpsc::sync_channel(1);
-		let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
-		runtime.set_debug_sink(
-			channel.clone(),
-			Arc::new(HandoffSink { tapped: tapped_tx, release: Mutex::new(release_rx) }),
-		);
-
-		let ids = subscription_ids("theme_subscribe").expect("known subscription");
-		let frame = ProtocolMessage {
-			request_id: "theme:1".to_string(),
-			payload: Payload {
-				trait_id: ids.trait_id,
-				method_id: ids.method_id,
-				message_type: crate::frame::MESSAGE_TYPE_START,
-				value: truapi::versioned::theme::HostThemeSubscribeRequest::V1.encode(),
-			},
-		};
-		let encoded = frame.encode();
-		let frame_runtime = Arc::clone(&runtime);
-		let frame_thread = std::thread::spawn(move || {
-			futures::executor::block_on(frame_runtime.receive_frame(encoded))
-		});
-
-		// Wait until the tap is inside `emit`, holding its own clone.
-		tapped_rx
-			.recv_timeout(std::time::Duration::from_secs(5))
-			.expect("tap never fired");
-		// Replace the sink: the installer's reference goes, leaving the frame
-		// path's clone as the last one.
-		runtime.set_debug_sink(channel, Arc::new(RecordingDebugSink::default()));
-		let _ = release_tx.send(());
-
-		let outcome = frame_thread.join();
-		assert!(outcome.is_ok(), "a panicking sink destructor unwound the frame path");
-	}
-
-	#[test]
-	fn outbound_frames_are_delivered_before_they_are_tapped() {
-		// `send` hands the frame to the transport and taps afterwards, so no sink can
-		// delay or drop THIS frame - it is already delivered. It says nothing about
-		// the next one: `send` returns only after the tap, so a slow sink delays
-		// every subsequent frame (see `DebugSink::emit`). Asserting the two lists
-		// match cannot see the ordering at all - they are order-identical either way.
-		// Counting deliveries AT TAP TIME can: tap N must observe N deliveries, and
-		// tapping first would make it N-1.
-		let platform = Arc::new(StubPlatform::default());
-		let transport = Arc::new(RecordingSink::default());
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			platform,
-			host_config,
-			product,
-			test_spawner(),
-			transport.clone(),
-		);
-		let debug = Arc::new(DeliveryOrderSink {
-			transport: transport.clone(),
-			delivered_at_tap: Mutex::new(Vec::new()),
-		});
-		runtime.set_debug_sink(ChannelId("myapp.dot".to_string()), debug.clone());
-
-		let ids = subscription_ids("theme_subscribe").expect("known subscription");
-		let frame = ProtocolMessage {
-			request_id: "theme:1".to_string(),
-			payload: Payload {
-				trait_id: ids.trait_id,
-				method_id: ids.method_id,
-				message_type: crate::frame::MESSAGE_TYPE_START,
-				value: truapi::versioned::theme::HostThemeSubscribeRequest::V1.encode(),
-			},
-		};
-		futures::executor::block_on(runtime.receive_frame(frame.encode())).unwrap();
-
-		let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-		while debug.delivered_at_tap.lock().expect("delivery order mutex poisoned").is_empty() &&
-			std::time::Instant::now() < deadline
-		{
-			std::thread::sleep(std::time::Duration::from_millis(5));
-		}
-		std::thread::sleep(std::time::Duration::from_millis(20));
-
-		let observed =
-			debug.delivered_at_tap.lock().expect("delivery order mutex poisoned").clone();
-		assert!(!observed.is_empty(), "expected at least one outbound tap");
-		// Tap i (0-based) must see i+1 frames already delivered.
-		let expected: Vec<usize> = (1..=observed.len()).collect();
-		assert_eq!(
-			observed, expected,
-			"each outbound tap must run after its own frame was delivered"
-		);
-	}
-
-	/// Every profile that ships a host aborts on panic, so [`emit_debug`]'s
-	/// `catch_unwind` cannot fire in a shipping build - which is why
-	/// [`DebugSink::emit`] documents its no-panic rule as caller-enforced. The
-	/// guard still earns its keep everywhere else: `dev` inherits
-	/// `panic = "unwind"` (the workspace defines no `[profile.dev]`), the Makefile
-	/// builds `truapi-host-cli` without `--release`, and a downstream crate may
-	/// compile this one under its own unwinding profile.
-	///
-	/// No unit test can demonstrate the guard itself - Cargo ignores the `panic`
-	/// setting for test profiles, so a "the guard protected dispatch" assertion
-	/// passes with the guard removed. The premise is what is checkable, and this
-	/// fails if a shipping profile stops aborting, at which point the reasoning on
-	/// `DebugSink::emit` needs revisiting.
-	#[test]
-	fn shipping_profiles_abort_on_panic() {
-		let workspace_manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-			.ancestors()
-			.nth(3)
-			.expect("crate lives at <workspace>/rust/crates/truapi")
-			.join("Cargo.toml");
-		let manifest = std::fs::read_to_string(&workspace_manifest)
-			.expect("workspace manifest is readable from the crate directory");
-		let release = manifest
-			.split("[profile.release]")
-			.nth(1)
-			.expect("workspace defines [profile.release]")
-			.split("\n[")
-			.next()
-			.expect("release profile section");
-		assert!(
-			release.contains("panic = \"abort\""),
-			"release no longer aborts on panic: revisit DebugSink::emit's contract docs"
-		);
-		assert!(
-			manifest.contains("[profile.codegen]") && manifest.contains("inherits = \"release\""),
-			"codegen no longer inherits release: recheck what the native artifacts build with"
-		);
-	}
-
-	#[test]
-	fn frame_direction_wire_str_is_product_vantage() {
-		// The wire string is product-vantage (what the debugger and design doc
-		// use), the inverse of the enum's host-vantage names: a frame the host
-		// tapped as `In` (product to core) *left the product*, so it serializes
-		// as `"out"`. This pins the convention so a sink can't re-invert it.
-		assert_eq!(FrameDirection::In.wire_str(), "out");
-		assert_eq!(FrameDirection::Out.wire_str(), "in");
-	}
-
-	#[test]
-	fn app_connection_rejects_rendering() {
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			Arc::new(StubPlatform::default()),
-			host_config,
-			product,
-			test_spawner(),
-			Arc::new(RecordingSink::default()),
-		);
-
-		assert!(matches!(
-			runtime.control().render(v01::ProductRendererRenderRequest {
-				context: v01::RenderContext::ChatMessage {
-					room_id: "room".into(),
-					message_id: "message".into(),
-					message_type: "vote".into(),
-				},
-				payload: vec![],
-			}),
-			Err(ProductRuntimeError::Denied)
-		));
-	}
-
-	#[test]
-	fn worker_connection_renders_and_receives_actions_without_a_session() {
-		// Renderer is gated on Worker execution alone, so a signed-out host
-		// still reaches the product.
-		let (host_config, _) = runtime_config("worker.dot");
-		let product = ProductContext::new_with_execution(
-			ProductId::for_test("worker.dot"),
-			crate::platform::ProductExecutionKind::Worker,
-		);
-		let runtime = ProductRuntime::from_platform_with_config(
-			Arc::new(StubPlatform::default()),
-			host_config,
-			product,
-			test_spawner(),
-			Arc::new(RecordingSink::default()),
-		);
-		let host = runtime.admin.product_runtime().clone();
-		assert!(
-			host.test_session_state().current().is_none(),
-			"the fixture must be signed out for this test to mean anything"
-		);
-
-		let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
-			host.as_ref(),
-			&CallContext::with_request_id("renderer:1".to_string()),
-			truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
-		));
-
-		let _render = runtime
-			.control()
-			.render(v01::ProductRendererRenderRequest {
-				context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
-				payload: vec![],
-			})
-			.expect("a signed-out Worker connection may render");
-
-		let published = v01::HostRendererActionSubscribeItem {
-			context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
-			action_id: "vote".into(),
-			payload: vec![],
-		};
-		runtime
-			.control()
-			.publish_renderer_action(published.clone())
-			.expect("a signed-out Worker connection may receive actions");
-
-		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
-		let delivered = match actions.poll_next_unpin(&mut cx) {
-			core::task::Poll::Ready(Some(item)) => item,
-			other => panic!("a published renderer action must be ready, got {other:?}"),
-		};
-		let Ok(truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(delivered)) =
-			delivered
-		else {
-			panic!("expected a renderer action item")
-		};
-		assert_eq!(delivered, published);
-	}
-
-	#[test]
-	fn an_open_render_holds_one_worker_reference() {
-		// The core owns the reference: no caller above it acquires or releases.
-		#[derive(Default)]
-		struct RecordingDemand {
-			transitions: Mutex<Vec<(String, WorkerTransition)>>,
-		}
-		impl crate::host_logic::worker::WorkerDemandObserver for RecordingDemand {
-			fn worker_demand_changed(&self, product_id: &ProductId, transition: WorkerTransition) {
-				self.transitions
-					.lock()
-					.expect("transition mutex poisoned")
-					.push((product_id.to_string(), transition));
-			}
-		}
-
-		let (host_config, _) = runtime_config("worker.dot");
-		let product = ProductContext::new_with_execution(
-			ProductId::for_test("worker.dot"),
-			crate::platform::ProductExecutionKind::Worker,
-		);
-		let runtime = ProductRuntime::from_platform_with_config(
-			Arc::new(StubPlatform::default()),
-			host_config,
-			product,
-			test_spawner(),
-			Arc::new(RecordingSink::default()),
-		);
-		let services = runtime.admin.product_runtime().connection().services().clone();
-		let demand = Arc::new(RecordingDemand::default());
-		assert!(
-			services.worker_ledger.install_demand_observer(demand.clone()),
-			"the observer installs once"
-		);
-		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-
-		let render = runtime
-			.control()
-			.render(v01::ProductRendererRenderRequest {
-				context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
-				payload: vec![],
-			})
-			.expect("a Worker connection may render");
-		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
-
-		drop(render);
-		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-		assert_eq!(
-			demand.transitions.lock().expect("transition mutex poisoned").as_slice(),
-			[
-				("worker.dot".to_string(), WorkerTransition::Start),
-				("worker.dot".to_string(), WorkerTransition::Stop),
-			]
-		);
-	}
-
-	/// A signed-out Worker runtime, which may render, and the sink holding the
-	/// start frames its renders send.
-	fn render_runtime() -> (ProductRuntime, Arc<RecordingSink>) {
-		let (host_config, _) = runtime_config("worker.dot");
-		let product = ProductContext::new_with_execution(
-			ProductId::for_test("worker.dot"),
-			crate::platform::ProductExecutionKind::Worker,
-		);
-		let sink = Arc::new(RecordingSink::default());
-		let runtime = ProductRuntime::from_platform_with_config(
-			Arc::new(StubPlatform::default()),
-			host_config,
-			product,
-			test_spawner(),
-			sink.clone(),
-		);
-		(runtime, sink)
-	}
-
-	/// Open one render for a Pocket card.
-	fn start_render(
-		runtime: &ProductRuntime,
-		card_id: &str,
-	) -> truapi::Subscription<v01::RendererNode, truapi::CallError<v01::GenericError>> {
-		runtime
-			.control()
-			.render(v01::ProductRendererRenderRequest {
-				context: v01::RenderContext::PocketCard { card_id: card_id.to_string() },
-				payload: vec![],
-			})
-			.expect("a Worker connection may render")
-	}
-
-	/// Request id of the render start frame sent at `index`.
-	fn render_request_id(sink: &RecordingSink, index: usize) -> String {
-		let frames = sink.frames.lock().expect("recording sink mutex poisoned");
-		let frame = frames.get(index).expect("the render sent a start frame");
-		ProtocolMessage::decode(&mut frame.as_slice())
-			.expect("a start frame decodes")
-			.request_id
-	}
-
-	/// Deliver one product frame on the render stream `request_id` names.
-	fn deliver_render_frame(
-		runtime: &ProductRuntime,
-		request_id: &str,
-		message_type: u8,
-		value: Vec<u8>,
-	) {
-		let ids = subscription_ids("renderer_render").expect("known subscription");
-		let frame = ProtocolMessage {
-			request_id: request_id.to_string(),
-			payload: Payload {
-				trait_id: ids.trait_id,
-				method_id: ids.method_id,
-				message_type,
-				value,
-			},
-		}
-		.encode();
-		futures::executor::block_on(runtime.receive_frame(frame))
-			.expect("the product frame is well formed");
-	}
-
-	/// Poll one render once with a waker that does nothing.
-	fn poll_render(
-		render: &mut truapi::Subscription<v01::RendererNode, truapi::CallError<v01::GenericError>>,
-	) -> core::task::Poll<Option<Result<v01::RendererNode, truapi::CallError<v01::GenericError>>>>
-	{
-		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
-		render.poll_next_unpin(&mut cx)
-	}
-
-	#[test]
-	fn a_render_the_product_ends_releases_its_worker_reference() {
-		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().connection().services().clone();
-		let mut render = start_render(&runtime, "loyalty");
-		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
-
-		let request_id = render_request_id(&sink, 0);
-		deliver_render_frame(
-			&runtime,
-			&request_id,
-			crate::frame::MESSAGE_TYPE_INTERRUPT,
-			crate::frame::encode_clean_interrupt(),
-		);
-		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
-
-		assert_eq!(
-			services.worker_ledger.count(&ProductId::for_test("worker.dot")),
-			0,
-			"an ended stream holds no reference, whether or not the handle lives on"
-		);
-		drop(render);
-		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-	}
-
-	#[test]
-	fn a_render_the_product_interrupts_releases_its_worker_reference() {
-		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().connection().services().clone();
-		let mut render = start_render(&runtime, "loyalty");
-
-		let request_id = render_request_id(&sink, 0);
-		deliver_render_frame(
-			&runtime,
-			&request_id,
-			crate::frame::MESSAGE_TYPE_INTERRUPT,
-			Result::<(), truapi::CallError<v01::GenericError>>::Err(
-				truapi::CallError::HostFailure {
-					reason: "the product stopped drawing".to_string(),
-				},
-			)
-			.encode(),
-		);
-		assert!(matches!(
-			poll_render(&mut render),
-			core::task::Poll::Ready(Some(Err(truapi::CallError::HostFailure { .. })))
-		));
-
-		assert_eq!(
-			services.worker_ledger.count(&ProductId::for_test("worker.dot")),
-			0,
-			"an interrupt ends the stream, so the reference goes with it"
-		);
-		drop(render);
-		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-	}
-
-	#[test]
-	fn a_render_refused_for_a_malformed_tree_releases_its_worker_reference() {
-		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().connection().services().clone();
-		let mut render = start_render(&runtime, "loyalty");
-
-		let request_id = render_request_id(&sink, 0);
-		deliver_render_frame(&runtime, &request_id, crate::frame::MESSAGE_TYPE_RECEIVE, vec![0xff]);
-		assert!(matches!(
-			poll_render(&mut render),
-			core::task::Poll::Ready(Some(Err(truapi::CallError::MalformedFrame { .. })))
-		));
-
-		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-		drop(render);
-		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-	}
-
-	#[test]
-	fn disposing_the_core_releases_an_open_renders_worker_reference() {
-		let (runtime, _sink) = render_runtime();
-		let services = runtime.admin.product_runtime().connection().services().clone();
-		let mut render = start_render(&runtime, "loyalty");
-		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
-
-		runtime.dispose();
-		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
-
-		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-		drop(render);
-		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-	}
-
-	#[test]
-	fn one_render_ending_leaves_the_other_renders_worker_reference() {
-		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().connection().services().clone();
-		let mut first = start_render(&runtime, "loyalty");
-		let second = start_render(&runtime, "rewards");
-		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 2);
-
-		let request_id = render_request_id(&sink, 0);
-		deliver_render_frame(
-			&runtime,
-			&request_id,
-			crate::frame::MESSAGE_TYPE_INTERRUPT,
-			crate::frame::encode_clean_interrupt(),
-		);
-		assert!(matches!(poll_render(&mut first), core::task::Poll::Ready(None)));
-		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
-
-		drop(first);
-		assert_eq!(
-			services.worker_ledger.count(&ProductId::for_test("worker.dot")),
-			1,
-			"dropping a stream that already released must not release again"
-		);
-
-		drop(second);
-		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-	}
-
-	#[test]
-	fn app_connection_rejects_publishing_a_renderer_action() {
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			Arc::new(StubPlatform::default()),
-			host_config,
-			product,
-			test_spawner(),
-			Arc::new(RecordingSink::default()),
-		);
-
-		assert!(matches!(
-			runtime.control().publish_renderer_action(v01::HostRendererActionSubscribeItem {
-				context: v01::RenderContext::PocketCard { card_id: "card".into() },
-				action_id: "vote".into(),
-				payload: vec![],
-			}),
-			Err(ProductRuntimeError::Denied)
-		));
-	}
-
-	#[test]
-	fn app_connection_rejects_publishing_a_chat_action() {
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			Arc::new(StubPlatform::default()),
-			host_config,
-			product,
-			test_spawner(),
-			Arc::new(RecordingSink::default()),
-		);
-
-		assert!(matches!(
-			runtime.control().publish_chat_action(v01::HostChatActionSubscribeItem {
-				room_id: "support".into(),
-				peer: "myapp.dot".into(),
-				payload: v01::ChatActionPayload::ActionTriggered(v01::ActionTrigger {
-					message_id: "message".into(),
-					action_id: "vote".into(),
-					payload: None,
-				}),
-			}),
-			Err(ProductRuntimeError::Denied)
-		));
-	}
-
-	#[test]
-	fn generated_filter_denies_chat_request_on_app_connection() {
-		let sink = Arc::new(RecordingSink::default());
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			Arc::new(StubPlatform::default()),
-			host_config,
-			product,
-			test_spawner(),
-			sink.clone(),
-		);
-		let ids = crate::frame::request_ids("chat_create_room").expect("known Chat request");
-		let request = v01::HostChatCreateRoomRequest {
-			room_id: "room".into(),
-			name: "Room".into(),
-			icon: String::new(),
-		};
-		let value = truapi::versioned::chat::HostChatCreateRoomRequest::V1(request).encode();
-		let frame = ProtocolMessage {
-			request_id: "chat:1".into(),
-			payload: Payload {
-				trait_id: ids.trait_id,
-				method_id: ids.method_id,
-				message_type: crate::frame::MESSAGE_TYPE_REQUEST,
-				value,
-			},
-		};
-
-		futures::executor::block_on(runtime.receive_frame(frame.encode())).unwrap();
-
-		let frames = sink.frames.lock().unwrap();
-		assert_eq!(frames.len(), 1);
-		let response = ProtocolMessage::decode(&mut frames[0].as_slice()).unwrap();
-		assert_eq!(response.payload.trait_id, ids.trait_id);
-		assert_eq!(response.payload.method_id, ids.method_id);
-		assert_eq!(response.payload.message_type, crate::frame::MESSAGE_TYPE_RESPONSE);
-		let expected: Result<
-			truapi::versioned::chat::HostChatCreateRoomResponse,
-			truapi::CallError<truapi::versioned::chat::HostChatCreateRoomError>,
-		> = Err(truapi::CallError::Denied);
-		assert_eq!(response.payload.value, expected.encode());
-	}
-
-	#[test]
-	fn generated_filter_denies_chat_register_bot_on_app_connection() {
-		let sink = Arc::new(RecordingSink::default());
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			Arc::new(StubPlatform::default()),
-			host_config,
-			product,
-			test_spawner(),
-			sink.clone(),
-		);
-		let ids = crate::frame::request_ids("chat_register_bot").expect("known Chat request");
-		let request = v01::HostChatRegisterBotRequest {
-			bot_id: "bot".into(),
-			name: "Bot".into(),
-			icon: String::new(),
-		};
-		let value = truapi::versioned::chat::HostChatRegisterBotRequest::V1(request).encode();
-		let frame = ProtocolMessage {
-			request_id: "chat:bot".into(),
-			payload: Payload {
-				trait_id: ids.trait_id,
-				method_id: ids.method_id,
-				message_type: crate::frame::MESSAGE_TYPE_REQUEST,
-				value,
-			},
-		};
-
-		futures::executor::block_on(runtime.receive_frame(frame.encode())).unwrap();
-
-		let frames = sink.frames.lock().unwrap();
-		assert_eq!(frames.len(), 1);
-		let response = ProtocolMessage::decode(&mut frames[0].as_slice()).unwrap();
-		assert_eq!(response.payload.trait_id, ids.trait_id);
-		assert_eq!(response.payload.method_id, ids.method_id);
-		assert_eq!(response.payload.message_type, crate::frame::MESSAGE_TYPE_RESPONSE);
-		let expected: Result<
-			truapi::versioned::chat::HostChatRegisterBotResponse,
-			truapi::CallError<truapi::versioned::chat::HostChatRegisterBotError>,
-		> = Err(truapi::CallError::Denied);
-		assert_eq!(response.payload.value, expected.encode());
-	}
-
-	#[test]
-	fn generated_filter_denies_chat_subscription_on_app_connection() {
-		let sink = Arc::new(RecordingSink::default());
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			Arc::new(StubPlatform::default()),
-			host_config,
-			product,
-			test_spawner(),
-			sink.clone(),
-		);
-		let ids = subscription_ids("chat_action_subscribe").expect("known Chat subscription");
-		let frame = ProtocolMessage {
-			request_id: "chat:actions".into(),
-			payload: Payload {
-				trait_id: ids.trait_id,
-				method_id: ids.method_id,
-				message_type: crate::frame::MESSAGE_TYPE_START,
-				value: truapi::versioned::chat::HostChatActionSubscribeRequest::V1.encode(),
-			},
-		};
-
-		futures::executor::block_on(runtime.receive_frame(frame.encode())).unwrap();
-
-		let frames = sink.frames.lock().unwrap();
-		assert_eq!(frames.len(), 1);
-		let response = ProtocolMessage::decode(&mut frames[0].as_slice()).unwrap();
-		assert_eq!(response.request_id, "chat:actions");
-		assert_eq!(response.payload.trait_id, ids.trait_id);
-		assert_eq!(response.payload.method_id, ids.method_id);
-		assert_eq!(response.payload.message_type, crate::frame::MESSAGE_TYPE_INTERRUPT);
-		let expected = Some(truapi::CallError::<truapi::latest::GenericError>::Denied).encode();
-		assert_eq!(response.payload.value, expected);
-	}
-
-	// The debug tap deliberately blocks to expose the registration race reliably.
-	#[test]
-	fn a_dispatch_racing_dispose_does_not_reach_the_platform() {
-		struct ParkingDebugSink {
-			entered: std::sync::mpsc::SyncSender<()>,
-			release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
-		}
-
-		impl DebugSink for ParkingDebugSink {
-			fn emit(&self, _event: DebugEvent) {
-				let _ = self.entered.try_send(());
-				if let Some(release) =
-					self.release.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take()
-				{
-					let _ = release.recv();
-				}
-			}
-		}
-
-		let navigations = Arc::new(Mutex::new(Vec::new()));
-		let platform =
-			Arc::new(StubPlatform { navigations: navigations.clone(), ..Default::default() });
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = Arc::new(ProductRuntime::from_platform_with_config(
-			platform,
-			host_config,
-			product,
-			test_spawner(),
-			Arc::new(RecordingSink::default()),
-		));
-
-		let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel::<()>(1);
-		let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
-		runtime.set_debug_sink(
-			ChannelId("race".to_string()),
-			Arc::new(ParkingDebugSink {
-				entered: entered_tx,
-				release: Mutex::new(Some(release_rx)),
-			}),
-		);
-
-		let ids = request_ids("system_navigate_to").expect("known request method");
-		let frame = ProtocolMessage {
-			request_id: "nav:1".to_string(),
-			payload: Payload {
-				trait_id: ids.trait_id,
-				method_id: ids.method_id,
-				message_type: crate::frame::MESSAGE_TYPE_REQUEST,
-				value: truapi::versioned::system::HostNavigateToRequest::V1(
-					v01::HostNavigateToRequest { url: "https://example.invalid/".to_string() },
-				)
-				.encode(),
-			},
-		}
-		.encode();
-
-		let dispatching = {
-			let runtime = runtime.clone();
-			std::thread::spawn(move || {
-				futures::executor::block_on(runtime.receive_frame(frame)).expect("receive frame");
-			})
-		};
-
-		entered_rx
-			.recv_timeout(std::time::Duration::from_secs(5))
-			.expect("frame never reached the debug tap");
-		runtime.dispose();
-		let _ = release_tx.send(());
-		dispatching.join().expect("dispatch thread panicked");
-
-		assert!(
-			navigations.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).is_empty(),
-			"a dispatch that lost the race with dispose still reached the platform"
-		);
-	}
-
-	#[test]
-	fn dispose_releases_the_demand_open_operations_hold() {
-		let platform = Arc::new(StubPlatform::default());
-		let sink = Arc::new(RecordingSink::default());
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			platform,
-			host_config,
-			product,
-			test_spawner(),
-			sink,
-		);
-		let host = runtime.admin.product_runtime().clone();
-
-		futures::executor::block_on(truapi::api::Worker::begin_operation(
-			host.as_ref(),
-			&truapi::CallContext::default(),
-			truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-				truapi::latest::HostWorkerBeginOperationRequest { label: None },
-			),
-		))
-		.expect("begin operation");
-		assert_eq!(
-			host.connection()
-				.services()
-				.worker_ledger
-				.count(&ProductId::for_test("myapp.dot")),
-			1
-		);
-
-		runtime.dispose();
-
-		assert_eq!(
-			host.connection()
-				.services()
-				.worker_ledger
-				.count(&ProductId::for_test("myapp.dot")),
-			0,
-			"disposing a connection drops the demand its open operations held"
-		);
-	}
-
-	#[test]
-	fn dispose_ends_the_operations_the_host_is_still_holding() {
-		let platform = Arc::new(StubPlatform::default());
-		let sink = Arc::new(RecordingSink::default());
-		let (host_config, product) = runtime_config("myapp.dot");
-		let runtime = ProductRuntime::from_platform_with_config(
-			platform.clone(),
-			host_config,
-			product,
-			test_spawner(),
-			sink,
-		);
-		let host = runtime.admin.product_runtime().clone();
-
-		futures::executor::block_on(truapi::api::Worker::begin_operation(
-			host.as_ref(),
-			&truapi::CallContext::default(),
-			truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-				truapi::latest::HostWorkerBeginOperationRequest { label: None },
-			),
-		))
-		.expect("begin operation");
-
-		runtime.dispose();
-
-		let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-		loop {
-			let ended = platform
-				.ended_operations
-				.lock()
-				.expect("ended operations mutex poisoned")
-				.clone();
-			if ended == vec![(ProductId::for_test("myapp.dot"), 1)] {
-				break;
-			}
-			assert!(
-				std::time::Instant::now() < deadline,
-				"the host's own record of the operation is closed, not left to \
+    use super::*;
+    use crate::frame::{Payload, ProtocolMessage, request_ids, subscription_ids};
+    use crate::host_internal::sso_messages::{
+        RemoteMessage, RemoteMessageData, decode_incoming_sso_request, v1,
+    };
+    use crate::host_logic::product_account::derive_identity_keypair;
+    use crate::host_logic::sso::pairing::{
+        PairingBootstrap, derive_x25519_keypair_from_entropy, establish_sso_session_info,
+        x25519_public_key,
+    };
+    use crate::host_logic::worker::WorkerTransition;
+    use crate::test_support::{StubPlatform, runtime_config, test_spawner, wait_until};
+    use parity_scale_codec::Encode;
+    use std::sync::atomic::Ordering;
+    use truapi::api::Permissions;
+    use truapi::latest::{RemotePermission, RemotePermissionRequest, RemotePermissionResponse};
+    use truapi::versioned::permissions;
+
+    #[derive(Default)]
+    struct RecordingSink {
+        frames: Mutex<Vec<Vec<u8>>>,
+    }
+
+    impl FrameSink for RecordingSink {
+        fn emit_frame(&self, frame: Vec<u8>) {
+            self.frames
+                .lock()
+                .expect("recording sink mutex poisoned")
+                .push(frame);
+        }
+    }
+
+    fn activated_signing_runtime(platform: Arc<StubPlatform>) -> SigningHostRuntime {
+        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
+
+        let config = SigningHostConfig::new(
+            HostInfo {
+                name: "Polkadot Mobile".to_string(),
+                icon: None,
+                version: None,
+                platform: truapi::latest::HostPlatform::Unknown,
+            },
+            PlatformInfo::default(),
+            [0; 32],
+            [0xbb; 32],
+            // Distinct from its siblings so a transposition stays visible.
+            [0xcc; 32],
+            "testnet".to_string(),
+        )
+        .expect("signing host config is valid");
+        let runtime = SigningHostRuntime::new(platform, config, test_spawner());
+        futures::executor::block_on(runtime.activate_local_session(vec![0xab; 32]))
+            .expect("activation succeeds");
+        runtime
+    }
+
+    /// Install `session` once the boot reconcile has reported the empty
+    /// session store, so its clear cannot land on top of the session.
+    fn install_session_after_boot(
+        runtime: &PairingHostRuntime,
+        platform: &StubPlatform,
+        session: crate::host_logic::session::SessionInfo,
+    ) {
+        wait_until(
+            || {
+                !platform
+                    .auth_states
+                    .lock()
+                    .expect("auth state list mutex poisoned")
+                    .is_empty()
+            },
+            "the boot reconcile did not report the empty session store",
+        );
+        runtime.pairing_host.session_state().set_session(session);
+    }
+
+    fn assert_send<T: Send>(_: T) {}
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    fn network_permission(domains: &[&str]) -> RemotePermissionRequest {
+        RemotePermissionRequest {
+            permission: RemotePermission::Remote {
+                domains: domains.iter().map(|domain| domain.to_string()).collect(),
+            },
+        }
+    }
+
+    #[test]
+    fn network_access_reuses_product_grants_and_prompts_only_for_new_domains() {
+        futures::executor::block_on(async {
+            let platform = Arc::new(StubPlatform::default());
+            let (config, _) = runtime_config("fetch.dot");
+            let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
+            let admin = runtime.product_admin(product_context("fetch.dot").unwrap());
+            let cx = CallContext::default();
+            let request = network_permission(&["api.example.com"]);
+            let granted = admin
+                .product_runtime
+                .request_remote_permission(
+                    &cx,
+                    permissions::RemotePermissionRequest::V1(request.clone()),
+                )
+                .await
+                .unwrap();
+            let mut decisions = Vec::new();
+            for domain in ["API.EXAMPLE.COM.", "api.example.com", "Bücher.example"] {
+                decisions.push(
+                    admin
+                        .product_runtime
+                        .authorize_remote_permission(
+                            &cx,
+                            permissions::RemotePermissionRequest::V1(network_permission(&[domain])),
+                        )
+                        .await
+                        .unwrap(),
+                );
+            }
+            let saved = admin
+                .permission_authorization_status(PermissionAuthorizationRequest::Remote(
+                    network_permission(&["xn--bcher-kva.example"]),
+                ))
+                .await
+                .unwrap();
+            let prompted = platform.remote_permission_requests.lock().unwrap().clone();
+            let allowed = permissions::RemotePermissionResponse::V1(RemotePermissionResponse {
+                granted: true,
+            });
+            assert_eq!(
+                (granted, decisions, saved, prompted),
+                (
+                    allowed.clone(),
+                    vec![allowed; 3],
+                    PermissionAuthorizationStatus::Authorized,
+                    vec![request, network_permission(&["Bücher.example"])],
+                )
+            );
+        });
+    }
+
+    #[test]
+    fn remote_authorization_frames_consume_one_use_grants() {
+        use crate::platform::PermissionDecision;
+        use truapi::CallError;
+
+        futures::executor::block_on(async {
+            for request_upfront in [false, true] {
+                let platform = Arc::new(StubPlatform {
+                    remote_permission_denied: true,
+                    remote_permission_decisions: Mutex::new([PermissionDecision::AllowOnce].into()),
+                    ..Default::default()
+                });
+                let sink = Arc::new(RecordingSink::default());
+                let (config, product) = runtime_config("fetch.dot");
+                let runtime = ProductRuntime::from_platform_with_config(
+                    platform.clone(),
+                    config,
+                    product,
+                    test_spawner(),
+                    sink.clone(),
+                );
+                let permission = network_permission(&["api.example.com"]);
+                let request = permissions::RemotePermissionRequest::V1(permission.clone()).encode();
+                let response = |granted| {
+                    Ok::<_, CallError<permissions::RemotePermissionError>>(
+                        permissions::RemotePermissionResponse::V1(RemotePermissionResponse {
+                            granted,
+                        }),
+                    )
+                    .encode()
+                };
+                let mut requests = Vec::new();
+                if request_upfront {
+                    requests.push(("permissions_request_remote_permission", true));
+                }
+                requests.extend([
+                    ("permissions_authorize_remote_permission", true),
+                    ("permissions_authorize_remote_permission", false),
+                ]);
+                let mut expected = Vec::new();
+                for (index, (method, granted)) in requests.into_iter().enumerate() {
+                    let ids = crate::frame::request_ids(method).expect("known permission request");
+                    let mut frame = ProtocolMessage {
+                        request_id: format!("permission:{index}"),
+                        payload: Payload {
+                            trait_id: ids.trait_id,
+                            method_id: ids.method_id,
+                            message_type: crate::frame::MESSAGE_TYPE_REQUEST,
+                            value: request.clone(),
+                        },
+                    };
+                    runtime.receive_frame(frame.encode()).await.unwrap();
+                    frame.payload.message_type = crate::frame::MESSAGE_TYPE_RESPONSE;
+                    frame.payload.value = response(granted);
+                    expected.push(frame.encode());
+                }
+                assert_eq!(
+                    (
+                        sink.frames.lock().unwrap().clone(),
+                        platform.remote_permission_requests.lock().unwrap().clone(),
+                    ),
+                    (expected, vec![permission.clone(), permission]),
+                    "request_upfront={request_upfront}",
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn network_access_honors_wildcard_precedence_revocation_and_product_isolation() {
+        futures::executor::block_on(async {
+            let platform = Arc::new(StubPlatform {
+                remote_permission_denied: true,
+                ..Default::default()
+            });
+            let (config, _) = runtime_config("fetch.dot");
+            let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
+            let admin = runtime.product_admin(product_context("fetch.dot").unwrap());
+            let cx = CallContext::default();
+            admin
+                .set_permission_authorization_status(
+                    PermissionAuthorizationRequest::Remote(network_permission(&["*.example.com"])),
+                    PermissionAuthorizationStatus::Authorized,
+                )
+                .await
+                .unwrap();
+            let mut decisions = Vec::new();
+            for domain in ["api.example.com", "deep.api.example.com", "example.com"] {
+                decisions.push(
+                    admin
+                        .product_runtime
+                        .authorize_remote_permission(
+                            &cx,
+                            permissions::RemotePermissionRequest::V1(network_permission(&[domain])),
+                        )
+                        .await
+                        .unwrap(),
+                );
+            }
+            admin
+                .set_permission_authorization_status(
+                    PermissionAuthorizationRequest::Remote(network_permission(&[
+                        "api.example.com",
+                    ])),
+                    PermissionAuthorizationStatus::Denied,
+                )
+                .await
+                .unwrap();
+            for domain in ["api.example.com", "other.example.com"] {
+                decisions.push(
+                    admin
+                        .product_runtime
+                        .authorize_remote_permission(
+                            &cx,
+                            permissions::RemotePermissionRequest::V1(network_permission(&[domain])),
+                        )
+                        .await
+                        .unwrap(),
+                );
+            }
+            let other = runtime.product_admin(product_context("other.dot").unwrap());
+            for _ in 0..2 {
+                decisions.push(
+                    other
+                        .product_runtime
+                        .authorize_remote_permission(
+                            &cx,
+                            permissions::RemotePermissionRequest::V1(network_permission(&[
+                                "other.example.com",
+                            ])),
+                        )
+                        .await
+                        .unwrap(),
+                );
+            }
+            assert_eq!(
+                (
+                    decisions,
+                    platform.remote_permission_requests.lock().unwrap().clone(),
+                ),
+                (
+                    [true, true, false, false, true, false, false]
+                        .map(|granted| permissions::RemotePermissionResponse::V1(
+                            RemotePermissionResponse { granted }
+                        ))
+                        .to_vec(),
+                    vec![
+                        network_permission(&["example.com"]),
+                        network_permission(&["other.example.com"]),
+                    ],
+                )
+            );
+        });
+    }
+
+    #[test]
+    fn network_access_trusted_products_honor_recorded_denials() {
+        futures::executor::block_on(async {
+            let platform = Arc::new(StubPlatform::default());
+            let (config, _) = runtime_config("peopl.dot");
+            let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
+            let admin = runtime.product_admin(product_context("peopl.dot").unwrap());
+            let cx = CallContext::default();
+            let request = network_permission(&["api.example.com"]);
+            let allowed = admin
+                .product_runtime
+                .authorize_remote_permission(
+                    &cx,
+                    permissions::RemotePermissionRequest::V1(request.clone()),
+                )
+                .await
+                .unwrap();
+            admin
+                .set_permission_authorization_status(
+                    PermissionAuthorizationRequest::Remote(request.clone()),
+                    PermissionAuthorizationStatus::Denied,
+                )
+                .await
+                .unwrap();
+            let after_denial = admin
+                .product_runtime
+                .authorize_remote_permission(&cx, permissions::RemotePermissionRequest::V1(request))
+                .await
+                .unwrap();
+            assert_eq!(
+                (
+                    allowed,
+                    after_denial,
+                    platform.remote_permission_requests.lock().unwrap().clone(),
+                ),
+                (
+                    permissions::RemotePermissionResponse::V1(RemotePermissionResponse {
+                        granted: true
+                    }),
+                    permissions::RemotePermissionResponse::V1(RemotePermissionResponse {
+                        granted: false
+                    }),
+                    vec![],
+                )
+            );
+        });
+    }
+
+    #[test]
+    fn a_cached_subtree_answers_without_reaching_the_wallet() {
+        let platform = Arc::new(StubPlatform::default());
+        let (host_config, _) = runtime_config("myapp.dot");
+        let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
+        let session = crate::test_support::sso_session_info();
+        install_session_after_boot(&runtime, &platform, session.clone());
+        runtime
+            .pairing_host
+            .cache_product_subtree_for_test(&session, "myapp.dot", [9; 32]);
+
+        let key =
+            futures::executor::block_on(runtime.product_subtree_public_key("myapp.dot", Some(1)))
+                .expect("a cached subtree resolves");
+        assert_eq!(key, Some([9; 32]));
+
+        // The cache comes before the wallet. A one-millisecond deadline means
+        // anything that reached for the wallet here would time out instead of
+        // answering, and no statement-store traffic says it did not try.
+        assert!(
+            platform
+                .sent_rpc
+                .lock()
+                .expect("rpc list mutex poisoned")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_timeout_bounds_the_wait_for_the_account_holder() {
+        let platform = Arc::new(StubPlatform::default());
+        let (host_config, _) = runtime_config("myapp.dot");
+        let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
+        install_session_after_boot(&runtime, &platform, crate::test_support::sso_session_info());
+
+        // Nothing answers the wallet request, and wait_for_sso_remote_response exits
+        // only on a peer answer, a disconnect, or the caller's token. Without
+        // the timeout cancelling that token the call never returns, so this
+        // test would hang rather than fail.
+        let error =
+            futures::executor::block_on(runtime.product_subtree_public_key("myapp.dot", Some(1)))
+                .expect_err("an unanswered wallet request ends at its deadline");
+        assert!(
+            error.reason.contains("timed out"),
+            "expected a timeout, got {}",
+            error.reason
+        );
+    }
+
+    #[test]
+    fn product_runtime_and_dispatch_future_are_send() {
+        assert_send_sync::<ProductRuntime>();
+        let (host_config, product) = runtime_config("myapp.dot");
+        let runtime = ProductRuntime::from_platform_with_config(
+            Arc::new(StubPlatform::default()),
+            host_config,
+            product,
+            test_spawner(),
+            Arc::new(RecordingSink::default()),
+        );
+
+        assert_send(runtime.receive_frame(Vec::new()));
+    }
+
+    #[derive(Default)]
+    struct RecordingDebugSink {
+        events: Mutex<Vec<(ChannelId, FrameDirection, Vec<u8>)>>,
+    }
+
+    impl DebugSink for RecordingDebugSink {
+        fn emit(&self, event: DebugEvent) {
+            match event {
+                DebugEvent::Frame {
+                    channel_id,
+                    dir,
+                    bytes,
+                } => self
+                    .events
+                    .lock()
+                    .expect("debug events mutex poisoned")
+                    .push((channel_id, dir, bytes)),
+            }
+        }
+    }
+
+    #[test]
+    fn debug_sink_taps_frames_in_both_directions() {
+        let platform = Arc::new(StubPlatform::default());
+        let sink = Arc::new(RecordingSink::default());
+        let debug = Arc::new(RecordingDebugSink::default());
+        let (host_config, product) = runtime_config("myapp.dot");
+        let runtime = ProductRuntime::from_platform_with_config(
+            platform,
+            host_config,
+            product,
+            test_spawner(),
+            sink.clone(),
+        );
+        runtime.set_debug_sink(ChannelId("myapp.dot".to_string()), debug.clone());
+
+        let ids = subscription_ids("theme_subscribe").expect("known subscription");
+        let frame = ProtocolMessage {
+            request_id: "theme:1".to_string(),
+            payload: Payload {
+                trait_id: ids.trait_id,
+                method_id: ids.method_id,
+                message_type: crate::frame::MESSAGE_TYPE_START,
+                value: truapi::versioned::theme::HostThemeSubscribeRequest::V1.encode(),
+            },
+        };
+        let raw = frame.encode();
+        futures::executor::block_on(runtime.receive_frame(raw.clone())).unwrap();
+
+        // The subscription's first item is emitted asynchronously; wait for it,
+        // then let the tap (which runs right after delivery in `send`) settle.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while sink
+            .frames
+            .lock()
+            .expect("recording sink mutex poisoned")
+            .is_empty()
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        // Snapshot into owned vecs (never hold a lock across an assertion).
+        let (inbound, outbound, channels): (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<ChannelId>) = {
+            let events = debug.events.lock().expect("debug events mutex poisoned");
+            (
+                events
+                    .iter()
+                    .filter(|(_, dir, _)| *dir == FrameDirection::In)
+                    .map(|(_, _, bytes)| bytes.clone())
+                    .collect(),
+                events
+                    .iter()
+                    .filter(|(_, dir, _)| *dir == FrameDirection::Out)
+                    .map(|(_, _, bytes)| bytes.clone())
+                    .collect(),
+                events.iter().map(|(cid, _, _)| cid.clone()).collect(),
+            )
+        };
+        let delivered = sink
+            .frames
+            .lock()
+            .expect("recording sink mutex poisoned")
+            .clone();
+
+        // Every event carries the installed channel id.
+        assert!(
+            channels
+                .iter()
+                .all(|c| *c == ChannelId("myapp.dot".to_string())),
+            "every event carries its channel id"
+        );
+        // Inbound tapped once, untouched, before decode.
+        assert_eq!(
+            inbound,
+            vec![raw],
+            "inbound frame tapped exactly once, untouched"
+        );
+        // Both directions fire, and every delivered outbound frame is tapped in
+        // order: the tap is in the path, not a fabricated side channel.
+        assert!(
+            !outbound.is_empty(),
+            "at least one outbound frame is tapped"
+        );
+        assert_eq!(
+            outbound, delivered,
+            "every delivered outbound frame is tapped, in order"
+        );
+    }
+
+    /// A sink whose `Drop` panics. `emit` is a no-op: the point is the destructor,
+    /// which `set_debug_sink` runs when it replaces this sink.
+    struct PanicOnDropSink;
+
+    impl DebugSink for PanicOnDropSink {
+        fn emit(&self, _event: DebugEvent) {}
+    }
+
+    impl Drop for PanicOnDropSink {
+        fn drop(&mut self) {
+            panic!("out-of-repo sink destructor");
+        }
+    }
+
+    /// Records how many frames the transport had already delivered at the moment
+    /// each outbound tap fired, which is what pins the deliver-THEN-tap ordering.
+    struct DeliveryOrderSink {
+        transport: Arc<RecordingSink>,
+        delivered_at_tap: Mutex<Vec<usize>>,
+    }
+
+    impl DebugSink for DeliveryOrderSink {
+        fn emit(&self, event: DebugEvent) {
+            let DebugEvent::Frame { dir, .. } = event;
+            if dir != FrameDirection::Out {
+                return;
+            }
+            let delivered = self
+                .transport
+                .frames
+                .lock()
+                .expect("recording sink mutex poisoned")
+                .len();
+            self.delivered_at_tap
+                .lock()
+                .expect("delivery order mutex poisoned")
+                .push(delivered);
+        }
+    }
+
+    #[test]
+    fn a_panicking_sink_destructor_does_not_poison_the_tap_for_later_frames() {
+        // `set_debug_sink` takes the previous sink out under the lock and drops it
+        // after releasing. If it dropped in place instead, this destructor's unwind
+        // would poison the debug mutex and - before the recovery below it - every
+        // subsequent frame would panic on that lock, killing a live host over a
+        // third-party sink's `Drop`. Both properties are asserted: the unwind
+        // surfaces to whoever INSTALLS a sink, and the tap keeps working after.
+        //
+        // This pins the two fixes as a PAIR, not individually: reverting only the
+        // drop-outside-the-guard change leaves the poison recovery to absorb it, and
+        // reverting only the recovery leaves no poisoner to trip it. Restoring both
+        // (the original code) fails here on the poisoned lock, which is the
+        // production shape being guarded against.
+        let platform = Arc::new(StubPlatform::default());
+        let transport = Arc::new(RecordingSink::default());
+        let (host_config, product) = runtime_config("myapp.dot");
+        let runtime = ProductRuntime::from_platform_with_config(
+            platform,
+            host_config,
+            product,
+            test_spawner(),
+            transport,
+        );
+        let channel = ChannelId("myapp.dot".to_string());
+        runtime.set_debug_sink(channel.clone(), Arc::new(PanicOnDropSink));
+
+        // Replacing it drops the panicking sink. The unwind lands HERE, on the
+        // installer, not on a later frame.
+        let replaced = Arc::new(RecordingDebugSink::default());
+        let installed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runtime.set_debug_sink(channel.clone(), replaced.clone());
+        }));
+        assert!(
+            installed.is_err(),
+            "the destructor's panic should surface to the installer"
+        );
+
+        // The mutex must not be poisoned: the new sink is reachable and taps.
+        let ids = subscription_ids("theme_subscribe").expect("known subscription");
+        let frame = ProtocolMessage {
+            request_id: "theme:1".to_string(),
+            payload: Payload {
+                trait_id: ids.trait_id,
+                method_id: ids.method_id,
+                message_type: crate::frame::MESSAGE_TYPE_START,
+                value: truapi::versioned::theme::HostThemeSubscribeRequest::V1.encode(),
+            },
+        };
+        futures::executor::block_on(runtime.receive_frame(frame.encode())).unwrap();
+        let tapped = replaced
+            .events
+            .lock()
+            .expect("debug events mutex poisoned")
+            .len();
+        assert!(
+            tapped > 0,
+            "the replacement sink should still receive frames after the panic"
+        );
+    }
+
+    /// The inbound tap runs BEFORE decode, so a frame the codec rejects is still
+    /// observed. Asserting a well-formed frame reaches the sink cannot see this -
+    /// it arrives either way. Only an undecodable frame can: the call must fail AND
+    /// the sink must still hold those exact bytes.
+    #[test]
+    fn a_corrupt_inbound_frame_is_tapped_even_though_decode_rejects_it() {
+        let platform = Arc::new(StubPlatform::default());
+        let transport = Arc::new(RecordingSink::default());
+        let (host_config, product) = runtime_config("myapp.dot");
+        let runtime = ProductRuntime::from_platform_with_config(
+            platform,
+            host_config,
+            product,
+            test_spawner(),
+            transport,
+        );
+        let debug = Arc::new(RecordingDebugSink::default());
+        runtime.set_debug_sink(ChannelId("myapp.dot".to_string()), debug.clone());
+
+        // Not a `ProtocolMessage`: the leading compact length claims far more
+        // bytes than follow, so decode fails before any field is read.
+        let corrupt = vec![0xff, 0xff, 0xff, 0xff];
+        let outcome = futures::executor::block_on(runtime.receive_frame(corrupt.clone()));
+        assert!(
+            matches!(outcome, Err(ProductRuntimeError::InvalidFrame { .. })),
+            "expected decode to reject the frame, got {outcome:?}"
+        );
+
+        let events = debug.events.lock().expect("debug events mutex poisoned");
+        assert_eq!(
+            events.len(),
+            1,
+            "a frame rejected by decode must still be tapped"
+        );
+        assert_eq!(events[0].1, FrameDirection::In);
+        assert_eq!(
+            events[0].2, corrupt,
+            "the tap must carry the original bytes, not a decoded form"
+        );
+    }
+
+    /// A sink whose destructor panics must not unwind the FRAME path.
+    ///
+    /// `set_debug_sink` drops the previous sink outside the lock, which covers the
+    /// case where the installer holds the last reference. It does not cover this
+    /// one: the frame path clones its own `Arc` before tapping, so if the sink is
+    /// replaced while that tap is in flight, the frame path holds the last
+    /// reference and runs the destructor itself. `emit_debug` takes the clone by
+    /// value so that drop lands inside its `catch_unwind`; with `&dyn DebugSink`
+    /// the clone instead dies at the caller's scope end, outside the guard, and
+    /// unwinds a live dispatch.
+    #[test]
+    fn a_panicking_sink_destructor_does_not_unwind_the_frame_path() {
+        /// Blocks inside `emit` until the installer has released its reference, so
+        /// the frame path is provably the one that drops this sink.
+        struct HandoffSink {
+            tapped: std::sync::mpsc::SyncSender<()>,
+            release: Mutex<std::sync::mpsc::Receiver<()>>,
+        }
+        impl DebugSink for HandoffSink {
+            fn emit(&self, _event: DebugEvent) {
+                let _ = self.tapped.send(());
+                let _ = self
+                    .release
+                    .lock()
+                    .expect("release receiver poisoned")
+                    .recv();
+            }
+        }
+        impl Drop for HandoffSink {
+            fn drop(&mut self) {
+                panic!("out-of-repo sink destructor");
+            }
+        }
+
+        let platform = Arc::new(StubPlatform::default());
+        let transport = Arc::new(RecordingSink::default());
+        let (host_config, product) = runtime_config("myapp.dot");
+        let runtime = Arc::new(ProductRuntime::from_platform_with_config(
+            platform,
+            host_config,
+            product,
+            test_spawner(),
+            transport,
+        ));
+        let channel = ChannelId("myapp.dot".to_string());
+
+        let (tapped_tx, tapped_rx) = std::sync::mpsc::sync_channel(1);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+        runtime.set_debug_sink(
+            channel.clone(),
+            Arc::new(HandoffSink {
+                tapped: tapped_tx,
+                release: Mutex::new(release_rx),
+            }),
+        );
+
+        let ids = subscription_ids("theme_subscribe").expect("known subscription");
+        let frame = ProtocolMessage {
+            request_id: "theme:1".to_string(),
+            payload: Payload {
+                trait_id: ids.trait_id,
+                method_id: ids.method_id,
+                message_type: crate::frame::MESSAGE_TYPE_START,
+                value: truapi::versioned::theme::HostThemeSubscribeRequest::V1.encode(),
+            },
+        };
+        let encoded = frame.encode();
+        let frame_runtime = Arc::clone(&runtime);
+        let frame_thread = std::thread::spawn(move || {
+            futures::executor::block_on(frame_runtime.receive_frame(encoded))
+        });
+
+        // Wait until the tap is inside `emit`, holding its own clone.
+        tapped_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("tap never fired");
+        // Replace the sink: the installer's reference goes, leaving the frame
+        // path's clone as the last one.
+        runtime.set_debug_sink(channel, Arc::new(RecordingDebugSink::default()));
+        let _ = release_tx.send(());
+
+        let outcome = frame_thread.join();
+        assert!(
+            outcome.is_ok(),
+            "a panicking sink destructor unwound the frame path"
+        );
+    }
+
+    #[test]
+    fn outbound_frames_are_delivered_before_they_are_tapped() {
+        // `send` hands the frame to the transport and taps afterwards, so no sink can
+        // delay or drop THIS frame - it is already delivered. It says nothing about
+        // the next one: `send` returns only after the tap, so a slow sink delays
+        // every subsequent frame (see `DebugSink::emit`). Asserting the two lists
+        // match cannot see the ordering at all - they are order-identical either way.
+        // Counting deliveries AT TAP TIME can: tap N must observe N deliveries, and
+        // tapping first would make it N-1.
+        let platform = Arc::new(StubPlatform::default());
+        let transport = Arc::new(RecordingSink::default());
+        let (host_config, product) = runtime_config("myapp.dot");
+        let runtime = ProductRuntime::from_platform_with_config(
+            platform,
+            host_config,
+            product,
+            test_spawner(),
+            transport.clone(),
+        );
+        let debug = Arc::new(DeliveryOrderSink {
+            transport: transport.clone(),
+            delivered_at_tap: Mutex::new(Vec::new()),
+        });
+        runtime.set_debug_sink(ChannelId("myapp.dot".to_string()), debug.clone());
+
+        let ids = subscription_ids("theme_subscribe").expect("known subscription");
+        let frame = ProtocolMessage {
+            request_id: "theme:1".to_string(),
+            payload: Payload {
+                trait_id: ids.trait_id,
+                method_id: ids.method_id,
+                message_type: crate::frame::MESSAGE_TYPE_START,
+                value: truapi::versioned::theme::HostThemeSubscribeRequest::V1.encode(),
+            },
+        };
+        futures::executor::block_on(runtime.receive_frame(frame.encode())).unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while debug
+            .delivered_at_tap
+            .lock()
+            .expect("delivery order mutex poisoned")
+            .is_empty()
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        let observed = debug
+            .delivered_at_tap
+            .lock()
+            .expect("delivery order mutex poisoned")
+            .clone();
+        assert!(!observed.is_empty(), "expected at least one outbound tap");
+        // Tap i (0-based) must see i+1 frames already delivered.
+        let expected: Vec<usize> = (1..=observed.len()).collect();
+        assert_eq!(
+            observed, expected,
+            "each outbound tap must run after its own frame was delivered"
+        );
+    }
+
+    /// Every profile that ships a host aborts on panic, so [`emit_debug`]'s
+    /// `catch_unwind` cannot fire in a shipping build - which is why
+    /// [`DebugSink::emit`] documents its no-panic rule as caller-enforced. The
+    /// guard still earns its keep everywhere else: `dev` inherits
+    /// `panic = "unwind"` (the workspace defines no `[profile.dev]`), the Makefile
+    /// builds `truapi-host-cli` without `--release`, and a downstream crate may
+    /// compile this one under its own unwinding profile.
+    ///
+    /// No unit test can demonstrate the guard itself - Cargo ignores the `panic`
+    /// setting for test profiles, so a "the guard protected dispatch" assertion
+    /// passes with the guard removed. The premise is what is checkable, and this
+    /// fails if a shipping profile stops aborting, at which point the reasoning on
+    /// `DebugSink::emit` needs revisiting.
+    #[test]
+    fn shipping_profiles_abort_on_panic() {
+        let workspace_manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .expect("crate lives at <workspace>/rust/crates/truapi")
+            .join("Cargo.toml");
+        let manifest = std::fs::read_to_string(&workspace_manifest)
+            .expect("workspace manifest is readable from the crate directory");
+        let release = manifest
+            .split("[profile.release]")
+            .nth(1)
+            .expect("workspace defines [profile.release]")
+            .split("\n[")
+            .next()
+            .expect("release profile section");
+        assert!(
+            release.contains("panic = \"abort\""),
+            "release no longer aborts on panic: revisit DebugSink::emit's contract docs"
+        );
+        assert!(
+            manifest.contains("[profile.codegen]") && manifest.contains("inherits = \"release\""),
+            "codegen no longer inherits release: recheck what the native artifacts build with"
+        );
+    }
+
+    #[test]
+    fn frame_direction_wire_str_is_product_vantage() {
+        // The wire string is product-vantage (what the debugger and design doc
+        // use), the inverse of the enum's host-vantage names: a frame the host
+        // tapped as `In` (product to core) *left the product*, so it serializes
+        // as `"out"`. This pins the convention so a sink can't re-invert it.
+        assert_eq!(FrameDirection::In.wire_str(), "out");
+        assert_eq!(FrameDirection::Out.wire_str(), "in");
+    }
+
+    #[test]
+    fn app_connection_rejects_rendering() {
+        let (host_config, product) = runtime_config("myapp.dot");
+        let runtime = ProductRuntime::from_platform_with_config(
+            Arc::new(StubPlatform::default()),
+            host_config,
+            product,
+            test_spawner(),
+            Arc::new(RecordingSink::default()),
+        );
+
+        assert!(matches!(
+            runtime.control().render(v01::ProductRendererRenderRequest {
+                context: v01::RenderContext::ChatMessage {
+                    room_id: "room".into(),
+                    message_id: "message".into(),
+                    message_type: "vote".into(),
+                },
+                payload: vec![],
+            }),
+            Err(ProductRuntimeError::Denied)
+        ));
+    }
+
+    #[test]
+    fn worker_connection_renders_and_receives_actions_without_a_session() {
+        // Renderer is gated on Worker execution alone, so a signed-out host
+        // still reaches the product.
+        let (host_config, _) = runtime_config("worker.dot");
+        let product = ProductContext::new_with_execution(
+            "worker.dot".to_string(),
+            crate::platform::ProductExecutionKind::Worker,
+        )
+        .expect("worker product context is valid");
+        let runtime = ProductRuntime::from_platform_with_config(
+            Arc::new(StubPlatform::default()),
+            host_config,
+            product,
+            test_spawner(),
+            Arc::new(RecordingSink::default()),
+        );
+        let host = runtime.admin.product_runtime().clone();
+        assert!(
+            host.test_session_state().current().is_none(),
+            "the fixture must be signed out for this test to mean anything"
+        );
+
+        let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
+            host.as_ref(),
+            &CallContext::with_request_id("renderer:1".to_string()),
+            truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
+        ));
+
+        let _render = runtime
+            .control()
+            .render(v01::ProductRendererRenderRequest {
+                context: v01::RenderContext::PocketCard {
+                    card_id: "loyalty".into(),
+                },
+                payload: vec![],
+            })
+            .expect("a signed-out Worker connection may render");
+
+        let published = v01::HostRendererActionSubscribeItem {
+            context: v01::RenderContext::PocketCard {
+                card_id: "loyalty".into(),
+            },
+            action_id: "vote".into(),
+            payload: vec![],
+        };
+        runtime
+            .control()
+            .publish_renderer_action(published.clone())
+            .expect("a signed-out Worker connection may receive actions");
+
+        let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+        let delivered = match actions.poll_next_unpin(&mut cx) {
+            core::task::Poll::Ready(Some(item)) => item,
+            other => panic!("a published renderer action must be ready, got {other:?}"),
+        };
+        let Ok(truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(delivered)) =
+            delivered
+        else {
+            panic!("expected a renderer action item")
+        };
+        assert_eq!(delivered, published);
+    }
+
+    #[test]
+    fn an_open_render_holds_one_worker_reference() {
+        // The core owns the reference: no caller above it acquires or releases.
+        #[derive(Default)]
+        struct RecordingDemand {
+            transitions: Mutex<Vec<(String, WorkerTransition)>>,
+        }
+        impl crate::host_logic::worker::WorkerDemandObserver for RecordingDemand {
+            fn worker_demand_changed(&self, product_id: &str, transition: WorkerTransition) {
+                self.transitions
+                    .lock()
+                    .expect("transition mutex poisoned")
+                    .push((product_id.to_string(), transition));
+            }
+        }
+
+        let (host_config, _) = runtime_config("worker.dot");
+        let product = ProductContext::new_with_execution(
+            "worker.dot".to_string(),
+            crate::platform::ProductExecutionKind::Worker,
+        )
+        .expect("worker product context is valid");
+        let runtime = ProductRuntime::from_platform_with_config(
+            Arc::new(StubPlatform::default()),
+            host_config,
+            product,
+            test_spawner(),
+            Arc::new(RecordingSink::default()),
+        );
+        let services = runtime.admin.product_runtime().services().clone();
+        let demand = Arc::new(RecordingDemand::default());
+        assert!(
+            services
+                .worker_ledger
+                .install_demand_observer(demand.clone()),
+            "the observer installs once"
+        );
+        assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+
+        let render = runtime
+            .control()
+            .render(v01::ProductRendererRenderRequest {
+                context: v01::RenderContext::PocketCard {
+                    card_id: "loyalty".into(),
+                },
+                payload: vec![],
+            })
+            .expect("a Worker connection may render");
+        assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+
+        drop(render);
+        assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+        assert_eq!(
+            demand
+                .transitions
+                .lock()
+                .expect("transition mutex poisoned")
+                .as_slice(),
+            [
+                ("worker.dot".to_string(), WorkerTransition::Start),
+                ("worker.dot".to_string(), WorkerTransition::Stop),
+            ]
+        );
+    }
+
+    /// A signed-out Worker runtime, which may render, and the sink holding the
+    /// start frames its renders send.
+    fn render_runtime() -> (ProductRuntime, Arc<RecordingSink>) {
+        let (host_config, _) = runtime_config("worker.dot");
+        let product = ProductContext::new_with_execution(
+            "worker.dot".to_string(),
+            crate::platform::ProductExecutionKind::Worker,
+        )
+        .expect("worker product context is valid");
+        let sink = Arc::new(RecordingSink::default());
+        let runtime = ProductRuntime::from_platform_with_config(
+            Arc::new(StubPlatform::default()),
+            host_config,
+            product,
+            test_spawner(),
+            sink.clone(),
+        );
+        (runtime, sink)
+    }
+
+    /// Open one render for a Pocket card.
+    fn start_render(
+        runtime: &ProductRuntime,
+        card_id: &str,
+    ) -> truapi::Subscription<v01::RendererNode, truapi::CallError<v01::GenericError>> {
+        runtime
+            .control()
+            .render(v01::ProductRendererRenderRequest {
+                context: v01::RenderContext::PocketCard {
+                    card_id: card_id.to_string(),
+                },
+                payload: vec![],
+            })
+            .expect("a Worker connection may render")
+    }
+
+    /// Request id of the render start frame sent at `index`.
+    fn render_request_id(sink: &RecordingSink, index: usize) -> String {
+        let frames = sink.frames.lock().expect("recording sink mutex poisoned");
+        let frame = frames.get(index).expect("the render sent a start frame");
+        ProtocolMessage::decode(&mut frame.as_slice())
+            .expect("a start frame decodes")
+            .request_id
+    }
+
+    /// Deliver one product frame on the render stream `request_id` names.
+    fn deliver_render_frame(
+        runtime: &ProductRuntime,
+        request_id: &str,
+        message_type: u8,
+        value: Vec<u8>,
+    ) {
+        let ids = subscription_ids("renderer_render").expect("known subscription");
+        let frame = ProtocolMessage {
+            request_id: request_id.to_string(),
+            payload: Payload {
+                trait_id: ids.trait_id,
+                method_id: ids.method_id,
+                message_type,
+                value,
+            },
+        }
+        .encode();
+        futures::executor::block_on(runtime.receive_frame(frame))
+            .expect("the product frame is well formed");
+    }
+
+    /// Poll one render once with a waker that does nothing.
+    fn poll_render(
+        render: &mut truapi::Subscription<v01::RendererNode, truapi::CallError<v01::GenericError>>,
+    ) -> core::task::Poll<Option<Result<v01::RendererNode, truapi::CallError<v01::GenericError>>>>
+    {
+        let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+        render.poll_next_unpin(&mut cx)
+    }
+
+    #[test]
+    fn a_render_the_product_ends_releases_its_worker_reference() {
+        let (runtime, sink) = render_runtime();
+        let services = runtime.admin.product_runtime().services().clone();
+        let mut render = start_render(&runtime, "loyalty");
+        assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+
+        let request_id = render_request_id(&sink, 0);
+        deliver_render_frame(
+            &runtime,
+            &request_id,
+            crate::frame::MESSAGE_TYPE_INTERRUPT,
+            crate::frame::encode_clean_interrupt(),
+        );
+        assert!(matches!(
+            poll_render(&mut render),
+            core::task::Poll::Ready(None)
+        ));
+
+        assert_eq!(
+            services.worker_ledger.count("worker.dot"),
+            0,
+            "an ended stream holds no reference, whether or not the handle lives on"
+        );
+        drop(render);
+        assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+    }
+
+    #[test]
+    fn a_render_the_product_interrupts_releases_its_worker_reference() {
+        let (runtime, sink) = render_runtime();
+        let services = runtime.admin.product_runtime().services().clone();
+        let mut render = start_render(&runtime, "loyalty");
+
+        let request_id = render_request_id(&sink, 0);
+        deliver_render_frame(
+            &runtime,
+            &request_id,
+            crate::frame::MESSAGE_TYPE_INTERRUPT,
+            Result::<(), truapi::CallError<v01::GenericError>>::Err(
+                truapi::CallError::HostFailure {
+                    reason: "the product stopped drawing".to_string(),
+                },
+            )
+            .encode(),
+        );
+        assert!(matches!(
+            poll_render(&mut render),
+            core::task::Poll::Ready(Some(Err(truapi::CallError::HostFailure { .. })))
+        ));
+
+        assert_eq!(
+            services.worker_ledger.count("worker.dot"),
+            0,
+            "an interrupt ends the stream, so the reference goes with it"
+        );
+        drop(render);
+        assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+    }
+
+    #[test]
+    fn a_render_refused_for_a_malformed_tree_releases_its_worker_reference() {
+        let (runtime, sink) = render_runtime();
+        let services = runtime.admin.product_runtime().services().clone();
+        let mut render = start_render(&runtime, "loyalty");
+
+        let request_id = render_request_id(&sink, 0);
+        deliver_render_frame(
+            &runtime,
+            &request_id,
+            crate::frame::MESSAGE_TYPE_RECEIVE,
+            vec![0xff],
+        );
+        assert!(matches!(
+            poll_render(&mut render),
+            core::task::Poll::Ready(Some(Err(truapi::CallError::MalformedFrame { .. })))
+        ));
+
+        assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+        drop(render);
+        assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+    }
+
+    #[test]
+    fn disposing_the_core_releases_an_open_renders_worker_reference() {
+        let (runtime, _sink) = render_runtime();
+        let services = runtime.admin.product_runtime().services().clone();
+        let mut render = start_render(&runtime, "loyalty");
+        assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+
+        runtime.dispose();
+        assert!(matches!(
+            poll_render(&mut render),
+            core::task::Poll::Ready(None)
+        ));
+
+        assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+        drop(render);
+        assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+    }
+
+    #[test]
+    fn one_render_ending_leaves_the_other_renders_worker_reference() {
+        let (runtime, sink) = render_runtime();
+        let services = runtime.admin.product_runtime().services().clone();
+        let mut first = start_render(&runtime, "loyalty");
+        let second = start_render(&runtime, "rewards");
+        assert_eq!(services.worker_ledger.count("worker.dot"), 2);
+
+        let request_id = render_request_id(&sink, 0);
+        deliver_render_frame(
+            &runtime,
+            &request_id,
+            crate::frame::MESSAGE_TYPE_INTERRUPT,
+            crate::frame::encode_clean_interrupt(),
+        );
+        assert!(matches!(
+            poll_render(&mut first),
+            core::task::Poll::Ready(None)
+        ));
+        assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+
+        drop(first);
+        assert_eq!(
+            services.worker_ledger.count("worker.dot"),
+            1,
+            "dropping a stream that already released must not release again"
+        );
+
+        drop(second);
+        assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+    }
+
+    #[test]
+    fn app_connection_rejects_publishing_a_renderer_action() {
+        let (host_config, product) = runtime_config("myapp.dot");
+        let runtime = ProductRuntime::from_platform_with_config(
+            Arc::new(StubPlatform::default()),
+            host_config,
+            product,
+            test_spawner(),
+            Arc::new(RecordingSink::default()),
+        );
+
+        assert!(matches!(
+            runtime
+                .control()
+                .publish_renderer_action(v01::HostRendererActionSubscribeItem {
+                    context: v01::RenderContext::PocketCard {
+                        card_id: "card".into()
+                    },
+                    action_id: "vote".into(),
+                    payload: vec![],
+                }),
+            Err(ProductRuntimeError::Denied)
+        ));
+    }
+
+    #[test]
+    fn app_connection_rejects_publishing_a_chat_action() {
+        let (host_config, product) = runtime_config("myapp.dot");
+        let runtime = ProductRuntime::from_platform_with_config(
+            Arc::new(StubPlatform::default()),
+            host_config,
+            product,
+            test_spawner(),
+            Arc::new(RecordingSink::default()),
+        );
+
+        assert!(matches!(
+            runtime
+                .control()
+                .publish_chat_action(v01::HostChatActionSubscribeItem {
+                    room_id: "support".into(),
+                    peer: "myapp.dot".into(),
+                    payload: v01::ChatActionPayload::ActionTriggered(v01::ActionTrigger {
+                        message_id: "message".into(),
+                        action_id: "vote".into(),
+                        payload: None,
+                    }),
+                }),
+            Err(ProductRuntimeError::Denied)
+        ));
+    }
+
+    #[test]
+    fn generated_filter_denies_chat_request_on_app_connection() {
+        let sink = Arc::new(RecordingSink::default());
+        let (host_config, product) = runtime_config("myapp.dot");
+        let runtime = ProductRuntime::from_platform_with_config(
+            Arc::new(StubPlatform::default()),
+            host_config,
+            product,
+            test_spawner(),
+            sink.clone(),
+        );
+        let ids = crate::frame::request_ids("chat_create_room").expect("known Chat request");
+        let request = v01::HostChatCreateRoomRequest {
+            room_id: "room".into(),
+            name: "Room".into(),
+            icon: String::new(),
+        };
+        let value = truapi::versioned::chat::HostChatCreateRoomRequest::V1(request).encode();
+        let frame = ProtocolMessage {
+            request_id: "chat:1".into(),
+            payload: Payload {
+                trait_id: ids.trait_id,
+                method_id: ids.method_id,
+                message_type: crate::frame::MESSAGE_TYPE_REQUEST,
+                value,
+            },
+        };
+
+        futures::executor::block_on(runtime.receive_frame(frame.encode())).unwrap();
+
+        let frames = sink.frames.lock().unwrap();
+        assert_eq!(frames.len(), 1);
+        let response = ProtocolMessage::decode(&mut frames[0].as_slice()).unwrap();
+        assert_eq!(response.payload.trait_id, ids.trait_id);
+        assert_eq!(response.payload.method_id, ids.method_id);
+        assert_eq!(
+            response.payload.message_type,
+            crate::frame::MESSAGE_TYPE_RESPONSE
+        );
+        let expected: Result<
+            truapi::versioned::chat::HostChatCreateRoomResponse,
+            truapi::CallError<truapi::versioned::chat::HostChatCreateRoomError>,
+        > = Err(truapi::CallError::Denied);
+        assert_eq!(response.payload.value, expected.encode());
+    }
+
+    #[test]
+    fn generated_filter_denies_chat_register_bot_on_app_connection() {
+        let sink = Arc::new(RecordingSink::default());
+        let (host_config, product) = runtime_config("myapp.dot");
+        let runtime = ProductRuntime::from_platform_with_config(
+            Arc::new(StubPlatform::default()),
+            host_config,
+            product,
+            test_spawner(),
+            sink.clone(),
+        );
+        let ids = crate::frame::request_ids("chat_register_bot").expect("known Chat request");
+        let request = v01::HostChatRegisterBotRequest {
+            bot_id: "bot".into(),
+            name: "Bot".into(),
+            icon: String::new(),
+        };
+        let value = truapi::versioned::chat::HostChatRegisterBotRequest::V1(request).encode();
+        let frame = ProtocolMessage {
+            request_id: "chat:bot".into(),
+            payload: Payload {
+                trait_id: ids.trait_id,
+                method_id: ids.method_id,
+                message_type: crate::frame::MESSAGE_TYPE_REQUEST,
+                value,
+            },
+        };
+
+        futures::executor::block_on(runtime.receive_frame(frame.encode())).unwrap();
+
+        let frames = sink.frames.lock().unwrap();
+        assert_eq!(frames.len(), 1);
+        let response = ProtocolMessage::decode(&mut frames[0].as_slice()).unwrap();
+        assert_eq!(response.payload.trait_id, ids.trait_id);
+        assert_eq!(response.payload.method_id, ids.method_id);
+        assert_eq!(
+            response.payload.message_type,
+            crate::frame::MESSAGE_TYPE_RESPONSE
+        );
+        let expected: Result<
+            truapi::versioned::chat::HostChatRegisterBotResponse,
+            truapi::CallError<truapi::versioned::chat::HostChatRegisterBotError>,
+        > = Err(truapi::CallError::Denied);
+        assert_eq!(response.payload.value, expected.encode());
+    }
+
+    #[test]
+    fn generated_filter_denies_chat_subscription_on_app_connection() {
+        let sink = Arc::new(RecordingSink::default());
+        let (host_config, product) = runtime_config("myapp.dot");
+        let runtime = ProductRuntime::from_platform_with_config(
+            Arc::new(StubPlatform::default()),
+            host_config,
+            product,
+            test_spawner(),
+            sink.clone(),
+        );
+        let ids = subscription_ids("chat_action_subscribe").expect("known Chat subscription");
+        let frame = ProtocolMessage {
+            request_id: "chat:actions".into(),
+            payload: Payload {
+                trait_id: ids.trait_id,
+                method_id: ids.method_id,
+                message_type: crate::frame::MESSAGE_TYPE_START,
+                value: truapi::versioned::chat::HostChatActionSubscribeRequest::V1.encode(),
+            },
+        };
+
+        futures::executor::block_on(runtime.receive_frame(frame.encode())).unwrap();
+
+        let frames = sink.frames.lock().unwrap();
+        assert_eq!(frames.len(), 1);
+        let response = ProtocolMessage::decode(&mut frames[0].as_slice()).unwrap();
+        assert_eq!(response.request_id, "chat:actions");
+        assert_eq!(response.payload.trait_id, ids.trait_id);
+        assert_eq!(response.payload.method_id, ids.method_id);
+        assert_eq!(
+            response.payload.message_type,
+            crate::frame::MESSAGE_TYPE_INTERRUPT
+        );
+        let expected = Some(truapi::CallError::<truapi::latest::GenericError>::Denied).encode();
+        assert_eq!(response.payload.value, expected);
+    }
+
+    // The debug tap deliberately blocks to expose the registration race reliably.
+    #[test]
+    fn a_dispatch_racing_dispose_does_not_reach_the_platform() {
+        struct ParkingDebugSink {
+            entered: std::sync::mpsc::SyncSender<()>,
+            release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+        }
+
+        impl DebugSink for ParkingDebugSink {
+            fn emit(&self, _event: DebugEvent) {
+                let _ = self.entered.try_send(());
+                if let Some(release) = self
+                    .release
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take()
+                {
+                    let _ = release.recv();
+                }
+            }
+        }
+
+        let navigations = Arc::new(Mutex::new(Vec::new()));
+        let platform = Arc::new(StubPlatform {
+            navigations: navigations.clone(),
+            ..Default::default()
+        });
+        let (host_config, product) = runtime_config("myapp.dot");
+        let runtime = Arc::new(ProductRuntime::from_platform_with_config(
+            platform,
+            host_config,
+            product,
+            test_spawner(),
+            Arc::new(RecordingSink::default()),
+        ));
+
+        let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel::<()>(1);
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        runtime.set_debug_sink(
+            ChannelId("race".to_string()),
+            Arc::new(ParkingDebugSink {
+                entered: entered_tx,
+                release: Mutex::new(Some(release_rx)),
+            }),
+        );
+
+        let ids = request_ids("system_navigate_to").expect("known request method");
+        let frame = ProtocolMessage {
+            request_id: "nav:1".to_string(),
+            payload: Payload {
+                trait_id: ids.trait_id,
+                method_id: ids.method_id,
+                message_type: crate::frame::MESSAGE_TYPE_REQUEST,
+                value: truapi::versioned::system::HostNavigateToRequest::V1(
+                    v01::HostNavigateToRequest {
+                        url: "https://example.invalid/".to_string(),
+                    },
+                )
+                .encode(),
+            },
+        }
+        .encode();
+
+        let dispatching = {
+            let runtime = runtime.clone();
+            std::thread::spawn(move || {
+                futures::executor::block_on(runtime.receive_frame(frame)).expect("receive frame");
+            })
+        };
+
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("frame never reached the debug tap");
+        runtime.dispose();
+        let _ = release_tx.send(());
+        dispatching.join().expect("dispatch thread panicked");
+
+        assert!(
+            navigations
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .is_empty(),
+            "a dispatch that lost the race with dispose still reached the platform"
+        );
+    }
+
+    #[test]
+    fn dispose_releases_the_demand_open_operations_hold() {
+        let platform = Arc::new(StubPlatform::default());
+        let sink = Arc::new(RecordingSink::default());
+        let (host_config, product) = runtime_config("myapp.dot");
+        let runtime = ProductRuntime::from_platform_with_config(
+            platform,
+            host_config,
+            product,
+            test_spawner(),
+            sink,
+        );
+        let host = runtime.admin.product_runtime().clone();
+
+        futures::executor::block_on(truapi::api::Worker::begin_operation(
+            host.as_ref(),
+            &truapi::CallContext::default(),
+            truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
+                truapi::v01::HostWorkerBeginOperationRequest { label: None },
+            ),
+        ))
+        .expect("begin operation");
+        assert_eq!(host.services().worker_ledger.count("myapp.dot"), 1);
+
+        runtime.dispose();
+
+        // A disposed connection can outlive its last `Arc` holder, so the
+        // release cannot wait for `Drop`.
+        assert_eq!(
+            host.services().worker_ledger.count("myapp.dot"),
+            0,
+            "disposing a connection drops the demand its open operations held"
+        );
+    }
+
+    #[test]
+    fn dispose_ends_the_operations_the_host_is_still_holding() {
+        let platform = Arc::new(StubPlatform::default());
+        let sink = Arc::new(RecordingSink::default());
+        let (host_config, product) = runtime_config("myapp.dot");
+        let runtime = ProductRuntime::from_platform_with_config(
+            platform.clone(),
+            host_config,
+            product,
+            test_spawner(),
+            sink,
+        );
+        let host = runtime.admin.product_runtime().clone();
+
+        futures::executor::block_on(truapi::api::Worker::begin_operation(
+            host.as_ref(),
+            &truapi::CallContext::default(),
+            truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
+                truapi::v01::HostWorkerBeginOperationRequest { label: None },
+            ),
+        ))
+        .expect("begin operation");
+
+        runtime.dispose();
+
+        // Teardown ends the operation off the disposing thread.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let ended = platform
+                .ended_operations
+                .lock()
+                .expect("ended operations mutex poisoned")
+                .clone();
+            if ended == vec![("myapp.dot".to_string(), 1)] {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the host's own record of the operation is closed, not left to \
                  accumulate; saw {ended:?}"
 			);
 			std::thread::yield_now();

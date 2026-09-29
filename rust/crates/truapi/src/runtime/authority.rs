@@ -249,17 +249,114 @@ pub enum SignRawAuthorityRequest {
 /// Transaction-creation request selected by the product API entrypoint.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CreateTransactionAuthorityRequest {
-	/// Create a transaction with a product-derived account.
-	Product(ProductAccountTxPayload),
-	/// Create a transaction through the legacy-account API using the product slot-zero account.
-	LegacyAccount {
-		/// Product slot-zero account that backs the validated legacy signer.
-		product_account: ProductAccountId,
-		/// Original legacy-account transaction request.
-		request: LegacyAccountTxPayload,
-	},
-	/// Create a transaction with the active wallet's identity account.
-	IdentityAccount(LegacyAccountTxPayload),
+    /// Create a transaction with a product-derived account.
+    Product(ProductAccountTxPayload),
+    /// Create a transaction through the legacy-account API using the product slot-zero account.
+    LegacyAccount {
+        /// Product slot-zero account that backs the validated legacy signer.
+        product_account: ProductAccountId,
+        /// Original legacy-account transaction request.
+        request: LegacyAccountTxPayload,
+    },
+    /// Create a transaction with the active wallet's identity account.
+    IdentityAccount(LegacyAccountTxPayload),
+}
+
+/// Host-owned Chat operation after the caller's capability authorization.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProductDeviceChatAuthorityRequest {
+    /// Product whose capability authorization was checked by the host.
+    pub calling_product_id: String,
+    /// Authorized wallet-local Chat operation.
+    pub operation: HostProductDeviceChatRequest,
+}
+
+/// Only trusted attachment preparation uploads preimages; products submit Chat statements.
+pub(crate) fn chat_requires_preimage_submit(operation: &HostProductDeviceChatRequest) -> bool {
+    match operation {
+        HostProductDeviceChatRequest::PrepareAttachments { .. } => true,
+        HostProductDeviceChatRequest::Initialize
+        | HostProductDeviceChatRequest::Bind { .. }
+        | HostProductDeviceChatRequest::Prepare { .. }
+        | HostProductDeviceChatRequest::Open { .. }
+        | HostProductDeviceChatRequest::SendPayment { .. }
+        | HostProductDeviceChatRequest::PaymentStatus { .. }
+        | HostProductDeviceChatRequest::ReconcilePayments
+        | HostProductDeviceChatRequest::OpenAttachment { .. }
+        | HostProductDeviceChatRequest::CommitMigration { .. }
+        | HostProductDeviceChatRequest::ContinueOpen { .. }
+        | HostProductDeviceChatRequest::ContinueState { .. }
+        | HostProductDeviceChatRequest::PaymentDenomination => false,
+    }
+}
+
+/// A wallet-local Chat failure before conversion to its public protocol error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProductDeviceChatAuthorityError {
+    /// The wallet session is no longer connected.
+    Disconnected,
+    /// The user rejected the operation.
+    Rejected,
+    /// A host backend is unavailable; diagnostics remain host-owned.
+    Unavailable(String),
+    /// A typed Chat failure safe to return to the product.
+    Domain(HostProductDeviceChatError),
+}
+
+impl From<AuthorityError> for ProductDeviceChatAuthorityError {
+    fn from(error: AuthorityError) -> Self {
+        match error {
+            AuthorityError::Disconnected => Self::Disconnected,
+            AuthorityError::Rejected => Self::Rejected,
+            other => Self::Unavailable(other.to_string()),
+        }
+    }
+}
+
+impl From<ProductDeviceChatAuthorityError> for truapi::v02::HostProductDeviceChatError {
+    fn from(error: ProductDeviceChatAuthorityError) -> Self {
+        match error {
+            ProductDeviceChatAuthorityError::Disconnected => Self::NotConnected,
+            ProductDeviceChatAuthorityError::Rejected => Self::UserRejected,
+            ProductDeviceChatAuthorityError::Unavailable(_) => Self::NetworkUnavailable,
+            ProductDeviceChatAuthorityError::Domain(error) => error,
+        }
+    }
+}
+
+/// Payment failures retain typed wallet results without exposing backend diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PaymentTopUpAuthorityError {
+    /// Session, consent, or backend authority failure.
+    Authority(AuthorityError),
+    /// A typed wallet top-up failure.
+    Domain(truapi::v01::HostPaymentTopUpError),
+}
+
+impl From<AuthorityError> for PaymentTopUpAuthorityError {
+    fn from(error: AuthorityError) -> Self {
+        Self::Authority(error)
+    }
+}
+
+impl From<PaymentTopUpAuthorityError> for truapi::v01::HostPaymentTopUpError {
+    fn from(error: PaymentTopUpAuthorityError) -> Self {
+        match error {
+            PaymentTopUpAuthorityError::Domain(error) if !matches!(error, Self::Unknown { .. }) => {
+                error
+            }
+            PaymentTopUpAuthorityError::Authority(AuthorityError::Disconnected) => Self::Unknown {
+                reason: "Wallet session is not active".to_string(),
+            },
+            PaymentTopUpAuthorityError::Authority(AuthorityError::Cancelled(_)) => Self::Unknown {
+                reason: "Payment top-up cancelled".to_string(),
+            },
+            // Backend failures may contain supplied source keys; never echo them.
+            _ => Self::Unknown {
+                reason: "Payment top-up unavailable".to_string(),
+            },
+        }
+    }
 }
 
 /// Whether blessed `calling_product_id` is using its own account, `owner`.

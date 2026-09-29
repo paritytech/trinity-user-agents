@@ -65,8 +65,16 @@ pub use host_session::HostSession;
 
 /// The host's contact picker plus the key its handles are minted under:
 /// everything one `contacts.pick` call needs from the connection.
-type ContactsPicker =
-	(Arc<dyn crate::platform::ContactsPlatform>, crate::runtime::contacts::ContactHandles);
+type ContactsPicker = (
+    Arc<dyn crate::platform::ContactsPlatform>,
+    crate::runtime::contacts::ContactHandles,
+);
+use crate::platform::{
+    AccountAccessReview, ChatFieldError, PermissionAuthorizationRequest,
+    PermissionAuthorizationStatus, PermissionDecision, Platform, ProductContext, ProductStorageKey,
+    SessionUiInfo, UserConfirmationReview, normalize_chat_identifier, normalize_product_identifier,
+    validate_chat_icon, validate_chat_message_content, validate_chat_name,
+};
 use futures::{FutureExt, StreamExt, pin_mut};
 #[cfg(test)]
 use pairing_host::PairingHost;
@@ -80,21 +88,14 @@ pub use sso_responder_service::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
 	PairingProposal, PairingProposalMetadata, ResponderExit, SsoResponderService,
 };
-use versioning::version;
-#[cfg(all(target_arch = "wasm32", feature = "test-host"))]
-pub use vrf::ring_vrf_member;
-// `TrackedStatementRenewalTarget` is only read back by the native renewal
-// reporting, so re-exporting it on wasm leaves an unused import.
-use crate::platform::{
-	AccountAccessReview, ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
-	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
-	ProductContext, ProductId, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
-	normalize_chat_identifier, validate_chat_icon, validate_chat_message_content,
-	validate_chat_name,
+pub use signing_host::{
+    LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService, disconnect_paired_host,
+    establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
+    respond_to_pairing, resume_pairing,
 };
-pub use signing_host::StatementRenewalTarget;
+pub use signing_host::{LocalIdentity, LocalIdentityContext, WalletAllowanceSnapshot};
 #[cfg(not(target_arch = "wasm32"))]
-pub use signing_host::TrackedStatementRenewalTarget;
+pub use signing_host::{StatementRenewalTarget, TrackedStatementRenewalTarget};
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
@@ -128,6 +129,28 @@ use truapi::{
 		},
 	},
 };
+use truapi::versioned::chat::{
+    HostChatActionSubscribeError, HostChatActionSubscribeItem, HostChatActionSubscribeRequest,
+    HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
+    HostChatListSubscribeError, HostChatListSubscribeItem, HostChatListSubscribeRequest,
+    HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+    HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+};
+use truapi::versioned::contacts::{
+    HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse,
+};
+use truapi::versioned::pocket::{
+    HostPocketListSubscribeError, HostPocketListSubscribeItem, HostPocketListSubscribeRequest,
+    HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPocketRemoveCardResponse,
+};
+use truapi::versioned::preimage::RemotePreimageSubmitError;
+use truapi::versioned::renderer::{
+    HostRendererActionSubscribeError, HostRendererActionSubscribeItem,
+    HostRendererActionSubscribeRequest,
+};
+use truapi::{CallContext, CallError, CancellationReason, Subscription, v01};
+#[cfg(all(target_arch = "wasm32", feature = "test-host"))]
+pub use vrf::ring_vrf_member;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 

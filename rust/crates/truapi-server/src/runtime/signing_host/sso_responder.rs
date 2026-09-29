@@ -1494,14 +1494,14 @@ mod tests {
                     payload: operation,
                 };
                 let message = RemoteMessage::request(message_id.to_string(), request);
-                let statement = messages::build_outgoing_request_statement(
+                let statement = sso_messages::build_outgoing_request_statement(
                     &pairing,
                     message_id.to_string(),
                     vec![message],
                     (statement_current_unix_secs() + 60) << 32,
                 )
                 .unwrap();
-                let incoming = messages::decode_incoming_sso_request(&responder, &statement)
+                let incoming = sso_messages::decode_incoming_sso_request(&responder, &statement)
                     .unwrap()
                     .unwrap();
                 let Dispatch::Response(answer) = service
@@ -1513,7 +1513,7 @@ mod tests {
                 else {
                     panic!("expected Chat response");
                 };
-                let response_statement = messages::build_outgoing_request_statement(
+                let response_statement = sso_messages::build_outgoing_request_statement(
                     &responder,
                     format!("{message_id}-response"),
                     vec![answer.message],
@@ -1594,7 +1594,7 @@ mod tests {
             };
             let message = RemoteMessage::request("top-up-1".to_string(), request);
             assert!(!format!("{message:?}").contains(&format!("{:?}", [0xab_u8; 64])));
-            let statement = messages::build_outgoing_request_statement(
+            let statement = sso_messages::build_outgoing_request_statement(
                 &pairing,
                 "top-up-1".to_string(),
                 vec![message],
@@ -1602,7 +1602,7 @@ mod tests {
             )
             .unwrap();
             assert!(!statement.windows(64).any(|bytes| bytes == [0xab; 64]));
-            let incoming = messages::decode_incoming_sso_request(&responder, &statement)
+            let incoming = sso_messages::decode_incoming_sso_request(&responder, &statement)
                 .unwrap()
                 .unwrap();
             let Dispatch::Response(answer) = service
@@ -1614,7 +1614,7 @@ mod tests {
             else {
                 panic!("expected top-up response");
             };
-            let response_statement = messages::build_outgoing_request_statement(
+            let response_statement = sso_messages::build_outgoing_request_statement(
                 &responder,
                 "top-up-response".to_string(),
                 vec![answer.message],
@@ -1631,7 +1631,7 @@ mod tests {
             assert_eq!(response.responding_to, "top-up-1");
             assert_eq!(
                 response.payload,
-                Err(messages::PaymentTopUpError(
+                Err(sso_messages::PaymentTopUpError(
                     truapi::v01::HostPaymentTopUpError::InvalidSource
                 ))
             );
@@ -1675,7 +1675,7 @@ mod tests {
             let response = PaymentTopUpRequest::response_from_message(data).unwrap();
             assert!(matches!(
                 response.payload,
-                Err(messages::PaymentTopUpError(
+                Err(sso_messages::PaymentTopUpError(
                     truapi::v01::HostPaymentTopUpError::Unknown { .. }
                 ))
             ));

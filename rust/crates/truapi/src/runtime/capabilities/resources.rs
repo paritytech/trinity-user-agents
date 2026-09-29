@@ -38,43 +38,129 @@ impl ResourceAllocation for ProductRuntimeHost {
 					})
 				})?;
 
-				let confirmed = until_cancelled(
-					cx,
-					self.connection.confirm_user_action_if_needed(
-						UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
-							calling_product_id: self.connection.product_id().clone(),
-							resources: inner.resources.clone(),
-						}),
-					),
-				)
-				.await
-				.map_err(|err| {
-					CallError::Domain(latest::ResourceAllocationError::Unknown {
-						reason: err.to_string(),
-					})
-				})?
-				.map_err(|err| CallError::HostFailure {
-					reason: format!("resource allocation confirmation failed: {err:?}"),
-				})?;
-				if !confirmed {
-					return Ok(latest::HostRequestResourceAllocationResponse {
-						outcomes: vec![latest::AllocationOutcome::Rejected; inner.resources.len()],
-					});
-				}
-				let cx = remote_authority_context_with_default(
-					cx,
-					RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-				);
-				remote_authority_call(&cx, self.accounts.allocate_resources(&cx, &session, inner))
-					.await
-					.map_err(|err| {
-						CallError::Domain(latest::ResourceAllocationError::Unknown {
-							reason: err.to_string(),
-						})
-					})
-			})
-			.await
-	}
+        let require_session = || {
+            if self.authority.current_session().as_ref() == Some(&session) {
+                Ok(())
+            } else {
+                Err(CallError::HostFailure {
+                    reason: "Resource allocation session changed".to_string(),
+                })
+            }
+        };
+        let service = self.permissions_service();
+        let mut grants = Vec::new();
+        for resource in &inner.resources {
+            let derivation_index = match resource {
+                v01::AllocatableResource::StatementStoreAllowance => None,
+                v01::AllocatableResource::ProductStatementStoreAllowance(index) => {
+                    Some(index.clone())
+                }
+                _ => continue,
+            };
+            let request =
+                PermissionAuthorizationRequest::StatementStoreAllowance { derivation_index };
+            if grants.iter().any(|(existing, _)| existing == &request) {
+                continue;
+            }
+            let status = service
+                .authorization_status(&request)
+                .await
+                .map_err(|err| CallError::HostFailure { reason: err.reason })?;
+            require_session()?;
+            if status == PermissionAuthorizationStatus::Denied {
+                return Err(CallError::Denied);
+            }
+            grants.push((request, status));
+        }
+
+        // An explicit request means additional quota, not merely ensure. Always
+        // confirm it, even when implicit provisioning has a durable grant. The
+        // same review establishes any missing grants without a second prompt.
+        // A withdrawn call stops waiting on the review and authorizes nothing.
+        let confirmed = until_cancelled(
+            cx,
+            self.platform.confirm_user_action(UserConfirmationReview::ResourceAllocation(
+                ResourceAllocationReview {
+                    calling_product_id: self.product_id(),
+                    resources: inner.resources.clone(),
+                },
+            )),
+        )
+        .await
+        .map_err(|err| {
+            CallError::Domain(HostRequestResourceAllocationError::V1(
+                v01::ResourceAllocationError::Unknown {
+                    reason: err.to_string(),
+                },
+            ))
+        })?
+        .map_err(|err| CallError::HostFailure {
+            reason: format!("resource allocation confirmation failed: {err:?}"),
+        })?;
+        require_session()?;
+        for (request, before) in &grants {
+            let current = service
+                .authorization_status(request)
+                .await
+                .map_err(|err| CallError::HostFailure { reason: err.reason })?;
+            require_session()?;
+            // Never overwrite a decision changed by administration during the
+            // review, including Authorized -> NotDetermined resets.
+            if current != *before {
+                return Err(CallError::Denied);
+            }
+        }
+        for (request, before) in &grants {
+            if *before == PermissionAuthorizationStatus::NotDetermined {
+                let decision = if confirmed {
+                    PermissionAuthorizationStatus::Authorized
+                } else {
+                    PermissionAuthorizationStatus::Denied
+                };
+                service
+                    .set_authorization_status(request, decision)
+                    .await
+                    .map_err(|err| CallError::HostFailure { reason: err.reason })?;
+                require_session()?;
+            }
+        }
+        if !confirmed {
+            // Declining an increase does not revoke an existing durable grant.
+            return Err(CallError::Domain(HostRequestResourceAllocationError::V1(
+                v01::ResourceAllocationError::Unknown {
+                    reason: "User rejected resource allocation".to_string(),
+                },
+            )));
+        }
+        for (request, _) in &grants {
+            let status = service
+                .authorization_status(request)
+                .await
+                .map_err(|err| CallError::HostFailure { reason: err.reason })?;
+            require_session()?;
+            if status != PermissionAuthorizationStatus::Authorized {
+                return Err(CallError::Denied);
+            }
+        }
+        let cx = remote_authority_context_with_default(
+            cx,
+            RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+        );
+        remote_authority_call(
+            &cx,
+            self.authority
+                .allocate_resources(&cx, &session, self.product_id(), inner),
+        )
+        .await
+        .map(HostRequestResourceAllocationResponse::V1)
+        .map_err(|err| {
+            CallError::Domain(HostRequestResourceAllocationError::V1(
+                v01::ResourceAllocationError::Unknown {
+                    reason: err.to_string(),
+                },
+            ))
+        })
+    }
 }
 
 #[truapi::async_trait]

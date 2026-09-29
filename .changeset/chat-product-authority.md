@@ -9,6 +9,9 @@ results.
 Use the unified runtime's native UniFFI gates and shared clock, dotNS discovery and runtime view-response decoding
 for Chat and Coinage without changing product authorization or payment review policy.
 
+Keep renewal-ledger mutation native-only and use the chain metadata's extension version for Coinage extrinsics.
+Trusted products still honor explicit network-permission denials.
+
 Support keyless Statement Store allowances for a selected product account in the native signing host.
 
 Replace raw guest Chat crypto with a narrow authenticated Host boundary on account method 12; retire method 11,

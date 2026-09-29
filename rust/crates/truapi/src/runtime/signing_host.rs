@@ -33,31 +33,20 @@ use super::{
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure},
 	validate_vrf_transcript,
 };
-use crate::{
-	host_internal::{
-		extrinsic::build_local_transaction,
-		sso_messages::{OnExistingAllowancePolicy, ProductRequest, RingVrfError},
-		transaction::sign_extrinsic_payload,
-	},
-	host_logic::{
-		entropy::derive_product_entropy,
-		features::genesis_for,
-		product_account::{
-			ProductAccountError, SR25519_SIGNING_CONTEXT, derivation_index_bytes,
-			derive_full_person_ring_vrf_entropy, derive_identity_keypair,
-			derive_lite_person_ring_vrf_entropy, derive_product_keypair,
-			derive_product_subtree_keypair, derive_ring_vrf_entropy,
-			derive_root_keypair_from_entropy, personhood_product_id,
-		},
-		raw_signing::raw_payload_bytes,
-		session::{SessionInfo, SessionState},
-	},
-	runtime::{
-		auth_state::AuthStateMachine,
-		sso_service::SsoWithdrawals,
-		statement_allowance::{self, CollectionCandidate, collection::PersonhoodCollection},
-		vrf::{self, Vrf},
-	},
+use super::native_chat::{NativeChatContext, NativeChatRegistry};
+use super::ring_vrf_registry::RingVrfRegistryStore;
+use super::{RuntimeServices, connected_session_ui_info, validate_vrf_transcript};
+use crate::host_internal::extrinsic::build_local_transaction;
+use crate::host_internal::sso_messages::{
+    OnExistingAllowancePolicy, PaymentTopUpRequest, ProductRequest, RingVrfError,
+};
+use crate::host_internal::transaction::sign_extrinsic_payload;
+use crate::host_logic::entropy::derive_product_entropy;
+use crate::host_logic::features::genesis_for;
+use crate::host_logic::product_account::{
+    ProductAccountError, SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_identity_keypair,
+    derive_product_keypair, derive_product_subtree_keypair, derive_ring_vrf_entropy,
+    derive_root_keypair_from_entropy, personhood_product_id,
 };
 use ring_vrf::{ChainRingResolver, MemberCandidate, RingResolver, context_bytes, create_proof};
 
@@ -1443,51 +1432,50 @@ mod tests {
 
 	use std::sync::Arc;
 
-	use super::{
-		super::{
-			HostSession, ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole,
-			authority::{
-				AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
-				SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
-			},
-		},
-		LocalActivation, TEST_NETWORK_SUFFIX,
-		ring_vrf::{MemberCandidate, ResolvedRing, RingResolver},
-	};
-	use crate::{
-		host_internal::{
-			extrinsic::tests::split_v4,
-			sso_messages::{ProductRequest, RingVrfError},
-			transaction::{extrinsic_payload_extensions, extrinsic_payload_preimage},
-		},
-		host_logic::product_account::{
-			SR25519_SIGNING_CONTEXT, derive_identity_keypair, derive_product_keypair,
-			derive_ring_vrf_entropy, derive_root_keypair_from_entropy, index_bytes,
-		},
-		platform::{
-			CoreStorageKey, HostInfo, Platform, PlatformInfo, ProductContext, ProductId,
-			SigningHostConfig,
-		},
-		runtime::statement_allowance::collection::PersonhoodCollection,
-		test_support::{StubPlatform, test_spawner},
-	};
-	use truapi::{
-		CallContext, CallError,
-		api::{Account, Entropy, ResourceAllocation, Signing},
-		latest::{
-			HostAccountCreateProofRequest, HostAccountGetAliasRequest,
-			HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-		},
-		v01,
-		versioned::{
-			account::{HostAccountGetError, HostAccountGetRequest},
-			entropy::HostDeriveEntropyRequest,
-			resource_allocation::{
-				HostRequestResourceAllocationRequest, HostRequestResourceAllocationResponse,
-			},
-			signing::{HostSignRawError, HostSignRawRequest, HostSignRawResponse},
-		},
-	};
+    use super::super::authority::{
+        AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
+        ProductDeviceChatAuthorityError, ProductDeviceChatAuthorityRequest,
+        SignPayloadAuthorityRequest, SignRawAuthorityRequest,
+    };
+    use super::super::{ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole};
+    use super::TEST_NETWORK_SUFFIX;
+    use super::ring_vrf::{MemberCandidate, ResolvedRing, RingResolver};
+    use super::{LocalActivation, RingVrfError, SR25519_SIGNING_CONTEXT};
+    use crate::host_internal::extrinsic::tests::split_v4;
+    use crate::host_internal::permissions::PermissionsService;
+    use crate::host_internal::sso_messages::{
+        ProductDeviceChatResponse, ProductRequest, RemoteMessage, RemoteMessageData,
+        SsoProductDeviceChatOperation, v1,
+    };
+    use crate::host_internal::transaction::{
+        extrinsic_payload_extensions, extrinsic_payload_preimage,
+    };
+    use crate::host_logic::product_account::{
+        derive_identity_keypair, derive_product_keypair, derive_ring_vrf_entropy,
+        derive_root_keypair_from_entropy, index_bytes,
+    };
+    use crate::platform::{
+        HostInfo, PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform,
+        PlatformInfo, ProductContext, SigningHostConfig,
+    };
+    use crate::runtime::sso_service::Dispatch;
+    use crate::runtime::statement_allowance::collection::PersonhoodCollection;
+    use crate::test_support::{StubPlatform, test_spawner};
+    use truapi::api::{Account, Entropy, ResourceAllocation, Signing};
+    use truapi::latest::{
+        HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+        HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
+    };
+    use truapi::versioned::account::{
+        HostAccountGetError, HostAccountGetRequest, HostProductDeviceChatError,
+        HostProductDeviceChatRequest, HostProductDeviceChatResponse,
+    };
+    use truapi::versioned::entropy::HostDeriveEntropyRequest;
+    use truapi::versioned::resource_allocation::{
+        HostRequestResourceAllocationRequest, HostRequestResourceAllocationResponse,
+    };
+    use truapi::versioned::signing::{HostSignRawError, HostSignRawRequest, HostSignRawResponse};
+    use truapi::{CallContext, CallError, v01};
 
 	const ENTROPY: [u8; 16] = [0xAB; 16];
 

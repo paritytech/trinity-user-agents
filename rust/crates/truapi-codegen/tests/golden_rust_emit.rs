@@ -23,7 +23,8 @@ fn nightly_toolchain() -> String {
 		.unwrap_or_else(|_| include_str!("../../../../nightly-toolchain").trim().to_string())
 }
 
-/// Path to `truapi`'s rustdoc JSON, building it on first use.
+/// Path to the rustdoc JSON of `truapi`'s protocol definitions alone, the
+/// input codegen reads the API from, building it on first use.
 fn produce_rustdoc_json(workspace_root: &Path) -> PathBuf {
 	produce_rustdoc_json_for_package(workspace_root, "truapi", &["--no-default-features"])
 }
