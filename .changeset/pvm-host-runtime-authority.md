@@ -21,3 +21,6 @@ full-source declaration snapshots, while retaining deterministic code generation
 Preserve incoming-payment ownership and native Coinage ledger records when
 migrating either the historical Chat store or current main's iOS store to the
 combined model. Retain both historical model variants for migration detection.
+
+Centralize iOS permission presentation for consent prompts and app settings,
+preserving the separate Chat and genesis-scoped JAM peer disclosures.
