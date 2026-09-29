@@ -1,0 +1,271 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f6f6f7;
+  --surface: #ffffff;
+  --text: #16161a;
+  --muted: #62626b;
+  --border: #d9d9de;
+  --accent: #e6007a;
+  --warning: #b42318;
+  --panel-width: 320px;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111114;
+    --surface: #1b1b20;
+    --text: #ececf1;
+    --muted: #9a9aa6;
+    --border: #33333b;
+    --warning: #f97066;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: var(--panel-width) 1fr;
+  grid-template-rows: auto 1fr;
+  background: var(--bg);
+  color: var(--text);
+}
+
+h1 {
+  font-size: 16px;
+  margin: 0;
+}
+
+h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+label {
+  display: block;
+  margin: 8px 0 4px;
+  color: var(--muted);
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+}
+
+.topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--warning);
+  color: #fff;
+  font-size: 12px;
+}
+
+.status {
+  color: var(--muted);
+  margin: 0;
+}
+
+.topbar .status {
+  margin-left: auto;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 16px;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.panel section > button {
+  margin-top: 8px;
+}
+
+.session {
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.warning {
+  color: var(--warning);
+}
+
+.log-section {
+  flex: 1;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+}
+
+.log {
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.log li {
+  padding: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.product-bar {
+  display: flex;
+  gap: 8px;
+}
+
+.product-bar input[type="url"] {
+  flex: 2;
+}
+
+.product-bar input[type="text"] {
+  flex: 1;
+}
+
+.product-bar button,
+.product-bar select {
+  width: auto;
+}
+
+.viewport-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.product-frame {
+  width: 100%;
+  height: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  flex: none;
+  transform-origin: center;
+}
+
+.prompt {
+  width: min(560px, 90vw);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 20px;
+}
+
+.prompt::backdrop {
+  background: rgb(0 0 0 / 0.4);
+}
+
+.prompt h2 {
+  font-size: 16px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text);
+}
+
+.prompt-subtitle {
+  color: var(--muted);
+}
+
+.prompt dt {
+  color: var(--muted);
+  margin-top: 10px;
+}
+
+.prompt dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.prompt pre {
+  margin: 2px 0 0;
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
