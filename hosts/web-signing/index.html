@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TrUAPI web signing host</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>TrUAPI web signing host</h1>
+      <span class="badge">Development wallets only</span>
+      <span class="status" id="core-status">Starting the core…</span>
+    </header>
+
+    <aside class="panel">
+      <section>
+        <h2>Session</h2>
+        <p id="session" class="session">Signed out</p>
+        <label for="wallet">Wallet</label>
+        <select id="wallet"></select>
+        <div class="row">
+          <button id="sign-in" class="primary" disabled>Sign in</button>
+          <button id="sign-out" disabled>Sign out</button>
+          <button id="forget" disabled>Forget</button>
+        </div>
+        <p class="note">
+          The session belongs to this tab. Open another tab to sign in with a
+          different wallet.
+        </p>
+      </section>
+
+      <section>
+        <h2>Add a wallet</h2>
+        <label for="wallet-name">Name</label>
+        <input
+          id="wallet-name"
+          type="text"
+          autocomplete="off"
+          placeholder="My test wallet"
+        />
+        <label for="mnemonic">Recovery phrase</label>
+        <textarea
+          id="mnemonic"
+          rows="3"
+          spellcheck="false"
+          autocomplete="off"
+          placeholder="Leave empty to create a new wallet"
+        ></textarea>
+        <button id="add-wallet" disabled>Create or import</button>
+        <p class="note warning">
+          Recovery phrases are saved unencrypted in this browser. Use wallets
+          you are willing to lose.
+        </p>
+      </section>
+
+      <section class="log-section">
+        <h2>Log</h2>
+        <ol id="log" class="log"></ol>
+      </section>
+    </aside>
+
+    <main class="stage">
+      <form id="product-form" class="product-bar">
+        <input
+          id="product-url"
+          type="url"
+          required
+          spellcheck="false"
+          autocomplete="off"
+          placeholder="http://localhost:3000"
+          aria-label="Product URL"
+        />
+        <input
+          id="product-id"
+          type="text"
+          spellcheck="false"
+          autocomplete="off"
+          placeholder="Product id (optional), e.g. myapp.paseo"
+          aria-label="Product id"
+        />
+        <button id="open" class="primary" type="submit" disabled>Open</button>
+        <select id="viewport" aria-label="Viewport"></select>
+      </form>
+      <p id="product-status" class="status">No product open.</p>
+      <div id="viewport-area" class="viewport-area">
+        <div id="product-frame" class="product-frame"></div>
+      </div>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
