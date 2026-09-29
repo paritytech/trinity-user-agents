@@ -26,7 +26,8 @@ correctness = "warn"
 [dependencies]
 truapi = { path = "../truapi" }
 truapi-platform = { path = "../truapi-platform" }
-truapi-server = { path = "../truapi-server" }
+truapi-server = { path = "../truapi-server", features = ["debug-sink"] }
+truapi-provider = { path = "../truapi-provider", default-features = false, features = ["networks"] }
 anyhow = "1"
 arboard = { version = "3.6.1", default-features = false, features = ["image-data"] }
 async-trait = "0.1"

@@ -738,17 +738,27 @@ to prompt. Main-purse payments are always excluded and are denied in this mode. 
 
 ## Scope / gaps
 
-- **Chain methods** route to real `wss://` nodes from the selected `--network`. Every role the preset serves is routed
-  unconditionally; `E2E_LIVE_CHAIN=1` only widens routing to endpoints it carries without serving. A rustls crypto
-  provider is installed at startup for the TLS connections.
-- **Ring-VRF product-account aliases and proofs** are implemented by the signing host via the `verifiable` crate
-  (`get_account_alias` and `create_account_proof`).
-- **`get_user_id`** resolves the signing account's username from the dotNS contracts on Asset Hub. Auto-managed signing
-  accounts register fresh lite usernames via the identity backend (`src/attestation.rs`); first registration is
-  backend-async and can take minutes (ring onboarding). `truapi-host identity-check --mnemonic <m>` probes which
-  derivation carries a username.
-- `set_statement_store_account`, Bulletin long-term-storage, and Asset Hub PGAS resource allocation are implemented over
-  SSO on native headless hosts.
-- Everything else the browser host exercises passes: signing (raw, payload, create-transaction, and their legacy
-  variants), statement store, entropy, aliases, preimage, storage, permissions, notifications, theme, system, chain and
-  user id, subject to live chain availability and allowance-slot capacity.
+- **Chain methods** route to real `wss://` nodes from the selected `--network`.
+  Every role the preset serves is routed unconditionally; `E2E_LIVE_CHAIN=1` only
+  widens routing to endpoints it carries without serving. A rustls crypto provider is
+  installed at startup for the TLS connections.
+- **`TRUAPI_LIGHT_CLIENT=1`** sends the host's own chain traffic (statement store,
+  allowance renewal, preimages, PGAS claims) through the embedded smoldot light
+  client instead of the public nodes, for CI runners those nodes rate-limit. Account
+  setup and dotNS username reads still use RPC. The first connection to a chain
+  waits for it to sync.
+- **Ring-VRF product-account aliases and proofs** are implemented by the
+  signing host via the `verifiable` crate (`get_account_alias` and
+  `create_account_proof`).
+- **`get_user_id`** resolves the signing account's username from the dotNS
+  contracts on Asset Hub. Auto-managed signing accounts register fresh lite
+  usernames via the identity backend (`src/attestation.rs`); first registration
+  is backend-async and can take minutes (ring onboarding). `truapi-host
+identity-check --mnemonic <m>` probes which derivation carries a username.
+- `set_statement_store_account`, Bulletin long-term-storage, and Asset Hub PGAS
+  resource allocation are implemented over SSO on native headless hosts.
+- Everything else the browser host exercises passes: signing (raw, payload,
+  create-transaction, and their legacy variants), statement store, entropy,
+  aliases, preimage, storage, permissions, notifications, theme, system, chain
+  and user id, subject to live chain availability
+  and allowance-slot capacity.
