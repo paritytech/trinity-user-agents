@@ -68,11 +68,10 @@ describe("worker wasm import", () => {
     },
   );
 
-  // The signing host lives only in the `testing` bundle. Asserting it here
-  // keeps the split honest in both directions: a rename still fails, and the
-  // production bundle is not quietly expected to carry a signing host.
+  // These checks use the default build: pairing-only web plus a testing wallet.
+  // An explicitly requested --signing-host web artifact is a separate variant.
   it.skipIf(!existsSync(testingGluePath))(
-    "exposes the signing host in the testing bundle only",
+    "keeps the default web bundle pairing-only",
     async () => {
       const testingGlue: Record<string, unknown> = await import(
         pathToFileURL(testingGluePath).href
@@ -87,7 +86,7 @@ describe("worker wasm import", () => {
       );
       expect(
         webGlue.WasmSigningHostRuntime,
-        "production `web` glue must not carry a signing host",
+        "default `web` glue must not carry a signing host",
       ).toBeUndefined();
     },
   );
