@@ -131,7 +131,6 @@
         <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="identifier" attributeType="String"/>
         <attribute name="outcomeTag" optional="YES" attributeType="String"/>
-        <attribute name="ownerId" optional="YES" attributeType="Binary"/>
         <attribute name="paymentId" attributeType="String"/>
         <attribute name="productId" attributeType="String"/>
         <fetchIndex name="byIncomingPaymentIdentifier">
@@ -339,14 +338,5 @@
         <relationship name="coin" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDCoin" inverseName="coinageTxOutput" inverseEntity="CDCoin"/>
         <relationship name="entry" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDDurableTx" inverseName="outputs" inverseEntity="CDDurableTx"/>
         <relationship name="voucher" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDVoucher" inverseName="coinageTxOutput" inverseEntity="CDVoucher"/>
-    </entity>
-    <entity name="CDNativeCoinageRecord" representedClassName="NSManagedObject" syncable="YES">
-        <attribute name="identifier" attributeType="String"/>
-        <attribute name="payload" attributeType="Binary"/>
-        <uniquenessConstraints>
-            <uniquenessConstraint>
-                <constraint value="identifier"/>
-            </uniquenessConstraint>
-        </uniquenessConstraints>
     </entity>
 </model>

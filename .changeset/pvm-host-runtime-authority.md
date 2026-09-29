@@ -17,3 +17,7 @@ in one invocation.
 
 Qualify callback contracts through executable codec and WASM checks rather than
 full-source declaration snapshots, while retaining deterministic code generation.
+
+Preserve incoming-payment ownership and native Coinage ledger records when
+migrating either the historical Chat store or current main's iOS store to the
+combined model. Retain both historical model variants for migration detection.
