@@ -1150,9 +1150,383 @@ pub trait Features: Send + Sync {
 		request: HostFeatureSupportedRequest,
 	) -> Result<HostFeatureSupportedResponse, GenericError>;
 
-	/// Enumerate the chains this host serves (RFC 0026). The core resolves
-	/// `get_chain_info` requests against the returned set.
-	async fn supported_chains(&self) -> Result<HostChainSet, GenericError>;
+    /// Enumerate the chains this host serves (RFC 0026). The core resolves
+    /// `get_chain_info` requests against the returned set.
+    async fn supported_chains(&self) -> Result<HostChainSet, GenericError>;
+}
+
+/// Wallet and asset binding checked by the native service before every operation.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct NativeCoinageScope {
+    /// Authenticated root key of the wallet owning the main purse.
+    pub root_public_key: [u8; 32],
+    /// Genesis hash of the configured Coinage chain.
+    pub genesis_hash: [u8; 32],
+    /// Configured asset instance; None denotes a legacy single-asset runtime.
+    pub coinage_instance_id: Option<u32>,
+}
+
+/// Immutable, Host-authenticated outgoing intent. No field is a product display hint.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct NativeCoinagePaymentIntent {
+    /// Stable wallet-, network- and product-scoped operation identity.
+    pub operation_id: [u8; 32],
+    /// Authenticated calling product, not a guest-provided display name.
+    pub product_id: String,
+    /// Original caller request identifier, bound immutably to this intent.
+    pub request_id: String,
+    /// Recipient identity authenticated by the Host's Chat authority.
+    pub peer_identity: [u8; 32],
+    /// Independently resolved recipient name, when available.
+    pub recipient_username: Option<String>,
+    /// Positive recipient amount in cents of the configured Coinage asset.
+    pub amount_cents: u64,
+}
+
+/// Host-private bearer material. Never return this through the product API or log it.
+/// Raw amounts are canonical unsigned decimal u128 strings, avoiding FFI truncation.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, zeroize::Zeroize)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct NativeCoinageMemo {
+    /// Validated 64-byte native sr25519 secret keys, confined to the trusted Host.
+    pub secret_keys: Vec<Vec<u8>>,
+    /// Exact total in canonical decimal raw chain units.
+    pub total_value_raw: String,
+}
+
+/// Durable native-wallet operations, not an alternative inventory ledger.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum NativeCoinageOperation {
+    /// Read trusted denomination metadata without selecting or allocating inventory.
+    Denomination,
+    /// Native trusted UI must review the exact intent and maximum debit before spending.
+    /// Replays must reuse persisted preparation, never allocate a second payment.
+    /// Before returning a memo, native custody must survive restart atomically with
+    /// transaction registration. Startup must never release these coins as provisional.
+    PreparePayment {
+        /// Exact request to review or replay from durable native custody.
+        intent: NativeCoinagePaymentIntent,
+    },
+    /// Called only after the authenticated Host durably accepts encrypted delivery.
+    /// Records transport acceptance; it is not the first durable native custody mark.
+    CommitHandoff {
+        /// Product whose ciphertext custody has been committed.
+        product_id: String,
+        /// Existing native payment being accepted, never a new allocation.
+        operation_id: [u8; 32],
+    },
+    /// Immutable public cards; do not initialize or claim an unrelated wallet.
+    Views {
+        /// Return public payments only for this authenticated product.
+        product_id: String,
+    },
+    /// Accepted ids come from the Host's durable ciphertext custody ledger.
+    PendingHandoffs {
+        /// Product whose native payments are being reconciled.
+        product_id: String,
+        /// Irreversible Host ciphertext custody evidence for acceptance repair.
+        accepted_operations: Vec<[u8; 32]>,
+    },
+    /// Read an existing recoverable handoff without approval, selection or spending.
+    ReadHandoff {
+        /// Product that originally obtained approval for this payment.
+        product_id: String,
+        /// Existing payment whose private memo is needed for encrypted replay.
+        operation_id: [u8; 32],
+    },
+    /// Peer acknowledgment is not monetary settlement.
+    NoteDelivery {
+        /// Product whose authenticated peer acknowledged the payment.
+        product_id: String,
+        /// Accepted outgoing payment; acknowledgment does not prove settlement.
+        operation_id: [u8; 32],
+    },
+    /// Resume already-owned work only; never authorize a fresh debit.
+    Reconcile,
+    /// Persist source custody before returning. Only finalized credit is successful.
+    /// Reordered sources reuse the same id; changed minimum or overlapping custody conflicts.
+    TopUp {
+        /// Authenticated product importing these source coins.
+        product_id: String,
+        /// Stable identity of the canonical source set in this wallet/product.
+        operation_id: [u8; 32],
+        /// Original immutable minimum in canonical decimal raw chain units.
+        /// Zero requests claim-all; it does not waive source completion or finality.
+        minimum_amount_raw: String,
+        /// Validated native bearer keys to place in durable incoming custody.
+        secret_keys: Vec<Vec<u8>>,
+    },
+}
+
+impl zeroize::Zeroize for NativeCoinageOperation {
+    fn zeroize(&mut self) {
+        if let Self::TopUp { secret_keys, .. } = self {
+            zeroize::Zeroize::zeroize(secret_keys);
+        }
+    }
+}
+
+/// One native operation with the immutable wallet/network scope to authenticate.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct NativeCoinageRequest {
+    /// Expected owner and asset, verified against the active native wallet.
+    pub scope: NativeCoinageScope,
+    /// Host-private command; incoming sources must never be logged.
+    pub operation: NativeCoinageOperation,
+}
+
+impl zeroize::Zeroize for NativeCoinageRequest {
+    fn zeroize(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.operation);
+    }
+}
+
+/// Sanitized failures. Never forward secret-bearing native exception descriptions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum NativeCoinageFailure {
+    /// The selected native owner, its durable store or its session is unavailable.
+    Unavailable,
+    /// The operation violates amount, identifier or protocol bounds.
+    InvalidRequest,
+    /// Incoming bearer material is invalid for native Coinage.
+    InvalidSource,
+    /// An identifier, source set or custody record has conflicting immutable fields.
+    OperationConflict,
+    /// The payment is absent or belongs to another product.
+    OperationNotFound,
+    /// Native inventory cannot fund the exact approved debit.
+    InsufficientBalance,
+    /// Trusted outgoing or privacy review was declined.
+    UserRejected,
+}
+
+/// Incoming settlement result; acceptance and best-head observations are not finality.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum NativeCoinageTopUpOutcome {
+    /// The original requested minimum has been credited at finality.
+    /// For a zero minimum, the source claim is terminal with positive finalized credit.
+    Cleared,
+    /// Terminal shortfall, expressed in raw chain units, not cents.
+    Partial {
+        /// Positive finalized raw-unit credit, strictly less than the original minimum.
+        credited_amount_raw: String,
+    },
+    /// Durable custody exists, but final credit has not been established.
+    Pending,
+    /// Terminal: none of the requested funds could be claimed.
+    NotClaimed,
+}
+
+/// Typed native results. Only the trusted Host may consume a Prepared memo.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum NativeCoinageResponse {
+    /// Trusted denomination metadata for the selected wallet/asset.
+    Denomination {
+        /// Positive raw chain units per Coinage cent, as canonical decimal u128.
+        cents_unit_raw: String,
+    },
+    /// Existing durable native preparation, or a terminal public payment.
+    Prepared {
+        /// Product-safe payment identity and current state.
+        payment: truapi::latest::HostNativeChatPayment,
+        /// Recoverable bearer material, absent when no handoff remains necessary.
+        memo: Option<NativeCoinageMemo>,
+    },
+    /// Product-scoped public payment cards, never a spendable balance.
+    Payments {
+        /// Durable payments belonging to the requested product.
+        payments: Vec<truapi::latest::HostNativeChatPayment>,
+    },
+    /// Result of an incoming custody operation.
+    TopUp {
+        /// Finalized settlement or explicit retained uncertainty.
+        outcome: NativeCoinageTopUpOutcome,
+    },
+    /// The requested metadata transition or recovery pass completed.
+    Done,
+    /// Sanitized domain rejection; cannot authorize another backend.
+    Failed {
+        /// Non-secret failure classification.
+        reason: NativeCoinageFailure,
+    },
+}
+
+impl zeroize::Zeroize for NativeCoinageResponse {
+    fn zeroize(&mut self) {
+        if let Self::Prepared {
+            memo: Some(memo), ..
+        } = self
+        {
+            zeroize::Zeroize::zeroize(memo);
+        }
+    }
+}
+
+/// Optional native wallet service boundary, never exposed to products.
+///
+/// Injecting this service at runtime construction assigns native custody for
+/// the runtime's lifetime. Absence selects the built-in Rust wallet; native
+/// unavailability or failure never permits Rust fallback.
+#[async_trait]
+pub trait CoinageWalletHost: Send + Sync {
+    /// Invoke the selected native owner. An error never permits Rust fallback.
+    async fn native_coinage(
+        &self,
+        request: NativeCoinageRequest,
+    ) -> Result<NativeCoinageResponse, GenericError>;
+}
+
+/// Trusted native Chat selection context; never passed to a product.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct NativeChatFilePickRequest {
+    /// Authenticated product requesting selection.
+    pub product_id: String,
+    /// Host-authenticated recipient identity.
+    pub peer_identity: [u8; 32],
+    /// Host-resolved recipient name, if available.
+    pub peer_username: Option<String>,
+    /// Maximum number of files the Host can accept.
+    pub max_files: u32,
+}
+
+/// Immutable Host-owned source and metadata derived from its actual bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct NativeChatPickedFile {
+    /// Opaque private handle surviving restart until explicitly released.
+    pub source_id: String,
+    /// Actual source size and native media metadata.
+    pub metadata: HostNativeChatAttachmentMetadata,
+}
+
+/// Trusted context for exporting a verified native Chat attachment.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct NativeChatFileExportRequest {
+    /// Authenticated product requesting presentation.
+    pub product_id: String,
+    /// Host-authenticated peer identity.
+    pub peer_identity: [u8; 32],
+    /// Host-resolved peer name, if available.
+    pub peer_username: Option<String>,
+    /// Verified attachment metadata, including the exact export size.
+    pub metadata: HostNativeChatAttachmentMetadata,
+}
+
+/// Host-private native Chat selection, immutable custody and safe export.
+///
+/// Handles, file bytes and destinations must never be exposed to products.
+/// Optional embedders without a backend must fail explicitly as unavailable.
+#[async_trait]
+pub trait NativeChatFilesHost: Send + Sync {
+    /// Present trusted selection and durably snapshot the selected files.
+    /// An empty result denotes user cancellation, not an unavailable backend.
+    async fn pick_chat_files(
+        &self,
+        request: NativeChatFilePickRequest,
+    ) -> Result<Vec<NativeChatPickedFile>, GenericError>;
+
+    /// Read exactly `length` bytes from an immutable source. Reject lengths
+    /// above 2,000,000 and checked ranges extending beyond its actual u32 size.
+    async fn read_chat_file(
+        &self,
+        source_id: String,
+        offset: u64,
+        length: u32,
+    ) -> Result<Vec<u8>, GenericError>;
+
+    /// Release durable source custody. Repeated release is harmless.
+    async fn release_chat_file(&self, source_id: String) -> Result<(), GenericError>;
+
+    /// Present trusted export consent and create a private partial output.
+    /// `None` denotes user cancellation. Never overwrite without consent.
+    async fn begin_chat_file_export(
+        &self,
+        request: NativeChatFileExportRequest,
+    ) -> Result<Option<String>, GenericError>;
+
+    /// Append a bounded chunk at the exact current offset; never allow holes,
+    /// rewrites, or bytes beyond the declared export size.
+    async fn write_chat_file_export(
+        &self,
+        export_id: String,
+        offset: u64,
+        data: Vec<u8>,
+    ) -> Result<(), GenericError>;
+
+    /// Publish only an exact-size completed output through safe native UI.
+    /// Never automatically execute HTML, SVG, scripts, or other active files.
+    async fn finish_chat_file_export(&self, export_id: String) -> Result<(), GenericError>;
+
+    /// Idempotently discard a partial output, never a completed user export.
+    async fn cancel_chat_file_export(&self, export_id: String) -> Result<(), GenericError>;
+}
+
+/// Host-private HOP transport for the configured Bulletin chain.
+///
+/// Endpoints are trusted host configuration, never product-supplied dialing
+/// instructions. Implementations must re-read their allowlist and enforce exact
+/// URL membership before opening a connection. An unconfigured host is
+/// explicitly unavailable; it must not fall back to a chain RPC endpoint.
+#[async_trait]
+pub trait HopProvider: Send + Sync {
+    /// Current exact WSS endpoints from the host's trusted Bulletin registry.
+    async fn allowed_hop_endpoints(
+        &self,
+        bulletin_genesis_hash: [u8; 32],
+    ) -> Result<Vec<String>, GenericError> {
+        let _ = bulletin_genesis_hash;
+        Ok(Vec::new())
+    }
+
+    /// Open one private HOP connection, sharing the JSON-RPC lifecycle only.
+    /// The caller closes the returned lease when the private operation ends.
+    async fn connect_hop(
+        &self,
+        bulletin_genesis_hash: [u8; 32],
+        endpoint: String,
+    ) -> Result<Box<dyn JsonRpcConnection>, GenericError> {
+        let _ = (bulletin_genesis_hash, endpoint);
+        Err(GenericError {
+            reason: "HOP provider unavailable".to_string(),
+        })
+    }
+}
+
+/// Check an endpoint without normalizing it into a different allowlist entry.
+pub fn ensure_allowed_hop_endpoint(endpoint: &str, allowed: &[String]) -> Result<(), GenericError> {
+    let valid = endpoint.starts_with("wss://")
+        && !endpoint
+            .chars()
+            .any(|ch| ch.is_whitespace() || ch.is_control())
+        && !endpoint.contains(['#', '\\'])
+        && !endpoint[6..]
+            .split(['/', '?'])
+            .next()
+            .unwrap_or_default()
+            .contains('@')
+        && url::Url::parse(endpoint).is_ok_and(|url| {
+            url.scheme() == "wss"
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.fragment().is_none()
+        })
+        && allowed.iter().any(|entry| entry == endpoint);
+    if !valid {
+        return Err(GenericError {
+            reason: "HOP endpoint is not in the trusted Bulletin WSS allowlist".to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Core-owned host-private storage slots. Products never address these slots;
@@ -2634,8 +3008,41 @@ pub struct AccountAccessReview {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct IdentityDisclosureReview {
-	/// Product currently handling the request.
-	pub product_id: ProductId,
+    /// Product currently handling the request.
+    pub product_id: String,
+}
+
+/// Review shown before a product binds or uses wallet-held Chat identity authority.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatAuthorityReview {
+    /// Product requesting the Chat identity operation.
+    pub product_id: String,
+}
+
+/// Exact Host-resolved payment reviewed before debiting the user's main purse.
+///
+/// This review never grants a reusable spending permission. Chat authority and
+/// automatic product signing do not authorize it.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct MainPurseChatPaymentReview {
+    /// Authenticated product requesting this payment.
+    pub calling_product_id: String,
+    /// Recipient identity authenticated by the Host's native Chat session.
+    pub recipient_identity: [u8; 32],
+    /// Host-resolved username for that identity, never a product display label.
+    pub recipient_username: Option<String>,
+    /// Exact recipient amount in cents of the selected Coinage asset.
+    pub amount_cents: u64,
+    /// Maximum main-purse debit, including any approved fee, in the same cents.
+    pub max_debit_cents: u64,
+    /// Genesis hash of the Host-selected Coinage chain.
+    pub genesis_hash: [u8; 32],
+    /// Trusted Coinage asset instance; None denotes a legacy single-asset runtime.
+    pub coinage_instance_id: Option<u32>,
+    /// Immutable, wallet-scoped payment operation being authorized.
+    pub operation_id: [u8; 32],
 }
 
 /// Review shown before a product resolves its own account subtree over SSO,

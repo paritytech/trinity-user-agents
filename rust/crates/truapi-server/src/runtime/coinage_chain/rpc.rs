@@ -63,7 +63,7 @@ pub(super) async fn free_unload_token_limits(
     )
     .await?;
     let output =
-        crate::runtime::statement_allowance::view::decode_response("Coinage", FUNCTION, response)
+        crate::runtime::statement_allowance::ViewFunctionError::decode_response("Coinage", FUNCTION, response)
             .map_err(|error| error.to_string())?;
     decode_exact(&output)
 }

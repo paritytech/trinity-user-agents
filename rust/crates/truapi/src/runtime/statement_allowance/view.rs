@@ -156,44 +156,60 @@ async fn execute_no_args(
 	function: &'static str,
 	id: [u8; 32],
 ) -> Result<Vec<u8>, StatementAllowanceError> {
-	let mut arguments = id.to_vec();
-	Vec::<u8>::new().encode_to(&mut arguments);
-	let response = rpc
-		.call("state_call", json!([EXECUTE_VIEW_FUNCTION, format!("0x{}", hex::encode(arguments))]))
-		.await?;
-	decode_response(pallet, function, response)
+    let mut arguments = id.to_vec();
+    Vec::<u8>::new().encode_to(&mut arguments);
+    let mut params = vec![
+        Value::String(EXECUTE_VIEW_FUNCTION.to_string()),
+        Value::String(format!("0x{}", hex::encode(arguments))),
+    ];
+    if let Some(at) = at {
+        params.push(Value::String(at.to_string()));
+    }
+    let response = rpc.call("state_call", Value::Array(params)).await?;
+    ViewFunctionError::decode_response(pallet, function, response)
 }
 
-fn decode_response(
-	pallet: &'static str,
-	function: &'static str,
-	response: Value,
-) -> Result<Vec<u8>, StatementAllowanceError> {
-	let encoded = response
-		.as_str()
-		.ok_or_else(|| view_error(ViewFunctionFailure::ResultNotString { pallet, function }))?;
-	let bytes = hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded)).map_err(|source| {
-		view_error(ViewFunctionFailure::ResponseHex { pallet, function, source })
-	})?;
-	let mut cursor = &bytes[..];
-	let dispatched =
-		Result::<Vec<u8>, ViewFunctionDispatchError>::decode(&mut cursor).map_err(|source| {
-			view_error(ViewFunctionFailure::ResponseDecode { pallet, function, source })
-		})?;
-	if !cursor.is_empty() {
-		return Err(view_error(ViewFunctionFailure::ResponseTrailingBytes {
-			pallet,
-			function,
-			remaining: cursor.len(),
-		}));
-	}
-	dispatched.map_err(|reason| {
-		view_error(ViewFunctionFailure::Dispatch {
-			pallet,
-			function,
-			reason: format!("{reason:?}"),
-		})
-	})
+impl ViewFunctionError {
+    /// Decode the SCALE dispatch result returned by a runtime view-function call.
+    pub fn decode_response(
+        pallet: &'static str,
+        function: &'static str,
+        response: Value,
+    ) -> Result<Vec<u8>, StatementAllowanceError> {
+        let encoded = response
+            .as_str()
+            .ok_or_else(|| view_error(ViewFunctionFailure::ResultNotString { pallet, function }))?;
+        let bytes = hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded)).map_err(|source| {
+            view_error(ViewFunctionFailure::ResponseHex {
+                pallet,
+                function,
+                source,
+            })
+        })?;
+        let mut cursor = &bytes[..];
+        let dispatched =
+            Result::<Vec<u8>, ViewFunctionDispatchError>::decode(&mut cursor).map_err(|source| {
+                view_error(ViewFunctionFailure::ResponseDecode {
+                    pallet,
+                    function,
+                    source,
+                })
+            })?;
+        if !cursor.is_empty() {
+            return Err(view_error(ViewFunctionFailure::ResponseTrailingBytes {
+                pallet,
+                function,
+                remaining: cursor.len(),
+            }));
+        }
+        dispatched.map_err(|reason| {
+            view_error(ViewFunctionFailure::Dispatch {
+                pallet,
+                function,
+                reason: format!("{reason:?}"),
+            })
+        })
+    }
 }
 
 fn view_error(error: ViewFunctionFailure) -> StatementAllowanceError {
@@ -253,7 +269,9 @@ mod tests {
 			)
 		));
 
-		let error = decode_response("Resources", "get_value", response).unwrap_err().to_string();
+        let error = ViewFunctionError::decode_response("Resources", "get_value", response)
+            .unwrap_err()
+            .to_string();
 
 		assert!(error.contains("dispatch failed: NotImplemented"), "{error}");
 	}

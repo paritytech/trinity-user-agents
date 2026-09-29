@@ -6,12 +6,12 @@
 //! one finalized pin. The registry, not the append-only LabelStore, owns names.
 
 use super::{NativeChatContext, normalize_username, rpc::Snapshot, schema};
+use crate::dotns_views::{network_tld, protocol_component, tld_node};
 #[cfg(test)]
 use crate::host_logic::dotns_gateway as gateway;
 use crate::host_logic::dotns_gateway::{
     DotnsTransport, account_to_h160, call_bytes32, call_no_args, decode_address, decode_bool,
-    discover_pop_controller, is_dns_label, is_pop_issued, namehash_under, network_tld,
-    protocol_component, resolve_labels, tld_node,
+    discover_pop_controller, is_dns_label, is_pop_issued, namehash_under, resolve_labels,
 };
 
 pub(super) struct Directory {

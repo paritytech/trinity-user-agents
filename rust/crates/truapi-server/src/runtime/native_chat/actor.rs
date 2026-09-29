@@ -25,14 +25,14 @@ use super::{
     store::ChatStateStore,
 };
 use crate::host_logic::statement_store::{
-    current_unix_secs, decode_signed_statement, sign_statement_fields, signed_statement_to_scale,
-    statement_fields_from_v01,
+    decode_signed_statement, sign_statement_fields, signed_statement_to_scale, statement_fields_from_v01,
 };
 use crate::host_logic::{product_account::*, sso::pairing::derive_identity_chat_private_key};
 use crate::runtime::{
     chat_device::{HostChatDevice, PeerDevice},
     chat_identity::*,
 };
+use crate::unix_time::current_unix_secs;
 
 type Error = HostProductDeviceChatError;
 const MAX_PEERS: usize = 256;
