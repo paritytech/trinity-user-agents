@@ -109,6 +109,12 @@ Native identifiers, content, recipients, storage and nested history remain bound
 than treated as an opaque signing/decryption tunnel. Capacity exhaustion must not evict live custody or idempotency
 commitments.
 
+Rich messages, attachments and imported history are bounded per peer as well as in total, so one contact cannot exhaust
+capacity for the others. When a bound is reached, the Host evicts the oldest settled records, the peer's own first: rich
+messages whose attachments are fully downloaded or uploaded with no pending acknowledgment, and history imports already
+acknowledged. Pending work is never evicted, so a store full of it refuses new records. An evicted rich message leaves
+`rich_messages`, and its attachments no longer open; the product keeps its own conversation history.
+
 ### Responses and paging
 
 Responses contain public `device` and authenticated `peers`, optional `binding`, authenticated `opened` frames,
@@ -153,9 +159,11 @@ at the signing Host would need per-product attestation across all SSO methods an
 Device state is scoped to wallet, network, product and installation; the allocator and imported source identity are
 wallet/network-wide. Handles and continuation IDs must not cross these boundaries.
 
-Chat authority is distinct from username disclosure. Pure `Bind`, `Prepare`, and `Open` do not require Host
-`StatementSubmit`; the product separately requests submission permission and the device's allowance. Uploads require
-`PreimageSubmit` and the existing Bulletin allowance. None is a spend grant.
+Chat authority is distinct from username disclosure. An "allow once" answer grants Chat authority for the rest of the
+wallet session, including the Host's own background file and history work for that product, and stores nothing; a stored
+denial or revocation ends it immediately. Pure `Bind`, `Prepare`, and `Open` do not require Host `StatementSubmit`; the
+product separately requests submission permission and the device's allowance. Uploads require `PreimageSubmit` and the
+existing Bulletin allowance. None is a spend grant.
 
 The Host verifies native invitations, peer identity proofs and device membership. Outgoing payments additionally require
 an active keyed peer device to acknowledge the legacy-device revocation update. Only eligible devices enter the payment

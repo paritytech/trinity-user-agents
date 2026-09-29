@@ -65,73 +65,32 @@ use zeroize::Zeroizing;
 
 #[derive(Default)]
 struct LocalGrantState {
-	activation_generation: u64,
-	auto_signing_grants: HashSet<([u8; 32], ProductId)>,
-	/// Per product, the period its statement-store allowance was last seen
-	/// registered in, and its key.
-	// TODO(#1159): persist in core.sqlite3 allowance_records.
-	statement_allowance_keys: HashMap<ProductId, (u32, StatementStoreAllowanceKey)>,
+    activation_generation: u64,
+    auto_signing_grants: HashSet<([u8; 32], String)>,
+    /// Chat authority the user allowed for this session only, by owner and product.
+    chat_session_grants: HashSet<([u8; 32], String)>,
 }
 
 impl LocalGrantState {
-	fn advance_activation(&mut self) {
-		self.activation_generation = self
-			.activation_generation
-			.checked_add(1)
-			.expect("local activation generation exhausted");
-		self.auto_signing_grants.clear();
-		self.statement_allowance_keys.clear();
-	}
+    fn advance_activation(&mut self) {
+        self.activation_generation = self
+            .activation_generation
+            .checked_add(1)
+            .expect("local activation generation exhausted");
+        self.auto_signing_grants.clear();
+        self.chat_session_grants.clear();
+    }
 
-	fn revoke_product(&mut self, product_id: &ProductId) {
-		self.activation_generation = self
-			.activation_generation
-			.checked_add(1)
-			.expect("local activation generation exhausted");
-		self.auto_signing_grants
-			.retain(|(_, granted_product_id)| granted_product_id != product_id);
-		self.statement_allowance_keys.remove(product_id);
-	}
-
-	fn statement_allowance_key(
-		&self,
-		activation_generation: u64,
-		product_id: &ProductId,
-		period: u32,
-	) -> Result<Option<&StatementStoreAllowanceKey>, AuthorityError> {
-		if self.activation_generation != activation_generation {
-			return Err(AuthorityError::Disconnected);
-		}
-		Ok(self
-			.statement_allowance_keys
-			.get(product_id)
-			.filter(|(cached_period, _)| *cached_period == period)
-			.map(|(_, key)| key))
-	}
-
-	fn forget_statement_allowance_key(&mut self, product_id: &ProductId, public_key: [u8; 32]) {
-		if self
-			.statement_allowance_keys
-			.get(product_id)
-			.is_some_and(|(_, key)| key.public_key == public_key)
-		{
-			self.statement_allowance_keys.remove(product_id);
-		}
-	}
-
-	fn remember_statement_allowance_key(
-		&mut self,
-		activation_generation: u64,
-		product_id: ProductId,
-		period: u32,
-		key: StatementStoreAllowanceKey,
-	) -> Result<(), AuthorityError> {
-		if self.activation_generation != activation_generation {
-			return Err(AuthorityError::Disconnected);
-		}
-		self.statement_allowance_keys.insert(product_id, (period, key));
-		Ok(())
-	}
+    fn revoke_product(&mut self, product_id: &str) {
+        self.activation_generation = self
+            .activation_generation
+            .checked_add(1)
+            .expect("local activation generation exhausted");
+        self.auto_signing_grants
+            .retain(|(_, granted_product_id)| granted_product_id != product_id);
+        self.chat_session_grants
+            .retain(|(_, granted_product_id)| granted_product_id != product_id);
+    }
 }
 
 /// Wallet-local account authority for a signing host.
@@ -356,16 +315,41 @@ impl SigningHost {
 		Ok(key)
 	}
 
-	fn has_auto_signing_grant(
-		&self,
-		activation_generation: u64,
-		owner: [u8; 32],
-		calling_product_id: &ProductId,
-		account_product_id: &ProductId,
-	) -> bool {
-		if account_product_id != calling_product_id {
-			return false;
-		}
+    /// Whether the user allowed Chat for `product_id` for this session only.
+    pub(crate) fn chat_session_granted(&self, session: &AuthoritySession, product_id: &str) -> bool {
+        self.local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned")
+            .chat_session_grants
+            .contains(&(session.public_key, product_id.to_owned()))
+    }
+
+    /// Fence in-flight grant work and revoke this product's grants from the
+    /// current local activation while preserving unrelated products.
+    pub async fn clear_product_state(&self, product_id: &str) -> Result<(), AuthorityError> {
+        let product_id = normalize_product_identifier(product_id).map_err(|error| {
+            AuthorityError::Unavailable {
+                reason: error.to_string(),
+            }
+        })?;
+        self.local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned")
+            .revoke_product(&product_id);
+        if let Some(session) = self.current_local_session() {
+            let context = self.native_chat_context(&session).map_err(|error| {
+                AuthorityError::Unavailable {
+                    reason: format!("native Chat product state unavailable: {error:?}"),
+                }
+            })?;
+            let forgotten = self.native_chat.forget_product(&context, &product_id).await;
+            // The registry preserves wallet custody and unrelated product authority.
+            forgotten.map_err(|_| AuthorityError::Unavailable {
+                reason: "native Chat product state could not be cleared".into(),
+            })?;
+        }
+        Ok(())
+    }
 
 		let state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
 		state.activation_generation == activation_generation &&
@@ -455,29 +439,41 @@ impl SigningHost {
     /// Read the current wallet's authenticated native Chat roster for the host shell.
     pub async fn get_native_chat_contacts(
         &self,
-    ) -> Result<super::NativeChatContactsSnapshot, v01::GenericError> {
-        let session = self
-            .current_local_session()
-            .ok_or_else(|| v01::GenericError {
-                reason: "native Chat contacts require a local signing session".into(),
-            })?;
-        let context = self
-            .native_chat_context(&session)
-            .map_err(|error| v01::GenericError {
-                reason: format!("native Chat contacts unavailable: {error:?}"),
-            })?;
-        let snapshot =
-            self.native_chat
-                .contacts(&context)
-                .await
-                .map_err(|error| v01::GenericError {
-                    reason: format!("native Chat contacts unavailable: {error:?}"),
-                })?;
-        self.require_current_session(&session)
-            .map_err(|error| v01::GenericError {
-                reason: error.to_string(),
-            })?;
-        Ok(snapshot)
+        session: &AuthoritySession,
+    ) -> Result<NativeChatContext, ProductDeviceChatAuthorityError> {
+        self.require_current_session(session)?;
+        let entropy = self.root_entropy()?;
+        self.require_current_session(session)?;
+        let session_state = self.session_state.clone();
+        let local_grants = self.local_grants.clone();
+        let validation_id = session.validation_id.clone();
+        let session_valid = Arc::new(move || {
+            let grants = local_grants
+                .lock()
+                .expect("local AutoSigning grant mutex poisoned");
+            session_state.current().is_some_and(|current| {
+                local_session_validation_id(&current, grants.activation_generation) == validation_id
+            })
+        });
+        let local_grants = self.local_grants.clone();
+        let owner = session.public_key;
+        let chat_session_granted = Arc::new(move |product: &str| {
+            local_grants
+                .lock()
+                .expect("local AutoSigning grant mutex poisoned")
+                .chat_session_grants
+                .contains(&(owner, product.to_owned()))
+        });
+        Ok(NativeChatContext {
+            services: self.services.clone(),
+            session: session.clone(),
+            entropy,
+            session_valid,
+            chat_session_granted,
+            network_suffix: self.network_suffix.clone(),
+            genesis_hash: self.services.people_chain_genesis_hash,
+            coinage_instance_id: self.coinage_instance_id,
+        })
     }
 
     fn ring_vrf_entropy(
@@ -1234,95 +1230,33 @@ impl ProductAuthority for SigningHost {
 		vrf.sign(&entropy, &request.payload.message)
 	}
 
-	async fn allocate_resources(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		product_id: &ProductId,
-		request: v01::HostRequestResourceAllocationRequest,
-	) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
-		self.require_current_session(session)?;
-		#[cfg(feature = "test-host")]
-		if self.resource_controls.grants_allowances_unchecked() {
-			// Nothing is allocated and no proof is built: a suite in this mode
-			// learns that its product handles a grant, not that a host would
-			// have given one. A withheld tag is still refused here, so the one
-			// resource a suite wants to prove its product lives without stays
-			// refused while the rest are granted.
-			return Ok(v01::HostRequestResourceAllocationResponse {
-				outcomes: request
-					.resources
-					.iter()
-					.map(|resource| {
-						if self.resource_controls.withholds(resource) {
-							v01::AllocationOutcome::Rejected
-						} else {
-							v01::AllocationOutcome::Allocated
-						}
-					})
-					.collect(),
-			});
-		}
-		let mut outcomes = Vec::with_capacity(request.resources.len());
-		for resource in request.resources {
-			if let Some(reason) = cx.cancel().reason() {
-				return Err(super::authority_cancellation_error(cx, reason));
-			}
-			// Checked before the work, not after: withholding is the suite
-			// saying this resource is refused, so performing the allocation and
-			// then reporting a refusal would leave the two disagreeing.
-			#[cfg(feature = "test-host")]
-			if self.resource_controls.withholds(&resource) {
-				outcomes.push(v01::AllocationOutcome::Rejected);
-				continue;
-			}
-			let outcome = match resource {
-				v01::AllocatableResource::StatementStoreAllowance => self
-					.allocate_statement_store_allowance_key(
-						session,
-						product_id,
-						OnExistingAllowancePolicy::Increase,
-					)
-					.await
-					.map(|_| v01::AllocationOutcome::Allocated),
-				v01::AllocatableResource::BulletinAllowance => {
-					allowance::allocate_bulletin_allowance(
-						&self.services,
-						self,
-						session,
-						product_id,
-						OnExistingAllowancePolicy::Increase,
-					)
-					.await
-					.map(|_| v01::AllocationOutcome::Allocated)
-				},
-				v01::AllocatableResource::SmartContractAllowance(index) => {
-					allowance::allocate_smart_contract_allowance(
-						&self.services,
-						self,
-						session,
-						product_id,
-						index,
-						OnExistingAllowancePolicy::Increase,
-					)
-					.await
-					.map(|()| v01::AllocationOutcome::Allocated)
-				},
-				v01::AllocatableResource::AutoSigning => self
-					.grant_auto_signing(session, product_id)
-					.map(|_| v01::AllocationOutcome::Allocated)
-					.map_err(allowance::AllowanceAllocationError::Authority),
-			};
-			match outcome {
-				Ok(outcome) => outcomes.push(outcome),
-				Err(reason) => {
-					tracing::warn!(%product_id, %reason, "direct resource allocation item failed");
-					outcomes.push(v01::AllocationOutcome::NotAvailable);
-				},
-			}
-		}
-		Ok(v01::HostRequestResourceAllocationResponse { outcomes })
-	}
+    async fn product_device_chat(
+        &self,
+        _cx: &CallContext,
+        session: &AuthoritySession,
+        request: ProductDeviceChatAuthorityRequest,
+    ) -> Result<truapi::latest::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError>
+    {
+        self.require_current_session(session)?;
+        let calling_product_id = normalize_product_identifier(&request.calling_product_id)
+            .map_err(|_| {
+                ProductDeviceChatAuthorityError::Domain(
+                    truapi::latest::HostProductDeviceChatError::InvalidRequest,
+                )
+            })?;
+        if request.session_consent {
+            self.local_grants
+                .lock()
+                .expect("local AutoSigning grant mutex poisoned")
+                .chat_session_grants
+                .insert((session.public_key, calling_product_id.clone()));
+        }
+        let context = self.native_chat_context(session)?;
+        self.native_chat
+            .execute(context, calling_product_id, request.operation)
+            .await
+            .map_err(ProductDeviceChatAuthorityError::Domain)
+    }
 
 	async fn statement_store_allowance_key(
 		&self,
@@ -2457,1528 +2391,2304 @@ mod tests {
 			Some(RingVrfError::NotAllowlisted),
 			"the network rule binds the read as well as the proof: the alias and \
              the proof come out of one VRF evaluation"
-		);
-		assert!(
-			alias("peopl.dot", "bank.dot").is_ok(),
-			"the owner may still read its own alias in any context"
-		);
-	}
-
-	/// An owner naming itself in another spelling is admitted, over the wire.
-	///
-	/// The context guard compares the identities the gate normalized, not the
-	/// ones the request carried. Deriving the caller from the request again
-	/// compares a peer's spelling against a normalized owner and refuses the
-	/// owner on its own key. `require_ring_vrf_key_access` returns the
-	/// normalized owner to stop exactly that, and `sso_responder` hands
-	/// `calling_product_id` through untouched.
-	#[test]
-	fn an_owner_spelled_differently_still_proves_with_its_own_key() {
-		let platform = Arc::new(StubPlatform::default());
-		let (_services, authority) =
-			signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = authority.current_session().expect("active session");
-		let ring = full_person_ring_location();
-		register_full_person_key(&authority, &session, &ring);
-		let prove = |caller: &str| {
-			futures::executor::block_on(authority.create_proof(
-				&CallContext::default(),
-				&session,
-				ProductRequest {
-					calling_product_id: ProductId::for_test(caller),
-					payload: v01::HostAccountCreateProofRequest {
-						key_handle: full_person_key_handle(),
-						context: v01::ProductProofContext {
-							product_id: "peopl.dot".to_string(),
-							suffix: v01::DerivationIndex::Index(0),
-						},
-						ring_location: ring.clone(),
-						message: b"m".to_vec(),
-					},
-				},
-			))
-		};
-		assert!(prove("peopl.dot").is_ok(), "control: the canonical spelling");
-		assert!(
-			prove("PEOPL.DOT").is_ok(),
-			"the owner must not be refused on its own key for spelling itself differently"
-		);
-	}
-
-	/// A refusal covers the product, not one spelling of it.
-	///
-	/// The manifest grants a product and a product is all its executables, so a
-	/// refusal that overrides the grant has to name the same party. Keyed by the
-	/// full id instead, the user refusing `dim2.dot` left `app.dim2.dot` holding
-	/// the identical grant: the product re-entered under a subname it already
-	/// owns and the override was gone. Both halves now key by the bare label.
-	#[test]
-	fn a_refusal_covers_every_executable_of_the_refused_product() {
-		use crate::host_internal::product_manifest::Granted;
-		let platform = Arc::new(StubPlatform::default());
-		cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
-		deny_account_access(&platform, "ordinary.dot", "peopl.dot");
-		let (services, _authority) =
-			signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-
-		let granted = |caller: &str| {
-			futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
-				&services,
-				platform.as_ref(),
-				&ProductId::for_test(caller),
-				&ProductId::for_test("peopl.dot"),
-				Granted::Context,
-			))
-		};
-		for spelling in
-			["ordinary.dot", "app.ordinary.dot", "worker.ordinary.dot", "ordinary.paseo"]
-		{
-			assert!(!granted(spelling), "{spelling} is the refused product wearing another name");
-		}
-
-		// Control: a product the user never refused still holds its own grant,
-		// so the assertions above are not passing because nothing is granted.
-		let clean = Arc::new(StubPlatform::default());
-		cache_grant(&clean, "peopl.dot", r#"{"ordinary":["context"]}"#);
-		let (services, _authority) =
-			signing_runtime_with_ring_resolver(clean.clone(), full_person_ring_resolver());
-		assert!(
-			futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
-				&services,
-				clean.as_ref(),
-				&ProductId::for_test("app.ordinary.dot"),
-				&ProductId::for_test("peopl.dot"),
-				Granted::Context,
-			)),
-			"control: with no refusal recorded the same subname is granted"
-		);
-	}
-
-	/// `all` is a superset, so it satisfies `context` at the runtime seam and
-	/// not only in the manifest parser.
-	#[test]
-	fn a_grant_of_all_satisfies_context_at_the_authority() {
-		let granted = foreign_proof_through_the_authority(Some(r#"{"dim2":["all"]}"#));
-		assert!(granted.is_ok(), "`all` must satisfy `context`, got {granted:?}");
-	}
-
-	fn signing_runtime_with_ring_resolver(
-		platform: Arc<StubPlatform>,
-		ring_resolver: Arc<StubRingResolver>,
-	) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
-		let authority = SigningHostRole::new_with_ring_resolver(platform, ring_resolver);
-		(authority.services(), authority)
-	}
-
-	/// The grant admits `ring_vrf_sign`, not only `create_proof`.
-	///
-	/// #655 lists this as untested and it was: the other grant tests here all
-	/// drive `create_proof`. Both authorities call the same
-	/// `require_ring_vrf_key_access` from both methods, so the code was
-	/// covered, but a scope that admits one call and not the other is exactly
-	/// the kind of half-wired gate this issue exists to fix, and nothing
-	/// asserted the second half.
-	///
-	/// Driven at the authority, where the wire path also arrives, so this
-	/// covers the paired case as well. Success is the owner's own signature:
-	/// the grant lets `dim2.dot` produce what `peopl.dot` would have.
-	#[test]
-	fn a_context_grant_lets_a_foreign_product_sign_with_the_owners_key() {
-		let granted = foreign_ring_vrf_sign_through_the_authority(Some(r#"{"dim2":["context"]}"#));
-		let owners_own = foreign_ring_vrf_sign_through_the_authority_as(
-			Some(r#"{"dim2":["context"]}"#),
-			"peopl.dot",
-		);
-		assert!(
-			granted.is_ok(),
-			"a granted cross-product ring-VRF signature must be produced, got {granted:?}"
-		);
-		assert_eq!(
-			granted, owners_own,
-			"the grant must yield the owner's own signature, not a caller-derived one"
-		);
-	}
-
-	/// The same call with no grant.
-	#[test]
-	fn a_foreign_ring_vrf_sign_is_refused_when_the_owner_granted_nothing() {
-		assert_eq!(
-			foreign_ring_vrf_sign_through_the_authority(None).err(),
-			Some(RingVrfError::NotAllowlisted)
-		);
-	}
-
-	/// An unreadable permission store refuses an ordinary product's grant.
-	///
-	/// The stored `AccountAccess` decision is the only thing that can override a
-	/// publisher's grant. Reading a storage fault as "not refused" would let a
-	/// locked keychain turn the user's explicit no into a yes, on the strength
-	/// of a manifest the publisher controls. `ProductConsent::account_access`,
-	/// which writes that same decision, already fails closed; this is the read
-	/// side agreeing with it.
-	///
-	/// The error is scoped to permission keys so the manifest cache still
-	/// answers: otherwise the call would refuse for want of a manifest and the
-	/// assertion would prove nothing.
-	#[test]
-	fn a_grant_is_refused_when_the_stored_decision_cannot_be_read() {
-		let platform = Arc::new(StubPlatform {
-			permission_storage_error: Some("keychain locked"),
-			..StubPlatform::default()
-		});
-		cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
-		let (services, _authority) =
-			signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-
-		let granted = futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
-			&services,
-			platform.as_ref(),
-			&ProductId::for_test("ordinary.dot"),
-			&ProductId::for_test("peopl.dot"),
-			crate::host_internal::product_manifest::Granted::Context,
-		));
-		assert!(
-			!granted,
-			"an unreadable permission store must refuse, not fall through to the manifest"
-		);
-
-		// Control: the identical grant, with the store readable, is honoured.
-		// Without this the assertion above would also pass if the grant never
-		// worked at all.
-		let readable = Arc::new(StubPlatform::default());
-		cache_grant(&readable, "peopl.dot", r#"{"ordinary":["context"]}"#);
-		let (services, _authority) =
-			signing_runtime_with_ring_resolver(readable.clone(), full_person_ring_resolver());
-		assert!(
-			futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
-				&services,
-				readable.as_ref(),
-				&ProductId::for_test("ordinary.dot"),
-				&ProductId::for_test("peopl.dot"),
-				crate::host_internal::product_manifest::Granted::Context,
-			)),
-			"control: the same grant must be honoured when the store reads cleanly"
-		);
-	}
-
-	/// A grant lookup with nothing cached reaches the chain, and dials the
-	/// Asset Hub the role was configured with.
-	///
-	/// Every other grant test here seeds the manifest cache, and `root_manifest`
-	/// serves that before it consults the genesis hash, so the whole suite
-	/// passes on a role with no Asset Hub, and deleting the production install
-	/// would not turn any of it red. That is the blind spot #660 survived in.
-	/// This is the one case that takes the other branch: it asserts the dial
-	/// itself, so removing the install breaks it rather than going unnoticed.
-	///
-	/// The stub answers no RPC, so the lookup fails closed and the call is
-	/// refused. What is pinned is that the chain was reached at all, and which
-	/// chain.
-	#[test]
-	fn a_grant_lookup_with_a_cold_cache_dials_the_configured_asset_hub() {
-		let platform = Arc::new(StubPlatform::default());
-		// Deliberately no `cache_grant`: this must take the chain branch.
-		let (services, _authority) =
-			signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-
-		let granted = futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
-			&services,
-			platform.as_ref(),
-			&ProductId::for_test("dim2.dot"),
-			&ProductId::for_test("peopl.dot"),
-			crate::host_internal::product_manifest::Granted::Context,
-		));
-		assert!(!granted, "the stub answers no RPC, so the lookup must fail closed");
-
-		let dialled = platform
-			.chain_connects
-			.lock()
-			.expect("chain connect list mutex poisoned")
-			.clone();
-		assert!(
-			dialled.contains(&[0xcc; 32]),
-			"a cold-cache grant lookup must dial the configured Asset Hub; dialled {dialled:?}"
-		);
-	}
-
-	fn foreign_ring_vrf_sign_through_the_authority(
-		trusted_products: Option<&str>,
-	) -> Result<Vec<u8>, RingVrfError> {
-		foreign_ring_vrf_sign_through_the_authority_as(trusted_products, "dim2.dot")
-	}
-
-	/// Drive `ring_vrf_sign` straight at the authority with `caller` naming
-	/// `peopl.dot`'s key handle, bypassing the frontend exactly as
-	/// `sso_responder` does.
-	fn foreign_ring_vrf_sign_through_the_authority_as(
-		trusted_products: Option<&str>,
-		caller: &str,
-	) -> Result<Vec<u8>, RingVrfError> {
-		let platform = Arc::new(StubPlatform::default());
-		if let Some(trusted_products) = trusted_products {
-			cache_grant(&platform, "peopl.dot", trusted_products);
-		}
-		let (_services, authority) =
-			signing_runtime_with_ring_resolver(platform, full_person_ring_resolver());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = authority.current_session().expect("active session");
-		register_full_person_key(&authority, &session, &full_person_ring_location());
-
-		futures::executor::block_on(authority.ring_vrf_sign(
-			&CallContext::default(),
-			&session,
-			ProductRequest {
-				calling_product_id: ProductId::for_test(caller),
-				payload: v01::HostAccountRingVrfSignRequest {
-					key_handle: full_person_key_handle(),
-					message: b"sign me".to_vec(),
-				},
-			},
-		))
-	}
-
-	fn foreign_proof_through_the_authority(
-		trusted_products: Option<&str>,
-	) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
-		foreign_proof_through_the_authority_with(trusted_products, |_| {})
-	}
-
-	/// Drive `create_proof` straight at the authority, bypassing the frontend,
-	/// with `dim2.dot` naming `peopl.dot`'s key handle.
-	fn foreign_proof_through_the_authority_with(
-		trusted_products: Option<&str>,
-		seed: impl FnOnce(&StubPlatform),
-	) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
-		let platform = Arc::new(StubPlatform::default());
-		if let Some(trusted_products) = trusted_products {
-			cache_grant(&platform, "peopl.dot", trusted_products);
-		}
-		seed(&platform);
-		let (_services, authority) =
-			signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = authority.current_session().expect("active session");
-		let ring_location = full_person_ring_location();
-		register_full_person_key(&authority, &session, &ring_location);
-
-		futures::executor::block_on(authority.create_proof(
-			&CallContext::default(),
-			&session,
-			ProductRequest {
-				calling_product_id: ProductId::for_test("dim2.dot"),
-				payload: v01::HostAccountCreateProofRequest {
-					key_handle: full_person_key_handle(),
-					context: v01::ProductProofContext {
-						product_id: "dim2.dot".to_string(),
-						suffix: v01::DerivationIndex::Index(0),
-					},
-					ring_location,
-					message: b"prove me".to_vec(),
-				},
-			},
-		))
-	}
-
-	fn foreign_proof_request(
-		ring_location: &v01::RingLocation,
-	) -> truapi::versioned::account::HostAccountCreateProofRequest {
-		truapi::versioned::account::HostAccountCreateProofRequest::V1(
-			v01::HostAccountCreateProofRequest {
-				key_handle: full_person_key_handle(),
-				context: v01::ProductProofContext {
-					product_id: "dim2.dot".to_string(),
-					suffix: v01::DerivationIndex::Index(0),
-				},
-				ring_location: ring_location.clone(),
-				message: b"prove me".to_vec(),
-			},
-		)
-	}
-
-	fn full_person_ring_location() -> v01::RingLocation {
-		v01::RingLocation {
-			chain_id: [0x22; 32],
-			junctions: vec![
-				v01::RingLocationJunction::PalletInstance(42),
-				v01::RingLocationJunction::CollectionId(
-					b"pop:polkadot.network/people     ".to_vec(),
-				),
-			],
-		}
-	}
-
-	fn register_full_person_key(
-		authority: &SigningHostRole,
-		session: &AuthoritySession,
-		ring: &v01::RingLocation,
-	) {
-		futures::executor::block_on(authority.register_ring_vrf_key(
-			&CallContext::default(),
-			session,
-			ProductRequest {
-				calling_product_id: ProductId::for_test("peopl.dot"),
-				payload: HostAccountRegisterRingVrfKeyRequest {
-					index: v01::DerivationIndex::Index(0),
-					ring: ring.clone(),
-				},
-			},
-		))
-		.expect("full person key registration succeeds");
-	}
-
-	#[test]
-	fn internal_allowances_offer_both_reserved_person_handles_widest_first() {
-		let (_, authority) = signing_runtime();
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = authority.current_session().expect("active session");
-		let candidates = authority
-			.reserved_person_collection_candidates(&session)
-			.expect("reserved keys derive");
-
-		// Index 0 is the full-person handle and index 1 the light-person one, and
-		// People leads so a full person spends its wider slot budget first.
-		let expected =
-			[(PersonhoodCollection::People, 0u32), (PersonhoodCollection::LitePeople, 1)];
-		assert_eq!(candidates.len(), expected.len());
-		for (candidate, (collection, index)) in candidates.iter().zip(expected) {
-			assert_eq!(candidate.collection, collection);
-			assert_eq!(
-				candidate.entropy,
-				derive_ring_vrf_entropy(
-					&ENTROPY,
-					&ProductId::for_test("peopl.dot"),
-					&v01::DerivationIndex::Index(index)
-				)
-				.expect("reserved RFC-0024 handle derives"),
-				"{collection} candidate does not use peopl.dot/{index}",
-			);
-		}
-		assert_ne!(candidates[0].entropy, candidates[1].entropy);
-	}
-
-	#[test]
-	fn reserved_identities_follow_the_configured_network_suffix() {
-		// A wallet on paseo-next-v2 is the `peopl.paseo` person and the
-		// `uid.paseo` account: the ones a `peopl.paseo` product registers and the
-		// ones the identity backend records a lite username for. The `.dot`
-		// derivations of the same seed are a different person.
-		let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform::default());
-		let authority = SigningHostRole::new_with_ring_resolver_on(
-			platform,
-			full_person_ring_resolver(),
-			"paseo",
-		);
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = authority.current_session().expect("active session");
-
-		let candidates = authority
-			.reserved_person_collection_candidates(&session)
-			.expect("reserved keys derive");
-		for (candidate, index) in candidates.iter().zip([0u32, 1]) {
-			assert_eq!(
-				candidate.entropy,
-				derive_ring_vrf_entropy(
-					&ENTROPY,
-					&ProductId::for_test("peopl.paseo"),
-					&v01::DerivationIndex::Index(index)
-				)
-				.expect("reserved RFC-0024 handle derives"),
-				"{} candidate does not use peopl.paseo/{index}",
-				candidate.collection
-			);
-			assert_ne!(
-				candidate.entropy,
-				derive_ring_vrf_entropy(
-					&ENTROPY,
-					&ProductId::for_test("peopl.dot"),
-					&v01::DerivationIndex::Index(index)
-				)
-				.expect("reserved RFC-0024 handle derives"),
-			);
-		}
-
-		let identity = derive_identity_keypair(&ENTROPY, "paseo")
-			.expect("uid.paseo identity derivation")
-			.public
-			.to_bytes();
-		assert_eq!(session.identity_account_id, Some(identity));
-		assert_eq!(authority.identity_keypair().expect("identity").public.to_bytes(), identity);
-	}
-
-	#[test]
-	fn ring_alias_and_proof_share_the_explicit_registered_key() {
-		let resolver = full_person_ring_resolver();
-		let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform::default());
-		let authority = SigningHostRole::new_with_ring_resolver(platform, resolver);
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = authority.current_session().expect("active session");
-		let cx = CallContext::default();
-		let context = v01::ProductProofContext {
-			product_id: "myapp.dot".to_string(),
-			suffix: v01::DerivationIndex::Index(0),
-		};
-		let ring_location = full_person_ring_location();
-		register_full_person_key(&authority, &session, &ring_location);
-
-		let alias = futures::executor::block_on(authority.account_alias(
-			&cx,
-			&session,
-			ProductRequest {
-				calling_product_id: ProductId::for_test("peopl.dot"),
-				payload: HostAccountGetAliasRequest {
-					key_handle: full_person_key_handle(),
-					context: context.clone(),
-					ring_location: ring_location.clone(),
-				},
-			},
-		))
-		.expect("alias succeeds");
-		let proof = futures::executor::block_on(authority.create_proof(
-			&cx,
-			&session,
-			ProductRequest {
-				calling_product_id: ProductId::for_test("peopl.dot"),
-				payload: HostAccountCreateProofRequest {
-					key_handle: full_person_key_handle(),
-					context,
-					ring_location,
-					message: b"prove me".to_vec(),
-				},
-			},
-		))
-		.expect("proof succeeds");
-
-		assert!(!proof.proof.is_empty());
-		assert_eq!(proof.contextual_alias, alias);
-		assert_eq!(proof.ring_index, 7);
-		assert_eq!(proof.ring_revision, 11);
-	}
-
-	#[test]
-	fn alias_checks_the_exact_registry_ring_before_resolving_it() {
-		let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform::default());
-		let authority =
-			SigningHostRole::new_with_ring_resolver(platform, full_person_ring_resolver());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = authority.current_session().expect("active session");
-		let registered_ring = full_person_ring_location();
-		register_full_person_key(&authority, &session, &registered_ring);
-
-		let error = futures::executor::block_on(authority.account_alias(
-			&CallContext::default(),
-			&session,
-			ProductRequest {
-				calling_product_id: ProductId::for_test("peopl.dot"),
-				payload: HostAccountGetAliasRequest {
-					key_handle: full_person_key_handle(),
-					context: v01::ProductProofContext {
-						product_id: "myapp.dot".to_string(),
-						suffix: v01::DerivationIndex::Index(0),
-					},
-					ring_location: v01::RingLocation {
-						chain_id: registered_ring.chain_id,
-						junctions: vec![],
-					},
-				},
-			},
-		))
-		.unwrap_err();
-
-		assert_eq!(error, RingVrfError::KeyNotInRing);
-	}
-
-	#[test]
-	fn direct_signing_rejects_registry_public_key_mismatched_with_wallet() {
-		let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform::default());
-		let authority =
-			SigningHostRole::new_with_ring_resolver(platform, full_person_ring_resolver());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = authority.current_session().expect("active session");
-		let handle = v01::ProductAccountId {
-			dot_ns_identifier: ProductId::for_test("myapp.dot"),
-			derivation_index: v01::DerivationIndex::Index(8),
-		};
-		futures::executor::block_on(authority.ring_vrf_registry.register(
-			session.public_key,
-			handle.clone(),
-			full_person_ring_location(),
-			[0xFF; 32],
-		))
-		.expect("synthetic registry entry persists");
-
-		let error = futures::executor::block_on(authority.ring_vrf_sign(
-			&CallContext::default(),
-			&session,
-			ProductRequest {
-				calling_product_id: ProductId::for_test("myapp.dot"),
-				payload: HostAccountRingVrfSignRequest {
-					key_handle: handle,
-					message: b"reject mismatched registry state".to_vec(),
-				},
-			},
-		))
-		.unwrap_err();
-
-		assert!(matches!(
-			error,
-			RingVrfError::Unknown { reason } if reason.contains("does not match the active wallet")
-		));
-	}
-
-	#[test]
-	fn foreign_alias_prompts_but_foreign_proof_is_refused_without_a_prompt() {
-		let platform = Arc::new(StubPlatform::default());
-		let authority =
-			SigningHostRole::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = authority.current_session().expect("active session");
-		let cx = CallContext::default();
-		let context = v01::ProductProofContext {
-			product_id: "other.dot".to_string(),
-			suffix: v01::DerivationIndex::Index(0),
-		};
-		let ring_location = full_person_ring_location();
-		register_full_person_key(&authority, &session, &ring_location);
-
-		let alias = futures::executor::block_on(authority.account_alias(
-			&cx,
-			&session,
-			ProductRequest {
-				calling_product_id: ProductId::for_test("myapp.dot"),
-				payload: HostAccountGetAliasRequest {
-					key_handle: full_person_key_handle(),
-					context: context.clone(),
-					ring_location: ring_location.clone(),
-				},
-			},
-		));
-		assert_eq!(alias, Err(RingVrfError::Rejected));
-
-		let proof = futures::executor::block_on(authority.create_proof(
-			&cx,
-			&session,
-			ProductRequest {
-				calling_product_id: ProductId::for_test("myapp.dot"),
-				payload: HostAccountCreateProofRequest {
-					key_handle: full_person_key_handle(),
-					context,
-					ring_location,
-					message: b"prove me".to_vec(),
-				},
-			},
-		));
-		assert_eq!(proof, Err(RingVrfError::NotAllowlisted));
-		assert_eq!(
-			platform
-				.account_access_reviews
-				.lock()
-				.expect("account access review list mutex poisoned")
-				.len(),
-			1
-		);
-	}
-
-	#[test]
-	fn cross_product_alias_reuses_persisted_account_access_grant() {
-		let platform =
-			Arc::new(StubPlatform { account_access_confirmed: true, ..StubPlatform::default() });
-		let authority =
-			SigningHostRole::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = authority.current_session().expect("active session");
-		let cx = CallContext::default();
-		let request = ProductRequest {
-			calling_product_id: ProductId::for_test("myapp.dot"),
-			payload: HostAccountGetAliasRequest {
-				key_handle: full_person_key_handle(),
-				context: v01::ProductProofContext {
-					product_id: "other.dot".to_string(),
-					suffix: v01::DerivationIndex::Index(0),
-				},
-				ring_location: full_person_ring_location(),
-			},
-		};
-		register_full_person_key(&authority, &session, &request.payload.ring_location);
-
-		futures::executor::block_on(authority.account_alias(&cx, &session, request.clone()))
-			.expect("first alias succeeds");
-		futures::executor::block_on(authority.account_alias(&cx, &session, request))
-			.expect("second alias succeeds from cached grant");
-
-		assert_eq!(
-			platform
-				.account_access_reviews
-				.lock()
-				.expect("account access review list mutex poisoned")
-				.len(),
-			1
-		);
-	}
-
-	#[test]
-	fn local_activation_exposes_the_uid_dot_identity_account() {
-		let (_services, authority) = signing_runtime();
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-
-		let session = authority.current_session().expect("active session");
-		let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX)
-			.expect("uid.dot identity derivation")
-			.public
-			.to_bytes();
-		assert_eq!(session.identity_account_id, Some(identity));
-	}
-
-	#[test]
-	fn activate_then_sign_raw_verifies_against_derived_product_key() {
-		let (services, activation) = signing_runtime();
-		futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let runtime = product_runtime(services, activation);
-		let cx = CallContext::default();
-
-		let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
-			account: v01::ProductAccountId {
-				dot_ns_identifier: ProductId::for_test("myapp.dot"),
-				derivation_index: v01::DerivationIndex::Index(0),
-			},
-			payload: v01::RawPayload::Bytes { bytes: b"hello world".to_vec() },
-		});
-		let HostSignRawResponse::V1(response) =
-			futures::executor::block_on(runtime.sign_raw(&cx, request)).expect("sign_raw ok");
-		assert!(response.signed_transaction.is_none());
-
-		let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-		let keypair =
-			derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0))
-				.unwrap();
-		let signature =
-			schnorrkel::Signature::from_bytes(&response.signature).expect("64-byte signature");
-		assert!(
-			keypair
-				.public
-				.verify_simple(b"substrate", b"<Bytes>hello world</Bytes>", &signature)
-				.is_ok(),
-			"signature verifies over the <Bytes>-wrapped message",
-		);
-	}
-
-	#[test]
-	fn sign_vrf_replays_transcript_and_returns_verifiable_proof() {
-		let (_services, authority) = signing_runtime();
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = authority.current_session().expect("active session");
-		let request = v01::HostAccountSignVrfRequest {
-			account: product_account(0),
-			transcript_label: b"pop:airdrop".to_vec(),
-			items: vec![
-				v01::VrfTranscriptItem { label: b"domain".to_vec(), value: b"lottery".to_vec() },
-				v01::VrfTranscriptItem {
-					label: b"round".to_vec(),
-					value: 7u32.to_le_bytes().to_vec(),
-				},
-			],
-		};
-
-		let signature = futures::executor::block_on(authority.sign_vrf(
-			&CallContext::default(),
-			&session,
-			&ProductId::for_test("myapp.dot"),
-			request,
-		))
-		.expect("VRF signing succeeds");
-
-		let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-		let keypair =
-			derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0))
-				.unwrap();
-		let mut transcript = merlin::Transcript::new(b"pop:airdrop");
-		transcript.append_message(b"domain", b"lottery");
-		transcript.append_message(b"round", &7u32.to_le_bytes());
-		let pre_output = schnorrkel::vrf::VRFPreOut::from_bytes(&signature.pre_output).unwrap();
-		let proof = schnorrkel::vrf::VRFProof::from_bytes(&signature.proof).unwrap();
-		keypair
-			.public
-			.vrf_verify(transcript, &pre_output, &proof)
-			.expect("VRF proof verifies");
-	}
-
-	#[test]
-	fn approved_auto_signing_product_skips_vrf_confirmation_but_other_product_does_not() {
-		let platform = Arc::new(StubPlatform {
-			resource_allocation_confirmed: true,
-			sign_vrf_confirmed: false,
-			..StubPlatform::default()
-		});
-		let (services, authority) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let runtime = product_runtime(services, authority.clone());
-		let allocation = futures::executor::block_on(ResourceAllocation::request(
-			&runtime,
-			&CallContext::default(),
-			HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
-				resources: vec![v01::AllocatableResource::AutoSigning],
-			}),
-		))
-		.expect("approved AutoSigning allocation succeeds");
-		let HostRequestResourceAllocationResponse::V1(allocation) = allocation;
-		assert_eq!(allocation.outcomes, vec![v01::AllocationOutcome::Allocated],);
-		assert_eq!(
-			platform
-				.resource_allocation_reviews
-				.lock()
-				.expect("resource allocation review list mutex poisoned")
-				.len(),
-			1,
-		);
-
-		let session = authority.current_session().expect("active session");
-		futures::executor::block_on(authority.sign_vrf(
-			&CallContext::default(),
-			&session,
-			&ProductId::for_test("myapp.dot"),
-			vrf_request("myapp.dot"),
-		))
-		.expect("granted product signs without another confirmation");
-		assert!(
-			platform
-				.sign_vrf_reviews
-				.lock()
-				.expect("VRF signing review list mutex poisoned")
-				.is_empty(),
-			"the allocation grant bypasses only the subsequent VRF prompt",
-		);
-
-		let error = futures::executor::block_on(authority.sign_vrf(
-			&CallContext::default(),
-			&session,
-			&ProductId::for_test("other.dot"),
-			vrf_request("myapp.dot"),
-		))
-		.expect_err("different calling product remains confirmation-bound");
-		assert_eq!(error, AuthorityError::Rejected);
-		let reviews = platform
-			.sign_vrf_reviews
-			.lock()
-			.expect("VRF signing review list mutex poisoned");
-		assert_eq!(reviews.len(), 1);
-		assert_eq!(reviews[0].calling_product_id, ProductId::for_test("other.dot"));
-	}
-
-	#[test]
-	fn product_clear_revokes_only_current_activation_grant_and_fences_stale_work() {
-		let platform = Arc::new(StubPlatform::default());
-		let (_services, authority) = signing_runtime_with_platform(platform);
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let stale_session = authority.current_session().expect("active session");
-		authority
-			.grant_auto_signing(&stale_session, &ProductId::for_test("myapp.dot"))
-			.expect("first product grant succeeds");
-		authority
-			.grant_auto_signing(&stale_session, &ProductId::for_test("other.dot"))
-			.expect("other product grant succeeds");
-
-		authority.clear_product_state(&ProductId::for_test("myapp.dot"));
-
-		let current_session = authority.current_session().expect("session remains active");
-		let (_, current_generation) = authority
-			.require_current_session(&current_session)
-			.expect("current session validates");
-		assert!(!authority.has_auto_signing_grant(
-			current_generation,
-			current_session.public_key,
-			&ProductId::for_test("myapp.dot"),
-			&ProductId::for_test("myapp.dot"),
-		));
-		assert!(authority.has_auto_signing_grant(
-			current_generation,
-			current_session.public_key,
-			&ProductId::for_test("other.dot"),
-			&ProductId::for_test("other.dot"),
-		));
-		assert!(matches!(
-			authority.grant_auto_signing(&stale_session, &ProductId::for_test("myapp.dot")),
-			Err(AuthorityError::Disconnected)
-		));
-	}
-
-	#[test]
-	fn auto_signing_grant_does_not_cross_root_identity_replacement() {
-		let platform = Arc::new(StubPlatform {
-			resource_allocation_confirmed: true,
-			sign_vrf_confirmed: false,
-			..StubPlatform::default()
-		});
-		let (services, authority) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("first activation succeeds");
-		let runtime = product_runtime(services, authority.clone());
-		futures::executor::block_on(ResourceAllocation::request(
-			&runtime,
-			&CallContext::default(),
-			HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
-				resources: vec![v01::AllocatableResource::AutoSigning],
-			}),
-		))
-		.expect("AutoSigning allocation succeeds");
-
-		futures::executor::block_on(authority.activate_local_session([0xCD; 16].to_vec()))
-			.expect("replacement activation succeeds");
-		let replacement = authority.current_session().expect("replacement session");
-		let error = futures::executor::block_on(authority.sign_vrf(
-			&CallContext::default(),
-			&replacement,
-			&ProductId::for_test("myapp.dot"),
-			vrf_request("myapp.dot"),
-		))
-		.expect_err("replacement root must receive its own confirmation");
-		assert_eq!(error, AuthorityError::Rejected);
-		assert_eq!(
-			platform
-				.sign_vrf_reviews
-				.lock()
-				.expect("VRF signing review list mutex poisoned")
-				.len(),
-			1,
-		);
-	}
-
-	#[test]
-	fn auto_signing_grant_does_not_cross_disconnect_and_same_wallet_reactivation() {
-		let platform = Arc::new(StubPlatform {
-			resource_allocation_confirmed: true,
-			sign_vrf_confirmed: false,
-			..StubPlatform::default()
-		});
-		let (services, authority) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("first activation succeeds");
-		let runtime = product_runtime(services, authority.clone());
-		futures::executor::block_on(ResourceAllocation::request(
-			&runtime,
-			&CallContext::default(),
-			HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
-				resources: vec![v01::AllocatableResource::AutoSigning],
-			}),
-		))
-		.expect("AutoSigning allocation succeeds");
-
-		futures::executor::block_on(authority.disconnect());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("same wallet reactivation succeeds");
-		let reactivated = authority.current_session().expect("reactivated session");
-		let error = futures::executor::block_on(authority.sign_vrf(
-			&CallContext::default(),
-			&reactivated,
-			&ProductId::for_test("myapp.dot"),
-			vrf_request("myapp.dot"),
-		))
-		.expect_err("reactivated wallet must receive its own confirmation");
-		assert_eq!(error, AuthorityError::Rejected);
-		assert_eq!(
-			platform
-				.sign_vrf_reviews
-				.lock()
-				.expect("VRF signing review list mutex poisoned")
-				.len(),
-			1,
-		);
-	}
-
-	#[test]
-	fn stale_auto_signing_completion_cannot_grant_same_wallet_reactivation() {
-		let platform =
-			Arc::new(StubPlatform { sign_vrf_confirmed: false, ..StubPlatform::default() });
-		let (_services, authority) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("first activation succeeds");
-		let stale = authority.current_session().expect("first session snapshot");
-
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("same wallet replacement activation succeeds");
-		let current = authority.current_session().expect("replacement session");
-		assert_ne!(stale.validation_id, current.validation_id);
-
-		let error = futures::executor::block_on(authority.allocate_resources(
-			&CallContext::default(),
-			&stale,
-			&ProductId::for_test("myapp.dot"),
-			v01::HostRequestResourceAllocationRequest {
-				resources: vec![v01::AllocatableResource::AutoSigning],
-			},
-		))
-		.expect_err("completion captured from the old activation is stale");
-		assert_eq!(error, AuthorityError::Disconnected);
-
-		let error = futures::executor::block_on(authority.sign_vrf(
-			&CallContext::default(),
-			&current,
-			&ProductId::for_test("myapp.dot"),
-			vrf_request("myapp.dot"),
-		))
-		.expect_err("stale allocation must not grant the replacement activation");
-		assert_eq!(error, AuthorityError::Rejected);
-		assert_eq!(
-			platform
-				.sign_vrf_reviews
-				.lock()
-				.expect("VRF signing review list mutex poisoned")
-				.len(),
-			1,
-		);
-	}
-
-	#[test]
-	fn auto_signing_grant_does_not_cross_runtime_instance() {
-		let platform = Arc::new(StubPlatform {
-			resource_allocation_confirmed: true,
-			sign_vrf_confirmed: false,
-			..StubPlatform::default()
-		});
-		let (services, granting_authority) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(granting_authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("granting runtime activates");
-		let granting_runtime = product_runtime(services, granting_authority);
-		futures::executor::block_on(ResourceAllocation::request(
-			&granting_runtime,
-			&CallContext::default(),
-			HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
-				resources: vec![v01::AllocatableResource::AutoSigning],
-			}),
-		))
-		.expect("AutoSigning allocation succeeds");
-
-		let (_replacement_services, replacement) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(replacement.activate_local_session(ENTROPY.to_vec()))
-			.expect("replacement runtime activates with the same root");
-		let session = replacement.current_session().expect("replacement session");
-		let error = futures::executor::block_on(replacement.sign_vrf(
-			&CallContext::default(),
-			&session,
-			&ProductId::for_test("myapp.dot"),
-			vrf_request("myapp.dot"),
-		))
-		.expect_err("a separate runtime must receive its own confirmation");
-		assert_eq!(error, AuthorityError::Rejected);
-		assert_eq!(
-			platform
-				.sign_vrf_reviews
-				.lock()
-				.expect("VRF signing review list mutex poisoned")
-				.len(),
-			1,
-		);
-	}
-
-	#[test]
-	fn sign_payload_product_and_legacy_use_the_substrate_preimage() {
-		let (_services, authority) = signing_runtime();
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = authority.current_session().expect("active session");
-		let cx = CallContext::default();
-		let mut payload = crate::test_support::sign_payload_data();
-		payload.signed_extensions = vec![
-			"CheckSpecVersion".to_string(),
-			"CheckTxVersion".to_string(),
-			"CheckGenesis".to_string(),
-			"CheckMortality".to_string(),
-			"CheckNonce".to_string(),
-			"ChargeTransactionPayment".to_string(),
-		];
-		payload.with_signed_transaction = parity_scale_codec::OptionBool(Some(true));
-		let preimage = extrinsic_payload_preimage(&payload).expect("preimage builds");
-
-		let product_response = futures::executor::block_on(authority.sign_payload(
-			&cx,
-			&session,
-			None,
-			SignPayloadAuthorityRequest::Product(v01::HostSignPayloadRequest {
-				account: product_account(0),
-				payload: payload.clone(),
-			}),
-		))
-		.expect("product payload signing succeeds");
-
-		let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-		let keypair =
-			derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0))
-				.unwrap();
-		assert_eq!(product_response.signature.len(), 65);
-		assert_eq!(product_response.signature[0], 1);
-		let signature =
-			schnorrkel::Signature::from_bytes(&product_response.signature[1..]).unwrap();
-		assert!(
-			keypair
-				.public
-				.verify_simple(SR25519_SIGNING_CONTEXT, &preimage, &signature)
-				.is_ok()
-		);
-		let signed_transaction = product_response
-			.signed_transaction
-			.as_ref()
-			.expect("requested signed transaction");
-		let (account, embedded_signature, tail) = split_v4(signed_transaction);
-		assert_eq!(account, keypair.public.to_bytes());
-		assert_eq!(embedded_signature.as_slice(), &product_response.signature[1..]);
-		let extensions = extrinsic_payload_extensions(&payload).unwrap();
-		let expected_tail = extensions
-			.iter()
-			.flat_map(|extension| extension.extra.iter().copied())
-			.chain(payload.method.iter().copied())
-			.collect::<Vec<_>>();
-		assert_eq!(tail, expected_tail);
-
-		let legacy_response = futures::executor::block_on(authority.sign_payload(
-			&cx,
-			&session,
-			None,
-			SignPayloadAuthorityRequest::LegacyAccount {
-				product_account: product_account(0),
-				request: v01::HostSignPayloadWithLegacyAccountRequest {
-					signer: format!("0x{}", hex::encode(keypair.public.to_bytes())),
-					payload,
-				},
-			},
-		))
-		.expect("legacy payload signing succeeds");
-		assert_eq!(legacy_response.signature[0], 1);
-		let signature = schnorrkel::Signature::from_bytes(&legacy_response.signature[1..]).unwrap();
-		assert!(
-			keypair
-				.public
-				.verify_simple(SR25519_SIGNING_CONTEXT, &preimage, &signature)
-				.is_ok()
-		);
-		assert!(legacy_response.signed_transaction.is_some());
-	}
-
-	#[test]
-	fn sign_raw_legacy_accepts_only_the_uid_dot_identity_key() {
-		let (_services, authority) = signing_runtime();
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = authority.current_session().expect("active session");
-		let cx = CallContext::default();
-		let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
-		let request = |account| SignRawAuthorityRequest::LegacyAccount {
-			account,
-			request: v01::HostSignRawWithLegacyAccountRequest {
-				signer: String::new(),
-				payload: v01::RawPayload::Bytes { bytes: b"hello".to_vec() },
-			},
-		};
-
-		let response = futures::executor::block_on(authority.sign_raw(
-			&cx,
-			&session,
-			None,
-			request(identity.public.to_bytes()),
-			true,
-		))
-		.expect("identity raw signing succeeds");
-		let signature = schnorrkel::Signature::from_bytes(&response.signature).unwrap();
-		assert!(
-			identity
-				.public
-				.verify_simple(SR25519_SIGNING_CONTEXT, b"<Bytes>hello</Bytes>", &signature)
-				.is_ok()
-		);
-
-		let error = futures::executor::block_on(authority.sign_raw(
-			&cx,
-			&session,
-			None,
-			request([0xff; 32]),
-			true,
-		))
-		.expect_err("unknown legacy account is rejected");
-		assert!(matches!(error, AuthorityError::Unavailable { .. }));
-	}
-
-	#[test]
-	fn sign_raw_requires_active_session() {
-		let (services, authority) = signing_runtime();
-		let runtime = product_runtime(services, authority);
-		let cx = CallContext::default();
-		let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
-			account: v01::ProductAccountId {
-				dot_ns_identifier: ProductId::for_test("myapp.dot"),
-				derivation_index: v01::DerivationIndex::Index(0),
-			},
-			payload: v01::RawPayload::Bytes { bytes: vec![1, 2, 3] },
-		});
-		let err =
-			futures::executor::block_on(runtime.sign_raw(&cx, request)).expect_err("no session");
-		assert!(matches!(err, CallError::Domain(HostSignRawError::V1(_))));
-	}
-
-	fn product_account(index: u32) -> v01::ProductAccountId {
-		v01::ProductAccountId {
-			dot_ns_identifier: ProductId::for_test("myapp.dot"),
-			derivation_index: v01::DerivationIndex::Index(index),
-		}
-	}
-
-	fn tx_payload(tx_ext_version: u8) -> v01::ProductAccountTxPayload {
-		v01::ProductAccountTxPayload {
-			signer: product_account(0),
-			genesis_hash: [0xaa; 32],
-			call_data: vec![0x00, 0x00],
-			extensions: vec![v01::TxPayloadExtension {
-				id: "CheckNonce".to_string(),
-				extra: vec![1],
-				additional_signed: vec![2, 3],
-			}],
-			tx_ext_version,
-			contacts: Vec::new(),
-		}
-	}
-
-	#[test]
-	fn create_transaction_reaches_chain_metadata_resolution() {
-		let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform {
-			chain_connect_error: Some("fixture has no live chain"),
-			..StubPlatform::default()
-		});
-		let (_services, activation) = signing_runtime_with_platform(platform);
-		futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = activation.current_session().expect("active session");
-		let cx = CallContext::default();
-
-		let err = futures::executor::block_on(activation.create_transaction(
-			&cx,
-			&session,
-			None,
-			CreateTransactionAuthorityRequest::Product(tx_payload(0)),
-		))
-		.expect_err("fixture cannot resolve metadata");
-		assert!(
-			matches!(err, AuthorityError::Unavailable { reason } if reason.contains("cannot load chain metadata")),
-			"choosing the extrinsic format reads the runtime metadata"
-		);
-	}
-
-	#[test]
-	fn create_transaction_legacy_signer_mismatch_errors() {
-		let (_services, activation) = signing_runtime();
-		futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = activation.current_session().expect("active session");
-		let cx = CallContext::default();
-
-		let payload = tx_payload(0);
-		let request = CreateTransactionAuthorityRequest::LegacyAccount {
-			product_account: product_account(0),
-			request: v01::LegacyAccountTxPayload {
-				signer: [0xff; 32], // does not match the derived slot-zero key
-				genesis_hash: payload.genesis_hash,
-				call_data: payload.call_data.clone(),
-				extensions: payload.extensions.clone(),
-				tx_ext_version: 0,
-			},
-		};
-		let err = futures::executor::block_on(
-			activation.create_transaction(&cx, &session, None, request),
-		)
-		.expect_err("mismatched legacy signer");
-		assert!(
-			matches!(err, AuthorityError::Unknown { reason } if reason.contains("does not match"))
-		);
-	}
-
-	#[test]
-	fn create_transaction_requires_active_session() {
-		let (_services, activation) = signing_runtime();
-		// A session snapshot cannot exist without activation, so construct the
-		// request against a role that has never been activated.
-		let (_s2, other) = signing_runtime();
-		futures::executor::block_on(other.activate_local_session(ENTROPY.to_vec())).unwrap();
-		let stale_session = other.current_session().expect("session");
-		futures::executor::block_on(other.disconnect());
-		let cx = CallContext::default();
-
-		let err = futures::executor::block_on(activation.create_transaction(
-			&cx,
-			&stale_session,
-			None,
-			CreateTransactionAuthorityRequest::Product(tx_payload(0)),
-		))
-		.expect_err("no active session");
-		assert_eq!(err, AuthorityError::Disconnected);
-	}
-
-	#[test]
-	fn derive_entropy_matches_ios_vector_over_local_session() {
-		let (services, activation) = signing_runtime();
-		futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let runtime = product_runtime_for(services, activation, "test.product.dot");
-		let cx = CallContext::default();
-		let request = HostDeriveEntropyRequest::V1(v01::HostDeriveEntropyRequest {
-			context: b"my-key".to_vec(),
-		});
-		let response =
-			futures::executor::block_on(runtime.derive(&cx, request)).expect("derive ok");
-		let truapi::versioned::entropy::HostDeriveEntropyResponse::V1(inner) = response;
-		assert_eq!(
-			hex::encode(inner.entropy),
-			"479d5b9ecce19615397c9f160ee95e2f00c579837a5afb111132dd0da5fd472a",
-		);
-	}
-
-	#[test]
-	fn get_account_gates_on_local_session() {
-		let (services, authority) = signing_runtime();
-		let runtime = product_runtime(services, authority);
-		let cx = CallContext::default();
-		let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
-			product_account_id: v01::ProductAccountId {
-				dot_ns_identifier: ProductId::for_test("myapp.dot"),
-				derivation_index: v01::DerivationIndex::Index(0),
-			},
-		});
-		let err = futures::executor::block_on(runtime.get_account(&cx, request))
-			.expect_err("no session yet");
-		assert!(matches!(
-			err,
-			CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::NotConnected))
-		));
-	}
-
-	#[test]
-	fn sign_raw_leaves_already_wrapped_payload_untouched() {
-		let (services, activation) = signing_runtime();
-		futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let runtime = product_runtime(services, activation);
-		let cx = CallContext::default();
-		let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
-			account: v01::ProductAccountId {
-				dot_ns_identifier: ProductId::for_test("myapp.dot"),
-				derivation_index: v01::DerivationIndex::Index(0),
-			},
-			payload: v01::RawPayload::Bytes { bytes: b"<Bytes>hi</Bytes>".to_vec() },
-		});
-		let HostSignRawResponse::V1(response) =
-			futures::executor::block_on(runtime.sign_raw(&cx, request)).expect("sign_raw ok");
-		let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-		let keypair =
-			derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0))
-				.unwrap();
-		let signature =
-			schnorrkel::Signature::from_bytes(&response.signature).expect("64-byte signature");
-		assert!(
-			keypair
-				.public
-				.verify_simple(b"substrate", b"<Bytes>hi</Bytes>", &signature)
-				.is_ok(),
-			"signature verifies over the unchanged wrapped message",
-		);
-		assert!(
-			keypair
-				.public
-				.verify_simple(b"substrate", b"<Bytes><Bytes>hi</Bytes></Bytes>", &signature)
-				.is_err(),
-			"payload was not double-wrapped",
-		);
-	}
-
-	#[test]
-	fn reactivation_invalidates_prior_session_snapshot() {
-		let (_services, authority) = signing_runtime();
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("first activation");
-		let stale = authority.current_session().expect("snapshot");
-
-		// Re-activate with different entropy: a fresh public key, hence a
-		// different validation id.
-		futures::executor::block_on(authority.activate_local_session([0xCD; 16].to_vec()))
-			.expect("second activation");
-		assert_ne!(authority.current_session().expect("session").public_key, stale.public_key,);
-
-		let cx = CallContext::default();
-		let request = v01::HostSignRawRequest {
-			account: v01::ProductAccountId {
-				dot_ns_identifier: ProductId::for_test("myapp.dot"),
-				derivation_index: v01::DerivationIndex::Index(0),
-			},
-			payload: v01::RawPayload::Bytes { bytes: vec![1, 2, 3] },
-		};
-		let err = futures::executor::block_on(authority.sign_raw(
-			&cx,
-			&stale,
-			None,
-			SignRawAuthorityRequest::Product(request),
-			true,
-		))
-		.expect_err("stale snapshot rejected");
-		assert_eq!(err, AuthorityError::Disconnected);
-	}
-
-	#[test]
-	fn disconnect_clears_local_session() {
-		let (_services, authority) = signing_runtime();
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation");
-		let session = authority.current_session().expect("connected");
-
-		futures::executor::block_on(authority.disconnect());
-		assert!(authority.current_session().is_none());
-
-		let cx = CallContext::default();
-		let request = v01::HostSignRawRequest {
-			account: v01::ProductAccountId {
-				dot_ns_identifier: ProductId::for_test("myapp.dot"),
-				derivation_index: v01::DerivationIndex::Index(0),
-			},
-			payload: v01::RawPayload::Bytes { bytes: vec![1] },
-		};
-		let err = futures::executor::block_on(authority.sign_raw(
-			&cx,
-			&session,
-			None,
-			SignRawAuthorityRequest::Product(request),
-			true,
-		))
-		.expect_err("no session after disconnect");
-		assert_eq!(err, AuthorityError::Disconnected);
-	}
-
-	/// A PGAS request has to actually reach Asset Hub. Asserting the outcome alone
-	/// cannot show that: the stub this replaced answered `NotAvailable` with no
-	/// chain access at all, which looks identical from outside. Pin instead that
-	/// the request is left waiting on the connection.
-	#[test]
-	fn a_pgas_request_waits_on_the_asset_hub_connection() {
-		use std::{
-			future::Future,
-			task::{Context, Poll},
-		};
-
-		let platform =
-			Arc::new(StubPlatform { chain_connect_pending: true, ..StubPlatform::default() });
-		let (_services, authority) = signing_runtime_with_platform(platform);
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation");
-		let session = authority.current_session().expect("connected");
-		let cx = CallContext::default();
-		let product_id = ProductId::for_test("myapp.dot");
-
-		let mut allocation = Box::pin(authority.allocate_resources(
-			&cx,
-			&session,
-			&product_id,
-			v01::HostRequestResourceAllocationRequest {
-				resources: vec![v01::AllocatableResource::SmartContractAllowance(
-					v01::DerivationIndex::Index(0),
-				)],
-			},
-		));
-		let waker = futures::task::noop_waker();
-		let mut task_cx = Context::from_waker(&waker);
-
-		match allocation.as_mut().poll(&mut task_cx) {
-			Poll::Pending => {},
-			Poll::Ready(outcome) => {
-				panic!("a PGAS claim should be waiting on Asset Hub, got {outcome:?}")
-			},
-		}
-	}
-
-	/// Each allocation spends on chain, so a withdrawn call must not start the
-	/// next one.
-	#[test]
-	fn a_withdrawn_allocation_starts_no_further_resource() {
-		let (_services, authority) =
-			signing_runtime_with_platform(Arc::new(StubPlatform::default()));
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation");
-		let session = authority.current_session().expect("connected");
-		let cancel = truapi::CancellationToken::default();
-		cancel.cancel();
-		let cx = CallContext::with_parts("allocation-withdrawn".to_string(), cancel);
-
-		let result = futures::executor::block_on(authority.allocate_resources(
-			&cx,
-			&session,
-			&ProductId::for_test("myapp.dot"),
-			v01::HostRequestResourceAllocationRequest {
-				resources: vec![v01::AllocatableResource::AutoSigning],
-			},
-		));
-
-		assert_eq!(
-			result,
-			Err(AuthorityError::Cancelled(crate::runtime::authority::AuthorityCancelError::new(
-				"allocation-withdrawn",
-				truapi::CancellationReason::Cancelled,
-			)))
-		);
-	}
-
-	#[test]
-	fn direct_allocation_handles_empty_and_optional_resource_batches() {
-		// A PGAS request now reaches Asset Hub, so the stub has to fail the
-		// connect for this to be deterministic. What the batch pins is that one
-		// resource failing does not poison the others.
-		let platform = Arc::new(StubPlatform {
-			chain_connect_error: Some("asset hub unavailable"),
-			..StubPlatform::default()
-		});
-		let (_services, authority) = signing_runtime_with_platform(platform);
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation");
-		let session = authority.current_session().expect("connected");
-		let cx = CallContext::default();
-
-		let empty = futures::executor::block_on(authority.allocate_resources(
-			&cx,
-			&session,
-			&ProductId::for_test("myapp.dot"),
-			v01::HostRequestResourceAllocationRequest { resources: vec![] },
-		))
-		.expect("empty allocation succeeds");
-		assert!(empty.outcomes.is_empty());
-
-		let optional = futures::executor::block_on(authority.allocate_resources(
-			&cx,
-			&session,
-			&ProductId::for_test("myapp.dot"),
-			v01::HostRequestResourceAllocationRequest {
-				resources: vec![
-					v01::AllocatableResource::SmartContractAllowance(v01::DerivationIndex::Index(
-						0,
-					)),
-					v01::AllocatableResource::AutoSigning,
-				],
-			},
-		))
-		.expect("optional allocation succeeds");
-		assert_eq!(
-			optional.outcomes,
-			vec![
-				// The chain is unreachable, so the claim degrades rather than
-				// failing the request.
-				v01::AllocationOutcome::NotAvailable,
-				// And the resource that needs no chain still allocates.
-				v01::AllocationOutcome::Allocated,
-			]
-		);
-	}
+        );
+        assert!(
+            alias("peopl.dot", "bank.dot").is_ok(),
+            "the owner may still read its own alias in any context"
+        );
+    }
+
+    /// An owner naming itself in another spelling is admitted, over the wire.
+    ///
+    /// The context guard compares the identities the gate normalized, not the
+    /// ones the request carried. Deriving the caller from the request again
+    /// compares a peer's spelling against a normalized owner and refuses the
+    /// owner on its own key. `require_ring_vrf_key_access` returns the
+    /// normalized owner to stop exactly that, and `sso_responder` hands
+    /// `calling_product_id` through untouched.
+    #[test]
+    fn an_owner_spelled_differently_still_proves_with_its_own_key() {
+        let platform = Arc::new(StubPlatform::default());
+        let (_services, authority) =
+            signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+        let ring = full_person_ring_location();
+        register_full_person_key(&authority, &session, &ring);
+        let prove = |caller: &str| {
+            futures::executor::block_on(authority.create_proof(
+                &CallContext::default(),
+                &session,
+                ProductRequest {
+                    calling_product_id: caller.to_string(),
+                    payload: v01::HostAccountCreateProofRequest {
+                        key_handle: full_person_key_handle(),
+                        context: v01::ProductProofContext {
+                            product_id: "peopl.dot".to_string(),
+                            suffix: v01::DerivationIndex::Index(0),
+                        },
+                        ring_location: ring.clone(),
+                        message: b"m".to_vec(),
+                    },
+                },
+            ))
+        };
+        assert!(
+            prove("peopl.dot").is_ok(),
+            "control: the canonical spelling"
+        );
+        assert!(
+            prove("PEOPL.DOT").is_ok(),
+            "the owner must not be refused on its own key for spelling itself differently"
+        );
+    }
+
+    /// A refusal covers the product, not one spelling of it.
+    ///
+    /// The manifest grants a product and a product is all its executables, so a
+    /// refusal that overrides the grant has to name the same party. Keyed by the
+    /// full id instead, the user refusing `dim2.dot` left `app.dim2.dot` holding
+    /// the identical grant: the product re-entered under a subname it already
+    /// owns and the override was gone. Both halves now key by the bare label.
+    #[test]
+    fn a_refusal_covers_every_executable_of_the_refused_product() {
+        use crate::host_internal::product_manifest::Granted;
+        let platform = Arc::new(StubPlatform::default());
+        cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
+        deny_account_access(&platform, "ordinary.dot", "peopl.dot");
+        let (services, _authority) =
+            signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+
+        let granted = |caller: &str| {
+            futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
+                &services,
+                platform.as_ref(),
+                caller,
+                "peopl.dot",
+                Granted::Context,
+            ))
+        };
+        for spelling in [
+            "ordinary.dot",
+            "app.ordinary.dot",
+            "worker.ordinary.dot",
+            "ordinary.paseo",
+        ] {
+            assert!(
+                !granted(spelling),
+                "{spelling} is the refused product wearing another name"
+            );
+        }
+
+        // Control: a product the user never refused still holds its own grant,
+        // so the assertions above are not passing because nothing is granted.
+        let clean = Arc::new(StubPlatform::default());
+        cache_grant(&clean, "peopl.dot", r#"{"ordinary":["context"]}"#);
+        let (services, _authority) =
+            signing_runtime_with_ring_resolver(clean.clone(), full_person_ring_resolver());
+        assert!(
+            futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
+                &services,
+                clean.as_ref(),
+                "app.ordinary.dot",
+                "peopl.dot",
+                Granted::Context,
+            )),
+            "control: with no refusal recorded the same subname is granted"
+        );
+    }
+
+    /// `all` is a superset, so it satisfies `context` at the runtime seam and
+    /// not only in the manifest parser.
+    #[test]
+    fn a_grant_of_all_satisfies_context_at_the_authority() {
+        let granted = foreign_proof_through_the_authority(Some(r#"{"dim2":["all"]}"#));
+        assert!(
+            granted.is_ok(),
+            "`all` must satisfy `context`, got {granted:?}"
+        );
+    }
+
+    fn signing_runtime_with_ring_resolver(
+        platform: Arc<StubPlatform>,
+        ring_resolver: Arc<StubRingResolver>,
+    ) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
+        let authority = SigningHostRole::new_with_ring_resolver(platform, ring_resolver);
+        (authority.services(), authority)
+    }
+
+    /// The grant admits `ring_vrf_sign`, not only `create_proof`.
+    ///
+    /// #655 lists this as untested and it was: the other grant tests here all
+    /// drive `create_proof`. Both authorities call the same
+    /// `require_ring_vrf_key_access` from both methods, so the code was
+    /// covered, but a scope that admits one call and not the other is exactly
+    /// the kind of half-wired gate this issue exists to fix, and nothing
+    /// asserted the second half.
+    ///
+    /// Driven at the authority, where the wire path also arrives, so this
+    /// covers the paired case as well. Success is the owner's own signature:
+    /// the grant lets `dim2.dot` produce what `peopl.dot` would have.
+    #[test]
+    fn a_context_grant_lets_a_foreign_product_sign_with_the_owners_key() {
+        let granted = foreign_ring_vrf_sign_through_the_authority(Some(r#"{"dim2":["context"]}"#));
+        let owners_own = foreign_ring_vrf_sign_through_the_authority_as(
+            Some(r#"{"dim2":["context"]}"#),
+            "peopl.dot",
+        );
+        assert!(
+            granted.is_ok(),
+            "a granted cross-product ring-VRF signature must be produced, got {granted:?}"
+        );
+        assert_eq!(
+            granted, owners_own,
+            "the grant must yield the owner's own signature, not a caller-derived one"
+        );
+    }
+
+    /// The same call with no grant.
+    #[test]
+    fn a_foreign_ring_vrf_sign_is_refused_when_the_owner_granted_nothing() {
+        assert_eq!(
+            foreign_ring_vrf_sign_through_the_authority(None).err(),
+            Some(RingVrfError::NotAllowlisted)
+        );
+    }
+
+    /// An unreadable permission store refuses an ordinary product's grant.
+    ///
+    /// The stored `AccountAccess` decision is the only thing that can override a
+    /// publisher's grant. Reading a storage fault as "not refused" would let a
+    /// locked keychain turn the user's explicit no into a yes, on the strength
+    /// of a manifest the publisher controls. `account_access_authorization`,
+    /// which writes that same decision, already fails closed; this is the read
+    /// side agreeing with it.
+    ///
+    /// The error is scoped to permission keys so the manifest cache still
+    /// answers: otherwise the call would refuse for want of a manifest and the
+    /// assertion would prove nothing.
+    #[test]
+    fn a_grant_is_refused_when_the_stored_decision_cannot_be_read() {
+        let platform = Arc::new(StubPlatform {
+            permission_storage_error: Some("keychain locked"),
+            ..StubPlatform::default()
+        });
+        cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
+        let (services, _authority) =
+            signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+
+        let granted = futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
+            &services,
+            platform.as_ref(),
+            "ordinary.dot",
+            "peopl.dot",
+            crate::host_internal::product_manifest::Granted::Context,
+        ));
+        assert!(
+            !granted,
+            "an unreadable permission store must refuse, not fall through to the manifest"
+        );
+
+        // Control: the identical grant, with the store readable, is honoured.
+        // Without this the assertion above would also pass if the grant never
+        // worked at all.
+        let readable = Arc::new(StubPlatform::default());
+        cache_grant(&readable, "peopl.dot", r#"{"ordinary":["context"]}"#);
+        let (services, _authority) =
+            signing_runtime_with_ring_resolver(readable.clone(), full_person_ring_resolver());
+        assert!(
+            futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
+                &services,
+                readable.as_ref(),
+                "ordinary.dot",
+                "peopl.dot",
+                crate::host_internal::product_manifest::Granted::Context,
+            )),
+            "control: the same grant must be honoured when the store reads cleanly"
+        );
+    }
+
+    /// A grant lookup with nothing cached reaches the chain, and dials the
+    /// Asset Hub the role was configured with.
+    ///
+    /// Every other grant test here seeds the manifest cache, and `root_manifest`
+    /// serves that before it consults the genesis hash, so the whole suite
+    /// passes on a role with no Asset Hub, and deleting the production install
+    /// would not turn any of it red. That is the blind spot #660 survived in.
+    /// This is the one case that takes the other branch: it asserts the dial
+    /// itself, so removing the install breaks it rather than going unnoticed.
+    ///
+    /// The stub answers no RPC, so the lookup fails closed and the call is
+    /// refused. What is pinned is that the chain was reached at all, and which
+    /// chain.
+    #[test]
+    fn a_grant_lookup_with_a_cold_cache_dials_the_configured_asset_hub() {
+        let platform = Arc::new(StubPlatform::default());
+        // Deliberately no `cache_grant`: this must take the chain branch.
+        let (services, _authority) =
+            signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+
+        let granted = futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
+            &services,
+            platform.as_ref(),
+            "dim2.dot",
+            "peopl.dot",
+            crate::host_internal::product_manifest::Granted::Context,
+        ));
+        assert!(
+            !granted,
+            "the stub answers no RPC, so the lookup must fail closed"
+        );
+
+        let dialled = platform
+            .chain_connects
+            .lock()
+            .expect("chain connect list mutex poisoned")
+            .clone();
+        assert!(
+            dialled.contains(&[0xcc; 32]),
+            "a cold-cache grant lookup must dial the configured Asset Hub; dialled {dialled:?}"
+        );
+    }
+
+    /// The gate and the key derivation act on one identity, by construction.
+    ///
+    /// Previously the gate normalized the handle to decide, then handed the
+    /// caller's own spelling on to derivation, and the only thing between an
+    /// authorization about `peopl.dot` and a key derived from `PEOPL.DOT` was a
+    /// registry lookup that happened to miss. A later "make the registry
+    /// case-insensitive" change would have turned that into key confusion with
+    /// nothing to catch it. The gate now returns the owner it decided about and
+    /// the authority derives from that, so the two cannot diverge.
+    #[test]
+    fn the_gate_and_the_derivation_act_on_the_same_identity() {
+        let signed = ring_vrf_sign_at_the_authority("peopl.dot", "PEOPL.DOT");
+        assert!(
+            signed.is_ok(),
+            "an owner's own key must sign however it is spelled, because the gate \
+             hands the normalized owner to the derivation; got {signed:?}"
+        );
+        assert_eq!(
+            signed.ok(),
+            ring_vrf_sign_at_the_authority("peopl.dot", "peopl.dot").ok(),
+            "the two spellings must produce the same signature, not merely both succeed"
+        );
+    }
+
+    /// A handle that does not normalize names no product, so it takes the same
+    /// refusal as a product that granted nothing rather than a distinguishable
+    /// error the caller could probe with.
+    #[test]
+    fn a_handle_that_does_not_normalize_takes_the_uniform_refusal() {
+        assert_eq!(
+            ring_vrf_sign_at_the_authority("peopl.dot", "not a product").err(),
+            Some(RingVrfError::NotAllowlisted)
+        );
+    }
+
+    /// Drive `ring_vrf_sign` at the authority with an arbitrary caller/handle
+    /// spelling, bypassing the frontend as `sso_responder` does.
+    fn ring_vrf_sign_at_the_authority(
+        caller: &str,
+        handle_owner: &str,
+    ) -> Result<Vec<u8>, RingVrfError> {
+        let platform = Arc::new(StubPlatform::default());
+        let (_services, authority) =
+            signing_runtime_with_ring_resolver(platform, full_person_ring_resolver());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+        register_full_person_key(&authority, &session, &full_person_ring_location());
+
+        futures::executor::block_on(authority.ring_vrf_sign(
+            &CallContext::default(),
+            &session,
+            ProductRequest {
+                calling_product_id: caller.to_string(),
+                payload: v01::HostAccountRingVrfSignRequest {
+                    key_handle: v01::ProductAccountId {
+                        dot_ns_identifier: handle_owner.to_string(),
+                        derivation_index: v01::DerivationIndex::Index(0),
+                    },
+                    message: b"sign me".to_vec(),
+                },
+            },
+        ))
+    }
+
+    fn foreign_ring_vrf_sign_through_the_authority(
+        trusted_products: Option<&str>,
+    ) -> Result<Vec<u8>, RingVrfError> {
+        foreign_ring_vrf_sign_through_the_authority_as(trusted_products, "dim2.dot")
+    }
+
+    /// Drive `ring_vrf_sign` straight at the authority with `caller` naming
+    /// `peopl.dot`'s key handle, bypassing the frontend exactly as
+    /// `sso_responder` does.
+    fn foreign_ring_vrf_sign_through_the_authority_as(
+        trusted_products: Option<&str>,
+        caller: &str,
+    ) -> Result<Vec<u8>, RingVrfError> {
+        let platform = Arc::new(StubPlatform::default());
+        if let Some(trusted_products) = trusted_products {
+            cache_grant(&platform, "peopl.dot", trusted_products);
+        }
+        let (_services, authority) =
+            signing_runtime_with_ring_resolver(platform, full_person_ring_resolver());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+        register_full_person_key(&authority, &session, &full_person_ring_location());
+
+        futures::executor::block_on(authority.ring_vrf_sign(
+            &CallContext::default(),
+            &session,
+            ProductRequest {
+                calling_product_id: caller.to_string(),
+                payload: v01::HostAccountRingVrfSignRequest {
+                    key_handle: full_person_key_handle(),
+                    message: b"sign me".to_vec(),
+                },
+            },
+        ))
+    }
+
+    fn foreign_proof_through_the_authority(
+        trusted_products: Option<&str>,
+    ) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
+        foreign_proof_through_the_authority_with(trusted_products, |_| {})
+    }
+
+    /// Drive `create_proof` straight at the authority, bypassing the frontend,
+    /// with `dim2.dot` naming `peopl.dot`'s key handle.
+    fn foreign_proof_through_the_authority_with(
+        trusted_products: Option<&str>,
+        seed: impl FnOnce(&StubPlatform),
+    ) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
+        let platform = Arc::new(StubPlatform::default());
+        if let Some(trusted_products) = trusted_products {
+            cache_grant(&platform, "peopl.dot", trusted_products);
+        }
+        seed(&platform);
+        let (_services, authority) =
+            signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+        let ring_location = full_person_ring_location();
+        register_full_person_key(&authority, &session, &ring_location);
+
+        futures::executor::block_on(authority.create_proof(
+            &CallContext::default(),
+            &session,
+            ProductRequest {
+                calling_product_id: "dim2.dot".to_string(),
+                payload: v01::HostAccountCreateProofRequest {
+                    key_handle: full_person_key_handle(),
+                    context: v01::ProductProofContext {
+                        product_id: "dim2.dot".to_string(),
+                        suffix: v01::DerivationIndex::Index(0),
+                    },
+                    ring_location,
+                    message: b"prove me".to_vec(),
+                },
+            },
+        ))
+    }
+
+    fn foreign_proof_request(
+        ring_location: &v01::RingLocation,
+    ) -> truapi::versioned::account::HostAccountCreateProofRequest {
+        truapi::versioned::account::HostAccountCreateProofRequest::V1(
+            v01::HostAccountCreateProofRequest {
+                key_handle: full_person_key_handle(),
+                context: v01::ProductProofContext {
+                    product_id: "dim2.dot".to_string(),
+                    suffix: v01::DerivationIndex::Index(0),
+                },
+                ring_location: ring_location.clone(),
+                message: b"prove me".to_vec(),
+            },
+        )
+    }
+
+    fn full_person_ring_location() -> v01::RingLocation {
+        v01::RingLocation {
+            chain_id: [0x22; 32],
+            junctions: vec![
+                v01::RingLocationJunction::PalletInstance(42),
+                v01::RingLocationJunction::CollectionId(
+                    b"pop:polkadot.network/people     ".to_vec(),
+                ),
+            ],
+        }
+    }
+
+    fn register_full_person_key(
+        authority: &SigningHostRole,
+        session: &AuthoritySession,
+        ring: &v01::RingLocation,
+    ) {
+        futures::executor::block_on(authority.register_ring_vrf_key(
+            &CallContext::default(),
+            session,
+            ProductRequest {
+                calling_product_id: "peopl.dot".to_string(),
+                payload: HostAccountRegisterRingVrfKeyRequest {
+                    index: v01::DerivationIndex::Index(0),
+                    ring: ring.clone(),
+                },
+            },
+        ))
+        .expect("full person key registration succeeds");
+    }
+
+    #[test]
+    fn internal_allowances_offer_both_reserved_person_handles_widest_first() {
+        let (_, authority) = signing_runtime();
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+        let candidates = authority
+            .reserved_person_collection_candidates(&session)
+            .expect("reserved keys derive");
+
+        // Index 0 is the full-person handle and index 1 the light-person one, and
+        // People leads so a full person spends its wider slot budget first.
+        let expected = [
+            (PersonhoodCollection::People, 0u32),
+            (PersonhoodCollection::LitePeople, 1),
+        ];
+        assert_eq!(candidates.len(), expected.len());
+        for (candidate, (collection, index)) in candidates.iter().zip(expected) {
+            assert_eq!(candidate.collection, collection);
+            assert_eq!(
+                candidate.entropy,
+                derive_ring_vrf_entropy(&ENTROPY, "peopl.dot", &v01::DerivationIndex::Index(index))
+                    .expect("reserved RFC-0024 handle derives"),
+                "{collection} candidate does not use peopl.dot/{index}",
+            );
+        }
+        assert_ne!(candidates[0].entropy, candidates[1].entropy);
+    }
+
+    #[test]
+    fn reserved_identities_follow_the_configured_network_suffix() {
+        // A wallet on paseo-next-v2 is the `peopl.paseo` person and the
+        // `uid.paseo` account: the ones a `peopl.paseo` product registers and the
+        // ones the identity backend records a lite username for. The `.dot`
+        // derivations of the same seed are a different person.
+        let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform::default());
+        let authority = SigningHostRole::new_with_ring_resolver_on(
+            platform,
+            full_person_ring_resolver(),
+            "paseo",
+        );
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+
+        let candidates = authority
+            .reserved_person_collection_candidates(&session)
+            .expect("reserved keys derive");
+        for (candidate, index) in candidates.iter().zip([0u32, 1]) {
+            assert_eq!(
+                candidate.entropy,
+                derive_ring_vrf_entropy(
+                    &ENTROPY,
+                    "peopl.paseo",
+                    &v01::DerivationIndex::Index(index)
+                )
+                .expect("reserved RFC-0024 handle derives"),
+                "{} candidate does not use peopl.paseo/{index}",
+                candidate.collection
+            );
+            assert_ne!(
+                candidate.entropy,
+                derive_ring_vrf_entropy(&ENTROPY, "peopl.dot", &v01::DerivationIndex::Index(index))
+                    .expect("reserved RFC-0024 handle derives"),
+            );
+        }
+
+        let identity = derive_identity_keypair(&ENTROPY, "paseo")
+            .expect("uid.paseo identity derivation")
+            .public
+            .to_bytes();
+        assert_eq!(session.identity_account_id, Some(identity));
+        assert_eq!(
+            authority
+                .identity_keypair()
+                .expect("identity")
+                .public
+                .to_bytes(),
+            identity
+        );
+    }
+
+    #[test]
+    fn ring_alias_and_proof_share_the_explicit_registered_key() {
+        let resolver = full_person_ring_resolver();
+        let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform::default());
+        let authority = SigningHostRole::new_with_ring_resolver(platform, resolver);
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+        let cx = CallContext::default();
+        let context = v01::ProductProofContext {
+            product_id: "myapp.dot".to_string(),
+            suffix: v01::DerivationIndex::Index(0),
+        };
+        let ring_location = full_person_ring_location();
+        register_full_person_key(&authority, &session, &ring_location);
+
+        let alias = futures::executor::block_on(authority.account_alias(
+            &cx,
+            &session,
+            ProductRequest {
+                calling_product_id: "peopl.dot".to_string(),
+                payload: HostAccountGetAliasRequest {
+                    key_handle: full_person_key_handle(),
+                    context: context.clone(),
+                    ring_location: ring_location.clone(),
+                },
+            },
+        ))
+        .expect("alias succeeds");
+        let proof = futures::executor::block_on(authority.create_proof(
+            &cx,
+            &session,
+            ProductRequest {
+                calling_product_id: "peopl.dot".to_string(),
+                payload: HostAccountCreateProofRequest {
+                    key_handle: full_person_key_handle(),
+                    context,
+                    ring_location,
+                    message: b"prove me".to_vec(),
+                },
+            },
+        ))
+        .expect("proof succeeds");
+
+        assert!(!proof.proof.is_empty());
+        assert_eq!(proof.contextual_alias, alias);
+        assert_eq!(proof.ring_index, 7);
+        assert_eq!(proof.ring_revision, 11);
+    }
+
+    #[test]
+    fn alias_checks_the_exact_registry_ring_before_resolving_it() {
+        let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform::default());
+        let authority =
+            SigningHostRole::new_with_ring_resolver(platform, full_person_ring_resolver());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+        let registered_ring = full_person_ring_location();
+        register_full_person_key(&authority, &session, &registered_ring);
+
+        let error = futures::executor::block_on(authority.account_alias(
+            &CallContext::default(),
+            &session,
+            ProductRequest {
+                calling_product_id: "peopl.dot".to_string(),
+                payload: HostAccountGetAliasRequest {
+                    key_handle: full_person_key_handle(),
+                    context: v01::ProductProofContext {
+                        product_id: "myapp.dot".to_string(),
+                        suffix: v01::DerivationIndex::Index(0),
+                    },
+                    ring_location: v01::RingLocation {
+                        chain_id: registered_ring.chain_id,
+                        junctions: vec![],
+                    },
+                },
+            },
+        ))
+        .unwrap_err();
+
+        assert_eq!(error, RingVrfError::KeyNotInRing);
+    }
+
+    #[test]
+    fn direct_signing_rejects_registry_public_key_mismatched_with_wallet() {
+        let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform::default());
+        let authority =
+            SigningHostRole::new_with_ring_resolver(platform, full_person_ring_resolver());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+        let handle = v01::ProductAccountId {
+            dot_ns_identifier: "myapp.dot".to_string(),
+            derivation_index: v01::DerivationIndex::Index(8),
+        };
+        futures::executor::block_on(authority.ring_vrf_registry.register(
+            session.public_key,
+            handle.clone(),
+            full_person_ring_location(),
+            [0xFF; 32],
+        ))
+        .expect("synthetic registry entry persists");
+
+        let error = futures::executor::block_on(authority.ring_vrf_sign(
+            &CallContext::default(),
+            &session,
+            ProductRequest {
+                calling_product_id: "myapp.dot".to_string(),
+                payload: HostAccountRingVrfSignRequest {
+                    key_handle: handle,
+                    message: b"reject mismatched registry state".to_vec(),
+                },
+            },
+        ))
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            RingVrfError::Unknown { reason } if reason.contains("does not match the active wallet")
+        ));
+    }
+
+    #[test]
+    fn foreign_alias_prompts_but_foreign_proof_is_refused_without_a_prompt() {
+        let platform = Arc::new(StubPlatform::default());
+        let authority =
+            SigningHostRole::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+        let cx = CallContext::default();
+        let context = v01::ProductProofContext {
+            product_id: "other.dot".to_string(),
+            suffix: v01::DerivationIndex::Index(0),
+        };
+        let ring_location = full_person_ring_location();
+        register_full_person_key(&authority, &session, &ring_location);
+
+        let alias = futures::executor::block_on(authority.account_alias(
+            &cx,
+            &session,
+            ProductRequest {
+                calling_product_id: "myapp.dot".to_string(),
+                payload: HostAccountGetAliasRequest {
+                    key_handle: full_person_key_handle(),
+                    context: context.clone(),
+                    ring_location: ring_location.clone(),
+                },
+            },
+        ));
+        assert_eq!(alias, Err(RingVrfError::Rejected));
+
+        let proof = futures::executor::block_on(authority.create_proof(
+            &cx,
+            &session,
+            ProductRequest {
+                calling_product_id: "myapp.dot".to_string(),
+                payload: HostAccountCreateProofRequest {
+                    key_handle: full_person_key_handle(),
+                    context,
+                    ring_location,
+                    message: b"prove me".to_vec(),
+                },
+            },
+        ));
+        assert_eq!(proof, Err(RingVrfError::NotAllowlisted));
+        assert_eq!(
+            platform
+                .account_access_reviews
+                .lock()
+                .expect("account access review list mutex poisoned")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn cross_product_alias_reuses_persisted_account_access_grant() {
+        let platform = Arc::new(StubPlatform {
+            account_access_confirmed: true,
+            ..StubPlatform::default()
+        });
+        let authority =
+            SigningHostRole::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+        let cx = CallContext::default();
+        let request = ProductRequest {
+            calling_product_id: "myapp.dot".to_string(),
+            payload: HostAccountGetAliasRequest {
+                key_handle: full_person_key_handle(),
+                context: v01::ProductProofContext {
+                    product_id: "other.dot".to_string(),
+                    suffix: v01::DerivationIndex::Index(0),
+                },
+                ring_location: full_person_ring_location(),
+            },
+        };
+        register_full_person_key(&authority, &session, &request.payload.ring_location);
+
+        futures::executor::block_on(authority.account_alias(&cx, &session, request.clone()))
+            .expect("first alias succeeds");
+        futures::executor::block_on(authority.account_alias(&cx, &session, request))
+            .expect("second alias succeeds from cached grant");
+
+        assert_eq!(
+            platform
+                .account_access_reviews
+                .lock()
+                .expect("account access review list mutex poisoned")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn local_activation_exposes_the_uid_dot_identity_account() {
+        let (_services, authority) = signing_runtime();
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+
+        let session = authority.current_session().expect("active session");
+        let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX)
+            .expect("uid.dot identity derivation")
+            .public
+            .to_bytes();
+        assert_eq!(session.identity_account_id, Some(identity));
+    }
+
+    #[test]
+    fn activate_then_sign_raw_verifies_against_derived_product_key() {
+        let (services, activation) = signing_runtime();
+        futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let runtime = product_runtime(services, activation);
+        let cx = CallContext::default();
+
+        let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
+            account: v01::ProductAccountId {
+                dot_ns_identifier: "myapp.dot".to_string(),
+                derivation_index: v01::DerivationIndex::Index(0),
+            },
+            payload: v01::RawPayload::Bytes {
+                bytes: b"hello world".to_vec(),
+            },
+        });
+        let HostSignRawResponse::V1(response) =
+            futures::executor::block_on(runtime.sign_raw(&cx, request)).expect("sign_raw ok");
+        assert!(response.signed_transaction.is_none());
+
+        let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
+        let keypair = derive_product_keypair(&root, "myapp.dot", index_bytes(0)).unwrap();
+        let signature =
+            schnorrkel::Signature::from_bytes(&response.signature).expect("64-byte signature");
+        assert!(
+            keypair
+                .public
+                .verify_simple(b"substrate", b"<Bytes>hello world</Bytes>", &signature)
+                .is_ok(),
+            "signature verifies over the <Bytes>-wrapped message",
+        );
+    }
+
+    #[test]
+    fn sign_vrf_replays_transcript_and_returns_verifiable_proof() {
+        let (_services, authority) = signing_runtime();
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+        let request = v01::HostAccountSignVrfRequest {
+            account: product_account(0),
+            transcript_label: b"pop:airdrop".to_vec(),
+            items: vec![
+                v01::VrfTranscriptItem {
+                    label: b"domain".to_vec(),
+                    value: b"lottery".to_vec(),
+                },
+                v01::VrfTranscriptItem {
+                    label: b"round".to_vec(),
+                    value: 7u32.to_le_bytes().to_vec(),
+                },
+            ],
+        };
+
+        let signature = futures::executor::block_on(authority.sign_vrf(
+            &CallContext::default(),
+            &session,
+            "myapp.dot".to_string(),
+            request,
+        ))
+        .expect("VRF signing succeeds");
+
+        let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
+        let keypair = derive_product_keypair(&root, "myapp.dot", index_bytes(0)).unwrap();
+        let mut transcript = merlin::Transcript::new(b"pop:airdrop");
+        transcript.append_message(b"domain", b"lottery");
+        transcript.append_message(b"round", &7u32.to_le_bytes());
+        let pre_output = schnorrkel::vrf::VRFPreOut::from_bytes(&signature.pre_output).unwrap();
+        let proof = schnorrkel::vrf::VRFProof::from_bytes(&signature.proof).unwrap();
+        keypair
+            .public
+            .vrf_verify(transcript, &pre_output, &proof)
+            .expect("VRF proof verifies");
+    }
+
+    #[test]
+    fn approved_auto_signing_product_skips_vrf_confirmation_but_other_product_does_not() {
+        let platform = Arc::new(StubPlatform {
+            resource_allocation_confirmed: true,
+            sign_vrf_confirmed: false,
+            ..StubPlatform::default()
+        });
+        let (services, authority) = signing_runtime_with_platform(platform.clone());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let runtime = product_runtime(services, authority.clone());
+        let allocation = futures::executor::block_on(ResourceAllocation::request(
+            &runtime,
+            &CallContext::default(),
+            HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
+                resources: vec![v01::AllocatableResource::AutoSigning],
+            }),
+        ))
+        .expect("approved AutoSigning allocation succeeds");
+        let HostRequestResourceAllocationResponse::V1(allocation) = allocation;
+        assert_eq!(allocation.outcomes, vec![v01::AllocationOutcome::Allocated],);
+        assert_eq!(
+            platform
+                .resource_allocation_reviews
+                .lock()
+                .expect("resource allocation review list mutex poisoned")
+                .len(),
+            1,
+        );
+
+        let session = authority.current_session().expect("active session");
+        futures::executor::block_on(authority.sign_vrf(
+            &CallContext::default(),
+            &session,
+            "myapp.dot".to_string(),
+            vrf_request("myapp.dot"),
+        ))
+        .expect("granted product signs without another confirmation");
+        assert!(
+            platform
+                .sign_vrf_reviews
+                .lock()
+                .expect("VRF signing review list mutex poisoned")
+                .is_empty(),
+            "the allocation grant bypasses only the subsequent VRF prompt",
+        );
+
+        let error = futures::executor::block_on(authority.sign_vrf(
+            &CallContext::default(),
+            &session,
+            "other.dot".to_string(),
+            vrf_request("myapp.dot"),
+        ))
+        .expect_err("different calling product remains confirmation-bound");
+        assert_eq!(error, AuthorityError::Rejected);
+        let reviews = platform
+            .sign_vrf_reviews
+            .lock()
+            .expect("VRF signing review list mutex poisoned");
+        assert_eq!(reviews.len(), 1);
+        assert_eq!(reviews[0].calling_product_id, "other.dot");
+    }
+
+    #[test]
+    fn lock_and_wallet_replacement_release_native_custody_and_fence_old_authority() {
+        futures::executor::block_on(async {
+            use truapi::latest::{HostProductDeviceChatError, HostProductDeviceChatRequest};
+            let (services, authority) = signing_runtime();
+            authority
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            crate::host_internal::permissions::PermissionsService::new(
+                services.platform.as_ref(),
+                services.platform.as_ref(),
+                &crate::platform::ProductContext::new_with_execution(
+                    "chat.dot".to_owned(),
+                    crate::platform::ProductExecutionKind::Worker,
+                )
+                .expect("test product id is valid"),
+            )
+            .set_authorization_status(
+                &PermissionAuthorizationRequest::ChatAuthority,
+                PermissionAuthorizationStatus::Authorized,
+            )
+            .await
+            .unwrap();
+            let session = authority.current_local_session().unwrap();
+            let context = authority.native_chat_context(&session).unwrap();
+            let first = authority
+                .native_chat
+                .execute(
+                    context.clone(),
+                    "chat.dot".into(),
+                    HostProductDeviceChatRequest::Initialize,
+                )
+                .await
+                .unwrap();
+            let wallet = authority.native_chat.wallet(&context).await.unwrap();
+            let lifetime = Arc::downgrade(&wallet);
+            drop(wallet);
+            authority.clear_local_session();
+            assert!(lifetime.upgrade().is_none());
+            assert_eq!(
+                context.require_current(),
+                Err(HostProductDeviceChatError::NotConnected)
+            );
+            assert_eq!(
+                authority
+                    .native_chat
+                    .execute(
+                        context,
+                        "chat.dot".into(),
+                        HostProductDeviceChatRequest::Initialize,
+                    )
+                    .await,
+                Err(HostProductDeviceChatError::NotConnected)
+            );
+
+            authority
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let session = authority.current_local_session().unwrap();
+            let context = authority.native_chat_context(&session).unwrap();
+            let restored = authority
+                .native_chat
+                .execute(
+                    context.clone(),
+                    "chat.dot".into(),
+                    HostProductDeviceChatRequest::Initialize,
+                )
+                .await
+                .unwrap();
+            assert_eq!(restored.device, first.device);
+            let wallet = authority.native_chat.wallet(&context).await.unwrap();
+            let lifetime = Arc::downgrade(&wallet);
+            drop(wallet);
+            authority
+                .activate_local_session(vec![0xCD; 16])
+                .await
+                .unwrap();
+            assert!(lifetime.upgrade().is_none());
+            assert_eq!(
+                context.require_current(),
+                Err(HostProductDeviceChatError::NotConnected)
+            );
+        });
+    }
+
+    #[test]
+    fn product_clear_revokes_only_current_activation_grant_and_fences_stale_work() {
+        let platform = Arc::new(StubPlatform::default());
+        let (_services, authority) = signing_runtime_with_platform(platform);
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let stale_session = authority.current_session().expect("active session");
+        authority
+            .grant_auto_signing(&stale_session, "myapp.dot")
+            .expect("first product grant succeeds");
+        authority
+            .grant_auto_signing(&stale_session, "other.dot")
+            .expect("other product grant succeeds");
+        let context = authority.native_chat_context(&stale_session).unwrap();
+        let wallet = futures::executor::block_on(authority.native_chat.wallet(&context)).unwrap();
+        let custody = Arc::downgrade(&wallet);
+        drop(wallet);
+
+        futures::executor::block_on(authority.clear_product_state("myapp.dot"))
+            .expect("product clear succeeds");
+        assert!(
+            custody.upgrade().is_some(),
+            "product clear must preserve wallet custody"
+        );
+
+        let current_session = authority.current_session().expect("session remains active");
+        let (_, current_generation) = authority
+            .require_current_session(&current_session)
+            .expect("current session validates");
+        assert!(!authority.has_auto_signing_grant(
+            current_generation,
+            current_session.public_key,
+            "myapp.dot",
+            "myapp.dot",
+        ));
+        assert!(authority.has_auto_signing_grant(
+            current_generation,
+            current_session.public_key,
+            "other.dot",
+            "other.dot",
+        ));
+        assert!(matches!(
+            authority.grant_auto_signing(&stale_session, "myapp.dot"),
+            Err(AuthorityError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn auto_signing_grant_does_not_cross_root_identity_replacement() {
+        let platform = Arc::new(StubPlatform {
+            resource_allocation_confirmed: true,
+            sign_vrf_confirmed: false,
+            ..StubPlatform::default()
+        });
+        let (services, authority) = signing_runtime_with_platform(platform.clone());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("first activation succeeds");
+        let runtime = product_runtime(services, authority.clone());
+        futures::executor::block_on(ResourceAllocation::request(
+            &runtime,
+            &CallContext::default(),
+            HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
+                resources: vec![v01::AllocatableResource::AutoSigning],
+            }),
+        ))
+        .expect("AutoSigning allocation succeeds");
+
+        futures::executor::block_on(authority.activate_local_session([0xCD; 16].to_vec()))
+            .expect("replacement activation succeeds");
+        let replacement = authority.current_session().expect("replacement session");
+        let error = futures::executor::block_on(authority.sign_vrf(
+            &CallContext::default(),
+            &replacement,
+            "myapp.dot".to_string(),
+            vrf_request("myapp.dot"),
+        ))
+        .expect_err("replacement root must receive its own confirmation");
+        assert_eq!(error, AuthorityError::Rejected);
+        assert_eq!(
+            platform
+                .sign_vrf_reviews
+                .lock()
+                .expect("VRF signing review list mutex poisoned")
+                .len(),
+            1,
+        );
+    }
+
+    #[test]
+    fn auto_signing_grant_does_not_cross_disconnect_and_same_wallet_reactivation() {
+        let platform = Arc::new(StubPlatform {
+            resource_allocation_confirmed: true,
+            sign_vrf_confirmed: false,
+            ..StubPlatform::default()
+        });
+        let (services, authority) = signing_runtime_with_platform(platform.clone());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("first activation succeeds");
+        let runtime = product_runtime(services, authority.clone());
+        futures::executor::block_on(ResourceAllocation::request(
+            &runtime,
+            &CallContext::default(),
+            HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
+                resources: vec![v01::AllocatableResource::AutoSigning],
+            }),
+        ))
+        .expect("AutoSigning allocation succeeds");
+
+        futures::executor::block_on(authority.disconnect());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("same wallet reactivation succeeds");
+        let reactivated = authority.current_session().expect("reactivated session");
+        let error = futures::executor::block_on(authority.sign_vrf(
+            &CallContext::default(),
+            &reactivated,
+            "myapp.dot".to_string(),
+            vrf_request("myapp.dot"),
+        ))
+        .expect_err("reactivated wallet must receive its own confirmation");
+        assert_eq!(error, AuthorityError::Rejected);
+        assert_eq!(
+            platform
+                .sign_vrf_reviews
+                .lock()
+                .expect("VRF signing review list mutex poisoned")
+                .len(),
+            1,
+        );
+    }
+
+    #[test]
+    fn stale_auto_signing_completion_cannot_grant_same_wallet_reactivation() {
+        let platform = Arc::new(StubPlatform {
+            sign_vrf_confirmed: false,
+            ..StubPlatform::default()
+        });
+        let (_services, authority) = signing_runtime_with_platform(platform.clone());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("first activation succeeds");
+        let stale = authority.current_session().expect("first session snapshot");
+
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("same wallet replacement activation succeeds");
+        let current = authority.current_session().expect("replacement session");
+        assert_ne!(stale.validation_id, current.validation_id);
+
+        let error = futures::executor::block_on(authority.allocate_resources(
+            &CallContext::default(),
+            &stale,
+            "myapp.dot".to_string(),
+            v01::HostRequestResourceAllocationRequest {
+                resources: vec![v01::AllocatableResource::AutoSigning],
+            },
+        ))
+        .expect_err("completion captured from the old activation is stale");
+        assert_eq!(error, AuthorityError::Disconnected);
+
+        let error = futures::executor::block_on(authority.sign_vrf(
+            &CallContext::default(),
+            &current,
+            "myapp.dot".to_string(),
+            vrf_request("myapp.dot"),
+        ))
+        .expect_err("stale allocation must not grant the replacement activation");
+        assert_eq!(error, AuthorityError::Rejected);
+        assert_eq!(
+            platform
+                .sign_vrf_reviews
+                .lock()
+                .expect("VRF signing review list mutex poisoned")
+                .len(),
+            1,
+        );
+    }
+
+    #[test]
+    fn auto_signing_grant_does_not_cross_runtime_instance() {
+        let platform = Arc::new(StubPlatform {
+            resource_allocation_confirmed: true,
+            sign_vrf_confirmed: false,
+            ..StubPlatform::default()
+        });
+        let (services, granting_authority) = signing_runtime_with_platform(platform.clone());
+        futures::executor::block_on(granting_authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("granting runtime activates");
+        let granting_runtime = product_runtime(services, granting_authority);
+        futures::executor::block_on(ResourceAllocation::request(
+            &granting_runtime,
+            &CallContext::default(),
+            HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
+                resources: vec![v01::AllocatableResource::AutoSigning],
+            }),
+        ))
+        .expect("AutoSigning allocation succeeds");
+
+        let (_replacement_services, replacement) = signing_runtime_with_platform(platform.clone());
+        futures::executor::block_on(replacement.activate_local_session(ENTROPY.to_vec()))
+            .expect("replacement runtime activates with the same root");
+        let session = replacement.current_session().expect("replacement session");
+        let error = futures::executor::block_on(replacement.sign_vrf(
+            &CallContext::default(),
+            &session,
+            "myapp.dot".to_string(),
+            vrf_request("myapp.dot"),
+        ))
+        .expect_err("a separate runtime must receive its own confirmation");
+        assert_eq!(error, AuthorityError::Rejected);
+        assert_eq!(
+            platform
+                .sign_vrf_reviews
+                .lock()
+                .expect("VRF signing review list mutex poisoned")
+                .len(),
+            1,
+        );
+    }
+
+    #[test]
+    fn sign_payload_product_and_legacy_use_the_substrate_preimage() {
+        let (_services, authority) = signing_runtime();
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+        let cx = CallContext::default();
+        let mut payload = crate::test_support::sign_payload_data();
+        payload.signed_extensions = vec![
+            "CheckSpecVersion".to_string(),
+            "CheckTxVersion".to_string(),
+            "CheckGenesis".to_string(),
+            "CheckMortality".to_string(),
+            "CheckNonce".to_string(),
+            "ChargeTransactionPayment".to_string(),
+        ];
+        payload.with_signed_transaction = parity_scale_codec::OptionBool(Some(true));
+        let preimage = extrinsic_payload_preimage(&payload).expect("preimage builds");
+
+        let product_response = futures::executor::block_on(authority.sign_payload(
+            &cx,
+            &session,
+            None,
+            SignPayloadAuthorityRequest::Product(v01::HostSignPayloadRequest {
+                account: product_account(0),
+                payload: payload.clone(),
+            }),
+        ))
+        .expect("product payload signing succeeds");
+
+        let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
+        let keypair = derive_product_keypair(&root, "myapp.dot", index_bytes(0)).unwrap();
+        assert_eq!(product_response.signature.len(), 65);
+        assert_eq!(product_response.signature[0], 1);
+        let signature =
+            schnorrkel::Signature::from_bytes(&product_response.signature[1..]).unwrap();
+        assert!(
+            keypair
+                .public
+                .verify_simple(SR25519_SIGNING_CONTEXT, &preimage, &signature)
+                .is_ok()
+        );
+        let signed_transaction = product_response
+            .signed_transaction
+            .as_ref()
+            .expect("requested signed transaction");
+        let (account, embedded_signature, tail) = split_v4(signed_transaction);
+        assert_eq!(account, keypair.public.to_bytes());
+        assert_eq!(
+            embedded_signature.as_slice(),
+            &product_response.signature[1..]
+        );
+        let extensions = extrinsic_payload_extensions(&payload).unwrap();
+        let expected_tail = extensions
+            .iter()
+            .flat_map(|extension| extension.extra.iter().copied())
+            .chain(payload.method.iter().copied())
+            .collect::<Vec<_>>();
+        assert_eq!(tail, expected_tail);
+
+        let legacy_response = futures::executor::block_on(authority.sign_payload(
+            &cx,
+            &session,
+            None,
+            SignPayloadAuthorityRequest::LegacyAccount {
+                product_account: product_account(0),
+                request: v01::HostSignPayloadWithLegacyAccountRequest {
+                    signer: format!("0x{}", hex::encode(keypair.public.to_bytes())),
+                    payload,
+                },
+            },
+        ))
+        .expect("legacy payload signing succeeds");
+        assert_eq!(legacy_response.signature[0], 1);
+        let signature = schnorrkel::Signature::from_bytes(&legacy_response.signature[1..]).unwrap();
+        assert!(
+            keypair
+                .public
+                .verify_simple(SR25519_SIGNING_CONTEXT, &preimage, &signature)
+                .is_ok()
+        );
+        assert!(legacy_response.signed_transaction.is_some());
+    }
+
+    #[test]
+    fn sign_raw_legacy_accepts_only_the_uid_dot_identity_key() {
+        let (_services, authority) = signing_runtime();
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+        let cx = CallContext::default();
+        let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
+        let request = |account| SignRawAuthorityRequest::LegacyAccount {
+            account,
+            request: v01::HostSignRawWithLegacyAccountRequest {
+                signer: String::new(),
+                payload: v01::RawPayload::Bytes {
+                    bytes: b"hello".to_vec(),
+                },
+            },
+        };
+
+        let response = futures::executor::block_on(authority.sign_raw(
+            &cx,
+            &session,
+            None,
+            request(identity.public.to_bytes()),
+            true,
+        ))
+        .expect("identity raw signing succeeds");
+        let signature = schnorrkel::Signature::from_bytes(&response.signature).unwrap();
+        assert!(
+            identity
+                .public
+                .verify_simple(SR25519_SIGNING_CONTEXT, b"<Bytes>hello</Bytes>", &signature)
+                .is_ok()
+        );
+
+        let error = futures::executor::block_on(authority.sign_raw(
+            &cx,
+            &session,
+            None,
+            request([0xff; 32]),
+            true,
+        ))
+        .expect_err("unknown legacy account is rejected");
+        assert!(matches!(error, AuthorityError::Unavailable { .. }));
+    }
+
+    #[test]
+    fn sign_raw_requires_active_session() {
+        let (services, authority) = signing_runtime();
+        let runtime = product_runtime(services, authority);
+        let cx = CallContext::default();
+        let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
+            account: v01::ProductAccountId {
+                dot_ns_identifier: "myapp.dot".to_string(),
+                derivation_index: v01::DerivationIndex::Index(0),
+            },
+            payload: v01::RawPayload::Bytes {
+                bytes: vec![1, 2, 3],
+            },
+        });
+        let err =
+            futures::executor::block_on(runtime.sign_raw(&cx, request)).expect_err("no session");
+        assert!(matches!(err, CallError::Domain(HostSignRawError::V1(_))));
+    }
+
+    fn product_account(index: u32) -> v01::ProductAccountId {
+        v01::ProductAccountId {
+            dot_ns_identifier: "myapp.dot".to_string(),
+            derivation_index: v01::DerivationIndex::Index(index),
+        }
+    }
+
+    fn tx_payload(tx_ext_version: u8) -> v01::ProductAccountTxPayload {
+        v01::ProductAccountTxPayload {
+            signer: product_account(0),
+            genesis_hash: [0xaa; 32],
+            call_data: vec![0x00, 0x00],
+            extensions: vec![v01::TxPayloadExtension {
+                id: "CheckNonce".to_string(),
+                extra: vec![1],
+                additional_signed: vec![2, 3],
+            }],
+            tx_ext_version,
+            contacts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn create_transaction_reaches_chain_metadata_resolution() {
+        let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform {
+            chain_connect_error: Some("fixture has no live chain"),
+            ..StubPlatform::default()
+        });
+        let (_services, activation) = signing_runtime_with_platform(platform);
+        futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = activation.current_session().expect("active session");
+        let cx = CallContext::default();
+
+        let err = futures::executor::block_on(activation.create_transaction(
+            &cx,
+            &session,
+            None,
+            CreateTransactionAuthorityRequest::Product(tx_payload(0)),
+        ))
+        .expect_err("fixture cannot resolve metadata");
+        assert!(
+            matches!(err, AuthorityError::Unavailable { reason } if reason.contains("cannot load chain metadata")),
+            "choosing the extrinsic format reads the runtime metadata"
+        );
+    }
+
+    #[test]
+    fn create_transaction_legacy_signer_mismatch_errors() {
+        let (_services, activation) = signing_runtime();
+        futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = activation.current_session().expect("active session");
+        let cx = CallContext::default();
+
+        let payload = tx_payload(0);
+        let request = CreateTransactionAuthorityRequest::LegacyAccount {
+            product_account: product_account(0),
+            request: v01::LegacyAccountTxPayload {
+                signer: [0xff; 32], // does not match the derived slot-zero key
+                genesis_hash: payload.genesis_hash,
+                call_data: payload.call_data.clone(),
+                extensions: payload.extensions.clone(),
+                tx_ext_version: 0,
+            },
+        };
+        let err = futures::executor::block_on(
+            activation.create_transaction(&cx, &session, None, request),
+        )
+        .expect_err("mismatched legacy signer");
+        assert!(
+            matches!(err, AuthorityError::Unknown { reason } if reason.contains("does not match"))
+        );
+    }
+
+    #[test]
+    fn create_transaction_requires_active_session() {
+        let (_services, activation) = signing_runtime();
+        // A session snapshot cannot exist without activation, so construct the
+        // request against a role that has never been activated.
+        let (_s2, other) = signing_runtime();
+        futures::executor::block_on(other.activate_local_session(ENTROPY.to_vec())).unwrap();
+        let stale_session = other.current_session().expect("session");
+        futures::executor::block_on(other.disconnect());
+        let cx = CallContext::default();
+
+        let err = futures::executor::block_on(activation.create_transaction(
+            &cx,
+            &stale_session,
+            None,
+            CreateTransactionAuthorityRequest::Product(tx_payload(0)),
+        ))
+        .expect_err("no active session");
+        assert_eq!(err, AuthorityError::Disconnected);
+    }
+
+    #[test]
+    fn derive_entropy_matches_ios_vector_over_local_session() {
+        let (services, activation) = signing_runtime();
+        futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let runtime = product_runtime_for(services, activation, "test.product.dot");
+        let cx = CallContext::default();
+        let request = HostDeriveEntropyRequest::V1(v01::HostDeriveEntropyRequest {
+            context: b"my-key".to_vec(),
+        });
+        let response =
+            futures::executor::block_on(runtime.derive(&cx, request)).expect("derive ok");
+        let truapi::versioned::entropy::HostDeriveEntropyResponse::V1(inner) = response;
+        assert_eq!(
+            hex::encode(inner.entropy),
+            "479d5b9ecce19615397c9f160ee95e2f00c579837a5afb111132dd0da5fd472a",
+        );
+    }
+
+    #[test]
+    fn get_account_gates_on_local_session() {
+        let (services, authority) = signing_runtime();
+        let runtime = product_runtime(services, authority);
+        let cx = CallContext::default();
+        let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+            product_account_id: v01::ProductAccountId {
+                dot_ns_identifier: "myapp.dot".to_string(),
+                derivation_index: v01::DerivationIndex::Index(0),
+            },
+        });
+        let err = futures::executor::block_on(runtime.get_account(&cx, request))
+            .expect_err("no session yet");
+        assert!(matches!(
+            err,
+            CallError::Domain(HostAccountGetError::V1(
+                v01::HostAccountGetError::NotConnected
+            ))
+        ));
+    }
+
+    #[test]
+    fn sign_raw_leaves_already_wrapped_payload_untouched() {
+        let (services, activation) = signing_runtime();
+        futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let runtime = product_runtime(services, activation);
+        let cx = CallContext::default();
+        let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
+            account: v01::ProductAccountId {
+                dot_ns_identifier: "myapp.dot".to_string(),
+                derivation_index: v01::DerivationIndex::Index(0),
+            },
+            payload: v01::RawPayload::Bytes {
+                bytes: b"<Bytes>hi</Bytes>".to_vec(),
+            },
+        });
+        let HostSignRawResponse::V1(response) =
+            futures::executor::block_on(runtime.sign_raw(&cx, request)).expect("sign_raw ok");
+        let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
+        let keypair = derive_product_keypair(&root, "myapp.dot", index_bytes(0)).unwrap();
+        let signature =
+            schnorrkel::Signature::from_bytes(&response.signature).expect("64-byte signature");
+        assert!(
+            keypair
+                .public
+                .verify_simple(b"substrate", b"<Bytes>hi</Bytes>", &signature)
+                .is_ok(),
+            "signature verifies over the unchanged wrapped message",
+        );
+        assert!(
+            keypair
+                .public
+                .verify_simple(
+                    b"substrate",
+                    b"<Bytes><Bytes>hi</Bytes></Bytes>",
+                    &signature
+                )
+                .is_err(),
+            "payload was not double-wrapped",
+        );
+    }
+
+    #[test]
+    fn chat_context_rejects_logout_and_same_wallet_reactivation() {
+        futures::executor::block_on(async {
+            let (_, authority) = signing_runtime();
+            authority
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let session = authority.current_session().unwrap();
+            let context = authority.native_chat_context(&session).unwrap();
+            assert!((context.session_valid)());
+            authority.disconnect().await;
+            assert!(!(context.session_valid)());
+            authority
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            assert!(!(context.session_valid)());
+            assert!(matches!(
+                authority
+                    .product_device_chat(
+                        &CallContext::default(),
+                        &session,
+                        ProductDeviceChatAuthorityRequest {
+                            calling_product_id: "myapp.dot".to_string(),
+                            operation: truapi::latest::HostProductDeviceChatRequest::Initialize,
+                            session_consent: false,
+                        },
+                    )
+                    .await,
+                Err(ProductDeviceChatAuthorityError::Disconnected)
+            ));
+            let current = authority.current_session().unwrap();
+            assert!((authority
+                .native_chat_context(&current)
+                .unwrap()
+                .session_valid)());
+        });
+    }
+
+    #[test]
+    fn product_chat_username_grant_does_not_authorize_chat() {
+        futures::executor::block_on(async {
+            let platform = Arc::new(StubPlatform::default());
+            let (services, activation) = signing_runtime_with_platform(platform.clone());
+            activation
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let runtime = product_runtime(services, activation);
+            runtime
+                .set_permission_authorization_status(
+                    PermissionAuthorizationRequest::IdentityDisclosure,
+                    PermissionAuthorizationStatus::Authorized,
+                )
+                .await
+                .unwrap();
+            let cx = CallContext::default();
+            let request = HostProductDeviceChatRequest::V2(
+                truapi::latest::HostProductDeviceChatRequest::Initialize,
+            );
+
+            for _ in 0..2 {
+                assert!(matches!(
+                    runtime.product_device_chat(&cx, request.clone()).await,
+                    Err(CallError::Domain(HostProductDeviceChatError::V1(
+                        truapi::latest::HostProductDeviceChatError::AccessNotGranted
+                    )))
+                ));
+            }
+            assert_eq!(
+                platform.chat_authority_reviews.lock().len(),
+                1,
+                "Chat requires its own prompt, then respects the persisted refusal"
+            );
+            assert_eq!(
+                runtime
+                    .permission_authorization_status(PermissionAuthorizationRequest::ChatAuthority)
+                    .await
+                    .unwrap(),
+                PermissionAuthorizationStatus::Denied
+            );
+            assert_eq!(
+                runtime
+                    .permission_authorization_status(
+                        PermissionAuthorizationRequest::IdentityDisclosure,
+                    )
+                    .await
+                    .unwrap(),
+                PermissionAuthorizationStatus::Authorized
+            );
+        });
+    }
+
+    #[test]
+    fn product_chat_consent_is_cached_and_revocation_blocks_chat() {
+        futures::executor::block_on(async {
+            let platform = Arc::new(StubPlatform {
+                chat_authority_confirmed: true,
+                ..StubPlatform::default()
+            });
+            let (services, activation) = signing_runtime_with_platform(platform.clone());
+            activation
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let runtime = product_runtime(services, activation);
+            let cx = CallContext::default();
+            let initialize = HostProductDeviceChatRequest::V2(
+                truapi::latest::HostProductDeviceChatRequest::Initialize,
+            );
+            let HostProductDeviceChatResponse::V2(first) = runtime
+                .product_device_chat(&cx, initialize.clone())
+                .await
+                .unwrap();
+            let HostProductDeviceChatResponse::V2(second) = runtime
+                .product_device_chat(&cx, initialize.clone())
+                .await
+                .unwrap();
+            assert_eq!(first.device, second.device);
+            assert_eq!(first.device.product_account.dot_ns_identifier, "myapp.dot");
+            assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
+            runtime
+                .set_permission_authorization_status(
+                    PermissionAuthorizationRequest::ChatAuthority,
+                    PermissionAuthorizationStatus::Denied,
+                )
+                .await
+                .unwrap();
+            assert!(matches!(
+                runtime.product_device_chat(&cx, initialize).await,
+                Err(CallError::Domain(HostProductDeviceChatError::V1(
+                    truapi::latest::HostProductDeviceChatError::AccessNotGranted
+                )))
+            ));
+            assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
+        });
+    }
+
+    #[test]
+    fn product_chat_allow_once_lasts_for_the_session_without_persisting() {
+        futures::executor::block_on(async {
+            let platform = Arc::new(StubPlatform {
+                chat_authority_confirmed: true,
+                ..StubPlatform::default()
+            });
+            platform
+                .permission_confirmation_decisions
+                .lock()
+                .expect("permission confirmation mutex poisoned")
+                .push_back(crate::platform::PermissionDecision::AllowOnce);
+            let (services, activation) = signing_runtime_with_platform(platform.clone());
+            activation
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let runtime = product_runtime(services, activation);
+            let cx = CallContext::default();
+            let chat =
+                |request| runtime.product_device_chat(&cx, HostProductDeviceChatRequest::V2(request));
+            chat(truapi::latest::HostProductDeviceChatRequest::Initialize)
+                .await
+                .unwrap();
+            // The in-actor re-check honours the session grant: the lookup, not
+            // authorization, is what fails for an unknown attachment.
+            let unknown = truapi::latest::HostProductDeviceChatRequest::OpenAttachment {
+                attachment_id: [0x77; 32],
+            };
+            assert!(!matches!(
+                chat(unknown.clone()).await,
+                Err(CallError::Domain(HostProductDeviceChatError::V1(
+                    truapi::latest::HostProductDeviceChatError::AccessNotGranted
+                )))
+            ));
+            assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
+            assert_eq!(
+                runtime
+                    .permission_authorization_status(PermissionAuthorizationRequest::ChatAuthority)
+                    .await
+                    .unwrap(),
+                PermissionAuthorizationStatus::NotDetermined
+            );
+
+            runtime
+                .set_permission_authorization_status(
+                    PermissionAuthorizationRequest::ChatAuthority,
+                    PermissionAuthorizationStatus::Denied,
+                )
+                .await
+                .unwrap();
+            assert!(matches!(
+                chat(unknown).await,
+                Err(CallError::Domain(HostProductDeviceChatError::V1(
+                    truapi::latest::HostProductDeviceChatError::AccessNotGranted
+                )))
+            ));
+        });
+    }
+
+    #[test]
+    fn product_chat_authority_validation_does_not_require_statement_delivery() {
+        futures::executor::block_on(async {
+            let platform = Arc::new(StubPlatform {
+                chat_authority_confirmed: true,
+                ..StubPlatform::default()
+            });
+            let (services, activation) = signing_runtime_with_platform(platform);
+            activation
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let runtime = product_runtime(services, activation);
+            runtime
+                .set_permission_authorization_status(
+                    PermissionAuthorizationRequest::Remote(v01::RemotePermissionRequest {
+                        permission: v01::RemotePermission::StatementSubmit,
+                    }),
+                    PermissionAuthorizationStatus::Denied,
+                )
+                .await
+                .unwrap();
+            let request = HostProductDeviceChatRequest::V2(
+                truapi::latest::HostProductDeviceChatRequest::SendPayment {
+                    peer_identity: [0x55; 32],
+                    request_id: "not-authorized".to_string(),
+                    amount_cents: 10,
+                },
+            );
+            assert!(matches!(
+                runtime
+                    .product_device_chat(&CallContext::default(), request)
+                    .await,
+                Err(CallError::Domain(HostProductDeviceChatError::V1(
+                    truapi::latest::HostProductDeviceChatError::PeerNotReady
+                )))
+            ));
+            let request = HostProductDeviceChatRequest::V2(
+                truapi::latest::HostProductDeviceChatRequest::Prepare {
+                    peer_identity: [0x55; 32],
+                    route: truapi::latest::HostNativeChatRoute::Identity,
+                    plaintext: vec![],
+                },
+            );
+            assert!(matches!(
+                runtime
+                    .product_device_chat(&CallContext::default(), request)
+                    .await,
+                Err(CallError::Domain(HostProductDeviceChatError::V1(
+                    truapi::latest::HostProductDeviceChatError::InvalidRequest
+                )))
+            ));
+        });
+    }
+
+    async fn sso_chat(
+        service: &super::sso_service::SigningHostSsoService,
+        payload: SsoProductDeviceChatOperation,
+    ) -> ProductDeviceChatResponse {
+        sso_chat_as(service, "myapp.dot", payload).await
+    }
+
+    async fn sso_chat_as(
+        service: &super::sso_service::SigningHostSsoService,
+        calling_product_id: &str,
+        payload: SsoProductDeviceChatOperation,
+    ) -> ProductDeviceChatResponse {
+        let message = RemoteMessage::request(
+            "chat-consent".to_string(),
+            ProductRequest {
+                calling_product_id: calling_product_id.to_string(),
+                payload,
+            },
+        );
+        let Dispatch::Response(answer) = service.answer(message).await else {
+            panic!("expected SSO response");
+        };
+        let RemoteMessageData::V1(v1::RemoteMessage::ProductDeviceChatResponse(response)) =
+            answer.message.data
+        else {
+            panic!("expected SSO Chat response");
+        };
+        response.payload
+    }
+
+    #[test]
+    fn sso_chat_username_grant_does_not_authorize_chat() {
+        futures::executor::block_on(async {
+            let platform = Arc::new(StubPlatform::default());
+            let (_, activation) = signing_runtime_with_platform(platform.clone());
+            activation
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let service = super::sso_service::SigningHostSsoService::new(activation);
+            let product = crate::platform::ProductContext::new_with_execution(
+                "myapp.dot".to_owned(),
+                crate::platform::ProductExecutionKind::Worker,
+            )
+            .expect("test product id is valid");
+            let permissions =
+                PermissionsService::new(platform.as_ref(), platform.as_ref(), &product);
+            permissions
+                .set_authorization_status(
+                    &PermissionAuthorizationRequest::IdentityDisclosure,
+                    PermissionAuthorizationStatus::Authorized,
+                )
+                .await
+                .unwrap();
+            let request = SsoProductDeviceChatOperation::V3(
+                truapi::latest::HostProductDeviceChatRequest::Initialize,
+            );
+
+            for _ in 0..2 {
+                assert_eq!(
+                    sso_chat(&service, request.clone()).await,
+                    Err(HostProductDeviceChatError::V1(
+                        truapi::latest::HostProductDeviceChatError::AccessNotGranted,
+                    ))
+                );
+            }
+            assert_eq!(
+                platform.chat_authority_reviews.lock().len(),
+                1,
+                "SSO Chat requires its own prompt, then respects the persisted refusal"
+            );
+            assert_eq!(
+                permissions
+                    .authorization_status(&PermissionAuthorizationRequest::ChatAuthority)
+                    .await
+                    .unwrap(),
+                PermissionAuthorizationStatus::Denied
+            );
+            assert_eq!(
+                permissions
+                    .authorization_status(&PermissionAuthorizationRequest::IdentityDisclosure)
+                    .await
+                    .unwrap(),
+                PermissionAuthorizationStatus::Authorized
+            );
+        });
+    }
+
+    #[test]
+    fn sso_chat_consent_is_cached_and_revocation_blocks_chat() {
+        futures::executor::block_on(async {
+            let platform = Arc::new(StubPlatform {
+                chat_authority_confirmed: true,
+                ..StubPlatform::default()
+            });
+            let (_, activation) = signing_runtime_with_platform(platform.clone());
+            activation
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let service = super::sso_service::SigningHostSsoService::new(activation);
+            let product = crate::platform::ProductContext::new_with_execution(
+                "myapp.dot".to_owned(),
+                crate::platform::ProductExecutionKind::Worker,
+            )
+            .expect("test product id is valid");
+            let permissions =
+                PermissionsService::new(platform.as_ref(), platform.as_ref(), &product);
+            let initialize = SsoProductDeviceChatOperation::V3(
+                truapi::latest::HostProductDeviceChatRequest::Initialize,
+            );
+            let HostProductDeviceChatResponse::V2(first) =
+                sso_chat(&service, initialize.clone()).await.unwrap();
+            let HostProductDeviceChatResponse::V2(second) =
+                sso_chat(&service, initialize.clone()).await.unwrap();
+            assert_eq!(first.device, second.device);
+            assert_eq!(first.device.product_account.dot_ns_identifier, "myapp.dot");
+            assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
+            permissions
+                .set_authorization_status(
+                    &PermissionAuthorizationRequest::ChatAuthority,
+                    PermissionAuthorizationStatus::Denied,
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                sso_chat(&service, initialize).await,
+                Err(HostProductDeviceChatError::V1(
+                    truapi::latest::HostProductDeviceChatError::AccessNotGranted,
+                ))
+            );
+            assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
+        });
+    }
+
+    #[test]
+    fn sso_chat_allow_once_lasts_for_the_session_without_persisting() {
+        futures::executor::block_on(async {
+            let platform = Arc::new(StubPlatform {
+                chat_authority_confirmed: true,
+                ..StubPlatform::default()
+            });
+            platform
+                .permission_confirmation_decisions
+                .lock()
+                .expect("permission confirmation mutex poisoned")
+                .push_back(crate::platform::PermissionDecision::AllowOnce);
+            let (_, activation) = signing_runtime_with_platform(platform.clone());
+            activation
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let service = super::sso_service::SigningHostSsoService::new(activation);
+            let initialize = SsoProductDeviceChatOperation::V3(
+                truapi::latest::HostProductDeviceChatRequest::Initialize,
+            );
+            let unknown = SsoProductDeviceChatOperation::V3(
+                truapi::latest::HostProductDeviceChatRequest::OpenAttachment {
+                    attachment_id: [0x77; 32],
+                },
+            );
+            sso_chat(&service, initialize.clone()).await.unwrap();
+            sso_chat(&service, initialize).await.unwrap();
+            assert_ne!(
+                sso_chat(&service, unknown.clone()).await,
+                Err(HostProductDeviceChatError::V1(
+                    truapi::latest::HostProductDeviceChatError::AccessNotGranted,
+                ))
+            );
+            assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
+
+            let product = crate::platform::ProductContext::new_with_execution(
+                "myapp.dot".to_owned(),
+                crate::platform::ProductExecutionKind::Worker,
+            )
+            .expect("test product id is valid");
+            let permissions = PermissionsService::new(platform.as_ref(), platform.as_ref(), &product);
+            assert_eq!(
+                permissions
+                    .authorization_status(&PermissionAuthorizationRequest::ChatAuthority)
+                    .await
+                    .unwrap(),
+                PermissionAuthorizationStatus::NotDetermined
+            );
+            permissions
+                .set_authorization_status(
+                    &PermissionAuthorizationRequest::ChatAuthority,
+                    PermissionAuthorizationStatus::Denied,
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                sso_chat(&service, unknown).await,
+                Err(HostProductDeviceChatError::V1(
+                    truapi::latest::HostProductDeviceChatError::AccessNotGranted,
+                ))
+            );
+            assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
+        });
+    }
+
+    #[test]
+    fn sso_chat_keys_consent_and_device_on_the_attested_product() {
+        futures::executor::block_on(async {
+            let platform = Arc::new(StubPlatform {
+                chat_authority_confirmed: true,
+                ..StubPlatform::default()
+            });
+            let (_, activation) = signing_runtime_with_platform(platform.clone());
+            activation
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let service = super::sso_service::SigningHostSsoService::new(activation);
+            let refused = crate::platform::ProductContext::new_with_execution(
+                "refused.dot".to_owned(),
+                crate::platform::ProductExecutionKind::Worker,
+            )
+            .expect("test product id is valid");
+            PermissionsService::new(platform.as_ref(), platform.as_ref(), &refused)
+                .set_authorization_status(
+                    &PermissionAuthorizationRequest::ChatAuthority,
+                    PermissionAuthorizationStatus::Denied,
+                )
+                .await
+                .unwrap();
+            let initialize = SsoProductDeviceChatOperation::V3(
+                truapi::latest::HostProductDeviceChatRequest::Initialize,
+            );
+
+            assert_eq!(
+                sso_chat_as(&service, "refused.dot", initialize.clone()).await,
+                Err(HostProductDeviceChatError::V1(
+                    truapi::latest::HostProductDeviceChatError::AccessNotGranted,
+                ))
+            );
+            assert!(platform.chat_authority_reviews.lock().is_empty());
+
+            let HostProductDeviceChatResponse::V2(approved) =
+                sso_chat_as(&service, "approved.dot", initialize.clone())
+                    .await
+                    .unwrap();
+            assert_eq!(
+                approved.device.product_account.dot_ns_identifier,
+                "approved.dot"
+            );
+            let HostProductDeviceChatResponse::V2(other) =
+                sso_chat_as(&service, "other.dot", initialize)
+                    .await
+                    .unwrap();
+            assert_eq!(other.device.product_account.dot_ns_identifier, "other.dot");
+            assert_ne!(approved.device.account_id, other.device.account_id);
+            assert_eq!(
+                platform
+                    .chat_authority_reviews
+                    .lock()
+                    .iter()
+                    .map(|review| review.product_id.as_str())
+                    .collect::<Vec<_>>(),
+                ["approved.dot", "other.dot"],
+                "each attested product is prompted under its own identity"
+            );
+        });
+    }
+
+    #[test]
+    fn sso_chat_authority_validation_does_not_require_statement_delivery() {
+        futures::executor::block_on(async {
+            let platform = Arc::new(StubPlatform {
+                chat_authority_confirmed: true,
+                ..StubPlatform::default()
+            });
+            let (_, activation) = signing_runtime_with_platform(platform.clone());
+            activation
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let service = super::sso_service::SigningHostSsoService::new(activation);
+            let product = crate::platform::ProductContext::new_with_execution(
+                "myapp.dot".to_owned(),
+                crate::platform::ProductExecutionKind::Worker,
+            )
+            .expect("test product id is valid");
+            let permissions =
+                PermissionsService::new(platform.as_ref(), platform.as_ref(), &product);
+            permissions
+                .set_authorization_status(
+                    &PermissionAuthorizationRequest::Remote(v01::RemotePermissionRequest {
+                        permission: v01::RemotePermission::StatementSubmit,
+                    }),
+                    PermissionAuthorizationStatus::Denied,
+                )
+                .await
+                .unwrap();
+            let request = SsoProductDeviceChatOperation::V3(
+                truapi::latest::HostProductDeviceChatRequest::SendPayment {
+                    peer_identity: [0x55; 32],
+                    request_id: "not-authorized".to_string(),
+                    amount_cents: 10,
+                },
+            );
+            assert_eq!(
+                sso_chat(&service, request).await,
+                Err(HostProductDeviceChatError::V1(
+                    truapi::latest::HostProductDeviceChatError::PeerNotReady,
+                ))
+            );
+            let request = SsoProductDeviceChatOperation::V3(
+                truapi::latest::HostProductDeviceChatRequest::Prepare {
+                    peer_identity: [0x55; 32],
+                    route: truapi::latest::HostNativeChatRoute::Identity,
+                    plaintext: vec![],
+                },
+            );
+            assert_eq!(
+                sso_chat(&service, request).await,
+                Err(HostProductDeviceChatError::V1(
+                    truapi::latest::HostProductDeviceChatError::InvalidRequest,
+                ))
+            );
+        });
+    }
+
+    #[test]
+    fn reactivation_invalidates_prior_session_snapshot() {
+        let (_services, authority) = signing_runtime();
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("first activation");
+        let stale = authority.current_session().expect("snapshot");
+
+        // Re-activate with different entropy: a fresh public key, hence a
+        // different validation id.
+        futures::executor::block_on(authority.activate_local_session([0xCD; 16].to_vec()))
+            .expect("second activation");
+        assert_ne!(
+            authority.current_session().expect("session").public_key,
+            stale.public_key,
+        );
+
+        let cx = CallContext::default();
+        let request = v01::HostSignRawRequest {
+            account: v01::ProductAccountId {
+                dot_ns_identifier: "myapp.dot".to_string(),
+                derivation_index: v01::DerivationIndex::Index(0),
+            },
+            payload: v01::RawPayload::Bytes {
+                bytes: vec![1, 2, 3],
+            },
+        };
+        let err = futures::executor::block_on(authority.sign_raw(
+            &cx,
+            &stale,
+            None,
+            SignRawAuthorityRequest::Product(request),
+            true,
+        ))
+        .expect_err("stale snapshot rejected");
+        assert_eq!(err, AuthorityError::Disconnected);
+    }
+
+    #[test]
+    fn disconnect_clears_local_session() {
+        let (_services, authority) = signing_runtime();
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation");
+        let session = authority.current_session().expect("connected");
+
+        futures::executor::block_on(authority.disconnect());
+        assert!(authority.current_session().is_none());
+
+        let cx = CallContext::default();
+        let request = v01::HostSignRawRequest {
+            account: v01::ProductAccountId {
+                dot_ns_identifier: "myapp.dot".to_string(),
+                derivation_index: v01::DerivationIndex::Index(0),
+            },
+            payload: v01::RawPayload::Bytes { bytes: vec![1] },
+        };
+        let err = futures::executor::block_on(authority.sign_raw(
+            &cx,
+            &session,
+            None,
+            SignRawAuthorityRequest::Product(request),
+            true,
+        ))
+        .expect_err("no session after disconnect");
+        assert_eq!(err, AuthorityError::Disconnected);
+    }
+
+    /// A PGAS request has to actually reach Asset Hub. Asserting the outcome alone
+    /// cannot show that: the stub this replaced answered `NotAvailable` with no
+    /// chain access at all, which looks identical from outside. Pin instead that
+    /// the request is left waiting on the connection.
+    #[test]
+    fn a_pgas_request_waits_on_the_asset_hub_connection() {
+        use std::future::Future;
+        use std::task::{Context, Poll};
+
+        let platform = Arc::new(StubPlatform {
+            chain_connect_pending: true,
+            ..StubPlatform::default()
+        });
+        let (_services, authority) = signing_runtime_with_platform(platform);
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation");
+        let session = authority.current_session().expect("connected");
+        let cx = CallContext::default();
+
+        let mut allocation = Box::pin(authority.allocate_resources(
+            &cx,
+            &session,
+            "myapp.dot".to_string(),
+            v01::HostRequestResourceAllocationRequest {
+                resources: vec![v01::AllocatableResource::SmartContractAllowance(
+                    v01::DerivationIndex::Index(0),
+                )],
+            },
+        ));
+        let waker = futures::task::noop_waker();
+        let mut task_cx = Context::from_waker(&waker);
+
+        match allocation.as_mut().poll(&mut task_cx) {
+            Poll::Pending => {}
+            Poll::Ready(outcome) => {
+                panic!("a PGAS claim should be waiting on Asset Hub, got {outcome:?}")
+            }
+        }
+    }
+
+    /// Each allocation spends on chain, so a withdrawn call must not start the
+    /// next one.
+    #[test]
+    fn a_withdrawn_allocation_starts_no_further_resource() {
+        let (_services, authority) =
+            signing_runtime_with_platform(Arc::new(StubPlatform::default()));
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation");
+        let session = authority.current_session().expect("connected");
+        let cancel = truapi::CancellationToken::default();
+        cancel.cancel();
+        let cx = CallContext::with_parts("allocation-withdrawn".to_string(), cancel);
+
+        let result = futures::executor::block_on(authority.allocate_resources(
+            &cx,
+            &session,
+            "myapp.dot".to_string(),
+            v01::HostRequestResourceAllocationRequest {
+                resources: vec![v01::AllocatableResource::AutoSigning],
+            },
+        ));
+
+        assert_eq!(
+            result,
+            Err(AuthorityError::Cancelled(
+                crate::runtime::authority::AuthorityCancelError::new(
+                    "allocation-withdrawn",
+                    truapi::CancellationReason::Cancelled,
+                )
+            ))
+        );
+    }
+
+    #[test]
+    fn direct_allocation_handles_empty_and_optional_resource_batches() {
+        // A PGAS request now reaches Asset Hub, so the stub has to fail the
+        // connect for this to be deterministic. What the batch pins is that one
+        // resource failing does not poison the others.
+        let platform = Arc::new(StubPlatform {
+            chain_connect_error: Some("asset hub unavailable"),
+            ..StubPlatform::default()
+        });
+        let (_services, authority) = signing_runtime_with_platform(platform);
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation");
+        let session = authority.current_session().expect("connected");
+        let cx = CallContext::default();
+
+        let empty = futures::executor::block_on(authority.allocate_resources(
+            &cx,
+            &session,
+            "myapp.dot".to_string(),
+            v01::HostRequestResourceAllocationRequest { resources: vec![] },
+        ))
+        .expect("empty allocation succeeds");
+        assert!(empty.outcomes.is_empty());
+
+        let optional = futures::executor::block_on(authority.allocate_resources(
+            &cx,
+            &session,
+            "myapp.dot".to_string(),
+            v01::HostRequestResourceAllocationRequest {
+                resources: vec![
+                    v01::AllocatableResource::SmartContractAllowance(v01::DerivationIndex::Index(
+                        0,
+                    )),
+                    v01::AllocatableResource::AutoSigning,
+                ],
+            },
+        ))
+        .expect("optional allocation succeeds");
+        assert_eq!(
+            optional.outcomes,
+            vec![
+                // The chain is unreachable, so the claim degrades rather than
+                // failing the request.
+                v01::AllocationOutcome::NotAvailable,
+                // And the resource that needs no chain still allocates.
+                v01::AllocationOutcome::Allocated,
+            ]
+        );
+    }
 }

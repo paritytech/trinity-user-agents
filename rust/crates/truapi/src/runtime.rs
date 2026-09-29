@@ -1262,7 +1262,9 @@ impl ProductRuntimeHost {
     }
 
     #[instrument(skip_all, fields(runtime.method = "permissions.chat_authority_authorization"))]
-    async fn chat_authority_authorization(&self) -> Result<PermissionAuthorizationStatus, String> {
+    async fn chat_authority_authorization(
+        &self,
+    ) -> Result<crate::host_internal::permissions::ChatAuthorityConsent, String> {
         self.permissions_service()
             .check_or_prompt_chat_authority()
             .await

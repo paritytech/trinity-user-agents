@@ -269,6 +269,9 @@ pub struct ProductDeviceChatAuthorityRequest {
     pub calling_product_id: String,
     /// Authorized wallet-local Chat operation.
     pub operation: HostProductDeviceChatRequest,
+    /// The user allowed Chat for this session only. The authority honours
+    /// that grant for the product until its session ends; nothing is stored.
+    pub session_consent: bool,
 }
 
 /// Only trusted attachment preparation uploads preimages; products submit Chat statements.

@@ -161,16 +161,24 @@ pub(super) async fn require_authorized(
     // per-call argument rather than context state. Permission lookups key only
     // on `product_id`; `Worker` is the execution kind because it is the only
     // one that may serve the Chat modality.
-    let product =
+    let product_context =
         ProductContext::new_with_execution(product.to_owned(), ProductExecutionKind::Worker)
             .map_err(|_| ChatError::AccessNotGranted)?;
-    let permissions = PermissionsService::new(platform, platform, &product);
-    if permissions
+    let permissions = PermissionsService::new(platform, platform, &product_context);
+    // A stored decision always wins, so a denial or revocation ends a
+    // session-only grant at once.
+    let authorized = match permissions
         .authorization_status(&PermissionAuthorizationRequest::ChatAuthority)
         .await
         .map_err(|_| ChatError::StorageUnavailable)?
-        != PermissionAuthorizationStatus::Authorized
     {
+        PermissionAuthorizationStatus::Authorized => true,
+        PermissionAuthorizationStatus::Denied => false,
+        PermissionAuthorizationStatus::NotDetermined => {
+            (context.chat_session_granted)(product)
+        }
+    };
+    if !authorized {
         return Err(ChatError::AccessNotGranted);
     }
     context.require_current()

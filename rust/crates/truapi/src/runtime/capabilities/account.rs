@@ -26,16 +26,17 @@ use truapi::{
 	},
 };
 
-use truapi::versioned::IntoLatest;
-
-use crate::{
-	host_internal::product_manifest::Granted,
-	runtime::{
-		ProductRuntimeHost, account_access_authorization, account_get_authority_error,
-		remote_authority_call, remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error,
-		ring_vrf_proof_error, ring_vrf_register_error, ring_vrf_sign_error, until_cancelled,
-		validate_vrf_transcript, versioning::version, vrf_call_error,
-	},
+use crate::host_internal::permissions::ChatAuthorityConsent;
+use crate::host_internal::product_manifest::Granted;
+use crate::host_internal::sso_messages::ProductRequest;
+use crate::runtime::authority::{
+    AuthorityError, ProductDeviceChatAuthorityRequest, chat_requires_preimage_submit,
+};
+use crate::runtime::{
+    ProductRuntimeHost, account_access_authorization, account_get_authority_error,
+    product_device_chat_authority_error, remote_authority_call, remote_authority_context,
+    ring_vrf_alias_error, ring_vrf_list_error, ring_vrf_proof_error, ring_vrf_register_error,
+    ring_vrf_sign_error, validate_vrf_transcript, vrf_call_error,
 };
 
 #[truapi::async_trait]
@@ -257,20 +258,62 @@ impl Account for ProductRuntimeHost {
 			.await
 	}
 
-	#[instrument(skip_all, fields(runtime.method = "account.get_legacy_accounts"))]
-	async fn get_legacy_accounts(
-		&self,
-		_cx: &CallContext,
-		request: HostGetLegacyAccountsRequest,
-	) -> Result<HostGetLegacyAccountsResponse, CallError<HostGetLegacyAccountsError>> {
-		version(request)
-			.exec(|()| async move {
-				// Match the mobile hosts: compatibility signing accounts may be
-				// addressed explicitly, but are not enumerated.
-				Ok(latest::HostGetLegacyAccountsResponse { accounts: vec![] })
-			})
-			.await
-	}
+    #[instrument(skip_all, fields(runtime.method = "account.product_device_chat"))]
+    async fn product_device_chat(
+        &self,
+        cx: &CallContext,
+        request: HostProductDeviceChatRequest,
+    ) -> Result<HostProductDeviceChatResponse, CallError<HostProductDeviceChatError>> {
+        let operation = match request {
+            HostProductDeviceChatRequest::V2(operation) => operation,
+            HostProductDeviceChatRequest::V1(_) => {
+                return Err(CallError::unavailable());
+            }
+        };
+        let calling_product_id =
+            normalize_product_identifier(&self.product_id()).map_err(|_| {
+                CallError::Domain(HostProductDeviceChatError::V1(
+                    latest::HostProductDeviceChatError::InvalidRequest,
+                ))
+            })?;
+        let Some(session) = self.authority.current_session() else {
+            return Err(CallError::Domain(HostProductDeviceChatError::V1(
+                latest::HostProductDeviceChatError::NotConnected,
+            )));
+        };
+        let consent = self
+            .chat_authority_authorization()
+            .await
+            .map_err(|reason| CallError::HostFailure { reason })?;
+        if consent == ChatAuthorityConsent::Refused {
+            return Err(CallError::Domain(HostProductDeviceChatError::V1(
+                latest::HostProductDeviceChatError::AccessNotGranted,
+            )));
+        }
+        if chat_requires_preimage_submit(&operation) {
+            self.require_remote_permission(
+                v01::RemotePermission::PreimageSubmit,
+                HostProductDeviceChatError::V1(
+                    latest::HostProductDeviceChatError::AccessNotGranted,
+                ),
+            )
+            .await?;
+        }
+        let cx = remote_authority_context(cx);
+        let authority_request = ProductDeviceChatAuthorityRequest {
+            calling_product_id,
+            operation,
+            session_consent: consent == ChatAuthorityConsent::Session,
+        };
+        remote_authority_call(
+            &cx,
+            self.authority
+                .product_device_chat(&cx, &session, authority_request),
+        )
+        .await
+        .map(HostProductDeviceChatResponse::V2)
+        .map_err(product_device_chat_authority_error)
+    }
 
 	#[instrument(skip_all, fields(runtime.method = "account.get_user_id"))]
 	async fn get_user_id(

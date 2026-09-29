@@ -65,6 +65,8 @@ pub(crate) struct NativeChatContext {
     pub(crate) session: AuthoritySession,
     pub(crate) entropy: Zeroizing<Vec<u8>>,
     pub(crate) session_valid: Arc<dyn Fn() -> bool + Send + Sync>,
+    /// Whether the user allowed Chat for a product for this session only.
+    pub(crate) chat_session_granted: Arc<dyn Fn(&str) -> bool + Send + Sync>,
     pub(crate) network_suffix: String,
     pub(crate) genesis_hash: [u8; 32],
     pub(crate) coinage_instance_id: Option<u32>,

@@ -13,6 +13,10 @@ use truapi_platform::{NativeChatFileExportRequest, NativeChatFilePickRequest};
 
 const MAX_FILES: usize = 4096;
 const MAX_RICH_MESSAGES: usize = 4096;
+// One contact cannot fill the shared bounds; each peer evicts its own oldest
+// settled records first.
+const MAX_PEER_FILES: usize = 512;
+const MAX_PEER_RICH_MESSAGES: usize = 512;
 const MAX_PICKED_FILES: u32 = 16;
 
 #[derive(Clone, Encode, Decode)]
@@ -342,9 +346,7 @@ impl NativeChatActor {
                     if !valid() {
                         return Err(Error::NotConnected);
                     }
-                    if state.rich_messages.len() >= MAX_RICH_MESSAGES {
-                        return Err(Error::StorageUnavailable);
-                    }
+                    make_room(state, peer, 0, 1)?;
                     state.rich_messages.push(RichRecord {
                         key,
                         peer,
@@ -477,9 +479,13 @@ impl NativeChatActor {
                 if !valid() {
                     return Err(Error::NotConnected);
                 }
-                if state.files.len() + files.len() > MAX_FILES {
-                    return Err(Error::StorageUnavailable);
-                }
+                let peer = state
+                    .rich_messages
+                    .iter()
+                    .find(|record| record.key == key)
+                    .ok_or(Error::OperationNotFound)?
+                    .peer;
+                make_room(state, peer, files.len(), 0)?;
                 let record = state
                     .rich_messages
                     .iter_mut()
@@ -607,7 +613,83 @@ impl NativeChatActor {
     }
 }
 
+/// A rich message with no remaining work: published or received, and every
+/// attachment downloaded or uploaded with no pending acknowledgment.
+fn settled(state: &State, message: &RichRecord) -> bool {
+    !message.selecting
+        && (message.incoming || message.published)
+        && message.files.iter().all(|id| {
+            state
+                .files
+                .iter()
+                .find(|file| &file.id == id)
+                .is_none_or(|file| !file.pending())
+        })
+}
+
+/// Make room for `files` new file records and `messages` new rich messages
+/// exchanged with `peer`. Evicts the oldest settled messages, the peer's own
+/// first, with the files no remaining message references. Live custody is
+/// never evicted, so a store full of pending work still refuses.
+fn make_room(
+    state: &mut State,
+    peer: [u8; 32],
+    files: usize,
+    messages: usize,
+) -> Result<(), Error> {
+    loop {
+        let peer_files = state.files.iter().filter(|file| file.peer == peer).count();
+        let peer_messages = state
+            .rich_messages
+            .iter()
+            .filter(|message| message.peer == peer)
+            .count();
+        let over_peer = peer_files + files > MAX_PEER_FILES
+            || peer_messages + messages > MAX_PEER_RICH_MESSAGES;
+        let over_total = state.files.len() + files > MAX_FILES
+            || state.rich_messages.len() + messages > MAX_RICH_MESSAGES;
+        if !over_peer && !over_total {
+            return Ok(());
+        }
+        let index = state
+            .rich_messages
+            .iter()
+            .position(|message| (!over_peer || message.peer == peer) && settled(state, message))
+            .ok_or(Error::StorageUnavailable)?;
+        let evicted = state.rich_messages.remove(index);
+        let messages = &state.rich_messages;
+        state.files.retain(|file| {
+            !evicted.files.contains(&file.id)
+                || messages.iter().any(|message| message.files.contains(&file.id))
+        });
+    }
+}
+
 pub(super) fn merge_received(state: &mut State, prepared: IncomingRich) -> Result<(), Error> {
+    let Some(peer) = prepared
+        .messages
+        .first()
+        .map(|message| message.peer)
+        .or_else(|| prepared.files.first().map(|file| file.peer))
+    else {
+        return Ok(());
+    };
+    let new_files = prepared
+        .files
+        .iter()
+        .filter(|file| !state.files.iter().any(|existing| existing.id == file.id))
+        .count();
+    let new_messages = prepared
+        .messages
+        .iter()
+        .filter(|message| {
+            !state
+                .rich_messages
+                .iter()
+                .any(|existing| existing.key == message.key)
+        })
+        .count();
+    make_room(state, peer, new_files, new_messages)?;
     for file in prepared.files {
         if let Some(existing) = state.files.iter().find(|existing| existing.id == file.id) {
             if existing.peer != file.peer
@@ -642,4 +724,135 @@ pub(super) fn merge_received(state: &mut State, prepared: IncomingRich) -> Resul
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+
+    const A: [u8; 32] = [0xA0; 32];
+    const B: [u8; 32] = [0xB0; 32];
+
+    fn file(id: u32, peer: [u8; 32], ready: bool) -> FileRecord {
+        let mut bytes = [0; 32];
+        bytes[..4].copy_from_slice(&id.to_le_bytes());
+        bytes[31] = 1;
+        FileRecord {
+            id: bytes,
+            cache_id: bytes,
+            peer,
+            incoming: true,
+            metadata: HostNativeChatAttachmentMetadata {
+                mime_type: "text/plain".into(),
+                size_bytes: 1,
+                kind: HostNativeChatAttachmentKind::File,
+            },
+            ticket: Secret32([7; 32]),
+            endpoint: "wss://hop.invalid".into(),
+            root: Some([9; 32]),
+            source: None,
+            upload: Vec::new(),
+            prepared: None,
+            descriptor: None,
+            download: Vec::new(),
+            cache_chunks: 0,
+            cache_bytes: if ready { 1 } else { 0 },
+            pending_ack: None,
+            ready,
+            recovering: false,
+        }
+    }
+
+    fn message(id: u32, peer: [u8; 32], files: &[&FileRecord]) -> RichRecord {
+        let mut key = [0; 32];
+        key[..4].copy_from_slice(&id.to_le_bytes());
+        key[30] = peer[0];
+        RichRecord {
+            key,
+            peer,
+            incoming: true,
+            client_request_id: None,
+            request_id: format!("request-{id}"),
+            message_id: format!("message-{id}"),
+            timestamp: u64::from(id),
+            kind: HostNativeChatRichMessageKind::Message,
+            text: None,
+            files: files.iter().map(|file| file.id).collect(),
+            digest: key,
+            selecting: false,
+            published: false,
+        }
+    }
+
+    /// Fill `peer`'s quota with one-attachment messages, numbered from `start`.
+    fn fill(state: &mut State, peer: [u8; 32], start: u32, ready: bool) {
+        for id in start..start + MAX_PEER_RICH_MESSAGES as u32 {
+            let file = file(id, peer, ready);
+            state.rich_messages.push(message(id, peer, &[&file]));
+            state.files.push(file);
+        }
+    }
+
+    fn receive(state: &mut State, id: u32, peer: [u8; 32]) -> Result<(), Error> {
+        let file = file(id, peer, false);
+        merge_received(
+            state,
+            IncomingRich {
+                messages: vec![message(id, peer, &[&file])],
+                files: vec![file],
+            },
+        )
+    }
+
+    #[test]
+    fn a_full_contact_evicts_only_its_own_oldest_settled_message() {
+        let mut state = State::initial().unwrap();
+        fill(&mut state, A, 0, true);
+        receive(&mut state, 10_000, B).unwrap();
+        receive(&mut state, 20_000, A).unwrap();
+
+        let from_a = |state: &State| {
+            state
+                .rich_messages
+                .iter()
+                .filter(|message| message.peer == A)
+                .count()
+        };
+        assert_eq!(from_a(&state), MAX_PEER_RICH_MESSAGES);
+        assert!(!state.rich_messages.iter().any(|m| m.message_id == "message-0"));
+        assert!(!state.files.iter().any(|f| f.id == file(0, A, true).id));
+        assert!(state.rich_messages.iter().any(|m| m.message_id == "message-10000"));
+    }
+
+    #[test]
+    fn pending_work_is_never_evicted_and_does_not_block_other_contacts() {
+        let mut state = State::initial().unwrap();
+        fill(&mut state, A, 0, false);
+        assert_eq!(receive(&mut state, 20_000, A), Err(Error::StorageUnavailable));
+        assert_eq!(state.rich_messages.len(), MAX_PEER_RICH_MESSAGES);
+        receive(&mut state, 10_000, B).unwrap();
+    }
+
+    #[test]
+    fn an_attachment_shared_by_a_remaining_message_is_kept() {
+        let mut state = State::initial().unwrap();
+        fill(&mut state, A, 0, true);
+        let shared = file(0, A, true);
+        state.rich_messages.push(message(30_000, A, &[&shared]));
+        // Over quota by one: the oldest message goes, but its file stays.
+        receive(&mut state, 20_000, A).unwrap();
+        assert!(!state.rich_messages.iter().any(|m| m.message_id == "message-0"));
+        assert!(state.files.iter().any(|f| f.id == shared.id));
+    }
+
+    #[test]
+    fn the_shared_bound_evicts_the_oldest_settled_message_of_any_contact() {
+        let mut state = State::initial().unwrap();
+        for (index, peer) in (0..(MAX_RICH_MESSAGES / MAX_PEER_RICH_MESSAGES) as u8).enumerate() {
+            fill(&mut state, [peer; 32], (index * 1_000) as u32, true);
+        }
+        receive(&mut state, 90_000, B).unwrap();
+        assert_eq!(state.rich_messages.len(), MAX_RICH_MESSAGES);
+        assert_ne!(state.rich_messages[0].message_id, "message-0");
+    }
 }
