@@ -152,6 +152,56 @@ struct TrUAPINativeCoinageTests {
         #expect(await harness.previews == 2)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func cancellingOneWaiterKeepsTheSharedReviewForTheOthers() async throws {
+        let harness = try NativeWalletHarness()
+        let presenter = NativeReviewHarness(suspended: true)
+        let service = adapter(harness, NativeRecordMemory(), presenter)
+        let intent = intent()
+        let first = Task { try await service.nativeCoinage(request: request(.preparePayment(intent: intent))) }
+        await presenter.waitForReview()
+        let retry = Task { try await service.nativeCoinage(request: request(.preparePayment(intent: intent))) }
+        try await Task.sleep(for: .milliseconds(200))
+        first.cancel()
+        // The cancelled caller detaches at once; the sheet stays open for the retry.
+        #expect(try await first.value == .failed(reason: .unavailable))
+        await presenter.answer(true)
+        guard case let .prepared(_, memo) = try await retry.value else {
+            Issue.record("Expected prepared custody"); return
+        }
+        #expect(memo != nil)
+        #expect(await presenter.reviews.count == 1)
+        #expect(await harness.debits == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aRetryQueuedBeforeTheDecisionIsSavedJoinsItInsteadOfPromptingAgain() async throws {
+        let harness = try NativeWalletHarness()
+        let presenter = NativeReviewHarness(suspended: true)
+        let service = adapter(harness, NativeRecordMemory(), presenter)
+        let intent = intent()
+        let first = Task { try await service.nativeCoinage(request: request(.preparePayment(intent: intent))) }
+        await presenter.waitForReview()
+        // Hold the queue so the retry's preparation runs after the answer but before it is saved.
+        await harness.holdNextDenomination()
+        let blocker = Task { try await service.nativeCoinage(request: request(.denomination)) }
+        await harness.waitForHeldDenomination()
+        let retry = Task { try await service.nativeCoinage(request: request(.preparePayment(intent: intent))) }
+        try await Task.sleep(for: .milliseconds(200))
+        await presenter.answer(true)
+        try await Task.sleep(for: .milliseconds(200))
+        await harness.releaseDenomination()
+        #expect(try await blocker.value == .denomination(centsUnitRaw: "1000"))
+        for payment in [first, retry] {
+            guard case let .prepared(_, memo) = try await payment.value else {
+                Issue.record("Expected prepared custody"); return
+            }
+            #expect(memo != nil)
+        }
+        #expect(await presenter.reviews.count == 1)
+        #expect(await harness.debits == 1)
+    }
+
     @Test func wrongRootGenesisAndInstanceAreRejectedBeforeSelection() async throws {
         let harness = try NativeWalletHarness()
         let service = adapter(harness, NativeRecordMemory(), NativeReviewHarness())
@@ -283,6 +333,9 @@ private actor NativeWalletHarness {
     private var accepted: Set<String> = []
     private var incoming: IncomingPaymentStatus = .detecting
     private var transfer: CoinageTransferStatus = .awaitingClaim
+    private var holdDenomination = false
+    private var heldDenomination: CheckedContinuation<Void, Never>?
+    private var heldWaiter: CheckedContinuation<Void, Never>?
 
     init(privacy: Bool = false) throws {
         let keys = try SNKeyFactory().createKeypair(fromSeed: Data(repeating: 42, count: 32))
@@ -293,7 +346,10 @@ private actor NativeWalletHarness {
 
     nonisolated var wallet: TrUAPINativeCoinage.Wallet {
         TrUAPINativeCoinage.Wallet(
-            denomination: { DenominationBreakdownContext(unit: 1000, precision: 5, maxExponent: 20, minExponent: -2) },
+            denomination: {
+                await self.denominationGate()
+                return DenominationBreakdownContext(unit: 1000, precision: 5, maxExponent: 20, minExponent: -2)
+            },
             preview: { try await self.preview($0) },
             prepare: { _, id, authorization in try await self.prepare(id, authorization: authorization) },
             retained: { await self.custody[$0] },
@@ -327,6 +383,25 @@ private actor NativeWalletHarness {
     private func accept(_ id: String) throws {
         guard accepted.insert(id).inserted else { throw IncomingPaymentError.alreadyExists }
         claims += 1
+    }
+    /// Suspend the next denomination read, holding whatever queued operation made it.
+    func holdNextDenomination() { holdDenomination = true }
+    func waitForHeldDenomination() async {
+        if heldDenomination != nil { return }
+        await withCheckedContinuation { heldWaiter = $0 }
+    }
+    func releaseDenomination() {
+        heldDenomination?.resume()
+        heldDenomination = nil
+    }
+    private func denominationGate() async {
+        guard holdDenomination else { return }
+        holdDenomination = false
+        await withCheckedContinuation { continuation in
+            heldDenomination = continuation
+            heldWaiter?.resume()
+            heldWaiter = nil
+        }
     }
     func setIncoming(_ value: IncomingPaymentStatus) { incoming = value }
     func setTransfer(_ value: CoinageTransferStatus) { transfer = value }

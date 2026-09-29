@@ -15,7 +15,7 @@ extension TrUAPINativeCoinage {
     /// A durably reviewing payment whose decision is awaited outside the serial queue.
     struct PendingReview: @unchecked Sendable {
         let record: NativeCoinageOutgoing
-        let review: MainPurseChatPaymentReview
+        let prompt: PaymentReview
         let privacy: Bool
     }
 
@@ -70,13 +70,22 @@ extension TrUAPINativeCoinage {
         guard value.intent == pending.record.intent, value.centsUnit == pending.record.centsUnit else {
             throw Refusal(reason: .operationConflict)
         }
-        guard value.approval != .rejected else { throw Refusal(reason: .userRejected) }
+        let operation = value.intent.operation
+        guard value.approval != .rejected else {
+            finishReview(operation)
+            throw Refusal(reason: .userRejected)
+        }
         if Self.needsReview(value, privacy: pending.privacy) {
             value.approval = approved ? .approved : .rejected
             value.privacyApproved = approved && pending.privacy
             try await store.save(.outgoing(value)) { [self] in try check(binding, lease) }
+            // Retries join this decision until it is durable, so none of them prompts again.
+            finishReview(operation)
             try check(binding, lease)
             guard approved else { throw Refusal(reason: .userRejected) }
+        } else {
+            // Another waiter already saved the decision; the durable one wins over this caller's copy.
+            finishReview(operation)
         }
         if let memo = try await wallet.retained(value.custodyId) {
             try check(binding, lease)
@@ -96,18 +105,19 @@ extension TrUAPINativeCoinage {
         if Self.needsReview(value, privacy: quote.privacy) {
             try await store.save(.outgoing(value)) { [self] in try check(binding, lease) }
             try check(binding, lease)
+            let review = MainPurseChatPaymentReview(
+                callingProductId: value.intent.product,
+                recipientIdentity: value.intent.peer,
+                recipientUsername: value.intent.username,
+                amountCents: value.intent.cents,
+                maxDebitCents: value.intent.cents,
+                genesisHash: binding.genesis,
+                coinageInstanceId: binding.instance,
+                operationId: value.intent.operation
+            )
             return .review(PendingReview(
                 record: value,
-                review: MainPurseChatPaymentReview(
-                    callingProductId: value.intent.product,
-                    recipientIdentity: value.intent.peer,
-                    recipientUsername: value.intent.username,
-                    amountCents: value.intent.cents,
-                    maxDebitCents: value.intent.cents,
-                    genesisHash: binding.genesis,
-                    coinageInstanceId: binding.instance,
-                    operationId: value.intent.operation
-                ),
+                prompt: joinReview(value.intent.operation, review: review, privacy: quote.privacy),
                 privacy: quote.privacy
             ))
         }

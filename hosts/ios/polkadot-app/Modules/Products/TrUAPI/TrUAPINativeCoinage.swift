@@ -20,7 +20,7 @@ final class TrUAPINativeCoinage: NativeCoinageHost, @unchecked Sendable {
     private var available = false
     private var generation: UInt64 = 0
     private var leases: [UUID: NativeCoinageLease] = [:]
-    private var reviews: [Data: Task<Bool?, Never>] = [:]
+    private var reviews: [Data: PaymentReview] = [:]
 
     convenience init(
         service: any CoinageServicing,
@@ -50,12 +50,14 @@ final class TrUAPINativeCoinage: NativeCoinageHost, @unchecked Sendable {
 
     /// Synchronous invalidation closes the gate before teardown starts, including callers suspended in UI/IO.
     func setAvailable(_ value: Bool) {
-        let pending: [NativeCoinageLease] = lock.withLock {
+        let (pending, prompts): ([NativeCoinageLease], [PaymentReview]) = lock.withLock {
             available = value
             generation &+= 1
-            return Array(leases.values)
+            defer { reviews.removeAll() }
+            return (Array(leases.values), Array(reviews.values))
         }
         pending.forEach { $0.cancel() }
+        prompts.forEach { $0.task.cancel() }
     }
 
     func nativeCoinage(request: NativeCoinageRequest) async throws -> NativeCoinageResponse {
@@ -274,27 +276,58 @@ extension TrUAPINativeCoinage {
         }
     }
 
-    /// One user decision per operation, shared by concurrent retries; `nil` when the prompt was cancelled.
-    private func decision(for pending: PendingReview, lease: NativeCoinageLease) async -> Bool? {
-        let operation = pending.record.intent.operation
-        let review = lock.withLock {
-            if let existing = reviews[operation] { return existing }
-            let task = Task { [confirmationPresenter] () -> Bool? in
+    /// Join the operation's single prompt, opening it if none is pending. Called from the queued step,
+    /// so it is ordered with `completeReview`: a retry either joins the decision or sees it saved.
+    func joinReview(
+        _ operation: Data,
+        review: MainPurseChatPaymentReview,
+        privacy: Bool
+    ) -> PaymentReview {
+        lock.withLock {
+            let prompt = reviews[operation] ?? PaymentReview(task: Task { [confirmationPresenter] () -> Bool? in
                 let approved = await confirmationPresenter.confirmNativeCoinage(
-                    review: pending.review,
-                    requiresPrivacyConfirmation: pending.privacy
+                    review: review,
+                    requiresPrivacyConfirmation: privacy
                 )
                 return Task.isCancelled ? nil : approved
-            }
-            reviews[operation] = task
-            return task
+            })
+            reviews[operation] = prompt
+            prompt.waiters += 1
+            return prompt
         }
-        lease.onCancel { review.cancel() }
-        let approved = await review.value
+    }
+
+    /// The shared decision; `nil` when this waiter was cancelled or the prompt was dismissed.
+    private func decision(for pending: PendingReview, lease: NativeCoinageLease) async -> Bool? {
+        let operation = pending.record.intent.operation
+        let review = pending.prompt
+        // A cancelled waiter detaches alone; the prompt stays open while another waiter needs it.
+        let answer: Bool?? = await withCheckedContinuation { continuation in
+            let resume = ResumeOnce<Bool??>(continuation)
+            Task { resume(.some(await review.task.value)) }
+            lease.onCancel { resume(.none) }
+        }
         lock.withLock {
-            if reviews[operation] == review { reviews[operation] = nil }
+            review.waiters -= 1
+            guard reviews[operation] === review else { return }
+            switch answer {
+            case .some(.some):
+                break
+            case .some(.none):
+                reviews[operation] = nil
+            case .none:
+                if review.waiters == 0 {
+                    reviews[operation] = nil
+                    review.task.cancel()
+                }
+            }
         }
-        return approved
+        return answer ?? nil
+    }
+
+    /// Release the shared decision for `operation` once it is durably saved.
+    func finishReview(_ operation: Data) {
+        lock.withLock { reviews[operation] = nil }
     }
 
     static func recipientAmount(_ selection: CoinSelectionResult, context: DenominationBreakdownContext) -> BigUInt {
@@ -408,6 +441,29 @@ extension TrUAPINativeCoinage {
         case .notClaimed: .notClaimed
         case .detecting, .claiming, .claimed(finalized: false): .pending
         }
+    }
+}
+
+/// A payment prompt shared by every retry of one operation. `waiters` is guarded by the adapter's lock.
+final class PaymentReview: @unchecked Sendable {
+    let task: Task<Bool?, Never>
+    var waiters = 0
+
+    init(task: Task<Bool?, Never>) { self.task = task }
+}
+
+/// Resumes a continuation once, from whichever of the decision or a cancellation arrives first.
+private final class ResumeOnce<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Never>?
+
+    init(_ continuation: CheckedContinuation<Value, Never>) { self.continuation = continuation }
+    func callAsFunction(_ value: Value) {
+        let continuation = lock.withLock { () -> CheckedContinuation<Value, Never>? in
+            defer { self.continuation = nil }
+            return self.continuation
+        }
+        continuation?.resume(returning: value)
     }
 }
 
