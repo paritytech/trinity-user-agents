@@ -23,6 +23,8 @@ import uniffi.truapi_server.HostRejection
  * encrypted value before the callback returns; the core may then acknowledge it.
  * Never clear this store when clearing a product's browsing data or logging out.
  * One process-owned instance must be shared by all executions of an environment.
+ * Suspend callbacks serialize their non-suspending SQLite work on this instance's
+ * monitor; no coroutine suspension occurs while the storage lock is held.
  *
  * The Keystore key intentionally remains usable while the screen is locked:
  * process-resident background Chat reception must persist messages and receipts.
@@ -51,8 +53,7 @@ class AndroidHostCoreStorage(context: Context, namespace: String) : HostCoreStor
     }
     private var encryptionKey: SecretKey? = null
 
-    @Synchronized
-    override fun read(key: ByteArray): ByteArray? = storageCall {
+    override suspend fun read(key: ByteArray): ByteArray? = storageCall {
         database.readableDatabase.query(
             "core_slots", arrayOf("ciphertext"), "slot = ?", arrayOf(slot(key)),
             null, null, null,
@@ -69,8 +70,7 @@ class AndroidHostCoreStorage(context: Context, namespace: String) : HostCoreStor
         }
     }
 
-    @Synchronized
-    override fun write(key: ByteArray, value: ByteArray) = storageCall {
+    override suspend fun write(key: ByteArray, value: ByteArray) = storageCall {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, loadKey(create = true))
         cipher.updateAAD(key)
@@ -87,8 +87,7 @@ class AndroidHostCoreStorage(context: Context, namespace: String) : HostCoreStor
         }
     }
 
-    @Synchronized
-    override fun clear(key: ByteArray) = storageCall {
+    override suspend fun clear(key: ByteArray) = storageCall {
         durableMutation { db ->
             db.delete("core_slots", "slot = ?", arrayOf(slot(key)))
         }
@@ -145,11 +144,13 @@ class AndroidHostCoreStorage(context: Context, namespace: String) : HostCoreStor
         "SELECT 1 FROM core_slots LIMIT 1", null,
     ).use { it.moveToFirst() }
 
-    private inline fun <T> storageCall(operation: () -> T): T = try {
-        operation()
-    } catch (error: Exception) {
-        // Do not expose key material, ciphertext or platform exception details.
-        throw HostRejection.Rejected("Private host storage unavailable")
+    private inline fun <T> storageCall(operation: () -> T): T = synchronized(this) {
+        try {
+            operation()
+        } catch (error: Exception) {
+            // Do not expose key material, ciphertext or platform exception details.
+            throw HostRejection.Rejected("Private host storage unavailable")
+        }
     }
 
     @Synchronized

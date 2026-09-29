@@ -10,9 +10,9 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod driver;
 
+use crate::platform::CoreStorageKey;
 #[cfg(any(test, not(target_arch = "wasm32")))]
-use crate::platform::normalize_product_identifier;
-use crate::platform::{CoreStorage, CoreStorageKey};
+use crate::platform::{CoreStorage, normalize_product_identifier};
 use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode};
 use tracing::warn;

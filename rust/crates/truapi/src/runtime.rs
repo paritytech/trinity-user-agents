@@ -83,10 +83,13 @@ use payment_id::host_funding_intent;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
-pub use signing_host::{LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService};
-pub use sso_responder_service::{
-	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-	PairingProposal, PairingProposalMetadata, ResponderExit, SsoResponderService,
+#[cfg(any(test, not(target_arch = "wasm32")))]
+pub use signing_host::StatementRenewalTarget;
+#[cfg(not(target_arch = "wasm32"))]
+pub use signing_host::TrackedStatementRenewalTarget;
+pub use signing_host::{
+    AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
+    PairingProposal, PairingProposalMetadata, ResponderExit,
 };
 pub use signing_host::{
     LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService, disconnect_paired_host,
@@ -94,10 +97,6 @@ pub use signing_host::{
     respond_to_pairing, resume_pairing,
 };
 pub use signing_host::{LocalIdentity, LocalIdentityContext, WalletAllowanceSnapshot};
-#[cfg(any(test, not(target_arch = "wasm32")))]
-pub use signing_host::StatementRenewalTarget;
-#[cfg(not(target_arch = "wasm32"))]
-pub use signing_host::TrackedStatementRenewalTarget;
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,

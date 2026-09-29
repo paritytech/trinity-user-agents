@@ -36,7 +36,7 @@ exceptions = [
     { name = "truapi-chat-v2", allow = ["AGPL-3.0-only"] },
     { name = "truapi-coinage", allow = ["AGPL-3.0-only"] },
     { name = "truapi-host-cli", allow = ["AGPL-3.0-only"] },
-    { name = "truapi-server", allow = ["AGPL-3.0-only"] },
+    { name = "truapi", allow = ["AGPL-3.0-only"] },
     { name = "smoldot", allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"] },
     { name = "smoldot-light", allow = ["GPL-3.0-or-later WITH Classpath-exception-2.0"] },
     # Ring-VRF implementation shared with the Individuality runtimes and Nova.

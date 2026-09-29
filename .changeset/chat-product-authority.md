@@ -12,6 +12,9 @@ for Chat and Coinage without changing product authorization or payment review po
 Keep renewal-ledger mutation native-only and use the chain metadata's extension version for Coinage extrinsics.
 Trusted products still honor explicit network-permission denials.
 
+Align Android's durable core store with suspend callbacks while retaining serialized, committed writes.
+Carry the existing scoped AGPL license exception onto the unified runtime crate.
+
 Support keyless Statement Store allowances for a selected product account in the native signing host.
 
 Replace raw guest Chat crypto with a narrow authenticated Host boundary on account method 12; retire method 11,
