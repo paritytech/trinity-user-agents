@@ -190,6 +190,7 @@ impl TransferRecipientService {
                             status: ClaimPlanStatus::Processing,
                             claimed_amount: None,
                             total_value: message.total_value,
+                            markers: crate::claim_plan::ClaimMarkers::default(),
                         })
                         .await?;
                 }
@@ -411,6 +412,7 @@ mod tests {
             status: ClaimPlanStatus::Detected,
             claimed_amount: None,
             total_value: 990,
+            markers: crate::claim_plan::ClaimMarkers::default(),
         }
     }
 

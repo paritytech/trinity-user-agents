@@ -93,7 +93,9 @@ impl WalletCoinage {
             .await
             .map_err(|_| top_up_error(Error::StorageUnavailable))?
             .map_err(top_up_error)?;
-        if request.amount > credited {
+        if credited == 0 {
+            Err(TopUpError::InsufficientFunds)
+        } else if request.amount > credited {
             Err(TopUpError::PartialPayment { credited })
         } else {
             Ok(())
@@ -218,10 +220,15 @@ impl WalletCoinage {
             if rows.len() != operation.source_public.len() {
                 return Err(Error::NetworkUnavailable);
             }
+            // An absent source may be an accepted native send still awaiting
+            // funding. Never discard custody or call an ambiguous zero settled:
+            // with nothing on-chain, report no funds without recording an
+            // outcome, so a retry after funding still claims every coin.
+            if rows.iter().all(Option::is_none) {
+                return Err(Error::InsufficientBalance);
+            }
             let mut total = 0u128;
             for row in rows {
-                // An absent source may be an accepted native send still awaiting
-                // funding. Never discard custody or call an ambiguous zero settled.
                 let row = row.ok_or(Error::NetworkUnavailable)?;
                 let d = &engine.denominations;
                 if row.exponent < d.min_exponent || row.exponent > d.max_exponent {
@@ -287,10 +294,14 @@ impl WalletCoinage {
         if plan.status != ClaimPlanStatus::Finished {
             return Ok(None);
         }
+        // A finished plan processed every entry; forfeited entries were spent
+        // elsewhere before this wallet claimed them and are not credited.
         if plan.claimed_amount != Some(memo.total_value) || memo.total_value == 0 {
             return Err(Error::StorageUnavailable);
         }
-        Ok(plan.claimed_amount)
+        plan.credited_amount()
+            .map(Some)
+            .ok_or(Error::StorageUnavailable)
     }
 
     /// Wallet/session recovery, independent of any product's Chat lifecycle.
@@ -396,6 +407,7 @@ impl WalletCoinage {
 fn top_up_error(error: Error) -> TopUpError {
     match error {
         Error::InvalidRequest | Error::OperationConflict => TopUpError::InvalidSource,
+        Error::InsufficientBalance => TopUpError::InsufficientFunds,
         Error::NotConnected => TopUpError::Unknown {
             reason: "top-up session is not active".into(),
         },

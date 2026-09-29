@@ -549,10 +549,15 @@ impl WalletCoinage {
                     .plan(&key)
                     .await
                     .map_err(|_| Error::StorageUnavailable)?;
-                let cleared = plan.as_ref().and_then(|p| p.claimed_amount).unwrap_or(0);
-                operation.card.state = if plan
+                // Forfeited entries were spent elsewhere and never clear.
+                let cleared = plan
                     .as_ref()
-                    .is_some_and(|p| p.status == ClaimPlanStatus::Finished)
+                    .and_then(|p| p.credited_amount())
+                    .unwrap_or(0);
+                let finished = plan
+                    .as_ref()
+                    .is_some_and(|p| p.status == ClaimPlanStatus::Finished);
+                operation.card.state = if finished
                     && Some(cleared)
                         == operation
                             .denominations
@@ -561,6 +566,10 @@ impl WalletCoinage {
                             .checked_mul(u128::from(operation.card.amount_cents))
                 {
                     State::Cleared
+                } else if finished && cleared == 0 {
+                    State::Failed {
+                        reason: Failure::AlreadySpent,
+                    }
                 } else if cleared > 0 {
                     State::PartiallyCleared {
                         cleared_cents: engine.partial_cents(cleared)?,

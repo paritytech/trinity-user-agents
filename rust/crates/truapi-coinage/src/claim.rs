@@ -277,6 +277,7 @@ impl ClaimOrchestrator {
                         status: ClaimPlanStatus::Processing,
                         claimed_amount: None,
                         total_value: incoming.total_value,
+                        markers: crate::claim_plan::ClaimMarkers::default(),
                     })
                     .await
                     .map_err(ClaimError::Failed)?;
@@ -300,6 +301,7 @@ impl ClaimOrchestrator {
             status: ClaimPlanStatus::Finished,
             claimed_amount: None,
             total_value: incoming.total_value,
+            markers: crate::claim_plan::ClaimMarkers::default(),
         };
         let claimed = claimed_amount_from_plan(&finished, &self.context);
         self.plans
@@ -360,6 +362,7 @@ mod tests {
             status,
             claimed_amount: None,
             total_value: 990,
+            markers: crate::claim_plan::ClaimMarkers::default(),
         }
     }
 

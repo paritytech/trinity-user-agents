@@ -25,7 +25,9 @@ use tokio::sync::Mutex;
 
 use crate::COIN_MAX_AGE;
 use crate::allocator::CoinAllocator;
-use crate::claim_plan::{ClaimPlan, ClaimPlanStatus, ClaimPlanStore, CodableClaimPlanEntry};
+use crate::claim_plan::{
+    ClaimMarkers, ClaimPlan, ClaimPlanStatus, ClaimPlanStore, CodableClaimPlanEntry,
+};
 use crate::constants::SEND_VERIFY_BLOCK_TIMEOUT;
 use crate::denomination::DenominationBreakdownContext;
 use crate::keys::CoinKeypairFactory;
@@ -251,7 +253,7 @@ impl ExternalSecretClaimService {
         let _operation = self.operation.lock().await;
         let plan = self.prepare_locked(&memo, message_id).await?;
         if plan.status == ClaimPlanStatus::Finished {
-            return Ok(plan.claimed_amount.unwrap_or(plan.total_value));
+            return credited(&plan);
         }
         let memo_key = plan.memo_key;
         let context = self.backend.denomination_context().await?;
@@ -263,7 +265,11 @@ impl ExternalSecretClaimService {
                 self.plans
                     .update_status(&memo_key, ClaimPlanStatus::Finished, Some(claimed))
                     .await?;
-                Ok(claimed)
+                let finished =
+                    self.plans.plan(&memo_key).await?.ok_or_else(|| {
+                        "finished external coin claim plan disappeared".to_string()
+                    })?;
+                credited(&finished)
             }
             Err(error) => {
                 let confirmed = self
@@ -337,7 +343,29 @@ impl ExternalSecretClaimService {
             status: ClaimPlanStatus::Processing,
             claimed_amount: None,
             total_value,
+            markers: ClaimMarkers::tracked(),
         })
+    }
+
+    /// Persist the plan's markers, and with `claimed` its processed prefix, in
+    /// one write so a forfeit and its prefix advance never separate.
+    async fn save_markers(
+        &self,
+        memo_key: &[u8; 32],
+        markers: &ClaimMarkers,
+        claimed: Option<u128>,
+    ) -> Result<(), String> {
+        let mut current = self
+            .plans
+            .plan(memo_key)
+            .await?
+            .ok_or_else(|| "external coin claim plan disappeared".to_string())?;
+        current.markers = markers.clone();
+        if let Some(claimed) = claimed {
+            current.status = ClaimPlanStatus::Processing;
+            current.claimed_amount = Some(claimed);
+        }
+        self.plans.save(&current).await
     }
 
     async fn execute_plan(
@@ -375,6 +403,7 @@ impl ExternalSecretClaimService {
             .map(|coin| (coin.derivation_index, coin.state))
             .collect::<HashMap<_, _>>();
 
+        let mut markers = plan.markers.clone();
         let mut claimed = 0u128;
         for (position, entry) in entries.into_iter().enumerate() {
             validate_exponent(entry.exponent, context)?;
@@ -407,6 +436,12 @@ impl ExternalSecretClaimService {
                             entry.exponent, source.exponent
                         ));
                     }
+                    // Record the submission before it can reach the chain, so a
+                    // transfer that lands unobserved is never read as a spend.
+                    if markers.tracked && !markers.submitted.contains(&entry.entry_index) {
+                        markers.submitted.push(entry.entry_index);
+                        self.save_markers(&plan.memo_key, &markers, None).await?;
+                    }
                     let (source_secret, source_public) = sources[position]
                         .take()
                         .expect("validated source entry consumed once");
@@ -426,6 +461,20 @@ impl ExternalSecretClaimService {
                     return Err(
                         "external claim destination collision: source remains unconsumed".into(),
                     );
+                }
+                // Finalized absence of an entry this wallet never submitted is
+                // proof the source was spent elsewhere: forfeit it and continue.
+                (None, None)
+                    if markers.tracked && !markers.submitted.contains(&entry.entry_index) =>
+                {
+                    markers.forfeited.push(entry.entry_index);
+                    markers.forfeited_value = markers
+                        .forfeited_value
+                        .checked_add(expected_amount)
+                        .ok_or_else(|| "external coin claim total exceeds u128".to_string())?;
+                    self.save_markers(&plan.memo_key, &markers, Some(claimed))
+                        .await?;
+                    continue;
                 }
                 (None, None) => {
                     return Err("external claim source and destination are both absent without finalized evidence".into());
@@ -692,12 +741,26 @@ fn validate_existing_plan(
     let mut total = 0u128;
     let confirmed = plan.claimed_amount.unwrap_or(0);
     let mut confirmed_boundary = confirmed == 0;
+    let mut forfeited_value = 0u128;
     for entry in entries {
         validate_exponent(entry.exponent, context)?;
+        let value = context.value_in_planks(entry.exponent);
         total = total
-            .checked_add(context.value_in_planks(entry.exponent))
+            .checked_add(value)
             .ok_or_else(|| "external coin claim plan total exceeds u128".to_string())?;
         confirmed_boundary |= confirmed == total;
+        if plan.markers.forfeited.contains(&entry.entry_index) {
+            // A forfeit is recorded together with the prefix that passes it.
+            if total > confirmed {
+                return Err("persisted external claim forfeit lies beyond its progress".into());
+            }
+            forfeited_value = forfeited_value
+                .checked_add(value)
+                .ok_or_else(|| "external coin claim plan total exceeds u128".to_string())?;
+        }
+    }
+    if forfeited_value != plan.markers.forfeited_value {
+        return Err("persisted external claim forfeits do not match their value".into());
     }
     if total != total_value {
         return Err(format!(
@@ -708,6 +771,12 @@ fn validate_existing_plan(
         return Err("persisted external claim progress is not a finalized entry boundary".into());
     }
     Ok(())
+}
+
+/// The credited value of a finished plan, never its forfeited entries.
+fn credited(plan: &ClaimPlan) -> Result<u128, String> {
+    plan.credited_amount()
+        .ok_or_else(|| "external coin claim credit exceeds its processed prefix".to_string())
 }
 
 fn ordered_plan_entries(
@@ -875,6 +944,9 @@ mod tests {
         transfers: StdMutex<Vec<RecordedTransfer>>,
         plans: Arc<MemoryPlans>,
         expected_plan: StdMutex<Option<[u8; 32]>>,
+        /// Consume the source but report no outcome, like a transfer whose
+        /// finality this wallet has not yet observed.
+        lose_transfers: StdMutex<bool>,
     }
 
     #[async_trait]
@@ -911,6 +983,9 @@ mod tests {
                 .remove(&request.source_public)
                 .ok_or_else(|| "source disappeared".to_string())?;
             assert_eq!(source.exponent, request.exponent);
+            if *self.lose_transfers.lock() {
+                return Err("transfer outcome not yet observed".into());
+            }
             assert!(!state.contains_key(&request.recipient));
             let landed = OnChainCoin {
                 exponent: request.exponent,
@@ -944,6 +1019,7 @@ mod tests {
             transfers: StdMutex::new(Vec::new()),
             plans: Arc::clone(&plans),
             expected_plan: StdMutex::new(None),
+            lose_transfers: StdMutex::new(false),
         });
         let service = Arc::new(ExternalSecretClaimService::new(
             &[0x44; 16],
@@ -1174,6 +1250,7 @@ mod tests {
                 status: ClaimPlanStatus::Error,
                 claimed_amount: None,
                 total_value: 20,
+                markers: ClaimMarkers::tracked(),
             },
         );
 
@@ -1254,7 +1331,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn absent_source_and_destination_without_receipt_never_clear() {
+    async fn source_spent_elsewhere_after_planning_finishes_with_zero_credit() {
         let source = expanded_secret(9);
         let memo = TransferMemo {
             entries: vec![source.clone()],
@@ -1272,6 +1349,162 @@ mod tests {
             .prepare_memo(&memo, external_claim_message_id(&key))
             .await
             .unwrap();
+        // The sender spends the source before this wallet submits anything.
+        rig.backend.state.lock().clear();
+        assert_eq!(
+            rig.service
+                .claim_external_memo(
+                    TransferMemo {
+                        entries: memo.entries.clone(),
+                        total_value: 20
+                    },
+                    external_claim_message_id(&key)
+                )
+                .await
+                .unwrap(),
+            0
+        );
+        let plan = rig.plans.plan(&key).await.unwrap().unwrap();
+        assert_eq!(plan.status, ClaimPlanStatus::Finished);
+        assert_eq!(plan.claimed_amount, Some(20));
+        assert_eq!(plan.markers.forfeited, vec![0]);
+        assert_eq!(plan.credited_amount(), Some(0));
+        assert!(rig.backend.transfers.lock().is_empty());
+        assert!(rig.coins.list().await.unwrap().is_empty());
+        // The terminal outcome is stable across retries.
+        assert_eq!(
+            rig.service
+                .claim_external_memo(memo, external_claim_message_id(&key))
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn one_source_spent_elsewhere_credits_only_what_landed() {
+        let first = expanded_secret(21);
+        let second = expanded_secret(22);
+        let memo = TransferMemo {
+            entries: vec![first.clone(), second.clone()],
+            total_value: 60,
+        };
+        let key = memo.identifier();
+        let rig = rig([
+            (
+                public(&first),
+                OnChainCoin {
+                    exponent: 1,
+                    age: 2,
+                },
+            ),
+            (
+                public(&second),
+                OnChainCoin {
+                    exponent: 2,
+                    age: 2,
+                },
+            ),
+        ]);
+        rig.service
+            .prepare_memo(&memo, external_claim_message_id(&key))
+            .await
+            .unwrap();
+        rig.backend.state.lock().remove(&public(&second));
+        assert_eq!(
+            rig.service
+                .claim_external_memo(memo, external_claim_message_id(&key))
+                .await
+                .unwrap(),
+            20
+        );
+        let plan = rig.plans.plan(&key).await.unwrap().unwrap();
+        assert_eq!(plan.status, ClaimPlanStatus::Finished);
+        assert_eq!(plan.markers.submitted, vec![0]);
+        assert_eq!(plan.markers.forfeited, vec![1]);
+        assert_eq!(plan.markers.forfeited_value, 40);
+        assert_eq!(plan.credited_amount(), Some(20));
+        assert_eq!(rig.coins.list().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn unobserved_own_transfer_stays_ambiguous_across_restart() {
+        let source = expanded_secret(23);
+        let memo = TransferMemo {
+            entries: vec![source.clone()],
+            total_value: 20,
+        };
+        let key = memo.identifier();
+        let rig = rig([(
+            public(&source),
+            OnChainCoin {
+                exponent: 1,
+                age: 2,
+            },
+        )]);
+        *rig.backend.lose_transfers.lock() = true;
+        assert!(
+            rig.service
+                .claim_external_memo(
+                    TransferMemo {
+                        entries: memo.entries.clone(),
+                        total_value: 20
+                    },
+                    external_claim_message_id(&key)
+                )
+                .await
+                .is_err()
+        );
+        let plan = rig.plans.plan(&key).await.unwrap().unwrap();
+        assert_eq!(plan.markers.submitted, vec![0]);
+        assert!(plan.markers.forfeited.is_empty());
+        // Source consumed, destination unobserved: never a forfeit, even after
+        // a restart reads the durable marker back.
+        let restarted = ExternalSecretClaimService::new(
+            &[0x44; 16],
+            Arc::new(CoinAllocator::new(Arc::new(
+                InMemoryCoinageIndexStore::default(),
+            ))),
+            rig.coins.clone(),
+            rig.plans.clone(),
+            rig.backend.clone(),
+        );
+        assert!(
+            restarted
+                .claim_external_memo(memo, external_claim_message_id(&key))
+                .await
+                .is_err()
+        );
+        let plan = rig.plans.plan(&key).await.unwrap().unwrap();
+        assert_ne!(plan.status, ClaimPlanStatus::Finished);
+        assert_eq!(plan.markers.submitted, vec![0]);
+        assert!(plan.markers.forfeited.is_empty());
+        assert_eq!(plan.claimed_amount, None);
+    }
+
+    #[tokio::test]
+    async fn untracked_plan_keeps_absence_ambiguous() {
+        let source = expanded_secret(24);
+        let memo = TransferMemo {
+            entries: vec![source.clone()],
+            total_value: 20,
+        };
+        let key = memo.identifier();
+        let rig = rig([(
+            public(&source),
+            OnChainCoin {
+                exponent: 1,
+                age: 2,
+            },
+        )]);
+        let mut plan = rig
+            .service
+            .prepare_memo(&memo, external_claim_message_id(&key))
+            .await
+            .unwrap();
+        // A plan stored before markers existed may have submitted any entry.
+        plan.markers = ClaimMarkers::default();
+        rig.plans.save(&plan).await.unwrap();
         rig.backend.state.lock().clear();
         assert!(
             rig.service
@@ -1281,9 +1514,26 @@ mod tests {
         );
         let plan = rig.plans.plan(&key).await.unwrap().unwrap();
         assert_ne!(plan.status, ClaimPlanStatus::Finished);
-        assert_eq!(plan.claimed_amount, None);
-        assert!(rig.backend.transfers.lock().is_empty());
-        assert!(rig.coins.list().await.unwrap().is_empty());
+        assert!(plan.markers.forfeited.is_empty());
+    }
+
+    #[tokio::test]
+    async fn absent_source_before_planning_records_nothing() {
+        let source = expanded_secret(25);
+        let memo = TransferMemo {
+            entries: vec![source.clone()],
+            total_value: 20,
+        };
+        let key = memo.identifier();
+        // Unfunded and spent-elsewhere look the same before any observation.
+        let rig = rig(std::iter::empty());
+        assert!(
+            rig.service
+                .claim_external_memo(memo, external_claim_message_id(&key))
+                .await
+                .is_err()
+        );
+        assert!(rig.plans.plan(&key).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -1319,6 +1569,11 @@ mod tests {
         let destination = CoinKeypairFactory::new(&[0x44; 16])
             .public_key(plan.entries[0].derivation_index)
             .unwrap();
+        // Entry 1's transfer was submitted but not yet observed, so its
+        // absence stays ambiguous rather than a forfeit.
+        let mut submitted = plan.clone();
+        submitted.markers.submitted = vec![1];
+        rig.plans.save(&submitted).await.unwrap();
         {
             let mut state = rig.backend.state.lock();
             state.remove(&public(&first));
@@ -1431,6 +1686,7 @@ mod tests {
                 status: ClaimPlanStatus::Processing,
                 claimed_amount: None,
                 total_value: 20,
+                markers: ClaimMarkers::tracked(),
             },
         );
 
@@ -1487,6 +1743,7 @@ mod tests {
                 status: ClaimPlanStatus::Error,
                 claimed_amount: None,
                 total_value: 20,
+                markers: ClaimMarkers::tracked(),
             },
         );
 

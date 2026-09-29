@@ -317,6 +317,89 @@ fn top_up_ambiguous_retry_preserves_plan_and_credit_across_restart() {
     });
 }
 
+fn chain_with(rows: impl IntoIterator<Item = ([u8; 32], i16)>) -> Arc<AmbiguousChain> {
+    Arc::new(AmbiguousChain {
+        rows: parking_lot::Mutex::new(
+            rows.into_iter()
+                .map(|(key, exponent)| (key, OnChainCoin { exponent, age: 0 }))
+                .collect(),
+        ),
+        hidden: parking_lot::Mutex::new(None),
+        transfers: AtomicUsize::new(0),
+        valid: Arc::new(AtomicBool::new(true)),
+        invalidate: AtomicBool::new(false),
+    })
+}
+
+#[test]
+fn top_up_reports_coins_spent_elsewhere_as_partial_or_insufficient() {
+    block_on(async {
+        let context = offline_context();
+        let wallet = WalletCoinage::open(&context).await.unwrap();
+        let partial = TransferMemo {
+            entries: vec![source(51), source(52)],
+            total_value: 60,
+        };
+        let empty = TransferMemo {
+            entries: vec![source(53)],
+            total_value: 20,
+        };
+        let partial_public = memo_public(&partial).unwrap();
+        let empty_public = memo_public(&empty).unwrap();
+        let chain = chain_with([
+            (partial_public[0], 1),
+            (partial_public[1], 2),
+            (empty_public[0], 1),
+        ]);
+        let engine = claimer(&context, &wallet, chain.clone());
+        for memo in [&partial, &empty] {
+            let operation = CoinTopUp {
+                product_id: "chat.dot".into(),
+                source_public: memo_public(memo).unwrap(),
+                denominations: Some((10, 0, 8, 2)),
+                memo: memo.scale_encoded(),
+            };
+            wallet.save_top_up(&operation).await.unwrap();
+            engine
+                .prepare_memo(
+                    memo,
+                    truapi_coinage::external_claim_message_id(&memo.identifier()),
+                )
+                .await
+                .unwrap();
+        }
+        // The sender spends one partial source and the only empty source
+        // before this wallet submits anything.
+        chain.rows.lock().remove(&partial_public[1]);
+        chain.rows.lock().remove(&empty_public[0]);
+        for (memo, credited) in [(&partial, 20), (&empty, 0)] {
+            let operation = CoinTopUp {
+                product_id: "chat.dot".into(),
+                source_public: memo_public(memo).unwrap(),
+                denominations: Some((10, 0, 8, 2)),
+                memo: memo.scale_encoded(),
+            };
+            assert_eq!(
+                wallet.claim_top_up(&context, &operation, &engine).await,
+                Ok(credited)
+            );
+        }
+        assert_eq!(chain.transfers.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            wallet
+                .top_up(&context, "chat.dot", request(&partial.entries, 60))
+                .await,
+            Err(TopUpError::PartialPayment { credited: 20 })
+        );
+        assert_eq!(
+            wallet
+                .top_up(&context, "chat.dot", request(&empty.entries, 20))
+                .await,
+            Err(TopUpError::InsufficientFunds)
+        );
+    });
+}
+
 #[test]
 fn top_up_session_invalidation_preserves_finalized_prefix_without_next_effect() {
     block_on(async {

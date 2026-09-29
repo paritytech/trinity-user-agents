@@ -47,6 +47,33 @@ impl ClaimPlanStatus {
     }
 }
 
+/// Durable per-entry progress for a claim of externally supplied secrets.
+///
+/// The default is untracked: a plan stored before markers existed may have
+/// submitted any entry, so an entry absent from chain stays ambiguous.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClaimMarkers {
+    /// Whether this plan has recorded every submission since its creation.
+    pub tracked: bool,
+    /// Entries whose transfer this wallet submitted, recorded before submission.
+    pub submitted: Vec<i16>,
+    /// Entries absent at finalized state that this wallet never submitted:
+    /// their source was spent elsewhere, so they can never be credited.
+    pub forfeited: Vec<i16>,
+    /// Total value of the forfeited entries.
+    pub forfeited_value: u128,
+}
+
+impl ClaimMarkers {
+    /// Markers for a plan created before any of its entries was submitted.
+    pub fn tracked() -> Self {
+        Self {
+            tracked: true,
+            ..Self::default()
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimPlan {
     pub memo_key: [u8; 32],
@@ -59,8 +86,20 @@ pub struct ClaimPlan {
     /// which provides historical evidence for an ultra-fast recipient claim.
     pub detection_anchor: Option<[u8; 32]>,
     pub status: ClaimPlanStatus,
+    /// Value of the processed entry prefix, including forfeited entries.
     pub claimed_amount: Option<u128>,
     pub total_value: u128,
+    pub markers: ClaimMarkers,
+}
+
+impl ClaimPlan {
+    /// Value actually credited to this wallet: the processed prefix without
+    /// forfeited entries. `None` when nothing was processed or the markers
+    /// exceed the prefix.
+    pub fn credited_amount(&self) -> Option<u128> {
+        self.claimed_amount?
+            .checked_sub(self.markers.forfeited_value)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -200,6 +239,7 @@ mod tests {
             status: ClaimPlanStatus::Processing,
             claimed_amount: None,
             total_value: 80,
+            markers: ClaimMarkers::default(),
         };
         assert_eq!(
             decode_claim_plan_data(&encode_claim_plan_data(&plan)).unwrap(),
