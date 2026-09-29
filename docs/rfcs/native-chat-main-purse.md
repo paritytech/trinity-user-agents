@@ -110,10 +110,9 @@ than treated as an opaque signing/decryption tunnel. Capacity exhaustion must no
 commitments.
 
 Rich messages, attachments and imported history are bounded per peer as well as in total, so one contact cannot exhaust
-capacity for the others. When a bound is reached, the Host evicts the oldest settled records, the peer's own first: rich
-messages whose attachments are fully downloaded or uploaded with no pending acknowledgment, and history imports already
-acknowledged. Pending work is never evicted, so a store full of it refuses new records. An evicted rich message leaves
-`rich_messages`, and its attachments no longer open; the product keeps its own conversation history.
+capacity for the others. A peer at its bound has further rich content and history imports refused with
+`StorageUnavailable`; records are never evicted, since they carry custody and replay protection. Releasing records the
+product has durably persisted is a planned extension.
 
 ### Responses and paging
 

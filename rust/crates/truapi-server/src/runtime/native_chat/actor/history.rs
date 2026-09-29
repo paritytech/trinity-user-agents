@@ -11,8 +11,7 @@ use crate::runtime::native_chat::{
 };
 
 const MAX_HISTORY_IMPORTS: usize = 4096;
-// One contact cannot fill the shared bound; each peer evicts its own oldest
-// acknowledged imports first.
+// One contact cannot fill the shared bound.
 const MAX_PEER_HISTORY_IMPORTS: usize = 512;
 const MAX_EXPANDED_BYTES: usize = 16 * 1024 * 1024;
 const MAX_HISTORY_DEPTH: usize = 64;
@@ -99,35 +98,16 @@ pub(super) fn reference_digest(reference: &CompactedHistory) -> [u8; 32] {
     hash(&bytes)
 }
 
-/// Room for `count` more imports from `peer` once acknowledged imports, which
-/// carry no pending HOP work, are evicted.
-fn import_room(imports: &[HistoryImport], peer: [u8; 32]) -> (usize, usize) {
-    let evictable = |entry: &&HistoryImport| entry.pending.is_none();
-    let peer_imports = imports.iter().filter(|entry| entry.peer == peer);
-    let peer_live = peer_imports.clone().filter(|entry| !evictable(entry)).count();
-    let live = imports.iter().filter(|entry| !evictable(entry)).count();
-    (
-        MAX_PEER_HISTORY_IMPORTS.saturating_sub(peer_live),
-        MAX_HISTORY_IMPORTS.saturating_sub(live),
-    )
-}
-
-/// Evict the oldest acknowledged imports, the peer's own first, until one
-/// more import from `peer` fits. Pending imports are never evicted.
-fn make_import_room(imports: &mut Vec<HistoryImport>, peer: [u8; 32]) -> Result<(), Error> {
-    loop {
-        let over_peer = imports.iter().filter(|entry| entry.peer == peer).count()
-            >= MAX_PEER_HISTORY_IMPORTS;
-        let over_total = imports.len() >= MAX_HISTORY_IMPORTS;
-        if !over_peer && !over_total {
-            return Ok(());
-        }
-        let index = imports
-            .iter()
-            .position(|entry| entry.pending.is_none() && (!over_peer || entry.peer == peer))
-            .ok_or(Error::StorageUnavailable)?;
-        imports.remove(index);
+/// Refuse one more import from `peer` once its quota or the shared bound is
+/// reached. Imports are never evicted: their digests stop a replayed history
+/// reference from being claimed again.
+fn check_import_capacity(imports: &[HistoryImport], peer: [u8; 32]) -> Result<(), Error> {
+    if imports.len() >= MAX_HISTORY_IMPORTS
+        || imports.iter().filter(|entry| entry.peer == peer).count() >= MAX_PEER_HISTORY_IMPORTS
+    {
+        return Err(Error::StorageUnavailable);
     }
+    Ok(())
 }
 
 pub(super) fn validate_imports(imports: &[HistoryImport]) -> Result<(), Error> {
@@ -199,18 +179,17 @@ impl NativeChatActor {
             .rev()
             .map(|bytes| (Zeroizing::new(bytes), 0usize))
             .collect();
-        let (mut seen, (peer_room, room)) = self
+        let (mut seen, existing, peer_existing) = self
             .store
             .read(|state| {
-                (
-                    state
-                        .history_imports
-                        .iter()
-                        .filter(|entry| entry.peer == peer)
-                        .map(|entry| entry.digest)
-                        .collect::<BTreeSet<_>>(),
-                    import_room(&state.history_imports, peer),
-                )
+                let peer_imports = state
+                    .history_imports
+                    .iter()
+                    .filter(|entry| entry.peer == peer)
+                    .map(|entry| entry.digest)
+                    .collect::<BTreeSet<_>>();
+                let peer_existing = peer_imports.len();
+                (peer_imports, state.history_imports.len(), peer_existing)
             })
             .await?;
         let mut expanded = Zeroizing::new(Vec::<Vec<u8>>::new());
@@ -243,7 +222,9 @@ impl NativeChatActor {
                     if !seen.insert(digest) {
                         continue;
                     }
-                    if imports.len() >= peer_room.min(room) {
+                    if existing + imports.len() >= MAX_HISTORY_IMPORTS
+                        || peer_existing + imports.len() >= MAX_PEER_HISTORY_IMPORTS
+                    {
                         return Err(Error::StorageUnavailable);
                     }
                     let rpc =
@@ -539,7 +520,7 @@ impl NativeChatActor {
                         if !state.history_imports.iter().any(|entry| {
                             entry.peer == imported.peer && entry.digest == imported.digest
                         }) {
-                            make_import_room(&mut state.history_imports, imported.peer)?;
+                            check_import_capacity(&state.history_imports, imported.peer)?;
                             state.history_imports.push(imported.clone());
                         }
                     }
@@ -607,52 +588,36 @@ impl NativeChatActor {
 mod capacity_tests {
     use super::*;
 
-    fn import(peer: u8, index: u32, pending: bool) -> HistoryImport {
+    fn import(peer: u8, index: u32) -> HistoryImport {
         let mut digest = [0; 32];
         digest[..4].copy_from_slice(&index.to_le_bytes());
         HistoryImport {
             peer: [peer; 32],
             digest,
-            pending: pending.then(|| HistoryAck {
-                endpoint: "wss://hop.invalid".into(),
-                ticket: Secret32([7; 32]),
-                encoded: Vec::new(),
-            }),
+            pending: None,
         }
     }
 
     #[test]
-    fn a_full_contact_evicts_only_its_own_acknowledged_imports() {
-        let mut imports: Vec<_> = (0..MAX_PEER_HISTORY_IMPORTS as u32)
-            .map(|index| import(1, index, index == 0))
+    fn a_full_contact_is_refused_without_blocking_others() {
+        let imports: Vec<_> = (0..MAX_PEER_HISTORY_IMPORTS as u32)
+            .map(|index| import(1, index))
             .collect();
-        imports.push(import(2, 0, false));
-        // Only the one pending import is live; the rest can be evicted.
         assert_eq!(
-            import_room(&imports, [1; 32]),
-            (MAX_PEER_HISTORY_IMPORTS - 1, MAX_HISTORY_IMPORTS - 1)
+            check_import_capacity(&imports, [1; 32]),
+            Err(Error::StorageUnavailable)
         );
-
-        make_import_room(&mut imports, [1; 32]).unwrap();
-        assert_eq!(imports.len(), MAX_PEER_HISTORY_IMPORTS);
-        assert!(imports[0].pending.is_some(), "pending import kept");
-        let oldest_acknowledged = import(1, 1, false).digest;
-        assert!(
-            !imports
-                .iter()
-                .any(|entry| entry.peer == [1; 32] && entry.digest == oldest_acknowledged)
-        );
-        assert!(imports.iter().any(|entry| entry.peer == [2; 32]));
+        assert_eq!(check_import_capacity(&imports, [2; 32]), Ok(()));
     }
 
     #[test]
-    fn pending_imports_are_never_evicted() {
-        let mut imports: Vec<_> = (0..MAX_PEER_HISTORY_IMPORTS as u32)
-            .map(|index| import(1, index, true))
+    fn the_shared_bound_holds_across_contacts() {
+        let imports: Vec<_> = (0..MAX_HISTORY_IMPORTS as u32)
+            .map(|index| import((index / MAX_PEER_HISTORY_IMPORTS as u32) as u8, index))
             .collect();
-        assert_eq!(import_room(&imports, [1; 32]).0, 0);
-        assert_eq!(make_import_room(&mut imports, [1; 32]), Err(Error::StorageUnavailable));
-        assert_eq!(import_room(&imports, [2; 32]).0, MAX_PEER_HISTORY_IMPORTS);
-        assert_eq!(make_import_room(&mut imports, [2; 32]), Ok(()));
+        assert_eq!(
+            check_import_capacity(&imports, [0xFF; 32]),
+            Err(Error::StorageUnavailable)
+        );
     }
 }
