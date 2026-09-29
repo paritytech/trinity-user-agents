@@ -256,7 +256,6 @@ fn restart_restores_atomic_spend_repositories_and_host_operations() {
                 claimed_amount: None,
                 total_value: 400,
                 markers: truapi_coinage::claim_plan::ClaimMarkers {
-                    tracked: true,
                     submitted: vec![0],
                     forfeited: Vec::new(),
                     forfeited_value: 0,
@@ -316,7 +315,6 @@ fn restart_restores_atomic_spend_repositories_and_host_operations() {
             vec![[10; 32]]
         );
         let markers = restored.plan(&[9; 32]).await.unwrap().unwrap().markers;
-        assert!(markers.tracked);
         assert_eq!(markers.submitted, vec![0]);
         assert_eq!(
             restored.read_operation([7; 32]).await.unwrap(),

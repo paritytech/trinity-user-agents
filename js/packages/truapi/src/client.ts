@@ -570,8 +570,11 @@ export function createTransport(
     if (KNOWN_WIRE_IDS.has(`${payload.traitId}:${payload.methodId}`)) {
       if (payload.messageType === MESSAGE_TYPE_RESPONSE) {
         // A late answer to a request this side abandoned at its deadline is
-        // normal. A response to a request this side never sent is not.
-        if (!abandoned.delete(requestId)) {
+        // normal, as is one for another transport sharing the connection or a
+        // pending request whose mismatch is reported above. A response to a
+        // request this transport never sent is not.
+        const ours = requestId.startsWith(requestIdPrefix);
+        if (ours && !pending.has(requestId) && !abandoned.delete(requestId)) {
           reportProtocolViolation(
             `ignoring response for request ${requestId} on (${payload.traitId}, ${payload.methodId}): no such request was sent`,
           );

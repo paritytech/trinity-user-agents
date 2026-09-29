@@ -563,13 +563,19 @@ pub trait ProductAuthority: Send + Sync {
 		false
 	}
 
-	/// Return Bulletin allowance key material for the calling product.
-	async fn bulletin_allowance_key(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		product_id: &ProductId,
-	) -> Result<BulletinAllowanceKey, AuthorityError>;
+    /// Whether the user allowed Chat for `product_id` for the rest of this
+    /// session. Authorities that do not keep session grants answer `false`.
+    fn chat_session_granted(&self, _session: &AuthoritySession, _product_id: &str) -> bool {
+        false
+    }
+
+    /// Execute an authorized operation on the Host-owned native Chat device.
+    async fn product_device_chat(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        request: ProductDeviceChatAuthorityRequest,
+    ) -> Result<HostProductDeviceChatResponse, ProductDeviceChatAuthorityError>;
 
 	/// Invalidate the cached Bulletin key and increase or recreate its allowance
 	/// after a submission is rejected for an exhausted or missing allowance.

@@ -692,8 +692,12 @@ describe("generated client transport", () => {
             fixture.receive(wireFrame("p:1", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
             expect(warn).not.toHaveBeenCalled();
 
+            // Another transport on the same connection owns this id.
+            fixture.receive(wireFrame("host:3", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
+            expect(warn).not.toHaveBeenCalled();
+
             fixture.receive(wireFrame("p:1", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
-            fixture.receive(wireFrame("never:1", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
+            fixture.receive(wireFrame("p:99", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
             expect(
                 warn.mock.calls.filter((args) =>
                     String(args[0]).includes("no such request was sent"),

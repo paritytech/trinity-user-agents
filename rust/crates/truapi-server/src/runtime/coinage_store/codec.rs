@@ -181,9 +181,7 @@ pub(super) fn validate(state: &Snapshot) -> Result<(), StoreError> {
         bound(markers.forfeited.len(), MAX_ITEMS)?;
         let submitted: BTreeSet<_> = markers.submitted.iter().collect();
         let forfeited: BTreeSet<_> = markers.forfeited.iter().collect();
-        if (!markers.tracked
-            && (!submitted.is_empty() || !forfeited.is_empty() || markers.forfeited_value != 0))
-            || submitted.len() != markers.submitted.len()
+        if submitted.len() != markers.submitted.len()
             || forfeited.len() != markers.forfeited.len()
             || !submitted.is_disjoint(&forfeited)
             || !submitted
@@ -292,11 +290,9 @@ fn encode_to(state: &Snapshot, out: &mut impl Output) {
         id.encode_to(out);
         bytes(out, value);
     }
-    // Claim markers trail the original layout: a snapshot written before they
-    // existed ends here and decodes every plan as untracked.
+    // Each plan's claim markers, in plan order.
     for plan in state.plans.values() {
         let markers = &plan.markers;
-        markers.tracked.encode_to(out);
         count(out, markers.submitted.len());
         for index in &markers.submitted {
             index.encode_to(out);
@@ -486,24 +482,20 @@ pub(super) fn decode(plaintext: &[u8]) -> Result<Snapshot, StoreError> {
             return Err(StoreError::Corrupt);
         }
     }
-    if !input.0.is_empty() {
-        for plan in state.plans.values_mut() {
-            let tracked = input.value()?;
-            let mut submitted = Vec::new();
-            for _ in 0..input.count(MAX_ITEMS)? {
-                submitted.push(input.value()?);
-            }
-            let mut forfeited = Vec::new();
-            for _ in 0..input.count(MAX_ITEMS)? {
-                forfeited.push(input.value()?);
-            }
-            plan.markers = ClaimMarkers {
-                tracked,
-                submitted,
-                forfeited,
-                forfeited_value: input.value()?,
-            };
+    for plan in state.plans.values_mut() {
+        let mut submitted = Vec::new();
+        for _ in 0..input.count(MAX_ITEMS)? {
+            submitted.push(input.value()?);
         }
+        let mut forfeited = Vec::new();
+        for _ in 0..input.count(MAX_ITEMS)? {
+            forfeited.push(input.value()?);
+        }
+        plan.markers = ClaimMarkers {
+            submitted,
+            forfeited,
+            forfeited_value: input.value()?,
+        };
     }
     if !input.0.is_empty() {
         return Err(StoreError::Corrupt);

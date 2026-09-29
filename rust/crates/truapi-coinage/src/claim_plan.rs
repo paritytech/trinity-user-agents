@@ -5,8 +5,6 @@
 use async_trait::async_trait;
 use parity_scale_codec::{Decode, Encode};
 
-const CLAIM_PLAN_DATA_V1_MAGIC: &[u8; 4] = b"CPV1";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub struct CodableClaimPlanEntry {
     pub entry_index: i16,
@@ -48,13 +46,8 @@ impl ClaimPlanStatus {
 }
 
 /// Durable per-entry progress for a claim of externally supplied secrets.
-///
-/// The default is untracked: a plan stored before markers existed may have
-/// submitted any entry, so an entry absent from chain stays ambiguous.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ClaimMarkers {
-    /// Whether this plan has recorded every submission since its creation.
-    pub tracked: bool,
     /// Entries whose transfer this wallet submitted, recorded before submission.
     pub submitted: Vec<i16>,
     /// Entries absent at finalized state that this wallet never submitted:
@@ -62,16 +55,6 @@ pub struct ClaimMarkers {
     pub forfeited: Vec<i16>,
     /// Total value of the forfeited entries.
     pub forfeited_value: u128,
-}
-
-impl ClaimMarkers {
-    /// Markers for a plan created before any of its entries was submitted.
-    pub fn tracked() -> Self {
-        Self {
-            tracked: true,
-            ..Self::default()
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,13 +85,6 @@ impl ClaimPlan {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-struct ClaimPlanDataV1 {
-    entries: Vec<CodableClaimPlanEntry>,
-    outgoing_public_keys: Vec<[u8; 32]>,
-    detection_anchor: Option<[u8; 32]>,
-}
-
 /// SCALE-encode the entries blob for `claim_plans.entries_data`.
 pub fn encode_claim_plan_entries(entries: &[CodableClaimPlanEntry]) -> Vec<u8> {
     entries.encode()
@@ -123,45 +99,6 @@ pub fn decode_claim_plan_entries(bytes: &[u8]) -> Result<Vec<CodableClaimPlanEnt
         return Err("claim plan entries: trailing bytes".into());
     }
     Ok(entries)
-}
-
-/// Versioned payload stored in the legacy `entries_data` column. Old rows
-/// contained only `Vec<CodableClaimPlanEntry>` and remain readable; new rows
-/// append the outgoing monitor's public-only evidence without a schema
-/// migration or secret-bearing data.
-pub fn encode_claim_plan_data(plan: &ClaimPlan) -> Vec<u8> {
-    let mut encoded = CLAIM_PLAN_DATA_V1_MAGIC.to_vec();
-    encoded.extend(
-        ClaimPlanDataV1 {
-            entries: plan.entries.clone(),
-            outgoing_public_keys: plan.outgoing_public_keys.clone(),
-            detection_anchor: plan.detection_anchor,
-        }
-        .encode(),
-    );
-    encoded
-}
-
-/// Decoded `claim_plans.entries_data` payload: the plan entries, the
-/// outgoing public keys, and the optional detection anchor (both absent on
-/// pre-v1 blobs).
-pub type DecodedClaimPlanData = (Vec<CodableClaimPlanEntry>, Vec<[u8; 32]>, Option<[u8; 32]>);
-
-pub fn decode_claim_plan_data(bytes: &[u8]) -> Result<DecodedClaimPlanData, String> {
-    let Some(payload) = bytes.strip_prefix(CLAIM_PLAN_DATA_V1_MAGIC) else {
-        return decode_claim_plan_entries(bytes).map(|entries| (entries, Vec::new(), None));
-    };
-    let mut input = payload;
-    let decoded = ClaimPlanDataV1::decode(&mut input)
-        .map_err(|error| format!("claim plan data v1: {error}"))?;
-    if !input.is_empty() {
-        return Err("claim plan data v1: trailing bytes".into());
-    }
-    Ok((
-        decoded.entries,
-        decoded.outgoing_public_keys,
-        decoded.detection_anchor,
-    ))
 }
 
 #[async_trait]
@@ -222,39 +159,6 @@ mod tests {
         let mut trailing = blob.clone();
         trailing.push(0);
         assert!(decode_claim_plan_entries(&trailing).is_err());
-    }
-
-    #[test]
-    fn versioned_plan_data_round_trips_and_legacy_rows_remain_readable() {
-        let plan = ClaimPlan {
-            memo_key: [1; 32],
-            message_id: Some("message".into()),
-            entries: vec![CodableClaimPlanEntry {
-                entry_index: 0,
-                exponent: 3,
-                derivation_index: 7,
-            }],
-            outgoing_public_keys: vec![[8; 32], [9; 32]],
-            detection_anchor: Some([10; 32]),
-            status: ClaimPlanStatus::Processing,
-            claimed_amount: None,
-            total_value: 80,
-            markers: ClaimMarkers::default(),
-        };
-        assert_eq!(
-            decode_claim_plan_data(&encode_claim_plan_data(&plan)).unwrap(),
-            (
-                plan.entries.clone(),
-                plan.outgoing_public_keys.clone(),
-                plan.detection_anchor
-            )
-        );
-
-        let legacy = encode_claim_plan_entries(&plan.entries);
-        assert_eq!(
-            decode_claim_plan_data(&legacy).unwrap(),
-            (plan.entries, Vec::new(), None)
-        );
     }
 
     #[test]

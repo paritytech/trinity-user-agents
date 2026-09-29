@@ -315,15 +315,6 @@ impl SigningHost {
 		Ok(key)
 	}
 
-    /// Whether the user allowed Chat for `product_id` for this session only.
-    pub(crate) fn chat_session_granted(&self, session: &AuthoritySession, product_id: &str) -> bool {
-        self.local_grants
-            .lock()
-            .expect("local AutoSigning grant mutex poisoned")
-            .chat_session_grants
-            .contains(&(session.public_key, product_id.to_owned()))
-    }
-
     /// Fence in-flight grant work and revoke this product's grants from the
     /// current local activation while preserving unrelated products.
     pub async fn clear_product_state(&self, product_id: &str) -> Result<(), AuthorityError> {
@@ -861,9 +852,17 @@ impl HostSession for SigningHost {
 
 #[async_trait::async_trait]
 impl ProductAuthority for SigningHost {
-	fn current_session(&self) -> Option<AuthoritySession> {
-		self.current_local_session()
-	}
+    fn chat_session_granted(&self, session: &AuthoritySession, product_id: &str) -> bool {
+        self.local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned")
+            .chat_session_grants
+            .contains(&(session.public_key, product_id.to_owned()))
+    }
+
+    fn current_session(&self) -> Option<AuthoritySession> {
+        self.current_local_session()
+    }
 
 	async fn product_subtree_public_key(
 		&self,
@@ -1237,7 +1236,7 @@ impl ProductAuthority for SigningHost {
         request: ProductDeviceChatAuthorityRequest,
     ) -> Result<truapi::latest::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError>
     {
-        self.require_current_session(session)?;
+        let (_, activation_generation) = self.require_current_session(session)?;
         let calling_product_id = normalize_product_identifier(&request.calling_product_id)
             .map_err(|_| {
                 ProductDeviceChatAuthorityError::Domain(
@@ -1245,9 +1244,16 @@ impl ProductAuthority for SigningHost {
                 )
             })?;
         if request.session_consent {
-            self.local_grants
+            let mut state = self
+                .local_grants
                 .lock()
-                .expect("local AutoSigning grant mutex poisoned")
+                .expect("local AutoSigning grant mutex poisoned");
+            // A revocation or reactivation since the session check advanced the
+            // generation; the grant must not outlive it.
+            if state.activation_generation != activation_generation {
+                return Err(ProductDeviceChatAuthorityError::Disconnected);
+            }
+            state
                 .chat_session_grants
                 .insert((session.public_key, calling_product_id.clone()));
         }
@@ -4082,7 +4088,7 @@ mod tests {
                 .activate_local_session(ENTROPY.to_vec())
                 .await
                 .unwrap();
-            let runtime = product_runtime(services, activation);
+            let runtime = product_runtime(services.clone(), activation.clone());
             let cx = CallContext::default();
             let chat =
                 |request| runtime.product_device_chat(&cx, HostProductDeviceChatRequest::V2(request));
@@ -4100,6 +4106,18 @@ mod tests {
                     truapi::latest::HostProductDeviceChatError::AccessNotGranted
                 )))
             ));
+            assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
+            // A new execution of the same product reuses the session grant.
+            let next_execution = product_runtime(services, activation);
+            next_execution
+                .product_device_chat(
+                    &cx,
+                    HostProductDeviceChatRequest::V2(
+                        truapi::latest::HostProductDeviceChatRequest::Initialize,
+                    ),
+                )
+                .await
+                .unwrap();
             assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
             assert_eq!(
                 runtime

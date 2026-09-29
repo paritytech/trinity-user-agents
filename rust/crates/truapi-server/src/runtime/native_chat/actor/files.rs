@@ -613,18 +613,23 @@ impl NativeChatActor {
     }
 }
 
+/// Files with remaining work: not yet downloaded or uploaded, or awaiting an
+/// acknowledgment.
+fn pending_files(state: &State) -> std::collections::BTreeSet<[u8; 32]> {
+    state
+        .files
+        .iter()
+        .filter(|file| file.pending())
+        .map(|file| file.id)
+        .collect()
+}
+
 /// A rich message with no remaining work: published or received, and every
-/// attachment downloaded or uploaded with no pending acknowledgment.
-fn settled(state: &State, message: &RichRecord) -> bool {
+/// attachment settled.
+fn settled(message: &RichRecord, pending: &std::collections::BTreeSet<[u8; 32]>) -> bool {
     !message.selecting
         && (message.incoming || message.published)
-        && message.files.iter().all(|id| {
-            state
-                .files
-                .iter()
-                .find(|file| &file.id == id)
-                .is_none_or(|file| !file.pending())
-        })
+        && !message.files.iter().any(|id| pending.contains(id))
 }
 
 /// Make room for `files` new file records and `messages` new rich messages
@@ -651,11 +656,22 @@ fn make_room(
         if !over_peer && !over_total {
             return Ok(());
         }
-        let index = state
+        let pending = pending_files(state);
+        let own = state
             .rich_messages
             .iter()
-            .position(|message| (!over_peer || message.peer == peer) && settled(state, message))
-            .ok_or(Error::StorageUnavailable)?;
+            .position(|message| message.peer == peer && settled(message, &pending));
+        let index = if over_peer {
+            own
+        } else {
+            own.or_else(|| {
+                state
+                    .rich_messages
+                    .iter()
+                    .position(|message| settled(message, &pending))
+            })
+        }
+        .ok_or(Error::StorageUnavailable)?;
         let evicted = state.rich_messages.remove(index);
         let messages = &state.rich_messages;
         state.files.retain(|file| {
@@ -854,5 +870,26 @@ mod capacity_tests {
         receive(&mut state, 90_000, B).unwrap();
         assert_eq!(state.rich_messages.len(), MAX_RICH_MESSAGES);
         assert_ne!(state.rich_messages[0].message_id, "message-0");
+    }
+
+    #[test]
+    fn the_shared_bound_evicts_the_contact_s_own_settled_message_first() {
+        let mut state = State::initial().unwrap();
+        let peers = (MAX_RICH_MESSAGES / MAX_PEER_RICH_MESSAGES) as u8;
+        for (index, peer) in (0..peers - 1).enumerate() {
+            fill(&mut state, [peer; 32], (index * 1_000) as u32, true);
+        }
+        for id in 0..MAX_PEER_RICH_MESSAGES as u32 - 1 {
+            let file = file(50_000 + id, B, true);
+            state.rich_messages.push(message(50_000 + id, B, &[&file]));
+            state.files.push(file);
+        }
+        let file = file(60_000, A, true);
+        state.rich_messages.push(message(60_000, A, &[&file]));
+        state.files.push(file);
+        // Total is full but B is under its own quota: B's oldest goes first.
+        receive(&mut state, 90_000, B).unwrap();
+        assert!(state.rich_messages.iter().any(|m| m.message_id == "message-0"));
+        assert!(!state.rich_messages.iter().any(|m| m.message_id == "message-50000"));
     }
 }

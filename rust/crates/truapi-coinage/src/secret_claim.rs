@@ -343,7 +343,7 @@ impl ExternalSecretClaimService {
             status: ClaimPlanStatus::Processing,
             claimed_amount: None,
             total_value,
-            markers: ClaimMarkers::tracked(),
+            markers: ClaimMarkers::default(),
         })
     }
 
@@ -438,7 +438,7 @@ impl ExternalSecretClaimService {
                     }
                     // Record the submission before it can reach the chain, so a
                     // transfer that lands unobserved is never read as a spend.
-                    if markers.tracked && !markers.submitted.contains(&entry.entry_index) {
+                    if !markers.submitted.contains(&entry.entry_index) {
                         markers.submitted.push(entry.entry_index);
                         self.save_markers(&plan.memo_key, &markers, None).await?;
                     }
@@ -464,9 +464,7 @@ impl ExternalSecretClaimService {
                 }
                 // Finalized absence of an entry this wallet never submitted is
                 // proof the source was spent elsewhere: forfeit it and continue.
-                (None, None)
-                    if markers.tracked && !markers.submitted.contains(&entry.entry_index) =>
-                {
+                (None, None) if !markers.submitted.contains(&entry.entry_index) => {
                     markers.forfeited.push(entry.entry_index);
                     markers.forfeited_value = markers
                         .forfeited_value
@@ -1250,7 +1248,7 @@ mod tests {
                 status: ClaimPlanStatus::Error,
                 claimed_amount: None,
                 total_value: 20,
-                markers: ClaimMarkers::tracked(),
+                markers: ClaimMarkers::default(),
             },
         );
 
@@ -1483,41 +1481,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn untracked_plan_keeps_absence_ambiguous() {
-        let source = expanded_secret(24);
-        let memo = TransferMemo {
-            entries: vec![source.clone()],
-            total_value: 20,
-        };
-        let key = memo.identifier();
-        let rig = rig([(
-            public(&source),
-            OnChainCoin {
-                exponent: 1,
-                age: 2,
-            },
-        )]);
-        let mut plan = rig
-            .service
-            .prepare_memo(&memo, external_claim_message_id(&key))
-            .await
-            .unwrap();
-        // A plan stored before markers existed may have submitted any entry.
-        plan.markers = ClaimMarkers::default();
-        rig.plans.save(&plan).await.unwrap();
-        rig.backend.state.lock().clear();
-        assert!(
-            rig.service
-                .claim_external_memo(memo, external_claim_message_id(&key))
-                .await
-                .is_err()
-        );
-        let plan = rig.plans.plan(&key).await.unwrap().unwrap();
-        assert_ne!(plan.status, ClaimPlanStatus::Finished);
-        assert!(plan.markers.forfeited.is_empty());
-    }
-
-    #[tokio::test]
     async fn absent_source_before_planning_records_nothing() {
         let source = expanded_secret(25);
         let memo = TransferMemo {
@@ -1686,7 +1649,7 @@ mod tests {
                 status: ClaimPlanStatus::Processing,
                 claimed_amount: None,
                 total_value: 20,
-                markers: ClaimMarkers::tracked(),
+                markers: ClaimMarkers::default(),
             },
         );
 
@@ -1743,7 +1706,7 @@ mod tests {
                 status: ClaimPlanStatus::Error,
                 claimed_amount: None,
                 total_value: 20,
-                markers: ClaimMarkers::tracked(),
+                markers: ClaimMarkers::default(),
             },
         );
 

@@ -1,7 +1,9 @@
 //! Product-facing account operations and login lifecycle.
 
 use crate::platform::{
-	PermissionAuthorizationStatus, ProductId, ProductSubtreeReview, UserConfirmationReview,
+    PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductSubtreeReview,
+    UserConfirmationReview,
+    normalize_product_identifier,
 };
 use futures::StreamExt;
 use tracing::instrument;
@@ -281,10 +283,23 @@ impl Account for ProductRuntimeHost {
                 latest::HostProductDeviceChatError::NotConnected,
             )));
         };
-        let consent = self
-            .chat_authority_authorization()
-            .await
-            .map_err(|reason| CallError::HostFailure { reason })?;
+        // A session-only grant lives with the authority, so a new execution of
+        // the same product reuses it without prompting again.
+        let consent = if self.authority.chat_session_granted(&session, &calling_product_id)
+            && self
+                .permission_authorization_status(PermissionAuthorizationRequest::ChatAuthority)
+                .await
+                .map_err(|error| CallError::HostFailure {
+                    reason: error.reason,
+                })?
+                == PermissionAuthorizationStatus::NotDetermined
+        {
+            ChatAuthorityConsent::Session
+        } else {
+            self.chat_authority_authorization()
+                .await
+                .map_err(|reason| CallError::HostFailure { reason })?
+        };
         if consent == ChatAuthorityConsent::Refused {
             return Err(CallError::Domain(HostProductDeviceChatError::V1(
                 latest::HostProductDeviceChatError::AccessNotGranted,
