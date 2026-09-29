@@ -106,10 +106,10 @@ pub mod latest {
 	use crate::versioned::{self, Versioned};
 
     pub use crate::v01::{
-        AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
-        BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
-        ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-        ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
+        AllocatableResource, AllocationOutcome, Arrangement, AvatarRect, Background, BlendingMode,
+        BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction,
+        ChatActionLayout, ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile,
+        ChatMedia, ChatMessageContent, ChatRichText, ChatRoom, ChatRoomParticipation,
         ChatRoomRegistrationStatus, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome,
         ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect, EffectProps,
         GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
