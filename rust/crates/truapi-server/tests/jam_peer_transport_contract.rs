@@ -5,14 +5,14 @@
 //! host uses on dial.
 
 use parity_scale_codec::{Decode, Encode};
-use truapi::latest;
-use truapi::versioned::jam_peer_transport;
-use truapi_server::generated::wire_table::{
+use truapi::generated::wire_table::{
     JAM_PEER_TRANSPORT_CLOSE, JAM_PEER_TRANSPORT_DIAL, JAM_PEER_TRANSPORT_EVENTS,
     JAM_PEER_TRANSPORT_OPEN, JAM_PEER_TRANSPORT_RECV, JAM_PEER_TRANSPORT_RESET,
     JAM_PEER_TRANSPORT_SEND, MethodIds,
 };
-use truapi_server::jam_peer_transport::{InvalidGenesis, alpn, parse_genesis};
+use truapi::jam_peer_transport::{InvalidGenesis, alpn, parse_genesis};
+use truapi::latest;
+use truapi::versioned::jam_peer_transport;
 
 const GENESIS_HEX: &str = "353963b9cedfe4ea22038081052a5c151b06b55a4a026a97522cd0320cabf49f";
 
