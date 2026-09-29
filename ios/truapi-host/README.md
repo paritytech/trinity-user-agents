@@ -59,8 +59,15 @@ rebuild, which needs Xcode and the iOS targets:
 make uniffi && ./ios/truapi-host/scripts/sync-bindings.sh
 ```
 
-CI's `iOS bindings (uniffi)` job runs the same two commands. With nothing committed to diff against, what it gates is
-that bindgen still produces a binding for every UniFFI-exposed type. It runs on Linux, so it never compiles Swift.
+Synchronization also removes generated Swift sources and FFI headers from the
+former `truapi_server` and `truapi_platform` namespaces. Only the unified `truapi`
+bindings belong in the package and its release tag. The binary asset remains
+`truapi_server.xcframework`, and its Swift FFI module is `truapiFFI`.
+
+CI's `iOS bindings (uniffi)` job runs the same two commands. With nothing
+committed to diff against, what it gates is that bindgen still produces a
+binding for every UniFFI-exposed type. It runs on Linux, so it never compiles
+Swift.
 
 The hand-written conformers in `TrUAPIHost.swift` and `Tests/` are covered by the `iOS package (swift compile)` job
 instead, which builds a simulator-only debug XCFramework from the pull request source and runs

@@ -21,6 +21,13 @@ if [ ! -d "$UNIFFI_OUT" ]; then
     exit 66
 fi
 
+# SwiftPM compiles every Swift source in this directory, including bindings
+# left by the former server/platform namespaces.
+rm -f "$PACKAGE_ROOT/Sources/TrUAPIHost/truapi_server.swift" \
+    "$PACKAGE_ROOT/Sources/TrUAPIHost/truapi_platform.swift"
+rm -rf "$PACKAGE_ROOT/Sources/truapi_serverFFI" \
+    "$PACKAGE_ROOT/Sources/truapi_platformFFI"
+
 for namespace in $NAMESPACES; do
     mkdir -p "$PACKAGE_ROOT/Sources/TrUAPIHost" \
         "$PACKAGE_ROOT/Sources/${namespace}FFI/include"
