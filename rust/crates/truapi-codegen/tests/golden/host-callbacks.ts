@@ -1009,6 +1009,15 @@ export interface PresentedContactProfile {
    * `PlacedAvatar::shared_at`.
    */
   sharedAt: bigint;
+
+  /**
+   * The contact's username, when the core knows one: the name its Chat
+   * roster holds for `peer_identity`, verified when the contact was bound
+   * or first authenticated, else the peer's verified dotNS name. Never a
+   * name from the product. ``undefined`` when neither is known in time; show the
+   * contact without a name then, never by address.
+   */
+  username?: string;
 }
 
 /**
@@ -1912,6 +1921,7 @@ export const PresentedContactProfile: S.Codec<PresentedContactProfile> = S.lazy(
       reference: S.str,
       peerIdentity: S.Bytes(32),
       sharedAt: S.u64,
+      username: S.Option(S.str),
     }) as S.Codec<PresentedContactProfile>,
 );
 

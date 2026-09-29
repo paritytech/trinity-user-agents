@@ -233,9 +233,13 @@ the digest it was sent under, so an upgrade sends nothing.
 ### Presentation
 
 `present_contact` looks up the caller's received reference for the named peer, screens it again, and hands it to
-`ProfilePlatform::present_contact_profile(product, PresentedContactProfile { reference, peer_identity, shared_at })`,
-where `shared_at` is the sender timestamp (Unix ms) of the frame the reference came from. The default calls
-`present_profile` with the reference alone, so a host that does not implement it shows the profile as before.
+`ProfilePlatform::present_contact_profile(product, PresentedContactProfile { reference, peer_identity, shared_at,
+username })`, where `shared_at` is the sender timestamp (Unix ms) of the frame the reference came from. `username` is
+the host's own name for the contact, never one from the product: the name the calling product's Chat roster holds for
+that peer, verified when the contact was bound or first authenticated, else the peer's verified dotNS name. The core
+waits at most 2 seconds for it and passes `None` when it knows none, so a slow directory never holds the drawer back; the
+host then names the contact generically, never by address. The default calls `present_profile` with the reference
+alone, so a host that does not implement it shows the profile as before.
 
 ### Provenance
 

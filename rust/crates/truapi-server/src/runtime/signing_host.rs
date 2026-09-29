@@ -1258,6 +1258,18 @@ impl ProductAuthority for SigningHost {
         }
     }
 
+    async fn contact_username(
+        &self,
+        session: &AuthoritySession,
+        product_id: &str,
+        peer_identity: [u8; 32],
+    ) -> Option<String> {
+        let context = self.native_chat_context(session).ok()?;
+        self.native_chat
+            .contact_username(&context, product_id, peer_identity)
+            .await
+    }
+
     async fn allocate_resources(
         &self,
         _cx: &CallContext,

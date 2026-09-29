@@ -907,6 +907,7 @@ describe("createWasmRawCallbacks", () => {
       reference: "seity-contacts:v1:ab",
       peerIdentity: new Uint8Array(32).fill(0xa1),
       sharedAt: 1_700_000_000_500n,
+      username: "alice.01",
     };
 
     it("hands the host the contact who shared the profile", async () => {

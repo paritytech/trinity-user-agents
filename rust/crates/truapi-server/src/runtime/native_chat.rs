@@ -216,6 +216,32 @@ impl NativeChatRegistry {
         }));
     }
 
+    /// The name to show for `peer`, a contact of `product`'s Chat: the one
+    /// its roster holds, verified when the contact was bound or first
+    /// authenticated, else the peer's verified dotNS name. Never a name a
+    /// product supplied; `None` when neither is known. A Chat not yet open in
+    /// this session is not opened for this, since opening it is the product's
+    /// authorized Chat work; the dotNS lookup covers it.
+    pub(crate) async fn contact_username(
+        &self,
+        context: &NativeChatContext,
+        product: &str,
+        peer: [u8; 32],
+    ) -> Option<String> {
+        let key = (
+            (context.session.public_key, context.genesis_hash),
+            product.to_owned(),
+        );
+        let cache = self.state.cache.lock().clone();
+        let chat = cache.chats.lock().await.get(&key).cloned();
+        if let Some(chat) = chat
+            && let Some(username) = chat.contact_username(&peer).await
+        {
+            return Some(username);
+        }
+        identity::verified_username(context, peer).await
+    }
+
     /// Generic incoming coin import shares the wallet's allocator and recovery
     /// store, but neither creates a Chat device nor requires Chat permission.
     pub(crate) fn top_up(

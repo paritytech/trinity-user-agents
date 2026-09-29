@@ -2592,6 +2592,49 @@ fn a_peer_that_becomes_ready_is_sent_the_disclosure_in_that_request() {
     });
 }
 
+/// A contact is named from the verified roster of the Chat it is a contact
+/// of; a peer the roster does not hold, or another product's contact, gets
+/// no name when the directory cannot supply one.
+#[test]
+fn a_contact_is_named_by_the_roster_of_its_own_chat() {
+    block_on(async {
+        let fixture = Fixture::new();
+        let registry = NativeChatRegistry::default();
+        set_product_grants(
+            &fixture.platform,
+            PRODUCT,
+            truapi_platform::PermissionAuthorizationStatus::Authorized,
+        )
+        .await;
+        let chat = registry.chat(&fixture.context, PRODUCT).await.unwrap();
+        let identity = IdentityFixture::new();
+        seed_peer(&chat, &identity, &[&DeviceFixture::new(1)]).await;
+
+        assert_eq!(
+            registry
+                .contact_username(&fixture.context, PRODUCT, identity.account)
+                .await
+                .as_deref(),
+            Some("peer.dot"),
+            "the name the host verified when the contact was added"
+        );
+        assert_eq!(
+            registry
+                .contact_username(&fixture.context, PRODUCT, [0xee; 32])
+                .await,
+            None,
+            "a peer not on the roster does not borrow a contact's name"
+        );
+        assert_eq!(
+            registry
+                .contact_username(&fixture.context, "other.dot", identity.account)
+                .await,
+            None,
+            "another product's Chat does not lend its roster"
+        );
+    });
+}
+
 /// Each open Chat of the wallet whose disclosure changed relays it, whichever
 /// product it belongs to; another wallet's Chat relays nothing.
 #[test]

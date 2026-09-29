@@ -1847,9 +1847,12 @@ fn profile_present_contact_names_the_contact_who_shared_it() {
                 reference: CONTACTS_REFERENCE.to_string(),
                 peer_identity: alice,
                 shared_at: 1_700_000_000_500,
+                // A paired host's Chat roster lives on the signing host.
+                username: None,
             }
         )],
-        "the host learns who sent the reference and when their newest share was"
+        "the host learns who sent the reference and when their newest share was, and no name \
+         it does not know"
     );
     assert!(
         presenter

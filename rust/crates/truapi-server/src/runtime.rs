@@ -159,6 +159,9 @@ const PREIMAGE_SUBMIT_TIMEOUT: Duration = Duration::from_secs(360);
 /// end-to-end submit deadline may reduce it further.
 const PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT: Duration =
     RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT;
+/// How long `profile.presentContact` waits for the contact's name before it
+/// shows the profile without one.
+const CONTACT_USERNAME_BUDGET: Duration = Duration::from_secs(2);
 
 const LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON: &str =
     "Account can't be derived from product account id";
@@ -1285,6 +1288,25 @@ impl ProductRuntimeHost {
         })
     }
 
+    /// The host-verified name of `peer_identity`, this product's Chat
+    /// contact, or `None` when the host knows none within
+    /// [`CONTACT_USERNAME_BUDGET`]: a presented profile is not held back
+    /// waiting for a slow directory.
+    async fn contact_username(&self, peer_identity: &[u8; 32]) -> Option<String> {
+        let session = self.authority.current_session()?;
+        let product_id = self.product_id();
+        let lookup = self
+            .authority
+            .contact_username(&session, &product_id, *peer_identity)
+            .fuse();
+        let deadline = futures_timer::Delay::new(CONTACT_USERNAME_BUDGET).fuse();
+        pin_mut!(lookup, deadline);
+        futures::select! {
+            username = lookup => username,
+            () = deadline => None,
+        }
+    }
+
     /// Tell the authority the disclosure changed, so open Chats relay it now
     /// rather than when their product next initializes. Never waits for the
     /// relay.
@@ -1623,6 +1645,9 @@ impl Profile for ProductRuntimeHost {
                 v01::HostProfilePresentContactError::InvalidReference,
             ));
         }
+        // The name comes from the host, never from the request: the product
+        // names only the peer identity.
+        let username = self.contact_username(&request.peer_identity).await;
         platform
             .present_contact_profile(
                 &self.product,
@@ -1630,6 +1655,7 @@ impl Profile for ProductRuntimeHost {
                     reference,
                     peer_identity: request.peer_identity,
                     shared_at,
+                    username,
                 },
             )
             .await

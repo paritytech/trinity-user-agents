@@ -353,6 +353,20 @@ impl NativeChatActor {
             .await
     }
 
+    /// The name this Chat's roster holds for `peer`: resolved and verified
+    /// by the host when the contact was bound or first authenticated. `None`
+    /// when `peer` is not a contact, has no name, or the store is unreadable.
+    pub(in crate::runtime::native_chat) async fn contact_username(
+        &self,
+        peer: &[u8; 32],
+    ) -> Option<String> {
+        self.store
+            .read(|state| state.peer(peer).ok().and_then(|peer| peer.username.clone()))
+            .await
+            .ok()
+            .flatten()
+    }
+
     /// Relay to the peers of `unready` that are ready now.
     pub(in crate::runtime::native_chat) async fn relay_to_newly_ready(
         self: &Arc<Self>,
