@@ -127,6 +127,31 @@ struct TrUAPINativeCoinageTests {
         #expect(await harness.previews == calls)
     }
 
+    @Test func pendingPaymentReviewDoesNotBlockOtherOperations() async throws {
+        let harness = try NativeWalletHarness()
+        let presenter = NativeReviewHarness(suspended: true)
+        let service = adapter(harness, NativeRecordMemory(), presenter)
+        let intent = intent()
+        let payment = Task { try await service.nativeCoinage(request: request(.preparePayment(intent: intent))) }
+        await presenter.waitForReview()
+        // Chat reads payment views after every operation; an open sheet must not hold them.
+        let views = try await service.nativeCoinage(request: request(.views(productId: intent.productId)))
+        guard case let .payments(cards) = views else { Issue.record("Expected cards"); return }
+        #expect(cards.map(\.state) == [.preparing])
+        #expect(try await service.nativeCoinage(request: request(.denomination)) == .denomination(centsUnitRaw: "1000"))
+        #expect(await harness.debits == 0)
+        await presenter.answer(true)
+        guard case let .prepared(card, memo) = try await payment.value else {
+            Issue.record("Expected prepared custody"); return
+        }
+        #expect(card.state == .preparing)
+        #expect(memo != nil)
+        #expect(await harness.debits == 1)
+        #expect(await presenter.reviews.count == 1)
+        // Coins are reselected after review, since another operation could have spent the first selection.
+        #expect(await harness.previews == 2)
+    }
+
     @Test func wrongRootGenesisAndInstanceAreRejectedBeforeSelection() async throws {
         let harness = try NativeWalletHarness()
         let service = adapter(harness, NativeRecordMemory(), NativeReviewHarness())

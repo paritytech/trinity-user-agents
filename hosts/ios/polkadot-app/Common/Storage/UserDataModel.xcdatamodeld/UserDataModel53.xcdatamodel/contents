@@ -213,6 +213,15 @@
         <attribute name="uploadedChunks" optional="YES" attributeType="Binary"/>
         <attribute name="uploadedSize" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
     </entity>
+    <entity name="CDNativeCoinageRecord" representedClassName="NSManagedObject" syncable="YES">
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="payload" attributeType="Binary"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="identifier"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
     <entity name="CDNotifiedMessageId" representedClassName="CDNotifiedMessageId" syncable="YES" codeGenerationType="class">
         <attribute name="identifier" attributeType="String"/>
     </entity>
@@ -386,14 +395,5 @@
         <attribute name="actualValue" optional="YES" attributeType="String"/>
         <attribute name="status" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <relationship name="message" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatMessage" inverseName="outgoingTransferState" inverseEntity="CDChatMessage"/>
-    </entity>
-    <entity name="CDNativeCoinageRecord" representedClassName="NSManagedObject" syncable="YES">
-        <attribute name="identifier" attributeType="String"/>
-        <attribute name="payload" attributeType="Binary"/>
-        <uniquenessConstraints>
-            <uniquenessConstraint>
-                <constraint value="identifier"/>
-            </uniquenessConstraint>
-        </uniquenessConstraints>
     </entity>
 </model>
