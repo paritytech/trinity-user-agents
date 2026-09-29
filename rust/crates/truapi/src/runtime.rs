@@ -1651,28 +1651,255 @@ impl Pocket for ProductRuntimeHost {
 			.await
 	}
 
-	#[instrument(skip_all, fields(runtime.method = "pocket.remove_card"))]
-	async fn remove_card(
-		&self,
-		_cx: &CallContext,
-		request: HostPocketRemoveCardRequest,
-	) -> Result<HostPocketRemoveCardResponse, CallError<HostPocketRemoveCardError>> {
-		version(request)
-			.exec(|mut request| async move {
-				let platform = self.connection.pocket_platform()?;
-				// A card id is a product-chosen label the host renders in its own
-				// chrome, so it is screened before the host ever sees it: trimmed,
-				// NFC-normalized, and rejected if it carries characters that let two
-				// distinct ids render identically.
-				request.card_id = normalize_chat_identifier("cardId", &request.card_id)
-					.map_err(pocket_field_error)?;
-				platform
-					.remove_pocket_card(&self.connection.product, request)
-					.await
-					.map_err(CallError::Domain)
-			})
-			.await
-	}
+    #[instrument(skip_all, fields(runtime.method = "pocket.remove_card"))]
+    async fn remove_card(
+        &self,
+        _cx: &CallContext,
+        request: HostPocketRemoveCardRequest,
+    ) -> Result<HostPocketRemoveCardResponse, CallError<HostPocketRemoveCardError>> {
+        let platform = self.pocket_platform()?;
+        let HostPocketRemoveCardRequest::V1(mut request) = request;
+        // A card id is a product-chosen label the host renders in its own
+        // chrome, so it is screened before the host ever sees it: trimmed,
+        // NFC-normalized, and rejected if it carries characters that let two
+        // distinct ids render identically.
+        request.card_id =
+            normalize_chat_identifier("cardId", &request.card_id).map_err(pocket_field_error)?;
+        platform
+            .remove_pocket_card(&self.product, request)
+            .await
+            .map(|()| HostPocketRemoveCardResponse::V1)
+            .map_err(|error| CallError::Domain(HostPocketRemoveCardError::V1(error)))
+    }
+}
+
+/// Longest profile reference the core forwards. Seity blob references are
+/// about 150 bytes; the bound leaves room for other formats without letting a
+/// product push arbitrary payloads into host UI.
+const MAX_PROFILE_REFERENCE_BYTES: usize = 2048;
+
+#[truapi::async_trait]
+impl Profile for ProductRuntimeHost {
+    #[instrument(skip_all, fields(runtime.method = "profile.present"))]
+    async fn present(
+        &self,
+        _cx: &CallContext,
+        request: HostProfilePresentRequest,
+    ) -> Result<HostProfilePresentResponse, CallError<HostProfilePresentError>> {
+        let platform = self.profile_platform()?;
+        let HostProfilePresentRequest::V1(request) = request;
+        // The reference is opaque here; parsing it is the host's. The core
+        // screens only its shape: bounded, non-empty, printable ASCII without
+        // whitespace, so no control or bidi character reaches host code.
+        if !is_screened_profile_reference(&request.reference) {
+            return Err(CallError::Domain(HostProfilePresentError::V1(
+                v01::HostProfilePresentError::InvalidReference,
+            )));
+        }
+        platform
+            .present_profile(&self.product, request)
+            .await
+            .map(|()| HostProfilePresentResponse::V1)
+            .map_err(|error| CallError::Domain(HostProfilePresentError::V1(error)))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "profile.disclose"))]
+    async fn disclose(
+        &self,
+        _cx: &CallContext,
+        request: HostProfileDiscloseRequest,
+    ) -> Result<HostProfileDiscloseResponse, CallError<HostProfileDiscloseError>> {
+        // The user's own profile is disclosed from where they manage it, an
+        // App, not from a background Worker.
+        if self.product.execution_kind != crate::platform::ProductExecutionKind::App {
+            return Err(CallError::Denied);
+        }
+        let domain = |error| CallError::Domain(HostProfileDiscloseError::V1(error));
+        let HostProfileDiscloseRequest::V1(request) = request;
+        if !is_screened_profile_reference(&request.reference) {
+            return Err(domain(v01::HostProfileDiscloseError::InvalidReference));
+        }
+        let owner = self
+            .profile_owner()
+            .ok_or_else(|| domain(v01::HostProfileDiscloseError::NotConnected))?;
+        // Every contact receives the reference, so the user decides once per
+        // product whether it may hand one over.
+        match self.profile_disclosure_authorization().await {
+            Ok(PermissionAuthorizationStatus::Authorized) => {}
+            Ok(
+                PermissionAuthorizationStatus::Denied
+                | PermissionAuthorizationStatus::NotDetermined,
+            ) => {
+                return Err(domain(v01::HostProfileDiscloseError::PermissionDenied));
+            }
+            Err(reason) => return Err(domain(v01::HostProfileDiscloseError::Unknown { reason })),
+        }
+        let storage = self.platform.as_ref();
+        // A later revision than the stored one even when the reference is the
+        // same: the record behind it changed, and contacts are sent it again.
+        let previous = profile::read_disclosure(storage, owner)
+            .await
+            .ok()
+            .flatten()
+            .map_or(0, |disclosure| disclosure.revision);
+        let now = crate::unix_time::current_unix_secs().saturating_mul(1000);
+        let disclosure = profile::Disclosure {
+            product_id: self.product_id(),
+            reference: request.reference,
+            revision: now.max(previous.saturating_add(1)),
+        };
+        profile::write_disclosure(storage, owner, &disclosure)
+            .await
+            .map_err(|reason| domain(v01::HostProfileDiscloseError::Unknown { reason }))?;
+        self.profile_disclosure_changed();
+        Ok(HostProfileDiscloseResponse::V1)
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "profile.retract"))]
+    async fn retract(
+        &self,
+        _cx: &CallContext,
+        _request: HostProfileRetractRequest,
+    ) -> Result<HostProfileRetractResponse, CallError<HostProfileRetractError>> {
+        if self.product.execution_kind != crate::platform::ProductExecutionKind::App {
+            return Err(CallError::Denied);
+        }
+        let domain = |error| CallError::Domain(HostProfileRetractError::V1(error));
+        let unknown = |reason| domain(v01::HostProfileRetractError::Unknown { reason });
+        let owner = self
+            .profile_owner()
+            .ok_or_else(|| domain(v01::HostProfileRetractError::NotConnected))?;
+        let storage = self.platform.as_ref();
+        match profile::read_disclosure(storage, owner)
+            .await
+            .map_err(unknown)?
+        {
+            None => Ok(HostProfileRetractResponse::V1),
+            // One product may not withdraw what another disclosed.
+            Some(disclosure) if disclosure.product_id != self.product_id() => {
+                Err(domain(v01::HostProfileRetractError::NotDiscloser))
+            }
+            Some(_) => {
+                profile::clear_disclosure(storage, owner)
+                    .await
+                    .map_err(unknown)?;
+                self.profile_disclosure_changed();
+                Ok(HostProfileRetractResponse::V1)
+            }
+        }
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "profile.present_contact"))]
+    async fn present_contact(
+        &self,
+        _cx: &CallContext,
+        request: HostProfilePresentContactRequest,
+    ) -> Result<HostProfilePresentContactResponse, CallError<HostProfilePresentContactError>> {
+        let platform = self.profile_platform()?;
+        let HostProfilePresentContactRequest::V1(request) = request;
+        let domain = |error| CallError::Domain(HostProfilePresentContactError::V1(error));
+        let owner = self
+            .profile_owner()
+            .ok_or_else(|| domain(v01::HostProfilePresentContactError::NotConnected))?;
+        // Stored only when it arrived over the authenticated Chat channel from
+        // this peer, so the peer is who shared it.
+        let (reference, shared_at) = profile::received_reference(
+            self.platform.as_ref(),
+            owner,
+            &self.product_id(),
+            &request.peer_identity,
+        )
+        .await
+        .map_err(|reason| domain(v01::HostProfilePresentContactError::Unknown { reason }))?
+        .and_then(|received| {
+            received
+                .reference
+                .map(|reference| (reference, received.timestamp))
+        })
+        .ok_or_else(|| domain(v01::HostProfilePresentContactError::NotShared))?;
+        // A stored reference passed the same screen when it arrived; check
+        // again rather than trust storage.
+        if !is_screened_profile_reference(&reference) {
+            return Err(domain(
+                v01::HostProfilePresentContactError::InvalidReference,
+            ));
+        }
+        // The name comes from the host, never from the request: the product
+        // names only the peer identity.
+        let username = self.contact_username(&request.peer_identity).await;
+        platform
+            .present_contact_profile(
+                &self.product,
+                crate::platform::PresentedContactProfile {
+                    reference,
+                    peer_identity: request.peer_identity,
+                    shared_at,
+                    username,
+                },
+            )
+            .await
+            .map(|()| HostProfilePresentContactResponse::V1)
+            .map_err(|error| {
+                domain(match error {
+                    v01::HostProfilePresentError::InvalidReference => {
+                        v01::HostProfilePresentContactError::InvalidReference
+                    }
+                    v01::HostProfilePresentError::Unknown { reason } => {
+                        v01::HostProfilePresentContactError::Unknown { reason }
+                    }
+                })
+            })
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "profile.place_contact_avatars"))]
+    async fn place_contact_avatars(
+        &self,
+        _cx: &CallContext,
+        request: HostProfilePlaceContactAvatarsRequest,
+    ) -> Result<
+        HostProfilePlaceContactAvatarsResponse,
+        CallError<HostProfilePlaceContactAvatarsError>,
+    > {
+        // Contacts' avatars are drawn over what the user is looking at, an
+        // App, not a background Worker.
+        if self.product.execution_kind != crate::platform::ProductExecutionKind::App {
+            return Err(CallError::Denied);
+        }
+        let platform = self.profile_platform()?;
+        let HostProfilePlaceContactAvatarsRequest::V1(request) = request;
+        let domain = |error| CallError::Domain(HostProfilePlaceContactAvatarsError::V1(error));
+        profile::avatars::validate(&request).map_err(|reason| {
+            domain(v01::HostProfilePlaceContactAvatarsError::Unknown { reason })
+        })?;
+        let placement = self
+            .services
+            .contact_avatars
+            .for_runtime(self.core_instance, || {
+                profile::avatars::ContactAvatarPlacement::new(
+                    platform,
+                    self.platform.clone(),
+                    self.product.clone(),
+                )
+            });
+        let Some(owner) = self.profile_owner() else {
+            // Avatars drawn for a wallet that signed out come down with it.
+            placement.clear().await;
+            return Err(domain(
+                v01::HostProfilePlaceContactAvatarsError::NotConnected,
+            ));
+        };
+        placement
+            .place(owner, request)
+            .await
+            .map(|()| HostProfilePlaceContactAvatarsResponse::V1)
+            .map_err(domain)
+    }
+}
+
+fn is_screened_profile_reference(reference: &str) -> bool {
+    !reference.is_empty()
+        && reference.len() <= MAX_PROFILE_REFERENCE_BYTES
+        && reference.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
 /// Report a rejected card id as a removal domain error.

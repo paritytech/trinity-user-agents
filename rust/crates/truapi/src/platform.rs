@@ -1157,7 +1157,10 @@ pub trait Features: Send + Sync {
 
 /// Wallet and asset binding checked by the native service before every operation.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct NativeCoinageScope {
     /// Authenticated root key of the wallet owning the main purse.
     pub root_public_key: [u8; 32],
@@ -1169,7 +1172,10 @@ pub struct NativeCoinageScope {
 
 /// Immutable, Host-authenticated outgoing intent. No field is a product display hint.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct NativeCoinagePaymentIntent {
     /// Stable wallet-, network- and product-scoped operation identity.
     pub operation_id: [u8; 32],
@@ -1188,7 +1194,10 @@ pub struct NativeCoinagePaymentIntent {
 /// Host-private bearer material. Never return this through the product API or log it.
 /// Raw amounts are canonical unsigned decimal u128 strings, avoiding FFI truncation.
 #[derive(Clone, PartialEq, Eq, Encode, Decode, zeroize::Zeroize)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct NativeCoinageMemo {
     /// Validated 64-byte native sr25519 secret keys, confined to the trusted Host.
     pub secret_keys: Vec<Vec<u8>>,
@@ -1198,7 +1207,10 @@ pub struct NativeCoinageMemo {
 
 /// Durable native-wallet operations, not an alternative inventory ledger.
 #[derive(Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum NativeCoinageOperation {
     /// Read trusted denomination metadata without selecting or allocating inventory.
     Denomination,
@@ -1271,7 +1283,10 @@ impl zeroize::Zeroize for NativeCoinageOperation {
 
 /// One native operation with the immutable wallet/network scope to authenticate.
 #[derive(Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct NativeCoinageRequest {
     /// Expected owner and asset, verified against the active native wallet.
     pub scope: NativeCoinageScope,
@@ -1287,7 +1302,10 @@ impl zeroize::Zeroize for NativeCoinageRequest {
 
 /// Sanitized failures. Never forward secret-bearing native exception descriptions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum NativeCoinageFailure {
     /// The selected native owner, its durable store or its session is unavailable.
     Unavailable,
@@ -1307,7 +1325,10 @@ pub enum NativeCoinageFailure {
 
 /// Incoming settlement result; acceptance and best-head observations are not finality.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum NativeCoinageTopUpOutcome {
     /// The original requested minimum has been credited at finality.
     /// For a zero minimum, the source claim is terminal with positive finalized credit.
@@ -1325,7 +1346,10 @@ pub enum NativeCoinageTopUpOutcome {
 
 /// Typed native results. Only the trusted Host may consume a Prepared memo.
 #[derive(Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum NativeCoinageResponse {
     /// Trusted denomination metadata for the selected wallet/asset.
     Denomination {
@@ -1385,7 +1409,10 @@ pub trait CoinageWalletHost: Send + Sync {
 
 /// Trusted native Chat selection context; never passed to a product.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct NativeChatFilePickRequest {
     /// Authenticated product requesting selection.
     pub product_id: String,
@@ -1399,7 +1426,10 @@ pub struct NativeChatFilePickRequest {
 
 /// Immutable Host-owned source and metadata derived from its actual bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct NativeChatPickedFile {
     /// Opaque private handle surviving restart until explicitly released.
     pub source_id: String,
@@ -1409,7 +1439,10 @@ pub struct NativeChatPickedFile {
 
 /// Trusted context for exporting a verified native Chat attachment.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct NativeChatFileExportRequest {
     /// Authenticated product requesting presentation.
     pub product_id: String,
@@ -3014,9 +3047,25 @@ pub struct IdentityDisclosureReview {
 
 /// Review shown before a product binds or uses wallet-held Chat identity authority.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct ChatAuthorityReview {
     /// Product requesting the Chat identity operation.
+    pub product_id: String,
+}
+
+/// Review shown before a product first discloses a profile reference to the
+/// user's Chat contacts. The host relays it to every contact, so the prompt
+/// names the product, never the contacts or the reference.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct ProfileDisclosureReview {
+    /// Product asking to disclose the profile.
     pub product_id: String,
 }
 
@@ -3025,7 +3074,10 @@ pub struct ChatAuthorityReview {
 /// This review never grants a reusable spending permission. Chat authority and
 /// automatic product signing do not authorize it.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct MainPurseChatPaymentReview {
     /// Authenticated product requesting this payment.
     pub calling_product_id: String,
@@ -3368,8 +3420,139 @@ pub trait GamePlatform: Send + Sync {
 		starts_at: u64,
 	) -> Result<(), GenericError>;
 
-	/// Drop the product's reminder. Idempotent: dropping none succeeds.
-	async fn cancel_game_reminder(&self, product: &ProductContext) -> Result<(), GenericError>;
+    /// Show a profile a Chat contact shared with the user, for the product
+    /// that asked with `profile.presentContact`. Same contract as
+    /// [`ProfilePlatform::present_profile`]: return once it is shown, and
+    /// report an unparseable reference as `InvalidReference`.
+    ///
+    /// The core holds this reference because it arrived over the
+    /// authenticated Chat channel from `peer_identity`'s own device, so the
+    /// host can name that contact as who shared it, rather than the product
+    /// that asked. It cannot vouch for more: the record behind the reference
+    /// is not signed by its owner, so a contact can forward someone else's
+    /// reference. The default presents it as
+    /// [`ProfilePlatform::present_profile`] would, without the contact.
+    async fn present_contact_profile(
+        &self,
+        product: &ProductContext,
+        presented: PresentedContactProfile,
+    ) -> Result<(), HostProfilePresentError> {
+        self.present_profile(
+            product,
+            HostProfilePresentRequest {
+                reference: presented.reference,
+            },
+        )
+        .await
+    }
+
+    /// Draw the contact avatars a product placed, on the host's own layer over
+    /// the product's surface, replacing what was drawn for it before; an empty
+    /// `avatars` clears it. The layer must let pointer input through to the
+    /// product and must never tell the product what it drew.
+    ///
+    /// The core calls this again, with the product's last geometry, whenever
+    /// a contact on it shares, re-shares or withdraws a profile, and with no
+    /// avatars once
+    /// the product's connection goes away. Answer `Unsupported` if this host
+    /// cannot draw over the product; the product is told so. The default draws
+    /// nothing.
+    async fn place_contact_avatars(
+        &self,
+        product: &ProductContext,
+        placed: PlacedAvatars,
+    ) -> Result<(), HostProfilePlaceContactAvatarsError> {
+        let _ = (product, placed);
+        Ok(())
+    }
+}
+
+/// A profile a Chat contact shared with the user, with the contact who sent
+/// it.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct PresentedContactProfile {
+    /// The profile reference the contact disclosed. A bearer capability, as
+    /// in [`ProfilePlatform::present_profile`].
+    pub reference: String,
+    /// The contact whose authenticated Chat device delivered the reference:
+    /// who shared it, not necessarily whose profile it is.
+    pub peer_identity: [u8; 32],
+    /// When the contact's host sent the share, in Unix milliseconds, as in
+    /// [`PlacedAvatar::shared_at`].
+    pub shared_at: u64,
+    /// The contact's username, when the core knows one: the name its Chat
+    /// roster holds for `peer_identity`, verified when the contact was bound
+    /// or first authenticated, else the peer's verified dotNS name. Never a
+    /// name from the product. `None` when neither is known in time; show the
+    /// contact without a name then, never by address.
+    pub username: Option<String>,
+}
+
+impl core::fmt::Debug for PresentedContactProfile {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PresentedContactProfile")
+            .field("reference", &"[REDACTED]")
+            .field("peer_identity", &self.peer_identity)
+            .field("shared_at", &self.shared_at)
+            .field("username", &self.username)
+            .finish()
+    }
+}
+
+/// The avatars the core found drawable in one product's placement: the slots
+/// whose contact shared a profile with the user, each with the reference that
+/// contact disclosed.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct PlacedAvatars {
+    /// Width of the product's surface, in the units of every rect.
+    pub surface_width: u32,
+    /// Height of the product's surface, in the same units.
+    pub surface_height: u32,
+    /// Avatars to draw, in the product's slot order.
+    pub avatars: Vec<PlacedAvatar>,
+}
+
+/// One avatar to draw over a product.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct PlacedAvatar {
+    /// The product's id for this on-screen avatar, stable across updates.
+    pub slot: u32,
+    /// Bounding box of the avatar circle, in surface units.
+    pub rect: AvatarRect,
+    /// Visible region the avatar is cut to, in surface units.
+    pub clip: AvatarRect,
+    /// The profile reference the contact disclosed. A bearer capability, as
+    /// in [`ProfilePlatform::present_profile`].
+    pub reference: String,
+    /// When the contact's host sent the share this reflects, in Unix
+    /// milliseconds. A contact re-shares the same reference when the record
+    /// behind it changes; a larger `shared_at` for the same reference means
+    /// any cached copy of that profile is stale.
+    pub shared_at: u64,
+}
+
+impl core::fmt::Debug for PlacedAvatar {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PlacedAvatar")
+            .field("slot", &self.slot)
+            .field("rect", &self.rect)
+            .field("clip", &self.clip)
+            .field("reference", &"[REDACTED]")
+            .field("shared_at", &self.shared_at)
+            .finish()
+    }
 }
 
 /// What the operating system currently says about a device capability.

@@ -9,7 +9,10 @@ use parity_scale_codec::{Decode, Encode};
 /// it names. The host resolves and renders it itself, so profile bytes, the
 /// avatar image included, never reach the product.
 #[derive(Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct HostProfilePresentRequest {
     /// Opaque profile reference, e.g. a Seity `<cid>#<key>` blob reference.
     pub reference: String,
@@ -25,7 +28,10 @@ impl fmt::Debug for HostProfilePresentRequest {
 
 /// Profile presentation failure.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum HostProfilePresentError {
     /// The reference is malformed or names a format this host cannot open.
     InvalidReference,
@@ -41,7 +47,10 @@ pub enum HostProfilePresentError {
 /// The reference is a bearer capability for everyone the host relays it to.
 /// The host stores it as the user's own and never parses it.
 #[derive(Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct HostProfileDiscloseRequest {
     /// Opaque profile reference, e.g. a Seity contacts reference.
     pub reference: String,
@@ -57,7 +66,10 @@ impl fmt::Debug for HostProfileDiscloseRequest {
 
 /// Profile disclosure failure.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum HostProfileDiscloseError {
     /// The reference is empty, too long, or not printable ASCII.
     InvalidReference,
@@ -75,7 +87,10 @@ pub enum HostProfileDiscloseError {
 
 /// Profile retraction failure.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum HostProfileRetractError {
     /// Another product disclosed the reference the host holds.
     NotDiscloser,
@@ -94,7 +109,10 @@ pub enum HostProfileRetractError {
 /// reference that contact's host sent, so the product cannot read, keep or
 /// substitute it.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct HostProfilePresentContactRequest {
     /// The contact's authenticated root identity, as the chat API names it.
     pub peer_identity: [u8; 32],
@@ -102,7 +120,10 @@ pub struct HostProfilePresentContactRequest {
 
 /// Contact profile presentation failure.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum HostProfilePresentContactError {
     /// This contact has not shared a profile with the user.
     NotShared,
@@ -123,7 +144,10 @@ pub enum HostProfilePresentContactError {
 /// The product sends geometry only. The host decides which slots it can fill
 /// and never says which, so the product cannot learn who shared a profile.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct HostProfilePlaceContactAvatarsRequest {
     /// Width of the product's drawing surface, in the units of every rect:
     /// framebuffer pixels for a PolkaVM product, CSS pixels of its viewport
@@ -138,7 +162,10 @@ pub struct HostProfilePlaceContactAvatarsRequest {
 
 /// One avatar the product draws for a chat contact.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct ContactAvatarSlot {
     /// Product-chosen id, stable for one on-screen avatar (a list row, a
     /// header). The host uses it only to keep what it draws stable across
@@ -154,7 +181,10 @@ pub struct ContactAvatarSlot {
 
 /// A rectangle in surface units, relative to the surface's top-left corner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct AvatarRect {
     /// Left edge.
     pub x: i32,
@@ -168,7 +198,10 @@ pub struct AvatarRect {
 
 /// Contact avatar placement failure. Says nothing about any one slot.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum HostProfilePlaceContactAvatarsError {
     /// This host cannot draw over the product's surface.
     Unsupported,
