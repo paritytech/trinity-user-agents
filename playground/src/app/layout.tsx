@@ -1,26 +1,38 @@
 import type { Metadata, Viewport } from "next";
-import { Instrument_Serif, Geist, JetBrains_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import packageJson from "../../package.json";
 
-const serif = Instrument_Serif({
-  subsets: ["latin"],
-  weight: "400",
-  style: ["normal", "italic"],
+const serif = localFont({
+  src: [
+    {
+      path: "./fonts/InstrumentSerif-Regular.ttf",
+      weight: "400",
+      style: "normal",
+    },
+    {
+      path: "./fonts/InstrumentSerif-Italic.ttf",
+      weight: "400",
+      style: "italic",
+    },
+  ],
+  adjustFontFallback: "Times New Roman",
   variable: "--font-serif",
   display: "swap",
 });
 
-const sans = Geist({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+const sans = localFont({
+  src: "./fonts/Geist.ttf",
+  weight: "400 700",
+  style: "normal",
   variable: "--font-sans",
   display: "swap",
 });
 
-const mono = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
+const mono = localFont({
+  src: "./fonts/JetBrainsMono.ttf",
+  weight: "400 600",
+  style: "normal",
   variable: "--font-mono",
   display: "swap",
 });
