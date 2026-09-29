@@ -37,3 +37,4 @@ Add `profile.ownStatus` and `profile.presentOwn`, and an optional `own` slot in 
 the host to present it without receiving the bearer reference. The core fills the own slot from the user's disclosure
 and hands it to the existing callback in the same replacement set as the contact avatars, redraws it when the user
 discloses or retracts, and still reveals nothing per slot. Version 1 placements keep working unchanged.
+The avatar regression suite also exercises version-1 response downgrading alongside the version-2 own-profile slot.

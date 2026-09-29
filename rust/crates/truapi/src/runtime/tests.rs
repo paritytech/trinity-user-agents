@@ -3763,7 +3763,10 @@ fn place_avatars(
         &CallContext::default(),
         HostProfilePlaceContactAvatarsRequest::V1(request),
     ))
-    .map(|response| HostProfilePlaceContactAvatarsResponse::from_latest(response.into_latest(), 1))
+    .map(|response| {
+        let () = response.into_latest();
+        HostProfilePlaceContactAvatarsResponse::from_latest((), 1)
+    })
     .map_err(|error| truapi::frame::downgrade_call_error(error, 1))
 }
 
