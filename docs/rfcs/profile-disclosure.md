@@ -251,6 +251,9 @@ forward another person's reference as their own. Nor can copies be erased: a ref
 whoever received it, directly or forwarded, keeps it and what it resolved; a retraction only stops a receiving host from
 presenting it.
 
+`own_status` reports only whether the signed-in wallet has a current disclosure. `present_own` resolves that disclosure
+and hands it to the same host presenter. Neither method returns the reference or profile contents to the product.
+
 ### Placed avatars
 
 A chat product draws its own conversation list and header, so only it knows where each contact's avatar sits. It sends
@@ -270,6 +273,12 @@ The core remembers the last placement per product connection, in memory. When a 
 re-shared in a newer frame or is withdrawn it filters the same geometry again and calls the host again, so avatars appear and disappear without the
 product sending anything. Disposing the connection, or a placement made after the user signed out, clears what the host
 drew.
+
+Version 2 of `place_contact_avatars` adds an optional `own` slot for where the product draws the signed-in user's own
+avatar. The core fills it from the wallet's current disclosure, with `shared_at` set to the disclosure's revision, and
+hands it to the host in the same `PlacedAvatars` set as the contact avatars, so one placement never replaces another's
+overlay. Slot ids are unique across `own` and the contact slots. Disclosing or retracting redraws every remembered
+placement for that wallet, as a contact's reference change does. A version 1 placement is one with no own slot.
 
 No leak: the product must not learn who shared a profile. The core answers `Ok` to any well-formed placement from a
 signed-in user however many avatars, if any, are drawn; it returns nothing per slot, logs nothing about slots, and

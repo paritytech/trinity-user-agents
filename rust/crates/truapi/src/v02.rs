@@ -6,6 +6,8 @@
 
 mod account;
 mod local_storage;
+mod profile;
 
 pub use account::*;
 pub use local_storage::*;
+pub use profile::*;

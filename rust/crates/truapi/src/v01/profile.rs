@@ -196,6 +196,54 @@ pub struct AvatarRect {
     pub height: u32,
 }
 
+/// Whether the signed-in user currently has a profile disclosed through the
+/// host. The reference itself never crosses into the product.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct HostProfileOwnStatusResponse {
+    /// `true` when the host holds a current own-profile reference.
+    pub configured: bool,
+}
+
+/// Failure while querying the signed-in user's profile status.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum HostProfileOwnStatusError {
+    /// No user is signed in.
+    NotConnected,
+    /// Catch-all.
+    Unknown {
+        /// Human-readable reason.
+        reason: String,
+    },
+}
+
+/// Failure while presenting the signed-in user's profile.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum HostProfilePresentOwnError {
+    /// The signed-in user has not configured a profile.
+    NotConfigured,
+    /// The host holds a reference it cannot parse.
+    InvalidReference,
+    /// No user is signed in.
+    NotConnected,
+    /// Catch-all.
+    Unknown {
+        /// Human-readable reason.
+        reason: String,
+    },
+}
+
 /// Contact avatar placement failure. Says nothing about any one slot.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(

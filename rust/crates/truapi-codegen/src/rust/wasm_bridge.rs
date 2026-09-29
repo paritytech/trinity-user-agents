@@ -654,52 +654,63 @@ fn validate_error_type(err: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<()> {
 	validate_error_name(name, ctx, &mut seen)
 }
 
+/// `seen` holds the envelopes on the path from the root, not every name
+/// visited: two versions of one envelope may carry the same payload, which is
+/// sharing, not recursion.
 fn validate_error_name<'a>(
 	name: &'a str,
 	ctx: &BridgeCtx<'a>,
 	seen: &mut BTreeSet<&'a str>,
 ) -> Result<()> {
-	if name == "GenericError" {
-		return Ok(());
-	}
-	if !seen.insert(name) {
-		bail!("platform error type `{name}` contains a recursive alias/envelope");
-	}
-	let Some(type_def) = resolve_alias_type(name, ctx) else {
-		bail!("platform error type `{name}` is not present in the API definition");
-	};
-	let TypeDefKind::Enum(variants) = &type_def.kind else {
-		bail!("platform error type `{name}` must resolve to an enum");
-	};
-	let has_unknown_reason = variants.iter().any(|variant| {
-		variant.name == "Unknown" &&
-			matches!(
-				&variant.fields,
-				VariantFields::Named(fields)
-					if fields.iter().any(|field| {
-						field.name == "reason" && is_string(&field.type_ref)
-					})
-			)
-	});
-	if !has_unknown_reason {
-		let versioned_payloads = variants
-			.iter()
-			.filter_map(|variant| match &variant.fields {
-				VariantFields::Unnamed(types) if types.len() == 1 => Some(&types[0]),
-				_ => None,
-			})
-			.collect::<Vec<_>>();
-		if !versioned_payloads.is_empty() && versioned_payloads.len() == variants.len() {
-			// Each version walks its own path: two versions sharing one
-			// payload type are siblings, not a cycle.
-			for payload in versioned_payloads {
-				validate_error_name(named_type_name(payload)?, ctx, &mut seen.clone())?;
-			}
-			return Ok(());
-		}
-		bail!("platform error type `{name}` must define `Unknown {{ reason: String }}`");
-	}
-	Ok(())
+    if name == "GenericError" {
+        return Ok(());
+    }
+    if !seen.insert(name) {
+        bail!("platform error type `{name}` contains a recursive alias/envelope");
+    }
+    let result = validate_error_def(name, ctx, seen);
+    seen.remove(name);
+    result
+}
+
+fn validate_error_def<'a>(
+    name: &'a str,
+    ctx: &BridgeCtx<'a>,
+    seen: &mut BTreeSet<&'a str>,
+) -> Result<()> {
+    let Some(type_def) = resolve_alias_type(name, ctx) else {
+        bail!("platform error type `{name}` is not present in the API definition");
+    };
+    let TypeDefKind::Enum(variants) = &type_def.kind else {
+        bail!("platform error type `{name}` must resolve to an enum");
+    };
+    let has_unknown_reason = variants.iter().any(|variant| {
+        variant.name == "Unknown"
+            && matches!(
+                &variant.fields,
+                VariantFields::Named(fields)
+                    if fields.iter().any(|field| {
+                        field.name == "reason" && is_string(&field.type_ref)
+                    })
+            )
+    });
+    if !has_unknown_reason {
+        let versioned_payloads = variants
+            .iter()
+            .filter_map(|variant| match &variant.fields {
+                VariantFields::Unnamed(types) if types.len() == 1 => Some(&types[0]),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !versioned_payloads.is_empty() && versioned_payloads.len() == variants.len() {
+            for payload in versioned_payloads {
+                validate_error_name(named_type_name(payload)?, ctx, seen)?;
+            }
+            return Ok(());
+        }
+        bail!("platform error type `{name}` must define `Unknown {{ reason: String }}`");
+    }
+    Ok(())
 }
 
 fn resolve_alias_type<'a>(name: &'a str, ctx: &BridgeCtx<'a>) -> Option<&'a TypeDef> {

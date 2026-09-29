@@ -2045,9 +2045,10 @@ fn contact_avatars_over_the_product_follow_what_the_contact_shares() {
         placement
             .place(
                 profile::profile_owner(&fixture.context),
-                truapi::v01::HostProfilePlaceContactAvatarsRequest {
+                truapi::v02::HostProfilePlaceContactAvatarsRequest {
                     surface_width: 360,
                     surface_height: 640,
+                    own: None,
                     slots: vec![truapi::v01::ContactAvatarSlot {
                         slot: 7,
                         peer_identity: identity.account,

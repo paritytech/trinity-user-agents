@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "474f1270d1b5ac35";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "df3802dbfb5dcf65";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1960,6 +1960,60 @@ impl RequestMethod for ProfilePlaceContactAvatars {
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
+/// `profile_own_status` method marker.
+pub struct ProfileOwnStatus;
+impl ProfileOwnStatus {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Profile",
+        method: "own_status",
+        wire_name: "profile_own_status",
+        request_type: "truapi::versioned::profile::HostProfileOwnStatusRequest",
+        response_type: "truapi::versioned::profile::HostProfileOwnStatusResponse",
+        error_type: Some("truapi::versioned::profile::HostProfileOwnStatusError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 69,
+            method_id: 5,
+        }),
+    };
+}
+impl RequestMethod for ProfileOwnStatus {
+    type Request = truapi::versioned::profile::HostProfileOwnStatusRequest;
+    type Response = truapi::versioned::profile::HostProfileOwnStatusResponse;
+    type Error = truapi::versioned::profile::HostProfileOwnStatusError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `profile_present_own` method marker.
+pub struct ProfilePresentOwn;
+impl ProfilePresentOwn {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Profile",
+        method: "present_own",
+        wire_name: "profile_present_own",
+        request_type: "truapi::versioned::profile::HostProfilePresentOwnRequest",
+        response_type: "truapi::versioned::profile::HostProfilePresentOwnResponse",
+        error_type: Some("truapi::versioned::profile::HostProfilePresentOwnError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 69,
+            method_id: 6,
+        }),
+    };
+}
+impl RequestMethod for ProfilePresentOwn {
+    type Request = truapi::versioned::profile::HostProfilePresentOwnRequest;
+    type Response = truapi::versioned::profile::HostProfilePresentOwnResponse;
+    type Error = truapi::versioned::profile::HostProfilePresentOwnError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
 /// `renderer_render` method marker.
 pub struct RendererRender;
 impl RendererRender {
@@ -2580,6 +2634,8 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     ProfileRetract::DESCRIPTOR,
     ProfilePresentContact::DESCRIPTOR,
     ProfilePlaceContactAvatars::DESCRIPTOR,
+    ProfileOwnStatus::DESCRIPTOR,
+    ProfilePresentOwn::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,
     SigningCreateTransaction::DESCRIPTOR,
     SigningCreateTransactionWithLegacyAccount::DESCRIPTOR,
@@ -2663,6 +2719,8 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     ProfileRetract::DESCRIPTOR,
     ProfilePresentContact::DESCRIPTOR,
     ProfilePlaceContactAvatars::DESCRIPTOR,
+    ProfileOwnStatus::DESCRIPTOR,
+    ProfilePresentOwn::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,
     SigningCreateTransaction::DESCRIPTOR,
     SigningCreateTransactionWithLegacyAccount::DESCRIPTOR,
@@ -2752,6 +2810,8 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     ProfileRetract::DESCRIPTOR,
     ProfilePresentContact::DESCRIPTOR,
     ProfilePlaceContactAvatars::DESCRIPTOR,
+    ProfileOwnStatus::DESCRIPTOR,
+    ProfilePresentOwn::DESCRIPTOR,
     RendererRender::DESCRIPTOR,
     RendererActionSubscribe::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,

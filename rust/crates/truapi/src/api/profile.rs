@@ -2,9 +2,11 @@
 
 use crate::versioned::profile::{
     HostProfileDiscloseError, HostProfileDiscloseRequest, HostProfileDiscloseResponse,
+    HostProfileOwnStatusError, HostProfileOwnStatusRequest, HostProfileOwnStatusResponse,
     HostProfilePlaceContactAvatarsError, HostProfilePlaceContactAvatarsRequest,
     HostProfilePlaceContactAvatarsResponse, HostProfilePresentContactError,
     HostProfilePresentContactRequest, HostProfilePresentContactResponse, HostProfilePresentError,
+    HostProfilePresentOwnError, HostProfilePresentOwnRequest, HostProfilePresentOwnResponse,
     HostProfilePresentRequest, HostProfilePresentResponse, HostProfileRetractError,
     HostProfileRetractRequest, HostProfileRetractResponse,
 };
@@ -99,11 +101,13 @@ pub trait Profile: Send + Sync {
         Err(CallError::unavailable())
     }
 
-    /// Tell the host where this product draws chat contacts' avatars, so it
-    /// can draw each contact's shared photo and mood ring over them on its own
-    /// layer.
+    /// Tell the host where this product draws chat contacts' avatars, and
+    /// optionally the signed-in user's own, so it can draw each shared photo
+    /// and mood ring over them on its own layer.
     ///
-    /// Each call replaces the product's placement; an empty `slots` clears it.
+    /// Each call replaces the product's placement; an empty `slots` and no
+    /// `own` clears it. The own slot is filled only while the user has
+    /// disclosed a profile, and redrawn when they disclose or retract one.
     /// The host draws only for contacts who shared a profile with the user,
     /// and keeps the placement current as they share or withdraw one, until
     /// the product replaces it or goes away. The answer is the same whoever
@@ -115,14 +119,19 @@ pub trait Profile: Send + Sync {
     /// product gives: framebuffer pixels for a PolkaVM product, CSS pixels of
     /// its viewport for a web product. A placement with more than 64 slots, a
     /// surface side outside 1 to 16384, an avatar that is not square or is
-    /// outside 1 to 1024 a side, or a repeated `slot` is `Unknown`. A host that
-    /// cannot draw over the product is `Unsupported`; with no user signed in
-    /// the call is `NotConnected`.
+    /// outside 1 to 1024 a side, or a `slot` repeated across `own` and `slots`
+    /// is `Unknown`. A host that cannot draw over the product is
+    /// `Unsupported`; with no user signed in the call is `NotConnected`.
     ///
     /// ```ts
     /// const result = await truapi.profile.placeContactAvatars({
     ///   surfaceWidth: 360,
     ///   surfaceHeight: 640,
+    ///   own: {
+    ///     slot: 1,
+    ///     rect: { x: 300, y: 16, width: 44, height: 44 },
+    ///     clip: { x: 0, y: 0, width: 360, height: 640 },
+    ///   },
     ///   slots: [
     ///     {
     ///       slot: 0,
@@ -143,6 +152,39 @@ pub trait Profile: Send + Sync {
         HostProfilePlaceContactAvatarsResponse,
         CallError<HostProfilePlaceContactAvatarsError>,
     > {
+        Err(CallError::unavailable())
+    }
+
+    /// Report whether the signed-in user has configured a profile.
+    ///
+    /// Only the boolean status returns. The profile reference and contents
+    /// remain host-owned.
+    ///
+    /// ```ts
+    /// const result = await truapi.profile.ownStatus();
+    /// console.log("own profile configured:", result);
+    /// ```
+    #[wire(id = 5)]
+    async fn own_status(
+        &self,
+        _cx: &CallContext,
+        _request: HostProfileOwnStatusRequest,
+    ) -> Result<HostProfileOwnStatusResponse, CallError<HostProfileOwnStatusError>> {
+        Err(CallError::unavailable())
+    }
+
+    /// Show the signed-in user's profile in host-owned UI.
+    ///
+    /// ```ts
+    /// const result = await truapi.profile.presentOwn();
+    /// console.log("own profile presentation:", result);
+    /// ```
+    #[wire(id = 6)]
+    async fn present_own(
+        &self,
+        _cx: &CallContext,
+        _request: HostProfilePresentOwnRequest,
+    ) -> Result<HostProfilePresentOwnResponse, CallError<HostProfilePresentOwnError>> {
         Err(CallError::unavailable())
     }
 }

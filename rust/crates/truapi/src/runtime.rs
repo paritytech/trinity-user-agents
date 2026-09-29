@@ -145,6 +145,16 @@ use truapi::versioned::pocket::{
     HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPocketRemoveCardResponse,
 };
 use truapi::versioned::preimage::RemotePreimageSubmitError;
+use truapi::versioned::profile::{
+    HostProfileDiscloseError, HostProfileDiscloseRequest, HostProfileDiscloseResponse,
+    HostProfileOwnStatusError, HostProfileOwnStatusRequest, HostProfileOwnStatusResponse,
+    HostProfilePlaceContactAvatarsError, HostProfilePlaceContactAvatarsRequest,
+    HostProfilePlaceContactAvatarsResponse, HostProfilePresentContactError,
+    HostProfilePresentContactRequest, HostProfilePresentContactResponse, HostProfilePresentError,
+    HostProfilePresentOwnError, HostProfilePresentOwnRequest, HostProfilePresentOwnResponse,
+    HostProfilePresentRequest, HostProfilePresentResponse, HostProfileRetractError,
+    HostProfileRetractRequest, HostProfileRetractResponse,
+};
 use truapi::versioned::renderer::{
     HostRendererActionSubscribeError, HostRendererActionSubscribeItem,
     HostRendererActionSubscribeRequest,
@@ -1752,6 +1762,9 @@ impl Profile for ProductRuntimeHost {
             .await
             .map_err(|reason| domain(v01::HostProfileDiscloseError::Unknown { reason }))?;
         self.profile_disclosure_changed();
+        self.services
+            .contact_avatars
+            .redraw_owner(owner, &self.services.spawner);
         Ok(HostProfileDiscloseResponse::V1)
     }
 
@@ -1784,6 +1797,9 @@ impl Profile for ProductRuntimeHost {
                     .await
                     .map_err(unknown)?;
                 self.profile_disclosure_changed();
+                self.services
+                    .contact_avatars
+                    .redraw_owner(owner, &self.services.spawner);
                 Ok(HostProfileRetractResponse::V1)
             }
         }
@@ -1866,8 +1882,9 @@ impl Profile for ProductRuntimeHost {
             return Err(CallError::Denied);
         }
         let platform = self.profile_platform()?;
-        let HostProfilePlaceContactAvatarsRequest::V1(request) = request;
-        let domain = |error| CallError::Domain(HostProfilePlaceContactAvatarsError::V1(error));
+        // A v0.1 placement is a v0.2 one with no own slot.
+        let request = truapi::versioned::IntoLatest::into_latest(request);
+        let domain = |error| CallError::Domain(HostProfilePlaceContactAvatarsError::V2(error));
         profile::avatars::validate(&request).map_err(|reason| {
             domain(v01::HostProfilePlaceContactAvatarsError::Unknown { reason })
         })?;
@@ -1891,8 +1908,71 @@ impl Profile for ProductRuntimeHost {
         placement
             .place(owner, request)
             .await
-            .map(|()| HostProfilePlaceContactAvatarsResponse::V1)
+            .map(|()| HostProfilePlaceContactAvatarsResponse::V2)
             .map_err(domain)
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "profile.own_status"))]
+    async fn own_status(
+        &self,
+        _cx: &CallContext,
+        _request: HostProfileOwnStatusRequest,
+    ) -> Result<HostProfileOwnStatusResponse, CallError<HostProfileOwnStatusError>> {
+        let domain = |error| CallError::Domain(HostProfileOwnStatusError::V1(error));
+        let owner = self
+            .profile_owner()
+            .ok_or_else(|| domain(v01::HostProfileOwnStatusError::NotConnected))?;
+        let disclosure = profile::read_disclosure(self.platform.as_ref(), owner)
+            .await
+            .map_err(|reason| domain(v01::HostProfileOwnStatusError::Unknown { reason }))?;
+        if disclosure
+            .as_ref()
+            .is_some_and(|disclosure| !is_screened_profile_reference(&disclosure.reference))
+        {
+            return Err(domain(v01::HostProfileOwnStatusError::Unknown {
+                reason: "stored profile disclosure is invalid".into(),
+            }));
+        }
+        Ok(HostProfileOwnStatusResponse::V1(
+            v01::HostProfileOwnStatusResponse {
+                configured: disclosure.is_some(),
+            },
+        ))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "profile.present_own"))]
+    async fn present_own(
+        &self,
+        _cx: &CallContext,
+        _request: HostProfilePresentOwnRequest,
+    ) -> Result<HostProfilePresentOwnResponse, CallError<HostProfilePresentOwnError>> {
+        let platform = self.profile_platform()?;
+        let domain = |error| CallError::Domain(HostProfilePresentOwnError::V1(error));
+        let owner = self
+            .profile_owner()
+            .ok_or_else(|| domain(v01::HostProfilePresentOwnError::NotConnected))?;
+        let reference = profile::read_disclosure(self.platform.as_ref(), owner)
+            .await
+            .map_err(|reason| domain(v01::HostProfilePresentOwnError::Unknown { reason }))?
+            .map(|disclosure| disclosure.reference)
+            .ok_or_else(|| domain(v01::HostProfilePresentOwnError::NotConfigured))?;
+        if !is_screened_profile_reference(&reference) {
+            return Err(domain(v01::HostProfilePresentOwnError::InvalidReference));
+        }
+        platform
+            .present_profile(&self.product, v01::HostProfilePresentRequest { reference })
+            .await
+            .map(|()| HostProfilePresentOwnResponse::V1)
+            .map_err(|error| {
+                domain(match error {
+                    v01::HostProfilePresentError::InvalidReference => {
+                        v01::HostProfilePresentOwnError::InvalidReference
+                    }
+                    v01::HostProfilePresentError::Unknown { reason } => {
+                        v01::HostProfilePresentOwnError::Unknown { reason }
+                    }
+                })
+            })
     }
 }
 
