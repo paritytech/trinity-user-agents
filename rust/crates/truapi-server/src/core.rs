@@ -187,15 +187,20 @@ mod tests {
     use crate::frame::{Payload, request_ids, subscription_ids};
     use crate::test_support::{StubPlatform, runtime_config, test_spawner};
 
+    /// A dial needs the user's `JamPeers` grant for its genesis, so a refusal
+    /// answers `NotGranted` before anything connects. The browser core never
+    /// asks: its JavaScript session serves trait 111 before frames reach it.
     #[test]
-    fn a_published_product_has_no_implicit_jam_peer_transport_grant() {
+    fn a_dial_the_user_refuses_is_not_granted() {
+        let genesis = [0x35; 32];
+        let platform = Arc::new(StubPlatform {
+            remote_permission_denied: true,
+            ..Default::default()
+        });
+        let asked = platform.remote_permission_requests.clone();
         let (host_config, product) = runtime_config("dotli.dot");
-        let core = TrUApiCore::from_platform_with_config(
-            Arc::new(StubPlatform::default()),
-            host_config,
-            product,
-            test_spawner(),
-        );
+        let core =
+            TrUApiCore::from_platform_with_config(platform, host_config, product, test_spawner());
         let ids = request_ids("jam_peer_transport_dial").expect("registered peer transport");
         let frame = ProtocolMessage {
             request_id: "p:peer".into(),
@@ -205,7 +210,7 @@ mod tests {
                 message_type: crate::frame::MESSAGE_TYPE_REQUEST,
                 value: truapi::versioned::jam_peer_transport::HostJamPeerTransportDialRequest::V1(
                     truapi::latest::HostJamPeerTransportDialRequest {
-                        genesis: [0x35; 32],
+                        genesis,
                         ip: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1],
                         port: 43000,
                         ed25519: [0; 32],
@@ -217,19 +222,32 @@ mod tests {
         };
         let response = futures::executor::block_on(core.receive_from_product(&frame.encode()))
             .expect("registered method must answer explicitly");
+        let prompted = if cfg!(target_arch = "wasm32") {
+            vec![]
+        } else {
+            vec![v01::RemotePermissionRequest {
+                permission: v01::RemotePermission::JamPeers { genesis },
+            }]
+        };
         assert_eq!(
-            ProtocolMessage::decode(&mut &response[..])
-                .unwrap()
-                .payload
-                .value,
-            Err::<truapi::versioned::jam_peer_transport::HostJamPeerTransportDialResponse, _>(
-                truapi::CallError::Domain(
-                    truapi::versioned::jam_peer_transport::HostJamPeerTransportDialError::V1(
-                        truapi::latest::HostJamPeerTransportDialError::NotGranted,
+            (
+                ProtocolMessage::decode(&mut &response[..])
+                    .unwrap()
+                    .payload
+                    .value,
+                asked.lock().unwrap().clone(),
+            ),
+            (
+                Err::<truapi::versioned::jam_peer_transport::HostJamPeerTransportDialResponse, _>(
+                    truapi::CallError::Domain(
+                        truapi::versioned::jam_peer_transport::HostJamPeerTransportDialError::V1(
+                            truapi::latest::HostJamPeerTransportDialError::NotGranted,
+                        ),
                     ),
-                ),
-            )
-            .encode(),
+                )
+                .encode(),
+                prompted,
+            ),
         );
     }
 

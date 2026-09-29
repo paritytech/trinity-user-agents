@@ -245,6 +245,30 @@ return an absent value and open a second purse. This refuses incoming claims as 
 identity-only wallet loader is not another allocator; a single Host runtime may own the purse while that loader retains
 responsibility for secure unlock.
 
+#### JAM peer transport
+
+Native product runtimes (iOS, Android, CLI) serve `JamPeerTransport` (trait
+111) themselves over JAMNP-S QUIC, with one endpoint per product connection.
+Every `dial` first requires `RemotePermission::JamPeers { genesis }` through the
+flow above. The connection asks once per genesis: concurrent dials wait for the
+same prompt, a refusal stays `NotGranted` for the connection, and the answer is
+persisted even when every dial waiting on it has given up.
+
+- A dial answers within 10 seconds, prompt included. One still waiting then
+  answers `Unreachable`, a cancelled one `Cancelled`, and what it would have
+  opened is dropped without holding one of the 8 connection slots.
+- The ALPN is `jam_peer_transport::alpn(genesis)`, and the peer certificate
+  must carry the Ed25519 key the dial names. The P-256 key is for WebTransport
+  hosts and is ignored.
+- The first granted dial creates the endpoint, so a refused product binds no
+  socket. Disposing the connection closes every peer connection, and later
+  calls are `Denied`.
+
+The browser core keeps the trait's `NotGranted` defaults, because its
+JavaScript session answers trait 111 before frames reach the core.
+`cargo test -p truapi-server --test live_jam_public_devnet -- --include-ignored`
+dials the public JAM devnet through a product runtime.
+
 ### The two roles
 
 Both implement the role-neutral **`ProductAuthority`** trait; each owns its role-specific lifecycle, so no method exists

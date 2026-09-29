@@ -28,7 +28,11 @@ dwarf-debug-info = false
 [features]
 default = ["wasm-signing-host"]
 wasm-signing-host = []
-ws-bridge = ["dep:tokio", "dep:tokio-tungstenite", "dep:rand", "dep:base64"]
+# Test-host-only shortcuts a shipping host must not carry, such as answering
+# resource allocation as granted without allocating anything.
+test-host = []
+debug-sink = ["dep:tokio-tungstenite", "dep:base64"]
+ws-bridge = ["debug-sink", "dep:rand", "dep:libc"]
 
 [dependencies]
 truapi = { path = "../truapi" }
@@ -75,12 +79,21 @@ truapi = { path = "../truapi", features = ["uniffi"] }
 truapi-platform = { path = "../truapi-platform", features = ["uniffi"] }
 futures = { version = "0.3", features = ["thread-pool"] }
 rand = { version = "0.8", optional = true }
-tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "macros", "io-util", "time"], optional = true }
-tokio-tungstenite = { version = "0.21", default-features = false, features = ["handshake"], optional = true }
+libc = { version = "0.2", optional = true }
+# Drives the JamPeerTransport QUIC endpoint, and the debug sink's WebSocket.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "macros", "io-util", "time"] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"], optional = true }
 uniffi.workspace = true
 subxt = { version = "0.50.3", default-features = false, features = ["native"] }
 subxt-rpcs = { version = "0.50.3", default-features = false, features = ["jsonrpsee", "native"] }
 base64 = { version = "0.22", optional = true }
+# JAMNP-S QUIC for the native JamPeerTransport; the browser dials WebTransport
+# from its JavaScript session instead.
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
+ring = "0.17"
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
+x509-parser = "0.17"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 futures-timer = { version = "3", features = ["wasm-bindgen"] }

@@ -34,6 +34,7 @@ internal val ProductPermission.icon: ImageVector
         ProductPermission.RemotePermission.ChainSubmitAccess -> NovaIcons.Send
         ProductPermission.RemotePermission.StatementSubmitAccess -> NovaIcons.CloudOn
         ProductPermission.RemotePermission.PreimageSubmitAccess -> NovaIcons.CloudOn
+        is ProductPermission.RemotePermission.JamPeersAccess -> NovaIcons.WiFi
     }
 
 private val DeviceCapabilityType.icon: ImageVector
@@ -62,6 +63,7 @@ internal fun ProductPermission.title(productId: String): String {
         ProductPermission.RemotePermission.ChainSubmitAccess -> stringResource(RCommon.string.product_permission_chain_submit_title, productId)
         ProductPermission.RemotePermission.StatementSubmitAccess -> stringResource(RCommon.string.product_permission_statement_submit_title, productId)
         ProductPermission.RemotePermission.PreimageSubmitAccess -> stringResource(RCommon.string.product_permission_preimage_submit_title, productId)
+        is ProductPermission.RemotePermission.JamPeersAccess -> stringResource(RCommon.string.product_permission_jam_peers_title, productId, shortGenesis)
     }
 }
 
@@ -95,6 +97,7 @@ internal fun ProductPermission.subtitle(): String {
         ProductPermission.RemotePermission.ChainSubmitAccess -> stringResource(RCommon.string.product_permission_chain_submit_subtitle, manageLater)
         ProductPermission.RemotePermission.StatementSubmitAccess -> stringResource(RCommon.string.product_permission_statement_submit_subtitle, manageLater)
         ProductPermission.RemotePermission.PreimageSubmitAccess -> stringResource(RCommon.string.product_permission_preimage_submit_subtitle, manageLater)
+        is ProductPermission.RemotePermission.JamPeersAccess -> stringResource(RCommon.string.product_permission_jam_peers_subtitle, manageLater)
     }
 }
 
@@ -123,5 +126,6 @@ internal fun ProductPermission.RemotePermission.shortLabel(): String {
         ProductPermission.RemotePermission.ChainSubmitAccess -> stringResource(RCommon.string.product_permission_chain_submit_label)
         ProductPermission.RemotePermission.StatementSubmitAccess -> stringResource(RCommon.string.product_permission_statement_submit_label)
         ProductPermission.RemotePermission.PreimageSubmitAccess -> stringResource(RCommon.string.product_permission_preimage_submit_label)
+        is ProductPermission.RemotePermission.JamPeersAccess -> stringResource(RCommon.string.product_permission_jam_peers_label, shortGenesis)
     }
 }

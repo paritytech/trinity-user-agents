@@ -18,7 +18,8 @@ class RemotePermissionHandler @Inject constructor(
             is RemotePermission.WebRtcAccess,
             is RemotePermission.ChainSubmitAccess,
             is RemotePermission.StatementSubmitAccess,
-            is RemotePermission.PreimageSubmitAccess -> repository.isGranted(productId, permission)
+            is RemotePermission.PreimageSubmitAccess,
+            is RemotePermission.JamPeersAccess -> repository.isGranted(productId, permission)
         }
     }
 
@@ -28,7 +29,8 @@ class RemotePermissionHandler @Inject constructor(
             is RemotePermission.WebRtcAccess,
             is RemotePermission.ChainSubmitAccess,
             is RemotePermission.StatementSubmitAccess,
-            is RemotePermission.PreimageSubmitAccess -> requestSimple(productId, permission)
+            is RemotePermission.PreimageSubmitAccess,
+            is RemotePermission.JamPeersAccess -> requestSimple(productId, permission)
         }
     }
 
@@ -38,7 +40,8 @@ class RemotePermissionHandler @Inject constructor(
             is RemotePermission.WebRtcAccess,
             is RemotePermission.ChainSubmitAccess,
             is RemotePermission.StatementSubmitAccess,
-            is RemotePermission.PreimageSubmitAccess -> repository.revoke(productId, permission)
+            is RemotePermission.PreimageSubmitAccess,
+            is RemotePermission.JamPeersAccess -> repository.revoke(productId, permission)
         }
     }
 

@@ -12,8 +12,22 @@
 //! genesis ([`alpn`]), verifies the peer certificate against the identity the
 //! guest named, frames messages and enforces the `JAM_PEER_TRANSPORT_MAX_*` caps
 //! from `truapi::latest`.
+//!
+//! Native product runtimes serve `JamPeerTransport` themselves over JAMNP-S
+//! QUIC, one endpoint per product connection. The browser core keeps the
+//! trait's `NotGranted` defaults: its JavaScript session answers trait 111
+//! over WebTransport before frames reach the core.
 
 use core::fmt;
+
+#[cfg(not(target_arch = "wasm32"))]
+mod peer_id;
+#[cfg(not(target_arch = "wasm32"))]
+mod quic;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod session;
+#[cfg(not(target_arch = "wasm32"))]
+mod tls;
 
 /// JAMNP-S ALPN prefix; the suffix is the first eight hex nibbles of the genesis
 /// header hash.

@@ -77,6 +77,15 @@ private extension AppPermissionsViewModelFactory {
                 String(localized: .Products.appPermissionStatementSubmitTitle),
                 String(localized: .Products.permissionBodyStatementSubmit)
             )
+        case let .jamPeersAccess(genesis):
+            (
+                String(localized: .Products.appPermissionJamPeersTitle),
+                String(
+                    localized: .Products.permissionLabelJamPeers(
+                        shortGenesis: ProductPermission.shortGenesis(genesis)
+                    )
+                )
+            )
         case .userIdentityAccess:
             (
                 String(localized: .Products.appPermissionUserIdentityTitle),
