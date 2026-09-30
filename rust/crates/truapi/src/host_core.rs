@@ -1304,7 +1304,7 @@ impl ConnectionAdapters {
         Self {
             platform: services.platform.clone(),
             chat_platform: services.chat_platform.clone(),
-            contacts_platform: services.contacts_platform(),
+            contacts_platform: None,
             permission_status: services.permission_status_host(),
             permission_grants: Arc::default(),
             chat: Arc::new(ActionChannel::chat()),
