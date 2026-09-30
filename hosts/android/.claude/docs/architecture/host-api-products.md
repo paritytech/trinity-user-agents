@@ -353,8 +353,8 @@ Core side (`feature/products/impl/.../domain/truapi/`):
   renderer actions. Both callbacks of `ProductPocketHostBridge` run on the core's dispatcher thread: the list is a
   snapshot, and a removal completes inline and answers `Removed`, `Absent` or `Privileged`, because the core reads the
   list again right after and republishes it.
-- Deeplinks are classified by the core's `parse_navigate` behind `PocketDeeplinkParser`; card ids are screened at
-  manifest load with the chat identifier rules (`PocketCardIdentifier`).
+- Deeplinks are classified by the core's `parse_navigate` behind `PocketDeeplinkParser`; card ids and titles are
+  screened at manifest load by the core's `screenPocketCardId` and `screenPocketCardTitle`.
 
 Demo: `feature/products/product-sample/pocket-worker`, a worker on the core's own client that publishes one card,
 draws its face live and gives it up on its Remove button.

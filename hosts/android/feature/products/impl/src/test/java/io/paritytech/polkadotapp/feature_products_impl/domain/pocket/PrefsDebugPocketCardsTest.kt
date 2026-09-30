@@ -65,6 +65,13 @@ class PrefsDebugPocketCardsTest {
         assertEquals("loyalty", cards().get(productId)?.title)
     }
 
+    @Test
+    fun `a title the core would refuse to draw reads as no card at all`() {
+        stored(cardId = "loyalty", title = "Loyalty‮")
+
+        assertNull(cards().get(productId))
+    }
+
     /** A release build has no debug menu, so it must not carry whatever a debug build left behind. */
     @Test
     fun `nothing is read on a release build`() {
