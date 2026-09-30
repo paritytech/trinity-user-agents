@@ -22,6 +22,18 @@ export interface HostCallbackOptions {
   onAuthState: (state: AuthState) => void;
   /** A `polkadot://` destination, which has no `https://` form to open. */
   onProductNavigation: (url: string) => void;
+  /**
+   * Whether a network permission is answered with a one-time yes, unasked.
+   * A developer relaxation; it is read at each prompt.
+   */
+  approveNetwork: () => boolean;
+  /**
+   * Called when a network permission names domains, so the host can read the
+   * core's saved answer for each. It only reports what was asked.
+   */
+  onNetworkAsked?: (domains: string[]) => void;
+  /** Called once a permission prompt, or an automatic answer, has been given. */
+  onPermissionDecided?: () => void;
 }
 
 const DECISIONS: PromptChoice<PermissionDecision>[] = [
@@ -40,7 +52,16 @@ const DECISIONS: PromptChoice<PermissionDecision>[] = [
 export function createHostCallbacks(
   options: HostCallbackOptions,
 ): RequiredHostCallbacks {
-  const { network, storage, log, onAuthState, onProductNavigation } = options;
+  const {
+    network,
+    storage,
+    log,
+    onAuthState,
+    onProductNavigation,
+    approveNetwork,
+    onNetworkAsked,
+    onPermissionDecided,
+  } = options;
   const knownGenesis = new Set(
     network.supportedChains.chains.map((chain) =>
       chain.genesisHash.toLowerCase(),
@@ -84,13 +105,22 @@ export function createHostCallbacks(
 
     permissions: {
       devicePermission: (product, request) =>
-        decide("Device permission", product, request),
-      remotePermission: (product, request) =>
-        decide(
-          "Remote permission",
-          product,
-          describePermission(request.permission),
+        decide("Device permission", product, request).finally(
+          onPermissionDecided,
         ),
+      remotePermission: (product, request) => {
+        const detail = describePermission(request.permission);
+        if (request.permission.tag === "Remote")
+          onNetworkAsked?.(request.permission.value.domains);
+        if (request.permission.tag === "Remote" && approveNetwork()) {
+          log(`approved without asking (developer relaxation): ${detail}`);
+          onPermissionDecided?.();
+          return Promise.resolve("AllowOnce" as PermissionDecision);
+        }
+        return decide("Remote permission", product, detail).finally(
+          onPermissionDecided,
+        );
+      },
     },
 
     features: {
