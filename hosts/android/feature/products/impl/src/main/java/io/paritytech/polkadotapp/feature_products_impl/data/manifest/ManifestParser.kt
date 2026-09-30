@@ -92,13 +92,13 @@ internal class ManifestParser @Inject constructor(
     }
 
     private fun PocketCardRemote.toDefinition(): PocketCardDefinition {
-        val title = requireNotNull(title) { "pocket card missing title" }
+        val title = screenPocketCardTitle(requireNotNull(title) { "pocket card missing title" })
         val preview = requireNotNull(preview) { "pocket card missing preview" }
-        require(title.isNotBlank()) { "pocket card title must not be blank" }
+        require(title.isNotEmpty()) { "pocket card title must not be blank" }
         require(preview.isNotBlank()) { "pocket card preview must not be blank" }
         return PocketCardDefinition(
             id = PocketCardId(screenPocketCardId(requireNotNull(id) { "pocket card missing id" })),
-            title = screenPocketCardTitle(title),
+            title = title,
             // Always a path in the archive: a published card must not be able to name a URL.
             preview = PocketCardPreview.Archive(preview),
         )

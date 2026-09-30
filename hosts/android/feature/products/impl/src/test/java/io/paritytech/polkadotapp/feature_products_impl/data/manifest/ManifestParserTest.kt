@@ -216,6 +216,8 @@ class ManifestParserTest {
                "pocket":{"cards":[{"id":"coffee","title":"$title","preview":"a.json"}]}}"""
 
         publishesNoCards(worker("Coffee\\u202e"))
+        // NEXT LINE is not blank to Kotlin, but the core trims it away and would leave the card untitled.
+        publishesNoCards(worker("\\u0085"))
 
         val worker = parser.parseExecutable(worker(" \\u2615\\ufe0f Coffee "), ExecutableKind.WORKER, host("worker.coinflip.dot"))
             .getOrNull() as? ProductExecutable.Worker

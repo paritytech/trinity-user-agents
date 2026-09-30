@@ -39,7 +39,7 @@ class PrefsDebugPocketCards(
         val rawId = prefs.getString(productId.key(CARD_ID), null) ?: return null
         val previewUrl = prefs.getString(productId.key(PREVIEW_URL), null)?.takeIf { it.isNotBlank() } ?: return null
 
-        val rawTitle = prefs.getString(productId.key(TITLE), null)?.takeIf { it.isNotBlank() }
+        val rawTitle = prefs.getString(productId.key(TITLE), null)
 
         // Screened with the rules the manifest path uses, so a debug card cannot carry an id or a
         // title the core would refuse. A rejected one reads as no card at all.
@@ -47,7 +47,7 @@ class PrefsDebugPocketCards(
             val cardId = screenPocketCardId(rawId)
             DebugPocketCard(
                 cardId = PocketCardId(cardId),
-                title = screenPocketCardTitle(rawTitle ?: cardId),
+                title = rawTitle?.let(::screenPocketCardTitle)?.takeIf { it.isNotEmpty() } ?: cardId,
                 previewUrl = previewUrl,
             )
         }
