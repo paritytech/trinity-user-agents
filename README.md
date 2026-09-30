@@ -45,9 +45,28 @@ host build:
 curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
 ```
 
-Prebuilt for macOS on Apple silicon and Linux on x86_64 and arm64. No Rust toolchain or checkout needed, and it keeps
-itself up to date. See the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md) for the commands, the
-terminal UI, and product scripts.
+Prebuilt for macOS on Apple silicon and Linux on x86_64 and arm64. No Rust toolchain or checkout needed, and it keeps itself up to date. `/script` opens a persistent TypeScript project with the Product SDK quickstart, pinned published dependencies, and editor types. Use `/script --run` to rerun it or `/script --edit` to edit without running. Projects survive session cleanup. See the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md) for setup and existing project scripts. Release checks install and typecheck the default SDK template against the public registry.
+
+The signing host registers its built-in full and lite personhood keys when an
+authorized product first lists `peopl.<network suffix>` (for example,
+`peopl.paseo`). The first listing reads People-chain metadata; later listings
+reuse the saved registrations, including after restart. Registration makes the
+handles discoverable; proof creation still checks permission and ring membership.
+The `listRingVrfKeys` example checks that both built-in keys are discoverable
+under `peopl.paseo` on Paseo.
+
+Preimage lookups that miss the core's cache read the selected network's Bulletin
+node through `bitswap_v1_get`. The CLI verifies the returned bytes against the
+requested key and keeps missing lookups subscribed until the blob arrives.
+
+Product scripts and `truapi-host dev` use the same web API permission checks from `js/container`. Dev loads the container through a blocking script tag in your existing browser. Scripts run in Bun and retain filesystem, environment and process access.
+
+To build from source, run `make headless install` with stable Rust, the nightly pinned in `nightly-toolchain` with rustfmt, Node.js 22 or newer, and
+Bun installed. The target installs missing workspace build tools and regenerates the Rust and TypeScript sources before
+compiling. CI tests this command in both a fresh checkout and one with stale generated files, then runs a product script
+through the installed CLI. Code generation and the workspace documentation check reject rustdoc warnings. These checks
+are part of the required `CI Status` gate. CLI packaging tests also build an isolated runner and verify it outside the
+source checkout.
 
 ## Usage
 
