@@ -202,6 +202,13 @@ second claim. `PartialPayment { credited }` carries proven raw credited units af
 the requested minimum. Missing/not-yet-funded or ambiguously spent sources remain unresolved, with custody retained; a
 cleared prefix alone must not become a false success or definitive partial result.
 
+A source proven on chain when its claim was planned, then absent at finalized state from both source and destination
+without this installation having submitted its transfer, was spent elsewhere: it is forfeited and never credited, and
+the import finishes. A source already absent before any plan exists stays unresolved, since that state cannot separate
+an unfunded coin from a spent one; settling it needs historical evidence that the coin existed. Settlement is judged per
+installation: when two installations of one wallet import the same sources, the one that loses the race sees a spend
+elsewhere and reports it, although the coins reached the wallet. Wallet balances come from inventory and are unaffected.
+
 The selected wallet service keeps durable import records, canonical source identity, claim plans and finalized receipts.
 Reordered keys reuse the same custody; conflicting overlaps and cross-product rebinding are rejected. The Rust backend
 uses its encrypted main-purse WAL and preserves original order, denomination binding and destination plans when adopting
