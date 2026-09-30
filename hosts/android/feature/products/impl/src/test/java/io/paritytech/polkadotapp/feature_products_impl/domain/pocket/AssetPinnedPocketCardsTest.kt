@@ -9,7 +9,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKe
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.RendererNodeJsonDecoder
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -36,7 +35,7 @@ class AssetPinnedPocketCardsTest {
         whenever(context.getString(anyInt())).thenReturn("Humanity")
         whenever(tldProvider.getTld()).thenReturn(Result.success(tld))
 
-        return AssetPinnedPocketCards(context, tldProvider, PocketFaceJsonDecoder(RendererNodeJsonDecoder())).cards()
+        return AssetPinnedPocketCards(context, tldProvider, PocketFaceJsonDecoder()).cards()
     }
 
     // Balance and Scarcity were dropped: the products behind them publish no Pocket cards, so pinning
@@ -72,7 +71,7 @@ class AssetPinnedPocketCardsTest {
         val neverAnswers: DotNsTldProvider = mock()
         val pinnedKey = PocketCardKey(ReservedProductIds.personhood(tld), PocketCardId("humanity"))
 
-        val cards = AssetPinnedPocketCards(context, neverAnswers, PocketFaceJsonDecoder(RendererNodeJsonDecoder()))
+        val cards = AssetPinnedPocketCards(context, neverAnswers, PocketFaceJsonDecoder())
 
         assertEquals(pinnedKey, cards.pinned(pinnedKey)?.card?.key)
         assertNull(cards.pinned(PocketCardKey(ProductId.fromStoredValue("game.testnet"), PocketCardId("humanity"))))

@@ -333,9 +333,9 @@ Seams, all in `feature/products/api/.../domain/pocket/`:
   pinned ones included, so a card wears what its product last drew rather than the bundled stub at cold start.
 - `PocketFaceSource.observeFace(key)` — the cached face first, then every tree the product streams; `sendAction`
   carries a press back; `resolveImage` fetches `Image` sources from the archive or the Bulletin gateway.
-- The face vocabulary is the renderer's: `RendererNodeJsonDecoder` reads a `{ tag, value }` preview into the core's
-  `RendererNode`, `RendererNodeMapping` turns that (or a streamed tree) into `JsWidget`, `JsWidgetRenderer`
-  (`api/presentation/widget`) draws it. Trees deeper than 32 levels are rejected.
+- The face vocabulary is the renderer's: the core's `parseRendererNodeJson` reads a `{ tag, value }` preview into its
+  `RendererNode`, with the same 64-level bound the render stream carries, `RendererNodeMapping` turns that (or a
+  streamed tree) into `JsWidget`, `JsWidgetRenderer` (`api/presentation/widget`) draws it.
 - A card expands in place rather than into a sheet: the wallet's Pocket screen moves the same card element to the top
   of a full-screen page with the shared-element transition the native cards use, and hosts the product under it through
   `SpaHost` (`api/presentation/spaHost`, with `ProductWebViewHost`). `ExpandedProductPage` keeps one session at a time

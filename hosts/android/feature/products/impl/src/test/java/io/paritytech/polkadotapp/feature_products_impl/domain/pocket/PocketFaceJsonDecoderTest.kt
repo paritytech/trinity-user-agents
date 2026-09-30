@@ -11,13 +11,13 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.RendererNodeJsonDecoder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.NativeRendererException
 
 class PocketFaceJsonDecoderTest {
-    private val decoder = PocketFaceJsonDecoder(RendererNodeJsonDecoder())
+    private val decoder = PocketFaceJsonDecoder()
 
     @Test
     fun `decodes the generated TypeScript shape into the shared widget vocabulary`() {
@@ -104,33 +104,43 @@ class PocketFaceJsonDecoderTest {
         assertEquals("fit defaults to Fill", JsImageFit.FILL, remote.fit)
     }
 
-    @Test
-    fun `rejects a tree deeper than the host bound, so a hostile preview cannot blow the stack`() {
-        val nested = (1..40).fold("""{"tag":"Nil"}""") { inner, _ ->
-            """{"tag":"Box","value":{"modifiers":[],"props":{},"children":[$inner]}}"""
-        }
-
-        val failure = decoder.decode(nested).exceptionOrNull()
-
-        assertTrue(failure?.message.orEmpty().contains("deeper than 32"))
+    private fun levels(count: Int) = (1 until count).fold("""{"tag":"Nil"}""") { inner, _ ->
+        """{"tag":"Box","value":{"modifiers":[],"props":{},"children":[$inner]}}"""
     }
 
+    // The core streams a live face up to 64 levels deep. A shallower bound here would refuse, as a
+    // preview, a face this host already draws live and iOS draws in both places.
     @Test
-    fun `a tree exactly at the bound still decodes`() {
-        val nested = (1..31).fold("""{"tag":"Nil"}""") { inner, _ ->
-            """{"tag":"Box","value":{"modifiers":[],"props":{},"children":[$inner]}}"""
-        }
-
-        assertTrue(decoder.decode(nested).isSuccess)
+    fun `reads a tree as deep as the core streams, and refuses one deeper so it cannot blow the stack`() {
+        assertTrue(decoder.decode(levels(64)).isSuccess)
+        assertTrue(decoder.decode(levels(65)).exceptionOrNull() is NativeRendererException.TooDeep)
     }
 
     // A size is read back as an Int when the face is drawn, where a negative padding throws at
     // composition of the card or the approval sheet, taking the screen rather than the one preview.
+    // One larger than any screen is the drawing's to clamp, as it does for a live face.
     @Test
-    fun `a size the host cannot draw is refused instead of wrapping into a huge or negative one`() {
+    fun `a negative size is refused, and one no screen could hold is left to the drawing to clamp`() {
         assertTrue(decoder.decode(sizedSpacer("""{"tag":"Padding","value":{"top":-1,"end":0}}""")).isFailure)
-        assertTrue(decoder.decode(sizedSpacer("""{"tag":"Width","value":4294967297}""")).isFailure)
+        assertTrue(decoder.decode(sizedSpacer("""{"tag":"Width","value":4294967297}""")).isSuccess)
         assertTrue(decoder.decode(sizedSpacer("""{"tag":"Width","value":40}""")).isSuccess)
+    }
+
+    // The shape is the protocol's, as the generated TypeScript client spells it. Reading a looser one
+    // would draw faces here that iOS and the core refuse, and a product tested on Android would ship
+    // a preview no other host shows.
+    @Test
+    fun `reads only the protocol's spelling of a face`() {
+        fun button(enabled: String) =
+            """{"tag":"Button","value":{"modifiers":[],"props":{"text":"Go","enabled":$enabled},"children":[]}}"""
+        fun text(color: String) = """{"tag":"Text","value":{"modifiers":[],"props":{"color":"$color"},"children":[]}}"""
+
+        assertTrue(decoder.decode(sizedSpacer("""{"tag":"Width","value":"40"}""")).isFailure)
+        assertTrue(decoder.decode(button("\"true\"")).isFailure)
+        assertTrue(decoder.decode(button("true")).isSuccess)
+        assertTrue(decoder.decode(text("FG_PRIMARY")).isFailure)
+        assertTrue(decoder.decode(text("FgPrimary")).isSuccess)
+        assertTrue(decoder.decode("""{"tag":"Box","value":{"props":{}}}""").isFailure)
     }
 
     // 256 wraps to 0, which draws nothing at all rather than reporting a bad preview.

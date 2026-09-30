@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductWorkerArchive
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.RendererNodeJsonDecoder
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -40,7 +39,7 @@ class PocketPreviewLoaderTest {
     private val loader = PocketPreviewLoader(
         archive = ProductWorkerArchive(dotNsResolver),
         remoteFaces = remoteFaces,
-        faceDecoder = PocketFaceJsonDecoder(RendererNodeJsonDecoder()),
+        faceDecoder = PocketFaceJsonDecoder(),
     )
 
     private fun definition(preview: PocketCardPreview) =
