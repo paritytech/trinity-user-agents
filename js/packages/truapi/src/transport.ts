@@ -884,3 +884,103 @@ export function createWebSocketProviderFactory(): (
     };
   };
 }
+
+/** Most frames held while the host has not yet handed over its port. */
+const MAX_PENDING_FRAMES = 256;
+
+/**
+ * The container's link to the host when the host is a web page and not a native
+ * bridge: a single `MessagePort` the host transfers after the container is up.
+ */
+export interface MessagePortBridge {
+  /**
+   * A provider for `createHostConnection`. Frames sent before a port is attached
+   * wait, up to a bound, and are dropped with an error past it, so a call made
+   * before the host is reachable never reaches the network.
+   **/
+  createProvider(): WebSocketWireProvider;
+  /**
+   * Give the bridge its port. Only the first port is taken; later ones are
+   * refused, so a second party cannot replace the host's channel.
+   **/
+  attach(port: MessagePort): boolean;
+}
+
+/** Capture native port APIs before product code can replace them. */
+export function createMessagePortBridge(): MessagePortBridge {
+  const portPostMessage = MessagePort.prototype.postMessage;
+  const portStart = MessagePort.prototype.start;
+  const addEventListener = EventTarget.prototype.addEventListener;
+  const messageData = Object.getOwnPropertyDescriptor(
+    MessageEvent.prototype,
+    "data",
+  )!.get!;
+  const NativeUint8Array = Uint8Array;
+  const apply = Reflect.apply;
+
+  let port: MessagePort | undefined;
+  let active: { deliver(frame: Uint8Array): void; flush(): void } | undefined;
+
+  const onMessage = (event: MessageEvent) => {
+    const data = apply(messageData, event, []);
+    if (data instanceof NativeUint8Array) active?.deliver(data);
+  };
+
+  return {
+    attach(next) {
+      if (port) return false;
+      port = next;
+      apply(addEventListener, port, ["message", onMessage]);
+      apply(portStart, port, []);
+      active?.flush();
+      return true;
+    },
+    createProvider() {
+      const base = createBaseProvider();
+      const pending: Uint8Array[] = [];
+      let resolveOpened!: () => void;
+      const opened = new Promise<void>((resolve) => {
+        resolveOpened = resolve;
+      });
+      const mine = {
+        deliver: (frame: Uint8Array) => base.deliver(frame),
+        flush() {
+          if (!port) return;
+          for (const frame of pending.splice(0))
+            apply(portPostMessage, port, [frame]);
+          resolveOpened();
+        },
+      };
+      active = mine;
+      if (port) mine.flush();
+      base.onClose(() => {
+        if (active === mine) active = undefined;
+      });
+      return {
+        opened,
+        postMessage(message) {
+          const error = base.closed();
+          if (error) throw error;
+          if (port) {
+            try {
+              apply(portPostMessage, port, [message]);
+            } catch (failure) {
+              base.close(failure);
+              throw toError(failure);
+            }
+          } else if (pending.length < MAX_PENDING_FRAMES) {
+            pending.push(message);
+          } else {
+            throw new Error("host channel is not connected");
+          }
+        },
+        subscribe: base.subscribe,
+        subscribeClose: base.subscribeClose,
+        dispose() {
+          base.close(new Error("message port provider disposed"));
+          pending.length = 0;
+        },
+      };
+    },
+  };
+}
