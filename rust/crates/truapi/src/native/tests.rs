@@ -3025,27 +3025,47 @@ fn reads_the_card_faces_the_hosts_conform_to() {
     assert!(matches!(node, latest::RendererNode::Column { .. }));
 }
 
+/// `depth` boxes around an empty node, three brackets per box.
+fn nested_boxes(depth: usize) -> String {
+    let mut json = String::new();
+    for _ in 0..depth {
+        json.push_str(r#"{"tag":"Box","value":{"modifiers":[],"props":{},"children":["#);
+    }
+    json.push_str(r#"{"tag":"Nil"}"#);
+    for _ in 0..depth {
+        json.push_str("]}}");
+    }
+    json
+}
+
 /// A face deeper than the core will carry is refused rather than half-read,
 /// so no host draws one it could not read back.
 #[test]
 fn refuses_a_face_deeper_than_the_core_carries() {
-    let nest = |depth: usize| {
-        let mut json = String::new();
-        for _ in 0..depth {
-            json.push_str(r#"{"tag":"Box","value":{"modifiers":[],"props":{},"children":["#);
-        }
-        json.push_str(r#"{"tag":"Nil"}"#);
-        for _ in 0..depth {
-            json.push_str("]}}");
-        }
-        json
-    };
-
-    assert!(parse_renderer_node_json(nest(MAX_FACE_DEPTH as usize - 1)).is_ok());
+    assert!(parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize - 1)).is_ok());
     assert!(matches!(
-        parse_renderer_node_json(nest(MAX_FACE_DEPTH as usize + 1)),
+        parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize + 1)),
         Err(NativeRendererError::TooDeep { .. })
     ));
+}
+
+/// A product chooses how deep its preview nests, and a host reads it before
+/// the user approved anything, on whatever thread it happens to be on. The
+/// deepest face the bracket bound lets through is refused on a thread with
+/// less stack than any host gives one, rather than overflowing it and taking
+/// the app down.
+#[test]
+fn a_face_at_the_nesting_bound_is_refused_on_a_small_host_stack() {
+    let json = nested_boxes(MAX_FACE_JSON_NESTING as usize / 3);
+
+    let read = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(move || parse_renderer_node_json(json))
+        .expect("host thread starts")
+        .join()
+        .expect("host thread survives the read");
+
+    assert!(matches!(read, Err(NativeRendererError::TooDeep { .. })));
 }
 
 /// A title is drawn and an id is addressed, so they cannot share one rule:
