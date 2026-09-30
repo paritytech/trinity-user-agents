@@ -66,7 +66,16 @@ hosts/imports.json         source repository and imported revision per host,
 hosts/dotli/               dotli submodule
 hosts/web-signing/         development web host: a browser tab that holds its own wallet
                            and signs with the `testing` core, with no pairing; built
-                           against the in-tree packages
+                           against the in-tree packages. Opens a product by DotNS name
+                           from a per-product origin: `src/archive/` verifies and
+                           unpacks CAR/UnixFS content, `src/sandbox/` and
+                           `sandbox-plugin.ts` are the loader page, service worker and
+                           container injection; `browser/` holds its headless-Chrome
+                           smoke test (`npm run test:browser`, run in CI);
+                           `scripts/tailscale-serve.sh` routes it over private https
+                           (Python helper, tests against a fake `tailscale` in `scripts/testing/`).
+                           A trusted development tool with disposable plaintext wallets:
+                           its container is a gate for cooperating pages, not a sandbox
 docs/                      design docs, RFCs, feature proposals
 scripts/codegen.sh         regenerate the TS client from the Rust crate
 scripts/battery.sh         run the generated battery against both headless CLI host roles,
