@@ -1569,103 +1569,172 @@ pub fn ensure_allowed_hop_endpoint(endpoint: &str, allowed: &[String]) -> Result
 /// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/storage.md?plain=1#L1-L7>
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum CoreStorageKey {
-	/// Opaque SSO/auth session blob.
-	#[codec(index = 0)]
-	AuthSession,
-	/// Pairing device identity used during SSO flows.
-	PairingDeviceIdentity,
-	/// Persisted authorization for one product-scoped permission request.
-	PermissionAuthorization {
-		/// Product whose permission decision is being stored.
-		product_id: String,
-		/// Permission request whose authorization is being stored.
-		request: PermissionAuthorizationRequest,
-	},
-	/// Persisted allowance-slot keys for one paired SSO session.
-	AllowanceKeys {
-		/// Stable host-derived SSO session id.
-		session_id: String,
-	},
-	/// Last processed SSO pairing response statement for the pairing device.
-	LastProcessedPairingStatement,
-	/// Legacy unscoped RFC-0010 AutoSigning secret. Core only addresses this
-	/// slot to reject and erase pre-scoping entries.
-	AutoSigningKey {
-		/// Product whose hard subtree the legacy secret controlled.
-		product_id: String,
-	},
-	/// Wallet-bound RFC-0010 AutoSigning capabilities for the active pairing.
-	AutoSigningKeys,
-	/// Wallet-bound RFC-0024 ring-VRF registry snapshot.
-	#[codec(index = 7)]
-	RingVrfRegistry {
-		/// Root account public key identifying the wallet that owns the registry.
-		root_public_key: [u8; 32],
-	},
-	/// Statement-store allowance targets the signing host keeps renewed.
-	#[codec(index = 8)]
-	StatementRenewalTargets,
-	/// This device's long-lived X25519 encryption secret, advertised to peers
-	/// as the device encryption public key. Random rather than identity-derived
-	/// so devices restoring one identity stay individually addressable.
-	///
-	/// Hosts must back this slot with storage scoped to the install, outliving
-	/// logout and any per-user namespacing: once it changes, peers addressing
-	/// the previous key can no longer reach this device.
-	#[codec(index = 9)]
-	DeviceEncryptionKey,
-	/// One product's hard-subtree public key, as the Account Holder answered it
-	/// for this paired session. Product account is a hard derivation, so the
-	/// answer is fixed for the pair and read back instead of re-asking the
-	/// wallet on every launch.
-	///
-	/// The value is the 32-byte key with no framing, so a host can derive
-	/// product account addresses from the slot it already stores. These are
-	/// public keys: every address derived from them already appears on the
-	/// reviews the host draws.
-	#[codec(index = 10)]
-	ProductSubtree {
-		/// Stable host-derived SSO session id.
-		session_id: String,
-		/// Product whose hard subtree this key roots.
-		product_id: ProductId,
-	},
-	/// Signing-host request replay state for one wallet and pairing peer.
-	///
-	/// The value is a versioned, bounded replay ledger owned by the core.
-	#[codec(index = 11)]
-	SsoResponderRequestLedger {
-		/// Root public key of the wallet that served the requests.
-		root_public_key: [u8; 32],
-		/// Pairing peer's statement-store account id.
-		peer_statement_account_id: [u8; 32],
-		/// Pairing peer's X25519 public key.
-		peer_encryption_public_key: [u8; 32],
-	},
-	/// Cached root manifest of one product, as published to dotNS.
-	///
-	/// The value carries the manifest JSON alongside the time it was read. The
-	/// core honours it for a bounded lifetime, which is what makes a revoked
-	/// trust grant eventually take effect.
-	#[codec(index = 12)]
-	ProductManifest {
-		/// Product whose manifest was cached, normalized.
-		product_id: String,
-	},
-	/// Funding sessions: every live one plus a bounded tail of settled ones,
-	/// as one versioned SCALE blob.
-	#[codec(index = 13)]
-	FundingSessions,
-	/// Funding sessions or session pack blobs the core could not read, as a SCALE list of the
-	/// raw blobs, newest last, so a stored session is never overwritten
-	/// unread and a later bad blob does not replace an earlier one. Kept for
-	/// diagnosis only: the core never reads them back.
-	#[codec(index = 17)]
-	FundingSessionsUnreadable,
-	/// Recorded funding sessions compacted out of the funding sessions blob,
-	/// as one versioned SCALE blob. Never trimmed.
-	#[codec(index = 18)]
-	FundingSessionPack,
+    /// Opaque SSO/auth session blob.
+    #[codec(index = 0)]
+    AuthSession,
+    /// Pairing device identity used during SSO flows.
+    PairingDeviceIdentity,
+    /// Persisted authorization for one product-scoped permission request.
+    PermissionAuthorization {
+        /// Product whose permission decision is being stored.
+        product_id: String,
+        /// Permission request whose authorization is being stored.
+        request: PermissionAuthorizationRequest,
+    },
+    /// Persisted allowance-slot keys for one paired SSO session.
+    AllowanceKeys {
+        /// Stable host-derived SSO session id.
+        session_id: String,
+    },
+    /// Last processed SSO pairing response statement for the pairing device.
+    LastProcessedPairingStatement,
+    /// Legacy unscoped RFC-0010 AutoSigning secret. Core only addresses this
+    /// slot to reject and erase pre-scoping entries.
+    AutoSigningKey {
+        /// Product whose hard subtree the legacy secret controlled.
+        product_id: String,
+    },
+    /// Wallet-bound RFC-0010 AutoSigning capabilities for the active pairing.
+    AutoSigningKeys,
+    /// Wallet-bound RFC-0024 ring-VRF registry snapshot.
+    #[codec(index = 7)]
+    RingVrfRegistry {
+        /// Root account public key identifying the wallet that owns the registry.
+        root_public_key: [u8; 32],
+    },
+    /// Statement-store allowance targets the signing host keeps renewed.
+    #[codec(index = 8)]
+    StatementRenewalTargets,
+    /// This device's long-lived X25519 encryption secret, advertised to peers
+    /// as the device encryption public key. Random rather than identity-derived
+    /// so devices restoring one identity stay individually addressable.
+    ///
+    /// Hosts must back this slot with storage scoped to the install, outliving
+    /// logout and any per-user namespacing: once it changes, peers addressing
+    /// the previous key can no longer reach this device.
+    #[codec(index = 9)]
+    DeviceEncryptionKey,
+    /// One product's hard-subtree public key, as the Account Holder answered it
+    /// for this paired session. Product account is a hard derivation, so the
+    /// answer is fixed for the pair and read back instead of re-asking the
+    /// wallet on every launch.
+    ///
+    /// The value is the 32-byte key with no framing, so a host can derive
+    /// product account addresses from the slot it already stores. These are
+    /// public keys: every address derived from them already appears on the
+    /// reviews the host draws.
+    #[codec(index = 10)]
+    ProductSubtree {
+        /// Stable host-derived SSO session id.
+        session_id: String,
+        /// Product whose hard subtree this key roots.
+        product_id: String,
+    },
+    /// Signing-host request replay state for one wallet and pairing peer.
+    ///
+    /// The value is a versioned, bounded replay ledger owned by the core.
+    #[codec(index = 11)]
+    SsoResponderRequestLedger {
+        /// Root public key of the wallet that served the requests.
+        root_public_key: [u8; 32],
+        /// Pairing peer's statement-store account id.
+        peer_statement_account_id: [u8; 32],
+        /// Pairing peer's X25519 public key.
+        peer_encryption_public_key: [u8; 32],
+    },
+    /// Cached root manifest of one product, as published to dotNS.
+    ///
+    /// The value carries the manifest JSON alongside the time it was read. The
+    /// core honours it for a bounded lifetime, which is what makes a revoked
+    /// trust grant eventually take effect.
+    #[codec(index = 12)]
+    ProductManifest {
+        /// Product whose manifest was cached, normalized.
+        product_id: String,
+    },
+    /// Encrypted main-purse inventory, operation journal, and claim recovery state.
+    ///
+    /// This slot is wallet-owned, not product-owned, and must survive clearing a
+    /// product's data. Writes replace the entire value atomically.
+    #[codec(index = 13)]
+    MainPurseCoinage {
+        /// Root public key identifying the wallet.
+        root_public_key: [u8; 32],
+        /// Chain whose Coinage inventory is recorded.
+        genesis_hash: [u8; 32],
+    },
+    /// Encrypted Host-owned native Chat device, peer roster, and migration state.
+    #[codec(index = 14)]
+    NativeChatDevice {
+        /// Wallet owning the Chat identity.
+        root_public_key: [u8; 32],
+        /// Host-selected Chat network.
+        genesis_hash: [u8; 32],
+        /// Authenticated product using the device.
+        product_id: String,
+    },
+    /// One encrypted, bounded native Chat attachment cache chunk.
+    /// Values use the Chat state's wallet-bound authenticated encryption.
+    #[codec(index = 15)]
+    NativeChatFileChunk {
+        /// Wallet owning the attachment.
+        root_public_key: [u8; 32],
+        /// Host-selected Chat network.
+        genesis_hash: [u8; 32],
+        /// Authenticated product using the device.
+        product_id: String,
+        /// Public opaque attachment identifier, not a source handle or ticket.
+        attachment_id: [u8; 32],
+        /// Exact chunk index within the authenticated file root.
+        chunk_index: u32,
+    },
+    /// Previously initialized Chat products to restore after this wallet unlocks.
+    ///
+    /// This is a host-private wallet-owned index, not a permission grant. The
+    /// core rechecks each product's current grants before restoring reception.
+    #[codec(index = 16)]
+    NativeChatProducts {
+        /// Wallet owning the installed Chat devices.
+        root_public_key: [u8; 32],
+        /// Host-selected Chat network.
+        genesis_hash: [u8; 32],
+    },
+    /// The profile reference the user disclosed to their chat contacts on one
+    /// Chat network, with the product that disclosed it. Wallet-owned: one per
+    /// wallet and network, whichever product wrote it. The reference is a
+    /// bearer capability.
+    ///
+    /// Known gap (docs/rfcs/profile-disclosure.md): one slot, so the last product to disclose replaces
+    /// the others.
+    #[codec(index = 17)]
+    ProfileDisclosure {
+        /// Wallet whose user disclosed the reference.
+        root_public_key: [u8; 32],
+        /// Host-selected Chat network the reference is relayed on.
+        genesis_hash: [u8; 32],
+    },
+    /// Profile references the contacts on one Chat product's roster disclosed,
+    /// the newest per contact, withdrawals included. Scoped like the
+    /// `NativeChatDevice` roster it shadows, and product-indexed so clearing
+    /// the product clears them. The references are bearer capabilities.
+    #[codec(index = 18)]
+    ProfileReferencesReceived {
+        /// Wallet owning the Chat identity the references were sent to.
+        root_public_key: [u8; 32],
+        /// Host-selected Chat network.
+        genesis_hash: [u8; 32],
+        /// Chat product whose contacts sent the references.
+        product_id: String,
+    },
+    /// Wallet-wide personal profile grants, including replay tombstones.
+    /// These bearer capabilities are independent of the receiving product.
+    #[codec(index = 19)]
+    ProfilePersonalReferencesReceived {
+        /// Wallet whose authenticated peers sent the references.
+        root_public_key: [u8; 32],
+        /// Host-selected Chat network.
+        genesis_hash: [u8; 32],
+    },
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1697,35 +1766,43 @@ pub enum CoreStorageKeyDescriptionError {
 pub fn describe_core_storage_key(
 	encoded: &[u8],
 ) -> Result<CoreStorageKeyDescription, CoreStorageKeyDescriptionError> {
-	let mut input = encoded;
-	let key = CoreStorageKey::decode(&mut input)
-		.map_err(|_| CoreStorageKeyDescriptionError::InvalidEncoding)?;
-	if !input.is_empty() {
-		return Err(CoreStorageKeyDescriptionError::TrailingBytes);
-	}
-	let (kind, product_id) = match key {
-		CoreStorageKey::AuthSession => ("AuthSession", None),
-		CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
-		CoreStorageKey::PermissionAuthorization { product_id, .. } => {
-			("PermissionAuthorization", Some(product_id))
-		},
-		CoreStorageKey::AllowanceKeys { .. } => ("AllowanceKeys", None),
-		CoreStorageKey::LastProcessedPairingStatement => ("LastProcessedPairingStatement", None),
-		CoreStorageKey::AutoSigningKey { product_id } => ("AutoSigningKey", Some(product_id)),
-		CoreStorageKey::ProductSubtree { product_id, .. } => {
-			("ProductSubtree", Some(product_id.into()))
-		},
-		CoreStorageKey::AutoSigningKeys => ("AutoSigningKeys", None),
-		CoreStorageKey::RingVrfRegistry { .. } => ("RingVrfRegistry", None),
-		CoreStorageKey::StatementRenewalTargets => ("StatementRenewalTargets", None),
-		CoreStorageKey::DeviceEncryptionKey => ("DeviceEncryptionKey", None),
-		CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
-		CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
-		CoreStorageKey::FundingSessions => ("FundingSessions", None),
-		CoreStorageKey::FundingSessionsUnreadable => ("FundingSessionsUnreadable", None),
-		CoreStorageKey::FundingSessionPack => ("FundingSessionPack", None),
-	};
-	Ok(CoreStorageKeyDescription { kind, product_id })
+    let mut input = encoded;
+    let key = CoreStorageKey::decode(&mut input)
+        .map_err(|_| CoreStorageKeyDescriptionError::InvalidEncoding)?;
+    if !input.is_empty() {
+        return Err(CoreStorageKeyDescriptionError::TrailingBytes);
+    }
+    let (kind, product_id) = match key {
+        CoreStorageKey::AuthSession => ("AuthSession", None),
+        CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
+        CoreStorageKey::PermissionAuthorization { product_id, .. } => {
+            ("PermissionAuthorization", Some(product_id))
+        }
+        CoreStorageKey::AllowanceKeys { .. } => ("AllowanceKeys", None),
+        CoreStorageKey::LastProcessedPairingStatement => ("LastProcessedPairingStatement", None),
+        CoreStorageKey::AutoSigningKey { product_id } => ("AutoSigningKey", Some(product_id)),
+        CoreStorageKey::ProductSubtree { product_id, .. } => ("ProductSubtree", Some(product_id)),
+        CoreStorageKey::AutoSigningKeys => ("AutoSigningKeys", None),
+        CoreStorageKey::RingVrfRegistry { .. } => ("RingVrfRegistry", None),
+        CoreStorageKey::StatementRenewalTargets => ("StatementRenewalTargets", None),
+        CoreStorageKey::DeviceEncryptionKey => ("DeviceEncryptionKey", None),
+        CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
+        CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
+        CoreStorageKey::MainPurseCoinage { .. } => ("MainPurseCoinage", None),
+        CoreStorageKey::NativeChatDevice { .. } => ("NativeChatDevice", None),
+        CoreStorageKey::NativeChatProducts { .. } => ("NativeChatProducts", None),
+        CoreStorageKey::ProfileDisclosure { .. } => ("ProfileDisclosure", None),
+        CoreStorageKey::ProfileReferencesReceived { product_id, .. } => {
+            ("ProfileReferencesReceived", Some(product_id))
+        }
+        CoreStorageKey::ProfilePersonalReferencesReceived { .. } => {
+            ("ProfilePersonalReferencesReceived", None)
+        }
+        CoreStorageKey::NativeChatFileChunk { product_id, .. } => {
+            ("NativeChatFileChunk", Some(product_id))
+        }
+    };
+    Ok(CoreStorageKeyDescription { kind, product_id })
 }
 
 impl CoreStorageKey {
@@ -3481,8 +3558,8 @@ pub struct PresentedContactProfile {
     /// The contact whose authenticated Chat device delivered the reference:
     /// who shared it, not necessarily whose profile it is.
     pub peer_identity: [u8; 32],
-    /// When the contact's host sent the share, in Unix milliseconds, as in
-    /// [`PlacedAvatar::shared_at`].
+    /// The share's freshness timestamp, as in [`PlacedAvatar::shared_at`].
+    /// Personal grants advance it monotonically across relay actors.
     pub shared_at: u64,
     /// The contact's username, when the core knows one: the name its Chat
     /// roster holds for `peer_identity`, verified when the contact was bound
@@ -3536,10 +3613,11 @@ pub struct PlacedAvatar {
     /// The profile reference the contact disclosed. A bearer capability, as
     /// in [`ProfilePlatform::present_profile`].
     pub reference: String,
-    /// When the contact's host sent the share this reflects, in Unix
-    /// milliseconds. A contact re-shares the same reference when the record
-    /// behind it changes; a larger `shared_at` for the same reference means
-    /// any cached copy of that profile is stale.
+    /// Freshness token for this reference. Contact shares use Unix
+    /// milliseconds, advanced monotonically for personal revisions even
+    /// across relay actors with different clocks. The own avatar uses the
+    /// disclosure revision. A changed token invalidates cached contents;
+    /// do not interpret an own-profile token as a wall-clock date.
     pub shared_at: u64,
 }
 

@@ -19,8 +19,8 @@
 //! Publishes on one actor run one at a time, so one that read an older
 //! disclosure never queues it after a newer one.
 //!
-//! Delivery is best effort. References have their own outbox budget, one per
-//! peer, so they never take a slot user traffic needs; a reference that finds
+//! Delivery is best effort. References have their own fixed outbox budget,
+//! so they never take a slot user traffic needs; a reference that finds
 //! no room is left for a later publish. A queued reference is offered for one
 //! statement lifetime. If it lapses unacknowledged, it is signed again and
 //! offered to a ready peer for another lifetime, up to
@@ -30,16 +30,20 @@
 
 use super::*;
 use crate::runtime::native_chat::background::require_authorized;
-use crate::runtime::profile::{Disclosure, ProfileOwner, read_disclosure};
+use crate::runtime::profile::{Disclosure, ProfileOwner, ProfileScope, read_disclosure_state};
 
 /// Frames signed for one disclosure to one peer, the first included, before
 /// the Host stops offering it until the disclosure changes.
 pub(super) const MAX_PROFILE_ATTEMPTS: u8 = 3;
 
+pub(super) const WATERMARK_MARKER: [u8; 4] = [0xff, b'P', b'R', 2];
+
 /// What this Host last queued to one peer.
 #[derive(Clone, PartialEq, Eq, Encode, Decode)]
 pub(super) struct ProfileWatermark {
     pub(super) peer: [u8; 32],
+    pub(super) scope: ProfileScope,
+    pub(super) revision: u64,
     /// Digest of the disclosure sent, identifying it without keeping it;
     /// `None` once a withdrawal was sent.
     pub(super) digest: Option<[u8; 32]>,
@@ -51,6 +55,17 @@ pub(super) struct ProfileWatermark {
     pub(super) attempts: u8,
     /// The frame sent lapsed without an acknowledgement.
     pub(super) lapsed: bool,
+}
+
+/// App-scoped watermarks written before independent personal grants.
+#[derive(Decode)]
+struct AppWatermark {
+    peer: [u8; 32],
+    digest: Option<[u8; 32]>,
+    discloser_product_id: String,
+    timestamp: u64,
+    attempts: u8,
+    lapsed: bool,
 }
 
 /// A watermark as written from 571f348f4 until lapsed frames were resent: no
@@ -84,14 +99,35 @@ pub(super) fn decode_watermarks(
     bytes: &[u8],
 ) -> Result<Vec<ProfileWatermark>, parity_scale_codec::Error> {
     use parity_scale_codec::DecodeAll;
-    if let Ok(current) = Vec::<ProfileWatermark>::decode_all(&mut &bytes[..]) {
-        return Ok(current);
+    if let Some(current) = bytes.strip_prefix(&WATERMARK_MARKER) {
+        let watermarks = Vec::<ProfileWatermark>::decode_all(&mut &current[..])?;
+        if watermarks.len() > MAX_PEERS * 2 {
+            return Err("too many profile watermarks".into());
+        }
+        return Ok(watermarks);
+    }
+    if let Ok(app) = Vec::<AppWatermark>::decode_all(&mut &bytes[..]) {
+        return Ok(app
+            .into_iter()
+            .map(|watermark| ProfileWatermark {
+                peer: watermark.peer,
+                scope: ProfileScope::App,
+                revision: 0,
+                digest: watermark.digest,
+                discloser_product_id: watermark.discloser_product_id,
+                timestamp: watermark.timestamp,
+                attempts: watermark.attempts,
+                lapsed: watermark.lapsed,
+            })
+            .collect());
     }
     if let Ok(single) = Vec::<SingleAttemptWatermark>::decode_all(&mut &bytes[..]) {
         return Ok(single
             .into_iter()
             .map(|watermark| ProfileWatermark {
                 peer: watermark.peer,
+                scope: ProfileScope::App,
+                revision: 0,
                 digest: watermark.digest,
                 discloser_product_id: watermark.discloser_product_id,
                 timestamp: watermark.timestamp,
@@ -116,7 +152,7 @@ pub(super) fn profile_owner(context: &NativeChatContext) -> ProfileOwner {
 /// its own revision and so its own digest, and starts a new round even for
 /// the same reference; automatic publishes of one disclosure share it. A
 /// disclosure stored before revisions keeps the digest it was sent under.
-fn disclosure_digest(disclosure: &Disclosure) -> [u8; 32] {
+pub(super) fn disclosure_digest(disclosure: &Disclosure) -> [u8; 32] {
     if disclosure.revision == 0 {
         return hash(
             &(
@@ -149,6 +185,27 @@ struct Frame {
     attempts: u8,
 }
 
+fn next_attempt(
+    disclosure: Option<&(Disclosure, [u8; 32])>,
+    current: Option<&ProfileWatermark>,
+    revision: u64,
+) -> Option<u8> {
+    if disclosure.is_none() && current.is_none() {
+        return None;
+    }
+    let digest = disclosure.map(|(_, digest)| *digest);
+    match current {
+        Some(watermark)
+            if watermark.digest == digest
+                && (watermark.scope == ProfileScope::App || watermark.revision == revision) =>
+        {
+            (watermark.lapsed && watermark.attempts < MAX_PROFILE_ATTEMPTS)
+                .then(|| watermark.attempts + 1)
+        }
+        _ => Some(1),
+    }
+}
+
 /// What one peer should be sent now, given the user's disclosure and its
 /// digest: the disclosure, a withdrawal of the one it holds, or the frame it
 /// was last sent again, once that lapsed with attempts to spare. `None` when
@@ -156,7 +213,9 @@ struct Frame {
 fn wanted(
     disclosure: Option<&(Disclosure, [u8; 32])>,
     current: Option<&ProfileWatermark>,
+    revision: u64,
 ) -> Option<Frame> {
+    let attempts = next_attempt(disclosure, current, revision)?;
     let (discloser, reference, digest) = match (disclosure, current) {
         (Some((disclosure, digest)), _) => (
             &disclosure.product_id,
@@ -165,15 +224,6 @@ fn wanted(
         ),
         (None, Some(watermark)) => (&watermark.discloser_product_id, None, None),
         (None, None) => return None,
-    };
-    let attempts = match current {
-        Some(watermark) if watermark.digest == digest => {
-            if !watermark.lapsed || watermark.attempts >= MAX_PROFILE_ATTEMPTS {
-                return None;
-            }
-            watermark.attempts + 1
-        }
-        _ => 1,
     };
     Some(Frame {
         discloser: discloser.clone(),
@@ -185,11 +235,33 @@ fn wanted(
 
 /// A queued reference whose statement lifetime is over.
 fn lapsed(entry: &Outgoing, now: u64) -> bool {
-    matches!(entry.kind, OutgoingKind::ProfileReference(_))
+    entry.kind.profile_scope().is_some()
         && entry
             .statement
             .expiry
             .is_none_or(|expiry| (expiry >> 32) <= now)
+}
+
+pub(super) fn superseded(
+    entry: &Outgoing,
+    watermarks: &[ProfileWatermark],
+    disclosure: Option<&(Disclosure, [u8; 32])>,
+    product: &str,
+    revision: u64,
+) -> bool {
+    let Some(scope) = entry.kind.profile_scope() else {
+        return false;
+    };
+    let Some(current) = watermarks
+        .iter()
+        .find(|watermark| watermark.peer == entry.peer && watermark.scope == scope)
+    else {
+        return scope == ProfileScope::Personal;
+    };
+    let desired = disclosure
+        .filter(|(disclosure, _)| disclosure.grants(scope, product, &entry.peer))
+        .map(|(_, digest)| *digest);
+    current.digest != desired || (scope == ProfileScope::Personal && current.revision != revision)
 }
 
 impl NativeChatActor {
@@ -204,7 +276,7 @@ impl NativeChatActor {
         context.require_current()?;
         // Each publish reads the disclosure and then queues it; two at once
         // could queue the older one last.
-        let _publishing = self.profile_gate.lock().await;
+        let _profile_state = context.services.profile_state_gate.lock().await;
         if self
             .store
             .read(|state| state.boundary.legacy_pending)
@@ -213,29 +285,70 @@ impl NativeChatActor {
             return Ok(false);
         }
         self.retire_lapsed_profile_references(context).await?;
-        let disclosure = read_disclosure(&*context.services.platform, profile_owner(context))
-            .await
-            .map_err(|_| Error::StorageUnavailable)?
-            .map(|disclosure| {
-                let digest = disclosure_digest(&disclosure);
-                (disclosure, digest)
-            });
+        let (revision, disclosure) =
+            read_disclosure_state(&*context.services.platform, profile_owner(context))
+                .await
+                .map_err(|_| Error::StorageUnavailable)?;
+        let disclosure = disclosure.map(|disclosure| {
+            let digest = disclosure_digest(&disclosure);
+            (disclosure, digest)
+        });
+        // Remove superseded shares even for an unready peer. Keep its
+        // watermark so the withdrawal is still due after restart.
+        let obsolete = self
+            .store
+            .read(|state| {
+                state.outbox.iter().any(|entry| {
+                    superseded(
+                        entry,
+                        &state.profile_shared,
+                        disclosure.as_ref(),
+                        &self.product,
+                        revision,
+                    )
+                })
+            })
+            .await?;
+        if obsolete {
+            let current_disclosure = disclosure.clone();
+            let product = self.product.clone();
+            let valid = context.session_valid.clone();
+            self.store
+                .update(move |state| {
+                    if !valid() {
+                        return Err(Error::NotConnected);
+                    }
+                    state.outbox.retain(|entry| {
+                        !superseded(
+                            entry,
+                            &state.profile_shared,
+                            current_disclosure.as_ref(),
+                            &product,
+                            revision,
+                        )
+                    });
+                    Ok(())
+                })
+                .await?;
+        }
         let stale = self
             .store
             .read(|state| {
-                state
-                    .peers
-                    .iter()
-                    .filter(|peer| peer.ready())
-                    .filter(|peer| {
-                        let current = state
-                            .profile_shared
-                            .iter()
-                            .find(|watermark| watermark.peer == peer.identity);
-                        wanted(disclosure.as_ref(), current).is_some()
-                    })
-                    .map(|peer| peer.identity)
-                    .collect::<Vec<_>>()
+                let mut stale = Vec::new();
+                for peer in state.peers.iter().filter(|peer| peer.ready()) {
+                    for scope in [ProfileScope::App, ProfileScope::Personal] {
+                        let current = state.profile_shared.iter().find(|watermark| {
+                            watermark.peer == peer.identity && watermark.scope == scope
+                        });
+                        let granted = disclosure.as_ref().filter(|(disclosure, _)| {
+                            disclosure.grants(scope, &self.product, &peer.identity)
+                        });
+                        if next_attempt(granted, current, revision).is_some() {
+                            stale.push((peer.identity, scope));
+                        }
+                    }
+                }
+                stale
             })
             .await?;
         if stale.is_empty() {
@@ -251,7 +364,7 @@ impl NativeChatActor {
                 }
                 let now = current_unix_secs().saturating_mul(1000);
                 let mut queued = false;
-                for identity in stale {
+                for (identity, scope) in stale {
                     let peer = state.peer(&identity)?.clone();
                     if !peer.ready() {
                         continue;
@@ -259,8 +372,11 @@ impl NativeChatActor {
                     let current = state
                         .profile_shared
                         .iter()
-                        .find(|watermark| watermark.peer == identity);
-                    let Some(frame) = wanted(disclosure.as_ref(), current) else {
+                        .find(|watermark| watermark.peer == identity && watermark.scope == scope);
+                    let granted = disclosure.as_ref().filter(|(disclosure, _)| {
+                        disclosure.grants(scope, &actor.product, &identity)
+                    });
+                    let Some(frame) = wanted(granted, current, revision) else {
                         continue;
                     };
                     // Later than anything sent to this peer before, even
@@ -269,15 +385,38 @@ impl NativeChatActor {
                     let timestamp = current.map_or(now, |watermark| {
                         now.max(watermark.timestamp.saturating_add(1))
                     });
-                    let tag =
-                        hash(&(identity, &frame.discloser, &frame.reference, timestamp).encode());
+                    let tag = match scope {
+                        ProfileScope::App => hash(
+                            &(identity, &frame.discloser, &frame.reference, timestamp).encode(),
+                        ),
+                        ProfileScope::Personal => hash(
+                            &(
+                                identity,
+                                scope,
+                                revision,
+                                &frame.discloser,
+                                &frame.reference,
+                                timestamp,
+                            )
+                                .encode(),
+                        ),
+                    };
                     let request_id = format!("profile-{}", hex::encode(&tag[..8]));
-                    let bytes = wire::encode_profile_reference_message(
-                        &request_id,
-                        timestamp,
-                        &frame.discloser,
-                        frame.reference.as_deref(),
-                    )
+                    let bytes = match scope {
+                        ProfileScope::App => wire::encode_profile_reference_message(
+                            &request_id,
+                            timestamp,
+                            &frame.discloser,
+                            frame.reference.as_deref(),
+                        ),
+                        ProfileScope::Personal => wire::encode_personal_profile_reference_message(
+                            &request_id,
+                            timestamp,
+                            revision,
+                            &frame.discloser,
+                            frame.reference.as_deref(),
+                        ),
+                    }
                     .map_err(|_| Error::InvalidRequest)?;
                     let messages = Zeroizing::new(vec![bytes]);
                     let statement = actor.multi_statement(
@@ -287,16 +426,18 @@ impl NativeChatActor {
                         &request_id,
                         &messages,
                     )?;
-                    // Only the newest disclosure is worth delivering.
+                    // Each scope keeps its own pending share or withdrawal.
                     state.outbox.retain(|entry| {
-                        entry.peer != identity
-                            || !matches!(entry.kind, OutgoingKind::ProfileReference(_))
+                        entry.peer != identity || entry.kind.profile_scope() != Some(scope)
                     });
                     match state.queue(Outgoing {
                         peer: identity,
                         request_id,
                         digest: hash(&messages.encode()),
-                        kind: OutgoingKind::ProfileReference(tag),
+                        kind: match scope {
+                            ProfileScope::App => OutgoingKind::ProfileReference(tag),
+                            ProfileScope::Personal => OutgoingKind::PersonalProfileReference(tag),
+                        },
                         roster_revision: peer.revision,
                         statement,
                         last_attempt: 0,
@@ -309,9 +450,15 @@ impl NativeChatActor {
                     }
                     state
                         .profile_shared
-                        .retain(|watermark| watermark.peer != identity);
+                        .retain(|watermark| watermark.peer != identity || watermark.scope != scope);
                     state.profile_shared.push(ProfileWatermark {
                         peer: identity,
+                        scope,
+                        revision: if scope == ProfileScope::Personal {
+                            revision
+                        } else {
+                            0
+                        },
                         digest: frame.digest,
                         discloser_product_id: frame.discloser,
                         timestamp,
@@ -410,13 +557,13 @@ impl NativeChatActor {
                 if !valid() {
                     return Err(Error::NotConnected);
                 }
-                // A peer has one reference queued at most, the one its
-                // watermark records.
+                // A peer has at most one pending frame per scope.
                 for watermark in &mut state.profile_shared {
-                    watermark.lapsed |= state
-                        .outbox
-                        .iter()
-                        .any(|entry| entry.peer == watermark.peer && lapsed(entry, now));
+                    watermark.lapsed |= state.outbox.iter().any(|entry| {
+                        entry.peer == watermark.peer
+                            && entry.kind.profile_scope() == Some(watermark.scope)
+                            && lapsed(entry, now)
+                    });
                 }
                 state.outbox.retain(|entry| !lapsed(entry, now));
                 Ok(())
@@ -434,6 +581,9 @@ mod tests {
             product_id: "seity.dot".into(),
             reference: reference.into(),
             revision: 1,
+            all_chat_apps: true,
+            app_products: Vec::new(),
+            contacts: Vec::new(),
         };
         let digest = disclosure_digest(&disclosure);
         (disclosure, digest)
@@ -444,21 +594,23 @@ mod tests {
         let current = disclosure("seity-contacts:v1:aa");
         let held = ProfileWatermark {
             peer: [1; 32],
+            scope: ProfileScope::App,
+            revision: 0,
             digest: Some(current.1),
             discloser_product_id: "seity.dot".into(),
             timestamp: 1,
             attempts: 1,
             lapsed: false,
         };
-        assert!(wanted(Some(&current), Some(&held)).is_none());
-        let replacement = wanted(Some(&disclosure("seity-contacts:v1:bb")), Some(&held))
+        assert!(wanted(Some(&current), Some(&held), 0).is_none());
+        let replacement = wanted(Some(&disclosure("seity-contacts:v1:bb")), Some(&held), 0)
             .expect("a replacement is sent");
         assert_eq!(
             (replacement.reference.as_deref(), replacement.attempts),
             (Some("seity-contacts:v1:bb"), 1)
         );
         assert_eq!(
-            wanted(None, Some(&held)).expect("a withdrawal is sent to a holder"),
+            wanted(None, Some(&held), 0).expect("a withdrawal is sent to a holder"),
             Frame {
                 discloser: "seity.dot".into(),
                 reference: None,
@@ -471,19 +623,19 @@ mod tests {
             ..held
         };
         assert!(
-            wanted(None, Some(&withdrawn)).is_none(),
+            wanted(None, Some(&withdrawn), 0).is_none(),
             "a withdrawal is sent once"
         );
         assert!(
-            wanted(Some(&current), Some(&withdrawn)).is_some(),
+            wanted(Some(&current), Some(&withdrawn), 0).is_some(),
             "a withdrawn peer is sent a new disclosure"
         );
         assert!(
-            wanted(None, None).is_none(),
+            wanted(None, None, 0).is_none(),
             "nothing to withdraw from a new peer"
         );
         assert!(
-            wanted(Some(&current), None).is_some(),
+            wanted(Some(&current), None, 0).is_some(),
             "a new peer is sent the disclosure"
         );
     }
@@ -493,14 +645,20 @@ mod tests {
         let current = disclosure("seity-contacts:v1:aa");
         let lapsed_watermark = |digest, attempts| ProfileWatermark {
             peer: [1; 32],
+            scope: ProfileScope::App,
+            revision: 0,
             digest,
             discloser_product_id: "seity.dot".into(),
             timestamp: 1,
             attempts,
             lapsed: true,
         };
-        let resent = wanted(Some(&current), Some(&lapsed_watermark(Some(current.1), 1)))
-            .expect("a lapsed disclosure is sent again");
+        let resent = wanted(
+            Some(&current),
+            Some(&lapsed_watermark(Some(current.1), 1)),
+            0,
+        )
+        .expect("a lapsed disclosure is sent again");
         assert_eq!(
             (resent.digest, resent.attempts),
             (Some(current.1), 2),
@@ -509,7 +667,8 @@ mod tests {
         assert!(
             wanted(
                 Some(&current),
-                Some(&lapsed_watermark(Some(current.1), MAX_PROFILE_ATTEMPTS))
+                Some(&lapsed_watermark(Some(current.1), MAX_PROFILE_ATTEMPTS)),
+                0
             )
             .is_none(),
             "not once its attempts are spent"
@@ -517,7 +676,8 @@ mod tests {
         assert_eq!(
             wanted(
                 Some(&disclosure("seity-contacts:v1:bb")),
-                Some(&lapsed_watermark(Some(current.1), MAX_PROFILE_ATTEMPTS))
+                Some(&lapsed_watermark(Some(current.1), MAX_PROFILE_ATTEMPTS)),
+                0
             )
             .expect("a new disclosure is sent")
             .attempts,
@@ -525,11 +685,50 @@ mod tests {
             "with attempts of its own"
         );
         assert_eq!(
-            wanted(None, Some(&lapsed_watermark(None, 1)))
+            wanted(None, Some(&lapsed_watermark(None, 1)), 0)
                 .expect("a lapsed withdrawal is sent again")
                 .attempts,
             2
         );
-        assert!(wanted(None, Some(&lapsed_watermark(None, MAX_PROFILE_ATTEMPTS))).is_none());
+        assert!(wanted(None, Some(&lapsed_watermark(None, MAX_PROFILE_ATTEMPTS)), 0).is_none());
+    }
+
+    #[test]
+    fn current_app_watermarks_migrate_without_broadening_or_losing_pending_withdrawal() {
+        let current = disclosure("profile:secret");
+        let bytes = vec![(
+            [1u8; 32],
+            Some(current.1),
+            "seity.dot".to_string(),
+            91u64,
+            2u8,
+            true,
+        )]
+        .encode();
+        let migrated = decode_watermarks(&bytes).unwrap();
+        assert_eq!(migrated[0].scope, ProfileScope::App);
+        assert_eq!(migrated[0].timestamp, 91);
+        assert_eq!(
+            wanted(Some(&current), Some(&migrated[0]), 9)
+                .unwrap()
+                .attempts,
+            3
+        );
+        assert_eq!(
+            wanted(None, Some(&migrated[0]), 10).unwrap().reference,
+            None
+        );
+        let withdrawn = ProfileWatermark {
+            scope: ProfileScope::Personal,
+            revision: 10,
+            digest: None,
+            lapsed: false,
+            ..migrated[0].clone()
+        };
+        assert!(wanted(None, Some(&withdrawn), 10).is_none());
+        assert!(
+            wanted(None, Some(&withdrawn), 12).is_some(),
+            "an actor that missed a regrant must send the newer withdrawal"
+        );
     }
 }

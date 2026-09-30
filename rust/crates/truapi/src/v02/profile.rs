@@ -1,7 +1,8 @@
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
+use core::fmt;
 use parity_scale_codec::{Decode, Encode};
 
-use crate::v01::{AvatarRect, ContactAvatarSlot};
+use crate::v01::{AvatarRect, ContactAvatarSlot, ContactHandle};
 
 /// Where a chat product draws avatars the host fills in: its contacts' and,
 /// optionally, the signed-in user's own.
@@ -35,4 +36,68 @@ pub struct OwnAvatarSlot {
     pub rect: AvatarRect,
     /// Visible region the avatar is cut to.
     pub clip: AvatarRect,
+}
+
+/// Recipients of one profile reference. Multiple audiences form a union.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum ProfileAudience {
+    /// Every ready Chat App, with profiles scoped to that App.
+    ChatApps,
+    /// Contacts of this Chat App, with profiles scoped to that App.
+    App {
+        /// Canonical product identifier.
+        product_id: String,
+    },
+    /// Selected contacts, with profiles available in any receiving App.
+    Contacts {
+        /// Opaque handles returned by the host's contact picker, at most 4096
+        /// across the request.
+        handles: Vec<ContactHandle>,
+    },
+}
+
+/// Replace the user's disclosed reference and its complete set of audiences.
+///
+/// An empty audience retains the user's own profile but withdraws all delivery
+/// grants. A contact handle that no longer resolves rejects the whole request.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostProfileDiscloseRequest {
+    /// Opaque bearer reference, retained and relayed only by the host.
+    pub reference: String,
+    /// Independent grants for this reference, at most 64.
+    pub audiences: Vec<ProfileAudience>,
+}
+
+impl fmt::Debug for HostProfileDiscloseRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HostProfileDiscloseRequest")
+            .field("reference", &"[REDACTED]")
+            .field("audiences", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// A contact named without exposing a handle's account to the product.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub enum ProfileContact {
+    /// An authenticated Chat network identity already known to the product.
+    Peer {
+        /// The contact's identity account, not a product device account.
+        peer_identity: [u8; 32],
+    },
+    /// An opaque host-issued contact selection.
+    Handle {
+        /// A handle returned by the contact picker.
+        handle: ContactHandle,
+    },
+}
+
+/// Ask the host to present a contact's available profile.
+///
+/// Unknown handles, absent profiles and presentation failures return success,
+/// without disclosing whether the contact shares a profile.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostProfilePresentContactRequest {
+    /// The contact whose profile the host may present.
+    pub contact: ProfileContact,
 }

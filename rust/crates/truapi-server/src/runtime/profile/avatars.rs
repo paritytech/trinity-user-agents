@@ -1,7 +1,7 @@
 //! Avatars the host draws over a chat product: its contacts' and the signed-in
 //! user's own.
 //!
-//! A product says where it draws each contact's avatar, by peer identity, and
+//! A product says where it draws each contact's avatar, by identity or handle, and
 //! optionally where it draws the user's own. The core fills in the reference
 //! each contact shared, and the user's own disclosure, and hands the host only
 //! the avatars it can draw. The product gets the same answer whoever shared, and
@@ -12,14 +12,20 @@
 //! disappears without the product sending it again.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
-use tracing::debug;
-use truapi::{v01, v02};
 use crate::platform::{PlacedAvatar, PlacedAvatars, Platform, ProductContext, ProfilePlatform};
+use tracing::debug;
+use truapi::latest::{
+    ContactAvatarSlot, HostProfilePlaceContactAvatarsError, HostProfilePlaceContactAvatarsRequest,
+    ProfileContact,
+};
 
 use super::{ProfileOwner, read_disclosure, read_received};
-use crate::runtime::is_screened_profile_reference;
+use crate::runtime::{
+    ProductAuthority, RuntimeServices, contacts::ContactHandles, is_screened_profile_reference,
+    resolve_contact_accounts,
+};
 use crate::subscription::Spawner;
 
 /// Most avatars one placement may hold: a screenful of list rows and a header.
@@ -31,7 +37,7 @@ const MAX_AVATAR_SIDE: u32 = 1024;
 
 /// Why a placement is malformed, if it is. Only input the product controls is
 /// judged here, never what any contact shared.
-pub(crate) fn validate(request: &v02::HostProfilePlaceContactAvatarsRequest) -> Result<(), String> {
+pub(crate) fn validate(request: &HostProfilePlaceContactAvatarsRequest) -> Result<(), String> {
     let surface = 1..=MAX_SURFACE_SIDE;
     if !surface.contains(&request.surface_width) || !surface.contains(&request.surface_height) {
         return Err(format!("surface sides must be 1 to {MAX_SURFACE_SIDE}"));
@@ -59,15 +65,22 @@ pub(crate) struct ContactAvatarPlacement {
     platform: Arc<dyn ProfilePlatform>,
     storage: Arc<dyn Platform>,
     product: ProductContext,
+    services: Weak<RuntimeServices>,
     /// Held across each draw, so the host sees the connection's placements in
     /// the order they were made.
     state: futures::lock::Mutex<PlacementState>,
 }
 
+struct RememberedPlacement {
+    owner: ProfileOwner,
+    request: HostProfilePlaceContactAvatarsRequest,
+    authority: Option<Weak<dyn ProductAuthority>>,
+}
+
 #[derive(Default)]
 struct PlacementState {
     /// The last non-empty placement and the wallet it was drawn for.
-    placed: Option<(ProfileOwner, v02::HostProfilePlaceContactAvatarsRequest)>,
+    placed: Option<RememberedPlacement>,
     /// The connection is gone; nothing is drawn for it again.
     closed: bool,
 }
@@ -77,11 +90,13 @@ impl ContactAvatarPlacement {
         platform: Arc<dyn ProfilePlatform>,
         storage: Arc<dyn Platform>,
         product: ProductContext,
+        services: Weak<RuntimeServices>,
     ) -> Self {
         Self {
             platform,
             storage,
             product,
+            services,
             state: futures::lock::Mutex::new(PlacementState::default()),
         }
     }
@@ -92,16 +107,21 @@ impl ContactAvatarPlacement {
     pub(crate) async fn place(
         &self,
         owner: ProfileOwner,
-        request: v02::HostProfilePlaceContactAvatarsRequest,
-    ) -> Result<(), v01::HostProfilePlaceContactAvatarsError> {
+        request: HostProfilePlaceContactAvatarsRequest,
+        authority: Option<Weak<dyn ProductAuthority>>,
+    ) -> Result<(), HostProfilePlaceContactAvatarsError> {
         let mut state = self.state.lock().await;
         if state.closed {
             return Ok(());
         }
         state.placed = None;
-        self.draw(owner, &request).await?;
+        self.draw(owner, &request, authority.as_ref()).await?;
         if request.own.is_some() || !request.slots.is_empty() {
-            state.placed = Some((owner, request));
+            state.placed = Some(RememberedPlacement {
+                owner,
+                request,
+                authority,
+            });
         }
         Ok(())
     }
@@ -120,7 +140,7 @@ impl ContactAvatarPlacement {
     }
 
     async fn clear_drawn(&self, state: &mut PlacementState) {
-        let Some((_, request)) = state.placed.take() else {
+        let Some(RememberedPlacement { request, .. }) = state.placed.take() else {
             return;
         };
         let (surface_width, surface_height) = (request.surface_width, request.surface_height);
@@ -142,27 +162,62 @@ impl ContactAvatarPlacement {
     /// `owner` disclosed, changed.
     async fn redraw(&self, owner: ProfileOwner) {
         let state = self.state.lock().await;
-        let Some((placed_for, request)) = state.placed.as_ref() else {
+        let Some(RememberedPlacement {
+            owner: placed_for,
+            request,
+            authority,
+        }) = state.placed.as_ref()
+        else {
             return;
         };
         if *placed_for != owner {
             return;
         }
-        if let Err(error) = self.draw(owner, request).await {
+        if let Err(error) = self.draw(owner, request, authority.as_ref()).await {
             debug!(?error, "contact avatars were not redrawn");
+        }
+    }
+
+    async fn contacts_changed(&self) {
+        let state = self.state.lock().await;
+        let Some(RememberedPlacement {
+            owner,
+            request,
+            authority,
+        }) = state.placed.as_ref()
+        else {
+            return;
+        };
+        if request
+            .slots
+            .iter()
+            .any(|slot| matches!(slot.contact, ProfileContact::Handle { .. }))
+        {
+            let _ = self
+                .platform
+                .place_contact_avatars(
+                    &self.product,
+                    PlacedAvatars {
+                        surface_width: request.surface_width,
+                        surface_height: request.surface_height,
+                        avatars: Vec::new(),
+                    },
+                )
+                .await;
+            if let Err(error) = self.draw(*owner, request, authority.as_ref()).await {
+                debug!(?error, "contact avatars were not redrawn");
+            }
         }
     }
 
     async fn draw(
         &self,
         owner: ProfileOwner,
-        request: &v02::HostProfilePlaceContactAvatarsRequest,
-    ) -> Result<(), v01::HostProfilePlaceContactAvatarsError> {
-        let unknown = |reason| v01::HostProfilePlaceContactAvatarsError::Unknown { reason };
-        let mut avatars = self
-            .drawable(owner, &request.slots)
-            .await
-            .map_err(unknown)?;
+        request: &HostProfilePlaceContactAvatarsRequest,
+        authority: Option<&Weak<dyn ProductAuthority>>,
+    ) -> Result<(), HostProfilePlaceContactAvatarsError> {
+        let unknown = |reason| HostProfilePlaceContactAvatarsError::Unknown { reason };
+        let mut own_avatar = None;
         if let Some(own) = request.own {
             let disclosure = read_disclosure(self.storage.as_ref(), owner)
                 .await
@@ -170,7 +225,7 @@ impl ContactAvatarPlacement {
             if let Some(disclosure) =
                 disclosure.filter(|disclosure| is_screened_profile_reference(&disclosure.reference))
             {
-                avatars.push(PlacedAvatar {
+                own_avatar = Some(PlacedAvatar {
                     slot: own.slot,
                     rect: own.rect,
                     clip: own.clip,
@@ -180,6 +235,13 @@ impl ContactAvatarPlacement {
                     shared_at: disclosure.revision,
                 });
             }
+        }
+        let mut avatars = self
+            .drawable(owner, &request.slots, authority)
+            .await
+            .map_err(unknown)?;
+        if let Some(own_avatar) = own_avatar {
+            avatars.push(own_avatar);
         }
         let (surface_width, surface_height) = (request.surface_width, request.surface_height);
         let placed = PlacedAvatars {
@@ -193,8 +255,8 @@ impl ContactAvatarPlacement {
             .await
         {
             Ok(()) => Ok(()),
-            Err(v01::HostProfilePlaceContactAvatarsError::Unsupported) => {
-                Err(v01::HostProfilePlaceContactAvatarsError::Unsupported)
+            Err(HostProfilePlaceContactAvatarsError::Unsupported) => {
+                Err(HostProfilePlaceContactAvatarsError::Unsupported)
             }
             // Any other host failure could depend on which avatars it was
             // given, so the product is not told of it.
@@ -210,7 +272,8 @@ impl ContactAvatarPlacement {
     async fn drawable(
         &self,
         owner: ProfileOwner,
-        slots: &[v01::ContactAvatarSlot],
+        slots: &[ContactAvatarSlot],
+        authority: Option<&Weak<dyn ProductAuthority>>,
     ) -> Result<Vec<PlacedAvatar>, String> {
         if slots.is_empty() {
             return Ok(Vec::new());
@@ -225,11 +288,68 @@ impl ContactAvatarPlacement {
                         .then_some((received.peer_identity, (reference, received.timestamp)))
                 })
                 .collect();
+        let requested: Vec<[u8; 32]> = slots
+            .iter()
+            .filter_map(|slot| match slot.contact {
+                ProfileContact::Handle { handle } => Some(handle.bytes),
+                ProfileContact::Peer { .. } => None,
+            })
+            .collect();
+        let services = self.services.upgrade();
+        let mut generation = None;
+        let resolved = if requested.is_empty() {
+            Vec::new()
+        } else if let (Some(services), Some(authority)) =
+            (services.as_ref(), authority.and_then(Weak::upgrade))
+        {
+            generation = Some(services.contact_handles.generation());
+            if let (Some(platform), Some(session)) = (
+                services.contacts_platform(),
+                authority
+                    .current_session()
+                    .filter(|session| session.public_key == owner.root_public_key),
+            ) {
+                if let Ok(handle_key) = authority.contacts_handle_key(&session) {
+                    let resolved = resolve_contact_accounts(
+                        services,
+                        platform.as_ref(),
+                        &ContactHandles::from_handle_key(handle_key),
+                        &requested,
+                    )
+                    .await
+                    .unwrap_or_default();
+                    if authority.current_session().as_ref() == Some(&session) {
+                        resolved
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        let handles_current = services
+            .as_ref()
+            .is_some_and(|services| generation == Some(services.contact_handles.generation()));
         Ok(slots
             .iter()
             .filter_map(|slot| {
+                let identity = match slot.contact {
+                    ProfileContact::Peer { peer_identity } => peer_identity,
+                    ProfileContact::Handle { handle } if handles_current => {
+                        resolved
+                            .iter()
+                            .find(|(requested, _)| *requested == handle.bytes)?
+                            .1?
+                    }
+                    ProfileContact::Handle { .. } => return None,
+                };
                 shared
-                    .get(&slot.peer_identity)
+                    .get(&identity)
                     .map(|(reference, shared_at)| PlacedAvatar {
                         slot: slot.slot,
                         rect: slot.rect,
@@ -314,6 +434,25 @@ impl ContactAvatarPlacements {
         spawner(Box::pin(async move {
             for placement in placements {
                 placement.redraw(owner).await;
+            }
+        }));
+    }
+
+    /// Re-resolve handle placements after the host removes or blocks contacts.
+    pub fn contacts_changed(&self, spawner: &Spawner) {
+        let placements = self
+            .by_runtime
+            .lock()
+            .expect("contact avatar placements mutex poisoned")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        if placements.is_empty() {
+            return;
+        }
+        spawner(Box::pin(async move {
+            for placement in placements {
+                placement.contacts_changed().await;
             }
         }));
     }

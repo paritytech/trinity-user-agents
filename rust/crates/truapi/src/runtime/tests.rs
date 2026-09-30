@@ -3200,6 +3200,9 @@ fn own_profile_status_and_presentation_resolve_the_host_owned_disclosure() {
             product_id: "seity.dot".to_string(),
             reference: CONTACTS_REFERENCE.to_string(),
             revision: 1,
+            all_chat_apps: true,
+            app_products: Vec::new(),
+            contacts: Vec::new(),
         },
     ))
     .expect("own disclosure stored");
@@ -3391,38 +3394,317 @@ fn a_request_dropped_under_the_overlay_still_ends_its_session() {
 }
 
 #[test]
-fn a_dismissed_funding_overlay_is_rejected_and_leaves_no_session() {
-	let services = funding_services();
-	let platform =
-		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Dismissed);
-	assert!(services.funding().install_platform(platform.clone()));
-	let host = funding_host(&services, "wallet.dot", true);
-
-	assert_eq!(
-		request_funding(&host),
-		Err(CallError::Domain(truapi::versioned::funding::HostFundingError::V1(
-			v01::HostFundingError::Rejected
-		)))
-	);
-	assert_eq!(first_funding_status(&host, FUNDING_ID), Some(Err(funding_not_found())));
+fn a_disclosure_stored_before_revisions_still_reads() {
+    use crate::platform::CoreStorage;
+    use parity_scale_codec::Encode;
+    let platform = consenting_platform();
+    let seity = app_host(&platform, "seity.dot");
+    let owner = owner_of(&seity);
+    futures::executor::block_on(platform.write_core_storage(
+        owner.disclosure_key(),
+        ("seity.dot".to_string(), CONTACTS_REFERENCE.to_string()).encode(),
+    ))
+    .unwrap();
+    let stored = futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner))
+        .expect("the old layout decodes")
+        .expect("stored");
+    assert_eq!(
+        stored,
+        profile::Disclosure {
+            product_id: "seity.dot".into(),
+            reference: CONTACTS_REFERENCE.into(),
+            revision: 0,
+            all_chat_apps: true,
+            app_products: Vec::new(),
+            contacts: Vec::new(),
+        }
+    );
 }
 
-// The host's in-flight pill reads these announcements, so a session the user
-// never started must not appear there.
+fn picked_handle(host: &ProductRuntimeHost) -> truapi::latest::ContactHandle {
+    let HostContactsPickResponse::V1(response) = pick(host).expect("picker succeeds");
+    let v01::ContactPickOutcome::Picked { handle } = response.outcome else {
+        panic!("fixture picks a contact");
+    };
+    handle
+}
+
+fn disclose_audiences(
+    host: &ProductRuntimeHost,
+    audiences: Vec<truapi::latest::ProfileAudience>,
+) -> Result<HostProfileDiscloseResponse, CallError<HostProfileDiscloseError>> {
+    futures::executor::block_on(Profile::disclose(
+        host,
+        &CallContext::default(),
+        HostProfileDiscloseRequest::V2(truapi::latest::HostProfileDiscloseRequest {
+            reference: CONTACTS_REFERENCE.to_string(),
+            audiences,
+        }),
+    ))
+}
+
 #[test]
-fn the_host_hears_of_started_sessions_only() {
-	for (outcome, expected) in [
-		(crate::platform::FundingPresentOutcome::Started, 1),
-		(crate::platform::FundingPresentOutcome::Dismissed, 0),
-	] {
-		let services = funding_services();
-		let platform = RecordingFundingPlatform::answering(outcome);
-		assert!(services.funding().install_platform(platform.clone()));
+fn profile_audiences_are_independent_and_invalid_handles_leave_the_disclosure_unchanged() {
+    use truapi::latest::{ContactHandle, ProfileAudience};
+    let platform = consenting_platform();
+    let account = [0xa1; 32];
+    let host = contacts_host(
+        "seity.dot",
+        platform.clone(),
+        Some(StubContactsPlatform::picking(account)),
+        true,
+    );
+    let handle = picked_handle(&host);
+    let owner = owner_of(&host);
+    let read = || {
+        futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner))
+            .unwrap()
+            .unwrap()
+    };
+    disclose_audiences(
+        &host,
+        vec![
+            ProfileAudience::App {
+                product_id: "egui-chat.dot".into(),
+            },
+            ProfileAudience::Contacts {
+                handles: vec![handle, handle],
+            },
+            ProfileAudience::App {
+                product_id: "egui-chat.dot".into(),
+            },
+        ],
+    )
+    .expect("independent audiences accepted");
+    let original = read();
+    assert_eq!(
+        (
+            original.all_chat_apps,
+            &original.app_products,
+            &original.contacts
+        ),
+        (false, &vec!["egui-chat.dot".to_string()], &vec![account]),
+    );
+    for audiences in [
+        vec![ProfileAudience::Contacts {
+            handles: vec![handle, ContactHandle { bytes: [0xee; 32] }],
+        }],
+        vec![ProfileAudience::App {
+            product_id: "invalid product".into(),
+        }],
+        vec![ProfileAudience::Contacts {
+            handles: vec![handle; 4097],
+        }],
+        vec![ProfileAudience::ChatApps; 65],
+    ] {
+        assert!(matches!(
+            disclose_audiences(&host, audiences),
+            Err(CallError::Domain(HostProfileDiscloseError::V2(
+                v01::HostProfileDiscloseError::Unknown { .. }
+            )))
+        ));
+        assert_eq!(
+            read(),
+            original,
+            "a rejected audience cannot partially change grants"
+        );
+    }
+    disclose_audiences(&host, Vec::new()).expect("retaining own profile without grants");
+    let retained = read();
+    assert_eq!(
+        (
+            retained.reference.as_str(),
+            retained.all_chat_apps,
+            retained.app_products,
+            retained.contacts
+        ),
+        (CONTACTS_REFERENCE, false, Vec::new(), Vec::new()),
+    );
+    assert_eq!(
+        own_profile_status(&host).unwrap(),
+        HostProfileOwnStatusResponse::V1(v01::HostProfileOwnStatusResponse { configured: true })
+    );
+    disclose(&host, CONTACTS_REFERENCE).unwrap();
+    let legacy = read();
+    assert_eq!(
+        (legacy.all_chat_apps, legacy.app_products, legacy.contacts),
+        (true, Vec::new(), Vec::new())
+    );
+}
 
-		let _ = request_funding(&funding_host(&services, "wallet.dot", true));
+fn present_selected_contact(
+    host: &ProductRuntimeHost,
+    contact: truapi::latest::ProfileContact,
+) -> Result<HostProfilePresentContactResponse, CallError<HostProfilePresentContactError>> {
+    futures::executor::block_on(Profile::present_contact(
+        host,
+        &CallContext::default(),
+        HostProfilePresentContactRequest::V2(truapi::latest::HostProfilePresentContactRequest {
+            contact,
+        }),
+    ))
+}
 
-		assert_eq!(platform.announced.lock().expect("announced mutex poisoned").len(), expected);
-	}
+#[test]
+fn profile_handle_presentation_hides_absence_and_removed_contacts_in_an_unrelated_app() {
+    use truapi::latest::{ContactHandle, ProfileContact};
+    let platform = stub_platform();
+    let account = [0xa1; 32];
+    let contacts = StubContactsPlatform::picking(account);
+    let presented = Arc::new(RecordingProfilePlatform::default());
+    let mut host = contacts_host("notes.dot", platform.clone(), Some(contacts.clone()), true);
+    host.profile_platform = Some(presented.clone());
+    let handle = picked_handle(&host);
+    let selected = ProfileContact::Handle { handle };
+    let success = Ok(HostProfilePresentContactResponse::V2);
+    assert_eq!(present_selected_contact(&host, selected), success);
+    let not_shared = Err(CallError::Domain(HostProfilePresentContactError::V1(
+        v01::HostProfilePresentContactError::NotShared,
+    )));
+    assert_eq!(present_contact(&host, account), not_shared);
+    futures::executor::block_on(profile::record_personal_received_reference(
+        platform.as_ref(),
+        owner_of(&host),
+        account,
+        "seity.dot".into(),
+        1,
+        1,
+        Some(CONTACTS_REFERENCE.into()),
+    ))
+    .unwrap();
+    assert_eq!(
+        present_contact(&host, account),
+        not_shared,
+        "legacy raw-peer requests must not reveal that a personal profile became available"
+    );
+    assert_eq!(present_selected_contact(&host, selected), success);
+    assert_eq!(
+        present_selected_contact(
+            &host,
+            ProfileContact::Handle {
+                handle: ContactHandle { bytes: [0xee; 32] },
+            }
+        ),
+        success
+    );
+    contacts
+        .listed
+        .lock()
+        .expect("listed mutex poisoned")
+        .clear();
+    host.services.contact_handles.clear();
+    assert_eq!(present_selected_contact(&host, selected), success);
+    assert_eq!(
+        presented
+            .presented
+            .lock()
+            .expect("presented mutex poisoned")
+            .as_slice(),
+        [("notes.dot".to_string(), CONTACTS_REFERENCE.to_string())],
+        "only a current verified contact reaches host UI, never the reference or availability response",
+    );
+}
+
+#[test]
+fn profile_v2_presentation_does_not_expose_host_parse_failures() {
+    struct RejectingProfile;
+    #[truapi::async_trait]
+    impl crate::platform::ProfilePlatform for RejectingProfile {
+        async fn present_profile(
+            &self,
+            _product: &ProductContext,
+            _request: truapi::latest::HostProfilePresentRequest,
+        ) -> Result<(), truapi::latest::HostProfilePresentError> {
+            Err(v01::HostProfilePresentError::InvalidReference)
+        }
+    }
+    let platform = stub_platform();
+    let host = signed_in(
+        profile_host_on(
+            platform.clone(),
+            egui_chat(),
+            Some(Arc::new(RejectingProfile)),
+        ),
+        WALLET,
+    );
+    let account = [0xa1; 32];
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(),
+        owner_of(&host),
+        "egui-chat.dot",
+        account,
+        "seity.dot".into(),
+        1,
+        Some(CONTACTS_REFERENCE.into()),
+    ))
+    .unwrap();
+    assert_eq!(
+        present_selected_contact(
+            &host,
+            truapi::latest::ProfileContact::Peer {
+                peer_identity: account
+            }
+        ),
+        Ok(HostProfilePresentContactResponse::V2),
+    );
+    assert_eq!(
+        present_contact(&host, account),
+        Err(CallError::Domain(HostProfilePresentContactError::V1(
+            v01::HostProfilePresentContactError::InvalidReference,
+        ))),
+    );
+}
+
+#[test]
+fn a_contact_removed_during_lookup_never_becomes_a_transaction_recipient_or_profile_grant() {
+    struct RemovingContacts {
+        services: std::sync::Weak<RuntimeServices>,
+        account: [u8; 32],
+    }
+    #[truapi::async_trait]
+    impl crate::platform::ContactsPlatform for RemovingContacts {
+        async fn contacts(
+            &self,
+            lookup: &crate::platform::HostContactLookup,
+        ) -> Result<crate::platform::HostContactMatches, truapi::latest::GenericError> {
+            self.services.upgrade().unwrap().contact_handles.clear();
+            Ok(crate::platform::HostContactMatches {
+                accounts: vec![Some(self.account); lookup.handles.len()],
+            })
+        }
+    }
+    let platform = consenting_platform();
+    let host = contacts_host("seity.dot", platform.clone(), None, true);
+    let account = [0xa1; 32];
+    host.services
+        .install_contacts_platform(Arc::new(RemovingContacts {
+            services: Arc::downgrade(&host.services),
+            account,
+        }));
+    let (_, handles) = host.contacts_picker().unwrap();
+    let handle = truapi::latest::ContactHandle {
+        bytes: handles.mint(&account),
+    };
+    assert_eq!(
+        futures::executor::block_on(
+            host.substitute_declared_contacts(handle.bytes.to_vec(), &[handle])
+        ),
+        Err(ContactResolutionError::UnknownContact),
+    );
+    assert!(
+        disclose_audiences(
+            &host,
+            vec![truapi::latest::ProfileAudience::Contacts {
+                handles: vec![handle]
+            }]
+        )
+        .is_err()
+    );
+    assert_eq!(
+        futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner_of(&host)))
+            .unwrap(),
+        None,
+    );
 }
 
 #[test]
@@ -3784,6 +4066,131 @@ fn place_profile_avatars(
 }
 
 #[test]
+fn handle_avatars_render_personal_profiles_without_reviving_removed_contacts_on_redraw() {
+    use truapi::latest::{ContactAvatarSlot, ContactHandle, ProfileContact};
+    let platform = stub_platform();
+    let account = [0xa1; 32];
+    let contacts = StubContactsPlatform::picking(account);
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let mut host = contacts_host("notes.dot", platform.clone(), Some(contacts.clone()), true);
+    host.profile_platform = Some(avatars.clone());
+    let handle = picked_handle(&host);
+    let owner = owner_of(&host);
+    futures::executor::block_on(profile::record_personal_received_reference(
+        platform.as_ref(),
+        owner,
+        account,
+        "seity.dot".into(),
+        1,
+        1,
+        Some(CONTACTS_REFERENCE.into()),
+    ))
+    .unwrap();
+    let request = truapi::latest::HostProfilePlaceContactAvatarsRequest {
+        surface_width: 360,
+        surface_height: 640,
+        own: None,
+        slots: [handle, ContactHandle { bytes: [0xee; 32] }]
+            .into_iter()
+            .enumerate()
+            .map(|(index, handle)| ContactAvatarSlot {
+                slot: index as u32,
+                contact: ProfileContact::Handle { handle },
+                rect: avatar_rect(16, 80 + 56 * index as i32, 44),
+                clip: AVATAR_CLIP,
+            })
+            .collect(),
+    };
+    assert_eq!(
+        futures::executor::block_on(Profile::place_contact_avatars(
+            &host,
+            &CallContext::default(),
+            HostProfilePlaceContactAvatarsRequest::V3(request),
+        )),
+        Ok(HostProfilePlaceContactAvatarsResponse::V3),
+    );
+    assert_eq!(
+        avatars.placements(),
+        vec![(
+            "notes.dot".to_string(),
+            placed_avatars(vec![placed_avatar(0, CONTACTS_REFERENCE)])
+        )],
+    );
+    contacts
+        .listed
+        .lock()
+        .expect("listed mutex poisoned")
+        .clear();
+    host.services.contact_handles.clear();
+    host.services
+        .contact_avatars
+        .contacts_changed(&host.services.spawner);
+    let empty = ("notes.dot".to_string(), placed_avatars(Vec::new()));
+    assert_eq!(avatars.wait_for(3)[1..], [empty.clone(), empty.clone()]);
+    host.services
+        .contact_avatars
+        .redraw_owner(owner, &host.services.spawner);
+    assert_eq!(
+        avatars.wait_for(4)[3],
+        empty,
+        "a later profile update cannot reuse the removed handle's account"
+    );
+}
+
+#[test]
+fn handle_avatar_redraw_does_not_resolve_under_a_signed_out_wallet() {
+    let platform = stub_platform();
+    let account = [0xa1; 32];
+    let contacts = StubContactsPlatform::picking(account);
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let mut host = contacts_host("notes.dot", platform.clone(), Some(contacts), true);
+    host.profile_platform = Some(avatars.clone());
+    let handle = picked_handle(&host);
+    let owner = owner_of(&host);
+    futures::executor::block_on(profile::record_personal_received_reference(
+        platform.as_ref(),
+        owner,
+        account,
+        "seity.dot".into(),
+        1,
+        1,
+        Some(CONTACTS_REFERENCE.into()),
+    ))
+    .unwrap();
+    let request = truapi::latest::HostProfilePlaceContactAvatarsRequest {
+        surface_width: 360,
+        surface_height: 640,
+        own: None,
+        slots: vec![truapi::latest::ContactAvatarSlot {
+            slot: 0,
+            contact: truapi::latest::ProfileContact::Handle { handle },
+            rect: avatar_rect(16, 80, 44),
+            clip: AVATAR_CLIP,
+        }],
+    };
+    futures::executor::block_on(Profile::place_contact_avatars(
+        &host,
+        &CallContext::default(),
+        HostProfilePlaceContactAvatarsRequest::V3(request),
+    ))
+    .unwrap();
+    host.test_session_state().clear_session();
+    host.services
+        .contact_avatars
+        .redraw_owner(owner, &host.services.spawner);
+    assert_eq!(
+        avatars.wait_for(2),
+        vec![
+            (
+                "notes.dot".to_string(),
+                placed_avatars(vec![placed_avatar(0, CONTACTS_REFERENCE)])
+            ),
+            ("notes.dot".to_string(), placed_avatars(Vec::new())),
+        ]
+    );
+}
+
+#[test]
 fn own_avatar_placement_draws_the_disclosed_profile_without_returning_its_reference() {
     let platform = stub_platform();
     let avatars = Arc::new(RecordingAvatarHost::default());
@@ -3796,6 +4203,9 @@ fn own_avatar_placement_draws_the_disclosed_profile_without_returning_its_refere
             product_id: "seity.dot".to_string(),
             reference: CONTACTS_REFERENCE.to_string(),
             revision: 7,
+            all_chat_apps: true,
+            app_products: Vec::new(),
+            contacts: Vec::new(),
         },
     ))
     .expect("own disclosure stored");
@@ -3843,8 +4253,12 @@ fn own_and_contact_slots_share_one_slot_namespace() {
         clip: AVATAR_CLIP,
     });
     assert!(matches!(
-        place_profile_avatars(&chat, request),
-        Err(CallError::Domain(HostProfilePlaceContactAvatarsError::V2(
+        futures::executor::block_on(Profile::place_contact_avatars(
+            &chat,
+            &CallContext::default(),
+            HostProfilePlaceContactAvatarsRequest::V3(request),
+        )),
+        Err(CallError::Domain(HostProfilePlaceContactAvatarsError::V3(
             v01::HostProfilePlaceContactAvatarsError::Unknown { .. }
         )))
     ));

@@ -384,10 +384,8 @@ impl NativeChatActor {
         self.continue_open(context, id, 0).await
     }
 
-    /// Keep the newest profile reference each frame carries for `peer`, in
-    /// this product's received-reference slot. `None` withdraws it, and a
-    /// frame older than the one held changes nothing. Contact avatars placed
-    /// over this product are redrawn when anything changed.
+    /// Apply authenticated grants within their own scope. Personal changes
+    /// redraw all placements of the wallet, app changes only this product.
     async fn record_profile_references(
         &self,
         context: &NativeChatContext,
@@ -395,21 +393,50 @@ impl NativeChatActor {
         frames: Vec<crate::runtime::chat_device::ProfileReferenceFrame>,
     ) -> Result<(), Error> {
         let owner = super::profile::profile_owner(context);
+        let profile_state = context.services.profile_state_gate.lock().await;
         let mut changed = false;
+        let mut personal_changed = false;
         for frame in frames {
-            changed |= crate::runtime::profile::record_received_reference(
-                &*context.services.platform,
-                owner,
-                &self.product,
-                peer,
-                frame.discloser_product_id,
-                frame.timestamp,
-                frame.reference,
-            )
-            .await
+            use crate::runtime::profile::{
+                ProfileScope, record_personal_received_reference, record_received_reference,
+            };
+            let kept = match frame.scope {
+                ProfileScope::App => {
+                    record_received_reference(
+                        &*context.services.platform,
+                        owner,
+                        &self.product,
+                        peer,
+                        frame.discloser_product_id,
+                        frame.timestamp,
+                        frame.reference,
+                    )
+                    .await
+                }
+                ProfileScope::Personal => {
+                    record_personal_received_reference(
+                        &*context.services.platform,
+                        owner,
+                        peer,
+                        frame.discloser_product_id,
+                        frame.timestamp,
+                        frame.revision,
+                        frame.reference,
+                    )
+                    .await
+                }
+            }
             .map_err(|_| Error::StorageUnavailable)?;
+            changed |= kept;
+            personal_changed |= kept && frame.scope == ProfileScope::Personal;
         }
-        if changed {
+        drop(profile_state);
+        if personal_changed {
+            context
+                .services
+                .contact_avatars
+                .redraw_owner(owner, &context.services.spawner);
+        } else if changed {
             context.services.contact_avatars.redraw(
                 owner,
                 &self.product,

@@ -276,17 +276,15 @@ impl PairingHostRuntime {
 		self.services.install_funding_platform(platform)
 	}
 
-	/// Open a funding session on the host's own behalf, as the Balance card's
-	/// Add and Withdraw do, and show the overlay. Returns the session id, or
-	/// `None` when the user dismissed the overlay without starting.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.open_funding"))]
-	pub async fn open_funding(
-		&self,
-		direction: v01::FundingDirection,
-		amount: Option<u128>,
-	) -> Result<Option<String>, v01::GenericError> {
-		self.services.open_host_funding(direction, amount).await
-	}
+    /// Invalidate cached contact handles and refresh host-drawn contact avatars.
+    /// Call whenever a contact is removed or blocked.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.notify_contacts_changed"))]
+    pub fn notify_contacts_changed(&self) {
+        self.services.contact_handles.clear();
+        self.services
+            .contact_avatars
+            .contacts_changed(&self.services.spawner);
+    }
 
 	/// Install the host's [`GamePlatform`], which holds each product's game
 	/// reminder.
@@ -801,17 +799,15 @@ impl SigningHostRuntime {
 		self.services.funding().history()
 	}
 
-	/// Record that the host wrote ended session `intent` into its own
-	/// history. Until it does, the session is handed over again through
-	/// `funding_session_changed` each time funding resumes; the host reads
-	/// the full record with `funding_session`.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.acknowledge_funding_session"))]
-	pub async fn acknowledge_funding_session(
-		&self,
-		intent: &str,
-	) -> Result<bool, v01::GenericError> {
-		Ok(self.services.acknowledge_funding_session(intent).await?)
-	}
+    /// Invalidate cached contact handles and refresh host-drawn contact avatars.
+    /// Call whenever a contact is removed or blocked.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.notify_contacts_changed"))]
+    pub fn notify_contacts_changed(&self) {
+        self.services.contact_handles.clear();
+        self.services
+            .contact_avatars
+            .contacts_changed(&self.services.spawner);
+    }
 
 	/// Cancel open funding session `intent`. Returns whether it was still
 	/// open.
@@ -1633,12 +1629,13 @@ impl Drop for WorkerReference {
 }
 
 impl ProductRuntime {
-	/// Tell the core the host's contacts changed, so no handle resolves from
-	/// what it cached before. For an embedder that holds only this runtime;
-	/// one holding the host runtime calls it there.
-	pub fn notify_contacts_changed(&self) {
-		self.admin.product_runtime.connection().services().contact_handles.clear();
-	}
+    /// Invalidate contact handles and refresh avatars for this host's runtimes.
+    /// Embedders holding the host runtime may notify it instead.
+    pub fn notify_contacts_changed(&self) {
+        let services = self.admin.product_runtime.services();
+        services.contact_handles.clear();
+        services.contact_avatars.contacts_changed(&services.spawner);
+    }
 
 	/// Build a product-facing host core around a platform implementation and
 	/// outgoing frame sink.

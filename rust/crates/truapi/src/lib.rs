@@ -143,11 +143,12 @@ pub mod latest {
         HostNativeChatInvitation, HostNativeChatMessages, HostNativeChatPayment,
         HostNativeChatPaymentDirection, HostNativeChatPaymentFailure, HostNativeChatPaymentState,
         HostNativeChatPeer, HostNativeChatPeerDevice, HostNativeChatRichMessage,
-        HostNativeChatRichMessageKind,
+        HostNativeChatRichMessageKind, OwnAvatarSlot, ProfileAudience, ProfileContact,
     };
     pub use crate::v03::{
-        HostNativeChatBinding, HostNativeChatMigrationInvitation, HostNativeChatOpenPage,
-        HostNativeChatOpened, HostNativeChatPrepared, HostNativeChatRoute, HostNativeChatStatePage,
+        ContactAvatarSlot, HostNativeChatBinding, HostNativeChatMigrationInvitation,
+        HostNativeChatOpenPage, HostNativeChatOpened, HostNativeChatPrepared, HostNativeChatRoute,
+        HostNativeChatStatePage,
     };
 
 	pub use crate::v01::{
@@ -258,6 +259,14 @@ pub mod latest {
     /// Contact avatar placement failure.
     pub type HostProfilePlaceContactAvatarsError =
         LatestOf<versioned::profile::HostProfilePlaceContactAvatarsError>;
+    /// Profile disclosure request with explicit audiences.
+    pub type HostProfileDiscloseRequest = LatestOf<versioned::profile::HostProfileDiscloseRequest>;
+    /// Contact profile presentation selector.
+    pub type HostProfilePresentContactRequest =
+        LatestOf<versioned::profile::HostProfilePresentContactRequest>;
+    /// Contact and own avatar geometry.
+    pub type HostProfilePlaceContactAvatarsRequest =
+        LatestOf<versioned::profile::HostProfilePlaceContactAvatarsRequest>;
     /// Push notification scheduling request.
     pub type HostPushNotificationRequest =
         LatestOf<versioned::notifications::HostPushNotificationRequest>;

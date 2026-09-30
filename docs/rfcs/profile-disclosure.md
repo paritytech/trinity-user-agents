@@ -8,11 +8,11 @@ status: draft
 
 ## Summary
 
-A product hands the host one opaque profile reference for the user's chat contacts. The host relays it to each contact
-over Chat v2 and keeps the references contacts relay back. A chat product then asks the host to show a contact's profile
-by naming the contact, and the host presents the reference that contact disclosed through the existing `profile.present`
-path. A chat product may also tell the host where it draws contacts' avatars, and the host draws each sharing contact's
-photo and mood ring there on its own layer. No product holds another user's reference, and none learns who shared one.
+A product hands the host one opaque profile reference and an audience policy. The host relays app-scoped grants or
+personal grants to selected Contacts handles over authenticated Chat v2 channels, and keeps received references
+inside the host. An app-scoped grant is renderable in that app; a personal grant is renderable across apps on the
+recipient's host. Products request host-owned drawers and avatar overlays by peer identity or opaque handle, never
+receive another user's reference, and cannot inspect the host's rendering.
 
 ## Motivation
 
@@ -23,11 +23,11 @@ the hosts, and Chat v2 leaves ordinary delivery to products.
 
 ## Requirements
 
-- **Blind:** the disclosing product never learns who the contacts are.
+- **Blind:** products may retain selected opaque handles, but receive no contact names, accounts or contact enumeration.
 - **Sealed:** no product reads a reference in transit or at rest, on either side.
 - **Bound:** a presented profile is the one that contact's host sent, not one a product chose.
 - **Stable:** a change to the referenced profile does not require relaying again.
-- **Withdrawable:** the discloser can retract, and contacts drop what they hold.
+- **Withdrawable:** narrowing an audience withdraws its grant; recipients stop rendering it once the withdrawal arrives.
 - **Unobservable:** a product that shows contacts' avatars cannot tell which contacts shared a profile.
 
 ## Approach
@@ -36,160 +36,98 @@ The design has six parts:
 
 - The `Profile` trait gains `disclose`, `retract`, `present_contact` and `place_contact_avatars`.
 - `disclose` asks the user once per product before anything is stored.
-- Core storage holds the user's disclosure and the references received per chat product.
+- Core storage holds the user's disclosure, app-scoped received references and wallet-wide personal received references.
 - The Chat v2 actor relays disclosures through its host-private outbox.
 - `present_contact` hands the host the stored reference and the contact who sent it.
 - `place_contact_avatars` substitutes stored references into a host-drawn avatar layer.
 
 ### Trait
 
+`Profile` uses wire trait **69**. This change preserves that address and the existing method IDs.
+
+| Method | ID | Request versions |
+| --- | --- | --- |
+| `present` | 0 | V1: reference supplied by the caller |
+| `disclose` | 1 | V1: reference; V2: reference plus audiences |
+| `retract` | 2 | V1 |
+| `present_contact` | 3 | V1: peer identity; V2: peer or Contacts handle |
+| `place_contact_avatars` | 4 | V1: peer slots; V2: optional own slot; V3: peer/handle slots plus own |
+| `own_status` | 5 | V1 |
+| `present_own` | 6 | V1 |
+
+The canonical payloads are in `truapi::latest`; wire envelopes are in `truapi::versioned::profile`.
+The new audience and selector shapes are:
+
 ```rust
-#[wire_trait(id = 69)]
-#[crate::async_trait]
-pub trait Profile: Send + Sync {
-    /// Show the referenced profile in host-owned UI.
-    #[wire(id = 0)]
-    async fn present(
-        &self,
-        _cx: &CallContext,
-        _request: HostProfilePresentRequest,
-    ) -> Result<HostProfilePresentResponse, CallError<HostProfilePresentError>> {
-        Err(CallError::unavailable())
-    }
-
-    /// Give the user's chat contacts this reference. App executions only.
-    #[wire(id = 1)]
-    async fn disclose(
-        &self,
-        _cx: &CallContext,
-        _request: HostProfileDiscloseRequest,
-    ) -> Result<HostProfileDiscloseResponse, CallError<HostProfileDiscloseError>> {
-        Err(CallError::unavailable())
-    }
-
-    /// Withdraw the reference this product disclosed.
-    #[wire(id = 2)]
-    async fn retract(
-        &self,
-        _cx: &CallContext,
-        _request: HostProfileRetractRequest,
-    ) -> Result<HostProfileRetractResponse, CallError<HostProfileRetractError>> {
-        Err(CallError::unavailable())
-    }
-
-    /// Show the profile a chat contact disclosed.
-    #[wire(id = 3)]
-    async fn present_contact(
-        &self,
-        _cx: &CallContext,
-        _request: HostProfilePresentContactRequest,
-    ) -> Result<HostProfilePresentContactResponse, CallError<HostProfilePresentContactError>> {
-        Err(CallError::unavailable())
-    }
-
-    /// Say where this product draws contacts' avatars. App executions only.
-    #[wire(id = 4)]
-    async fn place_contact_avatars(
-        &self,
-        _cx: &CallContext,
-        _request: HostProfilePlaceContactAvatarsRequest,
-    ) -> Result<
-        HostProfilePlaceContactAvatarsResponse,
-        CallError<HostProfilePlaceContactAvatarsError>,
-    > {
-        Err(CallError::unavailable())
-    }
+pub enum ProfileAudience {
+    ChatApps,
+    App { product_id: String },
+    Contacts { handles: Vec<ContactHandle> },
 }
-
 pub struct HostProfileDiscloseRequest {
-    /// Opaque reference, screened like a `present` reference.
     pub reference: String,
+    pub audiences: Vec<ProfileAudience>,
 }
-pub enum HostProfileDiscloseError {
-    /// The reference is empty, too long, or not printable ASCII.
-    InvalidReference,
-    /// The user declined, now or earlier, to let this product disclose a profile.
-    PermissionDenied,
-    /// No user is signed in.
-    NotConnected,
-    /// Catch-all.
-    Unknown { reason: String },
-}
-pub enum HostProfileRetractError {
-    /// Another product disclosed the reference the host holds.
-    NotDiscloser,
-    /// No user is signed in.
-    NotConnected,
-    /// Catch-all.
-    Unknown { reason: String },
+pub enum ProfileContact {
+    Peer { peer_identity: [u8; 32] },
+    Handle { handle: ContactHandle },
 }
 pub struct HostProfilePresentContactRequest {
-    /// The contact's authenticated root identity, as the Chat v2 API names it.
-    pub peer_identity: [u8; 32],
-}
-pub enum HostProfilePresentContactError {
-    /// The contact has not disclosed a profile to the user.
-    NotShared,
-    /// The stored reference no longer passes screening.
-    InvalidReference,
-    /// No user is signed in.
-    NotConnected,
-    /// Catch-all.
-    Unknown { reason: String },
-}
-pub struct HostProfilePlaceContactAvatarsRequest {
-    /// Surface size, in the units of every rect: framebuffer pixels for a PolkaVM product,
-    /// CSS pixels of the viewport for a web product. 1 to 16384 a side.
-    pub surface_width: u32,
-    pub surface_height: u32,
-    /// Replaces the product's previous placement; empty clears it. At most 64.
-    pub slots: Vec<ContactAvatarSlot>,
+    pub contact: ProfileContact,
 }
 pub struct ContactAvatarSlot {
-    /// Product-chosen id, unique in the placement and stable for one on-screen avatar.
     pub slot: u32,
-    pub peer_identity: [u8; 32],
-    /// The avatar circle's bounding box: square, 1 to 1024 a side.
+    pub contact: ProfileContact,
     pub rect: AvatarRect,
-    /// Visible region the avatar is cut to.
     pub clip: AvatarRect,
-}
-pub struct AvatarRect { pub x: i32, pub y: i32, pub width: u32, pub height: u32 }
-pub enum HostProfilePlaceContactAvatarsError {
-    /// The host cannot draw over the product.
-    Unsupported,
-    /// No user is signed in.
-    NotConnected,
-    /// Catch-all, including a malformed placement.
-    Unknown { reason: String },
 }
 ```
 
+V1 disclosure maps to `ChatApps`: app-scoped sharing with ready peers of each Chat app, not a wallet-wide personal
+grant. `App` selects one normalized product ID. `Contacts` selects personal recipients by opaque handle. A request may
+combine these; an empty list retains the own profile without granting delivery. Calls replace the previous audience
+policy. At most 64 audience entries and 4096 handles are accepted; duplicates are coalesced.
+
+The core resolves handles using the same verified Contacts lookup as transaction recipient substitution, rehashes
+returned accounts, and rejects the entire disclosure if any handle is invalid or the session/cache generation changes.
+It never guesses a translation between a payment account, device key and Chat root identity: a resolved account must
+exactly match an authenticated ready peer identity. A Contacts entry does not establish such a channel.
+
+Seity groups can be sets of handles whose union is passed as `Contacts`. Group names, labels and membership editing
+are not host Profile state. Handles are stable pseudonyms across apps and hosts for one user, not unlinkable identities.
+
 ### Consent
 
-Every contact receives the reference, so a product may disclose only once the user has allowed it. The first `disclose`
-from a product raises `UserConfirmationReview::ProfileDisclosure { product_id }` through the host's
+The first `disclose` from a product raises `UserConfirmationReview::ProfileDisclosure { product_id }` through the host's
 `confirm_permission`, beside `ChatAuthority`; the answer is remembered per product as
-`PermissionAuthorizationRequest::ProfileDisclosure`, and a refusal, then or remembered, is `PermissionDenied` with
-nothing stored. `retract` never asks: withdrawing only narrows what contacts hold.
+`PermissionAuthorizationRequest::ProfileDisclosure`. A refusal is `PermissionDenied` with nothing stored.
+The current review authorizes the disclosing product, not each audience mutation. A product must explain the difference
+between sharing inside an app and personal sharing across apps; audience-specific host consent remains a rollout
+question. `retract` never asks: it withdraws all grants of the current disclosure.
 
 ### Storage
 
-Two core-storage slots hold references, and neither is visible to products. Both are scoped to the signed-in wallet and
-the Chat network, as the Chat roster is. `ProfileDisclosure { root_public_key, genesis_hash }` holds the disclosing
-product id and the reference. `ProfileReferencesReceived { root_public_key, genesis_hash, product_id }` holds, per chat
-product, what each contact's host last sent: its discloser, its frame timestamp, and the reference, or `None` once
-withdrawn. Clearing the product clears it. Hosts treat both as secret material.
+Three secret core-storage slots are scoped to the signed-in wallet and People network:
+
+- `ProfileDisclosure { root_public_key, genesis_hash }`: discloser, reference, audience policy and durable revision.
+  Retraction retains a revision tombstone, so the next share cannot reuse an older sequence after restart.
+- `ProfileReferencesReceived { root_public_key, genesis_hash, product_id }`: app-scoped received grants and withdrawals.
+- `ProfilePersonalReferencesReceived { root_public_key, genesis_hash }`: personal received grants and withdrawals,
+  shared across recipient apps but isolated from other wallets and networks.
+
+Legacy disclosure and watermark records migrate to app-scoped behavior, never to personal grants. A live app-specific
+reference takes precedence over a personal one. An app withdrawal removes only that grant, allowing a personal grant
+to remain visible; a personal withdrawal leaves app grants intact.
 
 ### Relay
 
-A disclosure travels as a new Chat v2 content type, `ProfileReference { discloser_product_id, reference: Option }`,
-where `None` withdraws. The Chat actor seals it to each ready peer's devices through the same host-private outbox that
-carries payments and rich files, so the chat product submits and retries opaque ciphertext it cannot read, and cannot
-prepare the content type itself. A per-peer watermark records what was last sent; each publish sends the current
-disclosure to every ready peer whose watermark differs, which covers the first share, a new contact, a replacement and a
-withdrawal. On receipt the host screens the frame, stores it for that peer and removes it from the plaintext returned to
-the product. Frames from compacted history are dropped.
+App grants retain Chat v2 content **21**, `ProfileReference { discloser_product_id, reference: Option }`, byte for byte.
+Personal grants use distinct content **22**, with validated personal scope byte **1**, a nonzero durable disclosure
+revision, the disclosing product and optional reference. `None` withdraws in that scope only.
+The Chat actor seals frames to ready peer devices through the host-private outbox. The product submits opaque
+ciphertext, cannot prepare profile content itself, and receives no profile content in opened history.
+Per-peer, per-scope watermarks track shares, replacements and withdrawals. Personal frames are addressed only to selected
+resolved accounts. Frames from compacted history are dropped.
 
 A Chat actor publishes:
 
@@ -201,41 +139,40 @@ A Chat actor publishes:
   call, and asks every open Chat actor of the same wallet and network, whatever its product, to publish on a task of its
   own, so the call never waits on it.
 
-Publishes on one actor run one at a time, so one that read an older disclosure never queues it after a newer one.
-Without a new disclosure and with nothing lapsed, a publish reads the disclosure and checks watermarks, nothing more.
+A wallet/network profile-state gate serializes disclosure replacement, publication and received-store updates.
+Without a new disclosure and with nothing lapsed, publication reads the disclosure and checks watermarks.
+Narrowing an audience removes obsolete unsent frames, even for peers that are no longer ready, and retains withdrawal
+watermarks for later delivery. Already returned signed frames cannot be recalled.
 
-The product decides the order it opens statements in, so frames are ordered by their timestamp, not by arrival. Each
-frame a host sends a peer is timestamped later than the one before it, even if its clock steps back. The receiving host
-applies a frame only if it is strictly newer than the one it holds, and keeps a withdrawal as a row rather than deleting
-it, so a disclosure opened after its own withdrawal cannot bring the reference back.
+App frames retain timestamp ordering. Personal frames use the durable disclosure revision across actors: independent
+app clocks must not allow an old share to undo a newer withdrawal. Received withdrawals remain tombstones, so replaying
+an older share cannot restore it after the newer withdrawal has been received.
 
-Delivery is best effort. References have their own outbox budget, one per peer, so they never take a slot payments or
-rich files need, and a reference that finds no room waits for a later publish rather than failing the chat product's
-initialization. A queued reference is offered for one statement lifetime. If it lapses unacknowledged and the peer is
-still ready, it is signed again as a new, later frame and offered for another lifetime, up to three frames per peer and
-disclosure; then the host stops until the disclosure changes, which starts a fresh count. A host that predates the
-content type rejects the whole statement and never acknowledges it, so it costs at most three statements per disclosure.
-The watermark records the attempts and whether the last frame lapsed; state written before it recorded them counts as
-one attempt that did not lapse.
+Delivery is best effort. References share the existing bounded profile outbox budget, with separate entries per peer
+and scope, and never take slots reserved for payments or rich files. A frame that finds no room waits for a later
+publish. An unacknowledged frame lapsing after one statement lifetime is signed again for a ready peer, up to three
+frames per scope and disclosure; a new disclosure starts a fresh count. Hosts predating a content type reject it and
+never acknowledge it. Migration retains existing app watermarks and pending withdrawals.
 
 The host only prepares statements: the chat product submits them. A publish outside the product's own requests, after
 `disclose` or `retract`, queues the reference while the chat actor is open, and it reaches the contact once the chat
 product next runs and submits what its responses offer.
 
-A reference may name a mutable record, such as a registry slot, and a discloser such as Seity re-shares the same
-reference when only the record behind it changes. Each `disclose` call therefore stores the disclosure with a new
-revision, later than the stored one, and the watermark records the disclosure by a digest that includes it. Disclosing
-the reference already held starts a new round to every ready peer: a new, later frame with its own request id and
-signature, and a fresh attempt count. Automatic publishes (initialize, reconcile, a peer becoming ready) compare the
-same revision and never resend a round already sent. A disclosure stored before revisions reads as revision 0 and keeps
-the digest it was sent under, so an upgrade sends nothing.
+A reference may name a mutable record. Every `disclose`, even with an unchanged reference, advances the durable
+revision and starts a new round for the selected recipients with fresh attempt counts. Initialize, reconcile and
+readiness-triggered publishes do not resend a round already delivered. A pre-revision disclosure reads as revision 0
+and preserves its legacy app digest, so migration alone does not broaden or resend it.
 
 ### Presentation
 
-`present_contact` looks up the caller's received reference for the named peer, screens it again, and hands it to
+V1 `present_contact` reads only the caller's app-scoped grant and preserves its existing errors. It cannot probe personal
+grants through `NotShared`. V2 accepts a peer or verified Contacts handle, selects the live app grant then personal
+fallback, and answers uniformly for an absent, unknown or unreadable profile, including host drawing failures.
+Neither path returns the reference. The core hands a found reference to
 `ProfilePlatform::present_contact_profile(product, PresentedContactProfile { reference, peer_identity, shared_at,
-username })`, where `shared_at` is the sender timestamp (Unix ms) of the frame the reference came from. `username` is
-the host's own name for the contact, never one from the product: the name the calling product's Chat roster holds for
+username })`. `shared_at` is a frame freshness timestamp; personal grants advance it monotonically even when a newer
+revision arrives from an actor with an older clock. `username` is the host's own name for the contact, never one from
+the product: the name the calling product's Chat roster holds for
 that peer, verified when the contact was bound or first authenticated, else the peer's verified dotNS name. The core
 waits at most 2 seconds for it and passes `None` when it knows none, so a slow directory never holds the drawer back; the
 host then names the contact generically, never by address. The default calls `present_profile` with the reference
@@ -260,11 +197,10 @@ A chat product draws its own conversation list and header, so only it knows wher
 `place_contact_avatars` with its surface size and, per avatar, a slot id, the contact's peer identity, the circle's
 square bounding box and the region it is cut to, in surface units. Each call replaces the product's placement.
 
-The core keeps only the slots whose contact holds a current reference in the caller's `ProfileReferencesReceived`,
-withdrawals excluded, and hands them with those references to `ProfilePlatform::place_contact_avatars(product,
-PlacedAvatars { surface_width, surface_height, avatars })`. Each avatar carries `shared_at`, the sender timestamp (Unix ms) of
-the frame its reference came from: a newer frame with the same reference means the contact updated the record behind
-it, and the host should drop any profile it cached for that reference. The host draws each contact's photo and mood ring, when
+The core keeps only slots with an effective live app or personal reference, withdrawals excluded, and hands them to
+`ProfilePlatform::place_contact_avatars(product, PlacedAvatars { surface_width, surface_height, avatars })`.
+Each avatar carries `shared_at`, a monotonically advancing freshness timestamp within its grant scope. A newer value
+for the same reference means the host should drop cached profile contents. The host draws each photo and mood ring, when
 they have one, on a layer over the product that lets pointer input through; a tap still reaches the product, which
 opens the profile with `present_contact`. The default callback draws nothing, so a host draws avatars only once it
 implements it.
@@ -280,6 +216,12 @@ hands it to the host in the same `PlacedAvatars` set as the contact avatars, so 
 overlay. Slot ids are unique across `own` and the contact slots. Disclosing or retracting redraws every remembered
 placement for that wallet, as a contact's reference change does. A version 1 placement is one with no own slot.
 
+Version 3 retains the own slot and accepts `ProfileContact` selectors for contact slots. V1/V2 requests and replies
+remain compatible. Handle placements revalidate the session and Contacts cache generation on redraw.
+`notifyContactsChanged` clears stale handle resolution and clears the old overlay before resolving it again, so
+removed handles cannot leave old avatars visible. Personal receives and withdrawals refresh all wallet placements.
+Removing a Contacts entry invalidates lookup but does not itself edit an already approved disclosure's recipient set.
+
 No leak: the product must not learn who shared a profile. The core answers `Ok` to any well-formed placement from a
 signed-in user however many avatars, if any, are drawn; it returns nothing per slot, logs nothing about slots, and
 treats a host drawing failure as success, since it could depend on which avatars were drawn. Only what the product
@@ -290,7 +232,8 @@ read it.
 
 ## Trade-offs
 
-- One reference for all contacts, so withdrawing it from one contact means rotating it for all of them.
+- One reference is shared by all audiences. A narrower audience withdraws rendering only for the removed grants;
+  overlapping grants remain effective. It cannot invalidate copies of the bearer reference.
 - A retraction cannot make a contact's host forget a reference it already resolved.
 - The watermark advances when the message is queued. A message that never arrives is sent again only when it lapses
   unacknowledged, three frames at most per disclosure, so a contact whose host misses all three is not sent it again
@@ -303,12 +246,12 @@ read it.
 
 ## Open questions
 
-- The wire trait id. The prototype uses 69, clear of the sequential range, and moves to the next free id when it lands.
-- The content-type index. The prototype uses V2 index 21, which native Chat has to agree to.
+- Chat content indices 21 (app) and 22 (personal) require coordination with native Chat before rollout.
 - Several disclosing products. There is one `ProfileDisclosure` slot, so the last product to disclose replaces the
   others and the earlier one can no longer retract. The alternative is one slot per product, with the host relaying the
   one from a product the user designates, as RFC 0024 designates a personhood provider.
-- Consent covers the product, not the reference: once allowed, a product may replace its disclosure without asking.
+- Consent covers the product, not each audience mutation: once allowed, a product may replace its disclosure without
+  asking. Selected-contact and cross-app personal-sharing review must be agreed with the host Contacts owner.
 - Devices. Only the host that took `disclose` knows the disclosure, so contacts that reach the user's other devices are
   not sent it.
 - Resolution. Hosts parse references today; a shared resolver in the core would need the reference format specified here

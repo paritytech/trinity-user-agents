@@ -44,11 +44,12 @@ use futures::{
 use truapi::latest;
 
 use crate::platform::{
-	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
-	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
-	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
-	ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
-	async_trait,
+    AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
+    HopProvider, JsonRpcConnection, LocaleHost, NativeChatFileExportRequest,
+    NativeChatFilePickRequest, NativeChatFilesHost, NativeChatPickedFile, Navigation,
+    Notifications, PermissionDecision, Permissions, PreimageHost, ProductContext,
+    ProductOperations, ProductStorage, ProviderError, ThemeHost, UserConfirmation,
+    UserConfirmationReview,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -704,49 +705,108 @@ fn hex_key(bytes: &[u8; 32]) -> String {
 
 /// Stable string key for a typed core-storage slot.
 fn core_key(key: &CoreStorageKey) -> String {
-	match key {
-		CoreStorageKey::AuthSession => "core:auth-session".to_string(),
-		CoreStorageKey::PairingDeviceIdentity => "core:pairing-device-identity".to_string(),
-		CoreStorageKey::PermissionAuthorization { product_id, request } => {
-			format!("core:permission:{product_id}:{request:?}")
-		},
-		CoreStorageKey::AutoSigningKey { product_id } => {
-			format!("core:auto-signing-key:{product_id}")
-		},
-		CoreStorageKey::AutoSigningKeys => "core:auto-signing-keys".to_string(),
-		CoreStorageKey::RingVrfRegistry { root_public_key } => {
-			format!("core:ring-vrf-registry:{}", hex_key(root_public_key))
-		},
-		CoreStorageKey::StatementRenewalTargets => "core:statement-renewal-targets".to_string(),
-		CoreStorageKey::DeviceEncryptionKey => "core:device-encryption-key".to_string(),
-		CoreStorageKey::ProductSubtree { session_id, product_id } => {
-			format!("core:product-subtree:{session_id}:{product_id}")
-		},
-		CoreStorageKey::SsoResponderRequestLedger {
-			root_public_key,
-			peer_statement_account_id,
-			peer_encryption_public_key,
-		} => {
-			format!(
-				"core:sso-responder-ledger:{}:{}:{}",
-				hex_key(root_public_key),
-				hex_key(peer_statement_account_id),
-				hex_key(peer_encryption_public_key)
-			)
-		},
-		CoreStorageKey::ProductManifest { product_id } => {
-			format!("core:product-manifest:{product_id}")
-		},
-		CoreStorageKey::FundingSessions => "core:funding-sessions".to_string(),
-		CoreStorageKey::FundingSessionsUnreadable => "core:funding-sessions-unreadable".to_string(),
-		CoreStorageKey::FundingSessionPack => "core:funding-session-pack".to_string(),
-		CoreStorageKey::AllowanceKeys { session_id } => {
-			format!("core:allowance-keys:{session_id}")
-		},
-		CoreStorageKey::LastProcessedPairingStatement => {
-			"core:last-processed-pairing-statement".to_string()
-		},
-	}
+    match key {
+        CoreStorageKey::AuthSession => "core:auth-session".to_string(),
+        CoreStorageKey::PairingDeviceIdentity => "core:pairing-device-identity".to_string(),
+        CoreStorageKey::PermissionAuthorization {
+            product_id,
+            request,
+        } => format!("core:permission:{product_id}:{request:?}"),
+        CoreStorageKey::AutoSigningKey { product_id } => {
+            format!("core:auto-signing-key:{product_id}")
+        }
+        CoreStorageKey::AutoSigningKeys => "core:auto-signing-keys".to_string(),
+        CoreStorageKey::RingVrfRegistry { root_public_key } => {
+            format!("core:ring-vrf-registry:{}", hex_key(root_public_key))
+        }
+        CoreStorageKey::StatementRenewalTargets => "core:statement-renewal-targets".to_string(),
+        CoreStorageKey::DeviceEncryptionKey => "core:device-encryption-key".to_string(),
+        CoreStorageKey::ProductSubtree {
+            session_id,
+            product_id,
+        } => format!("core:product-subtree:{session_id}:{product_id}"),
+        CoreStorageKey::SsoResponderRequestLedger {
+            root_public_key,
+            peer_statement_account_id,
+            peer_encryption_public_key,
+        } => format!(
+            "core:sso-responder-ledger:{}:{}:{}",
+            hex_key(root_public_key),
+            hex_key(peer_statement_account_id),
+            hex_key(peer_encryption_public_key)
+        ),
+        CoreStorageKey::MainPurseCoinage {
+            root_public_key,
+            genesis_hash,
+        } => format!(
+            "core:main-purse-coinage:{}:{}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
+        CoreStorageKey::NativeChatDevice {
+            root_public_key,
+            genesis_hash,
+            product_id,
+        } => format!(
+            "core:native-chat-device:{}:{}:{product_id}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
+        CoreStorageKey::NativeChatProducts {
+            root_public_key,
+            genesis_hash,
+        } => format!(
+            "core:native-chat-products:{}:{}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
+        CoreStorageKey::ProfileDisclosure {
+            root_public_key,
+            genesis_hash,
+        } => format!(
+            "core:profile-disclosure:{}:{}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
+        CoreStorageKey::ProfileReferencesReceived {
+            root_public_key,
+            genesis_hash,
+            product_id,
+        } => format!(
+            "core:profile-references-received:{}:{}:{product_id}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
+        CoreStorageKey::ProfilePersonalReferencesReceived {
+            root_public_key,
+            genesis_hash,
+        } => format!(
+            "core:profile-personal-references-received:{}:{}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
+        CoreStorageKey::NativeChatFileChunk {
+            root_public_key,
+            genesis_hash,
+            product_id,
+            attachment_id,
+            ..
+        } => format!(
+            "core:native-chat-file-chunk:{}:{}:{product_id}:{}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash),
+            hex_key(attachment_id)
+        ),
+        CoreStorageKey::ProductManifest { product_id } => {
+            format!("core:product-manifest:{product_id}")
+        }
+        CoreStorageKey::AllowanceKeys { session_id } => {
+            format!("core:allowance-keys:{session_id}")
+        }
+        CoreStorageKey::LastProcessedPairingStatement => {
+            "core:last-processed-pairing-statement".to_string()
+        }
+    }
 }
 
 /// Content address of a preimage value: blake2b-256 of the raw bytes.

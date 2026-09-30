@@ -40,18 +40,20 @@ pub trait Profile: Send + Sync {
     ) -> Result<HostProfilePresentResponse, CallError<HostProfilePresentError>> {
         Err(CallError::unavailable())
     }
-    /// Give the user's chat contacts this reference to their profile.
+    /// Store the user's profile and replace its independent delivery audiences.
     ///
-    /// The host stores it as the user's own and relays it to each contact,
-    /// replacing whatever it sent before; the product never learns who they
-    /// are. App executions only. The first disclosure asks the user once for
-    /// this product; a refusal, then or remembered, is `PermissionDenied`. A
-    /// reference this core cannot screen is `InvalidReference`, and with no
-    /// user signed in the call is `NotConnected`.
+    /// `ChatApps` shares within every ready Chat App. `App` selects one Chat
+    /// App's audience. `Contacts` shares personally with picked opaque handles;
+    /// those received profiles may render in any App. An empty audience list
+    /// retains the own profile but withdraws all grants. Unknown handles reject
+    /// the whole disclosure. App executions only. The first disclosure asks
+    /// the user once per product; a refusal is `PermissionDenied`.
+    /// v0.1 callers retain the `ChatApps` audience.
     ///
     /// ```ts
     /// const result = await truapi.profile.disclose({
     ///   reference: "seity-contacts:v1:" + "00".repeat(64),
+    ///   audiences: [{ tag: "ChatApps" }],
     /// });
     /// console.log("profile disclosed:", result);
     /// ```
@@ -80,15 +82,21 @@ pub trait Profile: Send + Sync {
         Err(CallError::unavailable())
     }
 
-    /// Show a chat contact's profile in host-owned UI.
+    /// Show a contact's available profile in host-owned UI.
     ///
-    /// The product names the contact; the host looks up the reference that
-    /// contact shared and presents it as `present` would. The reference never
-    /// reaches the product. A contact who shared nothing is `NotShared`.
+    /// The selector names a Chat peer or a picked opaque handle. App-scoped
+    /// profiles take precedence over personal profiles. References, names,
+    /// resolved accounts and availability never return to the product. Unknown
+    /// handles, absent profiles and host presentation failures return the same
+    /// success. v0.1 callers retain their `NotShared` and presentation errors
+    /// for App-scoped shares only; personal drawers require v0.2 so a legacy
+    /// raw-peer request cannot disclose personal sharing availability.
     ///
     /// ```ts
     /// const result = await truapi.profile.presentContact({
-    ///   peerIdentity: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    ///   contact: { tag: "Peer", value: {
+    ///     peerIdentity: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    ///   } },
     /// });
     /// console.log("contact profile presentation:", result);
     /// ```
@@ -101,7 +109,7 @@ pub trait Profile: Send + Sync {
         Err(CallError::unavailable())
     }
 
-    /// Tell the host where this product draws chat contacts' avatars, and
+    /// Tell the host where this product draws contacts' avatars, and
     /// optionally the signed-in user's own, so it can draw each shared photo
     /// and mood ring over them on its own layer.
     ///
@@ -135,7 +143,9 @@ pub trait Profile: Send + Sync {
     ///   slots: [
     ///     {
     ///       slot: 0,
-    ///       peerIdentity: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    ///       contact: { tag: "Peer", value: {
+    ///         peerIdentity: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    ///       } },
     ///       rect: { x: 16, y: 80, width: 44, height: 44 },
     ///       clip: { x: 0, y: 64, width: 360, height: 576 },
     ///     },

@@ -960,7 +960,11 @@ fn exchange_digest(messages: &[OpenedDeviceMessage]) -> Result<[u8; 32], Error> 
                 continue;
             }
             OpenedDeviceMessage::ProfileReference(frame) => {
-                hasher.update(&[6]);
+                let personal = frame.scope == crate::runtime::profile::ProfileScope::Personal;
+                hasher.update(&[if personal { 7 } else { 6 }]);
+                if personal {
+                    hasher.update(&frame.revision.to_le_bytes());
+                }
                 let bytes = (
                     frame.message_id.as_str(),
                     frame.timestamp,

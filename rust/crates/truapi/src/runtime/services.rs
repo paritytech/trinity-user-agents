@@ -10,24 +10,15 @@ use std::{
 	sync::{Arc, Mutex, OnceLock},
 };
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::durable::{DurableTxEngine, DurableWorkObserver};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::store::{Db, DbError};
-use crate::{
-	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
-	host_logic::worker::WorkerLedger,
-	platform::{
-		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
-		PaymentPlatform, PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform,
-		TopUpPlatform,
-	},
-	runtime::{
-		bulletin_rpc::BulletinRpc, sso_responder_service::DevicePairingObserver,
-		statement_store_rpc::StatementStoreRpc,
-	},
-	subscription::Spawner,
+use crate::chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure};
+use crate::host_logic::worker::WorkerLedger;
+use crate::platform::{
+    CoinageWalletHost, HostInfo, JsonRpcConnection, PermissionStatusHost, Platform,
 };
+use crate::runtime::bulletin_rpc::BulletinRpc;
+use crate::runtime::signing_host::DevicePairingObserver;
+use crate::runtime::statement_store_rpc::StatementStoreRpc;
+use crate::subscription::Spawner;
 use async_trait::async_trait;
 use truapi::latest;
 
@@ -41,91 +32,70 @@ const STATEMENT_CACHE_MAX_ENTRIES: usize = 64;
 
 /// Infrastructure shared by all product runtimes created from one host role.
 pub struct RuntimeServices {
-	/// Host platform backing all syscalls.
-	pub platform: Arc<dyn Platform>,
-	/// Host identity reported to products via `System::host_info`.
-	pub host_info: HostInfo,
-	/// Host chat adapter, when the host serves the Chat capability. `None`
-	/// makes every product chat call resolve as `Unsupported`.
-	pub chat_platform: Option<Arc<dyn ChatPlatform>>,
-	/// Host adapter reporting live OS permission state, installed once at
-	/// startup by a host that can read it. Unset leaves device grants
-	/// resolving from stored state alone.
-	permission_status: OnceLock<Arc<dyn PermissionStatusHost>>,
-	/// Host Pocket adapter, installed once at startup by a host with a Pocket
-	/// surface. Unset leaves every product Pocket call `Unsupported`.
-	pocket_platform: OnceLock<Arc<dyn PocketPlatform>>,
-	/// Host top-up engine, installed once at startup by a host that claims
-	/// funds into the balance. Unset leaves every top-up `Unsupported`.
-	top_up_platform: OnceLock<Arc<dyn TopUpPlatform>>,
-	/// The host's payment engine, once installed.
-	payment_platform: OnceLock<Arc<dyn PaymentPlatform>>,
-	/// The host's balance view, once installed.
-	balance_platform: OnceLock<Arc<dyn BalancePlatform>>,
-	/// Funding sessions shared by every product runtime of this host.
-	funding: Arc<crate::runtime::funding::FundingRegistry>,
-	/// Host contacts adapter, installed once at startup by a host with a
-	/// contact picker. Unset leaves every product contacts call `Unsupported`.
-	contacts_platform: OnceLock<Arc<dyn ContactsPlatform>>,
-	/// Contact handles already resolved, shared by every product runtime of
-	/// this host and emptied when the host says its contacts changed.
-	pub contact_handles: crate::runtime::contacts::ContactHandleCache,
-	/// Host Game adapter, installed once at startup by a host that can hold
-	/// reminders. Unset leaves every product Game call `Unsupported`.
-	game_platform: OnceLock<Arc<dyn GamePlatform>>,
-	/// Host scanner, installed once at startup by a host that can draw a
-	/// viewfinder. Unset leaves every product scan `Unsupported`.
-	scanner_platform: OnceLock<Arc<dyn ScannerPlatform>>,
-	/// Whether a scan is open. Shared by every product runtime of this host,
-	/// because the device has one viewfinder.
-	scan_open: AtomicBool,
-	/// Host observer told when a device finishes pairing with this signing
-	/// host. Unset leaves a paired device unannounced.
-	device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
-	/// Core-owned database, installed once at startup by a host that
-	/// configured one. Unset makes every durable consumer report
-	/// [`DbError::NotConfigured`].
-	#[cfg(not(target_arch = "wasm32"))]
-	core_db: OnceLock<Db>,
-	/// Durable transaction engine over the core database, installed with it.
-	#[cfg(not(target_arch = "wasm32"))]
-	durable_engine: OnceLock<Arc<DurableTxEngine>>,
-	/// Host observer told whether durable work is pending. Unset leaves
-	/// recovery to whoever calls it.
-	#[cfg(not(target_arch = "wasm32"))]
-	durable_work_observer: OnceLock<Arc<dyn DurableWorkObserver>>,
-	/// Asset Hub the dotNS contracts are deployed on. All-zero says this host
-	/// has none, which leaves every manifest unresolvable.
-	asset_hub_chain_genesis_hash: [u8; 32],
-	/// Reference counts per product worker.
-	pub worker_ledger: WorkerLedger,
-	/// Shared chainHead-v1 runtime behind the Chain surface.
-	pub chain: ChainRuntime,
-	/// People-chain statement store RPC client.
-	pub statement_store: StatementStoreRpc,
-	/// In-core Bulletin submission over the configured Bulletin chain.
-	pub bulletin: BulletinRpc,
-	/// Runtime metadata and chain state shared by the native allowance
-	/// paths, per chain.
-	pub chain_context: crate::runtime::statement_allowance::ChainContextCache,
-	/// Values from confirmed in-core submissions, served to `lookup_subscribe`
-	/// until the host's content backend has them. Byte-bounded, oldest-first.
-	preimage_cache: Mutex<PreimageCache>,
-	/// Preimages a test host kept instead of submitting. Unbounded, unlike
-	/// `preimage_cache`: nothing else holds them, so evicting one would leave
-	/// its key unresolvable for the rest of the run.
-	#[cfg(feature = "test-host")]
-	local_preimages: Mutex<std::collections::HashMap<[u8; 32], Vec<u8>>>,
-	/// Confirmed submissions served to new subscriptions until the remote
-	/// Statement Store reports them.
-	statement_cache: Mutex<StatementCache>,
-	/// Task spawner for background runtime work.
-	pub spawner: Spawner,
-	/// Serializes the read-or-create of the persisted device encryption key.
-	/// Concurrent first-time readers would otherwise each generate a secret and
-	/// persist it, leaving peers addressing an overwritten key.
-	device_encryption_key: futures::lock::Mutex<()>,
-	next_core_instance: AtomicU64,
+    /// Host platform backing all syscalls.
+    pub platform: Arc<dyn Platform>,
+    /// Host identity reported to products via `System::host_info`.
+    pub host_info: HostInfo,
+    /// Host chat adapter, when the host serves the Chat capability. `None`
+    /// makes every product chat call resolve as `Unsupported`.
+    pub chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
+    /// Native wallet custody, fixed at construction. Absence uses Rust; an
+    /// injected service remains the owner even while unavailable.
+    pub(crate) native_wallet: Option<Arc<dyn CoinageWalletHost>>,
+    /// Host adapter reporting live OS permission state, installed once at
+    /// startup by a host that can read it. Unset leaves device grants
+    /// resolving from stored state alone.
+    permission_status: OnceLock<Arc<dyn PermissionStatusHost>>,
+    /// Host Pocket adapter, installed once at startup by a host with a Pocket
+    /// surface. Unset leaves every product Pocket call `Unsupported`.
+    /// Host profile presenter, installed once at startup by a host that can
+    /// render profiles. Unset leaves every product Profile call `Unsupported`.
+    profile_platform: OnceLock<Arc<dyn crate::platform::ProfilePlatform>>,
+    /// Where each live product connection draws contact avatars, so they can
+    /// be redrawn when what a contact shared changes.
+    pub(crate) contact_avatars: crate::runtime::profile::avatars::ContactAvatarPlacements,
+    /// Serializes profile audience updates, relay publication and received grants.
+    pub(crate) profile_state_gate: futures::lock::Mutex<()>,
+    /// Optional native authenticated username index; only supplies candidates.
+    identity_backend: OnceLock<Arc<dyn crate::platform::IdentityBackendHost>>,
+    pocket_platform: OnceLock<Arc<dyn crate::platform::PocketPlatform>>,
+    /// Host contacts adapter, installed once at startup by a host with a
+    /// contact picker. Unset leaves every product contacts call `Unsupported`.
+    contacts_platform: OnceLock<Arc<dyn crate::platform::ContactsPlatform>>,
+    /// Contact handles already resolved, shared by every product runtime of
+    /// this host and emptied when the host says its contacts changed.
+    pub contact_handles: crate::runtime::contacts::ContactHandleCache,
+    /// Host observer told when a device finishes pairing with this signing
+    /// host. Unset leaves a paired device unannounced.
+    device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
+    /// Asset Hub the dotNS contracts are deployed on. All-zero says this host
+    /// has none, which leaves every manifest unresolvable.
+    asset_hub_chain_genesis_hash: [u8; 32],
+    /// Reference counts per product worker.
+    pub worker_ledger: WorkerLedger,
+    /// Shared chainHead-v1 runtime behind the Chain surface.
+    pub chain: ChainRuntime,
+    /// Configured People chain for native Chat identity and main-purse Coinage.
+    pub(crate) people_chain_genesis_hash: [u8; 32],
+    /// People-chain statement store RPC client.
+    pub statement_store: StatementStoreRpc,
+    /// In-core Bulletin submission over the configured Bulletin chain.
+    pub bulletin: BulletinRpc,
+    /// Runtime metadata and chain state shared by allowance paths, per chain.
+    pub chain_context: crate::runtime::statement_allowance::ChainContextCache,
+    /// Values from confirmed in-core submissions, served to `lookup_subscribe`
+    /// until the host's content backend has them. Byte-bounded, oldest-first.
+    preimage_cache: Mutex<PreimageCache>,
+    /// Confirmed submissions served to new subscriptions until the remote
+    /// Statement Store reports them.
+    statement_cache: Mutex<StatementCache>,
+    /// Task spawner for background runtime work.
+    pub spawner: Spawner,
+    /// Serializes the read-or-create of the persisted device encryption key.
+    /// Concurrent first-time readers would otherwise each generate a secret and
+    /// persist it, leaving peers addressing an overwritten key.
+    device_encryption_key: futures::lock::Mutex<()>,
+    next_core_instance: AtomicU64,
 }
 
 impl RuntimeServices {
@@ -192,32 +162,53 @@ impl RuntimeServices {
 		})
 	}
 
-	/// Same as [`Self::new`], with the host's chat adapter installed.
-	pub fn with_chat_platform(
-		platform: Arc<dyn Platform>,
-		host_info: HostInfo,
-		people_chain_genesis_hash: [u8; 32],
-		bulletin_chain_genesis_hash: [u8; 32],
-		asset_hub_chain_genesis_hash: [u8; 32],
-		spawner: Spawner,
-		chat_platform: Option<Arc<dyn ChatPlatform>>,
-	) -> Arc<Self> {
-		let services = Self::new(
-			platform,
-			host_info,
-			people_chain_genesis_hash,
-			bulletin_chain_genesis_hash,
-			asset_hub_chain_genesis_hash,
-			spawner,
-		);
-		let Some(chat_platform) = chat_platform else {
-			return services;
-		};
-		let mut services = Arc::try_unwrap(services)
-			.unwrap_or_else(|_| unreachable!("services are not shared before this point"));
-		services.chat_platform = Some(chat_platform);
-		Arc::new(services)
-	}
+    /// Same as [`Self::new`], with optional Chat and native wallet dependencies.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_chat_platform(
+        platform: Arc<dyn Platform>,
+        host_info: HostInfo,
+        people_chain_genesis_hash: [u8; 32],
+        bulletin_chain_genesis_hash: [u8; 32],
+        asset_hub_chain_genesis_hash: [u8; 32],
+        spawner: Spawner,
+        chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
+        native_wallet: Option<Arc<dyn CoinageWalletHost>>,
+    ) -> Arc<Self> {
+        let chain_provider = Arc::new(HostChainProvider {
+            platform: platform.clone(),
+        });
+        let chain = ChainRuntime::new(chain_provider, spawner.clone());
+        let statement_store =
+            StatementStoreRpc::new(platform.clone(), people_chain_genesis_hash, spawner.clone());
+        let bulletin = BulletinRpc::new(chain.clone(), bulletin_chain_genesis_hash);
+        Arc::new(Self {
+            platform,
+            host_info,
+            chat_platform,
+            native_wallet,
+            permission_status: OnceLock::new(),
+            pocket_platform: OnceLock::new(),
+            profile_platform: OnceLock::new(),
+            contact_avatars: Default::default(),
+            profile_state_gate: Default::default(),
+            identity_backend: OnceLock::new(),
+            contacts_platform: OnceLock::new(),
+            contact_handles: Default::default(),
+            device_pairing_observer: OnceLock::new(),
+            asset_hub_chain_genesis_hash,
+            worker_ledger: WorkerLedger::default(),
+            chain,
+            people_chain_genesis_hash,
+            statement_store,
+            bulletin,
+            chain_context: crate::runtime::statement_allowance::ChainContextCache::default(),
+            preimage_cache: Mutex::new(PreimageCache::default()),
+            statement_cache: Mutex::new(StatementCache::default()),
+            spawner,
+            device_encryption_key: futures::lock::Mutex::new(()),
+            next_core_instance: AtomicU64::new(1),
+        })
+    }
 
 	/// Install the host's live OS permission-status adapter.
 	///

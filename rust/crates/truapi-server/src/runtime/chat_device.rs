@@ -121,6 +121,10 @@ pub(crate) struct ProfileReferenceFrame {
     pub(crate) discloser_product_id: String,
     /// The reference, or `None` for a withdrawal.
     pub(crate) reference: Option<String>,
+    /// Legacy frames remain app-scoped; only explicit personal frames broaden visibility.
+    pub(crate) scope: crate::runtime::profile::ProfileScope,
+    /// Personal grants use a durable cross-app sequence; legacy app frames use timestamps.
+    pub(crate) revision: u64,
 }
 
 /// The same bound and alphabet the core screens a product's reference with.
@@ -568,6 +572,30 @@ pub(crate) fn classify_message(
         }
         V2ChatMessageContent::ContactAdded => DeviceLifecycle::ContactAdded,
         V2ChatMessageContent::LeftChat => DeviceLifecycle::LeftChat,
+        V2ChatMessageContent::PersonalProfileReference {
+            discloser_product_id,
+            reference,
+            revision,
+        } => {
+            validate_id(&message.message_id)?;
+            if !screened_ascii(&discloser_product_id, MAX_PROFILE_PRODUCT_ID_BYTES)
+                || reference.as_deref().is_some_and(|reference| {
+                    !screened_ascii(reference, MAX_PROFILE_REFERENCE_BYTES)
+                })
+            {
+                return Err(ChatDeviceError::InvalidEncoding);
+            }
+            return Ok(OpenedDeviceMessage::ProfileReference(
+                ProfileReferenceFrame {
+                    message_id: message.message_id,
+                    timestamp: message.timestamp,
+                    discloser_product_id,
+                    reference,
+                    scope: crate::runtime::profile::ProfileScope::Personal,
+                    revision,
+                },
+            ));
+        }
         V2ChatMessageContent::ProfileReference {
             discloser_product_id,
             reference,
@@ -586,6 +614,8 @@ pub(crate) fn classify_message(
                     timestamp: message.timestamp,
                     discloser_product_id,
                     reference,
+                    scope: crate::runtime::profile::ProfileScope::App,
+                    revision: 0,
                 },
             ));
         }

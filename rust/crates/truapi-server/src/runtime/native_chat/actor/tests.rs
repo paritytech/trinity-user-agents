@@ -6,11 +6,13 @@ mod hop_history;
 mod native_wallet;
 
 use super::*;
+use crate::platform::CoreStorageKey;
 use crate::{
     host_logic::statement_store::decode_verified_statement_data,
     runtime::{authority::AuthoritySession, services::RuntimeServices},
     subscription::Spawner,
     test_support::{StubPlatform, core_storage_test_key, wait_until},
+    versioned::IntoLatest,
 };
 use futures::{
     executor::block_on,
@@ -18,7 +20,6 @@ use futures::{
 };
 use parking_lot::Mutex;
 use truapi_coinage::{MemoEntry, TransferMemo};
-use truapi_platform::CoreStorageKey;
 
 const PRODUCT: &str = "chat.dot";
 
@@ -1619,7 +1620,7 @@ fn a_snapshot_with_legacy_profile_watermarks_opens_and_resends() {
 
                 // The same state with its watermarks in the legacy layout.
                 let trailing = state.profile_shared.encode();
-                let mut legacy = current[..current.len() - trailing.len()].to_vec();
+                let mut legacy = current[..current.len() - trailing.len() - 4].to_vec();
                 legacy.extend(
                     state
                         .profile_shared
@@ -1695,7 +1696,7 @@ fn a_snapshot_with_single_attempt_profile_watermarks_keeps_them() {
             .update(|state| {
                 let current = state.encode();
                 let trailing = state.profile_shared.encode();
-                let mut single = current[..current.len() - trailing.len()].to_vec();
+                let mut single = current[..current.len() - trailing.len() - 4].to_vec();
                 single.extend(
                     state
                         .profile_shared
@@ -1782,6 +1783,9 @@ fn a_disclosed_profile_reference_is_sealed_once_per_peer_and_withdrawn_on_retrac
                 product_id: "seity.dot".into(),
                 reference: PROFILE_REFERENCE.into(),
                 revision: 1,
+                all_chat_apps: true,
+                app_products: Vec::new(),
+                contacts: Vec::new(),
             },
         )
         .await
@@ -1823,6 +1827,9 @@ fn a_disclosed_profile_reference_is_sealed_once_per_peer_and_withdrawn_on_retrac
                 product_id: "seity.dot".into(),
                 reference: format!("{PROFILE_REFERENCE}ff"),
                 revision: 1,
+                all_chat_apps: true,
+                app_products: Vec::new(),
+                contacts: Vec::new(),
             },
         )
         .await
@@ -1877,6 +1884,9 @@ fn a_disclosed_profile_reference_is_sealed_once_per_peer_and_withdrawn_on_retrac
                 product_id: "seity.dot".into(),
                 reference: PROFILE_REFERENCE.into(),
                 revision: 1,
+                all_chat_apps: true,
+                app_products: Vec::new(),
+                contacts: Vec::new(),
             },
         )
         .await
@@ -1908,6 +1918,9 @@ fn a_disclosed_profile_reference_is_sealed_once_per_peer_and_withdrawn_on_retrac
                 product_id: "seity.dot".into(),
                 reference: PROFILE_REFERENCE.into(),
                 revision: 2,
+                all_chat_apps: true,
+                app_products: Vec::new(),
+                contacts: Vec::new(),
             },
         )
         .await
@@ -2027,7 +2040,8 @@ fn contact_avatars_over_the_product_follow_what_the_contact_shares() {
             ContactAvatarPlacement::new(
                 host.clone(),
                 fixture.platform.clone(),
-                truapi_platform::ProductContext::new(PRODUCT.to_string()).unwrap(),
+                crate::platform::ProductContext::new(PRODUCT.to_string()).unwrap(),
+                Arc::downgrade(&fixture.context.services),
             )
         });
         let rect = truapi::v01::AvatarRect {
@@ -2045,17 +2059,21 @@ fn contact_avatars_over_the_product_follow_what_the_contact_shares() {
         placement
             .place(
                 profile::profile_owner(&fixture.context),
-                truapi::v02::HostProfilePlaceContactAvatarsRequest {
-                    surface_width: 360,
-                    surface_height: 640,
-                    own: None,
-                    slots: vec![truapi::v01::ContactAvatarSlot {
-                        slot: 7,
-                        peer_identity: identity.account,
-                        rect,
-                        clip,
-                    }],
-                },
+                truapi::versioned::profile::HostProfilePlaceContactAvatarsRequest::V2(
+                    truapi::v02::HostProfilePlaceContactAvatarsRequest {
+                        surface_width: 360,
+                        surface_height: 640,
+                        own: None,
+                        slots: vec![truapi::v01::ContactAvatarSlot {
+                            slot: 7,
+                            peer_identity: identity.account,
+                            rect,
+                            clip,
+                        }],
+                    },
+                )
+                .into_latest(),
+                None,
             )
             .await
             .unwrap();
@@ -2091,10 +2109,7 @@ fn contact_avatars_over_the_product_follow_what_the_contact_shares() {
         };
         assert_eq!(
             host.wait_for(2),
-            vec![
-                placed(Vec::new()),
-                placed(vec![avatar(fixture.timestamp)]),
-            ]
+            vec![placed(Vec::new()), placed(vec![avatar(fixture.timestamp)]),]
         );
         // The contact re-shares the same reference (its record changed): the
         // host is told, with the newer frame's time, so it drops its cache.
@@ -2252,6 +2267,9 @@ async fn disclose_for(fixture: &Fixture) {
             product_id: "seity.dot".into(),
             reference: PROFILE_REFERENCE.into(),
             revision: 1,
+            all_chat_apps: true,
+            app_products: Vec::new(),
+            contacts: Vec::new(),
         },
     )
     .await
@@ -2471,6 +2489,9 @@ fn an_unacknowledged_reference_is_resent_a_bounded_number_of_times_per_disclosur
                 product_id: "seity.dot".into(),
                 reference: format!("{PROFILE_REFERENCE}ff"),
                 revision: 1,
+                all_chat_apps: true,
+                app_products: Vec::new(),
+                contacts: Vec::new(),
             },
         )
         .await
@@ -2684,6 +2705,9 @@ fn a_changed_disclosure_is_relayed_by_the_open_chats_of_its_wallet() {
                 product_id: "seity.dot".into(),
                 reference: PROFILE_REFERENCE.into(),
                 revision: 1,
+                all_chat_apps: true,
+                app_products: Vec::new(),
+                contacts: Vec::new(),
             },
         ))
         .unwrap();
@@ -2713,4 +2737,619 @@ fn a_changed_disclosure_is_relayed_by_the_open_chats_of_its_wallet() {
         .unwrap(),
         "another wallet's Chat is not told"
     );
+}
+
+async fn open_personal_profile_frame(
+    fixture: &Fixture,
+    actor: &Arc<NativeChatActor>,
+    identity: &IdentityFixture,
+    peer: &DeviceFixture,
+    request_id: &str,
+    (revision, timestamp): (u64, u64),
+    reference: Option<&str>,
+) {
+    let frame = wire::encode_personal_profile_reference_message(
+        &format!("{request_id}-frame"),
+        timestamp,
+        revision,
+        "seity.dot",
+        reference,
+    )
+    .unwrap();
+    let plaintext = wire::encode_transport_request_plaintext(request_id, &[frame]).unwrap();
+    let packet = native_packet(actor, identity, peer, &plaintext, false, false);
+    let (opened, _) = actor
+        .open_statement(&fixture.context, &NativeChatRegistry::default(), packet)
+        .await
+        .unwrap();
+    assert!(
+        opened
+            .iter()
+            .all(|opened| !contains(&opened.plaintext, PROFILE_REFERENCE.as_bytes()))
+    );
+}
+
+async fn queued_profile_contents(
+    fixture: &Fixture,
+    actor: &Arc<NativeChatActor>,
+    identity: &IdentityFixture,
+    device: &DeviceFixture,
+) -> Vec<wire::V2ChatMessageContent> {
+    actor
+        .public_view(&fixture.context, Vec::new())
+        .await
+        .unwrap()
+        .prepared
+        .into_iter()
+        .filter(|entry| entry.peer_identity == identity.account)
+        .map(|entry| {
+            let wire::V2StatementTransportData::MultiRequest(native) =
+                open_output(actor, identity, &entry.statement, false, false)
+            else {
+                panic!("profile must use authenticated multi-device transport");
+            };
+            let body = open_body(
+                actor,
+                device,
+                &native.encrypted_request,
+                &native.devices_info,
+            );
+            let request = wire::decode_message_exchange_request_plaintext(&body).unwrap();
+            assert_eq!(request.messages.len(), 1);
+            wire::decode_message(&request.messages[0]).unwrap().content
+        })
+        .collect()
+}
+
+#[test]
+fn profile_audiences_select_exact_identity_accounts_and_keep_scopes_independent_after_restart() {
+    block_on(async {
+        use crate::runtime::profile::{Disclosure, read_disclosure_state, write_disclosure};
+        let fixture = Fixture::new();
+        for product in [PRODUCT, "other.dot"] {
+            set_product_grants(
+                &fixture.platform,
+                product,
+                crate::platform::PermissionAuthorizationStatus::Authorized,
+            )
+            .await;
+        }
+        let actor = fixture.actor().await;
+        let other = NativeChatActor::open(&fixture.context, "other.dot")
+            .await
+            .unwrap();
+        let selected = IdentityFixture::new();
+        let bystander = IdentityFixture {
+            account: keypair(0x72).public.to_bytes(),
+            secret: [0x73; 32],
+        };
+        let device = DeviceFixture::new(1);
+        let other_device = DeviceFixture::new(2);
+        for chat in [&actor, &other] {
+            seed_peer(chat, &selected, &[&device]).await;
+            seed_peer(chat, &bystander, &[&other_device]).await;
+        }
+        let owner = profile::profile_owner(&fixture.context);
+        let mut disclosure = Disclosure {
+            product_id: "seity.dot".into(),
+            reference: PROFILE_REFERENCE.into(),
+            revision: 1,
+            all_chat_apps: false,
+            app_products: vec![PRODUCT.into()],
+            contacts: vec![selected.account, other_device.account()],
+        };
+        write_disclosure(fixture.platform.as_ref(), owner, &disclosure)
+            .await
+            .unwrap();
+        assert!(
+            actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap()
+        );
+        assert!(
+            other
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap()
+        );
+        let personal_share = wire::V2ChatMessageContent::PersonalProfileReference {
+            discloser_product_id: "seity.dot".into(),
+            reference: Some(PROFILE_REFERENCE.into()),
+            revision: 1,
+        };
+        assert_eq!(
+            queued_profile_contents(&fixture, &other, &selected, &device).await,
+            vec![personal_share.clone()]
+        );
+        assert_eq!(
+            queued_profile_contents(&fixture, &actor, &selected, &device).await,
+            vec![
+                wire::V2ChatMessageContent::ProfileReference {
+                    discloser_product_id: "seity.dot".into(),
+                    reference: Some(PROFILE_REFERENCE.into()),
+                },
+                personal_share
+            ]
+        );
+        assert_eq!(
+            queued_profile_contents(&fixture, &actor, &bystander, &other_device).await,
+            vec![wire::V2ChatMessageContent::ProfileReference {
+                discloser_product_id: "seity.dot".into(),
+                reference: Some(PROFILE_REFERENCE.into()),
+            }]
+        );
+        assert!(
+            queued_profile_contents(&fixture, &other, &bystander, &other_device)
+                .await
+                .is_empty(),
+            "a selected device account must not be translated to its peer identity"
+        );
+
+        disclosure.contacts.clear();
+        write_disclosure(fixture.platform.as_ref(), owner, &disclosure)
+            .await
+            .unwrap();
+        assert!(
+            queued_profile_contents(&fixture, &actor, &selected, &device)
+                .await
+                .is_empty(),
+            "a response cannot expose superseded pending shares before the relay runs"
+        );
+        let platform = fixture.platform.clone();
+        fixture.tasks.stop();
+        drop(actor);
+        drop(other);
+        drop(fixture);
+        let fixture = Fixture::on_platform(platform);
+        let actor = fixture.actor().await;
+        assert!(
+            actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap()
+        );
+        let revision = read_disclosure_state(fixture.platform.as_ref(), owner)
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(
+            queued_profile_contents(&fixture, &actor, &selected, &device).await,
+            vec![
+                wire::V2ChatMessageContent::ProfileReference {
+                    discloser_product_id: "seity.dot".into(),
+                    reference: Some(PROFILE_REFERENCE.into()),
+                },
+                wire::V2ChatMessageContent::PersonalProfileReference {
+                    discloser_product_id: "seity.dot".into(),
+                    reference: None,
+                    revision,
+                },
+            ],
+            "a never-delivered personal share still requires a durable withdrawal"
+        );
+
+        disclosure.app_products.clear();
+        disclosure.contacts = vec![selected.account];
+        write_disclosure(fixture.platform.as_ref(), owner, &disclosure)
+            .await
+            .unwrap();
+        assert!(
+            actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap()
+        );
+        let revision = read_disclosure_state(fixture.platform.as_ref(), owner)
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(
+            queued_profile_contents(&fixture, &actor, &selected, &device).await,
+            vec![
+                wire::V2ChatMessageContent::ProfileReference {
+                    discloser_product_id: "seity.dot".into(),
+                    reference: None,
+                },
+                wire::V2ChatMessageContent::PersonalProfileReference {
+                    discloser_product_id: "seity.dot".into(),
+                    reference: Some(PROFILE_REFERENCE.into()),
+                    revision,
+                },
+            ],
+            "a personal share cannot overwrite a pending app withdrawal"
+        );
+    });
+}
+
+#[test]
+fn personal_references_render_across_apps_with_independent_withdrawals_and_global_replay_order() {
+    block_on(async {
+        use crate::runtime::profile::{avatars::ContactAvatarPlacement, received_reference};
+        let fixture = Fixture::new();
+        let actor = fixture.actor().await;
+        let other = NativeChatActor::open(&fixture.context, "other.dot")
+            .await
+            .unwrap();
+        let identity = IdentityFixture::new();
+        let device = DeviceFixture::new(1);
+        seed_peer(&actor, &identity, &[&device]).await;
+        seed_peer(&other, &identity, &[&device]).await;
+        let owner = profile::profile_owner(&fixture.context);
+        let host = Arc::new(crate::test_support::RecordingAvatarHost::default());
+        let placement = fixture
+            .context
+            .services
+            .contact_avatars
+            .for_runtime(41, || {
+                ContactAvatarPlacement::new(
+                    host.clone(),
+                    fixture.platform.clone(),
+                    crate::platform::ProductContext::new("not-chat.dot".into()).unwrap(),
+                    Arc::downgrade(&fixture.context.services),
+                )
+            });
+        placement
+            .place(
+                owner,
+                truapi::versioned::profile::HostProfilePlaceContactAvatarsRequest::V2(
+                    truapi::v02::HostProfilePlaceContactAvatarsRequest {
+                        surface_width: 100,
+                        surface_height: 100,
+                        own: None,
+                        slots: vec![truapi::v01::ContactAvatarSlot {
+                            slot: 1,
+                            peer_identity: identity.account,
+                            rect: truapi::v01::AvatarRect {
+                                x: 0,
+                                y: 0,
+                                width: 40,
+                                height: 40,
+                            },
+                            clip: truapi::v01::AvatarRect {
+                                x: 0,
+                                y: 0,
+                                width: 100,
+                                height: 100,
+                            },
+                        }],
+                    },
+                )
+                .into_latest(),
+                None,
+            )
+            .await
+            .unwrap();
+        open_personal_profile_frame(
+            &fixture,
+            &other,
+            &identity,
+            &device,
+            "personal-share",
+            (10, fixture.timestamp),
+            Some(PROFILE_REFERENCE),
+        )
+        .await;
+        let draws = host.wait_for(2);
+        assert_eq!(draws[1].0, "not-chat.dot");
+        assert_eq!(draws[1].1.avatars[0].reference, PROFILE_REFERENCE);
+        for product in [PRODUCT, "other.dot", "not-chat.dot"] {
+            assert_eq!(
+                received_reference(fixture.platform.as_ref(), owner, product, &identity.account)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .reference
+                    .as_deref(),
+                Some(PROFILE_REFERENCE)
+            );
+        }
+        let app_reference = format!("{PROFILE_REFERENCE}ff");
+        open_profile_frame(
+            &fixture,
+            &actor,
+            &identity,
+            &device,
+            "app-share",
+            fixture.timestamp + 1,
+            Some(&app_reference),
+        )
+        .await;
+        assert_eq!(
+            held_reference(&fixture, &identity).await.as_deref(),
+            Some(app_reference.as_str())
+        );
+        open_personal_profile_frame(
+            &fixture,
+            &actor,
+            &identity,
+            &device,
+            "personal-withdrawal",
+            (11, fixture.timestamp + 2),
+            None,
+        )
+        .await;
+        assert_eq!(
+            held_reference(&fixture, &identity).await.as_deref(),
+            Some(app_reference.as_str()),
+            "a personal withdrawal cannot remove an app grant"
+        );
+        assert!(host.wait_for(3)[2].1.avatars.is_empty());
+        open_personal_profile_frame(
+            &fixture,
+            &other,
+            &identity,
+            &device,
+            "late-stale-share",
+            (10, fixture.timestamp + 100),
+            Some(PROFILE_REFERENCE),
+        )
+        .await;
+        assert!(
+            received_reference(
+                fixture.platform.as_ref(),
+                owner,
+                "not-chat.dot",
+                &identity.account
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .reference
+            .is_none(),
+            "relay time cannot defeat a cross-app tombstone"
+        );
+        open_personal_profile_frame(
+            &fixture,
+            &other,
+            &identity,
+            &device,
+            "personal-regrant",
+            (12, fixture.timestamp),
+            Some(PROFILE_REFERENCE),
+        )
+        .await;
+        let redraws = host.wait_for(4);
+        assert!(
+            redraws[3].1.avatars[0].shared_at > draws[1].1.avatars[0].shared_at,
+            "a newer personal revision refreshes the profile despite another actor's older clock"
+        );
+        open_profile_frame(
+            &fixture,
+            &actor,
+            &identity,
+            &device,
+            "app-withdrawal",
+            fixture.timestamp + 4,
+            None,
+        )
+        .await;
+        assert_eq!(
+            held_reference(&fixture, &identity).await.as_deref(),
+            Some(PROFILE_REFERENCE),
+            "an app withdrawal exposes the independent personal fallback"
+        );
+        open_personal_profile_frame(
+            &fixture,
+            &actor,
+            &identity,
+            &device,
+            "late-stale-withdrawal",
+            (11, fixture.timestamp + 101),
+            None,
+        )
+        .await;
+        assert_eq!(
+            held_reference(&fixture, &identity).await.as_deref(),
+            Some(PROFILE_REFERENCE)
+        );
+        let platform = fixture.platform.clone();
+        fixture.tasks.stop();
+        drop(actor);
+        drop(other);
+        drop(fixture);
+        let fixture = Fixture::on_platform(platform);
+        let actor = fixture.actor().await;
+        open_personal_profile_frame(
+            &fixture,
+            &actor,
+            &identity,
+            &device,
+            "restart-stale-share",
+            (10, fixture.timestamp + 200),
+            Some(&app_reference),
+        )
+        .await;
+        assert_eq!(
+            held_reference(&fixture, &identity).await.as_deref(),
+            Some(PROFILE_REFERENCE)
+        );
+        let other_owner = crate::runtime::profile::ProfileOwner {
+            genesis_hash: [99; 32],
+            ..owner
+        };
+        assert!(
+            received_reference(
+                fixture.platform.as_ref(),
+                other_owner,
+                PRODUCT,
+                &identity.account
+            )
+            .await
+            .unwrap()
+            .is_none()
+        );
+    });
+}
+
+#[test]
+fn profile_storage_migrates_legacy_audiences_and_retains_retraction_sequence() {
+    block_on(async {
+        use crate::runtime::profile::{
+            clear_disclosure, read_disclosure, read_disclosure_state, write_disclosure,
+        };
+        let fixture = Fixture::new();
+        let owner = profile::profile_owner(&fixture.context);
+        for (raw, revision) in [
+            (
+                ("seity.dot".to_string(), PROFILE_REFERENCE.to_string()).encode(),
+                0,
+            ),
+            (
+                (
+                    "seity.dot".to_string(),
+                    PROFILE_REFERENCE.to_string(),
+                    42u64,
+                )
+                    .encode(),
+                42,
+            ),
+        ] {
+            crate::platform::CoreStorage::write_core_storage(
+                fixture.platform.as_ref(),
+                owner.disclosure_key(),
+                raw,
+            )
+            .await
+            .unwrap();
+            let legacy = read_disclosure(fixture.platform.as_ref(), owner)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(legacy.all_chat_apps);
+            assert!(legacy.app_products.is_empty() && legacy.contacts.is_empty());
+            assert_eq!(legacy.revision, revision);
+            clear_disclosure(fixture.platform.as_ref(), owner)
+                .await
+                .unwrap();
+            assert_eq!(
+                read_disclosure_state(fixture.platform.as_ref(), owner)
+                    .await
+                    .unwrap(),
+                (revision + 1, None)
+            );
+            write_disclosure(fixture.platform.as_ref(), owner, &legacy)
+                .await
+                .unwrap();
+            assert_eq!(
+                read_disclosure_state(fixture.platform.as_ref(), owner)
+                    .await
+                    .unwrap()
+                    .0,
+                revision + 2
+            );
+        }
+    });
+}
+
+#[test]
+fn personal_pending_shares_are_removed_while_unready_and_withdrawn_when_ready() {
+    block_on(async {
+        use crate::runtime::profile::{
+            Disclosure, ProfileScope, clear_disclosure, write_disclosure,
+        };
+        let fixture = Fixture::new();
+        set_product_grants(
+            &fixture.platform,
+            PRODUCT,
+            crate::platform::PermissionAuthorizationStatus::Authorized,
+        )
+        .await;
+        let actor = fixture.actor().await;
+        let identity = IdentityFixture::new();
+        let device = DeviceFixture::new(1);
+        seed_peer(&actor, &identity, &[&device]).await;
+        let owner = profile::profile_owner(&fixture.context);
+        write_disclosure(
+            fixture.platform.as_ref(),
+            owner,
+            &Disclosure {
+                product_id: "seity.dot".into(),
+                reference: PROFILE_REFERENCE.into(),
+                revision: 1,
+                all_chat_apps: false,
+                app_products: Vec::new(),
+                contacts: vec![identity.account],
+            },
+        )
+        .await
+        .unwrap();
+        actor
+            .publish_profile_reference(&fixture.context)
+            .await
+            .unwrap();
+        let peer = identity.account;
+        actor
+            .store
+            .update(move |state| {
+                state.peer_mut(&peer)?.established = false;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        clear_disclosure(fixture.platform.as_ref(), owner)
+            .await
+            .unwrap();
+        assert!(
+            !actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap()
+        );
+        actor
+            .store
+            .read(|state| {
+                assert!(
+                    state
+                        .outbox
+                        .iter()
+                        .all(|entry| entry.kind.profile_scope() != Some(ProfileScope::Personal))
+                );
+                assert_eq!(state.profile_shared[0].scope, ProfileScope::Personal);
+                assert!(state.profile_shared[0].digest.is_some());
+            })
+            .await
+            .unwrap();
+        actor
+            .store
+            .update(move |state| {
+                state.peer_mut(&peer)?.established = true;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        actor
+            .publish_profile_reference(&fixture.context)
+            .await
+            .unwrap();
+        assert_eq!(
+            queued_profile_contents(&fixture, &actor, &identity, &device).await,
+            vec![wire::V2ChatMessageContent::PersonalProfileReference {
+                discloser_product_id: "seity.dot".into(),
+                reference: None,
+                revision: 2,
+            }]
+        );
+        for _ in 1..profile::MAX_PROFILE_ATTEMPTS {
+            lapse_profile_references(&actor).await;
+            assert!(
+                actor
+                    .publish_profile_reference(&fixture.context)
+                    .await
+                    .unwrap()
+            );
+        }
+        lapse_profile_references(&actor).await;
+        assert!(
+            !actor
+                .publish_profile_reference(&fixture.context)
+                .await
+                .unwrap()
+        );
+        assert!(
+            queued_profile_contents(&fixture, &actor, &identity, &device)
+                .await
+                .is_empty()
+        );
+    });
 }

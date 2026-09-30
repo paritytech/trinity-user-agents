@@ -18,6 +18,7 @@ TypeScript client, and hosts and products implement against the same shared type
 - [TrUAPI reference](https://docs.polkadot.com/reference/apps/protocol/truapi/)
 - [Rust API reference](https://paritytech.github.io/host-rust-core/)
 - [Draft: Host-owned native Chat and main-purse payments](docs/rfcs/native-chat-main-purse.md)
+- [Draft: Profile disclosure audiences and host-rendered contacts](docs/rfcs/profile-disclosure.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
