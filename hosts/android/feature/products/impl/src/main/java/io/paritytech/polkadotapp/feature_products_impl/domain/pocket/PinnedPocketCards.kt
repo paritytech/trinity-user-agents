@@ -39,7 +39,6 @@ interface PinnedPocketCards {
 class AssetPinnedPocketCards @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val dotNsTldProvider: DotNsTldProvider,
-    private val faceDecoder: PocketFaceJsonDecoder,
 ) : PinnedPocketCards {
     private class Definition(
         val cardId: String,
@@ -86,8 +85,7 @@ class AssetPinnedPocketCards @Inject constructor(
 
     // Bundled with the app, so a failure here is a build defect rather than product input.
     private fun bundledFace(cardId: String): RendererNode = bundledFaces.getOrPut(cardId) {
-        faceDecoder
-            .decode(context.assets.open("pocket/$cardId.json").bufferedReader().readText())
+        readPocketFace(context.assets.open("pocket/$cardId.json").bufferedReader().readText())
             .getOrElse { throw IllegalStateException("bundled Pocket face '$cardId' is invalid", it) }
     }
 }

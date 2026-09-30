@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.database.migrations
 
 import androidx.room.testing.MigrationTestHelper
+import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.paritytech.polkadotapp.database.AppDatabase
@@ -31,15 +32,8 @@ class Migration68To69Test {
 
         val migrated = helper.runMigrationsAndValidate(TEST_DB, 69, true, Migration68To69())
         try {
-            migrated.query("SELECT productId, cardId, title FROM pocket_cards").use { cards ->
-                cards.moveToFirst()
-                assertEquals(listOf("game.dot", "loyalty", "Loyalty"), (0..2).map(cards::getString))
-                assertEquals(1, cards.count)
-            }
-            migrated.query("SELECT COUNT(*) FROM pocket_card_faces").use { faces ->
-                faces.moveToFirst()
-                assertEquals(0, faces.getInt(0))
-            }
+            assertEquals(listOf(listOf("game.dot", "loyalty", "Loyalty")), migrated.rows("SELECT * FROM pocket_cards"))
+            assertEquals(emptyList<List<String>>(), migrated.rows("SELECT productId, cardId FROM pocket_card_faces"))
 
             migrated.execSQL("INSERT INTO pocket_card_faces VALUES ('game.dot', 'loyalty', X'0A0B')")
             migrated.query("SELECT face FROM pocket_card_faces").use { faces ->
@@ -48,6 +42,12 @@ class Migration68To69Test {
             }
         } finally {
             migrated.close()
+        }
+    }
+
+    private fun SupportSQLiteDatabase.rows(sql: String): List<List<String>> = query(sql).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) add((0 until cursor.columnCount).map(cursor::getString))
         }
     }
 

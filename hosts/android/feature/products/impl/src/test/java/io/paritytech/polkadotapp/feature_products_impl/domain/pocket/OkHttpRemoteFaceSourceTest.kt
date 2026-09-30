@@ -50,7 +50,6 @@ class OkHttpRemoteFaceSourceTest {
 
     private val source = OkHttpRemoteFaceSource(
         calls = calls,
-        faceDecoder = PocketFaceJsonDecoder(),
         dispatchers = dispatchers,
     )
 

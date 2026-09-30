@@ -40,7 +40,6 @@ class PocketPreviewLoaderTest {
     private val loader = PocketPreviewLoader(
         archive = ProductWorkerArchive(dotNsResolver),
         remoteFaces = remoteFaces,
-        faceDecoder = PocketFaceJsonDecoder(),
     )
 
     private fun definition(preview: PocketCardPreview) =

@@ -17,12 +17,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.NativeRendererException
 
-class PocketFaceJsonDecoderTest {
-    private val decoder = PocketFaceJsonDecoder()
-
+class PocketFaceJsonTest {
     @Test
     fun `decodes the generated TypeScript shape into the shared widget vocabulary`() {
-        val face = decoder.decode(
+        val face = readPocketFace(
             """
             {"tag":"Column","value":{
               "modifiers":[
@@ -73,7 +71,7 @@ class PocketFaceJsonDecoderTest {
 
     @Test
     fun `decodes the nodes the unified renderer added`() {
-        val face = decoder.decode(
+        val face = readPocketFace(
             """
             {"tag":"Effect","value":{"props":{"effect":"Rainbow"},"children":[
               {"tag":"Image","value":{
@@ -113,8 +111,8 @@ class PocketFaceJsonDecoderTest {
     // preview, a face this host already draws live and iOS draws in both places.
     @Test
     fun `reads a tree as deep as the core streams, and refuses one deeper so it cannot blow the stack`() {
-        assertTrue(decoder.decode(levels(64)).isSuccess)
-        assertTrue(decoder.decode(levels(65)).exceptionOrNull() is NativeRendererException.TooDeep)
+        assertTrue(readPocketFace(levels(64)).isSuccess)
+        assertTrue(readPocketFace(levels(65)).exceptionOrNull() is NativeRendererException.TooDeep)
     }
 
     // A size is read back as an Int when the face is drawn, where a negative padding throws at
@@ -122,9 +120,9 @@ class PocketFaceJsonDecoderTest {
     // One larger than any screen is the drawing's to clamp, as it does for a live face.
     @Test
     fun `a negative size is refused, and one no screen could hold is left to the drawing to clamp`() {
-        assertTrue(decoder.decode(sizedSpacer("""{"tag":"Padding","value":{"top":-1,"end":0}}""")).isFailure)
-        assertTrue(decoder.decode(sizedSpacer("""{"tag":"Width","value":4294967297}""")).isSuccess)
-        assertTrue(decoder.decode(sizedSpacer("""{"tag":"Width","value":40}""")).isSuccess)
+        assertTrue(readPocketFace(sizedSpacer("""{"tag":"Padding","value":{"top":-1,"end":0}}""")).isFailure)
+        assertTrue(readPocketFace(sizedSpacer("""{"tag":"Width","value":4294967297}""")).isSuccess)
+        assertTrue(readPocketFace(sizedSpacer("""{"tag":"Width","value":40}""")).isSuccess)
     }
 
     // The shape is the protocol's, as the generated TypeScript client spells it. Reading a looser one
@@ -136,29 +134,29 @@ class PocketFaceJsonDecoderTest {
             """{"tag":"Button","value":{"modifiers":[],"props":{"text":"Go","enabled":$enabled},"children":[]}}"""
         fun text(color: String) = """{"tag":"Text","value":{"modifiers":[],"props":{"color":"$color"},"children":[]}}"""
 
-        assertTrue(decoder.decode(sizedSpacer("""{"tag":"Width","value":"40"}""")).isFailure)
-        assertTrue(decoder.decode(button("\"true\"")).isFailure)
-        assertTrue(decoder.decode(button("true")).isSuccess)
-        assertTrue(decoder.decode(text("FG_PRIMARY")).isFailure)
-        assertTrue(decoder.decode(text("FgPrimary")).isSuccess)
-        assertTrue(decoder.decode("""{"tag":"Box","value":{"props":{}}}""").isFailure)
+        assertTrue(readPocketFace(sizedSpacer("""{"tag":"Width","value":"40"}""")).isFailure)
+        assertTrue(readPocketFace(button("\"true\"")).isFailure)
+        assertTrue(readPocketFace(button("true")).isSuccess)
+        assertTrue(readPocketFace(text("FG_PRIMARY")).isFailure)
+        assertTrue(readPocketFace(text("FgPrimary")).isSuccess)
+        assertTrue(readPocketFace("""{"tag":"Box","value":{"props":{}}}""").isFailure)
     }
 
     // 256 wraps to 0, which draws nothing at all rather than reporting a bad preview.
     @Test
     fun `an opacity outside the byte it is carried in is refused`() {
-        assertTrue(decoder.decode(sizedSpacer("""{"tag":"Opacity","value":256}""")).isFailure)
-        assertTrue(decoder.decode(sizedSpacer("""{"tag":"Opacity","value":-1}""")).isFailure)
-        assertTrue(decoder.decode(sizedSpacer("""{"tag":"Opacity","value":255}""")).isSuccess)
+        assertTrue(readPocketFace(sizedSpacer("""{"tag":"Opacity","value":256}""")).isFailure)
+        assertTrue(readPocketFace(sizedSpacer("""{"tag":"Opacity","value":-1}""")).isFailure)
+        assertTrue(readPocketFace(sizedSpacer("""{"tag":"Opacity","value":255}""")).isSuccess)
     }
 
     private fun sizedSpacer(modifier: String) = """{"tag":"Spacer","value":{"modifiers":[$modifier]}}"""
 
     @Test
     fun `unknown nodes, modifiers and enum names are rejected rather than drawn as something else`() {
-        assertTrue(decoder.decode("""{"tag":"Video","value":{}}""").isFailure)
-        assertTrue(decoder.decode("""{"tag":"Spacer","value":{"modifiers":[{"tag":"Rotate","value":90}]}}""").isFailure)
-        assertTrue(decoder.decode("""{"tag":"Text","value":{"props":{"color":"Purple"},"children":[]}}""").isFailure)
-        assertTrue(decoder.decode("not json").isFailure)
+        assertTrue(readPocketFace("""{"tag":"Video","value":{}}""").isFailure)
+        assertTrue(readPocketFace("""{"tag":"Spacer","value":{"modifiers":[{"tag":"Rotate","value":90}]}}""").isFailure)
+        assertTrue(readPocketFace("""{"tag":"Text","value":{"props":{"color":"Purple"},"children":[]}}""").isFailure)
+        assertTrue(readPocketFace("not json").isFailure)
     }
 }

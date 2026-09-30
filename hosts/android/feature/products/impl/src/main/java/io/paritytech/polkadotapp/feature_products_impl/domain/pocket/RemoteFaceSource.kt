@@ -34,7 +34,6 @@ interface RemoteFaceSource {
  */
 class OkHttpRemoteFaceSource @Inject constructor(
     private val calls: Call.Factory,
-    private val faceDecoder: PocketFaceJsonDecoder,
     private val dispatchers: CoroutineDispatchers,
 ) : RemoteFaceSource {
     // `execute` blocks, and both callers collect on the main thread. Left there, Android answers with
@@ -50,6 +49,6 @@ class OkHttpRemoteFaceSource @Inject constructor(
                 body.byteStream().readFaceWithinBound()
             }
         }
-            .fold(onSuccess = faceDecoder::decode, onFailure = Result.Companion::failure)
+            .fold(onSuccess = ::readPocketFace, onFailure = Result.Companion::failure)
     }
 }

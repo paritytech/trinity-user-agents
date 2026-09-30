@@ -13,13 +13,12 @@ import javax.inject.Inject
 class PocketPreviewLoader @Inject constructor(
     private val archive: ProductWorkerArchive,
     private val remoteFaces: RemoteFaceSource,
-    private val faceDecoder: PocketFaceJsonDecoder,
 ) {
     suspend fun load(productId: ProductId, definition: PocketCardDefinition): Result<RendererNode> =
         when (val preview = definition.preview) {
             is PocketCardPreview.Archive -> archive.file(productId, preview.path)
                 .mapCatching { it.readWithinBound() }
-                .flatMap(faceDecoder::decode)
+                .flatMap(::readPocketFace)
 
             is PocketCardPreview.Url -> remoteFaces.fetch(preview.url)
         }

@@ -35,7 +35,7 @@ class AssetPinnedPocketCardsTest {
         whenever(context.getString(anyInt())).thenReturn("Humanity")
         whenever(tldProvider.getTld()).thenReturn(Result.success(tld))
 
-        return AssetPinnedPocketCards(context, tldProvider, PocketFaceJsonDecoder()).cards()
+        return AssetPinnedPocketCards(context, tldProvider).cards()
     }
 
     // Balance and Scarcity were dropped: the products behind them publish no Pocket cards, so pinning
@@ -71,7 +71,7 @@ class AssetPinnedPocketCardsTest {
         val neverAnswers: DotNsTldProvider = mock()
         val pinnedKey = PocketCardKey(ReservedProductIds.personhood(tld), PocketCardId("humanity"))
 
-        val cards = AssetPinnedPocketCards(context, neverAnswers, PocketFaceJsonDecoder())
+        val cards = AssetPinnedPocketCards(context, neverAnswers)
 
         assertEquals(pinnedKey, cards.pinned(pinnedKey)?.card?.key)
         assertNull(cards.pinned(PocketCardKey(ProductId.fromStoredValue("game.testnet"), PocketCardId("humanity"))))
