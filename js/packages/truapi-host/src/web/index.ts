@@ -7,3 +7,4 @@ export type {
   WorkerPairingHostRuntime,
 } from "./create-worker-host-runtime.js";
 export { createWebWorkerPairingHostRuntime } from "./create-worker-host-runtime.js";
+export { PRODUCT_RESOURCE_STATUS_UNSUPPORTED } from "../worker-protocol.js";

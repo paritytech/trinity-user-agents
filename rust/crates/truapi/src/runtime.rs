@@ -66,6 +66,7 @@ use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
+pub use signing_host::ProductResourceStatus;
 pub use signing_host::{
     AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
     PairingProposal, PairingProposalMetadata, ResponderExit,

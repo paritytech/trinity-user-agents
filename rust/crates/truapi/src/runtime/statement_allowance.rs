@@ -1133,7 +1133,24 @@ pub async fn fetch_bulletin_allowance(
     let Some(bytes) = rpc.get_storage(&bulletin_authorization_key(target)).await? else {
         return Ok(None);
     };
-    let fetched_at = fetch_block_number(rpc).await?;
+    let fetched_at = fetch_block_number(rpc, None).await?;
+    decode_bulletin_allowance(&bytes, fetched_at).map(Some)
+}
+
+/// Fetch Bulletin `TransactionStorage.Authorizations[Account(target)]` as of
+/// block `block_hash`, with that block's number as `fetched_at`.
+pub async fn fetch_bulletin_allowance_at(
+    rpc: &RpcClient,
+    target: &[u8; 32],
+    block_hash: &str,
+) -> Result<Option<BulletinAllowanceInfo>, StatementAllowanceError> {
+    let Some(bytes) = rpc
+        .get_storage_at(&bulletin_authorization_key(target), block_hash)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let fetched_at = fetch_block_number(rpc, Some(block_hash)).await?;
     decode_bulletin_allowance(&bytes, fetched_at).map(Some)
 }
 
@@ -1242,8 +1259,24 @@ fn decode_bulletin_allowance(
     })
 }
 
-async fn fetch_block_number(rpc: &RpcClient) -> Result<u32, StatementAllowanceError> {
-    let header = rpc.call("chain_getHeader", json!([])).await?;
+/// The number of block `block_hash`.
+pub async fn fetch_block_number_at(
+    rpc: &RpcClient,
+    block_hash: &str,
+) -> Result<u32, StatementAllowanceError> {
+    fetch_block_number(rpc, Some(block_hash)).await
+}
+
+async fn fetch_block_number(
+    rpc: &RpcClient,
+    block_hash: Option<&str>,
+) -> Result<u32, StatementAllowanceError> {
+    let header = rpc
+        .call(
+            "chain_getHeader",
+            block_hash.map_or(json!([]), |hash| json!([hash])),
+        )
+        .await?;
     let number = header
         .get("number")
         .and_then(Value::as_str)

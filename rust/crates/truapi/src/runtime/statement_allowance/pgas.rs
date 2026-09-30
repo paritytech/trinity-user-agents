@@ -66,6 +66,9 @@ pub enum PgasError {
     /// The asset account's leading balance failed to decode.
     #[error("PGAS balance: {0}")]
     BalanceDecode(#[source] parity_scale_codec::Error),
+    /// `Assets.Metadata` for the PGAS asset failed to decode.
+    #[error("PGAS asset metadata: {0}")]
+    AssetMetadataDecode(#[source] parity_scale_codec::Error),
     /// The claim reached a block but the slot is not recorded as claimed, so the
     /// call dispatch-errored and nothing was minted.
     #[error(
@@ -175,6 +178,57 @@ fn pgas_balance_key(asset_id: u32, who: &[u8; 32]) -> Vec<u8> {
     .concat()
 }
 
+/// `Assets.Metadata[asset_id]` storage key on Asset Hub.
+fn asset_metadata_key(asset_id: u32) -> Vec<u8> {
+    [
+        twox_128(b"Assets").as_slice(),
+        twox_128(b"Metadata").as_slice(),
+        &blake2_128_concat(&asset_id.to_le_bytes()),
+    ]
+    .concat()
+}
+
+/// The display facts `Assets.Metadata` holds for an asset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetDisplay {
+    /// Decimal places of one whole unit.
+    pub decimals: u8,
+    /// Ticker symbol, when it is valid UTF-8.
+    pub symbol: Option<String>,
+}
+
+/// A PGAS balance read from Asset Hub with the runtime's own parameters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PgasBalance {
+    /// The runtime's `Pgas.PgasAssetId`.
+    pub asset_id: u32,
+    /// Balance of the account in the asset's smallest unit; zero when the
+    /// account has no `Assets.Account` entry.
+    pub balance: u128,
+    /// The runtime's `Pgas.PgasClaimAmount`, the minted amount of one claim.
+    pub claim_amount: u128,
+    /// The asset's display facts, or `None` when the runtime holds none.
+    pub display: Option<AssetDisplay>,
+}
+
+/// Balance of `who` in asset `asset_id`, optionally pinned to `block_hash`.
+async fn asset_balance(
+    rpc: &RpcClient,
+    asset_id: u32,
+    who: &[u8; 32],
+    block_hash: Option<&str>,
+) -> Result<u128, StatementAllowanceError> {
+    let key = pgas_balance_key(asset_id, who);
+    let stored = match block_hash {
+        Some(block_hash) => rpc.get_storage_at(&key, block_hash).await?,
+        None => rpc.get_storage(&key).await?,
+    };
+    let Some(bytes) = stored else {
+        return Ok(0);
+    };
+    Ok(u128::decode(&mut &bytes[..]).map_err(PgasError::BalanceDecode)?)
+}
+
 /// Whether `target` already holds a full claim's worth of PGAS.
 ///
 /// A claim spends one of the day's slots, so a caller that asked to leave an
@@ -190,11 +244,47 @@ pub async fn holds_a_full_claim(
 ) -> Result<bool, StatementAllowanceError> {
     let asset_id = metadata.constant_u32("Pgas", "PgasAssetId")?;
     let claim_amount = metadata.constant_u128("Pgas", "PgasClaimAmount")?;
-    let Some(bytes) = rpc.get_storage(&pgas_balance_key(asset_id, target)).await? else {
-        return Ok(false);
+    Ok(asset_balance(rpc, asset_id, target, None).await? >= claim_amount)
+}
+
+/// The PGAS balance of `who`, read pinned to `block_hash`. The asset id and
+/// claim amount come from the runtime's metadata, never from a constant here.
+pub async fn read_balance_at(
+    rpc: &RpcClient,
+    metadata: &Metadata,
+    who: &[u8; 32],
+    block_hash: &str,
+) -> Result<PgasBalance, StatementAllowanceError> {
+    let asset_id = metadata.constant_u32("Pgas", "PgasAssetId")?;
+    let claim_amount = metadata.constant_u128("Pgas", "PgasClaimAmount")?;
+    let balance = asset_balance(rpc, asset_id, who, Some(block_hash)).await?;
+    let display = match rpc
+        .get_storage_at(&asset_metadata_key(asset_id), block_hash)
+        .await?
+    {
+        Some(bytes) => Some(decode_asset_display(&bytes).map_err(PgasError::AssetMetadataDecode)?),
+        None => None,
     };
-    let balance = u128::decode(&mut &bytes[..]).map_err(PgasError::BalanceDecode)?;
-    Ok(balance >= claim_amount)
+    Ok(PgasBalance {
+        asset_id,
+        balance,
+        claim_amount,
+        display,
+    })
+}
+
+/// Decode `AssetMetadata { deposit, name, symbol, decimals, is_frozen }`.
+fn decode_asset_display(bytes: &[u8]) -> Result<AssetDisplay, parity_scale_codec::Error> {
+    let input = &mut &bytes[..];
+    u128::decode(input)?;
+    Vec::<u8>::decode(input)?;
+    let symbol = Vec::<u8>::decode(input)?;
+    let decimals = u8::decode(input)?;
+    bool::decode(input)?;
+    Ok(AssetDisplay {
+        decimals,
+        symbol: String::from_utf8(symbol).ok(),
+    })
 }
 
 /// Claim one PGAS allowance for `target`, proving membership in the
@@ -424,6 +514,35 @@ mod tests {
     use super::super::rpc::testing::ScriptedRpc;
     use super::super::test_fixtures;
     use super::*;
+    use parity_scale_codec::Encode;
+
+    /// `AssetMetadata` is `(deposit, name, symbol, decimals, is_frozen)`; the
+    /// display needs the third and fourth field, so an order slip would show the
+    /// name as the ticker and `is_frozen` as the decimals.
+    #[test]
+    fn the_asset_display_reads_symbol_and_decimals_from_the_metadata_record() {
+        let record = (
+            1_000u128,
+            b"People Gas".to_vec(),
+            b"PGAS".to_vec(),
+            10u8,
+            false,
+        )
+            .encode();
+
+        assert_eq!(
+            decode_asset_display(&record).unwrap(),
+            AssetDisplay {
+                decimals: 10,
+                symbol: Some("PGAS".to_string()),
+            },
+        );
+    }
+
+    #[test]
+    fn a_truncated_asset_metadata_record_is_an_error() {
+        assert!(decode_asset_display(&1_000u128.encode()).is_err());
+    }
 
     /// The collection the captured roots were read from. The fixture only means
     /// anything paired with this identifier.

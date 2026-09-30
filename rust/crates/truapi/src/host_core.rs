@@ -870,6 +870,23 @@ impl SigningHostRuntime {
             })
     }
 
+    /// Read what the chains publicly hold for `product_id` under the active
+    /// session: its Statement Store allocation, Bulletin authorization and
+    /// PGAS balance. Changes nothing on any chain, and returns public
+    /// accounts only.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_resource_status"))]
+    pub async fn product_resource_status(
+        &self,
+        product_id: &str,
+    ) -> Result<crate::runtime::ProductResourceStatus, v01::GenericError> {
+        self.signing_host
+            .product_resource_status(product_id)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
     /// Activate a wallet-local session from host-held secret material and
     /// attach known identity metadata.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session_with_identity"))]

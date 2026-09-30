@@ -17,6 +17,7 @@
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod allowance_renewal;
 mod local_activation;
+mod resource_status;
 pub mod ring_vrf;
 mod sso_replay;
 mod sso_responder;
@@ -34,6 +35,7 @@ pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
 pub use local_activation::LocalActivation;
+pub use resource_status::ProductResourceStatus;
 pub use sso_responder::{
     AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
     PairingProposal, PairingProposalMetadata, ResponderExit,

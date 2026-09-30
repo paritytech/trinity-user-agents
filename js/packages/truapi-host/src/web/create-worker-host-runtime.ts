@@ -88,7 +88,10 @@ export interface WorkerPairingHostRuntime {
    * Signing hosts only. A pairing host has no local secret and rejects this:
    * it waits for a wallet to answer over the statement-store channel instead.
    */
-  activateLocalSession(secret: Uint8Array, liteUsername?: string): Promise<void>;
+  activateLocalSession(
+    secret: Uint8Array,
+    liteUsername?: string,
+  ): Promise<void>;
   setGrantAllowancesUnchecked(granted: boolean): Promise<void>;
   /**
    * Answer these resource tags as refused, replacing any earlier set.
@@ -119,6 +122,14 @@ export interface WorkerPairingHostRuntime {
   getSessionChatIdentityKey(): Promise<Uint8Array | undefined>;
   getDeviceStatementKey(): Promise<Uint8Array | undefined>;
   getDeviceEncryptionKey(): Promise<Uint8Array>;
+  /**
+   * What the chains publicly hold for `productId` under the active local
+   * session, as the core's JSON document: its Statement Store allocation,
+   * Bulletin authorization and PGAS balance. Read-only and secret-free.
+   * Rejects with {@link PRODUCT_RESOURCE_STATUS_UNSUPPORTED} when the loaded
+   * core build has no such export, and when no session is active.
+   */
+  getProductResourceStatus(productId: string): Promise<string>;
   getProductSubtreePublicKey(
     productId: string,
     timeoutMs?: number,
@@ -250,6 +261,10 @@ interface RuntimeState {
       reject: (error: Error) => void;
     }
   >;
+  pendingProductResourceStatuses: Map<
+    number,
+    { resolve: (status: string) => void; reject: (error: Error) => void }
+  >;
   /** Host-authored Chat and Renderer actions awaiting the worker's response. */
   pendingActions: Map<
     number,
@@ -277,6 +292,7 @@ let nextSessionChatIdentityKeyRequestId = 0;
 let nextDeviceStatementKeyRequestId = 0;
 let nextDeviceEncryptionKeyRequestId = 0;
 let nextProductSubtreePublicKeyRequestId = 0;
+let nextProductResourceStatusRequestId = 0;
 let nextSessionActivationRequestId = 0;
 let nextActionRequestId = 0;
 let nextRenderId = 0;
@@ -848,6 +864,19 @@ function handleProductSubtreePublicKeyResponse(
   );
 }
 
+function handleProductResourceStatusResponse(
+  state: RuntimeState,
+  msg:
+    | { requestId: number; ok: true; status: string }
+    | { requestId: number; ok: false; error: string },
+): void {
+  settlePending(
+    state.pendingProductResourceStatuses,
+    msg.requestId,
+    msg.ok ? { ok: true, value: msg.status } : { ok: false, error: msg.error },
+  );
+}
+
 function handleDeviceEncryptionKeyResponse(
   state: RuntimeState,
   msg:
@@ -871,6 +900,7 @@ function rejectPendingRuntimeRequests(state: RuntimeState, error: Error): void {
   rejectAll(state.pendingDeviceStatementKeys, error);
   rejectAll(state.pendingDeviceEncryptionKeys, error);
   rejectAll(state.pendingProductSubtreePublicKeys, error);
+  rejectAll(state.pendingProductResourceStatuses, error);
   rejectAll(state.pendingActions, error);
   for (const renderId of [...state.renders.keys()]) {
     const sink = takeRender(state, renderId);
@@ -1047,6 +1077,7 @@ export function createWebWorkerPairingHostRuntime(
       pendingSetPermissionAuthorizationStatuses: new Map(),
       pendingSessionChatIdentityKeys: new Map(),
       pendingProductSubtreePublicKeys: new Map(),
+      pendingProductResourceStatuses: new Map(),
       pendingDeviceStatementKeys: new Map(),
       pendingDeviceEncryptionKeys: new Map(),
       pendingActions: new Map(),
@@ -1123,6 +1154,9 @@ export function createWebWorkerPairingHostRuntime(
           break;
         case "productSubtreePublicKeyResponse":
           handleProductSubtreePublicKeyResponse(state, msg);
+          break;
+        case "productResourceStatusResponse":
+          handleProductResourceStatusResponse(state, msg);
           break;
         case "workerDemandChanged":
           // Teardown has already reported every worker unwanted, so a level
@@ -1418,6 +1452,22 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
         () => ++nextDeviceEncryptionKeyRequestId,
         new Uint8Array(),
         (requestId) => ({ kind: "getDeviceEncryptionKey", requestId }),
+      );
+    },
+    getProductResourceStatus(productId: string): Promise<string> {
+      if (state.disposed) {
+        return Promise.reject(new Error("worker host runtime is disposed"));
+      }
+      return sendWorkerRequest<string>(
+        state,
+        state.pendingProductResourceStatuses,
+        () => ++nextProductResourceStatusRequestId,
+        "",
+        (requestId) => ({
+          kind: "getProductResourceStatus",
+          requestId,
+          productId,
+        }),
       );
     },
     getProductSubtreePublicKey(

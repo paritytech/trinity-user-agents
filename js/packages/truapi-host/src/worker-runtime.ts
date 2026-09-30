@@ -4,7 +4,10 @@
 // state that needs DOM access (localStorage, prompts) while the core dispatcher
 // runs here off the page main thread.
 
-import { isLoopbackWsUrl } from "./worker-protocol.js";
+import {
+  isLoopbackWsUrl,
+  PRODUCT_RESOURCE_STATUS_UNSUPPORTED,
+} from "./worker-protocol.js";
 import type {
   MainToWorker,
   SubscriptionName,
@@ -719,6 +722,9 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         msg.timeoutMs,
       );
       break;
+    case "getProductResourceStatus":
+      void handleGetProductResourceStatus(msg.requestId, msg.productId);
+      break;
     case "notifySessionStoreChanged":
       runtime?.notifySessionStoreChanged();
       break;
@@ -1102,6 +1108,46 @@ async function handleGetProductSubtreePublicKey(
   } catch (err) {
     postToMain({
       kind: "productSubtreePublicKeyResponse",
+      requestId,
+      ok: false,
+      error: errorMessage(err),
+    });
+  }
+}
+
+async function handleGetProductResourceStatus(
+  requestId: number,
+  productId: string,
+): Promise<void> {
+  const signing = runtime as Partial<WorkerSigningHostRuntime> | null;
+  if (!signing) {
+    postToMain({
+      kind: "productResourceStatusResponse",
+      requestId,
+      ok: false,
+      error: "getProductResourceStatus received before runtime is ready",
+    });
+    return;
+  }
+  if (typeof signing.productResourceStatus !== "function") {
+    postToMain({
+      kind: "productResourceStatusResponse",
+      requestId,
+      ok: false,
+      error: PRODUCT_RESOURCE_STATUS_UNSUPPORTED,
+    });
+    return;
+  }
+  try {
+    postToMain({
+      kind: "productResourceStatusResponse",
+      requestId,
+      ok: true,
+      status: await signing.productResourceStatus(productId),
+    });
+  } catch (err) {
+    postToMain({
+      kind: "productResourceStatusResponse",
       requestId,
       ok: false,
       error: errorMessage(err),
