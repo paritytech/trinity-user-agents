@@ -3133,9 +3133,10 @@ pub struct ChatAuthorityReview {
     pub product_id: String,
 }
 
-/// Review shown before a product first discloses a profile reference to the
-/// user's Chat contacts. The host relays it to every contact, so the prompt
-/// names the product, never the contacts or the reference.
+/// Review shown before a product discloses a profile reference to an app
+/// audience or selected contacts. Personal grants permit host rendering across
+/// recipient apps. This authorizes the product, not individual audience edits.
+/// The prompt names the product, never the contacts or the reference.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(
     all(feature = "runtime", not(target_arch = "wasm32")),
