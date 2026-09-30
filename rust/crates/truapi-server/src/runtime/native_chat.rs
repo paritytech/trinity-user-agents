@@ -19,19 +19,44 @@ use std::{
     sync::Arc,
 };
 
+use crate::platform::{CoreStorageKey, normalize_product_identifier};
 use futures::{channel::oneshot, lock::Mutex};
 use parity_scale_codec::{DecodeAll, Encode};
 use truapi::latest::{
     HostProductDeviceChatError as ChatError, HostProductDeviceChatRequest as Request,
     HostProductDeviceChatResponse as Response,
 };
-use truapi_platform::{CoreStorageKey, normalize_product_identifier};
 use zeroize::Zeroizing;
 
 use super::{authority::AuthoritySession, services::RuntimeServices};
 use actor::NativeChatActor;
 use payments::WalletCoinage;
 use wallet::{SelectedWallet, WalletBinding};
+
+/// One authenticated, ready native Chat peer, visible only to the host shell.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct NativeChatContact {
+    /// Canonical 0x-prefixed People identity account.
+    pub peer_identity: String,
+    /// Verified roster name, omitted if products disagree.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+}
+
+/// Host-private directory scoped to the current signing wallet and People network.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct NativeChatContactsSnapshot {
+    /// Canonical 0x-prefixed root wallet public key, not the People identity.
+    pub wallet_public_key: String,
+    /// Canonical 0x-prefixed People chain genesis hash.
+    pub genesis_hash: String,
+    /// Ready peers in deterministic identity order, without duplicate identities.
+    pub contacts: Vec<NativeChatContact>,
+}
 
 /// Authority captured for one product call, rechecked before every new effect.
 #[derive(Clone)]
@@ -87,6 +112,57 @@ impl NativeChatRegistry {
     pub(crate) fn release(&self) {
         self.state.recoveries.lock().clear();
         *self.state.cache.lock() = Arc::default();
+    }
+
+    /// Read authenticated persisted actors, including products not opened this session.
+    pub async fn contacts(
+        &self,
+        context: &NativeChatContext,
+    ) -> Result<NativeChatContactsSnapshot, ChatError> {
+        let uncertain = self.state.products.lock().await;
+        context.require_current()?;
+        if uncertain.contains(&(context.session.public_key, context.genesis_hash)) {
+            return Err(ChatError::StorageUnavailable);
+        }
+        let generation = context.services.contact_handles.generation();
+        let products = self.load_products(context).await?;
+        let mut contacts = HashMap::new();
+        for product in &products {
+            match background::require_authorized(context, product).await {
+                Ok(()) => {}
+                Err(ChatError::AccessNotGranted) => continue,
+                Err(error) => return Err(error),
+            }
+            let actor = self.open_chat(context, product, None).await?;
+            actor.append_contacts(&mut contacts).await?;
+            background::require_authorized(context, product).await?;
+            context.require_current()?;
+        }
+        if context.services.contact_handles.generation() != generation {
+            return Err(ChatError::StorageUnavailable);
+        }
+        context.require_current()?;
+        let mut contacts: Vec<_> = contacts
+            .into_iter()
+            .map(|(identity, username)| NativeChatContact {
+                peer_identity: format!("0x{}", hex::encode(identity)),
+                username,
+            })
+            .collect();
+        contacts.sort_unstable_by(|a, b| a.username.cmp(&b.username));
+        for same_name in contacts.chunk_by_mut(|a, b| a.username == b.username) {
+            if same_name.len() > 1 {
+                for contact in same_name {
+                    contact.username = None;
+                }
+            }
+        }
+        contacts.sort_unstable_by(|a, b| a.peer_identity.cmp(&b.peer_identity));
+        Ok(NativeChatContactsSnapshot {
+            wallet_public_key: format!("0x{}", hex::encode(context.session.public_key)),
+            genesis_hash: format!("0x{}", hex::encode(context.genesis_hash)),
+            contacts,
+        })
     }
 
     fn products_key(context: &NativeChatContext) -> CoreStorageKey {
@@ -170,6 +246,7 @@ impl NativeChatRegistry {
         product: &str,
     ) -> Result<(), ChatError> {
         let mut uncertain = self.state.products.lock().await;
+        context.services.contact_handles.clear();
         let cache = self.state.cache.lock().clone();
         let key = (
             (context.session.public_key, context.genesis_hash),
@@ -305,6 +382,16 @@ impl NativeChatRegistry {
         context: &NativeChatContext,
         product: &str,
     ) -> Result<Arc<NativeChatActor>, ChatError> {
+        let mut uncertain = self.state.products.lock().await;
+        self.open_chat(context, product, Some(&mut uncertain)).await
+    }
+
+    async fn open_chat(
+        &self,
+        context: &NativeChatContext,
+        product: &str,
+        register: Option<&mut HashSet<WalletKey>>,
+    ) -> Result<Arc<NativeChatActor>, ChatError> {
         let key = (
             (context.session.public_key, context.genesis_hash),
             product.to_owned(),
@@ -319,7 +406,26 @@ impl NativeChatRegistry {
             return Err(ChatError::StorageUnavailable);
         }
         context.require_current()?;
-        let opened = NativeChatActor::open(context, product).await?;
+        let opened = if let Some(uncertain) = register {
+            let mut products = self.load_products(context).await?;
+            let needs_write = match products.binary_search_by(|value| value.as_str().cmp(product)) {
+                Ok(_) => uncertain.contains(&(context.session.public_key, context.genesis_hash)),
+                Err(index) => {
+                    if products.len() >= 256 {
+                        return Err(ChatError::StorageUnavailable);
+                    }
+                    products.insert(index, product.to_owned());
+                    true
+                }
+            };
+            let actor = NativeChatActor::open(context, product).await?;
+            if needs_write {
+                self.persist_products(context, &products, uncertain).await?;
+            }
+            actor
+        } else {
+            NativeChatActor::open_existing(context, product).await?
+        };
         context.require_current()?;
         // Failed opens are retryable; the store owns durable uncertainty.
         chats.insert(key, opened.clone());

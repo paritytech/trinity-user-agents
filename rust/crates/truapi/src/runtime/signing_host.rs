@@ -396,33 +396,42 @@ impl SigningHost {
 		Ok(Some(subtree.public.to_bytes()))
 	}
 
-	/// Derive the product-account keypair for `account` from the root entropy.
-	///
-	/// The root keypair is recomputed per call (PBKDF2, 2048 rounds, via
-	/// `substrate-bip39`) rather than cached: the signing host holds only the
-	/// raw, zeroizable entropy, never an expanded secret key.
-	fn product_keypair_with_owner(
-		&self,
-		account: &v01::ProductAccountId,
-	) -> Result<([u8; 32], schnorrkel::Keypair), AuthorityError> {
-		let entropy = self.root_entropy()?;
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
-		let owner = root.public.to_bytes();
-		derive_product_keypair(
-			&root,
-			&account.dot_ns_identifier,
-			derivation_index_bytes(&account.derivation_index),
-		)
-		.map(|keypair| (owner, keypair))
-		.map_err(product_authority_error)
-	}
+    fn install_local_session(&self, secret: Zeroizing<Vec<u8>>, session: SessionInfo) {
+        let mut state = self
+            .local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned");
+        state.advance_activation();
+        self.services.contact_handles.clear();
+        *self
+            .root_entropy
+            .lock()
+            .expect("signing host entropy mutex poisoned") = Some(secret);
+        self.session_state.set_session(session);
+        drop(state);
+        self.native_chat.release();
+        if let Some(session) = self.current_local_session()
+            && let Ok(context) = self.native_chat_context(&session)
+        {
+            self.native_chat.resume_wallet_recovery(context);
+        }
+    }
 
-	fn product_keypair(
-		&self,
-		account: &v01::ProductAccountId,
-	) -> Result<schnorrkel::Keypair, AuthorityError> {
-		self.product_keypair_with_owner(account).map(|(_, keypair)| keypair)
-	}
+    fn clear_local_session(&self) {
+        let mut state = self
+            .local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned");
+        state.advance_activation();
+        self.services.contact_handles.clear();
+        self.root_entropy
+            .lock()
+            .expect("signing host entropy mutex poisoned")
+            .take();
+        self.session_state.clear_session();
+        drop(state);
+        self.native_chat.release();
+    }
 
 	fn identity_keypair(&self) -> Result<schnorrkel::Keypair, AuthorityError> {
 		let entropy = self.root_entropy()?;
@@ -443,14 +452,47 @@ impl SigningHost {
 		self.session_state.clear_session();
 	}
 
-	fn current_local_session(&self) -> Option<AuthoritySession> {
-		let state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
-		let session = self.session_state.current()?;
-		Some(AuthoritySession::from_session_info(
-			&session,
-			local_session_validation_id(&session, state.activation_generation),
-		))
-	}
+    /// Read the current wallet's authenticated native Chat roster for the host shell.
+    pub async fn get_native_chat_contacts(
+        &self,
+    ) -> Result<super::NativeChatContactsSnapshot, v01::GenericError> {
+        let session = self
+            .current_local_session()
+            .ok_or_else(|| v01::GenericError {
+                reason: "native Chat contacts require a local signing session".into(),
+            })?;
+        let context = self
+            .native_chat_context(&session)
+            .map_err(|error| v01::GenericError {
+                reason: format!("native Chat contacts unavailable: {error:?}"),
+            })?;
+        let snapshot =
+            self.native_chat
+                .contacts(&context)
+                .await
+                .map_err(|error| v01::GenericError {
+                    reason: format!("native Chat contacts unavailable: {error:?}"),
+                })?;
+        self.require_current_session(&session)
+            .map_err(|error| v01::GenericError {
+                reason: error.to_string(),
+            })?;
+        Ok(snapshot)
+    }
+
+    fn ring_vrf_entropy(
+        &self,
+        session: &AuthoritySession,
+        handle: &v01::ProductAccountId,
+    ) -> Result<Zeroizing<[u8; 32]>, RingVrfError> {
+        self.require_current_session(session)?;
+        let root = self.root_entropy()?;
+        derive_ring_vrf_entropy(&root, &handle.dot_ns_identifier, &handle.derivation_index)
+            .map(Zeroizing::new)
+            .map_err(|err| RingVrfError::Unknown {
+                reason: err.to_string(),
+            })
+    }
 
 	fn require_current_session(
 		&self,

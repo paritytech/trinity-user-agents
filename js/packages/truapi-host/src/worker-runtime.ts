@@ -704,6 +704,45 @@ const identityOperations = new Set<Promise<void>>();
 let allowanceNetworkSuffix: string | null = null;
 let allowanceGeneration = 0;
 const allowanceOperations = new Set<Promise<void>>();
+const nativeChatContactsOperations = new Set<Promise<void>>();
+
+function handleNativeChatContacts(requestId: number): void {
+  const rt = runtime;
+  const generation = allowanceGeneration;
+  const operation = (async () => {
+    try {
+      if (!rt || !isSigningRuntime(rt)) {
+        throw new Error(
+          "native Chat contacts are unsupported on a pairing host",
+        );
+      }
+      const activation = rt.localIdentityContext().activationId;
+      const snapshot = await rt.getNativeChatContacts();
+      if (
+        runtime !== rt ||
+        generation !== allowanceGeneration ||
+        rt.localIdentityContext().activationId !== activation
+      ) {
+        throw new Error("local identity activation changed");
+      }
+      postToMain({
+        kind: "nativeChatContactsResponse",
+        requestId,
+        ok: true,
+        snapshot,
+      });
+    } catch (error) {
+      postToMain({
+        kind: "nativeChatContactsResponse",
+        requestId,
+        ok: false,
+        error: errorMessage(error),
+      });
+    }
+  })();
+  nativeChatContactsOperations.add(operation);
+  void operation.finally(() => nativeChatContactsOperations.delete(operation));
+}
 
 function handleWalletAllowanceSnapshot(
   requestId: number,
@@ -1062,6 +1101,9 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
     case "getWalletAllowanceSnapshot":
       handleWalletAllowanceSnapshot(msg.requestId, msg.productIds);
       break;
+    case "getNativeChatContacts":
+      handleNativeChatContacts(msg.requestId);
+      break;
     case "getPermissionAuthorizationStatus":
       void handleGetPermissionAuthorizationStatus(
         host?.runtime ?? null,
@@ -1201,6 +1243,7 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
             await disposing.disconnectSession();
           await Promise.allSettled(identityOperations);
           await Promise.allSettled(allowanceOperations);
+          await Promise.allSettled(nativeChatContactsOperations);
           await Promise.all(
             [...cores.keys()].map((coreId) => disposeCore(coreId)),
           );

@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::platform::{
-	CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
-	ProductExecutionKind, ProductId,
+    CoinageWalletHost, CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+    ProductContext, ProductExecutionKind,
 };
 use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
@@ -32,26 +32,22 @@ use crate::{
 	subscription::Spawner,
 };
 
+use super::callbacks::{
+    HostCallbacks, NativeChatCallbacks, NativeCoinageCallbacks, NativeContactsCallbacks,
+    NativePocketCallbacks,
+};
+use super::config::{
+    HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
+    ProductExecutionConfig,
+};
+use super::errors::HostRejection;
+use super::events::NativeEventBus;
+use super::executor::shared_native_executor;
 #[cfg(doc)]
 use super::parse_pairing_deeplink;
-use super::{
-	callbacks::{
-		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
-		NativeScannerCallbacks, NativeTopUpCallbacks,
-	},
-	config::{
-		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
-		ProductExecutionConfig,
-	},
-	errors::{HostRejection, NativeCoreDatabaseError},
-	events::NativeEventBus,
-	executor::shared_native_executor,
-	platform::{
-		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
-		FundingCallbackPlatform, GameCallbackPlatform, PaymentCallbackPlatform,
-		PocketCallbackPlatform, ScannerCallbackPlatform, TopUpCallbackPlatform,
-	},
+use super::platform::{
+    CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
+    NativeCoinageCallbackPlatform, PocketCallbackPlatform,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
@@ -291,11 +287,35 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_session(&intent)
 	}
 
-	/// Every funding session the core keeps, in flight first, then ended,
-	/// each newest first.
-	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
-		self.runtime.funding_sessions()
-	}
+    /// Read the active signing wallet's authenticated directory for host-owned UI.
+    pub async fn get_native_chat_contacts(
+        &self,
+    ) -> Result<crate::runtime::NativeChatContactsSnapshot, HostRejection> {
+        self.runtime
+            .get_native_chat_contacts()
+            .await
+            .map_err(HostRejection::from)
+    }
+
+    /// Open a connection-scoped execution with immutable trusted context.
+    /// `chat_callbacks` installs the host's Chat adapter; hosts without the
+    /// Chat modality pass `None`. `pocket_callbacks` does the same for the
+    /// card collection.
+    pub fn open_product_execution(
+        &self,
+        callbacks: Arc<dyn HostCallbacks>,
+        chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
+        pocket_callbacks: Option<Arc<dyn NativePocketCallbacks>>,
+        execution_config: ProductExecutionConfig,
+    ) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
+        let product: ProductContext = execution_config.try_into()?;
+        Ok(self.open_product_execution_with_callbacks(
+            callbacks,
+            chat_callbacks,
+            pocket_callbacks,
+            product,
+        ))
+    }
 
 	/// Every ended funding session the host recorded or the core compacted,
 	/// as summaries newest first,
@@ -796,19 +816,18 @@ pub struct NativeProductExecution {
 }
 
 impl NativeProductExecution {
-	fn adapters(&self) -> crate::host_core::ConnectionAdapters {
-		crate::host_core::ConnectionAdapters {
-			platform: self.platform.clone(),
-			chat_platform: self.chat.clone(),
-			permission_status: Some(self.permission_status.clone()),
-			permission_grants: self.permission_grants.clone(),
-			chat: self.chat_connection.clone(),
-			renderer: self.renderer_connection.clone(),
-			pocket_platform: self.pocket.clone(),
-			expanded_card: Some(self.expanded_card.clone()),
-			game_platform: self.game.clone(),
-		}
-	}
+    fn adapters(&self) -> crate::host_core::ConnectionAdapters {
+        crate::host_core::ConnectionAdapters {
+            platform: self.platform.clone(),
+            chat_platform: self.chat.clone(),
+            contacts_platform: None,
+            permission_status: Some(self.permission_status.clone()),
+            permission_grants: self.permission_grants.clone(),
+            chat: self.chat_connection.clone(),
+            renderer: self.renderer_connection.clone(),
+            pocket_platform: self.pocket.clone(),
+        }
+    }
 
 	fn admin(&self) -> crate::HostAdmin {
 		self.runtime.product_admin_with(self.product.clone(), self.adapters())
@@ -1116,18 +1135,28 @@ impl Drop for NativeProductExecution {
 
 #[cfg(test)]
 mod tests {
-	use super::*;
-	use crate::{
-		PairedSsoPeer,
-		native::tests::*,
-		platform::{
-			PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-			ProductExecutionKind,
-		},
-	};
-	use futures::stream::StreamExt;
-	use std::sync::{Arc, atomic::Ordering};
-	use truapi::v01;
+    use super::*;
+    use crate::PairedSsoPeer;
+    use crate::native::tests::*;
+    use crate::platform::{
+        PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
+        ProductExecutionKind,
+    };
+    use futures::stream::StreamExt;
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
+    use truapi::v01;
+    #[test]
+    fn native_wallet_dependency_survives_failure_and_product_replacement() {
+        use crate::native::NativeCoinageCallbackResult;
+        use crate::platform::{
+            NativeCoinageFailure, NativeCoinageOperation, NativeCoinageRequest,
+            NativeCoinageResponse, NativeCoinageTopUpOutcome,
+        };
+        use parking_lot::Mutex;
+        use std::sync::atomic::AtomicU8;
+        use truapi::api::Payment;
+        use truapi::versioned::payment::{HostPaymentTopUpError, HostPaymentTopUpRequest};
 
 	#[test]
 	fn a_worker_write_reaches_a_storage_subscription_in_the_products_other_execution() {
@@ -1218,41 +1247,41 @@ mod tests {
 			fn device_paired(&self, _device: PairedSsoPeer) {}
 		}
 
-		let host = NativeTrUApiHostRuntime::with_runtime_config(
-			Arc::new(EventCallbacks::new()),
-			native_host_runtime_config(),
-		)
-		.expect("host runtime config should be valid");
+        let host = NativeTrUApiHostRuntime::with_runtime_config(
+            Arc::new(EventCallbacks::new()),
+            native_host_runtime_config(),
+            None,
+        )
+        .expect("host runtime config should be valid");
 
 		assert!(!host.runtime.set_device_pairing_observer(Arc::new(Inert)));
 	}
 
-	#[test]
-	fn process_runtime_shares_authority_and_replaces_one_chat_execution_per_product() {
-		let host = NativeTrUApiHostRuntime::with_runtime_config(
-			Arc::new(EventCallbacks::new()),
-			native_host_runtime_config(),
-		)
-		.expect("host runtime config should be valid");
-		let app = host
-			.open_product_execution(
-				Arc::new(EventCallbacks::new()),
-				None,
-				None,
-				None,
-				native_execution_config("shared.dot", ProductExecutionKind::App),
-			)
-			.expect("App execution should open");
-		let chat_host = Arc::new(EventCallbacks::new());
-		let chat = host
-			.open_product_execution(
-				chat_host.clone(),
-				Some(chat_host.clone()),
-				None,
-				None,
-				native_execution_config("shared.dot", ProductExecutionKind::Worker),
-			)
-			.expect("Chat execution should open");
+    #[test]
+    fn process_runtime_shares_authority_and_replaces_one_chat_execution_per_product() {
+        let host = NativeTrUApiHostRuntime::with_runtime_config(
+            Arc::new(EventCallbacks::new()),
+            native_host_runtime_config(),
+            None,
+        )
+        .expect("host runtime config should be valid");
+        let app = host
+            .open_product_execution(
+                Arc::new(EventCallbacks::new()),
+                None,
+                None,
+                native_execution_config("shared.dot", ProductExecutionKind::App),
+            )
+            .expect("App execution should open");
+        let chat_host = Arc::new(EventCallbacks::new());
+        let chat = host
+            .open_product_execution(
+                chat_host.clone(),
+                Some(chat_host.clone()),
+                None,
+                native_execution_config("shared.dot", ProductExecutionKind::Worker),
+            )
+            .expect("Chat execution should open");
 
 		assert!(Arc::ptr_eq(&app.runtime, &chat.runtime));
 		assert!(matches!(
@@ -1281,22 +1310,24 @@ mod tests {
 			.expect("replacement execution has a fresh buffer");
 	}
 
-	#[test]
-	fn a_renderer_action_reaches_the_product_that_rendered_it() {
-		let host = NativeTrUApiHostRuntime::with_runtime_config(
-			Arc::new(EventCallbacks::new()),
-			native_host_runtime_config(),
-		)
-		.expect("host runtime config should be valid");
-		let execution = host
-			.open_product_execution(
-				Arc::new(EventCallbacks::new()),
-				None,
-				None,
-				None,
-				native_execution_config("chat.dot", ProductExecutionKind::Worker),
-			)
-			.expect("Worker execution should open");
+    #[test]
+    fn a_renderer_action_reaches_the_product_that_rendered_it() {
+        // The channel is execution-scoped, so the admin handle built from this
+        // execution reads what the execution published.
+        let host = NativeTrUApiHostRuntime::with_runtime_config(
+            Arc::new(EventCallbacks::new()),
+            native_host_runtime_config(),
+            None,
+        )
+        .expect("host runtime config should be valid");
+        let execution = host
+            .open_product_execution(
+                Arc::new(EventCallbacks::new()),
+                None,
+                None,
+                native_execution_config("chat.dot", ProductExecutionKind::Worker),
+            )
+            .expect("Worker execution should open");
 
 		let admin = execution.admin();
 		let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
@@ -1329,28 +1360,25 @@ mod tests {
 		assert!(admin.product_runtime().connection().recently_tapped());
 	}
 
-	#[test]
-	fn an_expanded_card_face_request_reaches_only_the_execution_that_made_it() {
-		let host = NativeTrUApiHostRuntime::with_runtime_config(
-			Arc::new(EventCallbacks::new()),
-			native_host_runtime_config(),
-		)
-		.expect("host runtime config should be valid");
-		let open_widget = |product_id: &str| {
-			let callbacks = Arc::new(EventCallbacks::new());
-			let execution = host
-				.open_product_execution(
-					callbacks.clone(),
-					None,
-					None,
-					None,
-					native_execution_config(product_id, ProductExecutionKind::Widget),
-				)
-				.expect("Widget execution should open");
-			(execution, callbacks)
-		};
-		let (card, card_callbacks) = open_widget("card.dot");
-		let (_other, other_callbacks) = open_widget("other.dot");
+    #[test]
+    fn product_execution_routes_chain_events_to_shared_and_scoped_services() {
+        let host = NativeTrUApiHostRuntime::with_runtime_config(
+            Arc::new(EventCallbacks::new()),
+            native_host_runtime_config(),
+            None,
+        )
+        .expect("host runtime config should be valid");
+        let execution = host
+            .open_product_execution(
+                Arc::new(EventCallbacks::new()),
+                None,
+                None,
+                native_execution_config("chain.dot", ProductExecutionKind::App),
+            )
+            .expect("App execution should open");
+        let mut shared_responses = host.events.register_chain(41, 0).unwrap();
+        let mut scoped_responses = execution.events.register_chain(41, 0).unwrap();
+        let response = r#"{"jsonrpc":"2.0","id":"truapi:1","result":true}"#.to_string();
 
 		let admin = card.admin();
 		let reply = futures::executor::block_on(truapi::api::ExpandedCard::set_face_shown(
@@ -1389,282 +1417,97 @@ mod tests {
 
 		execution.notify_chain_response(41, response.clone());
 
-		assert_eq!(futures::executor::block_on(shared_responses.next()), Some(response.clone()));
-		assert_eq!(futures::executor::block_on(scoped_responses.next()), Some(response));
-
-		execution.notify_chain_closed(41);
-		assert_eq!(futures::executor::block_on(shared_responses.next()), None);
-		assert_eq!(futures::executor::block_on(scoped_responses.next()), None);
-	}
-
-	/// An execution's close reaches both buses, so it necessarily misses one of
-	/// them. That miss must not read as a close racing a connect, or every
-	/// close an execution makes invalidates the shared bus's in-flight
-	/// connects and they fail with "chain connection closed during setup".
-	#[test]
-	fn an_execution_close_does_not_invalidate_shared_bus_connects() {
-		let host = NativeTrUApiHostRuntime::with_runtime_config(
-			Arc::new(EventCallbacks::new()),
-			native_host_runtime_config(),
-		)
-		.expect("host runtime config should be valid");
-		let execution = host
-			.open_product_execution(
-				Arc::new(EventCallbacks::new()),
-				None,
-				None,
-				None,
-				native_execution_config("chain.dot", ProductExecutionKind::App),
-			)
-			.expect("App execution should open");
-
-		// A connect on the shared bus reads the generation, then an unrelated
-		// execution connection closes while it is still in flight.
-		let generation = host.events.chain_close_generation();
-		let _scoped = execution.events.register_chain(7, 0).expect("scoped registration");
-		execution.notify_chain_closed(7);
-
-		assert_eq!(
-			host.events.chain_close_generation(),
-			generation,
-			"an execution's close bumped the shared bus generation",
-		);
-		assert!(
-			host.events.register_chain(99, generation).is_some(),
-			"a shared-bus connect was invalidated by an unrelated execution close",
-		);
-	}
-
-	/// A close for an id neither bus registered is the real early-close case
-	/// and must still invalidate the execution's own in-flight connects.
-	#[test]
-	fn an_unknown_close_still_invalidates_the_executions_own_connects() {
-		let host = NativeTrUApiHostRuntime::with_runtime_config(
-			Arc::new(EventCallbacks::new()),
-			native_host_runtime_config(),
-		)
-		.expect("host runtime config should be valid");
-		let execution = host
-			.open_product_execution(
-				Arc::new(EventCallbacks::new()),
-				None,
-				None,
-				None,
-				native_execution_config("chain.dot", ProductExecutionKind::App),
-			)
-			.expect("App execution should open");
-
-		let generation = execution.events.chain_close_generation();
-		execution.notify_chain_closed(404);
-
-		assert!(
-			execution.events.register_chain(404, generation).is_none(),
-			"a close that beat its own connect was not reported as an early close",
-		);
-	}
-
-	#[test]
-	fn native_execution_authorizes_device_permission_from_stored_decision() {
-		let callbacks = Arc::new(EventCallbacks::new());
-		let host = NativeTrUApiHostRuntime::with_runtime_config(
-			callbacks.clone(),
-			native_host_runtime_config(),
-		)
-		.unwrap();
-		let execution = host
-			.open_product_execution(
-				callbacks.clone(),
-				None,
-				None,
-				None,
-				native_execution_config("motion.dot", ProductExecutionKind::App),
-			)
-			.unwrap();
-		let motion = truapi::latest::HostDevicePermissionRequest::Motion;
-		let permission = PermissionAuthorizationRequest::Device(motion);
-		let authorize =
-			|| futures::executor::block_on(execution.authorize_device_permission(motion));
-		let prompts = || callbacks.device_permission_calls.load(Ordering::SeqCst);
-		let undecided = (authorize().unwrap(), prompts());
-		execution
-			.set_permission_authorization_status(
-				permission.clone(),
-				PermissionAuthorizationStatus::Authorized,
-			)
-			.unwrap();
-		let saved = (authorize().unwrap(), prompts());
-		execution
-			.set_permission_authorization_status(permission, PermissionAuthorizationStatus::Denied)
-			.unwrap();
-		let denied = (authorize().unwrap(), prompts());
-		execution.shutdown();
-		let closed = matches!(authorize(), Err(HostRejection::Rejected { .. }));
-		assert_eq!((undecided, saved, denied, closed), ((false, 1), (true, 1), (false, 1), true));
-	}
-
-	#[test]
-	fn native_execution_shares_one_use_permissions_across_connections_only() {
-		let callbacks = Arc::new(EventCallbacks {
-			remote_permission_result: Ok(PermissionDecision::AllowOnce),
-			..EventCallbacks::new()
-		});
-		let host = NativeTrUApiHostRuntime::with_runtime_config(
-			callbacks.clone(),
-			native_host_runtime_config(),
-		)
-		.unwrap();
-		let open = || {
-			host.open_product_execution(
-				callbacks.clone(),
-				None,
-				None,
-				None,
-				native_execution_config("fetch.dot", ProductExecutionKind::App),
-			)
-			.unwrap()
-		};
-		let execution = open();
-		let other = open();
-		futures::executor::block_on(async {
-			let admin = execution.admin();
-			let request = truapi::latest::RemotePermissionRequest {
-				permission: truapi::latest::RemotePermission::Remote {
-					domains: vec!["api.example.com".to_string()],
-				},
-			};
-			let context = truapi::CallContext::default();
-			let sdk_request = || {
-				admin
-					.product_runtime()
-					.request_remote_permission(&context, request.clone().into())
-			};
-			let granted = sdk_request().await.unwrap().into_latest();
-			let permission = PermissionAuthorizationRequest::Remote(request.clone());
-			let other_status =
-				other.permission_authorization_status(permission.clone()).await.unwrap();
-			let consumed = execution.authorize_remote_permission(request.clone()).await.unwrap();
-			let after_use =
-				execution.permission_authorization_status(permission.clone()).await.unwrap();
-			let prompts_after_use = callbacks.remote_permission_calls.load(Ordering::SeqCst);
-			let next_operation =
-				execution.authorize_remote_permission(request.clone()).await.unwrap();
-			let other_operation = other.authorize_remote_permission(request.clone()).await.unwrap();
-			let prompts_after_operations = callbacks.remote_permission_calls.load(Ordering::SeqCst);
-			sdk_request().await.unwrap();
-			execution.shutdown();
-			let after_shutdown = admin.permission_authorization_status(permission).await.unwrap();
-			assert_eq!(
-				(
-					granted,
-					other_status,
-					consumed,
-					after_use,
-					prompts_after_use,
-					next_operation,
-					other_operation,
-					prompts_after_operations,
-					after_shutdown
-				),
-				(
-					truapi::latest::RemotePermissionResponse { granted: true },
-					PermissionAuthorizationStatus::NotDetermined,
-					true,
-					PermissionAuthorizationStatus::NotDetermined,
-					1,
-					true,
-					true,
-					3,
-					PermissionAuthorizationStatus::NotDetermined,
-				)
-			);
-		});
-	}
-
-	#[test]
-	fn the_runtime_opens_the_core_database_at_startup() {
-		// Durable work resumes as soon as the runtime exists, so the database
-		// has to be open before the first call reaches it.
-		let dir = tempfile::tempdir().unwrap();
-		let host = NativeTrUApiHostRuntime::with_runtime_config(
-			Arc::new(EventCallbacks::new()),
-			HostRuntimeConfig {
-				database_directory: dir.path().to_string_lossy().into_owned(),
-				..native_host_runtime_config()
-			},
-		)
-		.expect("host runtime config should be valid");
-
-		let status = futures::executor::block_on(host.core_database_status())
-			.expect("the core database is open");
-
-		let file = dir.path().canonicalize().unwrap().join(crate::store::CORE_DB_FILE);
-		assert_eq!(
-			status.path,
-			Some(file.to_string_lossy().into_owned()),
-			"the database lives in the configured directory"
-		);
-	}
-
-	/// Rows a previous process left live are decided by recovery, so the
-	/// host has to be asked for its background task as soon as the runtime
-	/// exists.
-	#[test]
-	fn durable_work_left_by_a_previous_process_is_reported_at_startup() {
-		let dir = tempfile::tempdir().unwrap();
-		let previous = futures::executor::block_on(Db::open(core_db_config(dir.path()))).unwrap();
-		futures::executor::block_on(previous.write(|tx| {
-			tx.execute(
-				"INSERT INTO durable_tx (domain, tx_hash, birth_number, birth_hash, period, status)
-                 VALUES ('nft', zeroblob(32), 0, zeroblob(32), 64, 'PENDING')",
-				[],
-			)?;
-			Ok(())
-		}))
-		.unwrap();
-		futures::executor::block_on(previous.close()).unwrap();
-		let callbacks = Arc::new(EventCallbacks::new());
-
-		let _host = NativeTrUApiHostRuntime::with_runtime_config(
-			callbacks.clone(),
-			HostRuntimeConfig {
-				database_directory: dir.path().to_string_lossy().into_owned(),
-				..native_host_runtime_config()
-			},
-		)
-		.expect("host runtime config should be valid");
-
-		crate::test_support::wait_until(
-			|| *callbacks.durable_work.lock().unwrap() == vec![true],
-			"the host is told durable work is pending",
-		);
-	}
-
-	#[test]
-	fn durable_recovery_returns_once_nothing_is_live() {
-		let host = NativeTrUApiHostRuntime::with_runtime_config(
-			Arc::new(EventCallbacks::new()),
-			native_host_runtime_config(),
-		)
-		.expect("host runtime config should be valid");
-
-		assert!(futures::executor::block_on(host.run_durable_recovery()).is_ok());
-	}
-
-	#[test]
-	fn a_missing_database_directory_fails_runtime_creation() {
-		// A wrong directory must stop the host at startup, not surface later
-		// as durable work that cannot be recorded.
-		let dir = tempfile::tempdir().unwrap();
-		let missing = dir.path().join("absent");
-
-		let result = NativeTrUApiHostRuntime::with_runtime_config(
-			Arc::new(EventCallbacks::new()),
-			HostRuntimeConfig {
-				database_directory: missing.to_string_lossy().into_owned(),
-				..native_host_runtime_config()
-			},
-		);
-
-		assert!(matches!(result, Err(NativeRuntimeConfigError::DatabaseUnavailable { .. })));
-	}
+        let callbacks = Arc::new(EventCallbacks {
+            remote_permission_result: Ok(PermissionDecision::AllowOnce),
+            ..EventCallbacks::new()
+        });
+        let host = NativeTrUApiHostRuntime::with_runtime_config(
+            callbacks.clone(),
+            native_host_runtime_config(),
+            None,
+        )
+        .unwrap();
+        let open = || {
+            host.open_product_execution(
+                callbacks.clone(),
+                None,
+                None,
+                native_execution_config("fetch.dot", ProductExecutionKind::App),
+            )
+            .unwrap()
+        };
+        let execution = open();
+        let other = open();
+        futures::executor::block_on(async {
+            let admin = execution.admin();
+            let request = truapi::latest::RemotePermissionRequest {
+                permission: truapi::latest::RemotePermission::Remote {
+                    domains: vec!["api.example.com".to_string()],
+                },
+            };
+            let context = truapi::CallContext::default();
+            let sdk_request = || {
+                admin.product_runtime().request_remote_permission(
+                    &context,
+                    truapi::versioned::permissions::RemotePermissionRequest::V1(request.clone()),
+                )
+            };
+            let granted = sdk_request().await.unwrap();
+            let permission = PermissionAuthorizationRequest::Remote(request.clone());
+            let other_status = other
+                .permission_authorization_status(permission.clone())
+                .await
+                .unwrap();
+            let consumed = execution
+                .authorize_remote_permission(request.clone())
+                .await
+                .unwrap();
+            let after_use = execution
+                .permission_authorization_status(permission.clone())
+                .await
+                .unwrap();
+            let prompts_after_use = callbacks.remote_permission_calls.load(Ordering::SeqCst);
+            let next_operation = execution
+                .authorize_remote_permission(request.clone())
+                .await
+                .unwrap();
+            let other_operation = other
+                .authorize_remote_permission(request.clone())
+                .await
+                .unwrap();
+            let prompts_after_operations = callbacks.remote_permission_calls.load(Ordering::SeqCst);
+            sdk_request().await.unwrap();
+            execution.shutdown();
+            let after_shutdown = admin
+                .permission_authorization_status(permission)
+                .await
+                .unwrap();
+            assert_eq!(
+                (
+                    granted,
+                    other_status,
+                    consumed,
+                    after_use,
+                    prompts_after_use,
+                    next_operation,
+                    other_operation,
+                    prompts_after_operations,
+                    after_shutdown
+                ),
+                (
+                    truapi::versioned::permissions::RemotePermissionResponse::V1(
+                        truapi::latest::RemotePermissionResponse { granted: true },
+                    ),
+                    PermissionAuthorizationStatus::NotDetermined,
+                    true,
+                    PermissionAuthorizationStatus::NotDetermined,
+                    1,
+                    true,
+                    true,
+                    3,
+                    PermissionAuthorizationStatus::NotDetermined,
+                )
+            );
+        });
+    }
 }

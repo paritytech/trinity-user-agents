@@ -619,7 +619,97 @@ impl<T> Subscription<T> {
 	}
 }
 
-#[cfg(all(test, feature = "runtime"))]
+/// Applies `#[cfg(feature = "runtime")]` to every item it wraps.
+macro_rules! runtime_items {
+    ($($item:item)*) => { $( #[cfg(feature = "runtime")] $item )* };
+}
+
+runtime_items! {
+    pub mod bootstrap;
+    mod chain_runtime;
+    mod truapi_core;
+    mod dispatcher;
+    mod dotns_views;
+    mod dynamic_vrf;
+    pub mod frame;
+    mod host_core;
+    mod host_internal;
+    pub mod host_logic;
+    mod host_rpc_client;
+    mod interrupt;
+    pub mod logging;
+    pub mod platform;
+    mod protocol_error;
+    mod runtime;
+    mod session_usernames;
+    pub mod subscription;
+    pub mod transport;
+
+    #[cfg(test)]
+    mod test_support;
+    mod unix_time;
+
+    // Dispatch must keep serving deprecated APIs while clients migrate.
+    #[allow(deprecated)]
+    pub mod generated;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub mod native;
+
+    #[cfg(target_arch = "wasm32")]
+    pub mod wasm;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub mod native_debug;
+
+    pub use truapi_core::TrUApiCore;
+    pub use host_core::{
+        ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
+        ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
+    };
+    pub use host_logic::session::{
+        ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
+    };
+    pub use host_logic::worker::{WorkerLedger, WorkerTransition};
+    #[cfg(not(target_arch = "wasm32"))]
+    pub use native_debug::{DebugSinkError, WsDebugSink};
+    pub use platform::{
+        CoreStorageKeyDescription, CoreStorageKeyDescriptionError, HostIdentity, PairingHostConfig,
+        PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform, ProductContext,
+        SigningHostConfig, describe_core_storage_key,
+    };
+    #[cfg(any(test, not(target_arch = "wasm32")))]
+    pub use runtime::StatementRenewalTarget;
+    pub use runtime::contacts::contact_handle;
+    pub use runtime::login_failure::reports_exhausted_period;
+    pub use runtime::product_manifest::{encode_cached_root_manifest, manifest_cache_key};
+    pub use runtime::statement_allowance;
+    pub use runtime::{
+        AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
+        PairingProposal, PairingProposalMetadata, ResponderExit,
+    };
+    pub use runtime::{
+        LocalIdentity, LocalIdentityContext, NativeChatContact, NativeChatContactsSnapshot,
+        WalletAllowanceSnapshot,
+    };
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub use native::{
+        NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
+    };
+
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]
+    pub use wasm::WasmSigningHostRuntime;
+    #[cfg(target_arch = "wasm32")]
+    pub use wasm::{
+        WasmPairingHostRuntime, WasmProductRuntime, WasmRendererSubscription,
+        derive_product_account_public_key, describe_core_storage_key_for_wasm,
+        has_trusted_remote_permissions_for_wasm, product_account_address, set_log_level,
+        wire_schema_hash,
+    };
+}
+
+#[cfg(all(test, feature = "host-api"))]
 mod tests {
 	use super::*;
 

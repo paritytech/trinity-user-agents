@@ -930,15 +930,24 @@ impl SigningHostRuntime {
 		true
 	}
 
-	/// Install the host observer told whether durable transactions are
-	/// pending. Set-once; returns whether this call installed it.
-	#[cfg(not(target_arch = "wasm32"))]
-	pub fn set_durable_work_observer(
-		&self,
-		observer: Arc<dyn crate::durable::DurableWorkObserver>,
-	) -> bool {
-		self.services.install_durable_work_observer(observer)
-	}
+    /// Read authenticated native Chat contacts for host-owned UI, never products.
+    pub async fn get_native_chat_contacts(
+        &self,
+    ) -> Result<crate::runtime::NativeChatContactsSnapshot, v01::GenericError> {
+        self.signing_host.get_native_chat_contacts().await
+    }
+
+    /// Answer a pairing host's handshake deeplink and serve the resulting SSO
+    /// session until it ends.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.respond_to_pairing"))]
+    pub async fn respond_to_pairing(
+        &self,
+        deeplink: &str,
+    ) -> Result<ResponderExit, v01::GenericError> {
+        respond_to_pairing(self.services.clone(), self.signing_host.clone(), deeplink)
+            .await
+            .map_err(|reason| v01::GenericError { reason })
+    }
 
 	/// Runs durable recovery until no transaction is live, building scheduled
 	/// transactions meanwhile.
@@ -1275,6 +1284,8 @@ impl SigningHostRuntime {
 pub struct ConnectionAdapters {
     pub platform: Arc<dyn Platform>,
     pub chat_platform: Option<Arc<dyn ChatPlatform>>,
+    /// Connection-owned picker UI; absence inherits the host's contacts adapter.
+    pub contacts_platform: Option<Arc<dyn ContactsPlatform>>,
     /// Live OS permission state for this connection. It travels here rather
     /// than on the host runtime because a native host builds one platform per
     /// product execution, so the object that reports OS state has to be the
@@ -1288,20 +1299,19 @@ pub struct ConnectionAdapters {
 }
 
 impl ConnectionAdapters {
-	/// Default adapters for a connection without native scoping.
-	pub fn from_services(services: &RuntimeServices) -> Self {
-		Self {
-			platform: services.platform.clone(),
-			chat_platform: services.chat_platform.clone(),
-			permission_status: services.permission_status_host(),
-			permission_grants: Arc::default(),
-			chat: Arc::new(ActionChannel::chat()),
-			renderer: Arc::new(ActionChannel::renderer()),
-			pocket_platform: services.pocket_platform(),
-			expanded_card: None,
-			game_platform: services.game_platform(),
-		}
-	}
+    /// Default adapters for a connection without native scoping.
+    pub fn from_services(services: &RuntimeServices) -> Self {
+        Self {
+            platform: services.platform.clone(),
+            chat_platform: services.chat_platform.clone(),
+            contacts_platform: services.contacts_platform(),
+            permission_status: services.permission_status_host(),
+            permission_grants: Arc::default(),
+            chat: Arc::new(ActionChannel::chat()),
+            renderer: Arc::new(ActionChannel::renderer()),
+            pocket_platform: services.pocket_platform(),
+        }
+    }
 }
 
 fn ring_vrf_admin_error(

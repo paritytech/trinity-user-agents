@@ -26,6 +26,24 @@ export function encodeCoreStorageKey(key: CoreStorageKey): Uint8Array {
   return GeneratedCoreStorageKey.enc(key);
 }
 
+/** Authenticated, ready native Chat peer. Host-private; never a product directory. */
+export interface NativeChatContact {
+  /** Canonical lowercase 0x-prefixed People identity account. */
+  peerIdentity: string;
+  /** Verified roster name, absent when authorized products disagree. */
+  username?: string;
+}
+
+/** Current signing wallet's authenticated native Chat contacts, restored from storage. */
+export interface NativeChatContactsSnapshot {
+  /** Canonical lowercase 0x-prefixed root wallet public key. */
+  walletPublicKey: string;
+  /** Canonical lowercase 0x-prefixed People chain genesis hash. */
+  genesisHash: string;
+  /** Deterministically ordered, deduplicated ready peers. */
+  contacts: NativeChatContact[];
+}
+
 /**
  * Async-or-sync return. Synchronous hosts (e.g. the dotli main-thread
  * shell hitting localStorage) can return a plain value; the WASM bridge

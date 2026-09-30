@@ -14,6 +14,7 @@ use std::{
     },
 };
 
+use crate::platform::{CoreStorage, CoreStorageKey};
 use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
     aead::{AeadInPlace, KeyInit},
@@ -24,7 +25,6 @@ use parity_scale_codec::{Decode, Encode};
 use parking_lot::Mutex as SyncMutex;
 use sha2::Sha256;
 use truapi::latest::HostProductDeviceChatError as ChatError;
-use truapi_platform::{CoreStorage, CoreStorageKey};
 use zeroize::Zeroizing;
 
 use super::NativeChatContext;
@@ -210,6 +210,7 @@ pub(super) struct ChatStateStore<T> {
     // without requiring T: Sync or holding a sync guard over storage I/O.
     published: SyncMutex<T>,
     spawner: Spawner,
+    contacts: std::sync::OnceLock<Arc<crate::runtime::contacts::ContactHandleCache>>,
 }
 
 impl<T: Encode + Decode + Clone + Send + 'static> ChatStateStore<T> {
@@ -225,14 +226,16 @@ impl<T: Encode + Decode + Clone + Send + 'static> ChatStateStore<T> {
             genesis_hash: context.genesis_hash,
             product_id: product_id.to_owned(),
         };
-        Self::open_storage(
+        let store = Self::open_storage(
             context.services.platform.clone(),
             key,
             &context.entropy,
             context.services.spawner.clone(),
             initial,
         )
-        .await
+        .await?;
+        let _ = store.contacts.set(context.services.contact_handles.clone());
+        Ok(store)
     }
 
     /// One immutable, bounded private file chunk in a distinct authenticated slot.
@@ -309,6 +312,7 @@ impl<T: Encode + Decode + Clone + Send + 'static> ChatStateStore<T> {
             gate,
             published: SyncMutex::new(state),
             spawner: spawner.clone(),
+            contacts: Default::default(),
         });
         *owner = Arc::downgrade(&store.owner);
         let Some(bytes) = replacement else {
@@ -359,6 +363,9 @@ impl<T: Encode + Decode + Clone + Send + 'static> ChatStateStore<T> {
                 let mut candidate = store.published.lock().clone();
                 let output = mutation(&mut candidate)?;
                 let encrypted = store.cipher.encrypt(&candidate)?;
+                if let Some(contacts) = store.contacts.get() {
+                    contacts.clear();
+                }
                 store.gate.state.uncertain.store(true, Ordering::Release);
                 store
                     .storage
@@ -372,6 +379,9 @@ impl<T: Encode + Decode + Clone + Send + 'static> ChatStateStore<T> {
                 Ok(output)
             }
             .await;
+            if let Some(contacts) = store.contacts.get() {
+                contacts.clear();
+            }
             drop(store);
             let _ = tx.send(result);
             drop(owner);

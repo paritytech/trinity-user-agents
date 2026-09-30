@@ -64,7 +64,7 @@ pub struct RuntimeServices {
     contacts_platform: OnceLock<Arc<dyn crate::platform::ContactsPlatform>>,
     /// Contact handles already resolved, shared by every product runtime of
     /// this host and emptied when the host says its contacts changed.
-    pub contact_handles: crate::runtime::contacts::ContactHandleCache,
+    pub contact_handles: Arc<crate::runtime::contacts::ContactHandleCache>,
     /// Host observer told when a device finishes pairing with this signing
     /// host. Unset leaves a paired device unannounced.
     device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,

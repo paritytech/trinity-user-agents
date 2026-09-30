@@ -30,7 +30,11 @@
 // safe choice.
 
 import type { OptionalCapabilities } from "./generated/worker-callbacks.js";
-import type { LogLevel, PermissionAuthorizationStatus } from "./runtime.js";
+import type {
+  LogLevel,
+  NativeChatContactsSnapshot,
+  PermissionAuthorizationStatus,
+} from "./runtime.js";
 import type { WalletAllowanceSnapshot } from "./wallet-allowances.js";
 import type {
   CallbackName,
@@ -155,6 +159,7 @@ export type MainToWorker =
       requestId: number;
       productIds: string[];
     }
+  | { kind: "getNativeChatContacts"; requestId: number }
   | {
       kind: "registerLocalLiteUsername";
       requestId: number;
@@ -287,6 +292,18 @@ export type WorkerToMain =
     }
   | {
       kind: "walletAllowanceSnapshotResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  | {
+      kind: "nativeChatContactsResponse";
+      requestId: number;
+      ok: true;
+      snapshot: NativeChatContactsSnapshot;
+    }
+  | {
+      kind: "nativeChatContactsResponse";
       requestId: number;
       ok: false;
       error: string;

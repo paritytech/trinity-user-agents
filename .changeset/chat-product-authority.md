@@ -80,3 +80,10 @@ errors are sanitized; product callback overrides cannot replace the runtime-wide
 Bind native incoming receipts to wallet root, chain and asset instance in the additive Core Data schema upgrade.
 Preserve unowned pre-upgrade incoming rows and source secrets without automatically claiming them into the current
 wallet. Pending imports without provable ownership require explicit ownership recovery before resumption.
+
+Add a host-private native Chat contacts snapshot for signing hosts, with authenticated readiness, authorization,
+wallet/network isolation, encrypted-state restoration, identity deduplication and conservative verified names. Persist
+the native product index when actors open; historical unindexed products need one open on the upgraded host. Fence reads
+against actor commits and session changes, invalidate contact handles on trusted mutations, and reject late worker
+responses. Preserve provider-scoped Contacts UI callbacks without replacing the shared owner directory. Pairing hosts
+remain unsupported; no product wire or SSO directory API is added.

@@ -2033,9 +2033,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
           initTimeoutMs: 20,
         },
       );
-      const initErrorPromise = providerPromise.catch(
-        (error: unknown) => error,
-      );
+      const initErrorPromise = providerPromise.catch((error: unknown) => error);
 
       jest.advanceTimersByTime(20);
       const initError = await initErrorPromise;
@@ -2718,4 +2716,56 @@ describe("wallet allowance inspection isolation", () => {
     await expect(read).rejects.toThrow("current identity");
     runtime.dispose();
   });
+});
+
+describe("native Chat directory lifetime", () => {
+  it("refuses a pairing host instead of returning an empty directory", async () => {
+    const runtime = await readyRuntime(new FakeWorker());
+    await expect(runtime.getNativeChatContacts()).rejects.toThrow();
+    runtime.dispose();
+  });
+
+  it.each(["activation", "contacts", "dispose"] as const)(
+    "rejects a pending directory after %s invalidation, including a late reply",
+    async (change) => {
+      const worker = new FakeWorker();
+      const runtime = await readySigningRuntime(worker);
+      const directory = runtime.getNativeChatContacts();
+      const outcome = directory.catch((error: unknown) => error);
+      const requestId = lastMessageOfKind(
+        worker,
+        "getNativeChatContacts",
+      ).requestId;
+      let activation: Promise<void> | undefined;
+      if (change === "activation") {
+        activation = runtime.activateLocalSession(new Uint8Array(32));
+        await expect(runtime.getNativeChatContacts()).rejects.toThrow();
+      } else if (change === "contacts") {
+        runtime.notifyContactsChanged();
+      } else {
+        runtime.dispose();
+      }
+      worker.emit({
+        kind: "nativeChatContactsResponse",
+        requestId,
+        ok: true,
+        snapshot: {
+          walletPublicKey: `0x${"11".repeat(32)}`,
+          genesisHash: `0x${"22".repeat(32)}`,
+          contacts: [{ peerIdentity: `0x${"33".repeat(32)}` }],
+        },
+      });
+      expect(await outcome).toBeInstanceOf(Error);
+      if (activation) {
+        worker.emit({
+          kind: "sessionActivationResponse",
+          requestId: lastMessageOfKind(worker, "activateLocalSession")
+            .requestId,
+          ok: true,
+        });
+        await activation;
+      }
+      runtime.dispose();
+    },
+  );
 });

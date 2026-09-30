@@ -85,6 +85,11 @@ permission is not spending permission: every outgoing main-purse payment require
 retries resume the same recipient/amount operation; incoming batches require durable custody and complete claim plans
 before acknowledgment. Delivery acknowledgment and finalized clearing are separate states.
 
+Signing hosts can use the host-private `getNativeChatContacts()` directory for trusted Contacts UI. It restores
+authenticated, ready peers from authorized native Chat products, scopes them to the active wallet and People chain,
+and never exposes a product or SSO directory method. Actors opened on this version are durably indexed; historical
+unindexed Chat products must be opened once before their peers can appear. Pairing hosts do not supply this directory.
+
 The [native Chat/main-purse RFC](docs/rfcs/native-chat-main-purse.md) specifies the method 12 request/response and
 compatibility contract, device eligibility, custody-before-ACK rule, and delivery versus clearing semantics. It is a
 draft for review in #709, not an approved standard or a release claim. It builds on

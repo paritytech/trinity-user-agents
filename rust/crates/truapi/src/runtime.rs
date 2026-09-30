@@ -61,7 +61,7 @@ use authority::{AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
-pub use host_session::HostSession;
+pub use native_chat::{NativeChatContact, NativeChatContactsSnapshot};
 
 /// The host's contact picker plus the key its handles are minted under:
 /// everything one `contacts.pick` call needs from the connection.
@@ -349,9 +349,34 @@ fn authority_cancellation_error(cx: &CallContext, reason: CancellationReason) ->
 
 /// Product adapter for the generated TrUAPI dispatcher.
 pub struct ProductRuntimeHost {
-	connection: Arc<ProductConnection>,
-	accounts: ProductAccounts,
-	host_session: Arc<dyn HostSession>,
+    services: Arc<RuntimeServices>,
+    platform: Arc<dyn Platform>,
+    chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
+    contacts_platform: Option<Arc<dyn crate::platform::ContactsPlatform>>,
+    /// Live OS permission state for this connection, when the host serves it.
+    permission_status: Option<Arc<dyn crate::platform::PermissionStatusHost>>,
+    /// Permission requests and consuming operations can arrive on different connections.
+    temporary_permissions: Arc<TemporaryPermissions>,
+    authority: Arc<dyn ProductAuthority>,
+    product: ProductContext,
+    /// Stable per-product-runtime id used to scope long-lived chain follow
+    /// operation ids within one shared host runtime.
+    core_instance: u64,
+    chat: Arc<ActionChannel<HostChatActionSubscribeItem>>,
+    renderer: Arc<ActionChannel<HostRendererActionSubscribeItem>>,
+    pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
+    /// Host-assigned ids of this connection's open pending operations, each
+    /// holding one worker reference until it ends or the connection is torn
+    /// down.
+    ///
+    /// Scoped to the connection rather than the product, which holds because
+    /// only a Worker execution reaches `begin_operation`/`end_operation` and a
+    /// product has one of those at a time.
+    ///
+    /// The set is unbounded here. Whether a product may hold a thousand open
+    /// operations is the host's call, made in `begin_operation`, since the
+    /// host is what the operations keep running.
+    open_operations: Mutex<HashSet<u32>>,
 }
 
 /// Per-connection adapters, permissions, channels and open operation demand.
@@ -713,37 +738,34 @@ impl ProductConnection {
 }
 
 impl ProductRuntimeHost {
-	/// Build a product-scoped dispatcher target from a long-lived host runtime
-	/// and the adapters scoped to this product connection.
-	pub fn from_services(
-		services: Arc<RuntimeServices>,
-		adapters: crate::host_core::ConnectionAdapters,
-		authority: Arc<dyn ProductAuthority>,
-		host_session: Arc<dyn HostSession>,
-		product: ProductContext,
-	) -> Self {
-		let core_instance = services.next_core_instance();
-		let chain = services.chain.for_product(core_instance);
-		let accounts = ProductAccounts::new(authority, product.clone());
-		let connection = Arc::new(ProductConnection {
-			services,
-			platform: adapters.platform,
-			chat_platform: adapters.chat_platform,
-			permission_status: adapters.permission_status,
-			temporary_permissions: adapters.permission_grants,
-			session_state: host_session.session_state(),
-			product,
-			core_instance,
-			chain,
-			chat: adapters.chat,
-			renderer: adapters.renderer,
-			pocket_platform: adapters.pocket_platform,
-			game_platform: adapters.game_platform,
-			expanded_card: adapters.expanded_card,
-			open_operations: Mutex::new(HashSet::new()),
-		});
-		Self { connection, accounts, host_session }
-	}
+    /// Build a product-scoped dispatcher target from a long-lived host runtime
+    /// and the adapters scoped to this product connection.
+    pub fn from_services(
+        services: Arc<RuntimeServices>,
+        adapters: crate::host_core::ConnectionAdapters,
+        authority: Arc<dyn ProductAuthority>,
+        product: ProductContext,
+    ) -> Self {
+        let core_instance = services.next_core_instance();
+        let contacts_platform = adapters
+            .contacts_platform
+            .or_else(|| services.contacts_platform());
+        Self {
+            services,
+            platform: adapters.platform,
+            chat_platform: adapters.chat_platform,
+            contacts_platform,
+            permission_status: adapters.permission_status,
+            temporary_permissions: adapters.permission_grants,
+            authority,
+            product,
+            core_instance,
+            chat: adapters.chat,
+            renderer: adapters.renderer,
+            pocket_platform: adapters.pocket_platform,
+            open_operations: Mutex::new(HashSet::new()),
+        }
+    }
 
 	/// Shared connection state used by product control handles.
 	pub fn connection(&self) -> &Arc<ProductConnection> {
@@ -867,16 +889,42 @@ impl ProductRuntimeHost {
 		self.host_session.session_state()
 	}
 
-	/// Seed the paired Account Holder's hard product subtree for unit tests.
-	#[cfg(test)]
-	pub fn test_cache_product_subtree(
-		&self,
-		session: &SessionInfo,
-		product_id: &ProductId,
-		public_key: [u8; 32],
-	) {
-		self.accounts.cache_product_subtree_for_test(session, product_id, public_key);
-	}
+    #[cfg(test)]
+    fn new_pairing_for_tests(
+        platform: Arc<dyn Platform>,
+        host_config: crate::platform::PairingHostConfig,
+        product: ProductContext,
+        spawner: Spawner,
+    ) -> (Self, Arc<PairingHost>) {
+        let services = RuntimeServices::new(
+            platform.clone(),
+            host_config.host.host_info.clone(),
+            host_config.people_chain_genesis_hash,
+            host_config.bulletin_chain_genesis_hash,
+            host_config.asset_hub_chain_genesis_hash,
+            spawner.clone(),
+        );
+        let pairing_host = PairingHost::new(services.clone(), host_config);
+        let core_instance = services.next_core_instance();
+        let chat = Arc::new(ActionChannel::chat());
+        let renderer = Arc::new(ActionChannel::renderer());
+        let host = Self {
+            contacts_platform: services.contacts_platform(),
+            services,
+            platform,
+            chat_platform: None,
+            permission_status: None,
+            temporary_permissions: Arc::default(),
+            authority: pairing_host.clone(),
+            product,
+            core_instance,
+            chat,
+            renderer,
+            pocket_platform: None,
+            open_operations: Mutex::new(HashSet::new()),
+        };
+        (host, pairing_host)
+    }
 
 	/// Disconnect this runtime from its paired signing host.
 	#[cfg(test)]
@@ -1051,32 +1099,210 @@ impl ProductRuntimeHost {
 			.map_err(|_| ContactResolutionError::UnknownContact)
 	}
 
-	/// The contact picker for this connection, plus the key its handles are
-	/// minted under.
-	///
-	/// Ordered so a host that serves no picker answers `Unsupported` without an
-	/// overlay ever being raised. There is no permission step: the user
-	/// selecting a contact is the consent.
-	fn contacts_picker(&self) -> Result<ContactsPicker, CallError<latest::HostContactsPickError>> {
-		// A capability the host does not serve is a framework answer; a
-		// missing session is one the product handles.
-		let platform =
-			self.connection.services.contacts_platform().ok_or(CallError::Unsupported)?;
-		let session = self
-			.accounts
-			.current_session()
-			.ok_or(CallError::Domain(latest::HostContactsPickError::NotConnected))?;
-		let handle_key =
-			self.accounts.contacts_handle_key(&session).map_err(|error| match error {
-				AuthorityError::Disconnected => {
-					CallError::Domain(latest::HostContactsPickError::NotConnected)
-				},
-				other => CallError::Domain(latest::HostContactsPickError::Unknown {
-					reason: other.to_string(),
-				}),
-			})?;
-		Ok((platform, crate::runtime::contacts::ContactHandles::from_handle_key(handle_key)))
-	}
+    async fn product_account_public_key(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        product_account_id: &v01::ProductAccountId,
+    ) -> Result<[u8; 32], AuthorityError> {
+        let cx = remote_authority_context(cx);
+        let subtree = remote_authority_call(
+            &cx,
+            self.authority.product_subtree_public_key(
+                &cx,
+                session,
+                product_account_id.dot_ns_identifier.clone(),
+            ),
+        )
+        .await?;
+        derive_product_public_key(
+            subtree,
+            derivation_index_bytes(&product_account_id.derivation_index),
+        )
+        .map_err(|err| AuthorityError::Unknown {
+            reason: err.to_string(),
+        })
+    }
+
+    async fn legacy_slot_zero_public_key(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+    ) -> Result<[u8; 32], String> {
+        self.product_account_public_key(
+            cx,
+            session,
+            &v01::ProductAccountId {
+                dot_ns_identifier: self.product_id(),
+                derivation_index: v01::DerivationIndex::Index(0),
+            },
+        )
+        .await
+        .map_err(|err| err.to_string())
+    }
+
+    /// The storage key `owner` holds `key` under.
+    ///
+    /// The owner is explicit because a read may be addressed at another product:
+    /// deriving it from `self` would hand a granted foreign read the caller's own
+    /// values instead of the ones it asked for.
+    ///
+    /// `owner` must already be normalized — either this product's validated id or
+    /// an id returned by [`Self::cross_product_scope_target`]. `ProductStorageKey`
+    /// re-applies the same normalization, so the key cannot fail to build.
+    fn product_storage_key(&self, owner: &str, key: String) -> String {
+        ProductStorageKey::new(owner, key)
+            .expect("storage key owner was already normalized")
+            .encode()
+    }
+
+    fn follow_id(&self, id: &str) -> String {
+        format!("c{}:{id}", self.core_instance)
+    }
+}
+
+impl ProductRuntimeHost {
+    /// Read a stored permission authorization status without prompting.
+    ///
+    /// A device capability also resolves the host application's OS gate, so an
+    /// OS refusal reads as `Denied` whatever is stored. Remote,
+    /// identity-disclosure and account-access decisions have no OS gate.
+    #[instrument(skip_all, fields(runtime.method = "permissions.authorization_status"))]
+    pub async fn permission_authorization_status(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+        let service = self.permissions_service();
+        service.authorization_status(&request).await
+    }
+
+    /// Read stored permission authorization statuses without prompting.
+    ///
+    /// A device capability also resolves the host application's OS gate, so an
+    /// OS refusal reads as `Denied` whatever is stored. Remote,
+    /// identity-disclosure and account-access decisions have no OS gate.
+    #[instrument(skip_all, fields(runtime.method = "permissions.authorization_statuses"))]
+    pub async fn permission_authorization_statuses(
+        &self,
+        requests: Vec<PermissionAuthorizationRequest>,
+    ) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
+        let service = self.permissions_service();
+        service.authorization_statuses(&requests).await
+    }
+
+    /// Update a stored permission authorization status. `NotDetermined`
+    /// clears the stored value so the next product request prompts again.
+    #[instrument(skip_all, fields(runtime.method = "permissions.set_authorization_status"))]
+    pub async fn set_permission_authorization_status(
+        &self,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), v01::GenericError> {
+        let service = self.permissions_service();
+        let contacts_changed = matches!(request, PermissionAuthorizationRequest::ChatAuthority);
+        if contacts_changed {
+            self.services.contact_handles.clear();
+        }
+        let result = service.set_authorization_status(&request, status).await;
+        if contacts_changed {
+            self.services.contact_handles.clear();
+        }
+        result
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "permissions.remote_authorization"))]
+    async fn remote_permission_authorization(
+        &self,
+        permission: v01::RemotePermission,
+    ) -> Result<PermissionAuthorizationStatus, String> {
+        let service = self.permissions_service();
+        service
+            .authorize_remote(v01::RemotePermissionRequest { permission })
+            .await
+            .map_err(|err| format!("permission storage failed: {err:?}"))
+    }
+
+    /// Gate a remote call on `permission`, prompting the user when it is
+    /// undetermined. Anything short of `Authorized` fails with `denied_error`.
+    pub async fn require_remote_permission<E>(
+        &self,
+        permission: v01::RemotePermission,
+        denied_error: E,
+    ) -> Result<(), CallError<E>> {
+        match self.remote_permission_authorization(permission).await {
+            Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
+            Ok(
+                PermissionAuthorizationStatus::Denied
+                | PermissionAuthorizationStatus::NotDetermined,
+            ) => Err(CallError::Domain(denied_error)),
+            Err(reason) => Err(CallError::HostFailure { reason }),
+        }
+    }
+
+    async fn confirm_product_action(
+        &self,
+        review: UserConfirmationReview,
+    ) -> Result<bool, v01::GenericError> {
+        if crate::platform::has_trusted_remote_permissions(&self.product_id()) {
+            return Ok(true);
+        }
+        self.platform.confirm_user_action(review).await
+    }
+
+    async fn require_chain_submit<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
+        self.require_remote_permission(v01::RemotePermission::ChainSubmit, denied_error)
+            .await
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "permissions.identity_disclosure_authorization"))]
+    async fn identity_disclosure_authorization(
+        &self,
+    ) -> Result<PermissionAuthorizationStatus, String> {
+        self.permissions_service()
+            .check_or_prompt_identity_disclosure()
+            .await
+            .map_err(|err| format!("permission storage failed: {err:?}"))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "permissions.chat_authority_authorization"))]
+    async fn chat_authority_authorization(&self) -> Result<PermissionAuthorizationStatus, String> {
+        self.permissions_service()
+            .check_or_prompt_chat_authority()
+            .await
+            .map_err(|err| format!("permission storage failed: {err:?}"))
+    }
+
+    async fn classify_legacy_address_signer(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        signer: &str,
+    ) -> Result<LegacySigner, LegacySignerError> {
+        let requested_key = parse_legacy_signer_hex(signer)
+            .or_else(|| public_key_from_address(signer))
+            .ok_or(LegacySignerError::Unavailable)?;
+        self.classify_legacy_signer(cx, session, requested_key)
+            .await
+    }
+
+    async fn classify_legacy_signer(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        requested_key: [u8; 32],
+    ) -> Result<LegacySigner, LegacySignerError> {
+        if session.identity_account_id == Some(requested_key) {
+            return Ok(LegacySigner::Identity(requested_key));
+        }
+        let product_public_key = self
+            .legacy_slot_zero_public_key(cx, session)
+            .await
+            .map_err(LegacySignerError::ProductDerivation)?;
+        if requested_key == product_public_key {
+            return Ok(LegacySigner::Product);
+        }
+        Err(LegacySignerError::Unavailable)
+    }
 }
 
 async fn account_access_authorization(
@@ -1606,8 +1832,8 @@ impl ProductRuntimeHost {
         // A capability the host does not serve is a framework answer; a
         // missing session is one the product handles.
         let platform = self
-            .services
-            .contacts_platform()
+            .contacts_platform
+            .clone()
             .ok_or(CallError::Unsupported)?;
         let session = self
             .authority
