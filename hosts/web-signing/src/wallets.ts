@@ -1,9 +1,5 @@
 import { mnemonicToEntropy, validateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
-import {
-  DEV_ACCOUNTS,
-  DEV_ACCOUNT_NAMES,
-} from "@parity/truapi-host/testing/dev-accounts";
 
 /** A wallet this host can activate a session from. */
 export interface Wallet {
@@ -15,7 +11,7 @@ export interface Wallet {
   entropy: Uint8Array;
 }
 
-/** A wallet the user created or imported, as it is persisted. */
+/** A wallet the user imported, as it is persisted. */
 interface SavedWallet {
   id: string;
   name: string;
@@ -23,43 +19,56 @@ interface SavedWallet {
 }
 
 const SAVED_WALLETS_KEY = "truapi-web-signing-host:wallets:v1";
-const DEV_WALLET_PREFIX = "dev:";
+
+const UNREADABLE = `Saved wallets cannot be read. Nothing was changed. Fix or delete the "${SAVED_WALLETS_KEY}" entry in the browser's storage tools, then reload.`;
+
+/** What the stored list holds: entries to keep, or bytes this store cannot interpret as a list. */
+type StoredList = { readable: true; entries: unknown[] } | { readable: false };
 
 /**
- * The built-in dev accounts from the test host, so a session can start with
- * no recovery phrase at all. They share their entropy with every other
- * checkout, so anything they sign is public.
- */
-export function devWallets(): Wallet[] {
-  return DEV_ACCOUNT_NAMES.map((name) => ({
-    id: `${DEV_WALLET_PREFIX}${name}`,
-    name,
-    entropy: DEV_ACCOUNTS[name],
-  }));
-}
-
-/**
- * Wallets created or imported in this browser.
+ * Wallets imported in this browser. This host never creates a wallet: an
+ * account is made, registered and attested elsewhere, then imported here.
  *
  * Recovery phrases are stored in plain text in `storage`, which is this
  * origin's `localStorage`. That is the reason this host is for development
  * wallets only: any script on this origin can read them.
+ *
+ * Stored data this store cannot use is never rewritten or dropped. An entry
+ * that is malformed or holds an invalid phrase is left out of the list and kept
+ * in storage as it was; data that is not a list at all makes the store refuse
+ * changes until it is fixed by hand.
  */
 export class WalletStore {
   constructor(private readonly storage: Storage) {}
 
-  /** Built-in dev wallets first, then saved ones in the order they were added. */
+  /** Imported wallets that can be used, in the order they were added. */
   list(): Wallet[] {
-    return [...devWallets(), ...this.saved().map(toWallet)];
+    const stored = this.read();
+    if (!stored.readable) return [];
+    return stored.entries.flatMap((entry) => toWallet(entry) ?? []);
   }
 
   find(id: string): Wallet | undefined {
     return this.list().find((wallet) => wallet.id === id);
   }
 
-  /** The recovery phrase of a saved wallet, for the user to back it up. */
-  mnemonicOf(id: string): string | undefined {
-    return this.saved().find((wallet) => wallet.id === id)?.mnemonic;
+  /** Whether a usable wallet with this id is saved. */
+  has(id: string): boolean {
+    return this.find(id) !== undefined;
+  }
+
+  /**
+   * What is wrong with the saved wallets, or null when nothing is. The text
+   * says what to do about it.
+   */
+  problem(): string | null {
+    const stored = this.read();
+    if (!stored.readable) return UNREADABLE;
+    const skipped = stored.entries.filter(
+      (entry) => toWallet(entry) === null,
+    ).length;
+    if (skipped === 0) return null;
+    return `${skipped} saved ${skipped === 1 ? "wallet is" : "wallets are"} unreadable and left out. ${skipped === 1 ? "It stays" : "They stay"} in storage under "${SAVED_WALLETS_KEY}".`;
   }
 
   /**
@@ -72,20 +81,19 @@ export class WalletStore {
     if (!validateMnemonic(phrase, wordlist)) {
       throw new Error("That is not a valid BIP-39 recovery phrase.");
     }
-    const saved = this.saved();
-    const existing = saved.find((wallet) => wallet.mnemonic === phrase);
-    if (existing) return toWallet(existing);
-    const wallet: SavedWallet = {
-      id: crypto.randomUUID(),
-      name,
-      mnemonic: phrase,
-    };
-    this.write([...saved, wallet]);
-    return toWallet(wallet);
+    const entries = this.readForChange();
+    for (const entry of entries) {
+      const wallet = toWallet(entry);
+      if (wallet && savedWalletOf(entry)?.mnemonic === phrase) return wallet;
+    }
+    const saved: SavedWallet = { id: randomId(), name, mnemonic: phrase };
+    this.write([...entries, saved]);
+    return { id: saved.id, name, entropy: mnemonicToEntropy(phrase, wordlist) };
   }
 
   forget(id: string): void {
-    this.write(this.saved().filter((wallet) => wallet.id !== id));
+    const entries = this.readForChange();
+    this.write(entries.filter((entry) => savedWalletOf(entry)?.id !== id));
   }
 
   /** Whether a storage event is a change to the saved wallet list. */
@@ -93,36 +101,66 @@ export class WalletStore {
     return event.key === SAVED_WALLETS_KEY || event.key === null;
   }
 
-  private saved(): SavedWallet[] {
+  private read(): StoredList {
     const raw = this.storage.getItem(SAVED_WALLETS_KEY);
-    if (raw === null) return [];
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter(isSavedWallet) : [];
+    if (raw === null) return { readable: true, entries: [] };
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed)
+        ? { readable: true, entries: parsed }
+        : { readable: false };
+    } catch {
+      return { readable: false };
+    }
   }
 
-  private write(wallets: SavedWallet[]): void {
-    this.storage.setItem(SAVED_WALLETS_KEY, JSON.stringify(wallets));
+  /** The stored entries to build a change on, or a refusal that leaves storage as it is. */
+  private readForChange(): unknown[] {
+    const stored = this.read();
+    if (!stored.readable) throw new Error(UNREADABLE);
+    return stored.entries;
   }
+
+  private write(entries: unknown[]): void {
+    this.storage.setItem(SAVED_WALLETS_KEY, JSON.stringify(entries));
+  }
+}
+
+/**
+ * A random wallet id. `crypto.randomUUID` is only defined in secure contexts,
+ * and this host is also opened over plain http on a local network.
+ */
+function randomId(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
 }
 
 function normalizeMnemonic(mnemonic: string): string {
   return mnemonic.trim().normalize("NFKD").split(/\s+/).join(" ");
 }
 
-function toWallet(saved: SavedWallet): Wallet {
-  return {
-    id: saved.id,
-    name: saved.name,
-    entropy: mnemonicToEntropy(saved.mnemonic, wordlist),
-  };
+/** The wallet a stored entry describes, or null when it is malformed or its phrase is invalid. */
+function toWallet(entry: unknown): Wallet | null {
+  const saved = savedWalletOf(entry);
+  if (saved === null) return null;
+  try {
+    return {
+      id: saved.id,
+      name: saved.name,
+      entropy: mnemonicToEntropy(saved.mnemonic, wordlist),
+    };
+  } catch {
+    return null;
+  }
 }
 
-function isSavedWallet(value: unknown): value is SavedWallet {
-  if (typeof value !== "object" || value === null) return false;
+function savedWalletOf(value: unknown): SavedWallet | null {
+  if (typeof value !== "object" || value === null) return null;
   const { id, name, mnemonic } = value as Record<string, unknown>;
-  return (
-    typeof id === "string" &&
+  return typeof id === "string" &&
     typeof name === "string" &&
     typeof mnemonic === "string"
-  );
+    ? { id, name, mnemonic }
+    : null;
 }
