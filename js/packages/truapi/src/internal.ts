@@ -6,6 +6,11 @@ export {
 } from "./host-connection.js";
 
 export {
+  createMessagePortBridge,
+  type MessagePortBridge,
+} from "./transport.js";
+
+export {
   createInternalClient,
   type InternalTrUApiClient,
 } from "./generated/internal-client.js";
