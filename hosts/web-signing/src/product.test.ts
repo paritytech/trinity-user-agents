@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { parseProductUrl, productIdFor } from "./product.js";
+import {
+  parseProductUrl,
+  productFramePolicy,
+  productIdFor,
+} from "./product.js";
 
 describe("productIdFor", () => {
   // Two local dev servers are two products, so they must not share accounts,
@@ -41,5 +45,19 @@ describe("parseProductUrl", () => {
 
   test("refuses text that is not a URL", () => {
     expect(() => parseProductUrl("myapp.paseo")).toThrow("Not a URL");
+  });
+});
+
+describe("productFramePolicy", () => {
+  // The container is what asks the core before a device opens. A frame that
+  // will not load it must not be handed the devices at all.
+  test("delegates camera and microphone only to a frame expected to run the container", () => {
+    expect(productFramePolicy(true)).toBe("camera; microphone");
+    expect(productFramePolicy(false)).toBeUndefined();
+  });
+
+  // A `*` or an explicit origin would let a nested or redirected frame in.
+  test("names no origin, so only the frame's own src is covered", () => {
+    expect(productFramePolicy(true)).not.toMatch(/[*'/:]/);
   });
 });
