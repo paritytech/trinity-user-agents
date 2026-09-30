@@ -125,11 +125,21 @@ const FACE_READER_STACK_BYTES: usize = 8 * 1024 * 1024;
 /// about which faces are drawable, and about how deep one may nest.
 #[uniffi::export]
 pub fn parse_renderer_node_json(json: String) -> Result<latest::RendererNode, NativeRendererError> {
+    read_face_on_stack(json, FACE_READER_STACK_BYTES)
+}
+
+/// [`parse_renderer_node_json`] on a thread of its own carrying `stack_bytes`.
+fn read_face_on_stack(
+    json: String,
+    stack_bytes: usize,
+) -> Result<latest::RendererNode, NativeRendererError> {
     std::thread::Builder::new()
         .name("truapi-face-reader".to_string())
-        .stack_size(FACE_READER_STACK_BYTES)
+        .stack_size(stack_bytes)
         .spawn(move || read_renderer_node_json(&json))
-        .expect("face reader thread starts")
+        .map_err(|error| NativeRendererError::ReaderUnavailable {
+            reason: error.to_string(),
+        })?
         .join()
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
@@ -234,7 +244,7 @@ pub fn encode_renderer_node(node: latest::RendererNode) -> Vec<u8> {
 /// Read back a face kept as [`encode_renderer_node`] wrote it.
 #[uniffi::export]
 pub fn decode_renderer_node(bytes: Vec<u8>) -> Result<latest::RendererNode, NativeRendererError> {
-    latest::RendererNode::decode_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice()).map_err(
+    latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice()).map_err(
         |error| NativeRendererError::Malformed {
             reason: error.to_string(),
         },

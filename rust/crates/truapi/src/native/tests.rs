@@ -3068,6 +3068,34 @@ fn a_face_at_the_nesting_bound_is_refused_on_a_small_host_stack() {
     assert!(matches!(read, Err(NativeRendererError::TooDeep { .. })));
 }
 
+/// A host that cannot start the reader's thread, short of memory or of
+/// threads, gets an error it can show, not a panic, which a release build
+/// turns into an abort of the whole app.
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn a_face_reader_that_cannot_start_is_an_error_not_a_crash() {
+    let no_thread_has_this_much_stack = 1 << 47;
+
+    assert!(matches!(
+        read_face_on_stack(nested_boxes(1), no_thread_has_this_much_stack),
+        Err(NativeRendererError::ReaderUnavailable { .. })
+    ));
+}
+
+/// A kept face is read back only if it is exactly what was kept: bytes past
+/// the tree mean the row is not a face this host wrote, and drawing its
+/// prefix would show a card nobody drew.
+#[test]
+fn a_kept_face_with_bytes_past_its_tree_does_not_read_back() {
+    let mut kept = encode_renderer_node(latest::RendererNode::Nil);
+    kept.push(0);
+
+    assert!(matches!(
+        decode_renderer_node(kept),
+        Err(NativeRendererError::Malformed { .. })
+    ));
+}
+
 /// A title is drawn and an id is addressed, so they cannot share one rule:
 /// the emoji below carries a variation selector, which an id may not.
 #[test]
