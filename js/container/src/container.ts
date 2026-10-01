@@ -49,8 +49,6 @@ export function installContainer(
     { get: () => '', set: () => {} },
     (current) => current === '',
   );
-  // The Cookie Store API writes the same jar, so it goes too.
-  freezeAndDelete(window, 'cookieStore');
 
   // --- Workers ---
   freezeAndDelete(window, 'Worker');

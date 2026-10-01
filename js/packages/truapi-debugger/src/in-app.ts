@@ -441,7 +441,6 @@ export function createInAppDebugger(
   height: 100%; min-height: 0; overflow: hidden; background: #0a0a0a; color: #e0e0e0;
   font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .${MOUNT_CLASS} * { box-sizing: border-box; }
-.${MOUNT_CLASS} .ins-split { touch-action: none; }
 ${scopeCss(
   `${INSPECTOR_SHELL_CSS}\n${TRACE_DETAIL_CSS}\n${INSPECTOR_LAYOUT_CSS}`,
   `.${MOUNT_CLASS}`,
@@ -459,7 +458,6 @@ ${scopeCss(
     <option value="frames">frames</option>
   </select>
   <span class="ins-channels"></span>
-  <button class="ins-clear" type="button" title="Clear the trace">Clear</button>
 </div>
 <div class="ins-summary empty"></div>
 <div class="ins-body">
@@ -477,7 +475,6 @@ ${scopeCss(
       };
       const filterEl = pick<HTMLInputElement>(".ins-filter");
       const sortEl = pick<HTMLSelectElement>(".ins-sort");
-      const clearEl = pick<HTMLButtonElement>(".ins-clear");
       const channelsEl = pick<HTMLElement>(".ins-channels");
       const summaryEl = pick<HTMLElement>(".ins-summary");
       const listEl = pick<HTMLElement>(".ins-list");
@@ -672,39 +669,6 @@ ${scopeCss(
       });
       filterEl.addEventListener("input", render);
       sortEl.addEventListener("change", render);
-      clearEl.addEventListener("click", () => {
-        session.traceEngine.clear();
-        selected = null;
-        render();
-      });
-
-      // Dragging the split sets the list column's width. The pointer stays
-      // captured by the split, so the drag continues over the detail pane and
-      // outside the panel. A stacked layout hides the split, so it never runs.
-      const bodyEl = pick<HTMLElement>(".ins-body");
-      const splitEl = pick<HTMLElement>(".ins-split");
-      let dragging = false;
-      splitEl.addEventListener("pointerdown", (event) => {
-        dragging = true;
-        splitEl.setPointerCapture(event.pointerId);
-        root.style.userSelect = "none";
-        event.preventDefault();
-      });
-      splitEl.addEventListener("pointermove", (event) => {
-        if (!dragging) return;
-        const box = bodyEl.getBoundingClientRect();
-        const width = Math.max(
-          160,
-          Math.min(event.clientX - box.left, box.width - 240),
-        );
-        root.style.setProperty("--list-w", `${width}px`);
-      });
-      const endDrag = (): void => {
-        dragging = false;
-        root.style.userSelect = "";
-      };
-      splitEl.addEventListener("pointerup", endDrag);
-      splitEl.addEventListener("pointercancel", endDrag);
 
       render();
       const timer = setInterval(render, mountOptions.refreshMs ?? 1000);

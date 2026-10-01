@@ -203,9 +203,6 @@ export const INSPECTOR_LAYOUT_CSS = `
   .ins-filter:focus { outline: none; border-color: rgba(74,222,128,.5); }
   .ins-sort { padding: 2px 6px; border: 1px solid rgba(255,255,255,.14); border-radius: 5px;
     background: #0a0a0a; color: #cbd5e1; font: inherit; cursor: pointer; }
-  .ins-clear { margin-left: auto; padding: 2px 10px; border: 1px solid rgba(255,255,255,.14);
-    border-radius: 5px; background: transparent; color: #cbd5e1; font: inherit; cursor: pointer; }
-  .ins-clear:hover { border-color: rgba(74,222,128,.5); color: #d1fae5; }
   .td-op.filtered-out { display: none; }
   /* Clickable top-method pills. */
   .ins-method { cursor: pointer; }

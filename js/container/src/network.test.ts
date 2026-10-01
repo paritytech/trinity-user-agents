@@ -309,7 +309,6 @@ function browser(
     WebSocket: BrowserSocket,
     XMLHttpRequest: nativeHttp ? NativeXhr : undefined,
     WebTransport: class {},
-    cookieStore: { set: async () => {}, getAll: async () => [] },
     Worker: class {},
     SharedWorker: class {},
     navigator: {},
@@ -1026,11 +1025,5 @@ describe('container fetch authorization', () => {
 
   it('blocks WebTransport egress outside the HTTP request gate', () => {
     expect(browser().context.WebTransport).toBeUndefined();
-  });
-
-  // The Cookie Store API reads and writes the jar document.cookie is stubbed to
-  // hide, and it can set a cookie for a parent domain.
-  it('removes the Cookie Store API, which reaches the same jar as document.cookie', () => {
-    expect(browser().context.cookieStore).toBeUndefined();
   });
 });
