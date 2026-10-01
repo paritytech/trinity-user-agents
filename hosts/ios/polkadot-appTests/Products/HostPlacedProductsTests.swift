@@ -5,21 +5,27 @@ import KeyDerivation
 
 @Suite("Host-placed products")
 struct HostPlacedProductsTests {
-    /// The Jollity leg of #562: a Release build has to carry the game's chat with no add, install
-    /// or discover step. The list is what the host places; whether it places at all is the setting.
-    @Test("Jollity is the host-placed product")
-    func jollityIsTheHostPlacedProduct() throws {
-        let hostPlaced = try #require(HostPlacedProducts.all.first)
-
-        #expect(HostPlacedProducts.all.count == 1)
-        #expect(hostPlaced.fallbackName == "Jollity")
-        #expect(hostPlaced.productId("paseo") == BuiltInProduct.dim2(for: "paseo"))
+    /// The list is what the host places; whether it places at all is the setting. Jollity is the
+    /// leg of #562: a Release build has to carry the game's chat with no add, install or discover
+    /// step. Humanity's worker has to run before anyone opens the SPA, or the chat it posts into
+    /// never appears.
+    @Test("Jollity and Humanity are the host-placed products")
+    func jollityAndHumanityAreTheHostPlacedProducts() {
+        #expect(HostPlacedProducts.all.map(\.roomId) == ["jollity", "humanity"])
+        #expect(HostPlacedProducts.all.map(\.fallbackName) == ["Jollity", "Humanity"])
+        #expect(
+            HostPlacedProducts.all.map { $0.productId("paseo") }
+                == [BuiltInProduct.dim2(for: "paseo"), BuiltInProduct.personhood(for: "paseo")]
+        )
     }
 
     /// A reserved identity lives in each network's own namespace, so one entry has to answer for
     /// whichever chain the build is pointed at. Writing the product id out would silently stop
     /// placing it on Paseo.
-    @Test("A reserved identity matches across TLDs", arguments: ["dim2.dot", "dim2.paseo", "dim2.test"])
+    @Test(
+        "A reserved identity matches across TLDs",
+        arguments: ["dim2.dot", "dim2.paseo", "dim2.test", "peopl.dot", "peopl.paseo", "peopl.test"]
+    )
     func reservedIdentityMatchesEveryTld(productId: String) {
         #expect(HostPlacedProducts.contains(productId: productId))
     }
@@ -29,7 +35,10 @@ struct HostPlacedProductsTests {
     /// in `truapi::platform::has_trusted_remote_permissions`.
     @Test(
         "Only the reserved identity itself is host-placed",
-        arguments: ["app.dim2.dot", "dim2x.dot", "xdim2.dot", "dim2", "", "notdim2.paseo"]
+        arguments: [
+            "app.dim2.dot", "dim2x.dot", "xdim2.dot", "dim2", "", "notdim2.paseo",
+            "app.peopl.paseo", "people.paseo", "peopl"
+        ]
     )
     func neighbouringIdentifiersAreNotHostPlaced(productId: String) {
         #expect(!HostPlacedProducts.contains(productId: productId))

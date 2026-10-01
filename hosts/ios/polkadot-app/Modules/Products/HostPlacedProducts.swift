@@ -23,7 +23,8 @@ struct HostPlacedProduct: Sendable {
 enum HostPlacedProducts {
     /// Whether the host places these is ``SettingsManagerProtocol/isHostPlacementEnabled``.
     static let all: [HostPlacedProduct] = [
-        HostPlacedProduct(roomId: "jollity", fallbackName: "Jollity", productId: BuiltInProduct.dim2(for:))
+        HostPlacedProduct(roomId: "jollity", fallbackName: "Jollity", productId: BuiltInProduct.dim2(for:)),
+        HostPlacedProduct(roomId: "humanity", fallbackName: "Humanity", productId: BuiltInProduct.personhood(for:))
     ]
 
     /// Read against the candidate's own TLD, so it answers without the chain read that listing
