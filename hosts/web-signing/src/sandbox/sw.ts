@@ -57,7 +57,7 @@ const notFound = (reason: string) =>
 
 async function serve(
   request: Request,
-  content: { cid: string; container: boolean },
+  content: { cid: string },
 ): Promise<Response> {
   const url = new URL(request.url);
   if (request.method !== "GET" && request.method !== "HEAD")
@@ -74,21 +74,16 @@ async function serve(
   }
   if (stored === undefined || path === null)
     return notFound("Not found in this product's archive.");
-  return responseFor(
-    { path, bytes: new Uint8Array(await stored.arrayBuffer()) },
-    content.container
-      ? {
-          hostOrigin: url.origin,
-          src: `${base}${SANDBOX_DIR}container.js`,
-        }
-      : null,
-  );
+  return responseFor({
+    path,
+    bytes: new Uint8Array(await stored.arrayBuffer()),
+  });
 }
 
 // Every request a controlled page makes arrives here, whatever its path, so a
 // root-relative `/assets/app.js` is answered from the archive although it is
-// outside the scope. A request to another origin, and the host's own container
-// script, go to the network.
+// outside the scope. A request to another origin, and the host's own loader
+// files, go to the network.
 if (mount !== null)
   self.addEventListener("fetch", (event) => {
     const url = new URL(event.request.url);

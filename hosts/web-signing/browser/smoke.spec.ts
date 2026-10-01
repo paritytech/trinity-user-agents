@@ -1,13 +1,13 @@
 /**
  * Headless-browser smoke test of the web signing host, against the host page
- * from this tree, the shared container, the sandbox loader and worker, and the
- * real core. Everything runs on loopback: the chain record and the gateway
+ * from this tree, the sandbox loader and worker, and the real core. Everything runs on loopback: the chain record and the gateway
  * content of a name are stood in for inside the browser context, and the wallet
  * is a public test phrase. It needs a Chromium: playwright-core finds the one
  * it installs, or set CHROMIUM_PATH.
  *
- * A request is judged by whether it reached the counting server, never by what
- * the page says about it.
+ * A product's own requests follow the browser's rules, so the counting server
+ * sees them. A request is judged by whether it reached that server, never by
+ * what the page says about it.
  */
 import {
   afterAll,
@@ -145,100 +145,30 @@ async function productFrame(page: Page, origin: string): Promise<Frame> {
   throw new Error(`no product page appeared at ${origin}`);
 }
 
-const prompt = (page: Page) => page.locator("dialog.prompt");
-
-/** Choose in the open prompt. Returns what the prompt asked. */
-async function answer(
-  page: Page,
-  choice: "Deny" | "Allow once" | "Always allow",
-): Promise<string> {
-  const dialog = prompt(page);
-  await dialog.waitFor();
-  const asked = await dialog.innerText();
-  await dialog.getByRole("button", { name: choice, exact: true }).click();
-  await dialog.waitFor({ state: "detached" });
-  return asked;
-}
-
-/** A request from the product page, answered in the host's prompt. */
-async function askThrough(
-  page: Page,
-  frame: Frame,
-  path: string,
-  choice: "Deny" | "Allow once" | "Always allow",
-): Promise<{ result: "sent" | "refused"; asked: string }> {
-  const result = frame.evaluate(
-    (requested) => (window as unknown as ProductWindow).__ask(requested),
-    path,
-  );
-  const asked = await answer(page, choice);
-  return { result: await result, asked };
-}
-
-/** A request from the product page that must not need a prompt. */
-async function askUnprompted(
-  page: Page,
-  frame: Frame,
-  path: string,
-): Promise<"sent" | "refused"> {
-  const result = await frame.evaluate(
-    (requested) => (window as unknown as ProductWindow).__ask(requested),
-    path,
-  );
-  expect(await prompt(page).count()).toBe(0);
-  return result;
-}
-
-/**
- * A denial holds the page's first request, sends nothing to the target, and is
- * remembered: the next request to the same place is refused without asking.
- */
-async function expectDenialHolds(page: Page, frame: Frame): Promise<void> {
-  const asked = await answer(page, "Deny");
-  expect(asked).toContain("127.0.0.1");
-  await frame.waitForFunction(
-    () => (window as unknown as ProductWindow).__first.state !== "pending",
-  );
-  expect(
-    await frame.evaluate(() => (window as unknown as ProductWindow).__first),
-  ).toEqual({ state: "refused", message: expect.any(String) });
-  expect(await askUnprompted(page, frame, "/later")).toBe("refused");
-  expect(target.hits).toEqual([]);
-}
-
-/**
- * The page's first request waits for the prompt and is sent once allowed. An
- * allow-once covers that request only, and always-allow stops the prompts.
- */
-async function expectAllowsAreScoped(page: Page, frame: Frame): Promise<void> {
-  const asked = await answer(page, "Allow once");
-  expect(asked).toContain("127.0.0.1");
+/** The page's own requests are not gated: each one reaches the target. */
+async function expectRequestsAreNotGated(frame: Frame): Promise<void> {
   await frame.waitForFunction(
     () => (window as unknown as ProductWindow).__first.state !== "pending",
   );
   expect(
     await frame.evaluate(() => (window as unknown as ProductWindow).__first),
   ).toEqual({ state: "sent" });
-  expect(target.hits).toEqual(["/first"]);
-
   expect(
-    await askThrough(page, frame, "/second", "Always allow"),
-  ).toMatchObject({ result: "sent" });
-  expect(await askUnprompted(page, frame, "/third")).toBe("sent");
-  expect(target.hits).toEqual(["/first", "/second", "/third"]);
+    await frame.evaluate(() =>
+      (window as unknown as ProductWindow).__ask("/second"),
+    ),
+  ).toBe("sent");
+  expect(target.hits).toEqual(["/first", "/second"]);
 }
 
-/** Open the URL product with the container box ticked. */
 async function openUrlProduct(page: Page): Promise<Frame> {
-  await openMenu(page);
-  await page.check("#expect-container");
   await openAddress(page, urlProduct.url);
   return productFrame(page, new URL(urlProduct.url).origin);
 }
 
 describe("a product opened by name", () => {
   test(
-    "loads from its archive under the host's own path, and a denied request stays denied",
+    "loads from its archive under the host's own path, and its requests are not gated",
     async () => {
       const context = await newContext();
       try {
@@ -269,7 +199,7 @@ describe("a product opened by name", () => {
         expect(hostState.keys).toBeGreaterThan(0);
         expect(hostState.workers).toBe(0);
 
-        await expectDenialHolds(page, frame);
+        await expectRequestsAreNotGated(frame);
       } finally {
         await context.close();
       }
@@ -280,7 +210,7 @@ describe("a product opened by name", () => {
 
 describe("a product opened by URL", () => {
   test(
-    "with the container ticked, requests ask first and an allow covers what was allowed",
+    "loads from its own origin, with empty web storage, and its requests are not gated",
     async () => {
       const context = await newContext();
       try {
@@ -292,7 +222,7 @@ describe("a product opened by URL", () => {
         expect(
           await frame.evaluate(() => document.body.dataset.localKeys),
         ).toBe("[]");
-        await expectAllowsAreScoped(page, frame);
+        await expectRequestsAreNotGated(frame);
       } finally {
         await context.close();
       }
@@ -328,7 +258,6 @@ describe("a product opened by URL", () => {
         const page = await openHost(context);
         await signIn(page);
         const frame = await openUrlProduct(page);
-        await answer(page, "Allow once");
 
         const before = await frame.evaluate(() => {
           (window as unknown as ProductWindow).__mark = 7;
@@ -354,12 +283,6 @@ describe("a product opened by URL", () => {
         expect(
           await page.locator("#product-frame iframe").getAttribute("data-mark"),
         ).toBe("kept");
-
-        // The private channel survived the layout changes: a request still asks.
-        expect(
-          await askThrough(page, frame, "/still-asks", "Deny"),
-        ).toMatchObject({ result: "refused" });
-        expect(target.hits).toEqual(["/first"]);
       } finally {
         await context.close();
       }
@@ -368,70 +291,7 @@ describe("a product opened by URL", () => {
   );
 });
 
-describe("developer settings", () => {
-  test(
-    "start off, apply on the next open, survive a reload, and turn off again",
-    async () => {
-      const context = await newContext();
-      try {
-        const page = await openHost(context);
-        await signIn(page);
-
-        await openSection(page, "#developer");
-        expect(await page.isChecked("#relax-network")).toBe(false);
-        expect(await page.isChecked("#relax-container")).toBe(false);
-        expect(await page.locator("#relax-banner").isHidden()).toBe(true);
-
-        await page.check("#relax-network");
-        await page
-          .locator("#relax-banner")
-          .filter({ hasText: "network approved without asking" })
-          .waitFor();
-
-        const frame = await openUrlProduct(page);
-        await frame.waitForFunction(
-          () =>
-            (window as unknown as ProductWindow).__first.state !== "pending",
-        );
-        expect(await prompt(page).count()).toBe(0);
-        expect(target.hits).toEqual(["/first"]);
-        expect(await askUnprompted(page, frame, "/unasked")).toBe("sent");
-        expect(target.hits).toEqual(["/first", "/unasked"]);
-        await page
-          .locator("#log")
-          .filter({ hasText: "approved without asking" })
-          .waitFor({ state: "attached" });
-
-        // The setting belongs to the tab: a reload keeps it.
-        await page.reload();
-        await page
-          .locator("#core-status")
-          .filter({ hasText: "Core ready" })
-          .waitFor();
-        await openSection(page, "#developer");
-        expect(await page.isChecked("#relax-network")).toBe(true);
-
-        // The box for a container is not kept, and the reopened product needs it.
-        await page.check("#expect-container");
-        await page.click("#relax-banner-off");
-        expect(await page.isChecked("#relax-network")).toBe(false);
-        expect(await page.locator("#relax-banner").isHidden()).toBe(true);
-        const reopened = await productFrame(
-          page,
-          new URL(urlProduct.url).origin,
-        );
-        target.hits.length = 0;
-        expect(
-          await askThrough(page, reopened, "/asks-again", "Deny"),
-        ).toMatchObject({ result: "refused" });
-        expect(target.hits).toEqual([]);
-      } finally {
-        await context.close();
-      }
-    },
-    TEST_MS,
-  );
-
+describe("the product id", () => {
   test(
     "a product id entered in the menu is shown as entered, and Reset clears it",
     async () => {

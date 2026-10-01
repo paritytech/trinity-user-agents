@@ -1,15 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
-  PRODUCT_CSP,
   archivePath,
   archiveRequestPath,
   contentTypeOf,
-  injectContainer,
   responseFor,
 } from "./serve.js";
-
-const HOST = "http://127.0.0.1:5180";
-const CONTAINER = "/repo/truapi-sandbox/container.js";
 
 describe("archivePath", () => {
   test("maps the root and directories to their index.html", () => {
@@ -35,76 +30,26 @@ describe("archivePath", () => {
   });
 });
 
-describe("injectContainer", () => {
-  const scripts = (html: string) => html.indexOf(CONTAINER);
-
-  test("goes before every script of the page, whatever the head holds", () => {
-    const html =
-      "<!doctype html><html><head><script>window.mine=1</script></head></html>";
-    const injected = injectContainer(html, HOST, CONTAINER);
-    expect(scripts(injected)).toBeGreaterThan(-1);
-    expect(scripts(injected)).toBeLessThan(injected.indexOf("window.mine"));
-    expect(injected.startsWith("<!doctype html><script>")).toBe(true);
-  });
-
-  test("keeps a comment before the doctype, so the page stays out of quirks mode", () => {
-    const injected = injectContainer(
-      "<!-- built --><!DOCTYPE html><p>x</p>",
-      HOST,
-      CONTAINER,
-    );
-    expect(injected.startsWith("<!-- built --><!DOCTYPE html><script>")).toBe(
-      true,
-    );
-  });
-
-  test("goes first when the page has no doctype", () => {
-    expect(
-      injectContainer("<p>x</p>", HOST, CONTAINER).startsWith("<script>"),
-    ).toBe(true);
-  });
-
-  test("pins the port to the host's origin, and a hostile one cannot break out of the script", () => {
-    expect(injectContainer("<!doctype html>", HOST, CONTAINER)).toContain(
-      `window.__truapi_message_port="${HOST}"`,
-    );
-    const hostile = injectContainer(
-      "<!doctype html>",
-      "</script><script>alert(1)",
-      CONTAINER,
-    );
-    expect(hostile).not.toContain("</script><script>alert(1)");
-  });
-});
-
 describe("responseFor", () => {
-  const html = new TextEncoder().encode("<!doctype html><title>t</title>");
-  const WITH_CONTAINER = { hostOrigin: HOST, src: CONTAINER };
-
-  test("serves HTML with the container and a policy against embedding other sites", async () => {
-    const response = responseFor(
-      { path: "index.html", bytes: html },
-      WITH_CONTAINER,
-    );
-    expect(response.headers.get("content-security-policy")).toBe(PRODUCT_CSP);
+  test("serves HTML as it is, with its type and no sniffing", async () => {
+    const html = "<!doctype html><title>t</title>";
+    const response = responseFor({
+      path: "index.html",
+      bytes: new TextEncoder().encode(html),
+    });
     expect(response.headers.get("content-type")).toBe(
       "text/html; charset=utf-8",
     );
-    expect(await response.text()).toContain(CONTAINER);
+    expect(response.headers.get("content-security-policy")).toBeNull();
+    expect(await response.text()).toBe(html);
   });
 
   test("serves other files untouched and never sniffed", async () => {
     const bytes = new Uint8Array([1, 2, 3]);
-    const response = responseFor({ path: "data.wasm", bytes }, WITH_CONTAINER);
+    const response = responseFor({ path: "data.wasm", bytes });
     expect(response.headers.get("content-type")).toBe("application/wasm");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
-  });
-
-  test("serves HTML as it is only when the developer took the container out", async () => {
-    const response = responseFor({ path: "index.html", bytes: html }, null);
-    expect(response.headers.get("content-security-policy")).toBeNull();
-    expect(await response.text()).toBe("<!doctype html><title>t</title>");
   });
 
   test("does not guess a type for an unknown extension", () => {

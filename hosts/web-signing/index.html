@@ -123,10 +123,6 @@
           </svg>
         </button>
       </header>
-      <div id="relax-banner" class="relax-banner" role="status" hidden>
-        <span id="relax-banner-text"></span>
-        <button id="relax-banner-off" type="button">Turn off and reopen</button>
-      </div>
     </div>
 
     <aside
@@ -234,13 +230,6 @@
           <p id="product-id-effective" class="effective" aria-live="polite">
             Enter an address.
           </p>
-          <label
-            class="check"
-            title="For a URL page that loads the shared container itself. Names get it automatically."
-          >
-            <input id="expect-container" type="checkbox" />
-            Page loads the container
-          </label>
           <div class="row">
             <button id="open" class="primary" type="submit" disabled>
               Open
@@ -267,21 +256,6 @@
           <p id="product-details" class="status"></p>
         </details>
       </section>
-
-      <details class="fold section-fold" id="developer">
-        <summary>Developer</summary>
-        <label class="check">
-          <input id="relax-container" type="checkbox" />
-          Archives without the container
-        </label>
-        <label class="check">
-          <input id="relax-network" type="checkbox" />
-          Approve network without asking
-        </label>
-        <p id="relax-note" class="note" aria-live="polite">
-          Applies on the next Open.
-        </p>
-      </details>
 
       <section aria-labelledby="versions-title">
         <h2 id="versions-title">Versions</h2>
