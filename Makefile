@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product-storage e2e-cross-product-ringvrf e2e-cross-product-signing e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework
+.PHONY: help setup build codegen test check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product-storage e2e-cross-product-ringvrf e2e-cross-product-signing e2e-cli-update e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -475,6 +475,21 @@ e2e-cross-product-signing: ## One product signs with another's account on the si
 
 e2e-cli-update: cli-dist ## Install the packaged truapi-host from a fake release and self-update it, with no network.
 	node scripts/e2e-cli-update.mjs
+
+HOST_PLAYGROUND_IOS_APP ?= hosts/ios/build_simulator/polkadot-app.app
+HOST_PLAYGROUND_IOS_MNEMONIC_FILE ?=
+HOST_PLAYGROUND_IOS_OUT ?= artifacts/host-playground-ios
+
+e2e-host-playground-ios: ## Run the host-playground test list in the E2E_TEST iOS simulator app (set HOST_PLAYGROUND_IOS_MNEMONIC_FILE).
+	@test -n "$(HOST_PLAYGROUND_IOS_MNEMONIC_FILE)" || { \
+		echo "Set HOST_PLAYGROUND_IOS_MNEMONIC_FILE to a file holding the test account's seed phrase"; \
+		exit 1; \
+	}
+	node e2e/host-playground/ios/run.mjs \
+		--app "$(HOST_PLAYGROUND_IOS_APP)" \
+		--mnemonic-file "$(HOST_PLAYGROUND_IOS_MNEMONIC_FILE)" \
+		--out "$(HOST_PLAYGROUND_IOS_OUT)" \
+		$(if $(IOS_SIMULATOR_DEVICE),--device "$(IOS_SIMULATOR_DEVICE)",)
 
 matrix: ## Regenerate the host compatibility matrix from explorer/diagnosis-reports.
 	cd $(EXPLORER) && npm run generate-matrix
