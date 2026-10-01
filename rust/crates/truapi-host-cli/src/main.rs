@@ -2289,44 +2289,6 @@ async fn ensure_signer(session: &mut SigningHostSession) -> Result<()> {
     Ok(())
 }
 
-fn promote_current_profile(session: &mut SigningHostSession) -> Result<()> {
-    let Some(user_id) = session
-        .signer
-        .as_ref()
-        .and_then(|signer| signer.lite_username.clone())
-    else {
-        return Ok(());
-    };
-    let Some(current) = session.profile.as_ref() else {
-        return Ok(());
-    };
-    if current.name == user_id {
-        return Ok(());
-    }
-    let promoted = session.catalog.promote_to_user(current, &user_id)?;
-    let last_script = session.catalog.last_script(&promoted)?;
-    let (runtime, platform) = build_signing_runtime(
-        session.network,
-        session.coinage_instance_id,
-        promoted.path.clone(),
-        promoted.product_storage_dir.clone(),
-        session.platform.approval_policy(),
-        session.ui.clone(),
-        session.chat.clone(),
-        session.pocket.clone(),
-    )?;
-    session.runtime_factory.replace(runtime.clone());
-    session.runtime = runtime;
-    session.platform = platform;
-    session.last_script = last_script;
-    session.profile = Some(promoted);
-    session.catalog.set_current(&user_id)?;
-    if let Some(ui) = &session.ui {
-        ui.session(user_id, session.catalog.list()?);
-    }
-    Ok(())
-}
-
 fn current_account_base_path(session: &SigningHostSession) -> Result<PathBuf> {
 	Ok(session
 		.profile
