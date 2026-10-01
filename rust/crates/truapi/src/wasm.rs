@@ -1312,20 +1312,6 @@ impl WasmSigningHostRuntime {
             .map_err(generic_error_to_js)
     }
 
-    /// Read what the chains publicly hold for `productId` under the active
-    /// session, as a JSON document of `ProductResourceStatus`: the product's
-    /// Statement Store allocation, Bulletin authorization and PGAS balance.
-    /// Read-only and secret-free; rejects when no session is active.
-    #[wasm_bindgen(js_name = productResourceStatus)]
-    pub async fn product_resource_status(&self, product_id: String) -> Result<String, JsValue> {
-        let status = self
-            .runtime
-            .product_resource_status(&product_id)
-            .await
-            .map_err(generic_error_to_js)?;
-        serde_json::to_string(&status).map_err(|err| JsValue::from_str(&err.to_string()))
-    }
-
     /// Revoke one product's grants from the current local activation.
     #[wasm_bindgen(js_name = clearProductState)]
     pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {

@@ -7,7 +7,6 @@
 //! signing-bot `allowance.ts` / `allowance-slots.ts`.
 
 use parity_scale_codec::{Decode, DecodeAll, Encode};
-use serde_json::json;
 use sp_crypto_hashing::{blake2_256, twox_128};
 use thiserror::Error;
 
@@ -117,10 +116,6 @@ pub enum SlotError {
         /// Actual suffix length.
         len: usize,
     },
-    /// A `Resources.StmtStoreAllowanceByAccount` key was not hex, or did not end
-    /// in the `(period, seq, alias)` tuple after its account prefix.
-    #[error("StmtStoreAllowanceByAccount key: {0}")]
-    AccountAllowanceKey(String),
     /// Registration reached a block but the slot was not held by the target.
     #[error(
         "registration reached block {block_hash} but slot (period {period}, seq {seq}) is not held by the target account"
@@ -409,19 +404,6 @@ pub async fn read_chain_now_seconds(rpc: &RpcClient) -> Result<u64, StatementAll
     Ok(millis / 1_000)
 }
 
-/// The chain's clock in unix seconds as of block `block_hash`.
-pub async fn read_chain_now_seconds_at(
-    rpc: &RpcClient,
-    block_hash: &str,
-) -> Result<u64, StatementAllowanceError> {
-    let bytes = rpc
-        .get_storage_at(&timestamp_now_key(), block_hash)
-        .await?
-        .ok_or(SlotError::MissingChainTimestamp)?;
-    let millis = u64::decode(&mut &bytes[..]).map_err(|_| SlotError::MissingChainTimestamp)?;
-    Ok(millis / 1_000)
-}
-
 /// Seconds an occupied slot must age before the runtime allows replacing it.
 pub async fn replacement_cooldown(
     rpc: &RpcClient,
@@ -448,94 +430,6 @@ pub async fn read_slot_account_at(
         .get_storage_at(&key, block_hash)
         .await?
         .and_then(|bytes| decode_entry(&bytes).map(|entry| entry.account_id)))
-}
-
-/// One entry of the reverse index from a statement account to the anonymous
-/// allowances that name it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AccountAllowance {
-    /// Allowance period the entry belongs to.
-    pub period: u32,
-    /// Slot within that period.
-    pub seq: u32,
-}
-
-/// Longest page `state_getKeysPaged` is asked for.
-const ACCOUNT_ALLOWANCE_PAGE: u32 = 100;
-
-/// Most entries read for one account. An account holds one entry per period
-/// and slot it was registered in, so this is far above any real account.
-const ACCOUNT_ALLOWANCE_LIMIT: usize = 500;
-
-/// Bytes after the account in a `StmtStoreAllowanceByAccount` key: the
-/// `Blake2_128Concat` hash, then the `(period, seq, alias)` tuple.
-const ACCOUNT_ALLOWANCE_SUFFIX_LENGTH: usize = 16 + 4 + 4 + 32;
-
-/// The allowances `account` holds in `Resources.StmtStoreAllowanceByAccount`,
-/// read pinned to `block_hash`. A read of the public index only: nothing is
-/// derived from the alias.
-///
-/// Fails when the runtime has no such index rather than reporting no entries.
-pub async fn read_account_allowances_at(
-    rpc: &RpcClient,
-    metadata: &Metadata,
-    account: &[u8; 32],
-    block_hash: &str,
-) -> Result<Vec<AccountAllowance>, StatementAllowanceError> {
-    if metadata
-        .storage_value_type("Resources", "StmtStoreAllowanceByAccount")
-        .is_none()
-    {
-        return Err(super::extension::MetadataError::MissingStorageType {
-            pallet: "Resources",
-            entry: "StmtStoreAllowanceByAccount",
-        }
-        .into());
-    }
-    let prefix = [
-        twox_128(b"Resources").as_slice(),
-        twox_128(b"StmtStoreAllowanceByAccount").as_slice(),
-        &blake2_128_concat(account),
-    ]
-    .concat();
-    let prefix_hex = format!("0x{}", hex::encode(&prefix));
-    let mut entries = Vec::new();
-    let mut start_key: Option<String> = None;
-    loop {
-        let page = rpc
-            .call(
-                "state_getKeysPaged",
-                json!([prefix_hex, ACCOUNT_ALLOWANCE_PAGE, start_key, block_hash]),
-            )
-            .await?;
-        let keys = page.as_array().map(Vec::as_slice).unwrap_or_default();
-        for key in keys {
-            let key_bytes = key
-                .as_str()
-                .ok_or_else(|| SlotError::AccountAllowanceKey("not a string".into()))
-                .and_then(|key_hex| {
-                    hex::decode(key_hex.trim_start_matches("0x"))
-                        .map_err(|err| SlotError::AccountAllowanceKey(err.to_string()))
-                })?;
-            let suffix = key_bytes
-                .strip_prefix(prefix.as_slice())
-                .filter(|suffix| suffix.len() == ACCOUNT_ALLOWANCE_SUFFIX_LENGTH)
-                .ok_or_else(|| {
-                    SlotError::AccountAllowanceKey(format!(
-                        "{} bytes, not this account's (period, seq, alias) entry",
-                        key_bytes.len()
-                    ))
-                })?;
-            let period = u32::from_be_bytes(suffix[16..20].try_into().expect("four bytes"));
-            let seq = u32::from_le_bytes(suffix[20..24].try_into().expect("four bytes"));
-            entries.push(AccountAllowance { period, seq });
-        }
-        if keys.len() < ACCOUNT_ALLOWANCE_PAGE as usize || entries.len() >= ACCOUNT_ALLOWANCE_LIMIT
-        {
-            return Ok(entries);
-        }
-        start_key = keys.last().and_then(|key| key.as_str()).map(str::to_owned);
-    }
 }
 
 /// Outcome of scanning for a slot to register `target` in.
@@ -992,81 +886,6 @@ mod tests {
             Some(0),
             "one second past the cooldown is replaceable",
         );
-    }
-
-    /// The reverse index keys the period big-endian and the slot little-endian,
-    /// so swapping them would read period 1 as 16777216 and never match.
-    #[test]
-    fn the_account_index_reads_period_big_endian_and_slot_little_endian() {
-        let account = [0x33u8; 32];
-        let prefix = [
-            twox_128(b"Resources").as_slice(),
-            twox_128(b"StmtStoreAllowanceByAccount").as_slice(),
-            &blake2_128_concat(&account),
-        ]
-        .concat();
-        let key = |period: u32, seq: u32| {
-            let tuple = [
-                period.to_be_bytes().as_slice(),
-                seq.to_le_bytes().as_slice(),
-                [0xaa; 32].as_slice(),
-            ]
-            .concat();
-            format!(
-                r#""0x{}""#,
-                hex::encode(
-                    [
-                        prefix.clone(),
-                        blake2_128_concat(&tuple)[..16].to_vec(),
-                        tuple
-                    ]
-                    .concat()
-                )
-            )
-        };
-        let page = format!("[{}, {}]", key(20_000, 0), key(20_001, 3));
-        let scripted = ScriptedRpc::new([page.as_str()]);
-        let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
-
-        let entries = futures::executor::block_on(read_account_allowances_at(
-            &rpc,
-            test_fixtures::people(),
-            &account,
-            "0xabc",
-        ))
-        .unwrap();
-
-        assert_eq!(
-            entries,
-            vec![
-                AccountAllowance {
-                    period: 20_000,
-                    seq: 0
-                },
-                AccountAllowance {
-                    period: 20_001,
-                    seq: 3
-                },
-            ],
-        );
-        assert_eq!(scripted.calls().len(), 1);
-    }
-
-    /// A key that is not an entry of the asked account would otherwise be
-    /// counted as that account's allowance.
-    #[test]
-    fn a_key_outside_the_account_prefix_is_an_error_not_an_entry() {
-        let scripted = ScriptedRpc::new([r#"["0x00"]"#]);
-        let rpc = RpcClient::new(HostRpcClient::new(scripted));
-
-        let result = futures::executor::block_on(read_account_allowances_at(
-            &rpc,
-            test_fixtures::people(),
-            &[0x33; 32],
-            "0xabc",
-        ));
-
-        assert!(result.is_err());
     }
 
     /// `Timestamp.Now` is milliseconds; ages are judged in seconds.
