@@ -1125,7 +1125,7 @@ async function boot(): Promise<void> {
   runtime = await createWebWorkerPairingHostRuntime(worker, callbacks, {
     role: "signing",
     hostConfig: {
-      host: { name: "TrUAPI web signing host", platform: "Web" },
+      host: { name: "TrUAPI Web Host", platform: "Web" },
       platform: { type: "browser", version: navigator.userAgent },
       people: { genesisHash: network.genesis.people },
       bulletin: { genesisHash: network.genesis.bulletin },
