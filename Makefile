@@ -483,7 +483,6 @@ E2E_HOST_PLAYGROUND_OUT ?= target/e2e-host-playground/android
 e2e-host-playground-android: ## Run host-playground in the nightly Android host on a booted emulator or device. Needs MNEMONIC_FILE and the app config hosts/android reads; ANDROID_SERIAL picks a device.
 	@test -n "$(MNEMONIC_FILE)" || { echo "Set MNEMONIC_FILE to a file holding the test account's mnemonic."; exit 1; }
 	cd hosts/android && ./gradlew --init-script $(abspath $(E2E_HOST_PLAYGROUND)/android/e2e.init.gradle.kts) :app:assembleGpNightly
-	cd $(E2E_HOST_PLAYGROUND) && npm ci --no-audit --no-fund
 	node $(E2E_HOST_PLAYGROUND)/android/run.mjs --apk $(E2E_HOST_PLAYGROUND_APK) --mnemonic-file "$(MNEMONIC_FILE)" --out $(E2E_HOST_PLAYGROUND_OUT) $(if $(ANDROID_SERIAL),--serial $(ANDROID_SERIAL))
 
 matrix: ## Regenerate the host compatibility matrix from explorer/diagnosis-reports.

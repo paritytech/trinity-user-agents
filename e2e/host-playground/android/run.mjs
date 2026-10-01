@@ -7,7 +7,8 @@
 // e2e.init.gradle.kts): they open WebViews to DevTools and restore an account
 // from a mnemonic left in the app's files directory. The runner installs the
 // APK clean, seeds the account, opens the product through its deep link,
-// drives every test in ../tests.json through ../page-runner.js over CDP, and
+// drives every test in ../tests.json through ../page-runner.js over the
+// DevTools protocol, and
 // answers the native approval sheets the tests raise by tapping them through
 // uiautomator. It writes results.json and report.md into --out, plus a
 // screenshot per failed test and the app's own logcat when anything failed.
@@ -17,7 +18,6 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
-import { chromium } from "playwright-core";
 import { classify } from "../report.mjs";
 
 const SUITE_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -204,7 +204,66 @@ async function listTargets(port) {
 
 const isProductUrl = (url) => url.includes(PRODUCT_URL_FRAGMENT);
 
-/** Opens the product through its deep link and connects to its WebView over CDP. */
+/**
+ * One page target driven over the DevTools protocol.
+ *
+ * WebView DevTools rejects the browser-level commands Playwright's
+ * connectOverCDP sends on attach, so the runner talks to the page target
+ * directly and only ever needs Runtime.evaluate.
+ */
+class PageTarget {
+  #socket;
+  #pending = new Map();
+  #nextId = 1;
+
+  static async connect(port, target) {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/${target.id}`);
+    await new Promise((opened, failed) => {
+      socket.addEventListener("open", opened, { once: true });
+      socket.addEventListener("error", () => failed(new Error(`could not attach to ${target.url}`)), { once: true });
+    });
+    return new PageTarget(socket);
+  }
+
+  constructor(socket) {
+    this.#socket = socket;
+    socket.addEventListener("message", ({ data }) => {
+      const message = JSON.parse(data);
+      const pending = this.#pending.get(message.id);
+      if (!pending) return;
+      this.#pending.delete(message.id);
+      if (message.error) pending.reject(new Error(message.error.message));
+      else pending.resolve(message.result);
+    });
+    socket.addEventListener("close", () => {
+      for (const pending of this.#pending.values()) pending.reject(new Error("the page target closed"));
+      this.#pending.clear();
+    });
+  }
+
+  get closed() {
+    return this.#socket.readyState !== WebSocket.OPEN;
+  }
+
+  /** The value of `expression`, awaited if it is a promise. */
+  async evaluate(expression) {
+    if (this.closed) throw new Error("the page target closed");
+    const id = this.#nextId++;
+    const reply = new Promise((resolve, reject) => this.#pending.set(id, { resolve, reject }));
+    this.#socket.send(
+      JSON.stringify({ id, method: "Runtime.evaluate", params: { expression, awaitPromise: true, returnByValue: true } }),
+    );
+    const { result, exceptionDetails } = await reply;
+    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text);
+    return result.value;
+  }
+
+  close() {
+    this.#socket.close();
+  }
+}
+
+/** Opens the product through its deep link and attaches to its WebView page. */
 async function openProduct(adb, forwards) {
   const deadline = Date.now() + PRODUCT_OPEN_TIMEOUT_MS;
   let nextDeepLink = 0;
@@ -226,49 +285,41 @@ async function openProduct(adb, forwards) {
       forwards.set(socket, port);
     }
     const port = forwards.get(socket);
-    if (!(await listTargets(port)).some((target) => target.type === "page" && isProductUrl(target.url))) continue;
+    const target = (await listTargets(port)).find((candidate) => candidate.type === "page" && isProductUrl(candidate.url));
+    if (!target) continue;
 
-    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-    for (let attempt = 0; attempt < 10; attempt++) {
-      const page = browser.contexts().flatMap((context) => context.pages()).find((candidate) => isProductUrl(candidate.url()));
-      if (page) {
-        log(`connected to ${page.url()}`);
-        return { browser, page };
-      }
-      await sleep(500);
-    }
-    await browser.close().catch(() => {});
+    log(`attaching to ${target.url}`);
+    return PageTarget.connect(port, target);
   }
   throw new Error(`no WebView showing ${suite.product} within ${PRODUCT_OPEN_TIMEOUT_MS / 1000} s`);
 }
 
-/** A session whose page is the product with the page runner loaded and ready. */
-async function readySession(adb, forwards, session) {
-  const usable =
-    session && session.browser.isConnected() && !session.page.isClosed() && isProductUrl(session.page.url());
-  if (!usable) {
-    await session?.browser.close().catch(() => {});
-    session = await openProduct(adb, forwards);
+/** A page showing the product with the page runner loaded and ready. */
+async function readyPage(adb, forwards, page) {
+  const href = page && !page.closed ? await page.evaluate("location.href").catch(() => null) : null;
+  if (!href || !isProductUrl(href)) {
+    page?.close();
+    page = await openProduct(adb, forwards);
   }
-  const loaded = await session.page.evaluate(() => Boolean(window.__hostPlaygroundE2E)).catch(() => false);
-  if (!loaded) {
-    await session.page.evaluate(pageRunner);
-    await session.page.waitForFunction(() => window.__hostPlaygroundE2E.ready(), null, { timeout: READY_TIMEOUT_MS });
+  if (!(await page.evaluate("Boolean(window.__hostPlaygroundE2E)"))) {
+    await page.evaluate(pageRunner);
+    const deadline = Date.now() + READY_TIMEOUT_MS;
+    while (!(await page.evaluate("window.__hostPlaygroundE2E.ready()"))) {
+      if (Date.now() >= deadline) throw new Error(`host-playground rendered no tests within ${READY_TIMEOUT_MS / 1000} s`);
+      await sleep(500);
+    }
   }
-  return session;
+  return page;
 }
 
-async function runTest(session, id) {
+async function runTest(page, id) {
   const started = Date.now();
   let timer;
   const guard = new Promise((_, reject) => {
     timer = setTimeout(() => reject(new Error("the page stopped answering")), TEST_TIMEOUT_MS + 30_000);
   });
   try {
-    const run = session.page.evaluate(([testId, timeoutMs]) => window.__hostPlaygroundE2E.runOne(testId, timeoutMs), [
-      id,
-      TEST_TIMEOUT_MS,
-    ]);
+    const run = page.evaluate(`window.__hostPlaygroundE2E.runOne(${JSON.stringify(id)}, ${TEST_TIMEOUT_MS})`);
     return await Promise.race([run, guard]);
   } catch (error) {
     return { id, status: "error", message: `the page went away: ${firstLine(error.message)}`, durationMs: Date.now() - started };
@@ -326,7 +377,7 @@ async function main() {
     results: [],
   };
   let stopApprover = null;
-  let session = null;
+  let page = null;
   let fatal = null;
 
   try {
@@ -337,9 +388,9 @@ async function main() {
     stopApprover = startApprover(adb);
 
     for (const id of suite.tests) {
-      session = await readySession(adb, forwards, session);
+      page = await readyPage(adb, forwards, page);
       log(`running ${id}`);
-      const result = await runTest(session, id);
+      const result = await runTest(page, id);
       log(`${id}: ${result.status}${result.outcome ? ` (${result.outcome})` : ""}`);
       run.results.push(result);
       if (classify(result) === "failed") await screenshot(adb, join(out, `failed-${id}.png`));
@@ -350,7 +401,7 @@ async function main() {
     await screenshot(adb, join(out, "fatal.png"));
   } finally {
     await stopApprover?.();
-    await session?.browser.close().catch(() => {});
+    page?.close();
     for (const port of forwards.values()) await adb(["forward", "--remove", `tcp:${port}`], { allowFailure: true });
   }
 
