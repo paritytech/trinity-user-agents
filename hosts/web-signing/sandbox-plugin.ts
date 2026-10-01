@@ -4,16 +4,13 @@ import { fileURLToPath } from "node:url";
 import { type Plugin, build } from "vite";
 
 const hostRoot = fileURLToPath(new URL(".", import.meta.url));
-const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 /**
  * The scripts a mounted product needs from the host, bundled as one classic
- * script each, by path under the host's base. The container has to run
- * synchronously before the product's scripts, so it cannot be a module, and the
- * worker and the loader share the same build.
+ * script each, by path under the host's base. The service worker cannot be a
+ * module, and the loader shares the same build.
  */
 const SCRIPTS: Record<string, string> = {
-  "truapi-sandbox/container.js": `${repoRoot}js/container/src/index.ts`,
   "truapi-sandbox/page.js": `${hostRoot}src/sandbox/page.ts`,
   "sw.js": `${hostRoot}src/sandbox/sw.ts`,
 };
@@ -93,8 +90,8 @@ function serveSandbox(base: string): Middleware {
 }
 
 /**
- * The files a mounted product needs from the host: the loader page, the
- * container and the service worker. A build emits them as ordinary static files
+ * The files a mounted product needs from the host: the loader page,
+ * its script and the service worker. A build emits them as ordinary static files
  * beside the host, so any static host can serve them. The dev and preview
  * servers answer for the same paths.
  */

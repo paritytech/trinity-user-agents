@@ -14,7 +14,6 @@ const mount = {
   walletId: "wallet-one",
   productId: "chat.paseo",
   cid: CID,
-  container: true,
 };
 
 describe("hostBase", () => {
@@ -30,25 +29,21 @@ describe("hostBase", () => {
 });
 
 describe("mountScope", () => {
-  test("is parsed back to the content and container setting it was built from", () => {
+  test("is parsed back to the content it was built from", () => {
     expect(parseMountScope("/repo/", mountScope("/repo/", mount))).toEqual({
       cid: CID,
-      container: true,
     });
-    expect(
-      parseMountScope("/", mountScope("/", { ...mount, container: false })),
-    ).toEqual({ cid: CID, container: false });
+    expect(parseMountScope("/", mountScope("/", mount))).toEqual({ cid: CID });
   });
 
   // This is what keeps two tabs from sharing a worker: a different scope is a
   // different registration, so one tab's worker never answers the other's page.
-  test("differs by wallet, by product, by content and by container setting", () => {
+  test("differs by wallet, by product, and by content", () => {
     const scopes = [
       mount,
       { ...mount, walletId: "wallet-two" },
       { ...mount, productId: "other.paseo" },
       { ...mount, cid: `${CID}x` },
-      { ...mount, container: false },
     ].map((variant) => mountScope("/repo/", variant));
     expect(new Set(scopes).size).toBe(scopes.length);
   });

@@ -1,4 +1,3 @@
-import type { ContainerState } from "./container-channel.js";
 import { PASEO_DOTNS, type SkippedRecord } from "./dotns.js";
 
 /** How the open product was reached, for the bar and the status line. */
@@ -21,43 +20,17 @@ export interface Opened {
 /** What the status text reads of an open product. */
 export interface ProductView {
   url: URL;
-  /** The frame loaded a new document and its channels to the core were closed. */
-  lost: boolean;
-  container: { state: ContainerState } | null;
-}
-
-/** The container line: short, and blunt when nothing gates the page. */
-export function containerLine(open: ProductView, how: Opened | null): string {
-  if (open.lost) return "Container: ended. The page loaded a new document.";
-  if (open.container?.state === "connected") return "Container: on";
-  if (open.container)
-    return how?.via === "name"
-      ? "Container: starting"
-      : "Container: waiting for the page. Not gated until it connects.";
-  if (how?.via === "name")
-    return "Container: off (relaxed). Requests are not gated.";
-  return "Container: none. The page is not gated.";
 }
 
 /**
  * Camera and microphone. A page that is not a secure context, and so every
  * frame under it, has no `navigator.mediaDevices`.
  */
-export function deviceLine(open: ProductView, secureContext: boolean): string {
-  if (!secureContext)
-    return "Camera/mic: unavailable. Needs https or localhost.";
-  if (open.lost)
-    return "Camera/mic: unavailable until the product is reopened.";
-  if (open.container?.state === "connected")
-    return "Camera/mic: the core asks, then the browser.";
-  if (open.container)
-    return "Camera/mic: allowed, but only the browser asks until the container connects.";
-  return "Camera/mic: blocked.";
+export function deviceLine(secureContext: boolean): string {
+  return secureContext
+    ? "Camera/mic: the browser and the OS ask."
+    : "Camera/mic: unavailable. Needs https or localhost.";
 }
-
-/** What to do about a product that navigated away from the connection the host gave it. */
-const REOPEN_LINE =
-  "The page navigated on its own, so the host's connection to it ended. Press Reopen.";
 
 export function productStatusText(
   open: ProductView,
@@ -69,10 +42,8 @@ export function productStatusText(
     how?.via === "name"
       ? `${how.address} (${how.kind === "car" ? "app archive" : "website"})`
       : `${open.url.href}`,
-    ...(open.lost ? [REOPEN_LINE] : []),
     ...(sandboxStatus ? [sandboxStatus] : []),
-    containerLine(open, how),
-    deviceLine(open, secureContext),
+    deviceLine(secureContext),
   ];
   return lines.join("\n");
 }

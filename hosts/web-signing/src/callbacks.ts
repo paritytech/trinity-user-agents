@@ -23,11 +23,6 @@ export interface HostCallbackOptions {
   /** A `polkadot://` destination, which has no `https://` form to open. */
   onProductNavigation: (url: string) => void;
   /**
-   * Whether a network permission is answered with a one-time yes, unasked.
-   * A developer relaxation; it is read at each prompt.
-   */
-  approveNetwork: () => boolean;
-  /**
    * Called when a network permission names domains, so the host can read the
    * core's saved answer for each. It only reports what was asked.
    */
@@ -58,7 +53,6 @@ export function createHostCallbacks(
     log,
     onAuthState,
     onProductNavigation,
-    approveNetwork,
     onNetworkAsked,
     onPermissionDecided,
   } = options;
@@ -112,11 +106,6 @@ export function createHostCallbacks(
         const detail = describePermission(request.permission);
         if (request.permission.tag === "Remote")
           onNetworkAsked?.(request.permission.value.domains);
-        if (request.permission.tag === "Remote" && approveNetwork()) {
-          log(`approved without asking (developer relaxation): ${detail}`);
-          onPermissionDecided?.();
-          return Promise.resolve("AllowOnce" as PermissionDecision);
-        }
         return decide("Remote permission", product, detail).finally(
           onPermissionDecided,
         );

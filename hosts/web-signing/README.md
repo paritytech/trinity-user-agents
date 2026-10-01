@@ -25,10 +25,10 @@ and it makes no security promise against a hostile one. Its separations are for 
   keeps apart and what it does not.
 - **The permission prompts are a development aid.** They show what a product asks for and let you answer. They are not
   custody.
-- **The container is a gate for cooperating pages.** A page that loads the shared container asks the core before it uses
-  the network or a device. This works for the code a developer writes and the libraries it uses. It does not stop a page
-  that means to get around it: a page can create a browser context the container has not patched, such as an
-  `<iframe srcdoc>`, and use the built-ins there. Do not open a product you would not open in a browser tab.
+- **A product's own requests follow the browser.** The host does not intercept a product's `fetch`, XHR, WebSocket,
+  WebRTC or media. They follow the browser's rules and the target's CORS headers, and camera and microphone also need
+  the browser's and the operating system's permission. Calls a product makes through TrUAPI, such as signing or a
+  permission request, reach the core, which raises the host's prompts.
 - **Anyone who can reach a served host can use it.** Serve it on loopback, or accept that the page is public and use a
   disposable wallet. The wallets are in each visitor's own browser, so a public copy exposes no one else's.
 
@@ -81,22 +81,25 @@ npm run build
 Publish the contents of `dist/`. The build adds `.nojekyll`, so GitHub Pages serves every path.
 
 `dist/` holds the host page and its assets, `sw.js`, the service worker for mounted products, and `truapi-sandbox/`, the
-loader page and the shared container. They are ordinary files beside the host page, under the same base. To try the
-build locally under a path, run `npx vite preview --base /<repo>/` and open `http://localhost:5180/<repo>/`.
+loader page and its script. They are ordinary files beside the host page, under the same base. To try the build locally
+under a path, run `npx vite preview --base /<repo>/` and open `http://localhost:5180/<repo>/`.
 
 The one thing the base must match is where the files are served. A build made for `/repo/` served at `/` loads no
 assets.
 
 ## Opening a product
 
-The address bar takes a web address or a product name. What the container can do for the page depends on how it was
-opened.
+The address bar takes a web address or a product name.
 
-| Opened as                               | Where the page runs                                            | Container                                                                                                      |
-| --------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| A name, such as `myapp.paseo`           | A mount under this host's own path, served by a service worker | Added to every HTML page the host serves, before the page's own scripts. The default.                          |
-| A URL, with **Expect container** ticked | The URL's own origin                                           | The page loads it and announces itself. The host trusts the page and cannot check.                             |
-| A URL, plain                            | The URL's own origin                                           | None. The status line says `Container: none`. The page uses the network, storage and built-ins without asking. |
+| Opened as                     | Where the page runs                                            |
+| ----------------------------- | -------------------------------------------------------------- |
+| A name, such as `myapp.paseo` | A mount under this host's own path, served by a service worker |
+| A URL                         | The URL's own origin                                           |
+
+In both cases the product reaches the core through the public channel of `createIframeHost`. The frame keeps that
+function's default `sandbox` of `allow-forms allow-same-origin allow-scripts`, so a product cannot open popups, use
+`alert` or download files. The host adds `allow="camera; microphone"`, which lets the browser ask the user and grants
+nothing by itself.
 
 **Web addresses.** An address without a scheme gets `http://`. Only `http` and `https` are accepted. `localhost`, LAN
 addresses and ordinary sites keep their meaning.
@@ -136,7 +139,8 @@ it is served from a path of this host. The product id defaults to the name.
 3. It opens the loader, `<base>truapi-sandbox/index.html`, in the product frame. The loader registers a service worker
    for the mount `<base>product/<wallet>/<product>/<content>/`, fetches the blocks with `?format=raw`, checks each one
    against its CID, unpacks the site in memory and stores the files in Cache Storage under the content id. Then it moves
-   the frame to the start path inside the mount. The worker serves the files and adds the container to HTML pages.
+   the frame to the start path inside the mount. The worker serves the files as they are, with their type and no
+   sniffing.
 
 The mount path holds a hash of the wallet id, a readable form of the product id with its hash, and the content id. A
 different wallet, product or content is a different mount, with its own worker. The same wallet opening the same content
@@ -177,46 +181,16 @@ product opens on any address. The product frame is a secure context only when ev
 A browser that does not offer service workers in the frame, or Web Locks, cannot open a name. An embedded web view often
 lacks them: open the host in the system browser.
 
-### The container and its private channel
-
-The iOS and Android hosts inject `js/container` before any product code. It replaces `fetch`, `XMLHttpRequest`,
-`WebSocket` and WebRTC with versions that ask the host first, removes `indexedDB`, `caches`, `EventSource`, `Worker`,
-service workers and the Cookie Store API, makes `document.cookie` a no-op, and freezes the built-ins the permission path
-depends on. A web host cannot script a page on another origin before that page's own code runs, so the container reaches
-a page here in the two ways in the table above.
-
-How the channel between the container and the core works:
-
-- The container waits for a private `MessagePort` from the host, and holds every gated request until it has one. A
-  request made in the page's first script is held, prompts, and is sent only if allowed.
-- The container takes the port with a capture-phase listener that stops propagation, from its parent window only, and
-  only the first. In an archive the container is told the host's origin, which is the page's own, and accepts the port
-  only from it.
-- The host splits the one core connection by request id. Frames with the container's `host:` prefix go only to the
-  private port, and the same prefix arriving on the product's port is dropped, so a product does not read the
-  container's replies or send as the container.
-- Without **Expect container**, or for a URL page that did not load it, a container announcement is ignored and no
-  private port is given.
-- If the private port dies mid-session, gated requests wait and then fail after the 120 s request timeout, and nothing
-  is sent. A permission dialog raised just before the loss stays open.
-- Served HTML gets the page policy
-  `frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; worker-src 'none'`. It narrows what markup
-  can load. It is a convenience for well-behaved pages, and it does not make an archive a sandbox. See the trust model.
-
 ### Differences from the native hosts
 
 These are accepted for a development host.
 
-- Android authorizes every HTTP request natively, including images, scripts and stylesheets. A browser cannot intercept
-  those. The container's gates cover `fetch`, XHR, WebSocket, WebRTC and media, on iOS and here.
-- A URL product is cooperative: the host trusts a ticked page to have loaded the container. The menu says so until the
-  container connects.
-- Network, media and WebRTC prompts appear only for what the container gates. Secure-context APIs are unavailable on
-  plain HTTP, and native-only APIs are not emulated.
-- The frame gets `allow="camera; microphone"` only when a container is expected. Delegation only lets a request reach
-  the browser: the container still asks the core first, and the browser's and the operating system's prompts still
-  apply. Camera and microphone need a secure context, so on `http://<LAN address>` a product's capture call throws
-  before any prompt.
+- The native hosts load `js/container`, which asks the core before a page's own `fetch`, XHR, WebSocket, WebRTC or media
+  request. This host does not load it: those requests follow the browser and the target's CORS rules, and only explicit
+  TrUAPI calls reach the core.
+- Secure-context APIs are unavailable on plain HTTP, and native-only APIs are not emulated. Camera and microphone need a
+  secure context, so on `http://<LAN address>` a product's capture call throws before any prompt. Elsewhere the
+  browser's and the operating system's prompts apply.
 - A product opened by name shares the host's origin, so the browser APIs that are global to an origin are shared with
   the host and its other products: see [Wallets and sessions](#wallets-and-sessions).
 
@@ -264,7 +238,7 @@ kept for the tab. On a narrow screen the control is hidden and the product fills
 **Inspector.** It is `createInAppDebugger` from `@parity/truapi-debugger`. The page taps the frames it relays between
 the product and the core, in both directions, and the debugger groups and decodes them. Decoding is gated on the core's
 own wire schema: if it differs from the page bundle's, the inspector lists operations without decoding them and the log
-says so. Frames stay in the tab, may carry sensitive payloads, and are held in memory only. **Clear** drops them.
+says so. Frames stay in the tab, may carry sensitive payloads, and are held in memory only.
 
 **Versions.** The menu shows client, host and core, provider and debugger versions, read from the linked packages and
 the loaded `testing` bundle. A warning appears only when the core's wire schema differs from the client's. **Technical
@@ -274,20 +248,6 @@ starts or the build runs, so restart the dev server after rebuilding a WASM bund
 
 A tab that opens a product opens it again after a reload, once its wallet is restored. A `?product=` link only fills the
 form.
-
-## Developer settings
-
-The menu's Developer section holds two relaxations, each on purpose and per tab:
-
-- **Archives without the container.** The worker serves a name's HTML as it is, so the product's requests are not gated.
-  The product stays on the host's origin.
-- **Approve network without asking.** Each network permission prompt is answered with a one-time yes, and the log
-  records each one.
-
-Both start off. A banner under the top bar stays while any relaxation is on, in force or chosen for the next Open.
-Changing one applies when the product is opened again, and **Turn off and reopen** on the banner does both. The choice
-is kept in the tab's `sessionStorage`, so a reload keeps it. A container-less open is its own mount, so it never changes
-what another tab is running.
 
 ## Wallets and sessions
 
@@ -404,24 +364,22 @@ live chain and no real wallet. It checks that:
 
 - a name opens from an archive under the host's own path, in a frame whose storage does not hold the host's wallets, and
   a root-relative script link in the product is answered from the archive;
-- with the container, the page's first request waits for the prompt, a denial sends nothing to the target, an allow-once
-  sends one request, and always-allow stops the prompts, counted at the target;
-- a URL product with **Expect container** ticked behaves the same, and the host refuses its own origin;
-- opening the menu or inspector, or resizing the product, does not reload it or drop the private channel;
-- the Developer settings start off, apply on the next Open, survive a reload, and turn off again, and an entered product
-  id is shown as entered.
+- a product's own requests reach the target, counted there, because the host does not gate them;
+- a URL product opens on its own origin, and the host refuses its own origin;
+- opening the menu or inspector, or resizing the product, does not reload it;
+- an entered product id is shown as entered.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
 
 Not covered by automated checks, and tried by hand in Chrome when the behavior changes: WebRTC, camera and microphone
-capture, the 120 s private-port timeout, the phone setup, two tabs with different wallets, the build under a project
-path, the inspector's rendering, and layout on narrow screens.
+capture, the phone setup, two tabs with different wallets, the build under a project path, the inspector's rendering,
+and layout on narrow screens.
 
 ## Layout
 
-- `src/main.ts`: the page and its wiring. `src/product.ts`, `src/container-channel.ts`: embedding a product and the
-  private channel. `src/callbacks.ts`, `src/prompt.ts`, `src/reviews.ts`: the host callbacks and prompts.
+- `src/main.ts`: the page and its wiring. `src/product.ts`: embedding a product and relaying its frames to the core.
+  `src/callbacks.ts`, `src/prompt.ts`, `src/reviews.ts`: the host callbacks and prompts.
 - `src/wallets.ts`, `src/storage.ts`: wallet and per-wallet storage. `src/network.ts`: the light client.
 - `src/dotns.ts`, `src/address.ts`: name lookup and the address bar's grammar.
 - `src/archive/`: CAR, UnixFS and CID verification and unpacking.
@@ -433,13 +391,10 @@ path, the inspector's rendering, and layout on narrow screens.
 
 - Light-client-verified name resolution. The record's CID comes from one public RPC node.
 - Sharded directories in a website record. They are refused with a message, not opened partly.
-- Gating of subresources written in a product's markup, such as `<img>`, `<script src>` and stylesheets.
+- Gating of a product's own network, device or media requests. They follow the browser.
 - Byte-range requests and non-UTF-8 HTML from a name's archive.
 - Versioned hosted releases of this host, which would let a product be tested against a chosen TrUAPI version.
 - Navigation started by a product. A product that asks to go to a `polkadot://` name is logged and not followed.
-- A product that loads a new document in its frame (a link, a form post, `location.assign`). Single-page navigation is
-  fine. When a page that loads the container does this, the host closes its channels, shows "Container: ended" and turns
-  Open into **Reopen**. A page opened without the container is not watched and simply loses its channel.
 - Chat, contacts, Pocket and live OS permission status. The core answers those calls `Unsupported`.
 - Worker products. Products run as `App`.
 - Preimage lookup. Every lookup is a miss. The core submits preimages to Bulletin itself.
