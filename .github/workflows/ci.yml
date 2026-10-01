@@ -354,9 +354,8 @@ jobs:
 
           # The web signing host builds the TypeScript packages and both WASM
           # cores from this tree, so it moves with their sources and with the
-          # generator that produces the bridge between them. It also bundles
-          # the shared container from js/container.
-          gate host_web_signing '^(hosts/web-signing/|js/container/|js/packages/(truapi|truapi-host|truapi-provider|truapi-debugger)/|rust/crates/(truapi|truapi-provider|truapi-verifiable|truapi-codegen|truapi-macros)/|scripts/codegen\.sh$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/workflows/ci\.yml$)'
+          # generator that produces the bridge between them.
+          gate host_web_signing '^(hosts/web-signing/|js/packages/(truapi|truapi-host|truapi-provider|truapi-debugger)/|rust/crates/(truapi|truapi-provider|truapi-verifiable|truapi-codegen|truapi-macros)/|scripts/codegen\.sh$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/workflows/ci\.yml$)'
 
           # The packaging path has its own inputs: the archive layout in the
           # Makefile, the runner bundle, the generated sources cli-dist refuses

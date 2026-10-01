@@ -23,7 +23,6 @@ import { allocationRecord } from "./allowance-ledger.js";
 import {
   permissionRows,
   queriesFor,
-  type GateState,
   type PermissionsView,
 } from "./permissions-status.js";
 import { bindRecentsMenu } from "./address-recents.js";
@@ -50,14 +49,6 @@ import {
   productStatusText,
   type Opened,
 } from "./product-status.js";
-import {
-  NO_RELAXATIONS,
-  activeRelaxations,
-  loadRelaxations,
-  sameRelaxations,
-  saveRelaxations,
-  type Relaxations,
-} from "./relaxations.js";
 import {
   hostBase,
   loaderUrl,
@@ -113,7 +104,6 @@ const recentsList = element<HTMLUListElement>("address-recents");
 const resetDataButton = element<HTMLButtonElement>("reset-data");
 const addressGo = element<HTMLButtonElement>("address-go");
 const productIdInput = element<HTMLInputElement>("product-id");
-const expectContainerInput = element<HTMLInputElement>("expect-container");
 const productIdReset = element<HTMLButtonElement>("product-id-reset");
 const productIdEffective = element("product-id-effective");
 const openButton = element<HTMLButtonElement>("open");
@@ -121,12 +111,6 @@ const closeButton = element<HTMLButtonElement>("close-product");
 const productStatus = element("product-status");
 const productMore = element<HTMLDetailsElement>("product-more");
 const productDetails = element("product-details");
-const relaxContainerInput = element<HTMLInputElement>("relax-container");
-const relaxNetworkInput = element<HTMLInputElement>("relax-network");
-const relaxNote = element("relax-note");
-const relaxBanner = element("relax-banner");
-const relaxBannerText = element("relax-banner-text");
-const relaxBannerOff = element<HTMLButtonElement>("relax-banner-off");
 const productFrame = element("product-frame");
 const stageLoadingPill = element("stage-loading-pill");
 const stageLoadingText = element("stage-loading-text");
@@ -258,9 +242,6 @@ let opened: Opened | null = null;
 let openedWithOverride = false;
 /** The origin the entered product id was last opened with, for the log. */
 let overrideOrigin: string | null = null;
-/** The relaxations the tab has chosen, and the ones the open product started with. */
-let relaxations: Relaxations = loadRelaxations(sessionStorage);
-let appliedRelaxations: Relaxations = NO_RELAXATIONS;
 /** What the sandbox loader last said about the open product, until the page takes over. */
 let sandboxStatus = "";
 
@@ -425,48 +406,14 @@ function renderProduct(): void {
   addressId.title = product
     ? `Product id ${product.productId}, ${openedWithOverride ? "entered by you" : `derived from ${basis}`}. Not verified.`
     : "";
-  openButton.textContent = product?.lost ? "Reopen" : "Open";
   productStatus.textContent = product
     ? productStatusText(product, opened, sandboxStatus, window.isSecureContext)
     : "No product open.";
   const details = product ? productDetailsText(product, opened) : "";
   productDetails.textContent = details;
   productMore.hidden = details === "";
-  renderRelaxations();
   renderControls();
   void refreshProductAllowance();
-}
-
-/**
- * Show which protections are off. The banner stays for as long as any is: in
- * force for the open product, or chosen and waiting for the next Open.
- */
-function renderRelaxations(): void {
-  relaxContainerInput.checked = relaxations.archiveWithoutContainer;
-  relaxNetworkInput.checked = relaxations.approveNetworkWithoutAsking;
-  const inForce = product !== null;
-  const shown = activeRelaxations(inForce ? appliedRelaxations : relaxations);
-  const pending = inForce && !sameRelaxations(relaxations, appliedRelaxations);
-  relaxBanner.hidden = shown.length === 0 && !pending;
-  relaxBannerOff.textContent = inForce ? "Turn off and reopen" : "Turn off";
-  document.body.dataset.relaxed = String(!relaxBanner.hidden);
-  relaxBannerText.textContent = pending
-    ? "Relaxations changed. Press Open to apply."
-    : `Relaxed: ${shown.join(", ")}.`;
-  relaxNote.textContent = pending
-    ? "Changed. Press Open to apply."
-    : "Applies on the next Open.";
-}
-
-function setRelaxations(next: Relaxations): void {
-  relaxations = next;
-  saveRelaxations(sessionStorage, next);
-  log(
-    activeRelaxations(next).length === 0
-      ? "developer relaxations cleared"
-      : `developer relaxations chosen: ${activeRelaxations(next).join("; ")}`,
-  );
-  renderRelaxations();
 }
 
 const accountStatusList = element("account-status-rows");
@@ -515,33 +462,12 @@ function renderAccountStatus(): void {
   productStatusList.replaceChildren(
     ...versionLines(productAllowanceRows(productAllowance, productChain)),
   );
-  permissionsList.replaceChildren(
-    ...versionLines(
-      permissionRows(permissions, {
-        gate: gateState(),
-        autoApproveNetwork: appliedRelaxations.approveNetworkWithoutAsking,
-        archiveWithoutContainer: appliedRelaxations.archiveWithoutContainer,
-      }),
-    ),
-  );
+  permissionsList.replaceChildren(...versionLines(permissionRows(permissions)));
   accountStatusRefresh.disabled =
     lastAuthState.tag !== "Connected" ||
     chainAccess === null ||
     chainState.state === "loading" ||
     productChain.state === "loading";
-}
-
-/** What gates the open product's own requests: the container, as it stands. */
-function gateState(): GateState {
-  if (product?.lost) return "ended";
-  switch (product?.container?.state) {
-    case "connected":
-      return "on";
-    case "waiting":
-      return "waiting";
-    default:
-      return "none";
-  }
 }
 
 /**
@@ -873,7 +799,6 @@ async function resolveTarget(
     walletId: activeWallet?.id ?? "signed-out",
     productId,
     cid: source.cid,
-    container: !relaxations.archiveWithoutContainer,
   });
   return {
     address: shown,
@@ -913,25 +838,16 @@ async function openTarget(
 ): Promise<void> {
   closeProduct();
   const op = loading.begin("Loading…");
-  appliedRelaxations = relaxations;
   sandboxStatus = "";
   try {
     product = await openProduct(runtime, target.url, productId, productFrame, {
       mounted: target.via === "name",
       tap: createFrameTap(inspector, productId, runtime.coreWireSchemaHash),
-      expectContainer:
-        target.via === "name"
-          ? !appliedRelaxations.archiveWithoutContainer
-          : expectContainerInput.checked,
-      onContainerConnected() {
-        log("the page's container connected; permission prompts are active");
+      onFrameLoad(count) {
+        if (count < documentsBeforeProduct(target.via)) return;
+        loading.finish(op);
         sandboxStatus = "";
         renderProduct();
-      },
-      onDrop: (reason) =>
-        log(`dropped a frame on the wrong channel: ${reason}`),
-      onFrameLoad(count) {
-        if (count >= documentsBeforeProduct(target.via)) loading.finish(op);
       },
       onSandboxStatus(state, detail) {
         sandboxStatus = `Sandbox: ${detail}`;
@@ -939,12 +855,6 @@ async function openTarget(
           loading.finish(op);
           log(`sandbox could not start the product: ${detail}`);
         }
-        renderProduct();
-      },
-      onLost() {
-        log(
-          "the page loaded a new document; its connection to the host ended and is not restored",
-        );
         renderProduct();
       },
     });
@@ -1185,34 +1095,6 @@ productIdReset.addEventListener("click", () => {
   productIdInput.focus();
 });
 
-relaxContainerInput.addEventListener("change", () =>
-  setRelaxations({
-    ...relaxations,
-    archiveWithoutContainer: relaxContainerInput.checked,
-  }),
-);
-relaxNetworkInput.addEventListener("change", () =>
-  setRelaxations({
-    ...relaxations,
-    approveNetworkWithoutAsking: relaxNetworkInput.checked,
-  }),
-);
-relaxBannerOff.addEventListener("click", () => {
-  setRelaxations(NO_RELAXATIONS);
-  const current = opened;
-  const id = product?.productId;
-  if (current === null || id === undefined) return;
-  // A name is resolved again, so its mount carries the new settings.
-  void serial((runtime) =>
-    openResolved(
-      runtime,
-      parseTypedAddress(current.address),
-      id,
-      openedWithOverride,
-    ),
-  );
-});
-
 closeButton.addEventListener("click", () => {
   void serial(async () => {
     closeProduct();
@@ -1232,7 +1114,6 @@ async function boot(): Promise<void> {
     onAuthState: renderSession,
     onProductNavigation: (url) =>
       log(`dotNS navigation is not supported by this host: ${url}`),
-    approveNetwork: () => appliedRelaxations.approveNetworkWithoutAsking,
     onNetworkAsked(domains) {
       askedDomains = [...new Set([...askedDomains, ...domains])];
     },

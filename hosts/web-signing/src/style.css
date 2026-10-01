@@ -164,39 +164,6 @@ textarea {
   min-width: 0;
 }
 
-/* Stays for as long as any protection is off, so it is never forgotten. */
-.relax-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 12px;
-  background: #5a3b00;
-  color: #ffe2a8;
-  border-bottom: 1px solid #8a5b00;
-  font-size: 12px;
-}
-
-.relax-banner[hidden] {
-  display: none;
-}
-
-.relax-banner span {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.relax-banner button {
-  flex: none;
-  background: transparent;
-  color: inherit;
-  border: 1px solid currentColor;
-  border-radius: 6px;
-  padding: 3px 8px;
-  font: inherit;
-  cursor: pointer;
-}
-
 /* The bar is dark in both themes, like the address bar of a browser. */
 .appbar {
   --bar-bg: #1b1b1f;

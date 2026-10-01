@@ -9,11 +9,7 @@ import {
 import { createServer as createTcpServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import type { BrowserContext } from "playwright-core";
-import {
-  build,
-  createServer as createViteServer,
-  type ViteDevServer,
-} from "vite";
+import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { PASEO_DOTNS, bytesToHex, namehash } from "../src/dotns.js";
 import { Blocks, car } from "../src/archive/fixtures.js";
 import { cidToString } from "../src/archive/cid.js";
@@ -278,42 +274,8 @@ export async function serveName(
   });
 }
 
-/** The shared container as one classic script, built from this tree the way the host serves it. */
-async function buildContainer(): Promise<string> {
-  const result = await build({
-    configFile: false,
-    logLevel: "error",
-    publicDir: false,
-    define: { "process.env.NODE_ENV": '"production"' },
-    build: {
-      write: false,
-      minify: false,
-      target: "es2020",
-      modulePreload: false,
-      rollupOptions: {
-        input: fileURLToPath(
-          new URL("../../../js/container/src/index.ts", import.meta.url),
-        ),
-        output: { format: "iife", inlineDynamicImports: true },
-      },
-    },
-  });
-  const outputs = Array.isArray(result) ? result : [result];
-  for (const output of outputs) {
-    if (!("output" in output)) continue;
-    const chunk = output.output.find((item) => item.type === "chunk");
-    if (chunk?.type === "chunk") return chunk.code;
-  }
-  throw new Error("the container was not built");
-}
-
-/**
- * A product served by URL that loads the container itself and announces it
- * with `window.__truapi_message_port`, which is how a page asks this host for a
- * private channel. The host cannot check that a page did.
- */
+/** A product served by URL, on loopback and on a port of its own. */
 export interface UrlProduct {
-  /** The product's address, on loopback and on a port of its own. */
   url: string;
   close(): void;
 }
@@ -321,17 +283,8 @@ export interface UrlProduct {
 export async function startUrlProduct(
   targetOrigin: string,
 ): Promise<UrlProduct> {
-  const container = await buildContainer();
-  const html = productHtml(targetOrigin).replace(
-    "<body>",
-    '<body>\n<script>window.__truapi_message_port = true;</script>\n<script src="/container.js"></script>',
-  );
-  const { server, port } = await listen((request, response) => {
-    const path = new URL(request.url ?? "/", "http://product").pathname;
-    if (path === "/container.js") {
-      response.writeHead(200, { "content-type": "text/javascript" });
-      return void response.end(container);
-    }
+  const html = productHtml(targetOrigin);
+  const { server, port } = await listen((_request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(html);
   });

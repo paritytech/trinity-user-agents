@@ -70,11 +70,12 @@ hosts/web-signing/         development web host: a browser tab that holds its ow
                            such as GitHub Pages. Opens a product by DotNS name under
                            its own path, per wallet: `src/archive/` verifies and
                            unpacks CAR/UnixFS content, `src/sandbox/` and
-                           `sandbox-plugin.ts` are the loader page, service worker and
-                           container injection; `browser/` holds its headless-Chrome
-                           smoke test (`npm run test:browser`, run in CI).
+                           `sandbox-plugin.ts` are the loader page and service worker;
+                           `browser/` holds its headless-Chrome smoke test
+                           (`npm run test:browser`, run in CI).
                            A trusted development tool with disposable plaintext wallets:
-                           its container is a gate for cooperating pages, not a sandbox
+                           a product's own requests follow the browser, and it is not
+                           a sandbox
 docs/                      design docs, RFCs, feature proposals
 scripts/codegen.sh         regenerate the TS client from the Rust crate
 scripts/battery.sh         run the generated battery against both headless CLI host roles,

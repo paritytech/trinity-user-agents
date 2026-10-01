@@ -1,12 +1,3 @@
-/** Sent with every HTML page a product is served, since a browser has no other way to stop these. */
-export const PRODUCT_CSP = [
-  "frame-src 'self'",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "worker-src 'none'",
-].join("; ");
-
 const CONTENT_TYPES: Record<string, string> = {
   html: "text/html; charset=utf-8",
   htm: "text/html; charset=utf-8",
@@ -88,59 +79,19 @@ export function archiveRequestPath(
   );
 }
 
-const AFTER_DOCTYPE = /^(\s*(?:<!--[\s\S]*?-->\s*)*<!doctype[^>]*>)/i;
-
-/**
- * `html` with the container loaded first, as a plain synchronous script.
- *
- * It goes straight after the doctype, or at the very start without one, so no
- * script of the product's can run before it whatever the page puts in its head.
- * The host's origin is written into the page, which pins where the container
- * accepts its private port from. `src` is the container's absolute path.
- */
-export function injectContainer(
-  html: string,
-  hostOrigin: string,
-  src: string,
-): string {
-  const flag = JSON.stringify(hostOrigin).replaceAll("<", "\\u003c");
-  const scripts =
-    `<script>window.__truapi_message_port=${flag}</script>` +
-    `<script src="${src}"></script>`;
-  const doctype = AFTER_DOCTYPE.exec(html);
-  if (doctype === null) return scripts + html;
-  return doctype[1] + scripts + html.slice(doctype[1].length);
-}
-
 /** What the worker answers a request with: found, or not. */
 export interface ServedFile {
   path: string;
   bytes: Uint8Array;
 }
 
-/**
- * The response for an archive file, with the container injected into HTML.
- * A null `container` serves the page as it is, without the container or the
- * policy that goes with it.
- */
-export function responseFor(
-  file: ServedFile,
-  container: { hostOrigin: string; src: string } | null,
-): Response {
-  const type = contentTypeOf(file.path);
-  const headers: Record<string, string> = {
-    "content-type": type,
-    "x-content-type-options": "nosniff",
-    "cache-control": "no-store",
-  };
-  if (type.startsWith("text/html") && container !== null) {
-    headers["content-security-policy"] = PRODUCT_CSP;
-    const html = injectContainer(
-      new TextDecoder().decode(file.bytes),
-      container.hostOrigin,
-      container.src,
-    );
-    return new Response(html, { headers });
-  }
-  return new Response(file.bytes as BodyInit, { headers });
+/** The response for an archive file: its type by extension, never sniffed, never cached by the browser. */
+export function responseFor(file: ServedFile): Response {
+  return new Response(file.bytes as BodyInit, {
+    headers: {
+      "content-type": contentTypeOf(file.path),
+      "x-content-type-options": "nosniff",
+      "cache-control": "no-store",
+    },
+  });
 }

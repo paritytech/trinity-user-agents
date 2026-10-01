@@ -91,54 +91,18 @@ export type PermissionsView =
       networks: PermissionAnswer[];
     };
 
-/** What gates the product's own requests right now. */
-export type GateState = "on" | "waiting" | "ended" | "none";
-
-/** The developer settings and container state that change how permissions behave. */
-export interface PermissionMode {
-  gate: GateState;
-  /** Network prompts are answered with a one-time yes, unasked. */
-  autoApproveNetwork: boolean;
-  /** The archive was opened without the container. */
-  archiveWithoutContainer: boolean;
-}
-
-const GATE_TEXT: Record<GateState, string> = {
-  on: "Container on",
-  waiting: "Container starting",
-  ended: "Container ended",
-  none: "No container",
+const SCOPE_ROW: VersionRow = {
+  label: "Scope",
+  value: "Explicit TrUAPI calls",
+  title:
+    "These answers are for permission requests a product makes through TrUAPI. A page's own fetch, XHR, WebSocket, images and media follow the browser and the site's CORS rules, and camera and microphone also need the browser's and the OS's permission.",
 };
-
-const GATE_SCOPE =
-  "The container gates requests a page's scripts make with fetch, XHR, WebSocket and WebRTC, and asks the core first. It does not gate images, scripts or styles written in the markup, and it gates nothing on a page that does not load it. This is developer parity, not a sandbox for hostile code.";
 
 const STATUS_TEXT: Record<PermissionAuthorizationStatus, string> = {
   Authorized: "Allowed",
   Denied: "Denied",
   NotDetermined: "Ask",
 };
-
-function modeRows(mode: PermissionMode): VersionRow[] {
-  const gated = mode.gate === "on";
-  return [
-    {
-      label: "Gate",
-      value: GATE_TEXT[mode.gate],
-      state: gated ? undefined : "warning",
-      detail: mode.archiveWithoutContainer ? "relaxed" : undefined,
-      title: GATE_SCOPE,
-    },
-    {
-      label: "Network prompts",
-      value: mode.autoApproveNetwork ? "Approved once, unasked" : "Ask",
-      state: mode.autoApproveNetwork ? "warning" : undefined,
-      title: mode.autoApproveNetwork
-        ? "A developer relaxation answers each network prompt with a one-time yes. Nothing is stored, so the answers below do not change."
-        : "Each network request the core has no answer for raises a prompt.",
-    },
-  ];
-}
 
 function answerRow(answer: PermissionAnswer, prefix = ""): VersionRow {
   return {
@@ -163,16 +127,13 @@ function answerRow(answer: PermissionAnswer, prefix = ""): VersionRow {
  * domains this tab saw the core ask about, because the core has no call that
  * lists them.
  */
-export function permissionRows(
-  view: PermissionsView,
-  mode: PermissionMode,
-): VersionRow[] {
+export function permissionRows(view: PermissionsView): VersionRow[] {
   switch (view.state) {
     case "none-open":
       return [{ label: "Product", value: "None open", state: "unknown" }];
     case "signed-out":
       return [
-        ...modeRows(mode),
+        SCOPE_ROW,
         {
           label: "Current permissions",
           value: "Sign in first",
@@ -181,12 +142,12 @@ export function permissionRows(
       ];
     case "loading":
       return [
-        ...modeRows(mode),
+        SCOPE_ROW,
         { label: "Current permissions", value: "Checking…", state: "unknown" },
       ];
     case "error":
       return [
-        ...modeRows(mode),
+        SCOPE_ROW,
         {
           label: "Current permissions",
           value: "Unavailable",
@@ -202,7 +163,7 @@ export function permissionRows(
         ({ status }) => status === "NotDetermined",
       );
       return [
-        ...modeRows(mode),
+        SCOPE_ROW,
         ...decided.map((answer) => answerRow(answer)),
         ...(asking.length > 0
           ? [

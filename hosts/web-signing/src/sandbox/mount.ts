@@ -2,7 +2,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 
 /** Where a mounted product's files are served, under the host's base path. */
 export const PRODUCT_DIR = "product/";
-/** The host's own static files for mounted products: the loader and the container. Never the product's. */
+/** The host's own static files for mounted products: the loader page and script. Never the product's. */
 export const SANDBOX_DIR = "truapi-sandbox/";
 
 /** The product a frame is opened for, and the wallet session it belongs to. */
@@ -10,13 +10,10 @@ export interface Mount {
   walletId: string;
   productId: string;
   cid: string;
-  /** False only for the developer relaxation that serves HTML as it is. */
-  container: boolean;
 }
 
 const LABEL_LIMIT = 63;
 const READABLE_PART = 40;
-const RAW = ".raw";
 
 function hashHex(text: string): string {
   return [...sha256(new TextEncoder().encode(text)).slice(0, 6)]
@@ -64,21 +61,20 @@ export function hostBase(baseUrl: string, pageUrl: string): string {
  * same content again lands on the same mount.
  */
 export function mountScope(base: string, mount: Mount): string {
-  const content = mount.container ? mount.cid : `${mount.cid}${RAW}`;
-  return `${base}${PRODUCT_DIR}${walletKey(mount.walletId)}/${productLabel(mount.productId)}/${content}/`;
+  return `${base}${PRODUCT_DIR}${walletKey(mount.walletId)}/${productLabel(mount.productId)}/${mount.cid}/`;
 }
 
-const SCOPE = /^[0-9a-f]{12}\/[a-z0-9-]+\/([A-Za-z0-9]+)(\.raw)?\/$/;
+const SCOPE = /^[0-9a-f]{12}\/[a-z0-9-]+\/([A-Za-z0-9]+)\/$/;
 
-/** The content and container setting a scope path names, or null for a path that is no mount. */
+/** The content a scope path names, or null for a path that is no mount. */
 export function parseMountScope(
   base: string,
   scopePath: string,
-): { cid: string; container: boolean } | null {
+): { cid: string } | null {
   const prefix = `${base}${PRODUCT_DIR}`;
   if (!scopePath.startsWith(prefix)) return null;
   const match = SCOPE.exec(scopePath.slice(prefix.length));
-  return match ? { cid: match[1], container: match[2] === undefined } : null;
+  return match ? { cid: match[1] } : null;
 }
 
 /**
