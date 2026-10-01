@@ -955,16 +955,14 @@ fn connection_adapters_from_js(
         contacts_platform,
         status_host,
         pocket_platform,
-        ..
     } = wasm_platform(Arc::new(JsBridge::from_js(callbacks)?));
     Ok(Some(crate::host_core::ConnectionAdapters {
         platform,
         chat_platform,
         contacts_platform,
         permission_status: status_host,
-        // One-use grants are per-connection and start empty, matching the
-        // native adapter and `ConnectionAdapters`' own default.
-        permission_grants: std::sync::Arc::default(),
+        // One-use grants belong to this execution, not the shared host.
+        permission_grants: Arc::default(),
         pocket_platform,
         chat: Arc::new(crate::runtime::ActionChannel::chat()),
         renderer: Arc::new(crate::runtime::ActionChannel::renderer()),
@@ -1029,50 +1027,36 @@ impl WasmPairingHostRuntime {
 		self.runtime.set_submit_preimages_locally(local);
 	}
 
-	/// Build a shared runtime from host-level platform callbacks and host config.
-	#[wasm_bindgen(constructor)]
-	pub fn new(
-		callbacks: JsValue,
-		host_config: JsValue,
-	) -> Result<WasmPairingHostRuntime, JsValue> {
-		console_error_panic_hook::set_once();
-		crate::logging::init();
-		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
-		let WasmPlatformAdapters {
-			platform,
-			chat_platform,
-			contacts_platform,
-			status_host,
-			pocket_platform,
-			game_platform,
-			scanner_platform,
-		} = wasm_platform(bridge);
-		let spawner: Spawner = Arc::new(|fut| {
-			wasm_bindgen_futures::spawn_local(fut);
-		});
-		let host_config = pairing_host_config_from_js(&host_config)?;
-		let runtime = PairingHostRuntime::with_platforms(
-			platform,
-			host_config,
-			spawner,
-			chat_platform,
-			contacts_platform,
-		);
-		if let Some(status_host) = status_host {
-			runtime.set_permission_status_host(status_host);
-		}
-		if let Some(pocket_platform) = pocket_platform {
-			runtime.set_pocket_platform(pocket_platform);
-		}
-		if let Some(game_platform) = game_platform {
-			runtime.set_game_platform(game_platform);
-		}
-		if let Some(scanner_platform) = scanner_platform {
-			runtime.set_scanner_platform(scanner_platform);
-		}
-		install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
-		Ok(Self { runtime: Rc::new(runtime) })
-	}
+    /// Build one product-scoped runtime from this pairing host runtime.
+    /// Optional platform callbacks are execution-local; shared authority stays here.
+    #[wasm_bindgen(js_name = productRuntime)]
+    pub fn product_runtime(
+        &self,
+        product: JsValue,
+        core_callbacks: JsValue,
+        platform_callbacks: Option<JsValue>,
+    ) -> Result<WasmProductRuntime, JsValue> {
+        let product = product_context_from_js(&product)?;
+        let channel = CoreChannel::from_js(&core_callbacks)?;
+        let debug_emit = get_optional_function(&core_callbacks, "debugEmit")?;
+        let channel_id = product.product_id.clone();
+        let sink = Arc::new(WasmFrameSink {
+            emit_frame: SendWrapper::new(channel.emit_frame),
+        });
+        let runtime = match connection_adapters_from_js(platform_callbacks.as_ref())? {
+            Some(adapters) => self.runtime.product_runtime_with(product, adapters, sink),
+            None => self.runtime.product_runtime(product, sink),
+        };
+        if let Some(debug_emit) = debug_emit {
+            runtime.set_debug_sink(
+                ChannelId(channel_id),
+                Arc::new(WasmDebugSink {
+                    emit: SendWrapper::new(debug_emit),
+                }),
+            );
+        }
+        Ok(WasmProductRuntime::from_parts(runtime, channel.dispose))
+    }
 
 	/// Build one product-scoped runtime from this pairing host runtime.
 	#[wasm_bindgen(js_name = productRuntime)]
@@ -1392,17 +1376,26 @@ impl WasmSigningHostRuntime {
         })
     }
 
-	/// Answer these resource tags as refused, replacing any earlier set.
-	///
-	/// A suite proving its product survives a refused resource needs that one
-	/// withheld while the rest stay granted. The tag is the
-	/// `AllocatableResource` variant name, so `SmartContractAllowance`
-	/// withholds every derivation index.
-	#[cfg(feature = "test-host")]
-	#[wasm_bindgen(js_name = setWithheldResources)]
-	pub fn set_withheld_resources(&self, tags: Vec<String>) {
-		self.runtime.set_withheld_resources(tags);
-	}
+    /// Build one product-scoped runtime from this signing host.
+    /// Optional platform callbacks are execution-local; shared authority stays here.
+    #[wasm_bindgen(js_name = productRuntime)]
+    pub fn product_runtime(
+        &self,
+        product: JsValue,
+        core_callbacks: JsValue,
+        platform_callbacks: Option<JsValue>,
+    ) -> Result<WasmProductRuntime, JsValue> {
+        let product = product_context_from_js(&product)?;
+        let channel = CoreChannel::from_js(&core_callbacks)?;
+        let sink = Arc::new(WasmFrameSink {
+            emit_frame: SendWrapper::new(channel.emit_frame),
+        });
+        let runtime = match connection_adapters_from_js(platform_callbacks.as_ref())? {
+            Some(adapters) => self.runtime.product_runtime_with(product, adapters, sink),
+            None => self.runtime.product_runtime(product, sink),
+        };
+        Ok(WasmProductRuntime::from_parts(runtime, channel.dispose))
+    }
 
 	/// Keep preimage submissions in the core instead of the Bulletin chain.
 	///

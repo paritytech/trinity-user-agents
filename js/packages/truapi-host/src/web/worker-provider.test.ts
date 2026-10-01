@@ -164,6 +164,98 @@ const devGlobal = globalThis as typeof globalThis & {
 };
 
 describe("createWebWorkerPairingHostRuntime", () => {
+  it("isolates interactive callbacks across replacement connections on one host", async () => {
+    const worker = new FakeWorker();
+    const deliveries: string[] = [];
+    const callbacks = (owner: string) =>
+      makeHostCallbacks({
+        notifications: {
+          pushNotification: async (request) => {
+            deliveries.push(`${owner}:${request.text}`);
+            return { id: 42 };
+          },
+        },
+      });
+    const runtimePromise = createWebWorkerPairingHostRuntime(
+      asWorker(worker),
+      callbacks("host"),
+      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
+    );
+    worker.emit({ kind: "loaded" });
+    worker.emit({ kind: "ready" });
+    const runtime = await runtimePromise;
+    const old = await finishProviderReady(
+      worker,
+      runtime.createProvider({ productId: "test.dot" }, callbacks("old")),
+    );
+    const oldId = lastMessageOfKind(worker, "createCore").coreId;
+    const replacement = await finishProviderReady(
+      worker,
+      runtime.createProvider(
+        { productId: "test.dot" },
+        callbacks("replacement"),
+      ),
+    );
+    const replacementId = lastMessageOfKind(worker, "createCore").coreId;
+    let requestId = 0;
+    const notify = async (coreId?: unknown) => {
+      worker.emit({
+        kind: "callbackRequest",
+        requestId: ++requestId,
+        ...(coreId === undefined ? {} : { coreId }),
+        name: "pushNotification",
+        args: [
+          HostPushNotificationRequest.enc({
+            text: "Hello!",
+            deeplink: undefined,
+            scheduledAt: undefined,
+          }),
+        ],
+      });
+      await settle();
+      return lastMessageOfKind(worker, "callbackResponse");
+    };
+    expect((await notify(oldId)).ok).toBe(true);
+    expect((await notify(replacementId)).ok).toBe(true);
+    old.dispose();
+    expect((await notify(oldId)).ok).toBe(false);
+    expect((await notify(replacementId)).ok).toBe(true);
+    expect((await notify()).ok).toBe(true);
+    expect(deliveries).toEqual([
+      "old:Hello!",
+      "replacement:Hello!",
+      "replacement:Hello!",
+      "host:Hello!",
+    ]);
+    worker.emit({
+      kind: "frameError",
+      coreId: replacementId,
+      error: "connection lost",
+    });
+    expect((await notify(replacementId)).ok).toBe(false);
+    replacement.dispose();
+    const failed = runtime.createProvider(
+      { productId: "test.dot" },
+      callbacks("failed"),
+    );
+    const failedId = lastMessageOfKind(worker, "createCore").coreId;
+    worker.emit({
+      kind: "coreError",
+      coreId: failedId,
+      error: "creation failed",
+    });
+    await expect(failed).rejects.toThrow("creation failed");
+    expect((await notify(failedId)).ok).toBe(false);
+    runtime.dispose();
+    await notify(replacementId);
+    expect(deliveries).toEqual([
+      "old:Hello!",
+      "replacement:Hello!",
+      "replacement:Hello!",
+      "host:Hello!",
+    ]);
+  });
+
   it("initializes the worker without a callback manifest", async () => {
     const worker = new FakeWorker();
     const config = runtimeConfig();

@@ -103,18 +103,13 @@ function callbackRequest(
       if (r.ok) resolve(r.value);
       else reject(new Error(r.error));
     });
-    try {
-      postToMain({
-        kind: "callbackRequest",
-        requestId,
-        name,
-        args,
-        ...(coreId === undefined ? {} : { coreId }),
-      });
-    } catch {
-      pendingCallbacks.delete(requestId);
-      reject(new Error("Host callback transport is unavailable"));
-    }
+    postToMain({
+      kind: "callbackRequest",
+      requestId,
+      name,
+      args,
+      ...(coreId === undefined ? {} : { coreId }),
+    });
   });
 }
 
@@ -134,15 +129,14 @@ function startSubscription<T>(
     sendItem: sendItem as (value: unknown) => void,
     sendError: (error) => sendError({ reason: error }),
   });
-  try {
-    postToMain({
-      kind: "subscriptionStart",
-      subId,
-      name,
-      payload,
-      ...(coreId === undefined ? {} : { coreId }),
-    });
-  } catch {
+  postToMain({
+    kind: "subscriptionStart",
+    subId,
+    name,
+    payload,
+    ...(coreId === undefined ? {} : { coreId }),
+  });
+  return () => {
     subscriptionListeners.delete(subId);
     sendError({ reason: "Host subscription transport is unavailable" });
     return () => {};
@@ -268,12 +262,7 @@ function buildRawCallbacks(
   return {
     ...createWorkerRawCallbacks(
       {
-        callbackRequest: (name, args) =>
-          callbackRequest(
-            name,
-            args,
-            COINAGE_WALLET_CALLBACKS[name] ? undefined : coreId,
-          ),
+        callbackRequest: (name, args) => callbackRequest(name, args, coreId),
         startSubscription: (name, payload, sendItem, sendError) =>
           startSubscription(name, payload, sendItem, sendError, coreId),
         chainConnect,

@@ -281,6 +281,140 @@ impl PairingHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.notify_contacts_changed"))]
     pub fn notify_contacts_changed(&self) {
         self.services.contact_handles.clear();
+    }
+
+    /// Build a product-facing runtime from this pairing host.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_runtime"))]
+    pub fn product_runtime(
+        &self,
+        product: ProductContext,
+        sink: Arc<dyn FrameSink>,
+    ) -> ProductRuntime {
+        ProductRuntime::new(
+            self.services.clone(),
+            self.pairing_host.clone(),
+            product,
+            ConnectionAdapters::from_services(&self.services),
+            sink,
+        )
+    }
+
+    /// Build one execution with local adapters and shared authentication/services.
+    pub fn product_runtime_with(
+        &self,
+        product: ProductContext,
+        adapters: ConnectionAdapters,
+        sink: Arc<dyn FrameSink>,
+    ) -> ProductRuntime {
+        ProductRuntime::new(
+            self.services.clone(),
+            self.pairing_host.clone(),
+            product,
+            adapters,
+            sink,
+        )
+    }
+
+    /// Build a product-scoped administration handle from this pairing host.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_admin"))]
+    pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
+        HostAdmin::new(
+            self.services.clone(),
+            self.pairing_host.clone(),
+            product,
+            ConnectionAdapters::from_services(&self.services),
+        )
+    }
+
+    /// Disconnect the active account-authority session.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.disconnect_session"))]
+    pub async fn disconnect_session(&self) {
+        self.pairing_host.disconnect().await;
+    }
+
+    /// Log out and discard the old pairing keypair.
+    ///
+    /// The next product login request generates a fresh pairing identity and
+    /// presents a new deeplink suitable for another signing host.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
+    pub async fn logout(&self) -> Result<(), v01::GenericError> {
+        self.pairing_host
+            .logout_and_reset_pairing()
+            .await
+            .map_err(|reason| v01::GenericError { reason })
+    }
+
+    /// Clear one product's capability state while preserving the active
+    /// session and unrelated products.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
+    pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
+        self.pairing_host
+            .clear_product_state(product_id)
+            .await
+            .map_err(|reason| v01::GenericError { reason })
+    }
+
+    /// Registered providers available for an internal well-known-ring feature.
+    pub async fn ring_vrf_providers(
+        &self,
+        ring: &v01::RingLocation,
+    ) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
+        self.pairing_host
+            .ring_vrf_providers(ring)
+            .await
+            .map_err(ring_vrf_admin_error)
+    }
+
+    /// Current provider selected for an internal well-known-ring feature.
+    pub async fn selected_ring_vrf_provider(
+        &self,
+        ring: &v01::RingLocation,
+    ) -> Result<Option<v01::ProductAccountId>, v01::GenericError> {
+        self.pairing_host
+            .selected_ring_vrf_provider(ring)
+            .await
+            .map_err(ring_vrf_admin_error)
+    }
+
+    /// Select a registered provider for an internal well-known-ring feature.
+    pub async fn select_ring_vrf_provider(
+        &self,
+        ring: v01::RingLocation,
+        handle: v01::ProductAccountId,
+    ) -> Result<(), v01::GenericError> {
+        self.pairing_host
+            .select_ring_vrf_provider(ring, handle)
+            .await
+            .map_err(ring_vrf_admin_error)
+    }
+
+    /// Reference counts per product worker, shared by every connection of
+    /// this host.
+    pub fn worker_ledger(&self) -> &WorkerLedger {
+        &self.services.worker_ledger
+    }
+
+    /// Read the active session's X25519 chat identity private key, for hosts
+    /// running their own P2P chat channel for the paired identity.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.session_chat_identity_key"))]
+    pub fn session_chat_identity_key(&self) -> Option<[u8; 32]> {
+        self.pairing_host
+            .session_state()
+            .current()?
+            .identity_chat_private_key
+    }
+
+    /// Read the active session's sr25519 statement-store secret, for hosts
+    /// running their own statement-store traffic against the advertised account.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_statement_key"))]
+    pub fn device_statement_key(&self) -> Option<[u8; 64]> {
+        Some(self.pairing_host.session_state().current()?.sso?.ss_secret)
+    }
+
+    /// Read this device's X25519 encryption secret, for hosts running device
+    /// sync. Generated and persisted on first read.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_encryption_key"))]
+    pub async fn device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
         self.services
             .contact_avatars
             .contacts_changed(&self.services.spawner);
@@ -804,6 +938,154 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.notify_contacts_changed"))]
     pub fn notify_contacts_changed(&self) {
         self.services.contact_handles.clear();
+    }
+
+    /// Install the host's [`DevicePairingObserver`], told whenever a device
+    /// finishes pairing with this signing host.
+    ///
+    /// Set-once, so the surface that announces a new device cannot change
+    /// hands between two pairings. Returns whether this call installed it.
+    /// Call it before answering any pairing deeplink.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_device_pairing_observer"))]
+    pub fn set_device_pairing_observer(&self, observer: Arc<dyn DevicePairingObserver>) -> bool {
+        self.services.install_device_pairing_observer(observer)
+    }
+
+    /// Build a product-facing runtime from this signing host.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_runtime"))]
+    pub fn product_runtime(
+        &self,
+        product: ProductContext,
+        sink: Arc<dyn FrameSink>,
+    ) -> ProductRuntime {
+        ProductRuntime::new(
+            self.services.clone(),
+            self.signing_host.clone(),
+            product,
+            ConnectionAdapters::from_services(&self.services),
+            sink,
+        )
+    }
+
+    /// Build one product connection with execution-local adapters while
+    /// sharing this runtime's authentication and services.
+    pub fn product_runtime_with(
+        &self,
+        product: ProductContext,
+        adapters: ConnectionAdapters,
+        sink: Arc<dyn FrameSink>,
+    ) -> ProductRuntime {
+        ProductRuntime::new(
+            self.services.clone(),
+            self.signing_host.clone(),
+            product,
+            adapters,
+            sink,
+        )
+    }
+
+    /// Build a product-scoped administration handle from this signing host.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_admin"))]
+    pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
+        HostAdmin::new(
+            self.services.clone(),
+            self.signing_host.clone(),
+            product,
+            ConnectionAdapters::from_services(&self.services),
+        )
+    }
+
+    /// Build a product administration handle with adapters scoped to one
+    /// native executable connection.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn product_admin_with(
+        &self,
+        product: ProductContext,
+        adapters: ConnectionAdapters,
+    ) -> HostAdmin {
+        HostAdmin::new(
+            self.services.clone(),
+            self.signing_host.clone(),
+            product,
+            adapters,
+        )
+    }
+
+    /// Reference counts per product worker, shared by every connection of
+    /// this host.
+    pub fn worker_ledger(&self) -> &WorkerLedger {
+        &self.services.worker_ledger
+    }
+
+    /// Return whether this host currently has an authenticated signing session.
+    pub fn has_active_session(&self) -> bool {
+        self.signing_host.session_state().current().is_some()
+    }
+
+    /// Disconnect the active account-authority session.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.disconnect_session"))]
+    pub async fn disconnect_session(&self) {
+        self.signing_host.disconnect().await;
+    }
+
+    /// Revoke one product's grants from the current local activation while
+    /// preserving unrelated products.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
+    pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
+        self.signing_host
+            .clear_product_state(product_id)
+            .map_err(|error| v01::GenericError {
+                reason: error.to_string(),
+            })
+    }
+
+    /// Registered providers available for an internal well-known-ring feature.
+    pub async fn ring_vrf_providers(
+        &self,
+        ring: &v01::RingLocation,
+    ) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
+        self.signing_host
+            .ring_vrf_providers(ring)
+            .await
+            .map_err(ring_vrf_admin_error)
+    }
+
+    /// Current provider selected for an internal well-known-ring feature.
+    pub async fn selected_ring_vrf_provider(
+        &self,
+        ring: &v01::RingLocation,
+    ) -> Result<Option<v01::ProductAccountId>, v01::GenericError> {
+        self.signing_host
+            .selected_ring_vrf_provider(ring)
+            .await
+            .map_err(ring_vrf_admin_error)
+    }
+
+    /// Select a registered provider for an internal well-known-ring feature.
+    pub async fn select_ring_vrf_provider(
+        &self,
+        ring: v01::RingLocation,
+        handle: v01::ProductAccountId,
+    ) -> Result<(), v01::GenericError> {
+        self.signing_host
+            .select_ring_vrf_provider(ring, handle)
+            .await
+            .map_err(ring_vrf_admin_error)
+    }
+
+    /// Read the active local session's X25519 chat identity private key.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.session_chat_identity_key"))]
+    pub fn session_chat_identity_key(&self) -> Option<[u8; 32]> {
+        self.signing_host
+            .session_state()
+            .current()?
+            .identity_chat_private_key
+    }
+
+    /// Read this browser's X25519 encryption secret, generating and persisting
+    /// it on first read.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.device_encryption_key"))]
+    pub async fn device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
         self.services
             .contact_avatars
             .contacts_changed(&self.services.spawner);
@@ -1275,8 +1557,8 @@ impl SigningHostRuntime {
 }
 
 /// Adapters scoped to one product connection: the platform serving its
-/// syscalls, the optional native Chat adapter, and the connection's
-/// host-fed action streams. Non-native connections use [`Self::from_services`].
+/// syscalls, optional capability adapters, and the connection's host-fed
+/// action streams. Unscoped connections use [`Self::from_services`].
 ///
 /// `pocket_platform` is the same kind of optional adapter for the card
 /// collection, and `game_platform` for the product's game reminder.
@@ -1284,7 +1566,6 @@ impl SigningHostRuntime {
 pub struct ConnectionAdapters {
     pub platform: Arc<dyn Platform>,
     pub chat_platform: Option<Arc<dyn ChatPlatform>>,
-    /// Connection-owned picker UI; absence inherits the host's contacts adapter.
     pub contacts_platform: Option<Arc<dyn ContactsPlatform>>,
     /// Live OS permission state for this connection. It travels here rather
     /// than on the host runtime because a native host builds one platform per
@@ -1304,7 +1585,7 @@ impl ConnectionAdapters {
         Self {
             platform: services.platform.clone(),
             chat_platform: services.chat_platform.clone(),
-            contacts_platform: None,
+            contacts_platform: services.contacts_platform(),
             permission_status: services.permission_status_host(),
             permission_grants: Arc::default(),
             chat: Arc::new(ActionChannel::chat()),

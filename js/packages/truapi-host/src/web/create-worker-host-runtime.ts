@@ -261,9 +261,9 @@ interface RuntimeState {
   disposeNativeChatFiles: () => void;
   /**
    * Open `worker.beginOperation` holds. A non-empty set defers `dispose()`.
-   * Worker-wide rather than per-core, since a `callbackRequest` carries no core
-   * id, so entries are product-scoped: `OperationId` is only unique per product
-   * and two products sharing this worker may be handed the same id.
+   * Worker-wide rather than per-core: operation holds can outlive a product
+   * connection. Entries are product-scoped because `OperationId` is only
+   * unique per product and products sharing this worker may use the same id.
    */
   openOperations: Set<string>;
   /** A dispose() arrived while operations were open; run it once they drain. */
@@ -652,9 +652,8 @@ function handleCallbackRequest(
   },
 ): void {
   if (state.disposed) return;
-  const hostWalletCallback = COINAGE_WALLET_CALLBACKS[msg.name] === true;
   const callbacks =
-    msg.coreId === undefined || hostWalletCallback
+    msg.coreId === undefined
       ? state.rawCallbacks
       : state.coreCallbacks.get(msg.coreId);
   const fn =
@@ -678,11 +677,7 @@ function handleCallbackRequest(
   Promise.resolve()
     .then(() => {
       if (state.disposed) throw new Error("Host runtime is unavailable");
-      if (
-        !hostWalletCallback &&
-        msg.coreId !== undefined &&
-        !state.coreCallbacks.has(msg.coreId)
-      )
+      if (msg.coreId !== undefined && !state.coreCallbacks.has(msg.coreId))
         throw new Error("Product callbacks are unavailable");
       return fn(...msg.args);
     })
@@ -1849,6 +1844,8 @@ function buildRuntime(
           reject,
         });
         try {
+          if (callbacks)
+            state.coreCallbacks.set(coreId, createWasmRawCallbacks(callbacks));
           state.worker.postMessage({
             kind: "createCore",
             coreId,
@@ -1861,10 +1858,6 @@ function buildRuntime(
                     contacts: callbacks.contacts !== undefined,
                     permissionStatus: callbacks.permissionStatus !== undefined,
                     pocket: callbacks.pocket !== undefined,
-                    profile: callbacks.profile !== undefined,
-                    identityBackend: callbacks.identityBackend !== undefined,
-                    coinageWallet:
-                      state.rawCallbacks.nativeCoinage !== undefined,
                   },
                 }),
           } satisfies MainToWorker);

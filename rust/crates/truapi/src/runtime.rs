@@ -910,6 +910,7 @@ impl ProductRuntimeHost {
             services,
             platform,
             chat_platform: None,
+            contacts_platform: None,
             permission_status: None,
             temporary_permissions: Arc::default(),
             authority: pairing_host.clone(),

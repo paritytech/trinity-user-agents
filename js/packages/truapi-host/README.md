@@ -1,7 +1,7 @@
 # @parity/truapi-host
 
-WASM-backed TrUAPI host runtime. It embeds the `truapi-server` Rust core (compiled to WASM) behind a Web Worker
-provider, plus per-environment integration entry points. It is the counterpart to the native Android/iOS host shells.
+WASM-backed TrUAPI host runtime. It embeds the `truapi` Rust core (compiled to WASM) behind a Web Worker provider, plus
+per-environment integration entry points. It is the counterpart to the native Android/iOS host shells.
 
 ## Entry points
 
@@ -25,13 +25,25 @@ The package exposes tree-shakeable subpath exports — import only what your env
 host and excludes `WasmSigningHostRuntime`; `wasm/testing` adds the Rust `wasm-signing-host` and `test-host` features,
 which is what lets the test host hold keys and answer resource allocation as granted without allocating anything. A real
 browser wallet instead needs a web bundle built with `--no-default-features --features wasm-signing-host`, without
-`test-host`. That enables native signing and wallet administration without the testing-only allocation shortcuts.
-Build that wallet variant with `npm run build:wasm -- --web-only --signing-host`.
-The default web build remains pairing-only.
-Run the package tests against the default web/testing build, before selecting the wallet variant for consumer verification.
-`ProductRuntimeConfig` configures the pairing host and requires no network suffix. The signing constructor's
-configuration requires `runtimeConfig.networkSuffix` in addition: the bare TLD (`dot`, `paseo`, or `testnet`) matching
-the People chain and the wallet's onboarding configuration.
+`test-host`. That enables native signing and wallet administration without the testing-only allocation shortcuts. Build
+that wallet variant with `npm run build:wasm -- --web-only --signing-host`. The default web build remains pairing-only.
+Run the package tests against the default web/testing build, before selecting the wallet variant for consumer
+verification. `ProductRuntimeConfig` configures the pairing host and requires no network suffix. The signing
+constructor's configuration requires `runtimeConfig.networkSuffix` in addition: the bare TLD (`dot`, `paseo`, or
+`testnet`) matching the People chain and the wallet's onboarding configuration.
+
+`runtime.createProvider(product, callbacks?)` optionally binds platform callbacks to one product execution while
+retaining the same shared native host. Omit the second argument to use the host's default callbacks. Pass a complete
+`WebWorkerHostCallbacks` bundle (not a partial override) when each iframe or worker connection owns its own consent UI.
+Dispose that UI scope when the connection closes, provider creation fails, or the whole host retires; a replacement
+connection must get a fresh scope. Provider disposal, frame failure, failed creation, and host teardown remove the SDK's
+callback route, so stale requests cannot fall through to another connection's callbacks.
+
+Shared authentication, core storage, chain transport, and signing-wallet authority remain owned by the native host; the
+optional bundle does not replace them. Raw Wasm consumers can use
+`productRuntime(product, coreCallbacks, platformCallbacks?)` for the same execution-local adapters. This is callback
+routing isolation, not per-call `AbortSignal` cancellation: hosts must still retire their connection-owned interactive
+UI explicitly.
 
 `runtimeConfig.assetHub` is required by both configurations, pairing and signing. It is the Asset Hub genesis hash, in
 the same shape as `runtimeConfig.people` and `runtimeConfig.bulletin`. Product manifests are read from the dotNS
@@ -287,15 +299,12 @@ The index crosses as a SCALE-encoded `DerivationIndex`, the same value a review 
 code behind it stays core-owned and a host never reconstructs it. `productAccountAddress` applies the prefix host-spec
 C.6 fixes, rather than leaving each host to choose one.
 
-`contacts` needs both callbacks, or the group counts as absent. `pickContact`
-draws the picker and returns the chosen account, or `NoContacts` when there is
-nobody to show. `contacts({ handleKey, handles })` resolves the handles a
-transaction names: one entry per handle, in order, the account or `undefined`.
-A contact's handle is BLAKE2b-256 keyed with `handleKey` over its 32-byte
-account (`blake2b(account, { key: handleKey, dkLen: 32 })` in `@noble/hashes`).
-The core re-checks every account returned. It caches what it resolves, so call
-`notifyContactsChanged()` whenever a contact is removed or blocked. Omit blocked
-contacts from both. See the contacts RFC (`docs/rfcs/contacts-api.md`).
+`contacts` needs both callbacks, or the group counts as absent. `pickContact` draws the picker and returns the chosen
+account, or `NoContacts` when there is nobody to show. `contacts({ handleKey, handles })` resolves the handles a
+transaction names: one entry per handle, in order, the account or `undefined`. A contact's handle is BLAKE2b-256 keyed
+with `handleKey` over its 32-byte account (`blake2b(account, { key: handleKey, dkLen: 32 })` in `@noble/hashes`). The
+core re-checks every account returned. It caches what it resolves, so call `notifyContactsChanged()` whenever a contact
+is removed or blocked. Omit blocked contacts from both. See the contacts RFC (`docs/rfcs/contacts-api.md`).
 
 Browser signing hosts can back this UI with `runtime.getNativeChatContacts()`. It returns
 `{ walletPublicKey, genesisHash, contacts: [{ peerIdentity, username? }] }` to trusted host code only.
@@ -317,9 +326,9 @@ through `chainConnect`; if they omit it, chain calls fail with the core's standa
 the workspace size-optimized Rust profile plus `wasm-opt -Oz`, validate that debug/name/producers custom sections were
 stripped, and emit `.wasm.gz` and `.wasm.br` sidecars for hosts that serve precompressed assets.
 
-The core stays an `rlib` for Rust/no_std consumers. This build explicitly requests a `cdylib` with
-`cargo rustc`, then runs `wasm-bindgen` and `wasm-opt` using the profile settings in the core's Cargo metadata.
-The separate `truapi-verifiable` module still builds with `wasm-pack`; its optimized hash is embedded into both cores.
+The core stays an `rlib` for Rust/no_std consumers. This build explicitly requests a `cdylib` with `cargo rustc`, then
+runs `wasm-bindgen` and `wasm-opt` using the profile settings in the core's Cargo metadata. The separate
+`truapi-verifiable` module still builds with `wasm-pack`; its optimized hash is embedded into both cores.
 `TRUAPI_WASM_PROFILE` accepts `release` (default), `dev`, or `profiling`, with the same profile behavior as wasm-pack.
 
 Prerequisites on PATH:
@@ -327,17 +336,17 @@ Prerequisites on PATH:
 - Rust with `rustup target add wasm32-unknown-unknown`.
 - `wasm-pack` 0.14.0 (`cargo install wasm-pack --version 0.14.0 --locked`).
 - `wasm-bindgen-cli` at the exact resolved `wasm-bindgen` version in `Cargo.lock`
-  (`cargo install wasm-bindgen-cli --version <resolved-version> --locked --force`).
-  The build rejects a mismatched CLI and prints the required install command.
+  (`cargo install wasm-bindgen-cli --version <resolved-version> --locked --force`). The build rejects a mismatched CLI
+  and prints the required install command.
 - Binaryen 117's `wasm-opt`, matching wasm-pack 0.14.0's optimizer. Download the appropriate
-  [Binaryen version_117 archive](https://github.com/WebAssembly/binaryen/releases/tag/version_117)
-  and add its `bin` directory to PATH.
+  [Binaryen version_117 archive](https://github.com/WebAssembly/binaryen/releases/tag/version_117) and add its `bin`
+  directory to PATH.
 
-From the repository root, `bash scripts/install-wasm-artifact-tools.sh` installs
-the matching bindgen CLI and checksum-verified Binaryen archive, then prints the
-directory to add to PATH. CI uses the same installer.
+From the repository root, `bash scripts/install-wasm-artifact-tools.sh` installs the matching bindgen CLI and
+checksum-verified Binaryen archive, then prints the directory to add to PATH. CI uses the same installer.
 
-Build after editing `rust/crates/truapi` and before packaging, publishing, or running tests that load the raw WASM bundle:
+Build after editing `rust/crates/truapi` and before packaging, publishing, or running tests that load the raw WASM
+bundle:
 
 ```bash
 npm run build:wasm   # or `make wasm` from the repo root
@@ -433,18 +442,14 @@ once, after the last. A `wanted: false` is permission to stop, not an order: a h
 
 ## Debugging (dev-only)
 
-The worker can stream every product↔core wire frame to the wire debugger. It is off by default and enabled purely from
-the host page — the product needs no changes. Two conditions must **both** hold or nothing dials and the core installs
-no tap:
+The worker can stream every product↔core wire frame to the wire debugger. It is off by default and the embedding host
+decides; the product needs no changes. Two conditions must **both** hold or nothing dials and the core installs no tap:
 
 1. **The host page is a dev build.** The dial sits behind a hard `import.meta.env.DEV` gate, which bundlers replace with
-   a boolean literal: in a production bundle it returns `null` unconditionally, so no stored key can turn the tap on. A
-   production build that shows no frames is this gate, not a broken debugger — and it says so: with the key set but the
-   gate closed, the host logs once that the dial is compiled out, rather than staying silent and reading as a broken
-   tool. That matters for a host whose only local build is production-mode; `NODE_ENV=development` is what opens the
-   gate under Vite.
-2. **The host origin's `localStorage` carries a `ws://` loopback URL**, read on the host page at runtime boot and
-   forwarded to the worker in its `init` message:
+   a boolean literal: in a production bundle that gate is false, so no option can turn the tap on. A production build
+   that shows no frames is this gate, not a broken debugger. `NODE_ENV=development` is what opens the gate under Vite.
+2. **A `ws://` loopback URL reaches the runtime**, from one of two places. The host's own value wins over the build's,
+   so the build's is a default and never an override:
 
    ```ts
    // 1. the host passes it, the normal path, where the host stays in control
@@ -458,11 +463,26 @@ Run the debugger at the other end (`@parity/truapi-debugger`, `npm run serve`, `
 boot the worker dials that URL and (via the Rust core's `DebugSink` tap) sends each frame as
 `{ channelId, dir, frame }`.
 
+   Passing `null` or `""` is how a host refuses the dial even when the build carries one; omitting the field takes the
+   build's value.
+
+   While a dial is live the host shows a small fixed-position badge naming every endpoint frames are going to, so a tap
+   left on from an earlier session is visible rather than buried in a console line. Pass `debuggerIndicator: false` to
+   suppress it, and only when the host renders its own signal, since the point is that a host streaming frames is never
+   silent about it. One runtime suppressing the badge leaves another runtime's badge alone.
+
+   The dial is resolved once, when the runtime is created, and cannot be changed from the page afterwards, so whether
+   this session is observed is a property of the build and the host, not of anything typed into a console later.
+
+Run the debugger at the other end (`@parity/truapi-debugger`, `npm run serve`, `127.0.0.1:9231`). On the next runtime
+boot the worker dials that URL and (via the Rust core's `DebugSink` tap) sends each frame as
+`{ channelId, dir, frame }`.
+
 The URL must be `ws://` on a loopback host. Anything else — `wss://`, `http://`, a LAN or public address, a non-loopback
 hostname — yields an inert link and a `wire debugger URL rejected` console warning; there is no certificate or `wss`
 path. Prefer the literal `127.0.0.1` over `localhost`: `localhost` passes the gate, but it resolves `::1` first on macOS
-while the debugger binds `127.0.0.1` alone, so the same URL handed to a native host (`truapi-server`'s `WsDebugSink`
-dials the first resolved address) silently never connects.
+while the debugger binds `127.0.0.1` alone, so the same URL handed to a native host (`truapi`'s `WsDebugSink` dials the
+first resolved address) silently never connects.
 
 The debugger owns all decoding and decodes every frame it can, including signing and payment payloads; its safety is the
 dev-build gate above, not redaction. See `js/packages/truapi-debugger/README.md` for the tap, the envelope, and the
