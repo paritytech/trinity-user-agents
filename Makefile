@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product-storage e2e-cross-product-ringvrf e2e-cross-product-signing e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework
+.PHONY: help setup build codegen test check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product-storage e2e-cross-product-ringvrf e2e-cross-product-signing e2e-cli-update e2e-host-playground-android headless install cli-runner cli-dist matrix explorer xcframework
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -475,6 +475,16 @@ e2e-cross-product-signing: ## One product signs with another's account on the si
 
 e2e-cli-update: cli-dist ## Install the packaged truapi-host from a fake release and self-update it, with no network.
 	node scripts/e2e-cli-update.mjs
+
+E2E_HOST_PLAYGROUND := e2e/host-playground
+E2E_HOST_PLAYGROUND_APK := hosts/android/app/build/outputs/apk/gp/nightly/app-gp-nightly.apk
+E2E_HOST_PLAYGROUND_OUT ?= target/e2e-host-playground/android
+
+e2e-host-playground-android: ## Run host-playground in the nightly Android host on a booted emulator or device. Needs MNEMONIC_FILE and the app config hosts/android reads; ANDROID_SERIAL picks a device.
+	@test -n "$(MNEMONIC_FILE)" || { echo "Set MNEMONIC_FILE to a file holding the test account's mnemonic."; exit 1; }
+	cd hosts/android && ./gradlew --init-script $(abspath $(E2E_HOST_PLAYGROUND)/android/e2e.init.gradle.kts) :app:assembleGpNightly
+	cd $(E2E_HOST_PLAYGROUND) && npm ci --no-audit --no-fund
+	node $(E2E_HOST_PLAYGROUND)/android/run.mjs --apk $(E2E_HOST_PLAYGROUND_APK) --mnemonic-file "$(MNEMONIC_FILE)" --out $(E2E_HOST_PLAYGROUND_OUT) $(if $(ANDROID_SERIAL),--serial $(ANDROID_SERIAL))
 
 matrix: ## Regenerate the host compatibility matrix from explorer/diagnosis-reports.
 	cd $(EXPLORER) && npm run generate-matrix
