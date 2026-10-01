@@ -1510,4 +1510,56 @@ mod tests {
             );
         });
     }
+
+    #[test]
+    fn the_runtime_opens_the_core_database_at_startup() {
+        // Durable work resumes as soon as the runtime exists, so the database
+        // has to be open before the first call reaches it.
+        let dir = tempfile::tempdir().unwrap();
+        let host = NativeTrUApiHostRuntime::with_runtime_config(
+            Arc::new(EventCallbacks::new()),
+            HostRuntimeConfig {
+                database_directory: dir.path().to_string_lossy().into_owned(),
+                ..native_host_runtime_config()
+            },
+            None,
+        )
+        .expect("host runtime config should be valid");
+
+        let status = futures::executor::block_on(host.core_database_status())
+            .expect("the core database is open");
+
+        let file = dir
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join(crate::store::CORE_DB_FILE);
+        assert_eq!(
+            status.path,
+            Some(file.to_string_lossy().into_owned()),
+            "the database lives in the configured directory"
+        );
+    }
+
+    #[test]
+    fn a_missing_database_directory_fails_runtime_creation() {
+        // A wrong directory must stop the host at startup, not surface later
+        // as durable work that cannot be recorded.
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("absent");
+
+        let result = NativeTrUApiHostRuntime::with_runtime_config(
+            Arc::new(EventCallbacks::new()),
+            HostRuntimeConfig {
+                database_directory: missing.to_string_lossy().into_owned(),
+                ..native_host_runtime_config()
+            },
+            None,
+        );
+
+        assert!(matches!(
+            result,
+            Err(NativeRuntimeConfigError::DatabaseUnavailable { .. })
+        ));
+    }
 }

@@ -906,7 +906,6 @@ impl ProductRuntimeHost {
         let chat = Arc::new(ActionChannel::chat());
         let renderer = Arc::new(ActionChannel::renderer());
         let host = Self {
-            contacts_platform: None,
             services,
             platform,
             chat_platform: None,
