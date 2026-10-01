@@ -306,19 +306,6 @@ with `handleKey` over its 32-byte account (`blake2b(account, { key: handleKey, d
 core re-checks every account returned. It caches what it resolves, so call `notifyContactsChanged()` whenever a contact
 is removed or blocked. Omit blocked contacts from both. See the contacts RFC (`docs/rfcs/contacts-api.md`).
 
-Browser signing hosts can back this UI with `runtime.getNativeChatContacts()`. It returns
-`{ walletPublicKey, genesisHash, contacts: [{ peerIdentity, username? }] }` to trusted host code only.
-The directory restores encrypted native Chat actors, checks their current authorization, includes only authenticated
-ready peers, and deduplicates identities. Conflicting verified names are omitted. It is not a product or SSO API;
-pairing hosts reject it. Bind the result to the active signing public key and People genesis, never to a username.
-Native departures/revocations remove readiness; product-private block lists are not a separate directory source.
-
-Actors are indexed when opened. Historical unindexed products must be opened once on the upgraded host; private storage
-has no enumeration API. Directory reads share native commit gates, and native state/session/permission changes invalidate
-cached handles. A browser adapter must also cancel pending picker/lookup work when its wallet, network, provider or
-directory generation changes. Provider-scoped `contacts` callbacks control that provider's UI; absent overrides inherit
-the runtime-wide Contacts adapter. Keep the runtime-wide source alive for host-owned rendering until the owner closes.
-
 ## Generated WASM artefacts
 
 The ignored bundle under `dist/wasm/web/` is built with host-owned chain access. Hosts wire their JSON-RPC provider
