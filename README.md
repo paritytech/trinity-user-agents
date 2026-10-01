@@ -259,6 +259,10 @@ tree-shakeable subpath entries:
   (`createIframeHost`) plus `createWebWorkerProvider`.
 - `@parity/truapi-host/worker-runtime` is the Web Worker entrypoint so the WASM core can run off the page main thread.
 
+`createWorkerHostRuntime` shares the native core while `createProvider(product, callbacks)` binds platform callbacks to
+one product execution. The host UI disposes that execution's pending consent when its provider closes; wallet
+authentication and storage remain core-owned. See the [host SDK](js/packages/truapi-host/README.md) for lifecycle details.
+
 ### Chain transport
 
 A host that serves chain traffic itself embeds the `truapi-provider` crate: an embedded smoldot light client plus a
