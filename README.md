@@ -375,9 +375,14 @@ make wasm     # rebuild truapi WASM artifacts under js/packages/truapi-host/dist
 CI regenerates the shared bindings before building and testing both npm packages, so generated client and host callback
 changes are checked together.
 
-The native `truapi-host` utility runs pairing and signing hosts against the real SSO transport for local end-to-end
-work. See [Install the CLI](#install-the-cli) to get it, and the
-[`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md) for its commands and controls.
+CLI transcript tests share process-wide UI output. Match captured events by
+request identity rather than queue position: other tests may emit unrelated
+logs through the installed UI while the suite runs in parallel.
+
+The native `truapi-host` utility runs pairing and signing hosts against the real
+SSO transport for local end-to-end work. See [Install the CLI](#install-the-cli)
+to get it, and the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md)
+for its commands and controls.
 
 CLI reserved identities follow the selected network's dotNS suffix. Old account and pairing stores are left unused as
 the CLI starts fresh under its [versioned state directory](rust/crates/truapi-host-cli/README.md#state-directory).
