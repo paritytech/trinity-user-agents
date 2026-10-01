@@ -27,8 +27,8 @@ which is what lets the test host hold keys and answer resource allocation as gra
 browser wallet instead needs a web bundle built with `--no-default-features --features wasm-signing-host`, without
 `test-host`. That enables native signing and wallet administration without the testing-only allocation shortcuts. Build
 that wallet variant with `npm run build:wasm -- --web-only --signing-host`. The default web build remains pairing-only.
-Run the package tests against the default web/testing build, before selecting the wallet variant for consumer
-verification. `ProductRuntimeConfig` configures the pairing host and requires no network suffix. The signing
+Run the package tests against the generated web/testing bundles, then exercise the consuming host's real worker with
+the selected variant. `ProductRuntimeConfig` configures the pairing host and requires no network suffix. The signing
 constructor's configuration requires `runtimeConfig.networkSuffix` in addition: the bare TLD (`dot`, `paseo`, or
 `testnet`) matching the People chain and the wallet's onboarding configuration.
 
