@@ -24,7 +24,6 @@ import {
   type Page,
   chromium,
 } from "playwright-core";
-import { productLabel } from "../src/sandbox/origin.js";
 import {
   type CountingTarget,
   type PublishedApp,
@@ -59,7 +58,10 @@ let urlProduct: UrlProduct;
 beforeAll(async () => {
   host = await startHost();
   target = await startCountingTarget();
-  app = publishApp({ "index.html": productHtml(target.origin) });
+  app = publishApp({
+    "index.html": productHtml(target.origin, { rootRelativeScript: true }),
+    "root.js": "document.body.dataset.rootRelative = 'loaded';",
+  });
   urlProduct = await startUrlProduct(target.origin);
   browser = await chromium.launch({
     executablePath: process.env.CHROMIUM_PATH || undefined,
@@ -132,7 +134,7 @@ async function productFrame(page: Page, origin: string): Promise<Frame> {
       .find(
         (candidate) =>
           candidate.url().startsWith(origin) &&
-          !candidate.url().includes("/__sandbox/"),
+          !candidate.url().includes("/truapi-sandbox/"),
       );
     const ready = await frame
       ?.evaluate(() => "__ask" in window)
@@ -236,22 +238,28 @@ async function openUrlProduct(page: Page): Promise<Frame> {
 
 describe("a product opened by name", () => {
   test(
-    "loads from its archive on an origin of its own, and a denied request stays denied",
+    "loads from its archive under the host's own path, and a denied request stays denied",
     async () => {
       const context = await newContext();
       try {
         const page = await openHost(context);
         await signIn(page);
-        const origin = `http://${productLabel(NAME)}.localhost:${new URL(host.origin).port}`;
         await openAddress(page, NAME);
-        const frame = await productFrame(page, origin);
+        const frame = await productFrame(page, `${host.origin}/product/`);
 
+        // Same origin as the host, but a frame of its own: its web storage
+        // starts empty and does not see the saved wallets.
         expect(
           await frame.evaluate(() => ({
             origin: location.origin,
             localKeys: document.body.dataset.localKeys,
+            rootRelative: document.body.dataset.rootRelative,
           })),
-        ).toEqual({ origin, localKeys: "[]" });
+        ).toEqual({
+          origin: host.origin,
+          localKeys: "[]",
+          rootRelative: "loaded",
+        });
         expect(await page.locator("#address-id").innerText()).toContain(NAME);
 
         const hostState = await page.evaluate(async () => ({
@@ -262,33 +270,6 @@ describe("a product opened by name", () => {
         expect(hostState.workers).toBe(0);
 
         await expectDenialHolds(page, frame);
-      } finally {
-        await context.close();
-      }
-    },
-    TEST_MS,
-  );
-
-  test(
-    "the host's origin serves no sandbox loader or scripts",
-    async () => {
-      const context = await newContext();
-      try {
-        await openHost(context);
-        for (const path of [
-          "/__sandbox/index.html",
-          "/__sandbox/page.js",
-          "/__sandbox/container.js",
-        ]) {
-          const response = await context.request.get(`${host.origin}${path}`, {
-            headers: { "sec-fetch-dest": "iframe" },
-            failOnStatusCode: false,
-          });
-          expect({ path, status: response.status() }).toEqual({
-            path,
-            status: 404,
-          });
-        }
       } finally {
         await context.close();
       }
@@ -543,9 +524,8 @@ describe("the loading indicator", () => {
           await signIn(page);
           await recordLoading(page);
 
-          const origin = `http://${productLabel(NAME)}.localhost:${new URL(host.origin).port}`;
           await openAddress(page, NAME);
-          const frame = await productFrame(page, origin);
+          const frame = await productFrame(page, `${host.origin}/product/`);
           await page.waitForFunction(
             () => document.body.dataset.loading === "off",
           );

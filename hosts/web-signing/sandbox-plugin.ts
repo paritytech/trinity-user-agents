@@ -2,51 +2,29 @@ import { readFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { type Plugin, build } from "vite";
-import {
-  type AssetKind,
-  classifyAssetPath,
-  decideAsset,
-} from "./src/sandbox/access.js";
-import type { SandboxPolicy } from "./src/sandbox/policy.js";
 
 const hostRoot = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 /**
- * The scripts a product archive's origin serves, bundled as one classic script
- * each. The container has to run synchronously before the product's scripts, so
- * it cannot be a module, and the worker and loader share the same build.
+ * The scripts a mounted product needs from the host, bundled as one classic
+ * script each, by path under the host's base. The container has to run
+ * synchronously before the product's scripts, so it cannot be a module, and the
+ * worker and the loader share the same build.
  */
 const SCRIPTS: Record<string, string> = {
-  "/__sandbox/container.js": `${repoRoot}js/container/src/index.ts`,
-  "/__sandbox/page.js": `${hostRoot}src/sandbox/page.ts`,
-  "/__sandbox-sw.js": `${hostRoot}src/sandbox/sw.ts`,
+  "truapi-sandbox/container.js": `${repoRoot}js/container/src/index.ts`,
+  "truapi-sandbox/page.js": `${hostRoot}src/sandbox/page.ts`,
+  "sw.js": `${hostRoot}src/sandbox/sw.ts`,
 };
-const LOADER_PAGE = "/__sandbox/index.html";
-const WORKER_SCRIPT = "/__sandbox-sw.js";
+const LOADER_PAGE = "truapi-sandbox/index.html";
 
-const KNOWN: Record<string, AssetKind> = {
-  [LOADER_PAGE]: "loader",
-  [WORKER_SCRIPT]: "worker",
-  ...Object.fromEntries(
-    Object.keys(SCRIPTS)
-      .filter((path) => path !== WORKER_SCRIPT)
-      .map((path) => [path, "script" as const]),
-  ),
-};
-
-async function bundleScript(
-  entry: string,
-  policy: SandboxPolicy,
-): Promise<string> {
+async function bundleScript(entry: string): Promise<string> {
   const result = await build({
     configFile: false,
     logLevel: "warn",
     publicDir: false,
-    define: {
-      "process.env.NODE_ENV": '"production"',
-      __SANDBOX_POLICY__: JSON.stringify(policy),
-    },
+    define: { "process.env.NODE_ENV": '"production"' },
     build: {
       write: false,
       minify: false,
@@ -67,9 +45,9 @@ async function bundleScript(
   throw new Error(`no script was built from ${entry}`);
 }
 
+/** A sandbox file by its path under the base, or null for a path that is none. */
 async function sandboxFile(
   path: string,
-  policy: SandboxPolicy,
 ): Promise<{ type: string; body: string } | null> {
   if (path === LOADER_PAGE)
     return {
@@ -81,7 +59,7 @@ async function sandboxFile(
     ? null
     : {
         type: "text/javascript; charset=utf-8",
-        body: await bundleScript(entry, policy),
+        body: await bundleScript(entry),
       };
 }
 
@@ -92,49 +70,18 @@ type Middleware = (
   next: Next,
 ) => void;
 
-/**
- * Serve the sandbox's own files to the product origins of `policy`, which is
- * how a product gets an origin of its own from the one server. Any other
- * origin, the wallets' among them, gets none of them: see `decideAsset`.
- */
-function serveSandbox(policy: SandboxPolicy): Middleware {
+/** Serve the files a build emits, for the dev and preview servers. */
+function serveSandbox(base: string): Middleware {
   return (request, response, next) => {
-    const path = (request.url ?? "/").split(/[?#]/, 1)[0];
-    const kind = classifyAssetPath(path, KNOWN);
-    if (kind === null) return next();
-    if (kind === "reserved") {
-      response.statusCode = 404;
-      response.setHeader("content-type", "text/plain; charset=utf-8");
-      response.setHeader("cache-control", "no-store");
-      response.end("Not found.");
-      return;
-    }
-    const decision = decideAsset(policy, {
-      kind,
-      method: request.method ?? "GET",
-      host: request.headers.host,
-      fetchDest: request.headers["sec-fetch-dest"] as string | undefined,
-      secure:
-        "encrypted" in request.socket && request.socket.encrypted === true,
-    });
-    if (decision.type === "refuse") {
-      response.statusCode = decision.status;
-      response.setHeader("content-type", "text/plain; charset=utf-8");
-      response.setHeader("cache-control", "no-store");
-      response.end(decision.reason);
-      return;
-    }
-    sandboxFile(path, policy).then(
+    const url = (request.url ?? "/").split(/[?#]/, 1)[0];
+    if (!url.startsWith(base)) return next();
+    const path = url.slice(base.length);
+    if (path !== LOADER_PAGE && !(path in SCRIPTS)) return next();
+    sandboxFile(path).then(
       (file) => {
         if (file === null) return next();
         response.setHeader("content-type", file.type);
         response.setHeader("cache-control", "no-store");
-        response.setHeader("x-content-type-options", "nosniff");
-        if (decision.frameAncestors !== undefined)
-          response.setHeader(
-            "content-security-policy",
-            `frame-ancestors ${decision.frameAncestors.join(" ")}`,
-          );
         response.end(file.body);
       },
       (error: unknown) => {
@@ -145,26 +92,33 @@ function serveSandbox(policy: SandboxPolicy): Middleware {
   };
 }
 
-/** The sandbox origin's assets: served by the dev and preview servers, emitted into a build. */
-export function sandboxAssets(policy: SandboxPolicy): Plugin {
+/**
+ * The files a mounted product needs from the host: the loader page, the
+ * container and the service worker. A build emits them as ordinary static files
+ * beside the host, so any static host can serve them. The dev and preview
+ * servers answer for the same paths.
+ */
+export function sandboxAssets(): Plugin {
+  let base = "/";
   return {
     name: "truapi-sandbox-assets",
+    configResolved(config) {
+      base = config.base.startsWith("/") ? config.base : "/";
+    },
     configureServer(server) {
-      server.middlewares.use(serveSandbox(policy));
+      server.middlewares.use(serveSandbox(base));
     },
     configurePreviewServer(server) {
-      server.middlewares.use(serveSandbox(policy));
+      server.middlewares.use(serveSandbox(base));
     },
     async generateBundle() {
       for (const path of [...Object.keys(SCRIPTS), LOADER_PAGE]) {
-        const file = await sandboxFile(path, policy);
+        const file = await sandboxFile(path);
         if (file !== null)
-          this.emitFile({
-            type: "asset",
-            fileName: path.slice(1),
-            source: file.body,
-          });
+          this.emitFile({ type: "asset", fileName: path, source: file.body });
       }
+      // GitHub Pages runs Jekyll, which skips some paths unless this file is present.
+      this.emitFile({ type: "asset", fileName: ".nojekyll", source: "" });
     },
   };
 }

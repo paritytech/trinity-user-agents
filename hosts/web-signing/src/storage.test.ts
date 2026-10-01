@@ -92,3 +92,76 @@ describe("HostStorage", () => {
     expect(listeners.size).toBe(0);
   });
 });
+
+describe("HostStorage.clearProductData", () => {
+  /** The key the core hands the host: product-scoped, length-prefixed. */
+  const coreKey = (productId: string, key: string) =>
+    `truapi:product-storage:v1:${new TextEncoder().encode(productId).length}:${productId}:${key}`;
+
+  // The reset is only worth having if it cannot reach anything else.
+  test("removes one product's data for the active wallet and nothing else", async () => {
+    const { backing, storage } = storageWithExternalChanges();
+    storage.useWallet("alice");
+    await storage.product.write(coreKey("app.paseo", "a"), bytes(1));
+    await storage.product.write(coreKey("app.paseo", "b"), bytes(2));
+    await storage.product.write(coreKey("app.paseo.x", "a"), bytes(3));
+    await storage.product.write(coreKey("other.paseo", "a"), bytes(4));
+    await storage.core.writeCoreStorage({ tag: "AutoSigningKeys" }, bytes(5));
+    await storage.core.writeCoreStorage(
+      {
+        tag: "PermissionAuthorization",
+        value: {
+          productId: "app.paseo",
+          request: { tag: "IdentityDisclosure" },
+        },
+      },
+      bytes(6),
+    );
+    await storage.core.writeCoreStorage(
+      { tag: "StatementRenewalTargets" },
+      bytes(7),
+    );
+    backing.setItem("page-owned-key", "kept");
+    storage.useWallet("bob");
+    await storage.product.write(coreKey("app.paseo", "a"), bytes(8));
+    await storage.core.writeCoreStorage(
+      { tag: "DeviceEncryptionKey" },
+      bytes(9),
+    );
+    storage.useWallet("alice");
+    const before = backing.keys().length;
+
+    expect(storage.clearProductData(" App.Paseo ")).toBe(2);
+
+    expect(backing.keys()).toHaveLength(before - 2);
+    expect(
+      await storage.product.read(coreKey("app.paseo", "a")),
+    ).toBeUndefined();
+    expect(await storage.product.read(coreKey("app.paseo.x", "a"))).toEqual(
+      bytes(3),
+    );
+    expect(await storage.product.read(coreKey("other.paseo", "a"))).toEqual(
+      bytes(4),
+    );
+    expect(
+      await storage.core.readCoreStorage({ tag: "AutoSigningKeys" }),
+    ).toEqual(bytes(5));
+    expect(
+      await storage.core.readCoreStorage({ tag: "StatementRenewalTargets" }),
+    ).toEqual(bytes(7));
+    expect(backing.getItem("page-owned-key")).toBe("kept");
+    storage.useWallet("bob");
+    expect(await storage.product.read(coreKey("app.paseo", "a"))).toEqual(
+      bytes(8),
+    );
+    expect(
+      await storage.core.readCoreStorage({ tag: "DeviceEncryptionKey" }),
+    ).toEqual(bytes(9));
+  });
+
+  test("removes nothing for a product that stored nothing", () => {
+    const { storage } = storageWithExternalChanges();
+    storage.useWallet("alice");
+    expect(storage.clearProductData("none.paseo")).toBe(0);
+  });
+});

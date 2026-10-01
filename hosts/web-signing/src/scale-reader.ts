@@ -19,6 +19,11 @@ export class Reader {
     return new DataView(this.take(4).slice().buffer).getUint32(0, true);
   }
 
+  u128(): bigint {
+    const view = new DataView(this.take(16).slice().buffer);
+    return view.getBigUint64(0, true) | (view.getBigUint64(8, true) << 64n);
+  }
+
   u64(): bigint {
     return new DataView(this.take(8).slice().buffer).getBigUint64(0, true);
   }

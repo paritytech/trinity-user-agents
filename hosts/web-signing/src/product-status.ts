@@ -10,8 +10,8 @@ export interface Opened {
   cid?: string;
   /** What the content is, when opened by name: an archive or a directory. */
   kind?: "car" | "site";
-  /** The origin the content is served from, when opened by name. */
-  origin?: string;
+  /** The path the content is served under, on this host's origin, when opened by name. */
+  mount?: string;
   /** The DotNS record the content came from, when opened by name. */
   record?: string;
   /** Records that exist for the name but could not be opened. */
@@ -90,7 +90,7 @@ export function productDetailsText(
     `Record: ${how.record ?? how.address}`,
     `CID: ${how.cid}`,
     ...skipped,
-    `Origin: ${how.origin ?? open.url.origin} (not this host's)`,
+    `Served from: ${how.mount ?? open.url.pathname} on this host's origin, for this wallet and product only`,
     `Blocks: each checked against its CID. Gateway: ${PASEO_DOTNS.contentGateway} (not trusted).`,
     `Name: read from ${PASEO_DOTNS.assetHubRpc} (trusted, unverified).`,
   ].join("\n");

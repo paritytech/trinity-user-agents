@@ -242,6 +242,7 @@ textarea {
 }
 
 .address {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   max-width: 720px;
@@ -264,8 +265,35 @@ textarea {
   border-style: dashed;
 }
 
-.address input {
+.address-field {
   flex: 1;
+  min-width: 0;
+  display: grid;
+  align-items: center;
+}
+
+/* The dimmed TLD sits after a copy of the typed text that takes the same room,
+   so it follows the caret's end without measuring and without touching the field. */
+.address-hint {
+  grid-area: 1 / 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: pre;
+  pointer-events: none;
+  font: inherit;
+}
+
+.address-hint #address-hint-typed {
+  visibility: hidden;
+}
+
+.address-hint #address-hint-suffix {
+  color: var(--bar-muted);
+}
+
+.address input {
+  grid-area: 1 / 1;
+  width: 100%;
   min-width: 0;
   padding: 0;
   border: none;
@@ -281,6 +309,57 @@ textarea {
 
 .address input::placeholder {
   color: var(--bar-muted);
+}
+
+.address-recents {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: min(50dvh, 320px);
+  margin: 0;
+  padding: 4px;
+  overflow: auto;
+  list-style: none;
+  background: var(--bar-bg);
+  border: 1px solid var(--bar-border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+}
+
+.address-recents li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--bar-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.address-recents li:hover,
+.address-recents li[aria-selected="true"] {
+  background: var(--bar-field);
+}
+
+.address-recents .recent-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.address-recents .recent-id {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--bar-muted);
+  font-size: 11.5px;
 }
 
 .address-id {
@@ -345,6 +424,36 @@ textarea {
 .viewport-control select option {
   color: var(--text);
   background: var(--surface);
+}
+
+.viewport-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--bar-muted);
+  font-size: 12px;
+}
+
+.viewport-custom[hidden] {
+  display: none;
+}
+
+.viewport-custom input {
+  width: 6ch;
+  padding: 3px 4px;
+  border-color: var(--bar-border);
+  color: var(--bar-text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.viewport-custom input::-webkit-outer-spin-button,
+.viewport-custom input::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
 }
 
 .viewport-scale {
@@ -539,6 +648,22 @@ textarea {
   margin-bottom: 6px;
 }
 
+.quiet {
+  margin-top: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-decoration: underline;
+  text-decoration-color: var(--hairline);
+  text-underline-offset: 3px;
+}
+
+.quiet:hover:not(:disabled) {
+  color: var(--text);
+}
+
 .create-link {
   display: inline-block;
   margin-top: 10px;
@@ -601,6 +726,34 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* A value that copies on click looks like the text it replaces. */
+.versions button.copyable {
+  display: inline;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: copy;
+  min-height: 0;
+}
+
+.versions button.copyable:hover {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.versions button.copyable[data-copy="done"] {
+  color: var(--accent);
+}
+
+.versions button.copyable[data-copy="failed"] {
+  color: var(--warning);
+}
+
 .versions .detail {
   display: block;
   color: var(--muted);
@@ -649,6 +802,7 @@ textarea {
 }
 
 .viewport-area {
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -656,6 +810,42 @@ textarea {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+}
+
+/* A custom rectangle is anchored top-left, so its corner handle follows the pointer. */
+.viewport-area[data-custom="true"] {
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+.viewport-handle {
+  position: absolute;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: linear-gradient(
+    135deg,
+    transparent 50%,
+    var(--accent) 50% 58%,
+    transparent 58% 72%,
+    var(--accent) 72% 80%,
+    transparent 80%
+  );
+  cursor: nwse-resize;
+  touch-action: none;
+  opacity: 0.8;
+}
+
+.viewport-handle[hidden] {
+  display: none;
+}
+
+.viewport-handle:hover,
+.viewport-handle:focus-visible {
+  opacity: 1;
 }
 
 .product-frame {
@@ -1050,6 +1240,10 @@ body[data-dock="side"] .inspector-resize {
 @media (pointer: coarse) {
   .address input {
     min-height: 0;
+  }
+
+  .address-hint {
+    font-size: 16px;
   }
 
   .address {

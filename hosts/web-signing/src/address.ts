@@ -136,3 +136,63 @@ export function effectiveProductIdFor(
     ? { id: address.name, source: "derived", usable: true }
     : { id: entered, source: "entered", usable: true };
 }
+
+const BARE_LABEL = /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?=$|[/?#])/i;
+
+/**
+ * Give a bare product label its network TLD, so `myapp` means `myapp.paseo`.
+ *
+ * Only text that is a single label, alone or followed by a path, query or
+ * hash, is completed. Anything with a dot, a port, a scheme, credentials or
+ * brackets keeps its meaning, as do `localhost` and all-digit labels. Typing
+ * the dot is how someone says the text is complete as written. This is applied
+ * when the address is opened or read, never to what is in the field.
+ */
+export function completeAddress(raw: string): string {
+  const typed = raw.trim();
+  const body = typed.replace(/^polkadot:\/\//i, "");
+  const label = BARE_LABEL.exec(body)?.[1];
+  if (
+    label === undefined ||
+    label.length > 63 ||
+    label.toLowerCase() === "localhost" ||
+    /^\d+$/.test(label)
+  )
+    return typed;
+  return `${label.toLowerCase()}.${PASEO_DOTNS.tld}${body.slice(label.length)}`;
+}
+
+/** Parse what was typed, completing a bare product label first. */
+export function parseTypedAddress(raw: string): Address {
+  return parseAddress(completeAddress(raw));
+}
+
+/**
+ * The TLD shown dimmed after a bare label while it is typed, or an empty
+ * string when none applies: once a dot, path or scheme is typed the text means
+ * what it says.
+ */
+export function implicitSuffix(raw: string): string {
+  const typed = raw.trim();
+  const completed = completeAddress(typed);
+  return completed !== typed &&
+    completed === `${typed.toLowerCase()}.${PASEO_DOTNS.tld}`
+    ? `.${PASEO_DOTNS.tld}`
+    : "";
+}
+
+/**
+ * How an opened address is written in the field: a name on this network
+ * without its TLD, which the field shows dimmed. Left whole when dropping the
+ * TLD would not read back as the same address.
+ */
+export function displayAddress(address: string): string {
+  const suffix = `.${PASEO_DOTNS.tld}`;
+  const label = /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\./.exec(address)?.[1];
+  if (label === undefined || !address.slice(label.length).startsWith(suffix))
+    return address;
+  const after = address[label.length + suffix.length];
+  if (after !== undefined && !"/?#".includes(after)) return address;
+  const bare = `${label}${address.slice(label.length + suffix.length)}`;
+  return completeAddress(bare) === address ? bare : address;
+}

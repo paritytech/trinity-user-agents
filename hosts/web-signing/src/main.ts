@@ -1,15 +1,15 @@
 import "./style.css";
-import {
-  createWebWorkerPairingHostRuntime,
-  PRODUCT_RESOURCE_STATUS_UNSUPPORTED,
-} from "@parity/truapi-host/web";
+import { createWebWorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { AuthState } from "@parity/truapi-host";
 import { TRUAPI_CODEC_VERSION, TRUAPI_WIRE_SCHEMA_HASH } from "@parity/truapi";
 import { createInAppDebugger } from "@parity/truapi-debugger";
 import {
   effectiveProductIdFor,
-  parseAddress,
+  completeAddress,
+  displayAddress,
+  implicitSuffix,
+  parseTypedAddress,
   type Address,
 } from "./address.js";
 import {
@@ -26,17 +26,22 @@ import {
   type GateState,
   type PermissionsView,
 } from "./permissions-status.js";
+import { bindRecentsMenu } from "./address-recents.js";
 import { bindChrome } from "./chrome.js";
+import { copyInPage } from "./copy.js";
 import { bindDockResize } from "./dock-resize.js";
 import { PASEO_DOTNS, resolveSource } from "./dotns.js";
 import { createFrameTap } from "./frame-tap.js";
 import { createHostCallbacks } from "./callbacks.js";
 import { connectPaseo, type Network } from "./network.js";
+import { ask } from "./prompt.js";
+import { RecentProducts } from "./recents.js";
 import { readPeopleChain } from "./people-chain.js";
 import {
-  parseProductResourceStatus,
-  type ResourcesState,
-} from "./product-resources.js";
+  readBalance,
+  readProductAccount,
+  type ProductChainState,
+} from "./product-chain.js";
 import { StageLoading, documentsBeforeProduct } from "./loading.js";
 import { openProduct, type OpenProduct } from "./product.js";
 import {
@@ -53,18 +58,21 @@ import {
   saveRelaxations,
   type Relaxations,
 } from "./relaxations.js";
-import { PortLedger } from "./sandbox/ports.js";
 import {
-  containerOffAllowed,
-  productLabel,
+  hostBase,
+  loaderUrl,
+  mountScope,
   requireSecureHost,
-  sandboxOrigin,
-  sandboxUrl,
-} from "./sandbox/origin.js";
+} from "./sandbox/mount.js";
 import { HostStorage, localStorageChanges } from "./storage.js";
 import { SerialQueue } from "./serial-queue.js";
 import { versionSections, type VersionRow } from "./versions.js";
 import { bindViewport } from "./viewport.js";
+import {
+  WalletPublicInfoStore,
+  usernameFrom,
+  walletLabel,
+} from "./wallet-label.js";
 import { walletPanel, type WalletMode } from "./wallet-panel.js";
 import { WalletStore, type Wallet } from "./wallets.js";
 
@@ -72,15 +80,9 @@ import { WalletStore, type Wallet } from "./wallets.js";
 const TAB_WALLET_KEY = "truapi-web-signing-host:tab-wallet";
 /** The product this tab last opened, so a reload brings it back. */
 const TAB_PRODUCT_KEY = "truapi-web-signing-host:tab-product";
-/** Why archives cannot run without the container on this host. */
-const CONTAINER_OFF_REFUSED =
-  "Archives without the container need localhost: products here share cookies by host name.";
-
-/** Where product origins live, as the server was started with. Nothing typed or linked here changes it. */
-const SANDBOX_TEMPLATE = __SANDBOX_POLICY__.template;
 const MAX_LOG_LINES = 500;
-/** Whether archives may run without the container here: only beside a loopback host, where each product is its own host name. */
-const containerOffOk = containerOffAllowed(window.location, SANDBOX_TEMPLATE);
+/** This host's directory on its origin, from the build's base. Mounted products live under it. */
+const BASE = hostBase(import.meta.env.BASE_URL, window.location.href);
 
 function element<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -105,6 +107,10 @@ const productForm = element<HTMLFormElement>("product-form");
 const addressForm = element<HTMLFormElement>("address-form");
 const addressInput = element<HTMLInputElement>("address");
 const addressId = element("address-id");
+const addressHintTyped = element("address-hint-typed");
+const addressHintSuffix = element("address-hint-suffix");
+const recentsList = element<HTMLUListElement>("address-recents");
+const resetDataButton = element<HTMLButtonElement>("reset-data");
 const addressGo = element<HTMLButtonElement>("address-go");
 const productIdInput = element<HTMLInputElement>("product-id");
 const expectContainerInput = element<HTMLInputElement>("expect-container");
@@ -115,7 +121,6 @@ const closeButton = element<HTMLButtonElement>("close-product");
 const productStatus = element("product-status");
 const productMore = element<HTMLDetailsElement>("product-more");
 const productDetails = element("product-details");
-const sandboxOriginInput = element<HTMLInputElement>("sandbox-origin");
 const relaxContainerInput = element<HTMLInputElement>("relax-container");
 const relaxNetworkInput = element<HTMLInputElement>("relax-network");
 const relaxNote = element("relax-note");
@@ -152,11 +157,41 @@ bindViewport({
   frame: productFrame,
   root: document.body,
   fills: window.matchMedia("(max-width: 900px)"),
+  custom: {
+    group: element("viewport-custom"),
+    width: element<HTMLInputElement>("viewport-width"),
+    height: element<HTMLInputElement>("viewport-height"),
+  },
+  handle: element("viewport-handle"),
 });
 
 const versionsList = element("versions");
 const versionsTechnical = element("versions-technical");
 const versionsWarning = element("versions-warning");
+
+/**
+ * A value that copies `payload` when clicked, pressed with Enter or Space. What
+ * is shown may be shortened; what is copied is the whole value. It copies only
+ * on a click, and says so in place for a moment.
+ */
+function copyValue(shown: string, payload: string, label: string): HTMLElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "copyable";
+  button.textContent = shown;
+  button.setAttribute("aria-label", `${shown}. Copy ${label}`);
+  button.addEventListener("click", () => {
+    void copyInPage(payload).then((copied) => {
+      button.textContent = copied ? "Copied" : "Copy failed";
+      button.dataset.copy = copied ? "done" : "failed";
+      setTimeout(() => {
+        button.textContent = shown;
+        delete button.dataset.copy;
+      }, 1200);
+    });
+  });
+  return button;
+}
 
 function versionLines(rows: VersionRow[]): HTMLElement[] {
   return rows.map((row) => {
@@ -164,13 +199,15 @@ function versionLines(rows: VersionRow[]): HTMLElement[] {
     const label = document.createElement("dt");
     label.textContent = row.label;
     const value = document.createElement("dd");
-    value.textContent = row.value;
+    if (row.copy === undefined) value.textContent = row.value;
+    else value.append(copyValue(row.value, row.copy, row.label));
     if (row.state) value.dataset.state = row.state;
     if (row.title) value.title = row.title;
     if (row.detail) {
       const detail = document.createElement("span");
       detail.className = "detail";
-      detail.textContent = row.detail;
+      if (row.copyDetail === undefined) detail.textContent = row.detail;
+      else detail.append(copyValue(row.detail, row.copyDetail, row.label));
       value.append(detail);
     }
     line.append(label, value);
@@ -210,6 +247,7 @@ function renderLoading(text: string | null): void {
 const loading = new StageLoading(renderLoading);
 
 const wallets = new WalletStore(localStorage);
+const walletInfo = new WalletPublicInfoStore(localStorage);
 const storage = new HostStorage(localStorage, localStorageChanges);
 
 let runtime: WorkerPairingHostRuntime | null = null;
@@ -280,7 +318,10 @@ function renderWallets(): void {
   const saved = wallets.list();
   const problem = wallets.problem();
   walletSelect.replaceChildren(
-    ...saved.map((wallet) => new Option(wallet.name, wallet.id)),
+    ...saved.map(
+      (wallet) =>
+        new Option(walletLabel(wallet, walletInfo.get(wallet.id)), wallet.id),
+    ),
   );
   if (saved.length === 0 && problem !== null) {
     const notice = new Option(problem, "", false, true);
@@ -304,6 +345,8 @@ function renderControls(): void {
   openButton.disabled = !ready;
   addressGo.disabled = !ready;
   closeButton.disabled = !ready || product === null;
+  resetDataButton.disabled =
+    !ready || product === null || activeWallet === null;
   renderWalletPanel();
   renderAddress();
 }
@@ -315,9 +358,17 @@ function renderControls(): void {
  * loaded until Enter, the go button or the menu's Open button.
  */
 function renderAddress(): void {
-  const typed = addressInput.value.trim();
-  const dirty = typed !== "" && typed !== (opened?.address ?? "");
+  const typed = completeAddress(addressInput.value);
+  const dirty =
+    typed !== "" && typed !== completeAddress(opened?.address ?? "");
   addressForm.dataset.dirty = String(dirty);
+  // The dimmed TLD follows a bare label. A leading space would shift it, so it waits.
+  const suffix =
+    addressInput.value === addressInput.value.trim()
+      ? implicitSuffix(addressInput.value)
+      : "";
+  addressHintTyped.textContent = suffix === "" ? "" : addressInput.value;
+  addressHintSuffix.textContent = suffix;
   renderEffectiveId();
 }
 
@@ -335,7 +386,7 @@ function renderEffectiveId(): void {
     text = "Enter an address.";
   } else {
     try {
-      const address = parseAddress(addressInput.value);
+      const address = parseTypedAddress(addressInput.value);
       const effective = effectiveProductIdFor(address, productIdInput.value);
       source = effective.source;
       if (!effective.usable) {
@@ -391,8 +442,6 @@ function renderProduct(): void {
  * force for the open product, or chosen and waiting for the next Open.
  */
 function renderRelaxations(): void {
-  relaxContainerInput.disabled = !containerOffOk;
-  relaxContainerInput.title = containerOffOk ? "" : CONTAINER_OFF_REFUSED;
   relaxContainerInput.checked = relaxations.archiveWithoutContainer;
   relaxNetworkInput.checked = relaxations.approveNetworkWithoutAsking;
   const inForce = product !== null;
@@ -440,10 +489,10 @@ let chainRun = 0;
 /** What the core's ledger records for the open product, and which read it came from. */
 let productAllowance: ProductAllowanceView = { state: "none-open" };
 let ledgerRun = 0;
-/** What the chains hold for the open product, as the core read it on the last Refresh. */
-let resources: ResourcesState = { state: "idle" };
-/** Counts reads and account changes, so a late reply for an older one is dropped. */
-let resourcesRun = 0;
+/** The open product's account 0 and its Asset Hub balance, as the last Refresh read them. */
+let productChain: ProductChainState = { state: "idle" };
+/** Counts reads, product changes and account changes, so a late reply for an older one is dropped. */
+let productChainRun = 0;
 /** The core's saved permission answers for the open product, and which read they came from. */
 let permissions: PermissionsView = { state: "none-open" };
 let permissionsRun = 0;
@@ -464,7 +513,7 @@ function renderAccountStatus(): void {
     ),
   );
   productStatusList.replaceChildren(
-    ...versionLines(productAllowanceRows(productAllowance, resources)),
+    ...versionLines(productAllowanceRows(productAllowance, productChain)),
   );
   permissionsList.replaceChildren(
     ...versionLines(
@@ -479,7 +528,7 @@ function renderAccountStatus(): void {
     lastAuthState.tag !== "Connected" ||
     chainAccess === null ||
     chainState.state === "loading" ||
-    resources.state === "loading";
+    productChain.state === "loading";
 }
 
 /** What gates the open product's own requests: the container, as it stands. */
@@ -555,6 +604,13 @@ permissionsFold.addEventListener("toggle", () => {
  */
 async function refreshProductAllowance(): Promise<void> {
   const run = ++ledgerRun;
+  if (
+    productChain.state !== "idle" &&
+    productChain.productId !== product?.productId
+  ) {
+    productChainRun += 1;
+    productChain = { state: "idle" };
+  }
   void refreshPermissions();
   const productId = product?.productId;
   if (productId === undefined) productAllowance = { state: "none-open" };
@@ -581,62 +637,42 @@ async function refreshProductAllowance(): Promise<void> {
   renderAccountStatus();
 }
 
-/** How long the chains may take to answer a resource read before it is given up. */
-const RESOURCE_READ_TIMEOUT_MS = 60_000;
-
 /**
- * Ask the core what the chains hold for the open product: its Statement Store
- * allocation, Bulletin authorization and PGAS balance. Read-only, run on
- * Refresh only. A reply is dropped when the account changed meanwhile, and is
- * shown only while the product it was read for is still the open one.
+ * Read the open product's account 0 from the core and its balance on Asset
+ * Hub. Read-only and run on Refresh only. A reply is dropped when the product
+ * or the account changed meanwhile, and the provider made for the read is
+ * disposed whatever the outcome.
  */
-async function refreshProductResources(): Promise<void> {
+async function refreshProductChain(): Promise<void> {
+  const access = chainAccess;
   const productId = product?.productId;
   const current = runtime;
   if (
     productId === undefined ||
     current === null ||
+    access === null ||
     lastAuthState.tag !== "Connected"
   ) {
-    resourcesRun += 1;
-    resources = { state: "idle" };
+    productChainRun += 1;
+    productChain = { state: "idle" };
     return;
   }
-  const run = ++resourcesRun;
-  resources = { state: "loading", productId };
+  const run = ++productChainRun;
+  productChain = { state: "loading", productId };
   renderAccountStatus();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(
-        new Error(
-          `no answer from the chains after ${RESOURCE_READ_TIMEOUT_MS / 1000}s`,
-        ),
-      );
-    }, RESOURCE_READ_TIMEOUT_MS);
-  });
   try {
-    const json = await Promise.race([
-      current.getProductResourceStatus(productId),
-      timeout,
-    ]);
-    if (run !== resourcesRun) return;
-    resources = {
-      state: "done",
-      productId,
-      checkedAt: new Date(),
-      status: parseProductResourceStatus(json),
-    };
+    const account = await readProductAccount(current, productId);
+    const balance = await readBalance(
+      access.chain,
+      access.genesis.assetHub,
+      account,
+    );
+    if (run !== productChainRun) return;
+    productChain = { state: "done", productId, account, balance };
   } catch (error) {
-    if (run !== resourcesRun) return;
-    resources =
-      errorText(error) === PRODUCT_RESOURCE_STATUS_UNSUPPORTED
-        ? { state: "unsupported", productId }
-        : { state: "error", productId, message: errorText(error) };
-    if (resources.state === "error")
-      log(`Product resource status: ${resources.message}`);
-  } finally {
-    clearTimeout(timer);
+    if (run !== productChainRun) return;
+    productChain = { state: "error", productId, message: errorText(error) };
+    log(`Product account: ${errorText(error)}`);
   }
   renderAccountStatus();
 }
@@ -654,7 +690,7 @@ async function refreshChainStatus(): Promise<void> {
   chainState = { state: "loading" };
   renderAccountStatus();
   void refreshProductAllowance();
-  void refreshProductResources();
+  void refreshProductChain();
   try {
     const reading = await readPeopleChain(access.chain, access.genesis.people, [
       ...(identityAccountId
@@ -664,6 +700,11 @@ async function refreshChainStatus(): Promise<void> {
     ]);
     if (run !== chainRun) return;
     chainState = { state: "done", checkedAt: new Date(), reading };
+    const found = usernameFrom(reading.readings);
+    if (found !== undefined && activeWallet !== null) {
+      walletInfo.update(activeWallet.id, { publicKey, username: found });
+      renderWallets();
+    }
   } catch (error) {
     if (run !== chainRun) return;
     chainState = { state: "error", message: errorText(error) };
@@ -679,8 +720,8 @@ function trackChainAccount(state: AuthState): void {
   chainFor = key;
   chainRun += 1;
   chainState = { state: "idle" };
-  resourcesRun += 1;
-  resources = { state: "idle" };
+  productChainRun += 1;
+  productChain = { state: "idle" };
   void refreshProductAllowance();
   if (key !== null && accountStatusFold.open) void refreshChainStatus();
 }
@@ -695,6 +736,15 @@ accountStatusFold.addEventListener("toggle", () => {
 
 function renderSession(state: AuthState): void {
   lastAuthState = state;
+  if (state.tag === "Connected" && activeWallet !== null) {
+    // Public facts only, kept so the picker can tell wallets apart signed out.
+    const { publicKey, fullUsername, liteUsername } = state.value;
+    walletInfo.update(activeWallet.id, {
+      publicKey,
+      username: fullUsername ?? liteUsername ?? undefined,
+    });
+    renderWallets();
+  }
   trackChainAccount(state);
   renderAccountStatus();
   sessionLine.title = "";
@@ -795,8 +845,8 @@ interface Target extends Opened {
  * Turn what the bar holds into a URL to embed.
  *
  * A URL is used as typed. A name is looked up on Asset Hub, and its content is
- * loaded by a sandbox page on an origin of the product's own, which is never
- * this page's origin. Nothing is served from here.
+ * loaded by the sandbox loader, a static page of this host, which mounts it
+ * under this host's own path for the active wallet and this product.
  */
 async function resolveTarget(
   address: Address,
@@ -808,13 +858,6 @@ async function resolveTarget(
     ? `${address.name}/${address.suffix}`
     : address.name;
   requireSecureHost(window.isSecureContext, window.location.origin);
-  if (relaxations.archiveWithoutContainer && !containerOffOk)
-    throw new Error(CONTAINER_OFF_REFUSED);
-  // Fail before any lookup when this host has no origin to give the product.
-  const origin = await sandboxOrigin(window.location, productId, {
-    template: SANDBOX_TEMPLATE,
-    ports: new PortLedger(localStorage),
-  });
   productStatus.textContent = `Resolving ${address.name} on Paseo Asset Hub…`;
   let choice: Awaited<ReturnType<typeof resolveSource>>;
   try {
@@ -826,23 +869,27 @@ async function resolveTarget(
   }
   const { source, skipped } = choice;
   if (source === null) throw new Error(notOpenableText(address.name, skipped));
+  const scope = mountScope(BASE, {
+    walletId: activeWallet?.id ?? "signed-out",
+    productId,
+    cid: source.cid,
+    container: !relaxations.archiveWithoutContainer,
+  });
   return {
     address: shown,
     via: "name",
     cid: source.cid,
     kind: source.kind,
-    origin,
+    mount: scope,
     record: source.record,
     skipped,
-    url: sandboxUrl({
-      origin,
-      cid: source.cid,
+    url: loaderUrl({
+      base: BASE,
+      origin: window.location.origin,
+      scope,
       gateway: PASEO_DOTNS.contentGateway,
-      hostOrigin: window.location.origin,
       kind: source.kind,
       start: `/${address.suffix}`,
-      container: !relaxations.archiveWithoutContainer,
-      owner: productLabel(productId),
     }),
   };
 }
@@ -850,27 +897,6 @@ async function resolveTarget(
 /** The scope an entered product id was used with, for the log. */
 function scopeOf(address: Address): string {
   return address.kind === "url" ? address.url.origin : address.name;
-}
-
-/**
- * Retire the sandbox port a product found held by another product's data, so
- * the next Open takes another. The report is dropped when a different product
- * is open by then.
- */
-async function skipHeldPort(target: Target): Promise<void> {
-  const port = Number(target.url.port);
-  const held = `port ${port} holds another product's data`;
-  let status: string;
-  try {
-    if (port > 0) await new PortLedger(localStorage).retire(port);
-    status = `Sandbox: ${held}. It is skipped now; press Open again.`;
-  } catch (error) {
-    status = `Sandbox: ${held}, and it could not be skipped: ${errorText(error)}`;
-  }
-  log(status);
-  if (product?.url !== target.url) return;
-  sandboxStatus = status;
-  renderProduct();
 }
 
 /**
@@ -891,6 +917,7 @@ async function openTarget(
   sandboxStatus = "";
   try {
     product = await openProduct(runtime, target.url, productId, productFrame, {
+      mounted: target.via === "name",
       tap: createFrameTap(inspector, productId, runtime.coreWireSchemaHash),
       expectContainer:
         target.via === "name"
@@ -906,13 +933,12 @@ async function openTarget(
       onFrameLoad(count) {
         if (count >= documentsBeforeProduct(target.via)) loading.finish(op);
       },
-      onSandboxStatus(state, detail, code) {
+      onSandboxStatus(state, detail) {
         sandboxStatus = `Sandbox: ${detail}`;
         if (state === "error") {
           loading.finish(op);
           log(`sandbox could not start the product: ${detail}`);
         }
-        if (code === "owner") void skipHeldPort(target);
         renderProduct();
       },
       onLost() {
@@ -927,15 +953,21 @@ async function openTarget(
       via: target.via,
       cid: target.cid,
       kind: target.kind,
-      origin: target.origin,
+      mount: target.mount,
       record: target.record,
       skipped: target.skipped,
     };
     openedWithOverride = entered;
     askedDomains = [];
     overrideOrigin = entered ? scope : null;
-    addressInput.value = target.address;
+    addressInput.value = displayAddress(target.address);
     renderProduct();
+    recents.record(recentScope(), {
+      address: target.address,
+      productId,
+      entered,
+    });
+    recentsMenu.refresh();
     sessionStorage.setItem(
       TAB_PRODUCT_KEY,
       JSON.stringify({ address: target.address, productId }),
@@ -988,6 +1020,8 @@ signOutButton.addEventListener("click", () => {
 
 forgetButton.addEventListener("click", () => {
   const wallet = wallets.find(walletSelect.value);
+  recents.forget(walletSelect.value);
+  walletInfo.forget(walletSelect.value);
   wallets.forget(walletSelect.value);
   log(`forgot ${wallet?.name ?? "the wallet"}`);
   walletSelect.value = "";
@@ -1023,7 +1057,7 @@ window.addEventListener("storage", (event) => {
 function openAddress(): void {
   let address: Address;
   try {
-    address = parseAddress(addressInput.value);
+    address = parseTypedAddress(addressInput.value);
   } catch (error) {
     productStatus.textContent = errorText(error);
     log(productStatus.textContent);
@@ -1040,6 +1074,90 @@ function openAddress(): void {
   chrome.dismissCovering();
 }
 
+const recents = new RecentProducts(localStorage);
+
+/** History is kept per wallet, like the rest of its data; signed out has its own. */
+function recentScope(): string {
+  return activeWallet?.id ?? "signed-out";
+}
+
+const recentsMenu = bindRecentsMenu({
+  input: addressInput,
+  list: recentsList,
+  entries: () => recents.list(recentScope()),
+  untouched: () =>
+    addressInput.value.trim() === displayAddress(opened?.address ?? ""),
+  choose(entry) {
+    // The entry brings its own product id, or none, so a replay never
+    // inherits whatever id is entered now.
+    addressInput.value = displayAddress(entry.address);
+    productIdInput.value = entry.entered ? entry.productId : "";
+    renderAddress();
+    openAddress();
+    addressInput.blur();
+  },
+});
+
+/**
+ * Clear the open product's stored data for the signed-in wallet, after asking.
+ * The product is closed first so it cannot write the data back, then opened
+ * again as it was. Grants, allowances, other products and other wallets are
+ * outside what is cleared.
+ */
+async function resetAppData(): Promise<void> {
+  const wallet = activeWallet;
+  const current = product;
+  if (wallet === null || current === null) return;
+  const productId = current.productId;
+  const confirmed = await ask({
+    title: "Reset app data",
+    fields: [
+      { label: "Wallet", value: wallet.name },
+      { label: "Product", value: productId },
+      {
+        label: "Clears",
+        value:
+          "This product's stored data for this wallet, as stored through the host. The page's own browser storage, grants, allowances, other products and other wallets are kept.",
+      },
+      {
+        label: "Before you go on",
+        value: "Close other tabs that use this wallet and this product.",
+        warning: true,
+      },
+    ],
+    choices: [
+      { label: "Cancel", value: false },
+      { label: "Reset app data", value: true, primary: true },
+    ],
+    dismissed: false,
+  });
+  if (!confirmed) return;
+  await serial(async (runtime) => {
+    const how = opened;
+    if (
+      activeWallet?.id !== wallet.id ||
+      product?.productId !== productId ||
+      how === null
+    ) {
+      log("reset skipped: the open product or the wallet changed");
+      return;
+    }
+    const url = product.url;
+    const entered = openedWithOverride;
+    const scope = overrideOrigin ?? "";
+    closeProduct();
+    const removed = storage.clearProductData(productId);
+    log(
+      `reset app data of ${productId} for ${wallet.name}: ${removed} stored value${removed === 1 ? "" : "s"} removed`,
+    );
+    await openTarget(runtime, { ...how, url }, productId, entered, scope);
+  });
+}
+
+resetDataButton.addEventListener("click", () => {
+  void resetAppData();
+});
+
 addressForm.addEventListener("submit", (event) => {
   event.preventDefault();
   openAddress();
@@ -1054,7 +1172,8 @@ productForm.addEventListener("submit", (event) => {
 addressInput.addEventListener("input", renderAddress);
 addressInput.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
-  addressInput.value = opened?.address ?? "";
+  if (recentsMenu.close()) return;
+  addressInput.value = displayAddress(opened?.address ?? "");
   renderAddress();
   addressInput.blur();
 });
@@ -1083,24 +1202,16 @@ relaxBannerOff.addEventListener("click", () => {
   const current = opened;
   const id = product?.productId;
   if (current === null || id === undefined) return;
-  // A name is resolved again, so its sandbox URL carries the new settings.
+  // A name is resolved again, so its mount carries the new settings.
   void serial((runtime) =>
     openResolved(
       runtime,
-      parseAddress(current.address),
+      parseTypedAddress(current.address),
       id,
       openedWithOverride,
     ),
   );
 });
-
-sandboxOriginInput.value = SANDBOX_TEMPLATE;
-
-/** A stored container-off choice does not survive onto a host that cannot keep cookies apart. */
-if (relaxations.archiveWithoutContainer && !containerOffOk) {
-  setRelaxations({ ...relaxations, archiveWithoutContainer: false });
-  log(CONTAINER_OFF_REFUSED);
-}
 
 closeButton.addEventListener("click", () => {
   void serial(async () => {
@@ -1171,7 +1282,7 @@ async function boot(): Promise<void> {
   // wallet. A link's `product` parameter never does.
   const last = readTabProduct();
   if (last && !params.has("product")) {
-    addressInput.value = last.address;
+    addressInput.value = displayAddress(last.address);
     const derived = effectiveProductIdFor(last.parsed, "").id;
     const entered = last.productId !== derived;
     if (entered) productIdInput.value = last.productId;
@@ -1196,7 +1307,7 @@ function readTabProduct(): {
     const { address, productId } = stored as Record<string, unknown>;
     if (typeof address !== "string" || typeof productId !== "string")
       return null;
-    return { address, productId, parsed: parseAddress(address) };
+    return { address, productId, parsed: parseTypedAddress(address) };
   } catch {
     return null;
   }

@@ -5,55 +5,47 @@ import {
   loadArchive,
   loadSite,
 } from "../archive/gateway.js";
-import { OriginHeldError, claimOrigin } from "./claim.js";
-import { ARCHIVE_CACHE, fileKey } from "./files.js";
-import { authorizeEmbedding } from "./policy.js";
-import { SANDBOX_WORKER, contentTypeOf } from "./serve.js";
+import { hostBase, parseMountScope } from "./mount.js";
+import { storeArchive } from "./store.js";
 
 /** What the loader tells the host that embeds it, so the host can show why a product is not up. */
-export type SandboxStatus =
-  | { type: "truapi-sandbox"; state: "loading"; detail: string }
-  | {
-      type: "truapi-sandbox";
-      state: "error";
-      detail: string;
-      /** `owner`: this origin holds another product's data. */
-      code?: "owner";
-    };
+export type SandboxStatus = {
+  type: "truapi-sandbox";
+  state: "loading" | "error";
+  detail: string;
+};
 
 const params = new URLSearchParams(location.search);
+/** The host's directory: this page is `<base>truapi-sandbox/index.html`. */
+const base = hostBase("../", location.href);
 
-/**
- * The host this page answers to. It is set once the embedding page has been
- * checked, and nothing is sent to a host before that.
- */
-let authorizedHost: string | null = null;
-
-function report(status: SandboxStatus, target: string | null): void {
+function report(state: SandboxStatus["state"], detail: string): void {
   const line = document.getElementById("status") as HTMLElement;
-  line.textContent = status.detail;
-  line.dataset.state = status.state;
-  if (target !== null && window.parent !== window)
-    window.parent.postMessage(status, target);
+  line.textContent = detail;
+  line.dataset.state = state;
+  if (window.parent !== window)
+    window.parent.postMessage(
+      { type: "truapi-sandbox", state, detail } satisfies SandboxStatus,
+      location.origin,
+    );
 }
 
 /**
- * Register the worker at `script` and wait until that exact script controls
- * the origin, so a worker left from an earlier open, with other settings, never
- * answers the product's first requests.
+ * Register the worker for `scope` and wait until it is active, so the
+ * navigation into the product reaches it and not the static host.
  */
-async function startWorker(script: string): Promise<void> {
+async function startWorker(scope: string): Promise<void> {
+  const script = new URL(`${base}sw.js`, location.origin).href;
   const registration = await navigator.serviceWorker.register(script, {
-    scope: "/",
+    scope,
   });
-  const expected = new URL(script, location.origin).href;
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(
-      () => reject(new Error("The sandbox worker did not start.")),
+      () => reject(new Error("The product worker did not start.")),
       10_000,
     );
     const check = (): boolean => {
-      if (registration.active?.scriptURL !== expected) return false;
+      if (registration.active?.scriptURL !== script) return false;
       clearTimeout(timer);
       resolve();
       return true;
@@ -69,90 +61,64 @@ async function startWorker(script: string): Promise<void> {
   });
 }
 
-/**
- * Refuse anything but the configured host embedding this origin, and a link
- * that names a different host or product than the origin itself does. URL
- * values are requests, not credentials: the host and the label come from the
- * browser and the operator's policy.
- */
-function authorize(): { host: string; label: string } {
-  const { hostOrigin, label } = authorizeEmbedding(__SANDBOX_POLICY__, {
-    location,
-    topLevel: window.parent === window,
-    ancestorOrigins:
-      "ancestorOrigins" in location ? [...location.ancestorOrigins] : undefined,
-  });
-  authorizedHost = hostOrigin;
-  if (params.get("host") !== hostOrigin)
-    throw new Error(
-      "The link names a different host than the one embedding it.",
-    );
-  const owner = params.get("owner") ?? "";
-  if (label !== "" && owner !== label)
-    throw new Error(
-      "The link names a different product than this origin is for.",
-    );
-  return { host: hostOrigin, label: owner };
-}
-
 async function load(): Promise<void> {
-  const { host, label: owner } = authorize();
-  const say = (state: SandboxStatus["state"], detail: string) =>
-    report({ type: "truapi-sandbox", state, detail }, host);
-  const cid = params.get("cid") ?? "";
+  if (window.parent === window)
+    throw new Error("The loader runs only inside the host, never on its own.");
+  if (!isSecureContext)
+    throw new Error(
+      "Not a secure context: every page above the product must be https or localhost.",
+    );
+  if (!("serviceWorker" in navigator))
+    throw new Error(
+      "This browser does not offer service workers here, and the product loader needs them. An embedded web view often lacks them; open the host in the system browser.",
+    );
+
+  const scope = params.get("scope") ?? "";
+  const mount = parseMountScope(base, scope);
+  if (mount === null)
+    throw new Error("The link names no product mount of this host.");
+  const { cid } = mount;
   parseCidString(cid);
   const gateway = new URL(params.get("gateway") ?? "");
   if (gateway.protocol !== "https:" && gateway.protocol !== "http:")
     throw new Error("The gateway must be http or https.");
-
   const kind = params.get("kind");
   if (kind !== "car" && kind !== "site")
-    throw new Error("The sandbox was not told what the content is.");
-  const start = new URL(params.get("start") ?? "/", location.origin);
-  if (start.origin !== location.origin)
-    throw new Error("The start path must stay on the product's origin.");
-
-  if (!isSecureContext || !("serviceWorker" in navigator))
-    throw new Error(
-      "Not a secure context: every page above the product must be https or localhost.",
-    );
-
-  await claimOrigin(owner, location.origin, {
-    caches,
-    locks: navigator.locks,
-  });
-
-  say("loading", "Starting the sandbox.");
-  await startWorker(
-    `${SANDBOX_WORKER}?host=${encodeURIComponent(host)}&container=${params.get("container") === "off" ? "off" : "on"}`,
+    throw new Error("The loader was not told what the content is.");
+  const start = new URL(
+    (params.get("start") ?? "/").replace(/^\/+/, ""),
+    new URL(scope, location.origin),
   );
+  if (!start.href.startsWith(new URL(scope, location.origin).href))
+    throw new Error("The start path must stay inside the product's mount.");
 
-  say("loading", `Fetching ${cid} from ${gateway.origin}.`);
-  const blocks = gatewayBlocks(gateway.origin, ARCHIVE_LIMITS);
-  const { files } = await (kind === "car" ? loadArchive : loadSite)(
+  report("loading", "Starting the product worker.");
+  await startWorker(scope);
+
+  const { reused } = await storeArchive(
     cid,
-    blocks,
+    location.origin,
+    async () => {
+      report("loading", `Fetching ${cid} from ${gateway.origin}.`);
+      const blocks = gatewayBlocks(gateway.origin, ARCHIVE_LIMITS);
+      const { files } = await (kind === "car" ? loadArchive : loadSite)(
+        cid,
+        blocks,
+      );
+      report("loading", `Verified ${files.size} files.`);
+      return files;
+    },
+    { caches, locks: navigator.locks },
   );
-
-  say("loading", `Verified ${files.size} files. Starting the product.`);
-  await caches.delete(ARCHIVE_CACHE);
-  const cache = await caches.open(ARCHIVE_CACHE);
-  for (const [path, bytes] of files)
-    await cache.put(
-      fileKey(location.origin, path),
-      new Response(bytes as BodyInit, {
-        headers: { "content-type": contentTypeOf(path) },
-      }),
-    );
+  report(
+    "loading",
+    reused
+      ? "Using the verified copy. Starting the product."
+      : "Starting the product.",
+  );
   location.replace(start.href);
 }
 
-load().catch((error: unknown) => {
-  const detail = error instanceof Error ? error.message : String(error);
-  report(
-    error instanceof OriginHeldError
-      ? { type: "truapi-sandbox", state: "error", detail, code: "owner" }
-      : { type: "truapi-sandbox", state: "error", detail },
-    authorizedHost,
-  );
-});
+load().catch((error: unknown) =>
+  report("error", error instanceof Error ? error.message : String(error)),
+);
