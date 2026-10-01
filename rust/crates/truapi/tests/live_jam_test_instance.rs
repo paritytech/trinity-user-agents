@@ -1,5 +1,5 @@
-//! `JamPeerTransport` through a native product runtime against the public JAM
-//! devnet (`jam-public-devnet`, six validators on 51.159.188.61).
+//! `JamPeerTransport` through a native product runtime against JAM-TEST-INSTANCE
+//! (six validators on 51.159.188.61).
 //!
 //! Every call is a product frame: through the generated dispatcher into
 //! `ProductRuntimeHost`, whose dial asks the platform for
@@ -25,11 +25,11 @@ mod common;
 use common::{test_runtime_config, test_spawner};
 
 const GENESIS: &str = "10c123f02eb6df4c01397d797a112055be691883baa2e82f83b618ed6ce45e46";
-/// `follow.json` slot timing of the devnet.
+/// `follow.json` slot timing of JAM-TEST-INSTANCE.
 const SLOT_EPOCH_UNIX_MS: u64 = 1_735_732_800_000;
 const SLOT_DURATION_MS: u64 = 6_000;
 /// Validator UDP ports on 51.159.188.61 and the Ed25519 keys their
-/// certificates carry, from the devnet's `bootnodes.json`.
+/// certificates carry, from JAM-TEST-INSTANCE's `bootnodes.json`.
 const BOOTNODES: [(u16, &str); 6] = [
     (
         43000,
@@ -245,8 +245,8 @@ struct Up0 {
 }
 
 #[test]
-#[ignore = "needs network access to the public JAM devnet"]
-fn dials_every_public_devnet_validator_and_hears_block_announcements() {
+#[ignore = "needs network access to JAM-TEST-INSTANCE"]
+fn dials_every_test_instance_validator_and_hears_block_announcements() {
     let _serial = SERIAL
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());

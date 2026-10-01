@@ -214,12 +214,19 @@ The PolkaVM application runtime, GPU/UI wire contracts, and browser runtime live
 runtimes link the optional `truapi-polkavm-host` composition crate; the base `truapi-server` remains PolkaVM-free.
 Browser hosts consume `@parity/polkavm-browser-runtime` directly; browser assets are not shipped from this repository.
 
-Taking a screenshot opens **Report app issue** wherever the shake-opened Debug menu is, which is every build except the
-store submission: `DEBUG_TOOLS_ENABLED` on Android, false only for the `release` build type, and `TESTNET_FEATURE` on
-iOS, unset only for the `Release` configuration. Android screenshot detection requires Android 14+. The modal includes a
-snapshot of the app screen, a description, and ZIP logs. Send uploads the report through
-[issue-proxy](https://github.com/paritytech/issue-proxy). Configure these Firebase Remote Config string parameters for
-each mobile environment:
+The native JAM peer transport's live fixture targets JAM-TEST-INSTANCE.
+Run `cargo test -p truapi --features mock --test live_jam_test_instance -- --include-ignored`
+with network access to its six validators; see the
+[peer transport contract](rust/crates/truapi/RUNTIME.md#jam-peer-transport).
+
+Taking a screenshot opens **Report app issue** wherever the shake-opened Debug
+menu is, which is every build except the store submission: `DEBUG_TOOLS_ENABLED`
+on Android, false only for the `release` build type, and `TESTNET_FEATURE` on
+iOS, unset only for the `Release` configuration. Android screenshot detection
+requires Android 14+.
+The modal includes a snapshot of the app screen, a description, and ZIP logs.
+Send uploads the report through [issue-proxy](https://github.com/paritytech/issue-proxy).
+Configure these Firebase Remote Config string parameters for each mobile environment:
 
 | Parameter             | Value                                                     |
 | --------------------- | --------------------------------------------------------- |

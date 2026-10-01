@@ -58,7 +58,7 @@ const PATCHED = [
   },
 ] as const;
 
-// Certificate a stock `jam-public-devnet` validator served during period 2072.
+// Certificate a stock JAM-TEST-INSTANCE validator served during period 2072.
 const STOCK = {
   compressed: "03aac17e3833a6679e7064934a6f2a2bc9450d3b2b779a9930102ae16a4f16062e",
   der2072:
