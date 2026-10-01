@@ -1,4 +1,4 @@
-# Web signing host
+# TrUAPI Web Host
 
 A TrUAPI host that runs in a browser tab and holds its own wallet. It embeds a product in an iframe, runs the core from
 this repository in a Web Worker, and signs locally. There is no companion app and no QR pairing.
@@ -48,7 +48,7 @@ make wasm
 `truapi-provider` bundle. Then:
 
 ```bash
-cd hosts/web-signing
+cd hosts/web
 npm ci
 npm run dev
 ```
@@ -343,7 +343,7 @@ A name lookup uses one public RPC node instead, as described above.
 
 ## Tests
 
-From `hosts/web-signing`:
+From `hosts/web`:
 
 ```bash
 npm run typecheck   # tsc --noEmit
@@ -352,10 +352,10 @@ npm run build       # tsc --noEmit && vite build
 npm run test:browser
 ```
 
-CI runs `npm run typecheck` and `npm test` in the `host-web-signing` job of `.github/workflows/ci.yml`, after building
-the packages this host links. It does not run `npm run build` or `npm run test:browser`, which need the signing core's
-WASM bundle: run them by hand when the host or the core changes. These are best-effort gates for a development tool:
-they catch a broken host, not a hostile product.
+CI runs `npm run typecheck` and `npm test` in the `host-web` job of `.github/workflows/ci.yml`, after building the
+packages this host links. It does not run `npm run build` or `npm run test:browser`, which need the signing core's WASM
+bundle: run them by hand when the host or the core changes. These are best-effort gates for a development tool: they
+catch a broken host, not a hostile product.
 
 `npm run test:browser` is a headless-Chrome smoke test of the host page. It needs the linked packages and both WASM
 bundles built (see [Run it](#run-it)) and a Chromium: install one with `npx playwright-core install chromium`, or set
