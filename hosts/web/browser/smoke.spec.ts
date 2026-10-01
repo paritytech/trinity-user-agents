@@ -1,5 +1,5 @@
 /**
- * Headless-browser smoke test of the web signing host, against the host page
+ * Headless-browser smoke test of the TrUAPI Web Host, against the host page
  * from this tree, the sandbox loader and worker, and the real core. Everything runs on loopback: the chain record and the gateway
  * content of a name are stood in for inside the browser context, and the wallet
  * is a public test phrase. It needs a Chromium: playwright-core finds the one

@@ -64,7 +64,7 @@ hosts/android/             Android host app
 hosts/imports.json         source repository and imported revision per host,
                            read and updated by scripts/refresh-host-import.sh
 hosts/dotli/               dotli submodule
-hosts/web-signing/         development web host: a browser tab that holds its own wallet
+hosts/web/                 TrUAPI Web Host: a browser tab that holds its own wallet
                            and signs with the `testing` core, with no pairing; built
                            against the in-tree packages. A static build for one origin,
                            such as GitHub Pages. Opens a product by DotNS name under

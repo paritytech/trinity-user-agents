@@ -283,7 +283,7 @@ jobs:
       sdk_kotlin: ${{ steps.filter.outputs.sdk_kotlin }}
       sdk_provider_kotlin: ${{ steps.filter.outputs.sdk_provider_kotlin }}
       host_android: ${{ steps.filter.outputs.host_android }}
-      host_web_signing: ${{ steps.filter.outputs.host_web_signing }}
+      host_web: ${{ steps.filter.outputs.host_web }}
       cli_package: ${{ steps.filter.outputs.cli_package }}
       workflows: ${{ steps.filter.outputs.workflows }}
       needs_changeset: ${{ steps.filter.outputs.needs_changeset }}
@@ -322,7 +322,7 @@ jobs:
               echo "sdk_kotlin=true"
               echo "sdk_provider_kotlin=true"
               echo "host_android=true"
-              echo "host_web_signing=true"
+              echo "host_web=true"
               echo "cli_package=true"
               echo "workflows=true"
             } >> "$GITHUB_OUTPUT"
@@ -352,10 +352,10 @@ jobs:
           # that broke it reached a release with no gate in between.
           gate host_android '^(hosts/android/|android/truapi-host/|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|scripts/(codegen\.sh|regen-explorer-versions\.mjs)$|Cargo\.toml$|nightly-toolchain$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/actions/setup-android-build/|\.github/workflows/ci\.yml$)'
 
-          # The web signing host is typechecked against the TypeScript packages
+          # The TrUAPI Web Host is typechecked against the TypeScript packages
           # and the provider's generated types, so it moves with their sources
           # and with the generator behind the client.
-          gate host_web_signing '^(hosts/web-signing/|js/packages/(truapi|truapi-host|truapi-provider|truapi-debugger)/|rust/crates/(truapi|truapi-provider|truapi-codegen|truapi-macros)/|scripts/codegen\.sh$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/workflows/ci\.yml$)'
+          gate host_web '^(hosts/web/|js/packages/(truapi|truapi-host|truapi-provider|truapi-debugger)/|rust/crates/(truapi|truapi-provider|truapi-codegen|truapi-macros)/|scripts/codegen\.sh$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/workflows/ci\.yml$)'
 
           # The packaging path has its own inputs: the archive layout in the
           # Makefile, the runner bundle, the generated sources cli-dist refuses
@@ -844,10 +844,10 @@ jobs:
 
   # Typecheck and unit tests only. The static build and the browser smoke test
   # need the signing core, a second WASM build, so they run by hand.
-  host-web-signing:
-    name: Web signing host (typecheck, unit tests)
+  host-web:
+    name: TrUAPI Web Host (typecheck, unit tests)
     needs: [changes, codegen]
-    if: needs.changes.outputs.host_web_signing == 'true'
+    if: needs.changes.outputs.host_web == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -893,15 +893,15 @@ jobs:
           npm run build --prefix js/packages/truapi-debugger
 
       - name: Install host deps
-        working-directory: hosts/web-signing
+        working-directory: hosts/web
         run: npm ci
 
       - name: Typecheck
-        working-directory: hosts/web-signing
+        working-directory: hosts/web
         run: npm run typecheck
 
       - name: Unit tests
-        working-directory: hosts/web-signing
+        working-directory: hosts/web
         run: npm test
 
   ts-debugger:
@@ -1390,7 +1390,7 @@ jobs:
         provider-android-bindings,
         host-android-bindings,
         host-android-detekt,
-        host-web-signing,
+        host-web,
         cli-package,
         ts-client,
         ts-host,
@@ -1440,7 +1440,7 @@ jobs:
           REQUIRED: >-
             rust headless-install wasm-provider licenses codegen ios-bindings changes ios-swift
             android-bindings provider-android-bindings host-android-bindings
-            host-android-detekt host-web-signing
+            host-android-detekt host-web
             cli-package ts-client
             ts-host host-wasm ts-debugger bundle-size playground explorer e2e workflow-lint
             release-guard changeset-guard
