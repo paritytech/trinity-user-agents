@@ -105,9 +105,13 @@ export async function startCountingTarget(): Promise<CountingTarget> {
 /**
  * A product page that sends one request from its first script, before anything
  * else on the page runs, and exposes what it sees of its own origin. Its
- * requests go to `targetOrigin`.
+ * requests go to `targetOrigin`. With `rootRelativeScript` it also loads
+ * `/root.js` by a root-relative link, as a build made for the site root does.
  */
-export function productHtml(targetOrigin: string): string {
+export function productHtml(
+  targetOrigin: string,
+  options: { rootRelativeScript?: boolean } = {},
+): string {
   return `<!doctype html>
 <meta charset="utf-8">
 <title>fixture product</title>
@@ -128,7 +132,7 @@ export function productHtml(targetOrigin: string): string {
     );
   document.body.dataset.origin = location.origin;
   document.body.dataset.localKeys = JSON.stringify(Object.keys(localStorage));
-</script>
+</script>${options.rootRelativeScript ? '\n<script src="/root.js"></script>' : ""}
 </body>`;
 }
 

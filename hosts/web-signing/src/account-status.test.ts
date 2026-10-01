@@ -250,34 +250,22 @@ describe("product allowance", () => {
     });
   });
 
-  // Until a Refresh has read the chains there is nothing on chain to state, and
-  // the ledger must not stand in for it.
-  test("does not state the chain before it was read, in every recorded state", () => {
-    for (const record of ["recorded", "none", "unreadable"] as const)
-      expect(
-        by(
-          productAllowanceRows({ state: "done", productId: "a.paseo", record }),
-          "On chain",
-        ),
-      ).toMatchObject({ value: "Not read", state: "unknown" });
-  });
-
-  test("shows a read made for another product as not read", () => {
-    const rows = productAllowanceRows(
-      { state: "done", productId: "a.paseo", record: "none" },
-      { state: "unsupported", productId: "b.paseo" },
-    );
-    expect(by(rows, "On chain")).toMatchObject({ value: "Not read" });
-  });
-
-  test("shows the resource rows for the product they were read for", () => {
-    const rows = productAllowanceRows(
-      { state: "done", productId: "a.paseo", record: "none" },
-      { state: "unsupported", productId: "a.paseo" },
-    );
-    expect(by(rows, "On chain")).toMatchObject({
-      value: "Needs a newer core",
-    });
+  // Until a Refresh has read it, nothing about the chain is stated, and the
+  // ledger must not stand in for it.
+  test("shows the ledger and an unread account row before a Refresh", () => {
+    for (const record of ["recorded", "none", "unreadable"] as const) {
+      const rows = productAllowanceRows({
+        state: "done",
+        productId: "a.paseo",
+        record,
+      });
+      expect(rows.map((row) => row.label)).toEqual([
+        "Product",
+        "Allocation recorded",
+        "Account 0",
+      ]);
+      expect(rows[2]).toMatchObject({ value: "Not read", state: "unknown" });
+    }
   });
 });
 

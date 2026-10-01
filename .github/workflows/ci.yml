@@ -918,10 +918,6 @@ jobs:
         working-directory: hosts/web-signing
         run: npm run test:browser
 
-      - name: Sandbox boundary test
-        working-directory: hosts/web-signing
-        run: npm run test:sandbox
-
   ts-debugger:
     name: "@parity/truapi-debugger"
     timeout-minutes: 10

@@ -7,6 +7,7 @@ import type {
   CoreStorageKey,
   ProductStorage,
 } from "@parity/truapi-host";
+import { normalizeProductId } from "./allowance-ledger.js";
 import { subscription } from "./subscription.js";
 
 const PREFIX = "truapi-web-signing-host";
@@ -75,6 +76,26 @@ export class HostStorage {
       });
     },
   };
+
+  /**
+   * Remove what the core stored for `productId` under the active wallet, and
+   * nothing else: the key carries the wallet, and the core's own key carries
+   * the product and its length, so another product, another wallet, a grant,
+   * an allowance and the signing state are all outside the prefix. Returns how
+   * many entries were removed. The product must be closed first, so it cannot
+   * write them back.
+   */
+  clearProductData(productId: string): number {
+    const id = normalizeProductId(productId);
+    const prefix = `${this.productSlot("")}truapi:product-storage:v1:${new TextEncoder().encode(id).length}:${id}:`;
+    const slots: string[] = [];
+    for (let index = 0; index < this.storage.length; index += 1) {
+      const slot = this.storage.key(index);
+      if (slot?.startsWith(prefix)) slots.push(slot);
+    }
+    for (const slot of slots) this.clearSlot(slot);
+    return slots.length;
+  }
 
   readonly core: CoreStorage = {
     readCoreStorage: (key) =>

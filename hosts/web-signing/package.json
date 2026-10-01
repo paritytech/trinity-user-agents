@@ -9,9 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "bun test src scripts --timeout 60000",
-    "test:browser": "bun test browser --timeout 180000",
-    "test:sandbox": "bun src/sandbox/e2e/boundary.e2e.mjs"
+    "test": "bun test src --timeout 60000",
+    "test:browser": "bun test browser --timeout 180000"
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0",

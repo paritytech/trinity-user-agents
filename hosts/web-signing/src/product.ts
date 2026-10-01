@@ -95,22 +95,26 @@ export interface OpenProductOptions {
   onDrop?(reason: string): void;
   /**
    * Called with what the sandbox loader reports while it fetches and checks an
-   * archive. Only that loader, at the product's origin, is heard.
+   * archive. Only the product frame's own window is heard.
    */
-  onSandboxStatus?(
-    state: "loading" | "error",
-    detail: string,
-    code?: "owner",
-  ): void;
+  onSandboxStatus?(state: "loading" | "error", detail: string): void;
+  /**
+   * Allow `url` on this page's own origin. Only a product mounted by this host
+   * from a verified archive is opened that way; any other address on this
+   * origin is refused.
+   */
+  mounted?: boolean;
 }
 
 /**
  * Embed `url` in `container` and connect it to a product runtime for
  * `productId`.
  *
- * The product runs on its own origin. That is what keeps it away from this
- * page's storage, where the wallets are, so a product must never be served
- * from this origin.
+ * An address is embedded where it is served, and an address on this page's own
+ * origin is refused: the product would sit beside the saved wallets. The one
+ * exception is a product this host mounted itself from a verified archive
+ * (`mounted`), which is served from this origin on purpose. It is a
+ * development tool, and it trusts the products its user opens.
  *
  * Frames between the product and the core pass through a router that keeps the
  * container's private authorization traffic apart from the product's own.
@@ -130,8 +134,9 @@ export async function openProduct(
     onFrameLoad,
     onDrop,
     onSandboxStatus,
+    mounted = false,
   } = options;
-  if (url.origin === window.location.origin) {
+  if (url.origin === window.location.origin && !mounted) {
     throw new Error(
       "A product on this host's own origin could read the saved wallets.",
     );
@@ -197,16 +202,11 @@ export async function openProduct(
       type?: unknown;
       state?: unknown;
       detail?: unknown;
-      code?: unknown;
     } | null;
     if (data?.type !== "truapi-sandbox" || typeof data.detail !== "string")
       return;
     if (data.state === "loading" || data.state === "error")
-      onSandboxStatus?.(
-        data.state,
-        data.detail,
-        data.code === "owner" ? "owner" : undefined,
-      );
+      onSandboxStatus?.(data.state, data.detail);
   };
   if (onSandboxStatus) window.addEventListener("message", onWindowMessage);
   return {

@@ -28,17 +28,27 @@
 
         <form id="address-form" class="address" autocomplete="off">
           <label for="address" class="visually-hidden">Product address</label>
-          <input
-            id="address"
-            type="text"
-            inputmode="url"
-            enterkeyhint="go"
-            spellcheck="false"
-            autocomplete="off"
-            autocapitalize="off"
-            autocorrect="off"
-            placeholder="URL or product name, e.g. myapp.paseo"
-          />
+          <div class="address-field">
+            <input
+              id="address"
+              type="text"
+              inputmode="url"
+              enterkeyhint="go"
+              spellcheck="false"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              placeholder="Product name or URL"
+              role="combobox"
+              aria-expanded="false"
+              aria-controls="address-recents"
+              aria-autocomplete="list"
+            />
+            <span class="address-hint" aria-hidden="true"
+              ><span id="address-hint-typed"></span
+              ><span id="address-hint-suffix"></span
+            ></span>
+          </div>
           <span id="address-id" class="address-id" hidden></span>
           <button
             id="address-go"
@@ -52,11 +62,33 @@
               <path d="M4 10h11M10.5 5.5L15 10l-4.5 4.5" />
             </svg>
           </button>
+          <ul
+            id="address-recents"
+            class="address-recents"
+            role="listbox"
+            aria-label="Recent products"
+            hidden
+          ></ul>
         </form>
 
         <div class="viewport-control">
           <label for="viewport" class="visually-hidden">Product viewport</label>
           <select id="viewport" title="Size of the product rectangle"></select>
+          <span id="viewport-custom" class="viewport-custom" hidden>
+            <input
+              id="viewport-width"
+              type="number"
+              inputmode="numeric"
+              aria-label="Width in pixels"
+            />
+            ×
+            <input
+              id="viewport-height"
+              type="number"
+              inputmode="numeric"
+              aria-label="Height in pixels"
+            />
+          </span>
           <span
             id="viewport-scale"
             class="viewport-scale"
@@ -217,6 +249,15 @@
           </div>
         </form>
         <p id="product-status" class="status">No product open.</p>
+        <button
+          id="reset-data"
+          class="quiet"
+          type="button"
+          title="Clear this product's stored data for the signed-in wallet"
+          disabled
+        >
+          Reset app data…
+        </button>
         <details class="fold" id="permissions-status">
           <summary>Host permissions</summary>
           <dl id="permissions-rows" class="versions"></dl>
@@ -229,16 +270,6 @@
 
       <details class="fold section-fold" id="developer">
         <summary>Developer</summary>
-        <label for="sandbox-origin">Sandbox origin (set by the server)</label>
-        <input
-          id="sandbox-origin"
-          type="text"
-          readonly
-          spellcheck="false"
-          autocomplete="off"
-          placeholder="Automatic on localhost"
-          title="Where products get their own origin. Fixed when the server starts, from WEB_SIGNING_SANDBOX_ORIGIN. Read-only."
-        />
         <label class="check">
           <input id="relax-container" type="checkbox" />
           Archives without the container
@@ -276,6 +307,14 @@
     <main id="stage" class="stage">
       <div id="viewport-area" class="viewport-area">
         <div id="product-frame" class="product-frame"></div>
+        <button
+          id="viewport-handle"
+          class="viewport-handle"
+          type="button"
+          aria-label="Resize the product. Drag, or use the arrow keys."
+          title="Drag to resize"
+          hidden
+        ></button>
       </div>
       <div class="stage-loading" role="status" aria-live="polite">
         <div id="stage-loading-pill" class="stage-loading-pill" hidden>
