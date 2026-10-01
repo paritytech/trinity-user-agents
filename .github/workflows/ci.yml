@@ -352,10 +352,10 @@ jobs:
           # that broke it reached a release with no gate in between.
           gate host_android '^(hosts/android/|android/truapi-host/|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|scripts/(codegen\.sh|regen-explorer-versions\.mjs)$|Cargo\.toml$|nightly-toolchain$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/actions/setup-android-build/|\.github/workflows/ci\.yml$)'
 
-          # The web signing host builds the TypeScript packages and both WASM
-          # cores from this tree, so it moves with their sources and with the
-          # generator that produces the bridge between them.
-          gate host_web_signing '^(hosts/web-signing/|js/packages/(truapi|truapi-host|truapi-provider|truapi-debugger)/|rust/crates/(truapi|truapi-provider|truapi-verifiable|truapi-codegen|truapi-macros)/|scripts/codegen\.sh$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/workflows/ci\.yml$)'
+          # The web signing host is typechecked against the TypeScript packages
+          # and the provider's generated types, so it moves with their sources
+          # and with the generator behind the client.
+          gate host_web_signing '^(hosts/web-signing/|js/packages/(truapi|truapi-host|truapi-provider|truapi-debugger)/|rust/crates/(truapi|truapi-provider|truapi-codegen|truapi-macros)/|scripts/codegen\.sh$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/workflows/ci\.yml$)'
 
           # The packaging path has its own inputs: the archive layout in the
           # Makefile, the runner bundle, the generated sources cli-dist refuses
@@ -842,12 +842,14 @@ jobs:
       - name: Test
         run: npm test --prefix js/packages/truapi-host
 
+  # Typecheck and unit tests only. The static build and the browser smoke test
+  # need the signing core, a second WASM build, so they run by hand.
   host-web-signing:
-    name: Web signing host (typecheck, unit tests, build)
+    name: Web signing host (typecheck, unit tests)
     needs: [changes, codegen]
     if: needs.changes.outputs.host_web_signing == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 20
     env:
       TRUAPI_REQUIRE_GENERATED: 1
     steps:
@@ -857,7 +859,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -881,13 +883,12 @@ jobs:
       - name: Install workspace deps
         run: npm ci --ignore-scripts
 
-      # The host consumes these packages from this tree, so it is built
-      # against the core at this commit rather than a published release.
+      # The host links these from this tree. The provider build supplies the
+      # types the host imports; no other WASM is built.
       - name: Build the packages the host links
         run: |
           npm run build --prefix js/packages/truapi
           npm run build --prefix js/packages/truapi-host
-          npm run build:wasm --prefix js/packages/truapi-host
           npm run build --prefix js/packages/truapi-provider
           npm run build --prefix js/packages/truapi-debugger
 
@@ -902,20 +903,6 @@ jobs:
       - name: Unit tests
         working-directory: hosts/web-signing
         run: npm test
-
-      - name: Build
-        working-directory: hosts/web-signing
-        run: npm run build
-
-      - name: Install Chromium
-        working-directory: hosts/web-signing
-        run: npx playwright-core install --with-deps chromium
-
-      # Loopback only: fixture servers and a stand-in for the name's chain
-      # record and gateway. No live chain, tailnet or wallet is used.
-      - name: Browser smoke test
-        working-directory: hosts/web-signing
-        run: npm run test:browser
 
   ts-debugger:
     name: "@parity/truapi-debugger"

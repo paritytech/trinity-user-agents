@@ -72,7 +72,8 @@ hosts/web-signing/         development web host: a browser tab that holds its ow
                            unpacks CAR/UnixFS content, `src/sandbox/` and
                            `sandbox-plugin.ts` are the loader page and service worker;
                            `browser/` holds its headless-Chrome smoke test
-                           (`npm run test:browser`, run in CI).
+                           (`npm run test:browser`, run by hand; CI
+                           runs typecheck and unit tests).
                            A trusted development tool with disposable plaintext wallets:
                            a product's own requests follow the browser, and it is not
                            a sandbox

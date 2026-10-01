@@ -352,9 +352,10 @@ npm run build       # tsc --noEmit && vite build
 npm run test:browser
 ```
 
-CI runs all of these in the `host-web-signing` job of `.github/workflows/ci.yml`, after building the packages this host
-links, so it runs against the core at the same commit. These are best-effort gates for a development tool: they catch a
-broken host, not a hostile product.
+CI runs `npm run typecheck` and `npm test` in the `host-web-signing` job of `.github/workflows/ci.yml`, after building
+the packages this host links. It does not run `npm run build` or `npm run test:browser`, which need the signing core's
+WASM bundle: run them by hand when the host or the core changes. These are best-effort gates for a development tool:
+they catch a broken host, not a hostile product.
 
 `npm run test:browser` is a headless-Chrome smoke test of the host page. It needs the linked packages and both WASM
 bundles built (see [Run it](#run-it)) and a Chromium: install one with `npx playwright-core install chromium`, or set
