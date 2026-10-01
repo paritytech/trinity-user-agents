@@ -43,6 +43,10 @@ export interface VersionRow {
   detail?: string;
   /** The full value behind an abbreviated one. */
   title?: string;
+  /** The exact value a click on the value copies, when it differs from what is shown. */
+  copy?: string;
+  /** The exact value a click on the detail copies. */
+  copyDetail?: string;
   state?: "unknown" | "warning";
 }
 

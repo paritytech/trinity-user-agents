@@ -5,7 +5,6 @@ import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sandboxAssets } from "./sandbox-plugin.js";
-import { parseSandboxPolicy } from "./src/sandbox/origin.js";
 import type { BuildInfo } from "./src/versions.js";
 
 const hostRoot = fileURLToPath(new URL(".", import.meta.url));
@@ -107,25 +106,11 @@ const allowedHosts = (process.env.WEB_SIGNING_ALLOWED_HOSTS ?? "")
   .map((name) => name.trim())
   .filter((name) => name !== "");
 
-/**
- * Where product origins live and which origins may embed them, chosen here by
- * whoever runs the server. The loader and the worker are built with it and
- * hold to it whatever a link says.
- */
-const sandboxPolicy = parseSandboxPolicy(
-  process.env.WEB_SIGNING_SANDBOX_ORIGIN ?? "",
-  (process.env.WEB_SIGNING_HOST_ORIGINS ?? "")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter((origin) => origin !== ""),
-);
-
 export default defineConfig({
   define: {
     __BUILD_INFO__: JSON.stringify(readBuildInfo()),
-    __SANDBOX_POLICY__: JSON.stringify(sandboxPolicy),
   },
-  plugins: [sandboxAssets(sandboxPolicy)],
+  plugins: [sandboxAssets()],
   resolve: { alias: [signingCore] },
   worker: { format: "es" },
   server: {

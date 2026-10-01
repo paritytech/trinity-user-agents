@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
+  completeAddress,
+  displayAddress,
+  implicitSuffix,
+  parseTypedAddress,
   effectiveProductId,
   effectiveProductIdFor,
   KNOWN_DOTNS_TLDS,
@@ -191,5 +195,67 @@ describe("dotNS TLDs", () => {
       (match) => match[1],
     );
     expect(KNOWN_DOTNS_TLDS).toEqual(core);
+  });
+});
+
+describe("bare product labels", () => {
+  test("a bare label means the name on this network, path and query kept", () => {
+    expect(completeAddress(" My-App ")).toBe("my-app.paseo");
+    expect(completeAddress("myapp/x?y=1#z")).toBe("myapp.paseo/x?y=1#z");
+    expect(completeAddress("polkadot://myapp")).toBe("myapp.paseo");
+    expect(parseTypedAddress("myapp")).toEqual({
+      kind: "name",
+      name: "myapp.paseo",
+      suffix: "",
+    });
+  });
+
+  // Typing the dot, a port, a scheme or brackets says the text is complete as written.
+  test("leaves everything that already says where it is", () => {
+    for (const typed of [
+      "myapp.paseo",
+      "myapp.",
+      "localhost",
+      "localhost:3000",
+      "localhost/app",
+      "devbox:3000",
+      "http://myapp",
+      "https://example.test/x",
+      "192.168.0.7:3000",
+      "[::1]:3000",
+      "3000",
+      "",
+    ])
+      expect(completeAddress(typed)).toBe(typed.trim());
+    expect(parseTypedAddress("localhost:3000").kind).toBe("url");
+    expect(() => parseTypedAddress("myapp.dot")).toThrow("another network");
+  });
+
+  test("the dimmed suffix shows only for a lone bare label", () => {
+    expect(implicitSuffix("chat-spa")).toBe(".paseo");
+    for (const typed of [
+      "chat-spa.",
+      "chat-spa.paseo",
+      "chat-spa/x",
+      "localhost",
+      "",
+    ])
+      expect(implicitSuffix(typed)).toBe("");
+  });
+
+  test("an opened name is shown without its TLD and reads back the same", () => {
+    expect(displayAddress("myapp.paseo")).toBe("myapp");
+    expect(displayAddress("myapp.paseo/x?y=1")).toBe("myapp/x?y=1");
+    expect(completeAddress(displayAddress("myapp.paseo/x?y=1"))).toBe(
+      "myapp.paseo/x?y=1",
+    );
+    // Not every name can lose its TLD and still read back as itself.
+    for (const whole of [
+      "123.paseo",
+      "localhost.paseo",
+      "http://a.test/",
+      "a.paseo.test",
+    ])
+      expect(displayAddress(whole)).toBe(whole);
   });
 });

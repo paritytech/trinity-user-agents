@@ -5,7 +5,7 @@ import type {
   PeopleChainReading,
   RingMembership,
 } from "./people-chain.js";
-import { resourceRows, type ResourcesState } from "./product-resources.js";
+import { productChainRows, type ProductChainState } from "./product-chain.js";
 import type { VersionRow } from "./versions.js";
 
 /** What the status reads of the host: the network it runs on and the wallet imported into the tab. */
@@ -197,6 +197,7 @@ function chainRows(chain: ChainState): VersionRow[] {
           value: chain.checkedAt.toLocaleTimeString(),
           detail: abbreviate(chain.reading.blockHash),
           title: `${SOURCE}\nBlock ${chain.reading.blockHash}`,
+          copyDetail: chain.reading.blockHash,
         },
       ];
   }
@@ -236,14 +237,26 @@ export function accountStatusRows(
     network,
     { label: "Session", value: "Signed in" },
     ...(context.walletName
-      ? [{ label: "Wallet", value: context.walletName }]
+      ? [
+          {
+            label: "Wallet",
+            value: context.walletName,
+            copy: context.walletName,
+          },
+        ]
       : []),
-    { label: "Root key", value: abbreviate(publicKey), title: publicKey },
+    {
+      label: "Root key",
+      value: abbreviate(publicKey),
+      title: publicKey,
+      copy: publicKey,
+    },
     identityAccountId
       ? {
           label: "Identity account",
           value: abbreviate(identityAccountId),
           title: `${identityAccountId}\nDerived from the recovery phrase for ${context.networkSuffix}.`,
+          copy: identityAccountId,
         }
       : {
           label: "Identity account",
@@ -254,6 +267,7 @@ export function accountStatusRows(
       ? [
           {
             label: "Session username",
+            copy: reported,
             value: reported,
             detail: fullUsername ? "full" : "lite",
           },
@@ -271,21 +285,25 @@ export type ProductAllowanceView =
   | { state: "done"; productId: string; record: AllocationRecord };
 
 /**
- * Rows for the open product's resources.
+ * Rows for the open product's Statement Store allowance.
  *
- * The core's own ledger records whether it completed a Statement Store
- * allocation for this product. It is local and historical: it is written after
- * the chain accepted an allocation and says nothing about the chain now. What
- * the chains hold now comes from `resources`, which the core read for the same
- * product; a read for another product is not shown.
+ * Only the core's own ledger can be shown. It records whether the core
+ * completed an allocation for this product, which is local and written only
+ * after the chain accepted it. It is history, not a check of the chain now: the
+ * allowance account is derived from the wallet's secret entropy, which the
+ * core keeps, and the core exports no read-only call for it.
  */
 export function productAllowanceRows(
   view: ProductAllowanceView,
-  resources: ResourcesState = { state: "idle" },
+  chain: ProductChainState = { state: "idle" },
 ): VersionRow[] {
   if (view.state === "none-open")
     return [{ label: "Product", value: "None open", state: "unknown" }];
-  const product: VersionRow = { label: "Product", value: view.productId };
+  const product: VersionRow = {
+    label: "Product",
+    value: view.productId,
+    copy: view.productId,
+  };
   if (view.state === "signed-out")
     return [
       product,
@@ -321,9 +339,9 @@ export function productAllowanceRows(
             state: "warning",
             title: "The stored ledger is not the layout this reads.",
           };
-  const forThisProduct: ResourcesState =
-    resources.state !== "idle" && resources.productId === view.productId
-      ? resources
+  const forThisProduct: ProductChainState =
+    chain.state !== "idle" && chain.productId === view.productId
+      ? chain
       : { state: "idle" };
-  return [product, record, ...resourceRows(forThisProduct)];
+  return [product, record, ...productChainRows(forThisProduct)];
 }

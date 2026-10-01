@@ -1,9 +1,4 @@
-/**
- * Protections a developer can turn off for one tab, each on purpose.
- *
- * The separation between a product's origin and this host's wallets is not on
- * this list and cannot be turned off.
- */
+/** Protections a developer can turn off for one tab, each on purpose. */
 export interface Relaxations {
   /** Serve a product archive without the container, so its requests are not gated. */
   archiveWithoutContainer: boolean;

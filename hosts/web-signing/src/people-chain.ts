@@ -229,6 +229,7 @@ export async function readStorageValues(
   keys: HexString[],
   timeoutMs: number = READ_TIMEOUT_MS,
   followUps: FollowUp[] = [],
+  chainName = "People",
 ): Promise<{
   blockHash: HexString;
   values: (HexString | null)[];
@@ -238,7 +239,9 @@ export async function readStorageValues(
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       reject(
-        new Error(`no answer from the People chain after ${timeoutMs / 1000}s`),
+        new Error(
+          `no answer from the ${chainName} chain after ${timeoutMs / 1000}s`,
+        ),
       );
     }, timeoutMs);
   });
