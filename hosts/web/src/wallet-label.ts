@@ -1,3 +1,5 @@
+import { DEFAULT_NETWORK, normalizeNetwork } from "./network-scope.js";
+
 /** The default name an imported wallet gets when none is typed. */
 const GENERIC_NAME = "Imported wallet";
 
@@ -15,6 +17,20 @@ export interface WalletPublicInfo {
 
 const KEY_PREFIX = "truapi-web-signing-host:wallet-public:v1:";
 
+/**
+ * The storage key one network keeps a wallet's public facts under. A network
+ * other than the default gets a `network:<id>:` segment; the default keeps the
+ * original key. The root public key is the same on every network, but the
+ * record is per network so a username learned on one network never shows on
+ * another.
+ */
+function keyFor(walletId: string, network: string): string {
+  const id = normalizeNetwork(network);
+  return id === DEFAULT_NETWORK
+    ? KEY_PREFIX + walletId
+    : `truapi-web-signing-host:network:${id}:wallet-public:v1:${walletId}`;
+}
+
 function isInfo(value: unknown): value is WalletPublicInfo {
   if (typeof value !== "object" || value === null) return false;
   const { publicKey, username } = value as Record<string, unknown>;
@@ -24,19 +40,22 @@ function isInfo(value: unknown): value is WalletPublicInfo {
   );
 }
 
-/** The public facts kept per wallet id, in this browser. */
+/** The public facts kept per wallet and network, in this browser. */
 export class WalletPublicInfoStore {
   constructor(
     private readonly storage: Pick<
       Storage,
-      "getItem" | "setItem" | "removeItem"
+      "getItem" | "setItem" | "removeItem" | "length" | "key"
     >,
   ) {}
 
-  get(walletId: string): WalletPublicInfo | undefined {
+  get(
+    walletId: string,
+    network: string = DEFAULT_NETWORK,
+  ): WalletPublicInfo | undefined {
     try {
       const value: unknown = JSON.parse(
-        this.storage.getItem(KEY_PREFIX + walletId) ?? "null",
+        this.storage.getItem(keyFor(walletId, network)) ?? "null",
       );
       return isInfo(value) ? value : undefined;
     } catch {
@@ -45,20 +64,22 @@ export class WalletPublicInfoStore {
   }
 
   /**
-   * Keep what is known. A new key replaces an old one with its username dropped,
-   * because the name belonged to the old key. A name is kept when the key is the same.
+   * Keep what is known for this wallet on this network. A new key replaces an
+   * old one with its username dropped, because the name belonged to the old
+   * key. A name is kept when the key is the same.
    */
   update(
     walletId: string,
     next: { publicKey: string; username?: string },
+    network: string = DEFAULT_NETWORK,
   ): void {
-    const known = this.get(walletId);
+    const known = this.get(walletId, network);
     const username =
       next.username ??
       (known?.publicKey === next.publicKey ? known.username : undefined);
     try {
       this.storage.setItem(
-        KEY_PREFIX + walletId,
+        keyFor(walletId, network),
         JSON.stringify(
           username === undefined
             ? { publicKey: next.publicKey }
@@ -70,8 +91,23 @@ export class WalletPublicInfoStore {
     }
   }
 
+  /**
+   * Drop a wallet's public facts on every network, as when the wallet is
+   * forgotten. The facts are public, but a forgotten wallet should leave none.
+   */
   forget(walletId: string): void {
-    this.storage.removeItem(KEY_PREFIX + walletId);
+    const suffix = `wallet-public:v1:${walletId}`;
+    for (const key of this.keys())
+      if (key.endsWith(suffix)) this.storage.removeItem(key);
+  }
+
+  private keys(): string[] {
+    const keys: string[] = [];
+    for (let index = 0; index < this.storage.length; index += 1) {
+      const key = this.storage.key(index);
+      if (key !== null) keys.push(key);
+    }
+    return keys;
   }
 }
 

@@ -1,4 +1,5 @@
-import { PASEO_DOTNS, type SkippedRecord } from "./dotns.js";
+import { type SkippedRecord } from "./dotns.js";
+import type { NetworkConfig } from "./network-config.js";
 
 /** How the open product was reached, for the bar and the status line. */
 export interface Opened {
@@ -52,6 +53,7 @@ export function productStatusText(
 export function productDetailsText(
   open: ProductView,
   how: Opened | null,
+  network: NetworkConfig,
 ): string {
   if (how?.via !== "name" || how.cid === undefined) return "";
   const skipped = (how.skipped ?? []).map(
@@ -62,8 +64,8 @@ export function productDetailsText(
     `CID: ${how.cid}`,
     ...skipped,
     `Served from: ${how.mount ?? open.url.pathname} on this host's origin, for this wallet and product only`,
-    `Blocks: each checked against its CID. Gateway: ${PASEO_DOTNS.contentGateway} (not trusted).`,
-    `Name: read from ${PASEO_DOTNS.assetHubRpc} (trusted, unverified).`,
+    `Blocks: each checked against its CID. Gateway: ${network.dotns.contentGateway} (not trusted).`,
+    `Name: read from ${network.dotns.assetHubRpc} (trusted, unverified).`,
   ].join("\n");
 }
 

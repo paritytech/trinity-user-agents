@@ -93,6 +93,77 @@ describe("HostStorage", () => {
   });
 });
 
+describe("HostStorage networks", () => {
+  // Paseo is the network that was there first, so its keys must not move.
+  test("keeps the default network's original keys", async () => {
+    const { backing, storage } = storageWithExternalChanges();
+    storage.useWallet("alice");
+    await storage.product.write("counter", bytes(1));
+    expect(backing.getItem("truapi-web-signing-host:product:alice:counter")).toBe(
+      "0x01",
+    );
+  });
+
+  // The same wallet on two networks must not share grants, keys or product data.
+  test("keeps the same wallet's data apart on two networks", async () => {
+    const { storage } = storageWithExternalChanges();
+    storage.useWallet("alice", "paseo");
+    await storage.product.write("counter", bytes(1));
+    await storage.core.writeCoreStorage({ tag: "AutoSigningKeys" }, bytes(2));
+
+    storage.useWallet("alice", "previewnet");
+    expect(await storage.product.read("counter")).toBeUndefined();
+    expect(
+      await storage.core.readCoreStorage({ tag: "AutoSigningKeys" }),
+    ).toBeUndefined();
+    await storage.product.write("counter", bytes(9));
+
+    storage.useWallet("alice", "paseo");
+    expect(await storage.product.read("counter")).toEqual(bytes(1));
+    expect(
+      await storage.core.readCoreStorage({ tag: "AutoSigningKeys" }),
+    ).toEqual(bytes(2));
+  });
+
+  // Peers address this device by the key, so it is one per browser profile and
+  // takes no network namespace.
+  test("keeps the device encryption key shared across networks", async () => {
+    const { storage } = storageWithExternalChanges();
+    storage.useWallet("alice", "previewnet");
+    await storage.core.writeCoreStorage(
+      { tag: "DeviceEncryptionKey" },
+      bytes(7),
+    );
+
+    storage.useWallet("alice", "paseo");
+    expect(
+      await storage.core.readCoreStorage({ tag: "DeviceEncryptionKey" }),
+    ).toEqual(bytes(7));
+    storage.useWallet(null, "previewnet");
+    expect(
+      await storage.core.readCoreStorage({ tag: "DeviceEncryptionKey" }),
+    ).toEqual(bytes(7));
+  });
+
+  test("resets only the active network's product data", async () => {
+    const { storage } = storageWithExternalChanges();
+    const coreKey = (productId: string, key: string) =>
+      `truapi:product-storage:v1:${new TextEncoder().encode(productId).length}:${productId}:${key}`;
+    storage.useWallet("alice", "paseo");
+    await storage.product.write(coreKey("app.paseo", "a"), bytes(1));
+    storage.useWallet("alice", "previewnet");
+    await storage.product.write(coreKey("app.paseo", "a"), bytes(2));
+
+    expect(storage.clearProductData("app.paseo")).toBe(1);
+
+    expect(await storage.product.read(coreKey("app.paseo", "a"))).toBeUndefined();
+    storage.useWallet("alice", "paseo");
+    expect(await storage.product.read(coreKey("app.paseo", "a"))).toEqual(
+      bytes(1),
+    );
+  });
+});
+
 describe("HostStorage.clearProductData", () => {
   /** The key the core hands the host: product-scoped, length-prefixed. */
   const coreKey = (productId: string, key: string) =>

@@ -29,10 +29,23 @@ import { bindRecentsMenu } from "./address-recents.js";
 import { bindChrome } from "./chrome.js";
 import { copyInPage } from "./copy.js";
 import { bindDockResize } from "./dock-resize.js";
-import { PASEO_DOTNS, resolveSource } from "./dotns.js";
+import { resolveSource } from "./dotns.js";
 import { createFrameTap } from "./frame-tap.js";
 import { createHostCallbacks } from "./callbacks.js";
-import { connectPaseo, type Network } from "./network.js";
+import { connectNetwork, type Network } from "./network.js";
+import {
+  NETWORKS,
+  networkConfig,
+  type NetworkConfig,
+} from "./network-config.js";
+import { DEFAULT_NETWORK } from "./network-scope.js";
+import {
+  chosenNetwork,
+  rememberNetwork,
+  tabProductKey,
+  tabWalletKey,
+  type NetworkChoice,
+} from "./network-choice.js";
 import { ask } from "./prompt.js";
 import { RecentProducts } from "./recents.js";
 import { readPeopleChain } from "./people-chain.js";
@@ -67,13 +80,25 @@ import {
 import { walletPanel, type WalletMode } from "./wallet-panel.js";
 import { WalletStore, type Wallet } from "./wallets.js";
 
-/** The wallet this tab is signed in with, kept across reloads of the tab only. */
-const TAB_WALLET_KEY = "truapi-web-signing-host:tab-wallet";
-/** The product this tab last opened, so a reload brings it back. */
-const TAB_PRODUCT_KEY = "truapi-web-signing-host:tab-product";
 const MAX_LOG_LINES = 500;
 /** This host's directory on its origin, from the build's base. Mounted products live under it. */
 const BASE = hostBase(import.meta.env.BASE_URL, window.location.href);
+
+/** The networks the compact menu offers, from the one catalog this host serves. */
+const OFFERED_NETWORKS: NetworkChoice[] = Object.values(NETWORKS).map(
+  (network) => ({ id: network.id, label: network.displayName }),
+);
+
+/**
+ * The network this tab runs on, chosen before the core starts.
+ *
+ * The choice is per tab and applied by reloading, so the core, the wallet
+ * session and every open product are built for one network and never switched
+ * under a live page.
+ */
+const activeNetwork: NetworkConfig = networkConfig(
+  chosenNetwork(sessionStorage, OFFERED_NETWORKS, DEFAULT_NETWORK),
+);
 
 function element<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -213,6 +238,16 @@ function renderVersions(coreSchema: string | undefined): void {
 }
 renderVersions(undefined);
 
+const networkSelect = element<HTMLSelectElement>("network");
+networkSelect.replaceChildren(
+  ...OFFERED_NETWORKS.map((choice) => new Option(choice.label, choice.id)),
+);
+networkSelect.value = activeNetwork.id;
+networkSelect.addEventListener("change", () => {
+  rememberNetwork(sessionStorage, networkSelect.value);
+  window.location.reload();
+});
+
 function log(text: string): void {
   const line = document.createElement("li");
   line.textContent = `${new Date().toLocaleTimeString()} ${text}`;
@@ -301,7 +336,10 @@ function renderWallets(): void {
   walletSelect.replaceChildren(
     ...saved.map(
       (wallet) =>
-        new Option(walletLabel(wallet, walletInfo.get(wallet.id)), wallet.id),
+        new Option(
+          walletLabel(wallet, walletInfo.get(wallet.id, activeNetwork.id)),
+          wallet.id,
+        ),
     ),
   );
   if (saved.length === 0 && problem !== null) {
@@ -339,14 +377,15 @@ function renderControls(): void {
  * loaded until Enter, the go button or the menu's Open button.
  */
 function renderAddress(): void {
-  const typed = completeAddress(addressInput.value);
+  const typed = completeAddress(addressInput.value, activeNetwork);
   const dirty =
-    typed !== "" && typed !== completeAddress(opened?.address ?? "");
+    typed !== "" &&
+    typed !== completeAddress(opened?.address ?? "", activeNetwork);
   addressForm.dataset.dirty = String(dirty);
   // The dimmed TLD follows a bare label. A leading space would shift it, so it waits.
   const suffix =
     addressInput.value === addressInput.value.trim()
-      ? implicitSuffix(addressInput.value)
+      ? implicitSuffix(addressInput.value, activeNetwork)
       : "";
   addressHintTyped.textContent = suffix === "" ? "" : addressInput.value;
   addressHintSuffix.textContent = suffix;
@@ -367,7 +406,7 @@ function renderEffectiveId(): void {
     text = "Enter an address.";
   } else {
     try {
-      const address = parseTypedAddress(addressInput.value);
+      const address = parseTypedAddress(addressInput.value, activeNetwork);
       const effective = effectiveProductIdFor(address, productIdInput.value);
       source = effective.source;
       if (!effective.usable) {
@@ -409,7 +448,9 @@ function renderProduct(): void {
   productStatus.textContent = product
     ? productStatusText(product, opened, sandboxStatus, window.isSecureContext)
     : "No product open.";
-  const details = product ? productDetailsText(product, opened) : "";
+  const details = product
+    ? productDetailsText(product, opened, activeNetwork)
+    : "";
   productDetails.textContent = details;
   productMore.hidden = details === "";
   renderControls();
@@ -452,7 +493,9 @@ function renderAccountStatus(): void {
       accountStatusRows(
         lastAuthState,
         {
-          networkSuffix: chainAccess?.networkSuffix ?? "paseo",
+          networkName: activeNetwork.displayName,
+          networkSuffix:
+            chainAccess?.networkSuffix ?? activeNetwork.networkSuffix,
           walletName: activeWallet?.name ?? null,
         },
         chainState,
@@ -628,7 +671,11 @@ async function refreshChainStatus(): Promise<void> {
     chainState = { state: "done", checkedAt: new Date(), reading };
     const found = usernameFrom(reading.readings);
     if (found !== undefined && activeWallet !== null) {
-      walletInfo.update(activeWallet.id, { publicKey, username: found });
+      walletInfo.update(
+        activeWallet.id,
+        { publicKey, username: found },
+        activeNetwork.id,
+      );
       renderWallets();
     }
   } catch (error) {
@@ -665,10 +712,11 @@ function renderSession(state: AuthState): void {
   if (state.tag === "Connected" && activeWallet !== null) {
     // Public facts only, kept so the picker can tell wallets apart signed out.
     const { publicKey, fullUsername, liteUsername } = state.value;
-    walletInfo.update(activeWallet.id, {
-      publicKey,
-      username: fullUsername ?? liteUsername ?? undefined,
-    });
+    walletInfo.update(
+      activeWallet.id,
+      { publicKey, username: fullUsername ?? liteUsername ?? undefined },
+      activeNetwork.id,
+    );
     renderWallets();
   }
   trackChainAccount(state);
@@ -728,26 +776,26 @@ function changeSession(
 function signIn(wallet: Wallet): Promise<void> {
   return changeSession(async (runtime) => {
     if (activeWallet) await signOutOf(runtime);
-    storage.useWallet(wallet.id);
+    storage.useWallet(wallet.id, activeNetwork.id);
     activeWallet = wallet;
     try {
       await runtime.activateLocalSession(wallet.entropy);
     } catch (error) {
-      storage.useWallet(null);
+      storage.useWallet(null, activeNetwork.id);
       activeWallet = null;
       throw new Error(
         `Could not sign in with ${wallet.name}: ${String(error)}`,
       );
     }
-    sessionStorage.setItem(TAB_WALLET_KEY, wallet.id);
+    sessionStorage.setItem(tabWalletKey(activeNetwork.id), wallet.id);
     log(`signed in with ${wallet.name}`);
   });
 }
 
 async function signOutOf(runtime: WorkerPairingHostRuntime): Promise<void> {
   await runtime.disconnectSession();
-  storage.useWallet(null);
-  sessionStorage.removeItem(TAB_WALLET_KEY);
+  storage.useWallet(null, activeNetwork.id);
+  sessionStorage.removeItem(tabWalletKey(activeNetwork.id));
   log(`signed out of ${activeWallet?.name ?? "wallet"}`);
   activeWallet = null;
 }
@@ -784,10 +832,10 @@ async function resolveTarget(
     ? `${address.name}/${address.suffix}`
     : address.name;
   requireSecureHost(window.isSecureContext, window.location.origin);
-  productStatus.textContent = `Resolving ${address.name} on Paseo Asset Hub…`;
+  productStatus.textContent = `Resolving ${address.name} on ${activeNetwork.displayName} Asset Hub…`;
   let choice: Awaited<ReturnType<typeof resolveSource>>;
   try {
-    choice = await resolveSource(address.name);
+    choice = await resolveSource(address.name, activeNetwork);
   } catch (error) {
     throw new Error(
       `Could not read ${address.name}: ${errorText(error)}. Check the connection, or enter a URL.`,
@@ -799,6 +847,7 @@ async function resolveTarget(
     walletId: activeWallet?.id ?? "signed-out",
     productId,
     cid: source.cid,
+    network: activeNetwork.id,
   });
   return {
     address: shown,
@@ -812,7 +861,7 @@ async function resolveTarget(
       base: BASE,
       origin: window.location.origin,
       scope,
-      gateway: PASEO_DOTNS.contentGateway,
+      gateway: activeNetwork.dotns.contentGateway,
       kind: source.kind,
       start: `/${address.suffix}`,
     }),
@@ -870,16 +919,16 @@ async function openTarget(
     openedWithOverride = entered;
     askedDomains = [];
     overrideOrigin = entered ? scope : null;
-    addressInput.value = displayAddress(target.address);
+    addressInput.value = displayAddress(target.address, activeNetwork);
     renderProduct();
-    recents.record(recentScope(), {
-      address: target.address,
-      productId,
-      entered,
-    });
+    recents.record(
+      recentScope(),
+      { address: target.address, productId, entered },
+      activeNetwork.id,
+    );
     recentsMenu.refresh();
     sessionStorage.setItem(
-      TAB_PRODUCT_KEY,
+      tabProductKey(activeNetwork.id),
       JSON.stringify({ address: target.address, productId }),
     );
     log(
@@ -967,7 +1016,7 @@ window.addEventListener("storage", (event) => {
 function openAddress(): void {
   let address: Address;
   try {
-    address = parseTypedAddress(addressInput.value);
+    address = parseTypedAddress(addressInput.value, activeNetwork);
   } catch (error) {
     productStatus.textContent = errorText(error);
     log(productStatus.textContent);
@@ -994,13 +1043,15 @@ function recentScope(): string {
 const recentsMenu = bindRecentsMenu({
   input: addressInput,
   list: recentsList,
-  entries: () => recents.list(recentScope()),
+  network: activeNetwork,
+  entries: () => recents.list(recentScope(), activeNetwork.id),
   untouched: () =>
-    addressInput.value.trim() === displayAddress(opened?.address ?? ""),
+    addressInput.value.trim() ===
+    displayAddress(opened?.address ?? "", activeNetwork),
   choose(entry) {
     // The entry brings its own product id, or none, so a replay never
     // inherits whatever id is entered now.
-    addressInput.value = displayAddress(entry.address);
+    addressInput.value = displayAddress(entry.address, activeNetwork);
     productIdInput.value = entry.entered ? entry.productId : "";
     renderAddress();
     openAddress();
@@ -1083,7 +1134,7 @@ addressInput.addEventListener("input", renderAddress);
 addressInput.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (recentsMenu.close()) return;
-  addressInput.value = displayAddress(opened?.address ?? "");
+  addressInput.value = displayAddress(opened?.address ?? "", activeNetwork);
   renderAddress();
   addressInput.blur();
 });
@@ -1098,17 +1149,17 @@ productIdReset.addEventListener("click", () => {
 closeButton.addEventListener("click", () => {
   void serial(async () => {
     closeProduct();
-    sessionStorage.removeItem(TAB_PRODUCT_KEY);
+    sessionStorage.removeItem(tabProductKey(activeNetwork.id));
     log("closed the product");
   });
 });
 
 async function boot(): Promise<void> {
-  const network = await connectPaseo();
-  chainAccess = network;
+  const connection = await connectNetwork(activeNetwork);
+  chainAccess = connection;
   renderAccountStatus();
   const callbacks = createHostCallbacks({
-    network,
+    network: connection,
     storage,
     log,
     onAuthState: renderSession,
@@ -1127,15 +1178,15 @@ async function boot(): Promise<void> {
     hostConfig: {
       host: { name: "TrUAPI Web Host", platform: "Web" },
       platform: { type: "browser", version: navigator.userAgent },
-      people: { genesisHash: network.genesis.people },
-      bulletin: { genesisHash: network.genesis.bulletin },
-      assetHub: { genesisHash: network.genesis.assetHub },
+      people: { genesisHash: connection.genesis.people },
+      bulletin: { genesisHash: connection.genesis.bulletin },
+      assetHub: { genesisHash: connection.genesis.assetHub },
       // Required by the config type; a signing host never pairs.
       pairing: { deeplinkScheme: "polkadotapp" },
-      networkSuffix: network.networkSuffix,
+      networkSuffix: connection.networkSuffix,
     },
   });
-  coreStatus.textContent = `Core ready on Paseo · wire schema ${runtime.coreWireSchemaHash?.slice(0, 12) ?? "unknown"}`;
+  coreStatus.textContent = `Core ready on ${activeNetwork.displayName} · wire schema ${runtime.coreWireSchemaHash?.slice(0, 12) ?? "unknown"}`;
   log("core ready");
   renderVersions(runtime.coreWireSchemaHash);
   if (runtime.coreWireSchemaHash !== TRUAPI_WIRE_SCHEMA_HASH)
@@ -1145,7 +1196,9 @@ async function boot(): Promise<void> {
     );
   renderWallets();
 
-  const tabWallet = wallets.find(sessionStorage.getItem(TAB_WALLET_KEY) ?? "");
+  const tabWallet = wallets.find(
+    sessionStorage.getItem(tabWalletKey(activeNetwork.id)) ?? "",
+  );
   if (tabWallet) {
     walletSelect.value = tabWallet.id;
     await signIn(tabWallet);
@@ -1163,7 +1216,7 @@ async function boot(): Promise<void> {
   // wallet. A link's `product` parameter never does.
   const last = readTabProduct();
   if (last && !params.has("product")) {
-    addressInput.value = displayAddress(last.address);
+    addressInput.value = displayAddress(last.address, activeNetwork);
     const derived = effectiveProductIdFor(last.parsed, "").id;
     const entered = last.productId !== derived;
     if (entered) productIdInput.value = last.productId;
@@ -1182,13 +1235,13 @@ function readTabProduct(): {
 } | null {
   try {
     const stored: unknown = JSON.parse(
-      sessionStorage.getItem(TAB_PRODUCT_KEY) ?? "null",
+      sessionStorage.getItem(tabProductKey(activeNetwork.id)) ?? "null",
     );
     if (typeof stored !== "object" || stored === null) return null;
     const { address, productId } = stored as Record<string, unknown>;
     if (typeof address !== "string" || typeof productId !== "string")
       return null;
-    return { address, productId, parsed: parseTypedAddress(address) };
+    return { address, productId, parsed: parseTypedAddress(address, activeNetwork) };
   } catch {
     return null;
   }

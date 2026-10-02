@@ -10,6 +10,9 @@ import type { VersionRow } from "./versions.js";
 
 /** What the status reads of the host: the network it runs on and the wallet imported into the tab. */
 export interface AccountContext {
+  /** The network's human name, such as `PreviewNet`. */
+  networkName: string;
+  /** The network's dotNS TLD and identity suffix, such as `paseo`, `testnet`. */
   networkSuffix: string;
   walletName: string | null;
 }
@@ -219,7 +222,8 @@ export function accountStatusRows(
 ): VersionRow[] {
   const network: VersionRow = {
     label: "Network",
-    value: context.networkSuffix,
+    value: context.networkName,
+    detail: context.networkSuffix,
   };
   if (state.tag !== "Connected") {
     const value =

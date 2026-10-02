@@ -12,6 +12,7 @@ import {
   parseAddress,
 } from "./address.js";
 import { parseProductUrl } from "./product.js";
+import { NETWORKS } from "./network-config.js";
 
 describe("normalizeAddress", () => {
   test("adds http to a bare host and port", () => {
@@ -257,5 +258,63 @@ describe("bare product labels", () => {
       "a.paseo.test",
     ])
       expect(displayAddress(whole)).toBe(whole);
+  });
+});
+
+describe("product-name routing on PreviewNet", () => {
+  const previewnet = NETWORKS.previewnet;
+
+  test("opens a name on the active network's TLD", () => {
+    expect(parseAddress("myapp.testnet", previewnet)).toEqual({
+      kind: "name",
+      name: "myapp.testnet",
+      suffix: "",
+    });
+    expect(parseAddress("myapp.testnet/a?x=1#top", previewnet)).toEqual({
+      kind: "name",
+      name: "myapp.testnet",
+      suffix: "a?x=1#top",
+    });
+  });
+
+  // A name on another known dotNS network must not be opened as a web address,
+  // and the message has to name the network this host is actually on.
+  test("explains a name on a network this host is not connected to", () => {
+    expect(() => parseAddress("myapp.paseo", previewnet)).toThrow(
+      "another network",
+    );
+    expect(() => parseAddress("myapp.paseo", previewnet)).toThrow("PreviewNet");
+    expect(() => parseAddress("myapp.dot", previewnet)).toThrow(
+      "another network",
+    );
+  });
+
+  test("completes a bare label with the active TLD and shows it dimmed", () => {
+    expect(completeAddress("myapp", previewnet)).toBe("myapp.testnet");
+    expect(completeAddress("myapp/x", previewnet)).toBe("myapp.testnet/x");
+    expect(implicitSuffix("myapp", previewnet)).toBe(".testnet");
+    expect(parseTypedAddress("myapp", previewnet)).toEqual({
+      kind: "name",
+      name: "myapp.testnet",
+      suffix: "",
+    });
+  });
+
+  test("shows an opened name without the active TLD", () => {
+    expect(displayAddress("myapp.testnet", previewnet)).toBe("myapp");
+    expect(displayAddress("myapp.testnet/x?y=1", previewnet)).toBe("myapp/x?y=1");
+    expect(displayAddress("myapp.paseo", previewnet)).toBe("myapp.paseo");
+  });
+
+  test("points the active network's public gateway back at the name", () => {
+    expect(() => parseAddress("https://myapp.testnet.li/", previewnet)).toThrow(
+      "Type myapp.testnet instead",
+    );
+  });
+
+  test("keeps URLs, localhost and LAN addresses working", () => {
+    expect(parseAddress("localhost:3000", previewnet).kind).toBe("url");
+    expect(parseAddress("192.168.0.7:3000/app", previewnet).kind).toBe("url");
+    expect(parseAddress("https://example.test/x", previewnet).kind).toBe("url");
   });
 });

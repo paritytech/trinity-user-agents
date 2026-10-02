@@ -8,14 +8,15 @@ import type {
   ProductStorage,
 } from "@parity/truapi-host";
 import { normalizeProductId } from "./allowance-ledger.js";
+import { DEFAULT_NETWORK, normalizeNetwork } from "./network-scope.js";
 import { subscription } from "./subscription.js";
 
 const PREFIX = "truapi-web-signing-host";
 const SIGNED_OUT_SCOPE = "signed-out";
 /**
- * The device encryption key outlives logout and any per-user namespacing, as
- * `CoreStorageKey::DeviceEncryptionKey` requires, so it is kept once per
- * browser profile rather than once per wallet.
+ * The device encryption key outlives logout, any per-user namespacing and any
+ * per-network namespacing, as `CoreStorageKey::DeviceEncryptionKey` requires,
+ * so it is kept once per browser profile.
  */
 const INSTALL_SCOPE = "install";
 
@@ -25,15 +26,21 @@ export type ExternalChanges = (
 ) => () => void;
 
 /**
- * Product and core storage, namespaced by the active wallet.
+ * Product and core storage, namespaced by the active wallet and network.
  *
- * Tabs share `localStorage`, and each tab can hold a different wallet. Without
- * a namespace one wallet's grants, AutoSigning keys and product data would be
- * read, and overwritten, by a session activated from another. Call
- * {@link useWallet} before activating a session and after disconnecting it.
+ * Tabs share `localStorage`, and each tab can hold a different wallet, and the
+ * same wallet can be used on more than one network. Without a namespace one
+ * wallet's grants, AutoSigning keys and product data would be read, and
+ * overwritten, by a session activated from another wallet or another network.
+ * Call {@link useWallet} before activating a session and after disconnecting it.
+ *
+ * A network other than {@link DEFAULT_NETWORK} gets a `network:<id>:` key
+ * segment; the default network keeps the original keys, so data written before
+ * networks were separated stays readable.
  */
 export class HostStorage {
   private scope = SIGNED_OUT_SCOPE;
+  private network = DEFAULT_NETWORK;
   private readonly listeners = new Map<string, Set<() => void>>();
 
   constructor(
@@ -41,9 +48,15 @@ export class HostStorage {
     private readonly externalChanges: ExternalChanges,
   ) {}
 
-  /** Namespace every later read and write under `walletId`, or signed out. */
-  useWallet(walletId: string | null): void {
+  /**
+   * Namespace every later read and write under `walletId` and `network`, or
+   * signed out. The network defaults to Paseo so a caller that has not been
+   * given one keeps its old keys; pass the tab's network explicitly to keep two
+   * networks' data apart.
+   */
+  useWallet(walletId: string | null, network: string = DEFAULT_NETWORK): void {
     this.scope = walletId ?? SIGNED_OUT_SCOPE;
+    this.network = normalizeNetwork(network);
   }
 
   readonly product: ProductStorage = {
@@ -110,14 +123,21 @@ export class HostStorage {
     },
   };
 
+  /** The network's part of a key, empty for the network that keeps the original keys. */
+  private networkPrefix(): string {
+    return this.network === DEFAULT_NETWORK ? "" : `network:${this.network}:`;
+  }
+
   private productSlot(key: string): string {
-    return `${PREFIX}:product:${this.scope}:${key}`;
+    return `${PREFIX}:${this.networkPrefix()}product:${this.scope}:${key}`;
   }
 
   private coreSlot(key: CoreStorageKey): string {
-    const scope =
-      key.tag === "DeviceEncryptionKey" ? INSTALL_SCOPE : this.scope;
-    return `${PREFIX}:core:${scope}:${bytesToHex(encodeCoreStorageKey(key))}`;
+    // The device key is one per browser profile, so it takes neither the
+    // wallet's nor the network's namespace (`CoreStorageKey::DeviceEncryptionKey`).
+    if (key.tag === "DeviceEncryptionKey")
+      return `${PREFIX}:core:${INSTALL_SCOPE}:${bytesToHex(encodeCoreStorageKey(key))}`;
+    return `${PREFIX}:${this.networkPrefix()}core:${this.scope}:${bytesToHex(encodeCoreStorageKey(key))}`;
   }
 
   private readBytes(slot: string): Uint8Array | undefined {
