@@ -1,4 +1,4 @@
-import { PASEO_DOTNS } from "./dotns.js";
+import { DEFAULT_NETWORK_CONFIG, type NetworkConfig } from "./network-config.js";
 import { parseProductUrl, productIdFor } from "./product.js";
 
 const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
@@ -34,9 +34,6 @@ export type Address =
       suffix: string;
     };
 
-/** The public gateway suffixes known to serve the browser shell and refuse framing. */
-const SHELL_GATEWAY = `.${PASEO_DOTNS.tld}.li`;
-
 /** One DNS-style label: lower case letters, digits and inner hyphens. */
 const LABEL = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
@@ -48,13 +45,16 @@ const LABEL = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
  * `http://myapp.paseo/` both mean the name. Plain URLs, `localhost` and LAN
  * addresses keep their meaning.
  */
-export function parseAddress(raw: string): Address {
+export function parseAddress(
+  raw: string,
+  network: NetworkConfig = DEFAULT_NETWORK_CONFIG,
+): Address {
   const typed = raw.trim();
   const named = typed.replace(/^polkadot:\/\//i, "http://");
   const url = parseProductUrl(normalizeAddress(named));
   const host = url.hostname.toLowerCase();
 
-  if (host.endsWith(SHELL_GATEWAY)) {
+  if (host.endsWith(`.${network.webGateway}`)) {
     const name = host.slice(0, -".li".length);
     throw new Error(
       `${host} is the public gateway page. It serves the Polkadot browser shell and refuses to be embedded. Type ${name} instead.`,
@@ -65,7 +65,7 @@ export function parseAddress(raw: string): Address {
   if (!host.includes(".") || !KNOWN_DOTNS_TLDS.includes(tld)) {
     if (/^polkadot:/i.test(typed))
       throw new Error(
-        "A polkadot:// address must be a dotNS name such as myapp.paseo.",
+        `A polkadot:// address must be a dotNS name such as myapp.${network.networkSuffix}.`,
       );
     return { kind: "url", url };
   }
@@ -74,14 +74,14 @@ export function parseAddress(raw: string): Address {
     throw new Error(
       `A dotNS name takes no port or credentials. Type ${host} on its own.`,
     );
-  if (tld !== PASEO_DOTNS.tld)
+  if (tld !== network.networkSuffix)
     throw new Error(
-      `.${tld} names belong to another network. This host is connected to Paseo and opens .${PASEO_DOTNS.tld} names.`,
+      `.${tld} names belong to another network. This host is connected to ${network.displayName} and opens .${network.networkSuffix} names.`,
     );
   const labels = host.split(".");
   if (labels.length !== 2 || !LABEL.test(labels[0]) || labels[0].length > 63)
     throw new Error(
-      `${host} is not a product name. A name is one label and the TLD, for example myapp.${PASEO_DOTNS.tld}, using letters, digits and hyphens.`,
+      `${host} is not a product name. A name is one label and the TLD, for example myapp.${network.networkSuffix}, using letters, digits and hyphens.`,
     );
   return {
     kind: "name",
@@ -140,7 +140,8 @@ export function effectiveProductIdFor(
 const BARE_LABEL = /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?=$|[/?#])/i;
 
 /**
- * Give a bare product label its network TLD, so `myapp` means `myapp.paseo`.
+ * Give a bare product label the active network's TLD, so `myapp` means
+ * `myapp.paseo` on Paseo Next v2 and `myapp.testnet` on PreviewNet.
  *
  * Only text that is a single label, alone or followed by a path, query or
  * hash, is completed. Anything with a dot, a port, a scheme, credentials or
@@ -148,7 +149,10 @@ const BARE_LABEL = /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?=$|[/?#])/i;
  * the dot is how someone says the text is complete as written. This is applied
  * when the address is opened or read, never to what is in the field.
  */
-export function completeAddress(raw: string): string {
+export function completeAddress(
+  raw: string,
+  network: NetworkConfig = DEFAULT_NETWORK_CONFIG,
+): string {
   const typed = raw.trim();
   const body = typed.replace(/^polkadot:\/\//i, "");
   const label = BARE_LABEL.exec(body)?.[1];
@@ -159,12 +163,15 @@ export function completeAddress(raw: string): string {
     /^\d+$/.test(label)
   )
     return typed;
-  return `${label.toLowerCase()}.${PASEO_DOTNS.tld}${body.slice(label.length)}`;
+  return `${label.toLowerCase()}.${network.networkSuffix}${body.slice(label.length)}`;
 }
 
 /** Parse what was typed, completing a bare product label first. */
-export function parseTypedAddress(raw: string): Address {
-  return parseAddress(completeAddress(raw));
+export function parseTypedAddress(
+  raw: string,
+  network: NetworkConfig = DEFAULT_NETWORK_CONFIG,
+): Address {
+  return parseAddress(completeAddress(raw, network), network);
 }
 
 /**
@@ -172,12 +179,15 @@ export function parseTypedAddress(raw: string): Address {
  * string when none applies: once a dot, path or scheme is typed the text means
  * what it says.
  */
-export function implicitSuffix(raw: string): string {
+export function implicitSuffix(
+  raw: string,
+  network: NetworkConfig = DEFAULT_NETWORK_CONFIG,
+): string {
   const typed = raw.trim();
-  const completed = completeAddress(typed);
+  const completed = completeAddress(typed, network);
   return completed !== typed &&
-    completed === `${typed.toLowerCase()}.${PASEO_DOTNS.tld}`
-    ? `.${PASEO_DOTNS.tld}`
+    completed === `${typed.toLowerCase()}.${network.networkSuffix}`
+    ? `.${network.networkSuffix}`
     : "";
 }
 
@@ -186,13 +196,16 @@ export function implicitSuffix(raw: string): string {
  * without its TLD, which the field shows dimmed. Left whole when dropping the
  * TLD would not read back as the same address.
  */
-export function displayAddress(address: string): string {
-  const suffix = `.${PASEO_DOTNS.tld}`;
+export function displayAddress(
+  address: string,
+  network: NetworkConfig = DEFAULT_NETWORK_CONFIG,
+): string {
+  const suffix = `.${network.networkSuffix}`;
   const label = /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\./.exec(address)?.[1];
   if (label === undefined || !address.slice(label.length).startsWith(suffix))
     return address;
   const after = address[label.length + suffix.length];
   if (after !== undefined && !"/?#".includes(after)) return address;
   const bare = `${label}${address.slice(label.length + suffix.length)}`;
-  return completeAddress(bare) === address ? bare : address;
+  return completeAddress(bare, network) === address ? bare : address;
 }

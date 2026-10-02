@@ -1,15 +1,21 @@
 import { sha256 } from "@noble/hashes/sha2.js";
+import { DEFAULT_NETWORK, normalizeNetwork } from "../network-scope.js";
 
 /** Where a mounted product's files are served, under the host's base path. */
 export const PRODUCT_DIR = "product/";
 /** The host's own static files for mounted products: the loader page and script. Never the product's. */
 export const SANDBOX_DIR = "truapi-sandbox/";
 
-/** The product a frame is opened for, and the wallet session it belongs to. */
+/**
+ * The product a frame is opened for, and the wallet session it belongs to.
+ * The network is optional only so an existing caller keeps working; it
+ * defaults to Paseo, and a caller on another network must pass it.
+ */
 export interface Mount {
   walletId: string;
   productId: string;
   cid: string;
+  network?: string;
 }
 
 const LABEL_LIMIT = 63;
@@ -59,12 +65,19 @@ export function hostBase(baseUrl: string, pageUrl: string): string {
  * opened by two wallets, or at two versions, in two tabs is two mounts. One
  * tab's worker never answers another tab's page. The same wallet opening the
  * same content again lands on the same mount.
+ *
+ * A network other than the default adds a network segment, so the same wallet
+ * opening the same content id on two networks is two mounts and never shares a
+ * worker. The default network keeps the original path.
  */
 export function mountScope(base: string, mount: Mount): string {
-  return `${base}${PRODUCT_DIR}${walletKey(mount.walletId)}/${productLabel(mount.productId)}/${mount.cid}/`;
+  const network = normalizeNetwork(mount.network ?? DEFAULT_NETWORK);
+  const networkDir = network === DEFAULT_NETWORK ? "" : `${network}/`;
+  return `${base}${PRODUCT_DIR}${networkDir}${walletKey(mount.walletId)}/${productLabel(mount.productId)}/${mount.cid}/`;
 }
 
-const SCOPE = /^[0-9a-f]{12}\/[a-z0-9-]+\/([A-Za-z0-9]+)\/$/;
+const SCOPE =
+  /^(?:[a-z0-9-]+\/)?[0-9a-f]{12}\/[a-z0-9-]+\/([A-Za-z0-9]+)\/$/;
 
 /** The content a scope path names, or null for a path that is no mount. */
 export function parseMountScope(

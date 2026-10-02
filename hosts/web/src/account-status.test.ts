@@ -11,7 +11,11 @@ import type {
   RingMembership,
 } from "./people-chain.js";
 
-const CONTEXT = { networkSuffix: "paseo", walletName: "Dev" };
+const CONTEXT = {
+  networkName: "Paseo Next v2",
+  networkSuffix: "paseo",
+  walletName: "Dev",
+};
 const KEY = `0x${"ab".repeat(32)}` as const;
 const NO_RINGS: RingMembership[] = [
   { collection: "LitePeople", lookup: { tag: "NoKey" } },
@@ -33,7 +37,7 @@ describe("account status", () => {
       accountStatusRows({ tag: "Disconnected" }, CONTEXT).map(
         (row) => `${row.label}: ${row.value}`,
       ),
-    ).toEqual(["Network: paseo", "Session: Signed out"]);
+    ).toEqual(["Network: Paseo Next v2", "Session: Signed out"]);
   });
 
   test("names a failed sign-in by its reason", () => {

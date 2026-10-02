@@ -16,23 +16,33 @@ const entry = (address: string, productId = address, entered = false) => ({
 describe("recent products", () => {
   test("keeps newest first, once per address and id, and bounded", () => {
     const recents = new RecentProducts(new MemoryStorage());
-    recents.record("w", entry("a.paseo"), 1);
-    recents.record("w", entry("b.paseo"), 2);
-    recents.record("w", entry("a.paseo"), 3);
+    recents.record("w", entry("a.paseo"), "paseo", 1);
+    recents.record("w", entry("b.paseo"), "paseo", 2);
+    recents.record("w", entry("a.paseo"), "paseo", 3);
     expect(recents.list("w").map((item) => item.address)).toEqual([
       "a.paseo",
       "b.paseo",
     ]);
     for (let n = 0; n < RECENT_LIMIT + 5; n += 1)
-      recents.record("w", entry(`p${n}.paseo`), 10 + n);
+      recents.record("w", entry(`p${n}.paseo`), "paseo", 10 + n);
     expect(recents.list("w")).toHaveLength(RECENT_LIMIT);
   });
 
   // The same address under a different entered id is a different way to open it.
   test("remembers the product id with the address", () => {
     const recents = new RecentProducts(new MemoryStorage());
-    recents.record("w", entry("http://localhost:3000/", "chat.paseo", true), 1);
-    recents.record("w", entry("http://localhost:3000/", "localhost:3000"), 2);
+    recents.record(
+      "w",
+      entry("http://localhost:3000/", "chat.paseo", true),
+      "paseo",
+      1,
+    );
+    recents.record(
+      "w",
+      entry("http://localhost:3000/", "localhost:3000"),
+      "paseo",
+      2,
+    );
     expect(recents.list("w")).toEqual([
       {
         address: "http://localhost:3000/",
@@ -51,11 +61,28 @@ describe("recent products", () => {
 
   test("keeps each wallet's history apart, and forgets it with the wallet", () => {
     const recents = new RecentProducts(new MemoryStorage());
-    recents.record("alice", entry("a.paseo"), 1);
-    recents.record("bob", entry("b.paseo"), 1);
+    recents.record("alice", entry("a.paseo"), "paseo", 1);
+    recents.record("bob", entry("b.paseo"), "paseo", 1);
     recents.forget("alice");
     expect(recents.list("alice")).toEqual([]);
     expect(recents.list("bob")).toHaveLength(1);
+  });
+
+  // The same wallet on two networks keeps two histories, and forgetting the
+  // wallet drops both.
+  test("keeps each network's history apart, and forgets every network", () => {
+    const recents = new RecentProducts(new MemoryStorage());
+    recents.record("w", entry("a.paseo"), "paseo", 1);
+    recents.record("w", entry("b.previewnet"), "previewnet", 2);
+    expect(recents.list("w", "paseo").map((item) => item.address)).toEqual([
+      "a.paseo",
+    ]);
+    expect(recents.list("w", "previewnet").map((item) => item.address)).toEqual(
+      ["b.previewnet"],
+    );
+    recents.forget("w");
+    expect(recents.list("w", "paseo")).toEqual([]);
+    expect(recents.list("w", "previewnet")).toEqual([]);
   });
 
   test("reads damaged storage as empty", () => {

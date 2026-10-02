@@ -75,6 +75,38 @@ describe("wallet public info", () => {
   });
 });
 
+describe("wallet public info per network", () => {
+  test("keeps the default network's original key", () => {
+    const backing = new MemoryStorage();
+    new WalletPublicInfoStore(backing).update("a", { publicKey: KEY });
+    expect(backing.getItem("truapi-web-signing-host:wallet-public:v1:a")).toBe(
+      JSON.stringify({ publicKey: KEY }),
+    );
+  });
+
+  // A username learned on one network must not show on another.
+  test("keeps a name per network for the same wallet", () => {
+    const store = new WalletPublicInfoStore(new MemoryStorage());
+    store.update("a", { publicKey: KEY, username: "alice.07" }, "paseo");
+    expect(store.get("a", "paseo")?.username).toBe("alice.07");
+    expect(store.get("a", "previewnet")).toBeUndefined();
+    store.update("a", { publicKey: KEY }, "previewnet");
+    expect(store.get("a", "previewnet")).toEqual({ publicKey: KEY });
+    expect(store.get("a", "paseo")?.username).toBe("alice.07");
+  });
+
+  test("forgets a wallet on every network", () => {
+    const store = new WalletPublicInfoStore(new MemoryStorage());
+    store.update("a", { publicKey: KEY, username: "alice.07" }, "paseo");
+    store.update("a", { publicKey: KEY }, "previewnet");
+    store.update("b", { publicKey: KEY }, "previewnet");
+    store.forget("a");
+    expect(store.get("a", "paseo")).toBeUndefined();
+    expect(store.get("a", "previewnet")).toBeUndefined();
+    expect(store.get("b", "previewnet")).toBeDefined();
+  });
+});
+
 describe("username from a reading", () => {
   const record = { fullUsername: "alice", liteUsername: "alice.07" };
   test("prefers the identity account and the full name, and says nothing when absent", () => {

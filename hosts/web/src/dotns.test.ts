@@ -16,6 +16,7 @@ import {
   type ContentKind,
   type RpcCall,
 } from "./dotns.js";
+import { NETWORKS } from "./network-config.js";
 
 /** The CID `dotkit asset-hub name resolve chat-spa-probe` printed. */
 const PROBE_CID = "bafybeihmnm4dydovrq5jle7qgnyswajzdlu3cuncws32p5phwithaomsbe";
@@ -108,11 +109,16 @@ describe("gatewayUrl", () => {
  * Solidity `bytes` value in that child trie, inline when short and spread over
  * words from `keccak256(slotKey)` when long.
  */
-function fakeChain(name: string, contenthash: Uint8Array | null): RpcCall {
+function fakeChain(
+  name: string,
+  contenthash: Uint8Array | null,
+  slot = 0,
+): RpcCall {
   const trieId = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
   const store = new Map<string, Uint8Array>();
   const slotKey = (() => {
     const word = new Uint8Array(32);
+    new DataView(word.buffer).setUint32(28, slot);
     return keccak_256(Uint8Array.from([...namehash(name), ...word]));
   })();
   const put = (key: Uint8Array, value: Uint8Array) =>
@@ -527,6 +533,57 @@ describe("httpRpc", () => {
       httpRpc(URL_WSS, hangs, 20)("childstate_getStorage", []),
     ).rejects.toThrow(
       "no answer from https://rpc.test for childstate_getStorage",
+    );
+  });
+});
+
+describe("network parameterization", () => {
+  // PreviewNet's gateway base is the environment origin; the host appends the
+  // `/ipfs/<cid>/` path form, so the same builder serves both networks.
+  test("gatewayUrl builds on the given network's content gateway", () => {
+    const gateway = NETWORKS.previewnet.dotns.contentGateway;
+    expect(gatewayUrl(PROBE_CID, "", gateway).href).toBe(
+      `https://previewnet.substrate.dev/ipfs/${PROBE_CID}/`,
+    );
+    expect(gatewayUrl(PROBE_CID, "a/b?x=1#top", gateway).href).toBe(
+      `https://previewnet.substrate.dev/ipfs/${PROBE_CID}/a/b?x=1#top`,
+    );
+  });
+
+  test("classifyContent asks the given network's gateway", async () => {
+    const gateway = NETWORKS.previewnet.dotns.contentGateway;
+    let seen = "";
+    const fetchFn = (async (url: string) => {
+      seen = url;
+      return new Response("<html>", {
+        headers: { "content-type": "text/html" },
+      });
+    }) as unknown as typeof fetch;
+    expect(await classifyContent(PROBE_CID, fetchFn, gateway)).toBe("site");
+    expect(seen).toBe(
+      `https://previewnet.substrate.dev/ipfs/${PROBE_CID}/`,
+    );
+  });
+
+  // The resolver contract and the contenthash slot both key the read. Reading
+  // with another network's value must find nothing rather than this name's
+  // record.
+  test("resolveContentCid reads the given resolver contract", async () => {
+    const rpc = fakeChain("chat-spa-probe.paseo", record(PROBE_CID));
+    const otherResolver = {
+      ...NETWORKS.previewnet.dotns,
+      contentResolver: "aa".repeat(20),
+    };
+    expect(
+      await resolveContentCid("chat-spa-probe.paseo", rpc, otherResolver),
+    ).toBeNull();
+  });
+
+  test("resolveContentCid reads the given contenthash slot", async () => {
+    const dotns = { ...NETWORKS.previewnet.dotns, contenthashSlot: 5 };
+    const rpc = fakeChain("chat-spa-probe.testnet", record(PROBE_CID), 5);
+    expect(await resolveContentCid("chat-spa-probe.testnet", rpc, dotns)).toBe(
+      PROBE_CID,
     );
   });
 });

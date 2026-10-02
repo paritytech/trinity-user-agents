@@ -1,9 +1,12 @@
 import { displayAddress } from "./address.js";
+import type { NetworkConfig } from "./network-config.js";
 import { matchRecents, type RecentEntry } from "./recents.js";
 
 export interface RecentsMenuOptions {
   input: HTMLInputElement;
   list: HTMLUListElement;
+  /** The network the entries were opened on, so a name shows with its own TLD. */
+  network: NetworkConfig;
   /** The entries to offer, newest first, for the wallet in use. */
   entries(): RecentEntry[];
   /** Whether the field still holds what is open, so every entry is offered, not only matches. */
@@ -25,7 +28,7 @@ export function bindRecentsMenu(options: RecentsMenuOptions): {
   /** Redraw an open list after the text or the entries changed. */
   refresh(): void;
 } {
-  const { input, list, entries, untouched, choose } = options;
+  const { input, list, network, entries, untouched, choose } = options;
   let shown: RecentEntry[] = [];
   let active = -1;
 
@@ -67,7 +70,7 @@ export function bindRecentsMenu(options: RecentsMenuOptions): {
         item.setAttribute("role", "option");
         const name = document.createElement("span");
         name.className = "recent-name";
-        name.textContent = displayAddress(entry.address);
+        name.textContent = displayAddress(entry.address, network);
         item.append(name);
         if (entry.entered) {
           const id = document.createElement("span");
