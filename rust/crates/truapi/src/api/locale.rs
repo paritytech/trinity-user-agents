@@ -41,7 +41,7 @@ pub trait Locale: Send + Sync {
     ///     languageTag: locale.languageTag,
     ///     timeZone: locale.timeZone,
     ///   });
-    ///   console.log(localized.timestamps[0]?.dateTime);
+    ///   if (localized.isOk()) console.log(localized.value.timestamps[0]?.dateTime);
     /// }
     /// ```
     #[wire(id = 1)]
