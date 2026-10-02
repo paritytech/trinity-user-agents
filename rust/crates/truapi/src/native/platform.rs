@@ -4,14 +4,13 @@ use std::sync::{
 };
 
 use crate::platform::{
-	AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus, Features,
-	JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision, Permissions,
-	PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage, ProviderError,
-	ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
-};
-use futures::{
-	channel::mpsc,
-	stream::{self, BoxStream, StreamExt},
+    AuthPresenter, ChainProvider, CoinageWalletHost, CoreStorage, CoreStorageKey,
+    DevicePermissionStatus, Features, HopProvider, JsonRpcConnection, LocaleHost,
+    NativeChatFileExportRequest, NativeChatFilePickRequest, NativeChatFilesHost,
+    NativeChatPickedFile, NativeCoinageRequest, NativeCoinageResponse, Navigation, Notifications,
+    PermissionDecision, Permissions, PreimageHost, ProductContext, ProductOperations,
+    ProductStorage, ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
+    async_trait,
 };
 use parity_scale_codec::Encode;
 use truapi::v01;
@@ -28,6 +27,132 @@ use super::{
 	events::NativeEventBus,
 	subscribers::Subscribers,
 };
+use super::errors::HostRejection;
+use super::events::NativeEventBus;
+
+/// Host-selected process-wide native custody.
+pub struct NativeCoinageCallbackPlatform {
+    /// Wallet callbacks fixed at runtime construction.
+    pub callbacks: Arc<dyn NativeCoinageCallbacks>,
+}
+
+#[async_trait]
+impl CoinageWalletHost for NativeCoinageCallbackPlatform {
+    async fn native_coinage(
+        &self,
+        request: NativeCoinageRequest,
+    ) -> Result<NativeCoinageResponse, v01::GenericError> {
+        self.callbacks
+            .native_coinage(request)
+            .await
+            .map(|result| result.response)
+            .map_err(|_| v01::GenericError {
+                reason: "Native Coinage wallet operation failed".into(),
+            })
+    }
+}
+
+#[async_trait]
+impl NativeChatFilesHost for CallbackPlatform {
+    async fn pick_chat_files(
+        &self,
+        request: NativeChatFilePickRequest,
+    ) -> Result<Vec<NativeChatPickedFile>, v01::GenericError> {
+        self.callbacks
+            .pick_chat_files(request)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn read_chat_file(
+        &self,
+        source_id: String,
+        offset: u64,
+        length: u32,
+    ) -> Result<Vec<u8>, v01::GenericError> {
+        self.callbacks
+            .read_chat_file(source_id, offset, length)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn release_chat_file(&self, source_id: String) -> Result<(), v01::GenericError> {
+        self.callbacks
+            .release_chat_file(source_id)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn begin_chat_file_export(
+        &self,
+        request: NativeChatFileExportRequest,
+    ) -> Result<Option<String>, v01::GenericError> {
+        self.callbacks
+            .begin_chat_file_export(request)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn write_chat_file_export(
+        &self,
+        export_id: String,
+        offset: u64,
+        data: Vec<u8>,
+    ) -> Result<(), v01::GenericError> {
+        self.callbacks
+            .write_chat_file_export(export_id, offset, data)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn finish_chat_file_export(&self, export_id: String) -> Result<(), v01::GenericError> {
+        self.callbacks
+            .finish_chat_file_export(export_id)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn cancel_chat_file_export(&self, export_id: String) -> Result<(), v01::GenericError> {
+        self.callbacks
+            .cancel_chat_file_export(export_id)
+            .await
+            .map_err(Into::into)
+    }
+}
+
+#[async_trait]
+impl crate::platform::IdentityBackendHost for CallbackPlatform {
+    async fn identity_username_candidates(
+        &self,
+        username: String,
+        people_chain_genesis_hash: [u8; 32],
+    ) -> Result<Vec<[u8; 32]>, v01::GenericError> {
+        let candidates = self
+            .callbacks
+            .identity_username_candidates(username, people_chain_genesis_hash.to_vec())
+            .await
+            .map_err(v01::GenericError::from)?;
+        decode_identity_candidates(candidates)
+    }
+}
+
+fn decode_identity_candidates(
+    candidates: Vec<Vec<u8>>,
+) -> Result<Vec<[u8; 32]>, v01::GenericError> {
+    if candidates.len() > 32 {
+        return Err(v01::GenericError {
+            reason: "too many username candidates".into(),
+        });
+    }
+    candidates
+        .into_iter()
+        .map(|candidate| {
+            candidate.try_into().map_err(|_| v01::GenericError {
+                reason: "username candidate is not AccountId32".into(),
+            })
+        })
+        .collect()
+}
 
 /// [`crate::platform::ContactsPlatform`] served by host-provided
 /// [`NativeContactsCallbacks`]; constructed only when the host passed one.
@@ -64,8 +189,12 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
         product: &ProductContext,
         selection: crate::platform::ContactSelection,
     ) -> Result<crate::platform::HostContactsPick, v01::GenericError> {
-        self.contacts.pick_contacts(product.product_id.clone(), selection).await
-            .map_err(|error| v01::GenericError { reason: error.to_string() })
+        self.contacts
+            .pick_contacts(product.product_id.clone(), selection)
+            .await
+            .map_err(|error| v01::GenericError {
+                reason: error.to_string(),
+            })
     }
 
     async fn place_contact_labels(
@@ -73,7 +202,10 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
         product: &ProductContext,
         placed: crate::platform::PlacedContactLabels,
     ) -> Result<bool, crate::latest::HostContactsPlaceLabelsError> {
-        self.contacts.place_contact_labels(product.product_id.clone(), placed).await.map(|()| true)
+        self.contacts
+            .place_contact_labels(product.product_id.clone(), placed)
+            .await
+            .map(|()| true)
     }
 }
 

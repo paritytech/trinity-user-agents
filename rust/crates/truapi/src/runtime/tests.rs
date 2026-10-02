@@ -832,7 +832,10 @@ struct AudienceContactsPlatform {
 impl AudienceContactsPlatform {
     fn new(accounts: Vec<[u8; 32]>, outcome: crate::platform::HostContactsPick) -> Arc<Self> {
         Arc::new(Self {
-            directory: StubContactsPlatform::new(accounts, crate::platform::HostContactPick::Dismissed),
+            directory: StubContactsPlatform::new(
+                accounts,
+                crate::platform::HostContactPick::Dismissed,
+            ),
             outcome: parking_lot::Mutex::new(outcome),
             selected: Default::default(),
             labels: Default::default(),
@@ -849,7 +852,8 @@ impl crate::platform::ContactsPlatform for AudienceContactsPlatform {
         &self,
         lookup: &crate::platform::HostContactLookup,
     ) -> Result<crate::platform::HostContactMatches, truapi::latest::GenericError> {
-        let answer = crate::platform::ContactsPlatform::contacts(self.directory.as_ref(), lookup).await;
+        let answer =
+            crate::platform::ContactsPlatform::contacts(self.directory.as_ref(), lookup).await;
         if let Some(changed) = self.after_lookup.lock().take() {
             changed();
         }
@@ -896,32 +900,55 @@ fn pick_many(
 fn multi_picker_preserves_confirmed_empty_and_dismissed_outcomes() {
     use crate::platform::HostContactsPick;
     use truapi::latest::ContactPickManyOutcome;
-    let contacts = AudienceContactsPlatform::new(vec![[10; 32]], HostContactsPick::Picked { accounts: vec![] });
+    let contacts = AudienceContactsPlatform::new(
+        vec![[10; 32]],
+        HostContactsPick::Picked { accounts: vec![] },
+    );
     let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
     for (answer, expected) in [
-        (HostContactsPick::Picked { accounts: vec![] }, ContactPickManyOutcome::Picked { handles: vec![] }),
-        (HostContactsPick::Dismissed, ContactPickManyOutcome::Dismissed),
-        (HostContactsPick::NoContacts, ContactPickManyOutcome::NoContacts),
+        (
+            HostContactsPick::Picked { accounts: vec![] },
+            ContactPickManyOutcome::Picked { handles: vec![] },
+        ),
+        (
+            HostContactsPick::Dismissed,
+            ContactPickManyOutcome::Dismissed,
+        ),
+        (
+            HostContactsPick::NoContacts,
+            ContactPickManyOutcome::NoContacts,
+        ),
     ] {
         *contacts.outcome.lock() = answer;
-        assert_eq!(pick_many(&host, vec![]), Ok(HostContactsPickManyResponse::V1(
-            truapi::latest::HostContactsPickManyResponse { outcome: expected },
-        )));
+        assert_eq!(
+            pick_many(&host, vec![]),
+            Ok(HostContactsPickManyResponse::V1(
+                truapi::latest::HostContactsPickManyResponse { outcome: expected },
+            ))
+        );
     }
 }
 
 #[test]
 fn multi_picker_rejects_unresolved_or_oversized_initial_audiences_without_opening() {
     let account = [10; 32];
-    let contacts = AudienceContactsPlatform::new(vec![account], crate::platform::HostContactsPick::Dismissed);
+    let contacts =
+        AudienceContactsPlatform::new(vec![account], crate::platform::HostContactsPick::Dismissed);
     let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
     let (_, handles) = host.contacts_picker().unwrap();
-    let known = truapi::latest::ContactHandle { bytes: handles.mint(&account) };
-    let missing = truapi::latest::ContactHandle { bytes: handles.mint(&[11; 32]) };
+    let known = truapi::latest::ContactHandle {
+        bytes: handles.mint(&account),
+    };
+    let missing = truapi::latest::ContactHandle {
+        bytes: handles.mint(&[11; 32]),
+    };
     for selected in [vec![known, missing], vec![known; 257]] {
-        assert_eq!(pick_many(&host, selected), Err(CallError::Domain(HostContactsPickManyError::V1(
-            truapi::latest::HostContactsPickManyError::InvalidSelection,
-        ))));
+        assert_eq!(
+            pick_many(&host, selected),
+            Err(CallError::Domain(HostContactsPickManyError::V1(
+                truapi::latest::HostContactsPickManyError::InvalidSelection,
+            )))
+        );
     }
     assert!(contacts.selected.lock().is_empty());
 }
@@ -929,17 +956,27 @@ fn multi_picker_rejects_unresolved_or_oversized_initial_audiences_without_openin
 #[test]
 fn multi_picker_deduplicates_and_returns_only_wallet_scoped_handles() {
     let account = [10; 32];
-    let contacts = AudienceContactsPlatform::new(vec![account], crate::platform::HostContactsPick::Picked {
-        accounts: vec![account, account],
-    });
+    let contacts = AudienceContactsPlatform::new(
+        vec![account],
+        crate::platform::HostContactsPick::Picked {
+            accounts: vec![account, account],
+        },
+    );
     let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
     let (_, handles) = host.contacts_picker().unwrap();
-    let handle = truapi::latest::ContactHandle { bytes: handles.mint(&account) };
-    assert_eq!(pick_many(&host, vec![handle, handle]), Ok(HostContactsPickManyResponse::V1(
-        truapi::latest::HostContactsPickManyResponse {
-            outcome: truapi::latest::ContactPickManyOutcome::Picked { handles: vec![handle] },
-        },
-    )));
+    let handle = truapi::latest::ContactHandle {
+        bytes: handles.mint(&account),
+    };
+    assert_eq!(
+        pick_many(&host, vec![handle, handle]),
+        Ok(HostContactsPickManyResponse::V1(
+            truapi::latest::HostContactsPickManyResponse {
+                outcome: truapi::latest::ContactPickManyOutcome::Picked {
+                    handles: vec![handle]
+                },
+            },
+        ))
+    );
     assert_eq!(*contacts.selected.lock(), vec![vec![account]]);
     assert_ne!(handle.bytes, account);
 }
@@ -947,120 +984,212 @@ fn multi_picker_deduplicates_and_returns_only_wallet_scoped_handles() {
 #[test]
 fn multi_picker_rejects_lookup_invalidation_and_session_change_during_confirmation() {
     let account = [10; 32];
-    let contacts = AudienceContactsPlatform::new(vec![account], crate::platform::HostContactsPick::Picked {
-        accounts: vec![account],
-    });
+    let contacts = AudienceContactsPlatform::new(
+        vec![account],
+        crate::platform::HostContactsPick::Picked {
+            accounts: vec![account],
+        },
+    );
     let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
     let (_, handles) = host.contacts_picker().unwrap();
-    let handle = truapi::latest::ContactHandle { bytes: handles.mint(&account) };
+    let handle = truapi::latest::ContactHandle {
+        bytes: handles.mint(&account),
+    };
     let cache = host.services.contact_handles.clone();
     *contacts.after_lookup.lock() = Some(Box::new(move || cache.clear()));
-    assert!(matches!(pick_many(&host, vec![handle]), Err(CallError::Domain(
-        HostContactsPickManyError::V1(truapi::latest::HostContactsPickManyError::Unknown { .. })
-    ))));
+    assert!(matches!(
+        pick_many(&host, vec![handle]),
+        Err(CallError::Domain(HostContactsPickManyError::V1(
+            truapi::latest::HostContactsPickManyError::Unknown { .. }
+        )))
+    ));
     assert!(contacts.selected.lock().is_empty());
     let session = host.test_session_state();
     *contacts.after_pick.lock() = Some(Box::new(move || session.clear_session()));
-    assert_eq!(pick_many(&host, vec![]), Err(CallError::Domain(HostContactsPickManyError::V1(
-        truapi::latest::HostContactsPickManyError::NotConnected,
-    ))));
-    assert_eq!(host.services.contact_handles.get(&handle.bytes, &handles), None);
+    assert_eq!(
+        pick_many(&host, vec![]),
+        Err(CallError::Domain(HostContactsPickManyError::V1(
+            truapi::latest::HostContactsPickManyError::NotConnected,
+        )))
+    );
+    assert_eq!(
+        host.services.contact_handles.get(&handle.bytes, &handles),
+        None
+    );
 }
 
 #[test]
 fn multi_picker_cancellation_cannot_confirm_a_late_selection() {
     let account = [10; 32];
-    let contacts = AudienceContactsPlatform::new(vec![account], crate::platform::HostContactsPick::Picked {
-        accounts: vec![account],
-    });
+    let contacts = AudienceContactsPlatform::new(
+        vec![account],
+        crate::platform::HostContactsPick::Picked {
+            accounts: vec![account],
+        },
+    );
     let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
     let cx = CallContext::default();
     let cancel = cx.cancel().clone();
     *contacts.after_pick.lock() = Some(Box::new(move || cancel.cancel()));
-    assert!(matches!(futures::executor::block_on(Contacts::pick_many(
-        &host, &cx,
-        HostContactsPickManyRequest::V1(truapi::latest::HostContactsPickManyRequest { selected: vec![] }),
-    )), Err(CallError::Domain(HostContactsPickManyError::V1(
-        truapi::latest::HostContactsPickManyError::Unknown { .. }
-    )))));
+    assert!(matches!(
+        futures::executor::block_on(Contacts::pick_many(
+            &host,
+            &cx,
+            HostContactsPickManyRequest::V1(truapi::latest::HostContactsPickManyRequest {
+                selected: vec![]
+            }),
+        )),
+        Err(CallError::Domain(HostContactsPickManyError::V1(
+            truapi::latest::HostContactsPickManyError::Unknown { .. }
+        )))
+    ));
 }
 
 #[test]
 fn contact_labels_need_no_profile_grant_and_hide_missing_contact_availability() {
     let account = [10; 32];
-    let contacts = AudienceContactsPlatform::new(vec![account], crate::platform::HostContactsPick::Dismissed);
+    let contacts =
+        AudienceContactsPlatform::new(vec![account], crate::platform::HostContactsPick::Dismissed);
     let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
     let (_, handles) = host.contacts_picker().unwrap();
-    let rect = truapi::latest::AvatarRect { x: 0, y: 0, width: 180, height: 24 };
-    let request = |account| HostContactsPlaceLabelsRequest::V1(truapi::latest::HostContactsPlaceLabelsRequest {
-        surface_width: 300,
-        surface_height: 200,
-        slots: vec![truapi::latest::ContactLabelSlot {
-            slot: 0, handle: truapi::latest::ContactHandle { bytes: handles.mint(&account) },
-            rect, clip: rect,
-        }],
-    });
-    let place = |request| futures::executor::block_on(Contacts::place_labels(&host, &CallContext::default(), request));
+    let rect = truapi::latest::AvatarRect {
+        x: 0,
+        y: 0,
+        width: 180,
+        height: 24,
+    };
+    let request = |account| {
+        HostContactsPlaceLabelsRequest::V1(truapi::latest::HostContactsPlaceLabelsRequest {
+            surface_width: 300,
+            surface_height: 200,
+            slots: vec![truapi::latest::ContactLabelSlot {
+                slot: 0,
+                handle: truapi::latest::ContactHandle {
+                    bytes: handles.mint(&account),
+                },
+                rect,
+                clip: rect,
+            }],
+        })
+    };
+    let place = |request| {
+        futures::executor::block_on(Contacts::place_labels(
+            &host,
+            &CallContext::default(),
+            request,
+        ))
+    };
     let known = place(request(account));
     let missing = place(request([11; 32]));
-    assert_eq!(known, Ok(HostContactsPlaceLabelsResponse::V1(truapi::latest::HostContactsPlaceLabelsResponse {})));
+    assert_eq!(
+        known,
+        Ok(HostContactsPlaceLabelsResponse::V1(
+            truapi::latest::HostContactsPlaceLabelsResponse {}
+        ))
+    );
     assert_eq!(known, missing);
-    assert_eq!(*contacts.labels.lock(), vec![
-        crate::platform::PlacedContactLabels {
-            surface_width: 300, surface_height: 200,
-            labels: vec![crate::platform::PlacedContactLabel { slot: 0, account, rect, clip: rect }],
-        },
-        crate::platform::PlacedContactLabels { surface_width: 300, surface_height: 200, labels: vec![] },
-    ]);
+    assert_eq!(
+        *contacts.labels.lock(),
+        vec![
+            crate::platform::PlacedContactLabels {
+                surface_width: 300,
+                surface_height: 200,
+                labels: vec![crate::platform::PlacedContactLabel {
+                    slot: 0,
+                    account,
+                    rect,
+                    clip: rect
+                }],
+            },
+            crate::platform::PlacedContactLabels {
+                surface_width: 300,
+                surface_height: 200,
+                labels: vec![]
+            },
+        ]
+    );
 }
 
 #[test]
 fn contact_label_lookup_failure_does_not_clear_the_surface() {
-    let mut contacts = AudienceContactsPlatform::new(vec![], crate::platform::HostContactsPick::Dismissed);
+    let mut contacts =
+        AudienceContactsPlatform::new(vec![], crate::platform::HostContactsPick::Dismissed);
     Arc::get_mut(&mut contacts).unwrap().directory = StubContactsPlatform::failing("store offline");
     let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
-    let rect = truapi::latest::AvatarRect { x: 0, y: 0, width: 180, height: 24 };
+    let rect = truapi::latest::AvatarRect {
+        x: 0,
+        y: 0,
+        width: 180,
+        height: 24,
+    };
     let result = futures::executor::block_on(Contacts::place_labels(
-        &host, &CallContext::default(),
+        &host,
+        &CallContext::default(),
         HostContactsPlaceLabelsRequest::V1(truapi::latest::HostContactsPlaceLabelsRequest {
-            surface_width: 300, surface_height: 200,
+            surface_width: 300,
+            surface_height: 200,
             slots: vec![truapi::latest::ContactLabelSlot {
-                slot: 0, handle: truapi::latest::ContactHandle { bytes: [0x42; 32] },
-                rect, clip: rect,
+                slot: 0,
+                handle: truapi::latest::ContactHandle { bytes: [0x42; 32] },
+                rect,
+                clip: rect,
             }],
         }),
     ));
-    assert!(matches!(result, Err(CallError::Domain(HostContactsPlaceLabelsError::V1(
-        truapi::latest::HostContactsPlaceLabelsError::Unknown { .. }
-    )))));
+    assert!(matches!(
+        result,
+        Err(CallError::Domain(HostContactsPlaceLabelsError::V1(
+            truapi::latest::HostContactsPlaceLabelsError::Unknown { .. }
+        )))
+    ));
     assert!(contacts.labels.lock().is_empty());
 }
 
 #[test]
 fn contact_labels_are_cleared_if_the_session_changes_while_drawing() {
     let account = [10; 32];
-    let contacts = AudienceContactsPlatform::new(vec![account], crate::platform::HostContactsPick::Dismissed);
+    let contacts =
+        AudienceContactsPlatform::new(vec![account], crate::platform::HostContactsPick::Dismissed);
     let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
     let (_, handles) = host.contacts_picker().unwrap();
     let session = host.test_session_state();
     *contacts.after_labels.lock() = Some(Box::new(move || session.clear_session()));
-    let rect = truapi::latest::AvatarRect { x: 0, y: 0, width: 180, height: 24 };
+    let rect = truapi::latest::AvatarRect {
+        x: 0,
+        y: 0,
+        width: 180,
+        height: 24,
+    };
     let result = futures::executor::block_on(Contacts::place_labels(
-        &host, &CallContext::default(),
+        &host,
+        &CallContext::default(),
         HostContactsPlaceLabelsRequest::V1(truapi::latest::HostContactsPlaceLabelsRequest {
-            surface_width: 300, surface_height: 200,
+            surface_width: 300,
+            surface_height: 200,
             slots: vec![truapi::latest::ContactLabelSlot {
-                slot: 0, handle: truapi::latest::ContactHandle { bytes: handles.mint(&account) },
-                rect, clip: rect,
+                slot: 0,
+                handle: truapi::latest::ContactHandle {
+                    bytes: handles.mint(&account),
+                },
+                rect,
+                clip: rect,
             }],
         }),
     ));
-    assert_eq!(result, Err(CallError::Domain(HostContactsPlaceLabelsError::V1(
-        truapi::latest::HostContactsPlaceLabelsError::NotConnected,
-    ))));
-    assert_eq!(contacts.labels.lock().last(), Some(&crate::platform::PlacedContactLabels {
-        surface_width: 300, surface_height: 200, labels: vec![],
-    }));
+    assert_eq!(
+        result,
+        Err(CallError::Domain(HostContactsPlaceLabelsError::V1(
+            truapi::latest::HostContactsPlaceLabelsError::NotConnected,
+        )))
+    );
+    assert_eq!(
+        contacts.labels.lock().last(),
+        Some(&crate::platform::PlacedContactLabels {
+            surface_width: 300,
+            surface_height: 200,
+            labels: vec![],
+        })
+    );
 }
 
 /// A host that implements only the required `contacts` method.
@@ -1136,7 +1265,8 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
 
 #[test]
 fn workers_cannot_place_contact_labels_even_when_the_host_supports_them() {
-    let contacts = AudienceContactsPlatform::new(vec![], crate::platform::HostContactsPick::Dismissed);
+    let contacts =
+        AudienceContactsPlatform::new(vec![], crate::platform::HostContactsPick::Dismissed);
     let mut host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
     host.product.execution_kind = crate::platform::ProductExecutionKind::Worker;
     assert_eq!(

@@ -27,8 +27,8 @@ which is what lets the test host hold keys and answer resource allocation as gra
 browser wallet instead needs a web bundle built with `--no-default-features --features wasm-signing-host`, without
 `test-host`. That enables native signing and wallet administration without the testing-only allocation shortcuts. Build
 that wallet variant with `npm run build:wasm -- --web-only --signing-host`. The default web build remains pairing-only.
-Run the package tests against the generated web/testing bundles, then exercise the consuming host's real worker with
-the selected variant. `ProductRuntimeConfig` configures the pairing host and requires no network suffix. The signing
+Run the package tests against the generated web/testing bundles, then exercise the consuming host's real worker with the
+selected variant. `ProductRuntimeConfig` configures the pairing host and requires no network suffix. The signing
 constructor's configuration requires `runtimeConfig.networkSuffix` in addition: the bare TLD (`dot`, `paseo`, or
 `testnet`) matching the People chain and the wallet's onboarding configuration.
 
@@ -69,12 +69,11 @@ The optional callback receives `LocalIdentityProgress` (exported from `@parity/t
 `authenticating`, `submitting`, `confirming`, or `retrying` with a chain-read `error`. Stages reflect actual work, not
 elapsed-time estimates. `confirming` means the backend accepted the request, not that the username is owned yet; only
 the resolved promise confirms ownership. A retry does not submit another registration. Observer exceptions do not
-interrupt the operation, and settled or disposed requests receive no further progress.
-
-Both methods return `LocalIdentity` (exported from `@parity/truapi-host/web`): the canonical lowercase `0x`-prefixed
-`identityAccountId` and an optional verified `liteUsername`. The backend must allow the worker's origin, or the host
-must provide an approved same-origin proxy. Secret material stays in the signing runtime. Disconnecting or replacing the
-local activation invalidates an in-flight identity operation; concurrent identity operations are rejected.
+interrupt the operation, and settled or disposed requests receive no further progress. Both methods return
+`LocalIdentity` (exported from `@parity/truapi-host/web`): the canonical lowercase `0x`-prefixed `identityAccountId` and
+an optional verified `liteUsername`. The backend must allow the worker's origin, or the host must provide an approved
+same-origin proxy. Secret material stays in the signing runtime. Disconnecting or replacing the local activation
+invalidates an in-flight identity operation; concurrent identity operations are rejected.
 
 ### Read-only wallet allowance inspection
 
@@ -184,45 +183,44 @@ reading as usable. Omit it and a stored grant answers on its own.
 replacement, and `removePocketCard` takes one out. The host owns the collection: removing an absent card succeeds, and a
 card the host pins is refused with `Privileged`.
 
-`profile.presentProfile` shows the profile a product references in host-owned UI and resolves once it is shown, not
-when the user dismisses it. The reference is a bearer capability: the host fetches, decrypts and renders it, and the
+`profile.presentProfile` shows the profile a product references in host-owned UI and resolves once it is shown, not when
+the user dismisses it. The reference is a bearer capability: the host fetches, decrypts and renders it, and the
 profile's bytes never return to the product. The core forwards only references that are non-empty, at most 2048 bytes
 and printable ASCII without whitespace; parsing the format is the host's.
 
 `profile.presentContactProfile(product, presented)` shows the profile a Chat contact shared when a chat product calls
 `profile.presentContact`. `presented` carries the `reference`, the `peerIdentity` of the contact whose authenticated
 Chat device delivered it, the `sharedAt` freshness timestamp (`bigint`) and, when the core knows it, the contact's
-`username`, so the drawer can say who shared it rather than which product asked. The username is the one the core's
-Chat roster verified for that contact, else the contact's verified dotNS name, looked up for at most 2 seconds; never a
-name from the product. Without one, name the contact generically, never by address. It names who sent the reference,
-not whose profile it is: the record is not signed by its owner, and a contact can forward someone else's. Same contract
-as `presentProfile` otherwise. A `profile` group without it, from a host built before it, has contacts' profiles
-presented through `presentProfile`.
+`username`, so the drawer can say who shared it rather than which product asked. The username is the one the core's Chat
+roster verified for that contact, else the contact's verified dotNS name, looked up for at most 2 seconds; never a name
+from the product. Without one, name the contact generically, never by address. It names who sent the reference, not
+whose profile it is: the record is not signed by its owner, and a contact can forward someone else's. Same contract as
+`presentProfile` otherwise. A `profile` group without it, from a host built before it, has contacts' profiles presented
+through `presentProfile`.
 
 `profile.placeContactAvatars(product, placed)` draws contacts' avatars over a chat product. `placed` carries the
 product's surface size and, per avatar, the product's `slot` id, a square `rect`, the `clip` region it is cut to, all in
 surface units (framebuffer pixels for a PolkaVM product, CSS pixels of the viewport for a web product), and the
 `reference` that contact disclosed, so the host can draw their photo and mood ring, with a `sharedAt` freshness token
 (`bigint`). Contact tokens use Unix ms, advanced monotonically for personal revisions across relay actors; the own
-avatar uses the disclosure revision, not a date. A changed token invalidates cached contents. Each call replaces what was
-drawn for the product; an empty `avatars` clears it. The core calls it again with the same geometry when a contact
+avatar uses the disclosure revision, not a date. A changed token invalidates cached contents. Each call replaces what
+was drawn for the product; an empty `avatars` clears it. The core calls it again with the same geometry when a contact
 shares, re-shares or withdraws a profile, and with no avatars when the product's connection goes away. Draw on a layer
-the product cannot
-read that lets pointer input through, and never tell the product what was drawn. The host runtimes take
-`RequiredHostCallbacks`, so a `profile` group implements it and `presentContactProfile` alongside `presentProfile`.
+the product cannot read that lets pointer input through, and never tell the product what was drawn. The host runtimes
+take `RequiredHostCallbacks`, so a `profile` group implements it and `presentContactProfile` alongside `presentProfile`.
 
 `profile.disclose` needs no `profile` group, but the first call from a product asks the user through
 `userConfirmation.confirmPermission` with a `ProfileDisclosure` review naming that product. V1 shares app-scoped
 references with every ready Chat contact; V2 can select apps or opaque Contacts handles. Personal grants are
-host-renderable across recipient apps. The answer is kept like any other permission, as `ProfileDisclosure`.
-Audience mutations currently reuse that product-level consent. A host that cannot render the
-review should reject the call rather than answer `Deny`: the product is refused, but no refusal is remembered.
+host-renderable across recipient apps. The answer is kept like any other permission, as `ProfileDisclosure`. Audience
+mutations currently reuse that product-level consent. A host that cannot render the review should reject the call rather
+than answer `Deny`: the product is refused, but no refusal is remembered.
 
 `presentContact` V2 accepts peer or Contacts-handle selectors and hides sharing availability; V1 remains app-only.
 `placeContactAvatars` V3 accepts those selectors alongside the V2 own slot. V1/V2 placement bytes remain compatible.
-Hosts must call `notifyContactsChanged()` after directory changes so stale handle resolution and overlays clear.
-These APIs do not create a Chat channel or a group editor. See the
-[Profile RFC](../../../docs/rfcs/profile-disclosure.md) for audience, transport and withdrawal semantics.
+Hosts must call `notifyContactsChanged()` after directory changes so stale handle resolution and overlays clear. These
+APIs do not create a Chat channel or a group editor. See the [Profile RFC](../../../docs/rfcs/profile-disclosure.md) for
+audience, transport and withdrawal semantics.
 
 Under `createWebWorkerPairingHostRuntime` the presence of each optional group is reported to the worker in its `init`
 message, so the core sees the same capability set on both sides of the boundary.
@@ -299,31 +297,38 @@ The index crosses as a SCALE-encoded `DerivationIndex`, the same value a review 
 code behind it stays core-owned and a host never reconstructs it. `productAccountAddress` applies the prefix host-spec
 C.6 fixes, rather than leaving each host to choose one.
 
-The optional `contacts` group resolves handles through `contacts({ handleKey, handles })`:
-one entry per handle, in order, the account or `undefined`. `pickContact` draws a single
-picker and returns the chosen account. `pickContacts(product, { selected })` edits a
-complete selection of at most 256 resolved accounts, returning `Picked { accounts }`,
-`Dismissed`, or `NoContacts`. A confirmed empty array is `Picked`, not dismissal.
-Missing picker callbacks answer `Unsupported`.
-A contact's handle is BLAKE2b-256 keyed with `handleKey` over its 32-byte
-account (`blake2b(account, { key: handleKey, dkLen: 32 })` in `@noble/hashes`).
-The core re-checks every account returned. It caches what it resolves, so call
-`notifyContactsChanged()` whenever a contact is removed or blocked. Omit blocked
+The optional `contacts` group resolves handles through `contacts({ handleKey, handles })`: one entry per handle, in
+order, the account or `undefined`. `pickContact` draws a single picker and returns the chosen account.
+`pickContacts(product, { selected })` edits a complete selection of at most 256 resolved accounts, returning
+`Picked { accounts }`, `Dismissed`, or `NoContacts`. A confirmed empty array is `Picked`, not dismissal. Missing picker
+callbacks answer `Unsupported`. A contact's handle is BLAKE2b-256 keyed with `handleKey` over its 32-byte account
+(`blake2b(account, { key: handleKey, dkLen: 32 })` in `@noble/hashes`). The core re-checks every account returned. It
+caches what it resolves, so call `notifyContactsChanged()` whenever a contact is removed or blocked. Omit blocked
 contacts from both. See the contacts RFC (`docs/rfcs/contacts-api.md`).
 
-`placeContactLabels(product, placed)` receives surface dimensions and
-`labels: [{ slot, account, rect, clip }]`. Draw names from the host's contact directory,
-using an account fallback when no username exists. Profile-photo absence must not
-hide a name. Keep this UI host-owned: return no label or per-slot availability.
-Return `true` when the host supports label placement, even when no contact resolves.
-Return `false` when that UI is unsupported; the adapter supplies this answer when
-the callback is omitted. This capability acknowledgment never reports individual
-contact availability. Background Workers are denied label placement.
-Empty placements clear the previous names and cancel queued refreshes. Clear names
-and cancel pending work on frame load, navigation or disconnect. On same-wallet
-directory invalidation, clear stale names and refresh the latest live placement
-without waiting for the product to resend it. The core serializes placements per
-connection and rejects selections from changed sessions.
+`placeContactLabels(product, placed)` receives surface dimensions and `labels: [{ slot, account, rect, clip }]`. Draw
+names from the host's contact directory, using an account fallback when no username exists. Profile-photo absence must
+not hide a name. Keep this UI host-owned: return no label or per-slot availability. Return `true` when the host supports
+label placement, even when no contact resolves. Return `false` when that UI is unsupported; the adapter supplies this
+answer when the callback is omitted. This capability acknowledgment never reports individual contact availability.
+Background Workers are denied label placement. Empty placements clear the previous names and cancel queued refreshes.
+Clear names and cancel pending work on frame load, navigation or disconnect. On same-wallet directory invalidation,
+clear stale names and refresh the latest live placement without waiting for the product to resend it. The core
+serializes placements per connection and rejects selections from changed sessions.
+
+Browser signing hosts can back this UI with `runtime.getNativeChatContacts()`. It returns
+`{ walletPublicKey, genesisHash, contacts: [{ peerIdentity, username? }] }` to trusted host code only. The directory
+restores encrypted native Chat actors, checks their current authorization, includes only authenticated ready peers, and
+deduplicates identities. Conflicting verified names are omitted. It is not a product or SSO API; pairing hosts reject
+it. Bind the result to the active signing public key and People genesis, never to a username. Native
+departures/revocations remove readiness; product-private block lists are not a separate directory source.
+
+Actors are indexed when opened. Historical unindexed products must be opened once on the upgraded host; private storage
+has no enumeration API. Directory reads share native commit gates, and native state/session/permission changes
+invalidate cached handles. A browser adapter must also cancel pending picker/lookup work when its wallet, network,
+provider or directory generation changes. Provider-scoped `contacts` callbacks control that provider's UI; absent
+overrides inherit the runtime-wide Contacts adapter. Keep the runtime-wide source alive for host-owned rendering until
+the owner closes.
 
 ## Generated WASM artefacts
 

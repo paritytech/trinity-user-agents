@@ -3955,17 +3955,15 @@ mod tests {
 		assert!(!runtime.set_device_pairing_observer(Arc::new(Inert)));
 	}
 
-	/// Every durable consumer shares one core database: a second installer
-	/// must not swap it, and a host that configured none gets a clear error
-	/// rather than a silently missing store.
-	#[cfg(not(target_arch = "wasm32"))]
-	#[test]
-	fn the_core_database_is_installed_once_and_reports_when_missing() {
-		use crate::{
-			platform::{HostInfo, PlatformInfo, SigningHostConfig},
-			store::{Db, DbConfig, DbError, DbLocation},
-		};
-		use futures::executor::block_on;
+    /// Every durable consumer shares one core database: a second installer
+    /// must not swap it, and a host that configured none gets a clear error
+    /// rather than a silently missing store.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_core_database_is_installed_once_and_reports_when_missing() {
+        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
+        use crate::store::{Db, DbConfig, DbError, DbLocation};
+        use futures::executor::block_on;
 
 		let config = SigningHostConfig::new(
 			HostInfo {
@@ -3995,12 +3993,15 @@ mod tests {
 		assert!(runtime.set_core_db(installed));
 		assert!(!runtime.set_core_db(other));
 
-		let db = runtime.services.core_db().expect("installed database is served");
-		let answer: i64 =
-			block_on(db.write(|tx| Ok(tx.query_row("SELECT 42", [], |row| row.get(0))?)))
-				.expect("installed database serves writes");
-		assert_eq!(answer, 42);
-	}
+        let db = runtime
+            .services
+            .core_db()
+            .expect("installed database is served");
+        let answer: i64 =
+            block_on(db.write(|tx| Ok(tx.query_row("SELECT 42", [], |row| row.get(0))?)))
+                .expect("installed database serves writes");
+        assert_eq!(answer, 42);
+    }
 
 	#[test]
 	fn answer_sso_request_distinguishes_disconnect_from_ignorable_messages() {

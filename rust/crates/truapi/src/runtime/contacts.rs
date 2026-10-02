@@ -15,7 +15,10 @@
 //! the mapping cannot be recovered by hashing candidate accounts.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 use parity_scale_codec::Encode;
 
@@ -25,14 +28,18 @@ const HANDLE_CACHE_MAX_ENTRIES: usize = 256;
 const MAX_CONTACTS: usize = 256;
 
 /// Bound and deduplicate product-supplied selections without changing order.
-pub fn selected_handles(
-    selected: Vec<crate::latest::ContactHandle>,
-) -> Option<Vec<[u8; 32]>> {
+pub fn selected_handles(selected: Vec<crate::latest::ContactHandle>) -> Option<Vec<[u8; 32]>> {
     if selected.len() > MAX_CONTACTS {
         return None;
     }
     let mut seen = HashSet::with_capacity(selected.len());
-    Some(selected.into_iter().map(|handle| handle.bytes).filter(|handle| seen.insert(*handle)).collect())
+    Some(
+        selected
+            .into_iter()
+            .map(|handle| handle.bytes)
+            .filter(|handle| seen.insert(*handle))
+            .collect(),
+    )
 }
 
 /// Bound and deduplicate accounts a host picker confirmed.
@@ -87,14 +94,17 @@ impl ContactLabelPlacement {
             return;
         }
         if let Some((surface_width, surface_height, _)) = surface.take() {
-            let _ = self.platform.place_contact_labels(
-                &self.product,
-                crate::platform::PlacedContactLabels {
-                    surface_width,
-                    surface_height,
-                    labels: Vec::new(),
-                },
-            ).await;
+            let _ = self
+                .platform
+                .place_contact_labels(
+                    &self.product,
+                    crate::platform::PlacedContactLabels {
+                        surface_width,
+                        surface_height,
+                        labels: Vec::new(),
+                    },
+                )
+                .await;
         }
     }
 }
@@ -113,29 +123,32 @@ impl ContactLabelPlacements {
         platform: Arc<dyn crate::platform::ContactsPlatform>,
         product: &crate::platform::ProductContext,
     ) -> Arc<ContactLabelPlacement> {
-        self.by_runtime.lock()
-            .entry(runtime).or_insert_with(|| Arc::new(ContactLabelPlacement {
-                platform,
-                product: product.clone(),
-                surface: Default::default(),
-                closed: AtomicBool::new(false),
-            })).clone()
+        self.by_runtime
+            .lock()
+            .entry(runtime)
+            .or_insert_with(|| {
+                Arc::new(ContactLabelPlacement {
+                    platform,
+                    product: product.clone(),
+                    surface: Default::default(),
+                    closed: AtomicBool::new(false),
+                })
+            })
+            .clone()
     }
 
     /// Prevent late draws and clear a connection's labels during teardown.
     pub fn release(&self, runtime: u64, spawner: &crate::subscription::Spawner) {
-        let Some(placement) = self.by_runtime.lock()
-            .remove(&runtime) else {
-                return;
-            };
+        let Some(placement) = self.by_runtime.lock().remove(&runtime) else {
+            return;
+        };
         placement.closed.store(true, Ordering::Release);
         spawner(Box::pin(async move { placement.clear(None).await }));
     }
 
     /// Clear labels from the preceding wallet session, without erasing newer draws.
     pub fn session_changed(&self, generation: u64, spawner: &crate::subscription::Spawner) {
-        let placements: Vec<_> = self.by_runtime.lock()
-            .values().cloned().collect();
+        let placements: Vec<_> = self.by_runtime.lock().values().cloned().collect();
         if placements.is_empty() {
             return;
         }

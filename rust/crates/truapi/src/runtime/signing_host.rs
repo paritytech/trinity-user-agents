@@ -4115,8 +4115,9 @@ mod tests {
                 .unwrap();
             let runtime = product_runtime(services.clone(), activation.clone());
             let cx = CallContext::default();
-            let chat =
-                |request| runtime.product_device_chat(&cx, HostProductDeviceChatRequest::V2(request));
+            let chat = |request| {
+                runtime.product_device_chat(&cx, HostProductDeviceChatRequest::V2(request))
+            };
             chat(truapi::latest::HostProductDeviceChatRequest::Initialize)
                 .await
                 .unwrap();
@@ -4399,7 +4400,8 @@ mod tests {
                 crate::platform::ProductExecutionKind::Worker,
             )
             .expect("test product id is valid");
-            let permissions = PermissionsService::new(platform.as_ref(), platform.as_ref(), &product);
+            let permissions =
+                PermissionsService::new(platform.as_ref(), platform.as_ref(), &product);
             assert_eq!(
                 permissions
                     .authorization_status(&PermissionAuthorizationRequest::ChatAuthority)

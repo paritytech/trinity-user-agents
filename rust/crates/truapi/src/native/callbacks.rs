@@ -7,9 +7,30 @@ use crate::{PairedSsoPeer, host_logic::worker::WorkerTransition};
 
 #[cfg(doc)]
 use super::NativeTrUApiHostRuntime;
-use super::{config::ProductExecutionConfig, errors::HostRejection};
+use super::config::ProductExecutionConfig;
+use super::errors::HostRejection;
 #[cfg(doc)]
 use crate::platform::CoreStorageKey;
+
+/// Host-private native Coinage response. It may contain bearer memo material.
+#[derive(Clone, uniffi::Record)]
+pub struct NativeCoinageCallbackResult {
+    /// Typed result, including private memo material when preparing a payment.
+    pub response: NativeCoinageResponse,
+}
+
+/// Optional process-wide native custody, installed only at runtime construction.
+/// Absence selects built-in Rust custody. A registered wallet's failure or
+/// unavailability never changes that dependency or permits fallback.
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeCoinageCallbacks: Send + Sync {
+    /// Host-private wallet operation; bearer material must never reach a product.
+    async fn native_coinage(
+        &self,
+        request: NativeCoinageRequest,
+    ) -> Result<NativeCoinageCallbackResult, HostRejection>;
+}
 
 /// Callback surface that iOS and Android implement.
 ///

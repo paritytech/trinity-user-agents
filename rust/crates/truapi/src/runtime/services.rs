@@ -297,7 +297,8 @@ impl RuntimeServices {
     /// Forget handles and labels belonging to the preceding wallet session.
     pub fn contacts_session_changed(&self) {
         self.invalidate_contacts();
-        self.contact_labels.session_changed(self.contact_handles.generation(), &self.spawner);
+        self.contact_labels
+            .session_changed(self.contact_handles.generation(), &self.spawner);
     }
 
     /// Install the host's device-pairing observer.

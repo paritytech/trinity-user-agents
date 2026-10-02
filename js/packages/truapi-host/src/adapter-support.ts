@@ -26,9 +26,11 @@ export function contactsHostAdapter(
   if (host === undefined) return undefined;
   return {
     contacts: (lookup) => host.contacts(lookup),
-    pickContact: (product) => host.pickContact?.(product) ?? Promise.resolve({ tag: "Unsupported" }),
+    pickContact: (product) =>
+      host.pickContact?.(product) ?? Promise.resolve({ tag: "Unsupported" }),
     pickContacts: (product, selection) =>
-      host.pickContacts?.(product, selection) ?? Promise.resolve({ tag: "Unsupported" }),
+      host.pickContacts?.(product, selection) ??
+      Promise.resolve({ tag: "Unsupported" }),
     placeContactLabels: (product, placed) =>
       host.placeContactLabels?.(product, placed) ?? Promise.resolve(false),
   };

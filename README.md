@@ -45,19 +45,27 @@ host build:
 curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
 ```
 
-Prebuilt for macOS on Apple silicon and Linux on x86_64 and arm64. No Rust toolchain or checkout needed, and it keeps itself up to date. `/script` opens a persistent TypeScript project with the Product SDK quickstart, pinned published dependencies, and editor types. Use `/script --run` to rerun it or `/script --edit` to edit without running. Projects survive session cleanup. See the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md) for setup and existing project scripts. Release checks install and typecheck the default SDK template against the public registry.
+Prebuilt for macOS on Apple silicon and Linux on x86_64 and arm64. No Rust toolchain or checkout needed, and it keeps
+itself up to date. `/script` opens a persistent TypeScript project with the Product SDK quickstart, pinned published
+dependencies, and editor types. Use `/script --run` to rerun it or `/script --edit` to edit without running. Projects
+survive session cleanup. See the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md) for setup and existing
+project scripts. Release checks install and typecheck the default SDK template against the public registry.
 
-The signing host registers its built-in full and lite personhood keys when an
-authorized product first lists `peopl.<network suffix>` (for example,
-`peopl.paseo`). The first listing reads People-chain metadata; later listings
-reuse the saved registrations, including after restart. Registration makes the
-handles discoverable; proof creation still checks permission and ring membership.
-The `listRingVrfKeys` example checks that both built-in keys are discoverable
-under `peopl.paseo` on Paseo.
+`truapi-host signing-host --session <name>` opens an interactive session and restores or creates its signer.
+`/session <name>` switches to the saved account or resumes an unfinished setup. In `exec` mode, `--session` selects the
+command's session; inspection and clearing commands do not create accounts. A username base such as `workbench` selects
+the most recently created local session with that base; `workbench.42` selects that exact session. Creating an account
+from a session name requires at least six lowercase ASCII letters after digits and separators are omitted. A new
+`/session foo` fails immediately as too short; existing saved accounts and aliases still restore normally.
 
-Preimage lookups that miss the core's cache read the selected network's Bulletin
-node through `bitswap_v1_get`. The CLI verifies the returned bytes against the
-requested key and keeps missing lookups subscribed until the blob arrives.
+The signing host registers its built-in full and lite personhood keys when an authorized product first lists
+`peopl.<network suffix>` (for example, `peopl.paseo`). The first listing reads People-chain metadata; later listings
+reuse the saved registrations, including after restart. Registration makes the handles discoverable; proof creation
+still checks permission and ring membership. The `listRingVrfKeys` example checks that both built-in keys are
+discoverable under `peopl.paseo` on Paseo.
+
+Preimage lookups that miss the core's cache read the selected network's Bulletin node through `bitswap_v1_get`. The CLI
+verifies the returned bytes against the requested key and keeps missing lookups subscribed until the blob arrives.
 
 Bulletin submissions read the nonce and runtime metadata from current best-block
 state, but bind the 64-block mortal signature to a finalized checkpoint. A best
@@ -68,12 +76,12 @@ deadlines and bounded rejection retries are unchanged.
 
 Product scripts and `truapi-host dev` use the same web API permission checks from `js/container`. Dev loads the container through a blocking script tag in your existing browser. Scripts run in Bun and retain filesystem, environment and process access.
 
-To build from source, run `make headless install` with stable Rust, the nightly pinned in `nightly-toolchain` with rustfmt, Node.js 22 or newer, and
-Bun installed. The target installs missing workspace build tools and regenerates the Rust and TypeScript sources before
-compiling. CI tests this command in both a fresh checkout and one with stale generated files, then runs a product script
-through the installed CLI. Code generation and the workspace documentation check reject rustdoc warnings. These checks
-are part of the required `CI Status` gate. CLI packaging tests also build an isolated runner and verify it outside the
-source checkout.
+To build from source, run `make headless install` with stable Rust, the nightly pinned in `nightly-toolchain` with
+rustfmt, Node.js 22 or newer, and Bun installed. The target installs missing workspace build tools and regenerates the
+Rust and TypeScript sources before compiling. CI tests this command in both a fresh checkout and one with stale
+generated files, then runs a product script through the installed CLI. Code generation and the workspace documentation
+check reject rustdoc warnings. These checks are part of the required `CI Status` gate. CLI packaging tests also build an
+isolated runner and verify it outside the source checkout.
 
 ## Usage
 
@@ -112,17 +120,17 @@ retries resume the same recipient/amount operation; incoming batches require dur
 before acknowledgment. Delivery acknowledgment and finalized clearing are separate states.
 
 Signing hosts can use the host-private `getNativeChatContacts()` directory for trusted Contacts UI. It restores
-authenticated, ready peers from authorized native Chat products, scopes them to the active wallet and People chain,
-and never exposes a product or SSO directory method. Actors opened on this version are durably indexed; historical
-unindexed Chat products must be opened once before their peers can appear. Pairing hosts do not supply this directory.
+authenticated, ready peers from authorized native Chat products, scopes them to the active wallet and People chain, and
+never exposes a product or SSO directory method. Actors opened on this version are durably indexed; historical unindexed
+Chat products must be opened once before their peers can appear. Pairing hosts do not supply this directory.
 
 Contacts trait 20 retains the single picker at method 0, adds `pickMany({ selected })` at method 1, and
-`placeLabels({ surfaceWidth, surfaceHeight, slots })` at method 2. Multi-select confirmation returns only
-wallet-scoped handles, including a confirmed empty selection; dismissal never edits the audience. Host-owned
-labels show directory usernames or account fallbacks independently of Profile photos, without returning names,
-accounts or per-slot availability. Selections and placements are bounded to 256 entries; unresolved initial
-selections fail closed. Hosts implement `pickContacts(product, ContactSelection)` and
-`placeContactLabels(product, PlacedContactLabels)` through the canonical native/WASM/worker callbacks.
+`placeLabels({ surfaceWidth, surfaceHeight, slots })` at method 2. Multi-select confirmation returns only wallet-scoped
+handles, including a confirmed empty selection; dismissal never edits the audience. Host-owned labels show directory
+usernames or account fallbacks independently of Profile photos, without returning names, accounts or per-slot
+availability. Selections and placements are bounded to 256 entries; unresolved initial selections fail closed. Hosts
+implement `pickContacts(product, ContactSelection)` and `placeContactLabels(product, PlacedContactLabels)` through the
+canonical native/WASM/worker callbacks.
 
 The [native Chat/main-purse RFC](docs/rfcs/native-chat-main-purse.md) specifies the method 12 request/response and
 compatibility contract, device eligibility, custody-before-ACK rule, and delivery versus clearing semantics. It is a
@@ -177,6 +185,15 @@ Native Chat wire, cryptography, attachment codecs, and secret-zeroization change
 Distributing the runtime also requires the exact modified Corresponding Source, not only the base repository URLs in the
 notices.
 
+The [permission model](docs/rfcs/0002-permission-model.md) separates outbound domain access from `OpenUrl` external
+navigation and requires `Notifications` for push delivery. Hosts preserve the user's `AllowOnce`, `AllowAlways`, or
+`Deny` choice; Rust owns one-use grants for Rust-backed executions. Android permission prompts belong to one request and
+close when it finishes or is cancelled, including cancellation while the app is backgrounded.
+
+The shared Rust core asks blessed products (`peopl`, `dim2` and `stash`, on every supported network) only for device
+permissions and legacy-account signing. All other operations it handles bypass permission prompts and recorded
+decisions.
+
 ## Repository layout
 
 ```
@@ -226,8 +243,8 @@ scripts/bundle-size.mjs    Measure the JS and WASM the truapi-* packages ship, a
 
 The PolkaVM application runtime, GPU/UI wire contracts, and browser runtime live in
 [`paritytech/polkavm-host-runtime`](https://github.com/paritytech/polkavm-host-runtime). Native hosts that need both
-runtimes link the optional `truapi-polkavm-host` composition crate; the base `truapi-server` remains PolkaVM-free.
-Browser hosts consume `@parity/polkavm-browser-runtime` directly; browser assets are not shipped from this repository.
+runtimes link the optional `truapi-polkavm-host` composition crate; the base `truapi` remains PolkaVM-free. Browser
+hosts consume `@parity/polkavm-browser-runtime` directly; browser assets are not shipped from this repository.
 
 The native JAM peer transport's live fixture targets JAM-TEST-INSTANCE.
 Run `cargo test -p truapi --features mock --test live_jam_test_instance -- --include-ignored`
@@ -257,19 +274,28 @@ logs** remain available.
 See the [proc-macro guide](rust/crates/truapi-macros/README.md) for typed SSO handlers, their shared response envelope,
 and the macro implementation modules.
 
-The Swift host adapter (the `TrUAPIHost` SPM package over the truapi-server UniFFI core) lives under
+The Swift host adapter (the `TrUAPIHost` SPM package over the truapi UniFFI core) lives under
 [`ios/truapi-host/`](ios/truapi-host), with its SPM manifest at the repo root (`Package.swift`) so apps can consume it
 as a git-URL dependency. The UniFFI bindings and the container bundle are gitignored build outputs; `scripts/rebuild.sh`
 regenerates them along with the xcframework (`make xcframework` + `make uniffi`); see
-[`ios/truapi-host/README.md`](ios/truapi-host/README.md). Native bindings expose the canonical Rust domain and protocol
-value types; native-only adapter types are limited to lifecycle and callback behavior. On iOS, a wallet host that
-manages its own statement-store SSO session can call `handleSsoRequest` (routes one decrypted remote message through the
-core, returning a typed outcome: response bytes to post back, a disconnect marker, or ignored) and
-`prepareDisconnectRequest` (builds the SCALE-encoded wire message for a wallet-initiated disconnect) on
-`TrUAPIHostRuntime`. Response posting and session-record cleanup remain on the wallet side. See the core's
-[inter-host SSO design](rust/crates/truapi-server/README.md#inter-host-sso) for typed handlers, canonical resource
-types, and consent bound to the signing session. Product and SSO signing share canonical payloads and the one-byte
-`OptionBool` encoding for `with_signed_transaction`.
+[`ios/truapi-host/README.md`](ios/truapi-host/README.md). The container publishes the shared client and a temporary
+MessagePort adapter for older SDKs. The adapter's removal is tracked in
+[#881](https://github.com/paritytech/host-rust-core/issues/881); CLI and iframe MessagePort transports remain supported.
+The [container permission boundary](js/container/README.md) documents the protected operations and the built-ins that
+remain mutable for product compatibility. Native bindings expose the canonical Rust domain and protocol value types;
+native-only adapter types are limited to lifecycle and callback behavior. Native hosts must create an app-private
+directory excluded from device backups and pass its path as `HostRuntimeConfig.database_directory` (`databaseDirectory`
+in Swift and Kotlin). The shared core opens SQLite once; product executions keep their own callbacks and consent scope
+while sharing that database. The store is not compiled into the browser WASM bundles. See the
+[core database contract](rust/crates/truapi/RUNTIME.md#core-database). On iOS, a wallet host that manages its own
+statement-store SSO session can call `handleSsoRequest` (routes one decrypted remote message through the core, returning
+a typed outcome: response bytes to post back, a disconnect marker, or ignored; a `Cancel` returns at once, so the wallet
+passes it on without queueing it behind the request it withdraws) and `prepareDisconnectRequest` (builds the
+SCALE-encoded wire message for a wallet-initiated disconnect) on `TrUAPIHostRuntime`. Response posting and
+session-record cleanup remain on the wallet side. See the core's
+[inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso) for typed handlers, canonical resource types, and
+consent bound to the signing session. Product and SSO signing share canonical payloads and the one-byte `OptionBool`
+encoding for `with_signed_transaction`.
 
 ### JS Host SDKs
 
@@ -283,7 +309,8 @@ tree-shakeable subpath entries:
 
 `createWorkerHostRuntime` shares the native core while `createProvider(product, callbacks)` binds platform callbacks to
 one product execution. The host UI disposes that execution's pending consent when its provider closes; wallet
-authentication and storage remain core-owned. See the [host SDK](js/packages/truapi-host/README.md) for lifecycle details.
+authentication and storage remain core-owned. See the [host SDK](js/packages/truapi-host/README.md) for lifecycle
+details.
 
 ### Chain transport
 
@@ -291,7 +318,10 @@ A host that serves chain traffic itself embeds the `truapi-provider` crate: an e
 bundled chain-spec catalog, addressed by genesis hash, so the host ships no chain specs and never refreshes them. The
 light client holds at most 32 connections at once and refuses a `connect` past that, so a consumer that leaks them fails
 instead of growing; closing one hands its slot back. Connections to a remote node, which only the WASM build compiles,
-are not counted against it. The crate compiles to one binary artifact per platform, each exposing the same
+are not counted against it. A light-client connection holds its requests until the chain first syncs and then forwards
+them in order; chain-spec queries, statement-store and Bitswap calls, and the `lifecycle_unstable_*` subscription that
+reports the sync are forwarded at once. Every artifact exposes the sync progress of a running chain (phase, peer count,
+stall verdict) as a watch. The crate compiles to one binary artifact per platform, each exposing the same
 `ChainProvider` contract, so a consumer needs neither a Rust toolchain nor a dependency on the crate:
 
 - [`@parity/truapi-provider`](js/packages/truapi-provider) is the WASM build for browser and webview hosts, rebuilt by
@@ -335,25 +365,20 @@ conformance vectors. The plan for it and the tools on top of it is in
 
 ### Wire debugger
 
-[`@parity/truapi-debugger`](js/packages/truapi-debugger) is the consumer for the
-payload-blind frame tap in `truapi`. The core streams raw SCALE frames out
-of two choke points; the debugger correlates them into per-operation traces,
-decodes envelopes and values behind a `TRUAPI_WIRE_SCHEMA_HASH` match, and renders
-them through one of two mounts:
+[`@parity/truapi-debugger`](js/packages/truapi-debugger) is the consumer for the payload-blind frame tap in `truapi`.
+The core streams raw SCALE frames out of two choke points; the debugger correlates them into per-operation traces,
+decodes envelopes and values behind a `TRUAPI_WIRE_SCHEMA_HASH` match, and renders them through one of two mounts:
 
-- `startDebugServer(...)` is a standalone Bun WS+HTTP server on `127.0.0.1:9231`
-  that hosts dial into, so frames from any host reach one inspector.
-- `createInAppDebugger(...)` mounts the same engine inside the host page, with no
-  server and no dial.
+- `startDebugServer(...)` is a standalone Bun WS+HTTP server on `127.0.0.1:9231` that hosts dial into, so frames from
+  any host reach one inspector.
+- `createInAppDebugger(...)` mounts the same engine inside the host page, with no server and no dial.
 
 All decoding lives in this package; `@parity/truapi` has no debug seam. Its
-[README](js/packages/truapi-debugger/README.md) carries the endpoint list and the
-per-host enablement recipe.
+[README](js/packages/truapi-debugger/README.md) carries the endpoint list and the per-host enablement recipe.
 
-`make debugger` brings up the inspector on `:9231` alongside a dot.li host and the
-playground. It builds the host with `NODE_ENV=development` on purpose: the dial
-sits behind `import.meta.env.DEV`, which a production bundle replaces with `false`,
-so `make dev` leaves the board empty with no error.
+`make debugger` brings up the inspector on `:9231` alongside a dot.li host and the playground. It builds the host with
+`NODE_ENV=development` on purpose: the dial sits behind `import.meta.env.DEV`, which a production bundle replaces with
+`false`, so `make dev` leaves the board empty with no error.
 
 ## How it works
 
@@ -390,14 +415,12 @@ make wasm     # rebuild truapi WASM artifacts under js/packages/truapi-host/dist
 CI regenerates the shared bindings before building and testing both npm packages, so generated client and host callback
 changes are checked together.
 
-CLI transcript tests share process-wide UI output. Match captured events by
-request identity rather than queue position: other tests may emit unrelated
-logs through the installed UI while the suite runs in parallel.
+CLI transcript tests share process-wide UI output. Match captured events by request identity rather than queue position:
+other tests may emit unrelated logs through the installed UI while the suite runs in parallel.
 
-The native `truapi-host` utility runs pairing and signing hosts against the real
-SSO transport for local end-to-end work. See [Install the CLI](#install-the-cli)
-to get it, and the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md)
-for its commands and controls.
+The native `truapi-host` utility runs pairing and signing hosts against the real SSO transport for local end-to-end
+work. See [Install the CLI](#install-the-cli) to get it, and the
+[`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md) for its commands and controls.
 
 CLI reserved identities follow the selected network's dotNS suffix. Old account and pairing stores are left unused as
 the CLI starts fresh under its [versioned state directory](rust/crates/truapi-host-cli/README.md#state-directory).
@@ -440,10 +463,22 @@ the host already live. The product reaches it through a development-only `<scrip
 }
 ```
 
-The host serves that script itself, so the page needs no package, no imports, and no environment variables. It installs
-the same `window.__HOST_API_PORT__` that native webview hosts inject, and the SDK adopts it unchanged. TCP frame
-connections are accepted only from loopback peers, and browser WebSocket origins must also name localhost or a loopback
-IP. WebSocket is not subject to CORS, and confirmations here are auto-approved.
+The host serves that script itself, with no imports or environment variables needed. It installs the shared client and
+browser container before product code runs. Keep the tag before application scripts, without `async` or `defer`. SDK
+calls and permission checks share one connection. Updated SDKs reuse the injected client across reconnects; older SDKs
+can still start through the MessagePort adapter but require a page reload after a disconnect. A visible page retries a
+failed reconnect after 250 ms, 1 s and 4 s; after that, the next API call or return to a visible page tries again. On
+iOS the host rebinds its localhost listener on the same port each time the app returns to the foreground, since the
+system reclaims a suspended app's listening socket. On every platform the bridge also rebinds the port itself when its
+listening socket is destroyed, pausing between failed attempts instead of retrying in a tight loop; other accept errors
+keep the port. When WebKit loses its networking process, every MessagePort a page already holds stops delivering; the
+container detects this after a disconnect and reloads the page. On Android, a product whose WebView renderer dies
+reloads in a fresh WebView with the same bootstrap, and a running worker whose renderer dies boots again. The container
+routes fetch, XHR and WebSocket permission checks to Rust. WebRTC and camera/microphone access use the same live
+permission checks. `/script` shares these wrappers for the APIs available in Bun. CLI permission checks support
+development testing; product code can deliberately bypass them. Native hosts retain their separate authorization
+protection. TCP frame connections are accepted only from loopback peers, and browser WebSocket origins must also name
+localhost or a loopback IP. WebSocket is not subject to CORS, and confirmations here are auto-approved.
 
 The CLI owns the wrapped command's process group on Unix. On shutdown it sends SIGTERM to the group, waits up to five
 seconds, then sends SIGKILL if a descendant still remains. This prevents a package-manager child from keeping a
@@ -462,15 +497,12 @@ the Polkadot Desktop Host. See [`playground/README.md`](playground/README.md) fo
 ### Bundle size
 
 The `Bundle size` CI job builds the packages and runs
-[`.github/actions/bundle-size`](.github/actions/bundle-size/action.yml) on them.
-The action's `assets` input lists the groups it measures (raw, gzip and
-brotli): the wasm-pack output of the Rust crates (the `@parity/truapi-host` web
-bundle and `@parity/truapi-provider`) and the compiled TypeScript of
-`@parity/truapi` and `@parity/truapi-host`, without
-the test host behind `@parity/truapi-host/testing`. A push to `main` stores the
-measurement as the baseline, and every pull request gets one comment comparing
-with it. A size change never fails the job. To see the same report locally,
-build the assets and pass the job's `assets` list to the script:
+[`.github/actions/bundle-size`](.github/actions/bundle-size/action.yml) on them. The action's `assets` input lists the
+groups it measures (raw, gzip and brotli): the wasm-pack output of the Rust crates (the `@parity/truapi-host` web bundle
+and `@parity/truapi-provider`) and the compiled TypeScript of `@parity/truapi` and `@parity/truapi-host`, without the
+test host behind `@parity/truapi-host/testing`. A push to `main` stores the measurement as the baseline, and every pull
+request gets one comment comparing with it. A size change never fails the job. To see the same report locally, build the
+assets and pass the job's `assets` list to the script:
 
 ```bash
 make wasm
@@ -488,6 +520,9 @@ scripts/refresh-host-import.sh status ios     # how far behind, and what differs
 scripts/refresh-host-import.sh refresh ios    # take the new tree, re-apply adaptations
 ```
 
+Changes move one way, from the source into this tree. A change made here is not sent back: the source is upstream of
+this repository, not a peer.
+
 `refresh` replaces the tree with the source's, re-applies this repository's adaptations on top as a three-way patch,
 then compares every path against the source by blob hash in both directions. A difference no adaptation accounts for is
 upstream work that was dropped; an adaptation that left no difference either did not apply or has been adopted upstream.
@@ -495,10 +530,9 @@ upstream work that was dropped; an adaptation that left no difference either did
 A clean apply is staged for review. A conflicted one is left unmerged, so git refuses to commit it until someone decides
 which side is right.
 
-Drift is picked up on a schedule. `.github/workflows/backport-host.yml` opens a
-pull request carrying a single `BACKPORT-<host>.md`, which names the range, the
-pull requests in it, and what has to be done to finish the work. Completing that
-pull request means running the command above and deleting the file.
+Drift is picked up on a schedule. `.github/workflows/backport-host.yml` opens a pull request carrying a single
+`BACKPORT-<host>.md`, which names the range, the pull requests in it, and what has to be done to finish the work.
+Completing that pull request means running the command above and deleting the file.
 
 ### Working on the iOS host
 
@@ -511,11 +545,16 @@ make ios-bootstrap
 ```
 
 Then open `hosts/ios/polkadot-app.xcodeproj`. Rerun it after changing anything the bindings are generated from, which is
-the `truapi`, `truapi-platform`, `truapi-server` or `truapi-provider` crates. `SIM_ONLY=1` halves it by skipping the
-device slice, which is enough for Simulator but not for an archive.
+the `truapi` or `truapi-provider` crates. `SIM_ONLY=1` halves it by skipping the device slice, which is enough for
+Simulator but not for an archive.
 
 Because the app builds against the core in this tree, a core change that breaks it fails here rather than at the next
-version bump. Every pull request touching the app, or the crates its bindings come from, runs:
+version bump. Every push to main runs the jobs below, and so does a pull request touching the app, or the crates its
+bindings come from, once it is labelled `ios-simulator-build`. They are macOS jobs, so a pull request without the label
+runs none of them. CI's `iOS package (Swift + WebKit)` job still compiles the TrUAPIHost package against the core on a
+pull request touching `ios/` or the core crates, but the app itself is compiled before merge only with the label. The
+first time a pull request touches the iOS or Android app, `build-label-hint.yml` comments with the labels that build it:
+`ios-simulator-build`, `ios-device-build` and `android-device-build`.
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline does not already have
 - `test`, the unit test suite
@@ -572,22 +611,12 @@ Two workflows deliver through Firebase App Distribution, which reaches a named
 tester group. The nightly also attaches its APKs to a public GitHub prerelease,
 so anything built into a nightly is public.
 
-`android-nightly.yml` runs daily at 22:00 UTC, two hours after the iOS
-nightly starts, so the two never overlap. It publishes both flavours on a
-GitHub prerelease, `app-gp-nightly.apk` and `app-vanilla-nightly.apk` (without
-Google Play services), and sends the gp one to Firebase App Distribution.
-Every run on `main` also refreshes the `nightly-android` release, so the latest
-build always downloads from the same two links:
-`https://github.com/paritytech/trinity-user-agents/releases/download/nightly-android/app-gp-nightly.apk`
-and the same path ending in `app-vanilla-nightly.apk`.
-Each announcement links both APKs and lists the pull
-requests the build carries, with breaking changes, the titles carrying `!`,
-listed first and marked `Breaking:`. Both nightlies skip a scheduled night
-when `main` has not moved past what their last successful run built. `android-debug-distribution.yml` runs
-on every push to `main`, and answers what `main` does right now. It builds the
-pushed commit, the one that landed. A push rather than the pull request's merge
-event, because the Firebase identity is bound to `main`, and a pull request
-event's token never matches that binding.
+`android-nightly.yml` runs daily at 22:00 UTC, two hours after the iOS nightly starts, so the two never overlap. Each
+announcement lists the pull requests the build carries, with breaking changes, the titles carrying `!`, listed first and
+marked `Breaking:`. Both nightlies skip a scheduled night when `main` has not moved past what their last successful run
+built. `android-debug-distribution.yml` runs when a pull request merges to `main`, and answers what `main` does right
+now. It builds the merge commit rather than the pull request's merge preview, which is computed while the request is
+open and would otherwise ship a tree missing whatever landed first.
 
 Both authenticate by federation. The run proves its identity with its OIDC
 token and receives a short lived credential, so no long lived key for that

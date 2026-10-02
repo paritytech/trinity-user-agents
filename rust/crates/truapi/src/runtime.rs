@@ -138,8 +138,8 @@ use truapi::versioned::chat::{
     HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
 };
 use truapi::versioned::contacts::{
-    HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse,
-    HostContactsPickManyError, HostContactsPickManyRequest, HostContactsPickManyResponse,
+    HostContactsPickError, HostContactsPickManyError, HostContactsPickManyRequest,
+    HostContactsPickManyResponse, HostContactsPickRequest, HostContactsPickResponse,
     HostContactsPlaceLabelsError, HostContactsPlaceLabelsRequest, HostContactsPlaceLabelsResponse,
 };
 use truapi::versioned::pocket::{
@@ -1336,7 +1336,9 @@ impl ProductRuntimeHost {
 
     /// Clear this connection's host-owned contact names and prevent late draws.
     pub fn release_contact_labels(&self) {
-        self.services.contact_labels.release(self.core_instance, &self.services.spawner);
+        self.services
+            .contact_labels
+            .release(self.core_instance, &self.services.spawner);
     }
 
     /// Drop the worker reference a pending operation held. An id that is not
@@ -1591,16 +1593,26 @@ impl Contacts for ProductRuntimeHost {
         // choosing must not be undone by caching their choice.
         let generation = self.services.contact_handles.generation();
         if self.authority.current_session() != session {
-            return Err(CallError::Domain(wrap(v01::HostContactsPickError::NotConnected)));
+            return Err(CallError::Domain(wrap(
+                v01::HostContactsPickError::NotConnected,
+            )));
         }
         let picked = until_cancelled(cx, platform.pick_contact(&self.product))
             .await
-            .map_err(|_| unknown(v01::GenericError { reason: "contact picker interrupted".into() }))?;
+            .map_err(|_| {
+                unknown(v01::GenericError {
+                    reason: "contact picker interrupted".into(),
+                })
+            })?;
         if self.authority.current_session() != session {
-            return Err(CallError::Domain(wrap(v01::HostContactsPickError::NotConnected)));
+            return Err(CallError::Domain(wrap(
+                v01::HostContactsPickError::NotConnected,
+            )));
         }
         if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
-            return Err(unknown(v01::GenericError { reason: "contact picker interrupted".into() }));
+            return Err(unknown(v01::GenericError {
+                reason: "contact picker interrupted".into(),
+            }));
         }
         let outcome = match picked.map_err(unknown)? {
             crate::platform::HostContactPick::Picked { account } => {
@@ -1629,7 +1641,9 @@ impl Contacts for ProductRuntimeHost {
         cx: &CallContext,
         request: HostContactsPickManyRequest,
     ) -> Result<HostContactsPickManyResponse, CallError<HostContactsPickManyError>> {
-        use crate::latest::{ContactHandle, ContactPickManyOutcome, HostContactsPickManyError as Error};
+        use crate::latest::{
+            ContactHandle, ContactPickManyOutcome, HostContactsPickManyError as Error,
+        };
         let error = |error| CallError::Domain(HostContactsPickManyError::V1(error));
         let HostContactsPickManyRequest::V1(request) = request;
         let selected = contacts::selected_handles(request.selected)
@@ -1637,8 +1651,12 @@ impl Contacts for ProductRuntimeHost {
         let session = self.authority.current_session();
         let (platform, handles) = self.contacts_picker().map_err(|failure| match failure {
             CallError::Unsupported => CallError::Unsupported,
-            CallError::Domain(v01::HostContactsPickError::NotConnected) => error(Error::NotConnected),
-            _ => error(Error::Unknown { reason: "contact picker unavailable".into() }),
+            CallError::Domain(v01::HostContactsPickError::NotConnected) => {
+                error(Error::NotConnected)
+            }
+            _ => error(Error::Unknown {
+                reason: "contact picker unavailable".into(),
+            }),
         })?;
         let generation = self.services.contact_handles.generation();
         if self.authority.current_session() != session {
@@ -1647,47 +1665,82 @@ impl Contacts for ProductRuntimeHost {
         let resolved = until_cancelled(
             cx,
             resolve_contact_accounts(&self.services, platform.as_ref(), &handles, &selected),
-        ).await.map_err(|_| error(Error::Unknown { reason: "contact lookup interrupted".into() }))?;
+        )
+        .await
+        .map_err(|_| {
+            error(Error::Unknown {
+                reason: "contact lookup interrupted".into(),
+            })
+        })?;
         if self.authority.current_session() != session {
             return Err(error(Error::NotConnected));
         }
         if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
-            return Err(error(Error::Unknown { reason: "contact selection interrupted".into() }));
+            return Err(error(Error::Unknown {
+                reason: "contact selection interrupted".into(),
+            }));
         }
         let accounts = resolved
-            .map_err(|_| error(Error::Unknown { reason: "contact lookup failed".into() }))?
+            .map_err(|_| {
+                error(Error::Unknown {
+                    reason: "contact lookup failed".into(),
+                })
+            })?
             .into_iter()
             .map(|(_, account)| account)
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| error(Error::InvalidSelection))?;
-        let picked = until_cancelled(cx, platform.pick_contacts(&self.product, crate::platform::ContactSelection { selected: accounts }))
-            .await
-            .map_err(|_| error(Error::Unknown { reason: "contact picker interrupted".into() }))?;
+        let picked = until_cancelled(
+            cx,
+            platform.pick_contacts(
+                &self.product,
+                crate::platform::ContactSelection { selected: accounts },
+            ),
+        )
+        .await
+        .map_err(|_| {
+            error(Error::Unknown {
+                reason: "contact picker interrupted".into(),
+            })
+        })?;
         if self.authority.current_session() != session {
             return Err(error(Error::NotConnected));
         }
         if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
-            return Err(error(Error::Unknown { reason: "contact selection interrupted".into() }));
+            return Err(error(Error::Unknown {
+                reason: "contact selection interrupted".into(),
+            }));
         }
-        let outcome = match picked.map_err(|_| error(Error::Unknown {
-            reason: "contact picker failed".into(),
-        }))? {
+        let outcome = match picked.map_err(|_| {
+            error(Error::Unknown {
+                reason: "contact picker failed".into(),
+            })
+        })? {
             crate::platform::HostContactsPick::Picked { accounts } => {
-                let accounts = contacts::selected_accounts(accounts).ok_or_else(|| error(Error::Unknown {
-                    reason: "contact selection exceeds the limit".into(),
-                }))?;
-                let selected = accounts.into_iter().map(|account| {
-                    let bytes = handles.mint(&account);
-                    self.services.contact_handles.insert(bytes, account, generation);
-                    ContactHandle { bytes }
-                }).collect();
+                let accounts = contacts::selected_accounts(accounts).ok_or_else(|| {
+                    error(Error::Unknown {
+                        reason: "contact selection exceeds the limit".into(),
+                    })
+                })?;
+                let selected = accounts
+                    .into_iter()
+                    .map(|account| {
+                        let bytes = handles.mint(&account);
+                        self.services
+                            .contact_handles
+                            .insert(bytes, account, generation);
+                        ContactHandle { bytes }
+                    })
+                    .collect();
                 ContactPickManyOutcome::Picked { handles: selected }
             }
             crate::platform::HostContactsPick::Dismissed => ContactPickManyOutcome::Dismissed,
             crate::platform::HostContactsPick::NoContacts => ContactPickManyOutcome::NoContacts,
             crate::platform::HostContactsPick::Unsupported => return Err(CallError::Unsupported),
         };
-        Ok(HostContactsPickManyResponse::V1(crate::latest::HostContactsPickManyResponse { outcome }))
+        Ok(HostContactsPickManyResponse::V1(
+            crate::latest::HostContactsPickManyResponse { outcome },
+        ))
     }
 
     #[instrument(skip_all, fields(runtime.method = "contacts.place_labels"))]
@@ -1708,10 +1761,18 @@ impl Contacts for ProductRuntimeHost {
         let session = self.authority.current_session();
         let (platform, handles) = self.contacts_picker().map_err(|failure| match failure {
             CallError::Unsupported => CallError::Unsupported,
-            CallError::Domain(v01::HostContactsPickError::NotConnected) => error(Error::NotConnected),
-            _ => error(Error::Unknown { reason: "contact labels unavailable".into() }),
+            CallError::Domain(v01::HostContactsPickError::NotConnected) => {
+                error(Error::NotConnected)
+            }
+            _ => error(Error::Unknown {
+                reason: "contact labels unavailable".into(),
+            }),
         })?;
-        let placement = self.services.contact_labels.for_runtime(self.core_instance, platform.clone(), &self.product);
+        let placement = self.services.contact_labels.for_runtime(
+            self.core_instance,
+            platform.clone(),
+            &self.product,
+        );
         let mut surface = placement.surface.lock().await;
         if placement.is_closed() || cx.cancel().is_cancelled() {
             return Err(error(Error::NotConnected));
@@ -1724,46 +1785,75 @@ impl Contacts for ProductRuntimeHost {
         let resolved = until_cancelled(
             cx,
             resolve_contact_accounts(&self.services, platform.as_ref(), &handles, &requested),
-        ).await.map_err(|_| error(Error::Unknown { reason: "contact lookup interrupted".into() }))?;
+        )
+        .await
+        .map_err(|_| {
+            error(Error::Unknown {
+                reason: "contact lookup interrupted".into(),
+            })
+        })?;
         if self.authority.current_session() != session {
             return Err(error(Error::NotConnected));
         }
         if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
-            return Err(error(Error::Unknown { reason: "contact labels interrupted".into() }));
+            return Err(error(Error::Unknown {
+                reason: "contact labels interrupted".into(),
+            }));
         }
-        let resolved = resolved.map_err(|_| error(Error::Unknown { reason: "contact lookup failed".into() }))?;
-        let labels = request.slots.into_iter().zip(resolved).filter_map(|(slot, (_, account))| {
-            account.map(|account| crate::platform::PlacedContactLabel {
-                slot: slot.slot,
-                account,
-                rect: slot.rect,
-                clip: slot.clip,
+        let resolved = resolved.map_err(|_| {
+            error(Error::Unknown {
+                reason: "contact lookup failed".into(),
             })
-        }).collect();
+        })?;
+        let labels = request
+            .slots
+            .into_iter()
+            .zip(resolved)
+            .filter_map(|(slot, (_, account))| {
+                account.map(|account| crate::platform::PlacedContactLabel {
+                    slot: slot.slot,
+                    account,
+                    rect: slot.rect,
+                    clip: slot.clip,
+                })
+            })
+            .collect();
         if placement.is_closed() {
             return Err(error(Error::NotConnected));
         }
         *surface = Some((request.surface_width, request.surface_height, generation));
-        let result = platform.place_contact_labels(&self.product, crate::platform::PlacedContactLabels {
-            surface_width: request.surface_width,
-            surface_height: request.surface_height,
-            labels,
-        }).await;
+        let result = platform
+            .place_contact_labels(
+                &self.product,
+                crate::platform::PlacedContactLabels {
+                    surface_width: request.surface_width,
+                    surface_height: request.surface_height,
+                    labels,
+                },
+            )
+            .await;
         if self.authority.current_session() != session
             || cx.cancel().is_cancelled()
             || placement.is_closed()
         {
-            let _ = platform.place_contact_labels(&self.product, crate::platform::PlacedContactLabels {
-                surface_width: request.surface_width,
-                surface_height: request.surface_height,
-                labels: Vec::new(),
-            }).await;
+            let _ = platform
+                .place_contact_labels(
+                    &self.product,
+                    crate::platform::PlacedContactLabels {
+                        surface_width: request.surface_width,
+                        surface_height: request.surface_height,
+                        labels: Vec::new(),
+                    },
+                )
+                .await;
             return Err(error(Error::NotConnected));
         }
         if matches!(result, Ok(false) | Err(Error::Unsupported)) {
             return Err(CallError::Unsupported);
         }
-        Ok(HostContactsPlaceLabelsResponse::V1(crate::latest::HostContactsPlaceLabelsResponse {}))
+        Ok(HostContactsPlaceLabelsResponse::V1(
+            crate::latest::HostContactsPlaceLabelsResponse {},
+        ))
     }
 }
 

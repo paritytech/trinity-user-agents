@@ -1,7 +1,5 @@
 use truapi::v01;
 
-use crate::platform::ChatFieldError;
-
 /// Native-friendly rejection error returned by callback methods that map onto
 /// [`truapi::v01::GenericError`].
 ///
@@ -92,7 +90,9 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostNavigateToError {
 
 impl From<uniffi::UnexpectedUniFFICallbackError> for crate::latest::HostContactsPlaceLabelsError {
     fn from(_: uniffi::UnexpectedUniFFICallbackError) -> Self {
-        Self::Unknown { reason: "contact label callback failed".into() }
+        Self::Unknown {
+            reason: "contact label callback failed".into(),
+        }
     }
 }
 
