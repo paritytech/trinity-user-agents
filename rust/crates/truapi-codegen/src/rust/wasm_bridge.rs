@@ -40,7 +40,7 @@ pub fn generate_wasm_bridge(
         use futures::stream::BoxStream;
         use js_sys::{{Function, Uint8Array}};
         use parity_scale_codec::Encode;
-        use truapi::latest;
+        use truapi::v01;
         use wasm_bindgen::JsValue;
 
         use super::{{
@@ -141,27 +141,40 @@ pub fn generate_wasm_bridge(
 }
 
 struct BridgeCtx<'a> {
-	api_types: BTreeMap<&'a str, &'a TypeDef>,
-	codec_types: BTreeSet<&'a str>,
-	local_types: BTreeSet<&'a str>,
-	local_codec_types: BTreeSet<&'a str>,
+    api_types: BTreeMap<&'a str, &'a TypeDef>,
+    api_type_paths: &'a BTreeMap<String, String>,
+    codec_types: BTreeSet<&'a str>,
+    local_types: BTreeSet<&'a str>,
+    local_codec_types: BTreeSet<&'a str>,
 }
 
 impl<'a> BridgeCtx<'a> {
-	fn new(definition: &'a PlatformDefinition, api: &'a ApiDefinition) -> Self {
-		let api_types =
-			api.types.iter().map(|ty| (ty.name.as_str(), ty)).collect::<BTreeMap<_, _>>();
-		let codec_types = api
-			.types
-			.iter()
-			.filter(|ty| !matches!(ty.kind, TypeDefKind::Alias(_)))
-			.map(|ty| ty.name.as_str())
-			.collect::<BTreeSet<_>>();
-		let local_types =
-			definition.types.iter().map(|ty| ty.name.as_str()).collect::<BTreeSet<_>>();
-		let local_codec_types = collect_local_bridge_payload_types(definition);
-		Self { api_types, codec_types, local_types, local_codec_types }
-	}
+    fn new(definition: &'a PlatformDefinition, api: &'a ApiDefinition) -> Self {
+        let api_types = api
+            .types
+            .iter()
+            .map(|ty| (ty.name.as_str(), ty))
+            .collect::<BTreeMap<_, _>>();
+        let codec_types = api
+            .types
+            .iter()
+            .filter(|ty| !matches!(ty.kind, TypeDefKind::Alias(_)))
+            .map(|ty| ty.name.as_str())
+            .collect::<BTreeSet<_>>();
+        let local_types = definition
+            .types
+            .iter()
+            .map(|ty| ty.name.as_str())
+            .collect::<BTreeSet<_>>();
+        let local_codec_types = collect_local_bridge_payload_types(definition);
+        Self {
+            api_types,
+            api_type_paths: &definition.api_type_paths,
+            codec_types,
+            local_types,
+            local_codec_types,
+        }
+    }
 
 	fn is_api_codec(&self, ty: &TypeRef) -> bool {
 		matches!(ty, TypeRef::Named { name, .. } if self.codec_types.contains(name.as_str()))
@@ -491,7 +504,11 @@ fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
         )),
         TypeRef::Named { name, args } if ctx.api_types.contains_key(name.as_str()) => {
             if args.is_empty() {
-                Ok(format!("latest::{name}"))
+                Ok(match ctx.api_type_paths.get(name) {
+                    Some(path) if path.starts_with("truapi::v01::") => format!("v01::{name}"),
+                    Some(path) => path.clone(),
+                    None => format!("v01::{name}"),
+                })
             } else {
                 bail!("generic API type `{name}` is not supported in wasm bridge")
             }

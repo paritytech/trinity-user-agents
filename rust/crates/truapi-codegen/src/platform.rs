@@ -20,17 +20,19 @@ use crate::rustdoc::{
 /// Top-level extracted shape of the platform surface.
 #[derive(Debug, PartialEq, Eq)]
 pub struct PlatformDefinition {
-	/// Capability traits sorted alphabetically by name.
-	pub traits: Vec<PlatformTrait>,
-	/// Local structs and enums referenced from trait method signatures,
-	/// sorted alphabetically by name. Emitted alongside the trait interfaces
-	/// so the generated TS does not have to import them from the API client.
-	pub types: Vec<TypeDef>,
-	/// Composite super-trait (`Platform: Storage + Navigation + ...`), if any.
-	pub super_trait: Option<PlatformSuperTrait>,
-	/// Composite super-trait of capabilities a host may omit
-	/// (`OptionalPlatform: ChatPlatform + ...`), if any.
-	pub optional_super_trait: Option<PlatformSuperTrait>,
+    /// Capability traits sorted alphabetically by name.
+    pub traits: Vec<PlatformTrait>,
+    /// Local structs and enums referenced from trait method signatures,
+    /// sorted alphabetically by name. Emitted alongside the trait interfaces
+    /// so the generated TS does not have to import them from the API client.
+    pub types: Vec<TypeDef>,
+    /// Public API paths actually used by platform signatures, including version pins.
+    pub api_type_paths: BTreeMap<String, String>,
+    /// Composite super-trait (`Platform: Storage + Navigation + ...`), if any.
+    pub super_trait: Option<PlatformSuperTrait>,
+    /// Composite super-trait of capabilities a host may omit
+    /// (`OptionalPlatform: ChatPlatform + ...`), if any.
+    pub optional_super_trait: Option<PlatformSuperTrait>,
 }
 
 /// Single capability trait extracted from a `platform` module.
@@ -114,34 +116,53 @@ const PLATFORM_MODULE: &str = "platform";
 
 /// Extract the platform surface spread across the `platform` modules of `krates`.
 pub fn extract_all(krates: &[Crate]) -> Result<PlatformDefinition> {
-	let mut merged = PlatformDefinition {
-		traits: Vec::new(),
-		types: Vec::new(),
-		super_trait: None,
-		optional_super_trait: None,
-	};
-	for krate in krates {
-		let definition = extract(krate)?;
-		merged.traits.extend(definition.traits);
-		merged.types.extend(definition.types);
-		for (slot, found) in [
-			(&mut merged.super_trait, definition.super_trait),
-			(&mut merged.optional_super_trait, definition.optional_super_trait),
-		] {
-			if let Some(found) = found {
-				if slot.is_some() {
-					bail!("Multiple `{}` super-traits found; only one is supported", found.name);
-				}
-				*slot = Some(found);
-			}
-		}
-	}
-	merged.traits.sort_by(|a, b| a.name.cmp(&b.name));
-	merged.types.sort_by(|a, b| a.name.cmp(&b.name));
-	if let Some(pair) = merged.types.windows(2).find(|pair| pair[0].name == pair[1].name) {
-		bail!("platform type name `{}` is defined by more than one crate", pair[0].name);
-	}
-	Ok(merged)
+    let mut merged = PlatformDefinition {
+        traits: Vec::new(),
+        types: Vec::new(),
+        api_type_paths: BTreeMap::new(),
+        super_trait: None,
+        optional_super_trait: None,
+    };
+    for krate in krates {
+        let definition = extract(krate)?;
+        merged.traits.extend(definition.traits);
+        merged.types.extend(definition.types);
+        for (name, path) in definition.api_type_paths {
+            if merged.api_type_paths.insert(name.clone(), path.clone()).is_some_and(|old| old != path) {
+                bail!("platform API type `{name}` has conflicting Rust paths");
+            }
+        }
+        for (slot, found) in [
+            (&mut merged.super_trait, definition.super_trait),
+            (
+                &mut merged.optional_super_trait,
+                definition.optional_super_trait,
+            ),
+        ] {
+            if let Some(found) = found {
+                if slot.is_some() {
+                    bail!(
+                        "Multiple `{}` super-traits found; only one is supported",
+                        found.name
+                    );
+                }
+                *slot = Some(found);
+            }
+        }
+    }
+    merged.traits.sort_by(|a, b| a.name.cmp(&b.name));
+    merged.types.sort_by(|a, b| a.name.cmp(&b.name));
+    if let Some(pair) = merged
+        .types
+        .windows(2)
+        .find(|pair| pair[0].name == pair[1].name)
+    {
+        bail!(
+            "platform type name `{}` is defined by more than one crate",
+            pair[0].name
+        );
+    }
+    Ok(merged)
 }
 
 fn in_platform_module(path: &[String]) -> bool {
@@ -153,23 +174,24 @@ fn extract(krate: &Crate) -> Result<PlatformDefinition> {
 	let trait_ids = collect_local_trait_ids(krate);
 	let names = protocol_name_context(krate);
 
-	let mut traits = Vec::new();
-	let mut super_trait = None;
-	let mut optional_super_trait = None;
-	for item_id in &trait_ids {
-		let item = krate
-			.index
-			.get(item_id)
-			.with_context(|| format!("Missing rustdoc item `{item_id}` for trait"))?;
-		let name = item
-			.name
-			.as_ref()
-			.cloned()
-			.with_context(|| format!("Trait `{item_id}` has no name"))?;
-		let trait_inner = item
-			.inner
-			.get("trait")
-			.with_context(|| format!("Trait `{name}` missing rustdoc trait body"))?;
+    let mut traits = Vec::new();
+    let mut super_trait = None;
+    let mut optional_super_trait = None;
+    let mut api_type_paths = BTreeMap::new();
+    for item_id in &trait_ids {
+        let item = krate
+            .index
+            .get(item_id)
+            .with_context(|| format!("Missing rustdoc item `{item_id}` for trait"))?;
+        let name = item
+            .name
+            .as_ref()
+            .cloned()
+            .with_context(|| format!("Trait `{item_id}` has no name"))?;
+        let trait_inner = item
+            .inner
+            .get("trait")
+            .with_context(|| format!("Trait `{name}` missing rustdoc trait body"))?;
 
 		if is_super_trait(trait_inner) {
 			let slot = if name == OPTIONAL_SUPER_TRAIT {
@@ -184,13 +206,70 @@ fn extract(krate: &Crate) -> Result<PlatformDefinition> {
 			continue;
 		}
 
-		traits.push(extract_capability_trait(&name, item, trait_inner, krate, &names)?);
-	}
+        if let Some(methods) = trait_inner.get("items").and_then(serde_json::Value::as_array) {
+            for id in methods {
+                let id = id.as_str().map(str::to_owned).unwrap_or_else(|| id.to_string());
+                if let Some(method) = krate.index.get(&id) {
+                    collect_api_type_paths(&method.inner, krate, &mut api_type_paths)?;
+                }
+            }
+        }
+        traits.push(extract_capability_trait(
+            &name,
+            item,
+            trait_inner,
+            krate,
+            &names,
+        )?);
+    }
 
 	traits.sort_by(|a, b| a.name.cmp(&b.name));
 	let types = collect_referenced_local_types(krate, &traits, &names)?;
 
-	Ok(PlatformDefinition { traits, types, super_trait, optional_super_trait })
+    Ok(PlatformDefinition {
+        traits,
+        types,
+        api_type_paths,
+        super_trait,
+        optional_super_trait,
+    })
+}
+
+fn collect_api_type_paths(
+    value: &serde_json::Value,
+    krate: &Crate,
+    paths: &mut BTreeMap<String, String>,
+) -> Result<()> {
+    match value {
+        serde_json::Value::Object(object) => {
+            if let Some(id) = object.get("resolved_path").and_then(|path| path.get("id")) {
+                let id = id.as_str().map(str::to_owned).unwrap_or_else(|| id.to_string());
+                if let Some(path) = krate.paths.get(&id) {
+                    let module = path.path.get(1).map(String::as_str).unwrap_or_default();
+                    if path.path.first().is_some_and(|name| name == "truapi")
+                        && (module == "latest" || module.strip_prefix('v').is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())))
+                    {
+                        if let Some(name) = path.path.last() {
+                            let public_path = format!("truapi::{module}::{name}");
+                            if paths.insert(name.clone(), public_path.clone()).is_some_and(|old| old != public_path) {
+                                bail!("platform API type `{name}` uses conflicting Rust versions");
+                            }
+                        }
+                    }
+                }
+            }
+            for value in object.values() {
+                collect_api_type_paths(value, krate, paths)?;
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_api_type_paths(value, krate, paths)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Extract every local struct or enum whose name appears in a trait method

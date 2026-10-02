@@ -1840,25 +1840,26 @@ mod tests {
 			.collect()
 	}
 
-	#[test]
-	fn local_codec_imports_external_alias_as_runtime_value() {
-		let definition = PlatformDefinition {
-			traits: Vec::new(),
-			types: vec![TypeDef {
-				name: "SessionUiInfo".to_string(),
-				module_path: vec!["truapi".to_string(), "platform".to_string()],
-				generic_params: Vec::new(),
-				kind: TypeDefKind::Struct(vec![FieldDef {
-					name: "public_key".to_string(),
-					type_ref: named("Bytes32"),
-					docs: None,
-				}]),
-				docs: None,
-			}],
-			super_trait: None,
-			optional_super_trait: None,
-		};
-		let local_codec_types = ["SessionUiInfo".to_string()].into_iter().collect();
+    #[test]
+    fn local_codec_imports_external_alias_as_runtime_value() {
+        let definition = PlatformDefinition {
+            traits: Vec::new(),
+            api_type_paths: BTreeMap::new(),
+            types: vec![TypeDef {
+                name: "SessionUiInfo".to_string(),
+                module_path: vec!["truapi".to_string(), "platform".to_string()],
+                generic_params: Vec::new(),
+                kind: TypeDefKind::Struct(vec![FieldDef {
+                    name: "public_key".to_string(),
+                    type_ref: named("Bytes32"),
+                    docs: None,
+                }]),
+                docs: None,
+            }],
+            super_trait: None,
+            optional_super_trait: None,
+        };
+        let local_codec_types = ["SessionUiInfo".to_string()].into_iter().collect();
 
 		let output = emit_host_callbacks(&definition, &local_codec_types)
 			.expect("host callbacks should render");
@@ -1871,18 +1872,19 @@ mod tests {
 		assert!(output.contains("S.Struct({publicKey: Bytes32})"));
 	}
 
-	fn platform_with_method(method: PlatformMethod) -> PlatformDefinition {
-		PlatformDefinition {
-			traits: vec![PlatformTrait {
-				name: "Features".to_string(),
-				docs: None,
-				methods: vec![method],
-			}],
-			types: Vec::new(),
-			super_trait: None,
-			optional_super_trait: None,
-		}
-	}
+    fn platform_with_method(method: PlatformMethod) -> PlatformDefinition {
+        PlatformDefinition {
+            traits: vec![PlatformTrait {
+                name: "Features".to_string(),
+                docs: None,
+                methods: vec![method],
+            }],
+            types: Vec::new(),
+            api_type_paths: BTreeMap::new(),
+            super_trait: None,
+            optional_super_trait: None,
+        }
+    }
 
 	fn method_with_return(ok: TypeRef) -> PlatformMethod {
 		PlatformMethod {
