@@ -766,13 +766,24 @@ impl SigningHostRuntime {
 		self.signing_host.set_grant_allowances_unchecked(granted);
 	}
 
-	/// Keep preimage submissions in the core instead of the Bulletin chain.
-	///
-	/// For test hosts only, with the `test-host` feature enabled.
-	#[cfg(feature = "test-host")]
-	pub fn set_submit_preimages_locally(&self, local: bool) {
-		self.signing_host.set_submit_preimages_locally(local);
-	}
+    /// Answer these resource tags as refused, replacing any earlier set.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub fn set_withheld_resources(&self, tags: Vec<String>) {
+        self.signing_host.set_withheld_resources(tags);
+    }
+
+    /// Build a long-lived signing-host runtime around a platform implementation.
+    /// Optional capabilities are answered `Unsupported`;
+    /// [`Self::with_platforms`] serves them.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.new"))]
+    pub fn new<P>(platform: Arc<P>, config: SigningHostConfig, spawner: Spawner) -> Self
+    where
+        P: Platform + 'static,
+    {
+        Self::with_platforms(platform, config, spawner, None, None)
+    }
 
     /// Build a signing-host runtime that serves Chat through `chat_platform`.
     ///

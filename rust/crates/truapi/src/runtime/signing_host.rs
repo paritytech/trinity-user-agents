@@ -354,19 +354,32 @@ impl SigningHost {
         Ok(())
     }
 
-		let state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
-		state.activation_generation == activation_generation &&
-			state.auto_signing_grants.contains(&(owner, calling_product_id.clone()))
-	}
-
-	/// Fence in-flight grant work and revoke this product's grants from the
-	/// current local activation while preserving unrelated products.
-	pub fn clear_product_state(&self, product_id: &ProductId) {
-		self.local_grants
-			.lock()
-			.expect("local AutoSigning grant mutex poisoned")
-			.revoke_product(product_id);
-	}
+    /// Derive the product-account keypair for `account` from the root entropy.
+    ///
+    /// The root keypair is recomputed per call (PBKDF2, 2048 rounds, via
+    /// `substrate-bip39`) rather than cached: the signing host holds only the
+    /// raw, zeroizable entropy, never an expanded secret key.
+    fn product_keypair_with_owner(
+        &self,
+        account: &v01::ProductAccountId,
+    ) -> Result<([u8; 32], schnorrkel::Keypair), AuthorityError> {
+        let entropy = self.root_entropy()?;
+        let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+        let owner = root.public.to_bytes();
+        let product_id =
+            normalize_product_identifier(&account.dot_ns_identifier).map_err(|err| {
+                AuthorityError::Unavailable {
+                    reason: err.to_string(),
+                }
+            })?;
+        derive_product_keypair(
+            &root,
+            &product_id,
+            derivation_index_bytes(&account.derivation_index),
+        )
+        .map(|keypair| (owner, keypair))
+        .map_err(product_authority_error)
+    }
 
 	/// Derive the product's hard-subtree public key from the active session root.
 	/// Returns `None` when no session is active.

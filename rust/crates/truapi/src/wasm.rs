@@ -1320,22 +1320,29 @@ pub struct WasmSigningHostRuntime {
 #[cfg(feature = "wasm-signing-host")]
 #[wasm_bindgen]
 impl WasmSigningHostRuntime {
-	/// Answer resource allocation as granted without performing it.
-	///
-	/// A test host serves suites that exercise allowance-dependent product
-	/// paths without an on-chain personhood identity. Nothing is allocated, so
-	/// a green run says the product handles a grant, not that a host would
-	/// have given one.
-	///
-	/// Preimage submissions then stay in the core: the Bulletin allowance was
-	/// never authorized on chain, so a real `store` would be refused. The
-	/// product gets the content key back and reads the value from the core's
-	/// lookup cache, as after a landed submission.
-	#[cfg(feature = "test-host")]
-	#[wasm_bindgen(js_name = setGrantAllowancesUnchecked)]
-	pub fn set_grant_allowances_unchecked(&self, granted: bool) {
-		self.runtime.set_grant_allowances_unchecked(granted);
-	}
+    /// Answer resource allocation as granted without performing it.
+    ///
+    /// A test host serves suites that exercise allowance-dependent product
+    /// paths without an on-chain personhood identity. Nothing is allocated, so
+    /// a green run says the product handles a grant, not that a host would
+    /// have given one.
+    #[cfg(feature = "test-host")]
+    #[wasm_bindgen(js_name = setGrantAllowancesUnchecked)]
+    pub fn set_grant_allowances_unchecked(&self, granted: bool) {
+        self.runtime.set_grant_allowances_unchecked(granted);
+    }
+
+    /// Answer these resource tags as refused, replacing any earlier set.
+    ///
+    /// A suite proving its product survives a refused resource needs that one
+    /// withheld while the rest stay granted. The tag is the
+    /// `AllocatableResource` variant name, so `SmartContractAllowance`
+    /// withholds every derivation index.
+    #[cfg(feature = "test-host")]
+    #[wasm_bindgen(js_name = setWithheldResources)]
+    pub fn set_withheld_resources(&self, tags: Vec<String>) {
+        self.runtime.set_withheld_resources(tags);
+    }
 
     /// Build a shared signing runtime from host callbacks and host config.
     #[wasm_bindgen(constructor)]
