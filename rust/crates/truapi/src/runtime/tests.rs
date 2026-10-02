@@ -955,7 +955,9 @@ fn multi_picker_rejects_lookup_invalidation_and_session_change_during_confirmati
     let handle = truapi::latest::ContactHandle { bytes: handles.mint(&account) };
     let cache = host.services.contact_handles.clone();
     *contacts.after_lookup.lock() = Some(Box::new(move || cache.clear()));
-    assert_eq!(pick_many(&host, vec![handle]), Err(CallError::Cancelled));
+    assert!(matches!(pick_many(&host, vec![handle]), Err(CallError::Domain(
+        HostContactsPickManyError::V1(truapi::latest::HostContactsPickManyError::Unknown { .. })
+    ))));
     assert!(contacts.selected.lock().is_empty());
     let session = host.test_session_state();
     *contacts.after_pick.lock() = Some(Box::new(move || session.clear_session()));
@@ -975,10 +977,12 @@ fn multi_picker_cancellation_cannot_confirm_a_late_selection() {
     let cx = CallContext::default();
     let cancel = cx.cancel().clone();
     *contacts.after_pick.lock() = Some(Box::new(move || cancel.cancel()));
-    assert_eq!(futures::executor::block_on(Contacts::pick_many(
+    assert!(matches!(futures::executor::block_on(Contacts::pick_many(
         &host, &cx,
         HostContactsPickManyRequest::V1(truapi::latest::HostContactsPickManyRequest { selected: vec![] }),
-    )), Err(CallError::Cancelled));
+    )), Err(CallError::Domain(HostContactsPickManyError::V1(
+        truapi::latest::HostContactsPickManyError::Unknown { .. }
+    )))));
 }
 
 #[test]
@@ -1008,6 +1012,28 @@ fn contact_labels_need_no_profile_grant_and_hide_missing_contact_availability() 
         },
         crate::platform::PlacedContactLabels { surface_width: 300, surface_height: 200, labels: vec![] },
     ]);
+}
+
+#[test]
+fn contact_label_lookup_failure_does_not_clear_the_surface() {
+    let mut contacts = AudienceContactsPlatform::new(vec![], crate::platform::HostContactsPick::Dismissed);
+    Arc::get_mut(&mut contacts).unwrap().directory = StubContactsPlatform::failing("store offline");
+    let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
+    let rect = truapi::latest::AvatarRect { x: 0, y: 0, width: 180, height: 24 };
+    let result = futures::executor::block_on(Contacts::place_labels(
+        &host, &CallContext::default(),
+        HostContactsPlaceLabelsRequest::V1(truapi::latest::HostContactsPlaceLabelsRequest {
+            surface_width: 300, surface_height: 200,
+            slots: vec![truapi::latest::ContactLabelSlot {
+                slot: 0, handle: truapi::latest::ContactHandle { bytes: [0x42; 32] },
+                rect, clip: rect,
+            }],
+        }),
+    ));
+    assert!(matches!(result, Err(CallError::Domain(HostContactsPlaceLabelsError::V1(
+        truapi::latest::HostContactsPlaceLabelsError::Unknown { .. }
+    )))));
+    assert!(contacts.labels.lock().is_empty());
 }
 
 #[test]

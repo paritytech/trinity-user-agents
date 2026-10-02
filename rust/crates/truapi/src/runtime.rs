@@ -1595,12 +1595,12 @@ impl Contacts for ProductRuntimeHost {
         }
         let picked = until_cancelled(cx, platform.pick_contact(&self.product))
             .await
-            .map_err(|_| CallError::Cancelled)?;
+            .map_err(|_| unknown(v01::GenericError { reason: "contact picker interrupted".into() }))?;
         if self.authority.current_session() != session {
             return Err(CallError::Domain(wrap(v01::HostContactsPickError::NotConnected)));
         }
         if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
-            return Err(CallError::Cancelled);
+            return Err(unknown(v01::GenericError { reason: "contact picker interrupted".into() }));
         }
         let outcome = match picked.map_err(unknown)? {
             crate::platform::HostContactPick::Picked { account } => {
@@ -1647,12 +1647,12 @@ impl Contacts for ProductRuntimeHost {
         let resolved = until_cancelled(
             cx,
             resolve_contact_accounts(&self.services, platform.as_ref(), &handles, &selected),
-        ).await.map_err(|_| CallError::Cancelled)?;
+        ).await.map_err(|_| error(Error::Unknown { reason: "contact lookup interrupted".into() }))?;
         if self.authority.current_session() != session {
             return Err(error(Error::NotConnected));
         }
         if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
-            return Err(CallError::Cancelled);
+            return Err(error(Error::Unknown { reason: "contact selection interrupted".into() }));
         }
         let accounts = resolved
             .map_err(|_| error(Error::Unknown { reason: "contact lookup failed".into() }))?
@@ -1662,12 +1662,12 @@ impl Contacts for ProductRuntimeHost {
             .ok_or_else(|| error(Error::InvalidSelection))?;
         let picked = until_cancelled(cx, platform.pick_contacts(&self.product, crate::platform::ContactSelection { selected: accounts }))
             .await
-            .map_err(|_| CallError::Cancelled)?;
+            .map_err(|_| error(Error::Unknown { reason: "contact picker interrupted".into() }))?;
         if self.authority.current_session() != session {
             return Err(error(Error::NotConnected));
         }
         if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
-            return Err(CallError::Cancelled);
+            return Err(error(Error::Unknown { reason: "contact selection interrupted".into() }));
         }
         let outcome = match picked.map_err(|_| error(Error::Unknown {
             reason: "contact picker failed".into(),
@@ -1714,7 +1714,7 @@ impl Contacts for ProductRuntimeHost {
         let placement = self.services.contact_labels.for_runtime(self.core_instance, platform.clone(), &self.product);
         let mut surface = placement.surface.lock().await;
         if placement.is_closed() || cx.cancel().is_cancelled() {
-            return Err(CallError::Cancelled);
+            return Err(error(Error::NotConnected));
         }
         let generation = self.services.contact_handles.generation();
         if self.authority.current_session() != session {
@@ -1724,14 +1724,14 @@ impl Contacts for ProductRuntimeHost {
         let resolved = until_cancelled(
             cx,
             resolve_contact_accounts(&self.services, platform.as_ref(), &handles, &requested),
-        ).await.map_err(|_| CallError::Cancelled)?;
+        ).await.map_err(|_| error(Error::Unknown { reason: "contact lookup interrupted".into() }))?;
         if self.authority.current_session() != session {
             return Err(error(Error::NotConnected));
         }
         if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
-            return Err(CallError::Cancelled);
+            return Err(error(Error::Unknown { reason: "contact labels interrupted".into() }));
         }
-        let resolved = resolved.unwrap_or_else(|_| requested.into_iter().map(|handle| (handle, None)).collect());
+        let resolved = resolved.map_err(|_| error(Error::Unknown { reason: "contact lookup failed".into() }))?;
         let labels = request.slots.into_iter().zip(resolved).filter_map(|(slot, (_, account))| {
             account.map(|account| crate::platform::PlacedContactLabel {
                 slot: slot.slot,
@@ -1741,7 +1741,7 @@ impl Contacts for ProductRuntimeHost {
             })
         }).collect();
         if placement.is_closed() {
-            return Err(CallError::Cancelled);
+            return Err(error(Error::NotConnected));
         }
         *surface = Some((request.surface_width, request.surface_height, generation));
         let result = platform.place_contact_labels(&self.product, crate::platform::PlacedContactLabels {
@@ -1758,11 +1758,7 @@ impl Contacts for ProductRuntimeHost {
                 surface_height: request.surface_height,
                 labels: Vec::new(),
             }).await;
-            return Err(if self.authority.current_session() != session {
-                error(Error::NotConnected)
-            } else {
-                CallError::Cancelled
-            });
+            return Err(error(Error::NotConnected));
         }
         if matches!(result, Ok(false) | Err(Error::Unsupported)) {
             return Err(CallError::Unsupported);

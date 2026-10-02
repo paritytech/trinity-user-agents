@@ -65,3 +65,6 @@ Add `contacts.placeLabels` so Apps can reserve host-rendered contact names witho
 availability. The core validates bounded placements and wallet-scoped handles, refreshes labels after Contacts changes,
 and releases them when the connection closes. Hosts without a label surface return `Unsupported`; Worker products
 cannot place labels. Clearing a session serializes removal of its remembered contact labels with pending refreshes.
+Host-side interruption returns a Contacts domain error, reserving wire `Cancelled` for a peer's explicit cancellation.
+Failed directory lookups preserve the prior label surface and report a retryable error instead of clearing it as if
+the contacts were missing.

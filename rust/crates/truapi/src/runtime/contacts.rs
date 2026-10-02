@@ -136,6 +136,9 @@ impl ContactLabelPlacements {
     pub fn session_changed(&self, generation: u64, spawner: &crate::subscription::Spawner) {
         let placements: Vec<_> = self.by_runtime.lock()
             .values().cloned().collect();
+        if placements.is_empty() {
+            return;
+        }
         spawner(Box::pin(async move {
             for placement in placements {
                 placement.clear(Some(generation)).await;
