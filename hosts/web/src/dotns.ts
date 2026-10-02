@@ -1,29 +1,27 @@
 import { blake2b } from "@noble/hashes/blake2.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
+import {
+  DEFAULT_NETWORK_CONFIG,
+  NETWORKS,
+  type DotnsEndpoints,
+  type NetworkConfig,
+} from "./network-config.js";
 
 /**
- * How this host reads DotNS on Paseo Next v2.
+ * The DotNS endpoints of Paseo Next v2, the default network.
  *
- * Every value is copied from dotkit's built-in environment table
- * (`assets/envs.toml`, section `[paseo-next-v2]`), which its authors verified
- * against the chain. A wrong TLD or base node still namehashes, so a mistake
- * here reads as "name not found" and does not fail loudly.
+ * @deprecated Pass a network's config to the function that needs it instead
+ * (`NetworkConfig.dotns`); this alias remains for the callers not yet
+ * migrated. Every value is defined in `network-config.ts`, which names the
+ * canonical source it was verified against. A wrong TLD or base node still
+ * namehashes, so a mistake there reads as "name not found" and does not fail
+ * loudly.
  */
 export const PASEO_DOTNS = {
   /** The one dotNS TLD of the network this host is connected to. */
-  tld: "paseo",
-  assetHubRpc: "wss://paseo-asset-hub-next-rpc.polkadot.io",
-  /** The `DotnsContentResolver` contract on Asset Hub, an H160. */
-  contentResolver: "7f74d7cd50f5a834270e2ad395a01b01891ab37d",
-  /** Slot of the `contenthash` mapping in that contract. */
-  contenthashSlot: 0,
-  /**
-   * The Bulletin IPFS gateway. It is the only place content is fetched from;
-   * `paseo.li` is not a content gateway. It serves the Polkadot browser shell
-   * for every name and refuses framing.
-   */
-  contentGateway: "https://paseo-bulletin-next-ipfs.polkadot.io",
-} as const;
+  tld: NETWORKS.paseo.networkSuffix,
+  ...NETWORKS.paseo.dotns,
+};
 
 /** A JSON-RPC call whose result is a storage value or nothing. */
 export type RpcCall = (method: string, params: string[]) => Promise<unknown>;
@@ -176,11 +174,14 @@ async function storageHex(
  * value is a SCALE enum whose `Contract` variant (tag 0) starts with
  * `trie_id: Vec<u8>`; only that prefix is read.
  */
-async function resolverTrieId(rpc: RpcCall): Promise<Uint8Array | null> {
+async function resolverTrieId(
+  rpc: RpcCall,
+  contentResolver: string,
+): Promise<Uint8Array | null> {
   const key = concat(
     REVIVE_PREFIX,
     ACCOUNT_INFO_OF_PREFIX,
-    hexToBytes(PASEO_DOTNS.contentResolver),
+    hexToBytes(contentResolver),
   );
   const hex = await storageHex(rpc, "state_getStorage", [
     `0x${bytesToHex(key)}`,
@@ -251,10 +252,11 @@ async function readSolidityBytes(
 export async function resolveContentCid(
   name: string,
   rpc: RpcCall,
+  dotns: DotnsEndpoints = DEFAULT_NETWORK_CONFIG.dotns,
 ): Promise<string | null> {
-  const trieId = await resolverTrieId(rpc);
+  const trieId = await resolverTrieId(rpc, dotns.contentResolver);
   if (trieId === null) return null;
-  const slotKey = mappingSlot(namehash(name), PASEO_DOTNS.contenthashSlot);
+  const slotKey = mappingSlot(namehash(name), dotns.contenthashSlot);
   const record = await readSolidityBytes(
     rpc,
     concat(CHILD_STORAGE_PREFIX, trieId),
@@ -268,12 +270,13 @@ export async function resolveContentCid(
  * serves a UnixFS directory as a site with its relative asset paths intact.
  * `suffix` is the path, query and hash the user typed after the name.
  */
-export function gatewayUrl(cid: string, suffix: string): URL {
+export function gatewayUrl(
+  cid: string,
+  suffix: string,
+  contentGateway: string = DEFAULT_NETWORK_CONFIG.dotns.contentGateway,
+): URL {
   if (!/^b[a-z2-7]+$/.test(cid)) throw new Error("not a base32 CIDv1");
-  return new URL(
-    `/ipfs/${cid}/${suffix.replace(/^\//, "")}`,
-    PASEO_DOTNS.contentGateway,
-  );
+  return new URL(`/ipfs/${cid}/${suffix.replace(/^\//, "")}`, contentGateway);
 }
 
 const RPC_TIMEOUT_MS = 15_000;
@@ -392,8 +395,9 @@ async function readPrefix(
 export async function classifyContent(
   cid: string,
   fetchFn: typeof fetch = fetch,
+  contentGateway: string = DEFAULT_NETWORK_CONFIG.dotns.contentGateway,
 ): Promise<ContentKind> {
-  const response = await fetchFn(gatewayUrl(cid, "").href, {
+  const response = await fetchFn(gatewayUrl(cid, "", contentGateway).href, {
     headers: { Range: `bytes=0-${CLASSIFY_PREFIX_BYTES - 1}` },
     signal: AbortSignal.timeout(CLASSIFY_TIMEOUT_MS),
   });
@@ -466,11 +470,15 @@ export async function chooseSource(
   return { source: null, skipped };
 }
 
-/** Look `name` up on Paseo Asset Hub and pick what to open. */
-export async function resolveSource(name: string): Promise<SourceChoice> {
-  const rpc = httpRpc(PASEO_DOTNS.assetHubRpc);
+/** Look `name` up on `network`'s Asset Hub and pick what to open. */
+export async function resolveSource(
+  name: string,
+  network: NetworkConfig = DEFAULT_NETWORK_CONFIG,
+): Promise<SourceChoice> {
+  const rpc = httpRpc(network.dotns.assetHubRpc);
   return chooseSource(name, {
-    readCid: (record) => resolveContentCid(record, rpc),
-    classify: (cid) => classifyContent(cid),
+    readCid: (record) => resolveContentCid(record, rpc, network.dotns),
+    classify: (cid) =>
+      classifyContent(cid, fetch, network.dotns.contentGateway),
   });
 }

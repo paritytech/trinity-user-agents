@@ -62,6 +62,21 @@ The dev server answers `localhost` only. To reach it by another host name, such 
 `http://localhost:5180/?product=<url>&productId=<id>` fills in the address bar and product id. The product opens only
 when you press Enter or choose **Open**.
 
+## Networks
+
+The menu's **Network** control picks the network this tab runs on. It is chosen before the core starts and applied by
+reloading the tab, so the core, the session and any open product are always built for one network; there is no switch
+under a live page. The choice is kept per tab, so two tabs can run on different networks.
+
+- **Paseo Next v2** (`.paseo`, the default) is where products are published for the current testnet.
+- **PreviewNet** (`.testnet`) is the product preview network. Its DotNS names and content endpoints differ from Paseo's,
+  so a name opened on one network is not found on the other.
+
+A tab with no saved choice runs on Paseo, so tabs from before this control keep working. Storage, history, the username
+learned for a wallet and the tab's own wallet and open product are all kept per network, so nothing from one network is
+read on another. The recovery phrases are not per network, so the same wallet can be signed in on either. Switching
+network reloads the tab, which then restores the wallet and product it had open on the newly chosen network, if any.
+
 ## Static build and GitHub Pages
 
 `npm run build` writes `dist/`, a plain static folder. Any file server can serve it: no server code, no request-header
@@ -127,12 +142,13 @@ tab's memory, so close other tabs that use the same wallet and product first.
 
 ### How a name opens
 
-On Open the name is looked up on Paseo Asset Hub, its content is fetched from the Bulletin IPFS gateway and checked, and
-it is served from a path of this host. The product id defaults to the name.
+On Open the name is looked up on the selected network's Asset Hub, its content is fetched from that network's Bulletin
+IPFS gateway and checked, and it is served from a path of this host. The product id defaults to the name.
 
-1. The host namehashes a record name and reads the DotNS content resolver's `contenthash` from Asset Hub over
-   `wss://paseo-asset-hub-next-rpc.polkadot.io`. It tries `app.<name>` first, then `<name>`. `app.<name>` is where
-   `dotkit deploy` publishes the product's app executable, and the Polkadot browser reads it first too.
+1. The host namehashes a record name and reads the DotNS content resolver's `contenthash` from Asset Hub over the
+   network's Asset Hub RPC (for Paseo Next v2, `wss://paseo-asset-hub-next-rpc.polkadot.io`). It tries `app.<name>`
+   first, then `<name>`. `app.<name>` is where `dotkit deploy` publishes the product's app executable, and the Polkadot
+   browser reads it first too.
 2. It fetches the first bytes of each CID from the gateway to see what it is. An app executable is a CARv1 archive of
    the site's directory, stored as one chunked UnixFS file. A website is a UnixFS directory. Both open. A record that is
    neither is skipped and listed.
@@ -381,7 +397,8 @@ and layout on narrow screens.
 
 - `src/main.ts`: the page and its wiring. `src/product.ts`: embedding a product and relaying its frames to the core.
   `src/callbacks.ts`, `src/prompt.ts`, `src/reviews.ts`: the host callbacks and prompts.
-- `src/wallets.ts`, `src/storage.ts`: wallet and per-wallet storage. `src/network.ts`: the light client.
+- `src/wallets.ts`, `src/storage.ts`: wallet and per-wallet, per-network storage. `src/network.ts`,
+  `src/network-config.ts`, `src/network-choice.ts`: the light client, the networks it serves and the per-tab choice.
 - `src/dotns.ts`, `src/address.ts`: name lookup and the address bar's grammar.
 - `src/archive/`: CAR, UnixFS and CID verification and unpacking.
 - `src/sandbox/`, `sandbox-plugin.ts`: the loader, the service worker, the mount paths and the archive cache. The plugin

@@ -1,3 +1,5 @@
+import { DEFAULT_NETWORK, normalizeNetwork } from "./network-scope.js";
+
 /** One product opened before, with everything needed to open it the same way. */
 export interface RecentEntry {
   /** The canonical address: a name with its TLD, or a full URL. */
@@ -14,6 +16,18 @@ export interface RecentEntry {
 export const RECENT_LIMIT = 12;
 
 const KEY_PREFIX = "truapi-web-signing-host:recents:v1:";
+
+/**
+ * The storage key one network keeps a scope's history under. A network other
+ * than the default gets a `network:<id>:` segment; the default keeps the
+ * original key.
+ */
+function keyFor(scope: string, network: string): string {
+  const id = normalizeNetwork(network);
+  return id === DEFAULT_NETWORK
+    ? KEY_PREFIX + scope
+    : `truapi-web-signing-host:network:${id}:recents:v1:${scope}`;
+}
 
 const CREDENTIALS = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*@/i;
 const SENSITIVE_PARAM =
@@ -40,22 +54,22 @@ function isEntry(value: unknown): value is RecentEntry {
 }
 
 /**
- * The products a wallet opened, newest first, kept per wallet in this
- * browser. It holds addresses and product ids only, never a recovery phrase,
- * and skips addresses that look like they carry a secret.
+ * The products a wallet opened, newest first, kept per wallet and network in
+ * this browser. It holds addresses and product ids only, never a recovery
+ * phrase, and skips addresses that look like they carry a secret.
  */
 export class RecentProducts {
   constructor(
     private readonly storage: Pick<
       Storage,
-      "getItem" | "setItem" | "removeItem"
+      "getItem" | "setItem" | "removeItem" | "length" | "key"
     >,
   ) {}
 
-  list(scope: string): RecentEntry[] {
+  list(scope: string, network: string = DEFAULT_NETWORK): RecentEntry[] {
     try {
       const parsed: unknown = JSON.parse(
-        this.storage.getItem(KEY_PREFIX + scope) ?? "[]",
+        this.storage.getItem(keyFor(scope, network)) ?? "[]",
       );
       return Array.isArray(parsed)
         ? parsed.filter(isEntry).slice(0, RECENT_LIMIT)
@@ -69,16 +83,17 @@ export class RecentProducts {
   record(
     scope: string,
     entry: Omit<RecentEntry, "at">,
+    network: string = DEFAULT_NETWORK,
     now: number = Date.now(),
   ): boolean {
     if (!isRecordable(entry.address)) return false;
-    const rest = this.list(scope).filter(
+    const rest = this.list(scope, network).filter(
       (item) =>
         item.address !== entry.address || item.productId !== entry.productId,
     );
     try {
       this.storage.setItem(
-        KEY_PREFIX + scope,
+        keyFor(scope, network),
         JSON.stringify([{ ...entry, at: now }, ...rest].slice(0, RECENT_LIMIT)),
       );
       return true;
@@ -87,9 +102,22 @@ export class RecentProducts {
     }
   }
 
-  /** Drop a wallet's history, as when the wallet is forgotten. */
+  /**
+   * Drop a scope's history on every network, as when the wallet is forgotten.
+   */
   forget(scope: string): void {
-    this.storage.removeItem(KEY_PREFIX + scope);
+    const suffix = `recents:v1:${scope}`;
+    for (const key of this.keys())
+      if (key.endsWith(suffix)) this.storage.removeItem(key);
+  }
+
+  private keys(): string[] {
+    const keys: string[] = [];
+    for (let index = 0; index < this.storage.length; index += 1) {
+      const key = this.storage.key(index);
+      if (key !== null) keys.push(key);
+    }
+    return keys;
   }
 }
 

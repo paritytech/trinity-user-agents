@@ -14,6 +14,7 @@ const mount = {
   walletId: "wallet-one",
   productId: "chat.paseo",
   cid: CID,
+  network: "paseo",
 };
 
 describe("hostBase", () => {
@@ -52,6 +53,24 @@ describe("mountScope", () => {
     expect(mountScope("/repo/", mount)).toBe(
       mountScope("/repo/", { ...mount }),
     );
+  });
+
+  // The default network keeps the original path, so data written before
+  // networks were separated stays reachable.
+  test("keeps the default network's original path", () => {
+    expect(mountScope("/repo/", { ...mount, network: undefined })).toBe(
+      mountScope("/repo/", mount),
+    );
+  });
+
+  // The same wallet opening the same content on two networks must not share a
+  // mount, and so must not share a worker.
+  test("differs by network for the same wallet, product and content", () => {
+    const paseo = mountScope("/repo/", mount);
+    const preview = mountScope("/repo/", { ...mount, network: "previewnet" });
+    expect(preview).not.toBe(paseo);
+    expect(parseMountScope("/repo/", paseo)).toEqual({ cid: CID });
+    expect(parseMountScope("/repo/", preview)).toEqual({ cid: CID });
   });
 
   test("does not spell the wallet id out", () => {
