@@ -1827,7 +1827,8 @@ fn render_ts_doc_line(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-	use super::*;
+    use super::*;
+    use std::collections::BTreeMap;
 
 	fn named(name: &str) -> TypeRef {
 		TypeRef::Named { name: name.to_string(), args: Vec::new() }
