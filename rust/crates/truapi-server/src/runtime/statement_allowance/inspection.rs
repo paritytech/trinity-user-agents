@@ -1155,32 +1155,25 @@ mod tests {
         let collection = PersonhoodCollection::LitePeople;
         let member = proof::member_key([7; 32]);
         let block = account_hex(&[1; 32]);
-        let response = |key: Vec<u8>, bytes: Vec<u8>| {
-            json!([{
-                "block": block,
-                "changes": [[
-                    format!("0x{}", hex::encode(key)),
-                    format!("0x{}", hex::encode(bytes)),
-                ]],
-            }])
-            .to_string()
-        };
-        let replies = [
-            response(
+        let entries = [
+            (
                 ring::ring_keys_status_key(collection, 1),
                 (1u32, 0u32, None::<u64>).encode(),
             ),
-            response(ring::ring_keys_key(collection, 1, 0), vec![member].encode()),
-            response(
+            (ring::ring_keys_key(collection, 1, 0), vec![member].encode()),
+            (
                 ring::ring_keys_status_key(collection, 0),
                 (1u32, 1u32, None::<u64>).encode(),
             ),
-            response(ring::ring_keys_key(collection, 0, 0), vec![member].encode()),
+            (ring::ring_keys_key(collection, 0, 0), vec![member].encode()),
         ];
+        let replies: Vec<String> = entries
+            .iter()
+            .map(|(_, bytes)| json!(format!("0x{}", hex::encode(bytes))).to_string())
+            .collect();
+        let scripted = ScriptedRpc::new(replies.iter().map(String::as_str));
         let chain = ReadOnlyChain {
-            rpc: RpcClient::new(HostRpcClient::new(ScriptedRpc::new(
-                replies.iter().map(String::as_str),
-            ))),
+            rpc: RpcClient::new(HostRpcClient::new(scripted.clone())),
             metadata: decode_metadata(include_bytes!(
                 "../../../tests/fixtures/paseo-next-v2-metadata-v16.scale"
             ))
@@ -1197,6 +1190,20 @@ mod tests {
         assert!(
             futures::executor::block_on(chain.has_including_ring(collection, &member, 12, 1))
                 .unwrap()
+        );
+        assert_eq!(
+            scripted.calls(),
+            entries
+                .iter()
+                .map(|(key, _)| (
+                    "state_queryStorageAt".to_string(),
+                    json!([
+                        [format!("0x{}", hex::encode(key))],
+                        &chain.observation.block_hash
+                    ])
+                    .to_string(),
+                ))
+                .collect::<Vec<_>>(),
         );
     }
 
