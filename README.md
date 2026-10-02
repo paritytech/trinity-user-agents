@@ -59,6 +59,13 @@ Preimage lookups that miss the core's cache read the selected network's Bulletin
 node through `bitswap_v1_get`. The CLI verifies the returned bytes against the
 requested key and keeps missing lookups subscribed until the blob arrives.
 
+Bulletin submissions read the nonce and runtime metadata from current best-block
+state, but bind the 64-block mortal signature to a finalized checkpoint. A best
+block abandoned after dry-run therefore cannot invalidate the mortality anchor.
+If finality lags beyond that window, submission fails before broadcast rather
+than silently signing against an expired checkpoint. Existing submission
+deadlines and bounded rejection retries are unchanged.
+
 Product scripts and `truapi-host dev` use the same web API permission checks from `js/container`. Dev loads the container through a blocking script tag in your existing browser. Scripts run in Bun and retain filesystem, environment and process access.
 
 To build from source, run `make headless install` with stable Rust, the nightly pinned in `nightly-toolchain` with rustfmt, Node.js 22 or newer, and

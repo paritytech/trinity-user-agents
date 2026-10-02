@@ -20,7 +20,7 @@ pub const STORE_PALLET_NAME: &str = "TransactionStorage";
 pub const STORE_CALL_NAME: &str = "store";
 
 /// Mortality window for store transactions.
-const MORTAL_PERIOD_BLOCKS: u64 = 64;
+pub(crate) const MORTAL_PERIOD_BLOCKS: u64 = 64;
 
 /// Preimage key: blake2b-256 of the raw preimage bytes.
 pub fn preimage_key(value: &[u8]) -> [u8; 32] {
@@ -52,23 +52,25 @@ pub fn preimage_cid(key: &[u8; 32]) -> String {
 	cid
 }
 
-/// Sign with a finalized mortality anchor and the client's current account nonce.
+/// Build and sign `TransactionStorage.store` using the current state for the
+/// nonce and runtime version, but a finalized block for the mortality anchor.
+/// An unfinalized anchor can disappear on a fork after validation succeeds.
 pub async fn build_signed_store_transaction<C: OnlineClientAtBlockT<SubstrateConfig>>(
-	client: &ClientAtBlock<SubstrateConfig, C>,
-	finalized: &ClientAtBlock<SubstrateConfig, C>,
-	signer: &Sr25519Signer,
-	data: &[u8],
+    client: &ClientAtBlock<SubstrateConfig, C>,
+    finalized: &ClientAtBlock<SubstrateConfig, C>,
+    signer: &Sr25519Signer,
+    data: &[u8],
 ) -> Result<SubmittableTransaction<SubstrateConfig, C>, ExtrinsicError> {
-	let payload = StaticPayload::new(STORE_PALLET_NAME, STORE_CALL_NAME, StoreCallData(data));
-	let params = DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
-		.mortal_from_unchecked(
-			MORTAL_PERIOD_BLOCKS,
-			finalized.block_number(),
-			finalized.block_hash(),
-		)
-		.build();
-	let mut tx = client.tx();
-	tx.create_signed(&payload, signer, params).await
+    let payload = StaticPayload::new(STORE_PALLET_NAME, STORE_CALL_NAME, StoreCallData(data));
+    let params = DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
+        .mortal_from_unchecked(
+            MORTAL_PERIOD_BLOCKS,
+            finalized.block_number(),
+            finalized.block_hash(),
+        )
+        .build();
+    let mut tx = client.tx();
+    tx.create_signed(&payload, signer, params).await
 }
 
 /// The only [`BulletinAllowanceKey`] -> signer conversion in the crate. The
