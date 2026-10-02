@@ -3,7 +3,10 @@ use parity_scale_codec::{Decode, Encode};
 
 /// Host language and local time zone, replaced together when either changes.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct HostLocaleSubscribeItem {
     /// BCP 47 language tag selected by the host.
     pub language_tag: String,
@@ -13,7 +16,10 @@ pub struct HostLocaleSubscribeItem {
 
 /// Convert UTC instants using a snapshot of the host's locale subscription.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct HostLocaleLocalizeTimestampsRequest {
     /// At most 128 Unix millisecond instants, no later than year 9999.
     pub timestamps_ms: Vec<u64>,
@@ -25,7 +31,10 @@ pub struct HostLocaleLocalizeTimestampsRequest {
 
 /// One timestamp's calendar identity and presentation in the requested context.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct HostLocaleLocalizedTimestamp {
     /// Gregorian YYYY-MM-DD local date, independent of display language/calendar.
     pub local_date: String,
@@ -39,7 +48,10 @@ pub struct HostLocaleLocalizedTimestamp {
 
 /// Local timestamps in exactly the request's order.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct HostLocaleLocalizeTimestampsResponse {
     /// One result per requested timestamp; partial success is not returned.
     pub timestamps: Vec<HostLocaleLocalizedTimestamp>,

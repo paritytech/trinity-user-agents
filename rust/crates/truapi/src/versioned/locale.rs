@@ -1,7 +1,7 @@
 //! Versioned wrappers for [`Locale`](crate::api::Locale) methods.
 
-use crate::{v01, v02};
 use crate::versioned::{FromLatest, IntoLatest};
+use crate::{v01, v02};
 
 truapi_macros::versioned_type! {
     pub enum HostLocaleSubscribeRequest { V1, V2 }
@@ -39,7 +39,9 @@ impl FromLatest for HostLocaleSubscribeItem {
         if target >= 2 {
             Self::V2(item)
         } else {
-            Self::V1(v01::HostLocaleSubscribeItem { language_tag: item.language_tag })
+            Self::V1(v01::HostLocaleSubscribeItem {
+                language_tag: item.language_tag,
+            })
         }
     }
 }
@@ -54,7 +56,11 @@ impl IntoLatest for HostLocaleSubscribeError {
 
 impl FromLatest for HostLocaleSubscribeError {
     fn from_latest(error: Self::Latest, target: u8) -> Self {
-        if target >= 2 { Self::V2(error) } else { Self::V1(error) }
+        if target >= 2 {
+            Self::V2(error)
+        } else {
+            Self::V1(error)
+        }
     }
 }
 
@@ -66,7 +72,8 @@ mod tests {
     fn an_old_host_locale_does_not_invent_a_time_zone() {
         let locale = HostLocaleSubscribeItem::V1(v01::HostLocaleSubscribeItem {
             language_tag: "en-US".into(),
-        }).into_latest();
+        })
+        .into_latest();
         assert_eq!(locale.language_tag, "en-US");
         assert_eq!(locale.time_zone, None);
     }
@@ -79,8 +86,13 @@ mod tests {
         };
         assert_eq!(
             HostLocaleSubscribeItem::from_latest(locale.clone(), 1),
-            HostLocaleSubscribeItem::V1(v01::HostLocaleSubscribeItem { language_tag: "fr-CA".into() }),
+            HostLocaleSubscribeItem::V1(v01::HostLocaleSubscribeItem {
+                language_tag: "fr-CA".into()
+            }),
         );
-        assert_eq!(HostLocaleSubscribeItem::from_latest(locale.clone(), 2).into_latest(), locale);
+        assert_eq!(
+            HostLocaleSubscribeItem::from_latest(locale.clone(), 2).into_latest(),
+            locale
+        );
     }
 }

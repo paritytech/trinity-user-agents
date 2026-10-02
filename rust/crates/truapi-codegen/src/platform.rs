@@ -128,7 +128,11 @@ pub fn extract_all(krates: &[Crate]) -> Result<PlatformDefinition> {
         merged.traits.extend(definition.traits);
         merged.types.extend(definition.types);
         for (name, path) in definition.api_type_paths {
-            if merged.api_type_paths.insert(name.clone(), path.clone()).is_some_and(|old| old != path) {
+            if merged
+                .api_type_paths
+                .insert(name.clone(), path.clone())
+                .is_some_and(|old| old != path)
+            {
                 bail!("platform API type `{name}` has conflicting Rust paths");
             }
         }
@@ -206,9 +210,15 @@ fn extract(krate: &Crate) -> Result<PlatformDefinition> {
 			continue;
 		}
 
-        if let Some(methods) = trait_inner.get("items").and_then(serde_json::Value::as_array) {
+        if let Some(methods) = trait_inner
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+        {
             for id in methods {
-                let id = id.as_str().map(str::to_owned).unwrap_or_else(|| id.to_string());
+                let id = id
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| id.to_string());
                 if let Some(method) = krate.index.get(&id) {
                     collect_api_type_paths(&method.inner, krate, &mut api_type_paths)?;
                 }
@@ -243,15 +253,24 @@ fn collect_api_type_paths(
     match value {
         serde_json::Value::Object(object) => {
             if let Some(id) = object.get("resolved_path").and_then(|path| path.get("id")) {
-                let id = id.as_str().map(str::to_owned).unwrap_or_else(|| id.to_string());
+                let id = id
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| id.to_string());
                 if let Some(path) = krate.paths.get(&id) {
                     let module = path.path.get(1).map(String::as_str).unwrap_or_default();
                     if path.path.first().is_some_and(|name| name == "truapi")
-                        && (module == "latest" || module.strip_prefix('v').is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())))
+                        && (module == "latest"
+                            || module.strip_prefix('v').is_some_and(|v| {
+                                !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())
+                            }))
                     {
                         if let Some(name) = path.path.last() {
                             let public_path = format!("truapi::{module}::{name}");
-                            if paths.insert(name.clone(), public_path.clone()).is_some_and(|old| old != public_path) {
+                            if paths
+                                .insert(name.clone(), public_path.clone())
+                                .is_some_and(|old| old != public_path)
+                            {
                                 bail!("platform API type `{name}` uses conflicting Rust versions");
                             }
                         }

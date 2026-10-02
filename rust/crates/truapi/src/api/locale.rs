@@ -1,9 +1,9 @@
 //! Unified [`Locale`] trait.
 
 use crate::versioned::locale::{
-    HostLocaleSubscribeError, HostLocaleSubscribeItem, HostLocaleSubscribeRequest,
     HostLocaleLocalizeTimestampsError, HostLocaleLocalizeTimestampsRequest,
-    HostLocaleLocalizeTimestampsResponse,
+    HostLocaleLocalizeTimestampsResponse, HostLocaleSubscribeError, HostLocaleSubscribeItem,
+    HostLocaleSubscribeRequest,
 };
 
 /// Host locale subscription.
@@ -49,7 +49,8 @@ pub trait Locale: Send + Sync {
         &self,
         _cx: &CallContext,
         _request: HostLocaleLocalizeTimestampsRequest,
-    ) -> Result<HostLocaleLocalizeTimestampsResponse, CallError<HostLocaleLocalizeTimestampsError>> {
+    ) -> Result<HostLocaleLocalizeTimestampsResponse, CallError<HostLocaleLocalizeTimestampsError>>
+    {
         Err(CallError::unavailable())
     }
 }
