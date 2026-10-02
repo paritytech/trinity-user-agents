@@ -172,11 +172,23 @@ impl SigningHost {
 		self.resource_controls.set_grant_allowances_unchecked(granted);
 	}
 
-	/// Replace refused resource tags; SmartContractAllowance covers every index.
-	#[cfg(feature = "test-host")]
-	pub(crate) fn set_withheld_resources(&self, tags: Vec<String>) {
-		self.resource_controls.set_withheld_resources(tags);
-	}
+    /// Whether `resource` is answered as refused.
+    #[cfg(feature = "test-host")]
+    fn withholds(&self, resource: &v01::AllocatableResource) -> bool {
+        let tag = match resource {
+            v01::AllocatableResource::StatementStoreAllowance => "StatementStoreAllowance",
+            v01::AllocatableResource::ProductStatementStoreAllowance(_) => {
+                "ProductStatementStoreAllowance"
+            }
+            v01::AllocatableResource::BulletinAllowance => "BulletinAllowance",
+            v01::AllocatableResource::SmartContractAllowance(_) => "SmartContractAllowance",
+            v01::AllocatableResource::AutoSigning => "AutoSigning",
+        };
+        self.withheld_resources
+            .lock()
+            .expect("withheld resource mutex poisoned")
+            .contains(tag)
+    }
 
 	/// The shared services this role was built over, for tests that also need
 	/// to build a product runtime against the same platform and cache.
