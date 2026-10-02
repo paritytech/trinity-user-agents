@@ -478,46 +478,48 @@ fn await_chain(call: &str, map_err: &str) -> String {
 }
 
 fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
-	match ty {
-		TypeRef::Primitive(name) if name == "String" || name == "str" => Ok("String".to_string()),
-		TypeRef::Primitive(name) => Ok(name.clone()),
-		TypeRef::Named { name, args } if name == "String" && args.is_empty() => {
-			Ok("String".to_string())
-		},
-		TypeRef::Named { name, args } if name == "Result" && args.len() == 2 => {
-			Ok(format!("Result<{}, {}>", rust_type(&args[0], ctx)?, rust_type(&args[1], ctx)?))
-		},
-		TypeRef::Named { name, args } if ctx.api_types.contains_key(name.as_str()) => {
-			if args.is_empty() {
-				Ok(protocol_type_path(name))
-			} else {
-				bail!("generic API type `{name}` is not supported in wasm bridge")
-			}
-		},
-		TypeRef::Named { name, args } if ctx.local_types.contains(name.as_str()) => {
-			if args.is_empty() {
-				Ok(format!("crate::platform::{name}"))
-			} else {
-				bail!("generic platform type `{name}` is not supported in wasm bridge")
-			}
-		},
-		TypeRef::Named { name, .. } => Ok(name.clone()),
-		TypeRef::Vec(inner) if is_u8(inner) => Ok("Vec<u8>".to_string()),
-		TypeRef::Vec(inner) => Ok(format!("Vec<{}>", rust_type(inner, ctx)?)),
-		TypeRef::Option(inner) => Ok(format!("Option<{}>", rust_type(inner, ctx)?)),
-		TypeRef::Array(inner, len) => Ok(format!("[{}; {len}]", rust_type(inner, ctx)?)),
-		TypeRef::Tuple(items) if items.is_empty() => Ok("()".to_string()),
-		TypeRef::Tuple(items) => Ok(format!(
-			"({})",
-			items
-				.iter()
-				.map(|item| rust_type(item, ctx))
-				.collect::<Result<Vec<_>>>()?
-				.join(", ")
-		)),
-		TypeRef::Generic(name) => Ok(name.clone()),
-		TypeRef::Unit => Ok("()".to_string()),
-	}
+    match ty {
+        TypeRef::Primitive(name) if name == "String" || name == "str" => Ok("String".to_string()),
+        TypeRef::Primitive(name) => Ok(name.clone()),
+        TypeRef::Named { name, args } if name == "String" && args.is_empty() => {
+            Ok("String".to_string())
+        }
+        TypeRef::Named { name, args } if name == "Result" && args.len() == 2 => Ok(format!(
+            "Result<{}, {}>",
+            rust_type(&args[0], ctx)?,
+            rust_type(&args[1], ctx)?
+        )),
+        TypeRef::Named { name, args } if ctx.api_types.contains_key(name.as_str()) => {
+            if args.is_empty() {
+                Ok(format!("latest::{name}"))
+            } else {
+                bail!("generic API type `{name}` is not supported in wasm bridge")
+            }
+        }
+        TypeRef::Named { name, args } if ctx.local_types.contains(name.as_str()) => {
+            if args.is_empty() {
+                Ok(format!("crate::platform::{name}"))
+            } else {
+                bail!("generic platform type `{name}` is not supported in wasm bridge")
+            }
+        }
+        TypeRef::Named { name, .. } => Ok(name.clone()),
+        TypeRef::Vec(inner) if is_u8(inner) => Ok("Vec<u8>".to_string()),
+        TypeRef::Vec(inner) => Ok(format!("Vec<{}>", rust_type(inner, ctx)?)),
+        TypeRef::Option(inner) => Ok(format!("Option<{}>", rust_type(inner, ctx)?)),
+        TypeRef::Array(inner, len) => Ok(format!("[{}; {len}]", rust_type(inner, ctx)?)),
+        TypeRef::Tuple(items) if items.is_empty() => Ok("()".to_string()),
+        TypeRef::Tuple(items) => Ok(format!(
+            "({})",
+            items
+                .iter()
+                .map(|item| rust_type(item, ctx))
+                .collect::<Result<Vec<_>>>()?
+                .join(", ")
+        )),
+        TypeRef::Generic(name) => Ok(name.clone()),
+        TypeRef::Unit => Ok("()".to_string()),
+    }
 }
 
 fn js_args(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<Vec<String>> {
