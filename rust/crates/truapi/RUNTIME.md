@@ -4,7 +4,8 @@ _Runtime core for TrUAPI: dispatcher, protocol frames, SCALE-coded wire envelope
 
 ## What the runtime is for
 
-The `runtime` feature of `truapi` turns trait implementations of the protocol API into a working host. It owns:
+The `runtime` feature of `truapi` turns trait implementations of the
+protocol API into a working host. It owns:
 
 - the [`ProtocolMessage`] wire envelope and SCALE codec
 - the [`Dispatcher`] that routes incoming frames to per-method handlers
@@ -198,13 +199,16 @@ request path and the `CoreAdmin` status read resolve it through the host's
 and the stored product decision is never overwritten by it. Remote,
 identity-disclosure and account-access decisions have no OS gate.
 
-The embedder builds a role handle, `PairingHostRuntime::new(...)` or `SigningHostRuntime::new(...)`, then calls
-`product_runtime(product, sink)` for each product connection. Role-specific operations live only on the matching handle:
-`cancel_pairing`, `notify_session_store_changed`, `activate_stored_session`, `activate_external_session`, and
-`reset_session_state` on the pairing handle, `activate_local_session` on the signing handle. Both handles expose
-`clear_product_state` to revoke one product's capability material without touching the session or other products, and
-`notify_contacts_changed` to drop the contact handles the core cached once a contact is removed or blocked. Calling the
-wrong operation is a compile error, not a runtime `Unavailable`.
+The embedder builds a role handle, `PairingHostRuntime::new(...)` or
+`SigningHostRuntime::new(...)`, then calls `product_runtime(product, sink)` for
+each product connection. Role-specific operations live only on the matching handle:
+`cancel_pairing`, `notify_session_store_changed`, `activate_stored_session`,
+`activate_external_session`, and `reset_session_state` on the pairing handle,
+`activate_local_session` on the signing handle. Both handles expose
+`clear_product_state` to revoke one product's capability material without
+touching the session or other products, and `notify_contacts_changed` to drop
+the contact handles the core cached once a contact is removed or blocked. Calling the wrong operation is
+a compile error, not a runtime `Unavailable`.
 
 A local session's usernames come from the dotNS contracts on Asset Hub, read
 after activation. A name the host passes is shown until a record answers.
@@ -244,12 +248,15 @@ dials JAM-TEST-INSTANCE through a product runtime.
 
 ### Core database
 
-Native signing hosts (iOS, Android, the CLI) give the core a directory for its own SQLite database (`store` module,
-bundled SQLite through `rusqlite` and `async-sqlite`). The runtime opens `core.sqlite3` there at startup, so a missing
-or unwritable directory stops it from starting. Keep the directory out of device backups: it holds durable-transaction
-state that must not be restored onto another device. The required `HostRuntimeConfig.database_directory` sets it on iOS
-and Android, `SigningHostRuntime::set_core_db` on any other embedder, and `core_database_status()` reports the SQLite
-version, schema version and path. Web hosts do not compile the store.
+Native signing hosts (iOS, Android, the CLI) give the core a directory for its
+own SQLite database (`store` module, bundled SQLite through `rusqlite` and
+`async-sqlite`). The runtime opens `core.sqlite3` there at startup, so a
+missing or unwritable directory stops it from starting. Keep the directory out
+of device backups: it holds durable-transaction state that must not be restored
+onto another device. The required `HostRuntimeConfig.database_directory` sets
+it on iOS and Android, `SigningHostRuntime::set_core_db` on any other embedder,
+and `core_database_status()` reports the SQLite version, schema version and
+path. Web hosts do not compile the store.
 
 ### Durable transactions
 
@@ -340,10 +347,12 @@ Signing uses canonical request and result types. Product-scoped VRF requests use
 `ProductRequest<P>` to attach the caller to a canonical payload. Both product and
 SSO signing encode `with_signed_transaction` with the one-byte `OptionBool` codec.
 
-A pairing host that stops waiting because its caller withdrew the request sends a `Cancel` naming it, when that request
-is still the newest on the session's request channel. The responder reads statements while it serves a request, so a
-`Cancel` fires the running request's token or stops a queued one from starting; a withdrawn request posts no response.
-See the [SSO request cancellation RFC](../../../docs/rfcs/sso-request-cancellation.md).
+A pairing host that stops waiting because its caller withdrew the request sends
+a `Cancel` naming it, when that request is still the newest on the session's
+request channel. The responder reads statements while it serves a request, so a
+`Cancel` fires the running request's token or stops a queued one from starting;
+a withdrawn request posts no response. See the
+[SSO request cancellation RFC](../../../docs/rfcs/sso-request-cancellation.md).
 
 When a device finishes pairing, the signing host reports it to the embedder's
 [`DevicePairingObserver`](src/runtime/sso_responder_service.rs), installed
@@ -402,89 +411,107 @@ match variants directly or use the request's `SsoRequest::response_from_message`
 
 ## Host platform interface
 
-The `platform` module holds the capability traits a TrUAPI host implements. Each host (web/WASM, desktop, iOS/UniFFI,
-Android/UniFFI) implements these traits to provide the native capabilities the shared Rust runtime cannot reach
-directly. The dispatcher calls this surface while the Rust runtime owns product account management, SSO signing,
-statement-store protocol flows, permission state, and auth state transitions.
+The `platform` module holds the capability traits a TrUAPI host implements.
+Each host (web/WASM, desktop, iOS/UniFFI, Android/UniFFI) implements these
+traits to provide the native capabilities the shared Rust runtime cannot reach
+directly. The dispatcher calls this surface while the Rust
+runtime owns product account management, SSO signing, statement-store protocol
+flows, permission state, and auth state transitions.
 
 ### Type Imports
 
-Most host-facing wire types are imported from `truapi::latest` by this module and are exposed through the trait
-signatures below. `ProductContext` and `ProductExecutionKind` are defined here instead, and codegen emits their host
-codecs from these definitions. Both are SCALE-encodable so they can cross the wasm callback boundary, where every
-parameter is encoded with `parity-scale-codec`; `ProductContext` decodes through its validating constructor, so a
-context off the wire carries a normalized product id.
+Most host-facing wire types are imported from `truapi::latest` by this module and
+are exposed through the trait signatures below. `ProductContext` and
+`ProductExecutionKind` are defined here instead, and codegen emits their host
+codecs from these definitions. Both are SCALE-encodable so they can cross the
+wasm callback boundary, where every parameter is encoded with
+`parity-scale-codec`; `ProductContext` decodes through its validating
+constructor, so a context off the wire carries a normalized product id.
 
 ### Product Identity
 
-`normalize_product_identifier` is the single chokepoint that turns a host- or wire-supplied product id into the
-canonical form derivation, product storage and permission scopes are keyed by; `is_product_identifier` is its boolean
-form.
+`normalize_product_identifier` is the single chokepoint that turns a host- or
+wire-supplied product id into the canonical form derivation, product storage and
+permission scopes are keyed by; `is_product_identifier` is its boolean form.
 
-`DOTNS_TLDS` (`dot`, `paseo`, `test`) backs it: the TLDs dotNS deployments register product names under, one entry per
-network a host can be pointed at. A name ending in one of them is also what navigation resolves back into the host's own
-product surface, so it bypasses the outbound domain grant.
+`DOTNS_TLDS` (`dot`, `paseo`, `test`) backs it: the TLDs dotNS deployments
+register product names under, one entry per network a host can be pointed at. A
+name ending in one of them is also what navigation resolves back into the host's
+own product surface, so it bypasses the outbound domain grant.
 
-`REMOTE_PERMISSION_TRUSTED_LABELS` lists the blessed product labels across all networks in `DOTNS_TLDS`. These products
-bypass recorded permissions and prompt only for device permissions. The runtime grants account access, username
-disclosure, signing with their own product accounts and AutoSigning without approval. Legacy-account signing still asks
-the user.
+`REMOTE_PERMISSION_TRUSTED_LABELS` lists the blessed product labels across
+all networks in `DOTNS_TLDS`. These products bypass recorded permissions and
+prompt only for device permissions. The runtime grants
+account access, username disclosure, signing with their own product accounts and
+AutoSigning without approval. Legacy-account signing still asks the user.
 
 ### Host Callback Traits
 
 - `ProductStorage`: product-scoped key-value storage.
-- `CoreStorage`: typed core-owned storage slots such as auth session, pairing identity, and permission authorization
-  state.
+- `CoreStorage`: typed core-owned storage slots such as auth session, pairing
+  identity, and permission authorization state.
 - `Navigation`: open URLs in the system browser.
 - `Notifications`: deliver and cancel push notifications.
 - `Permissions`: prompt for device and remote authorizations.
 - `Features`: report host feature support.
-- `ChainProvider` / `JsonRpcConnection`: open JSON-RPC connections to chains. Defined in `truapi_provider::platform` so
-  the provider implements them without linking the runtime, and re-exported here.
+- `ChainProvider` / `JsonRpcConnection`: open JSON-RPC connections to chains.
+  Defined in `truapi_provider::platform` so the provider implements them
+  without linking the runtime, and re-exported here.
 - `AuthPresenter`: render core-owned auth state transitions.
-- `UserConfirmation`: confirm signing, transaction, resource, alias, and preimage actions before the core asks the
-  paired wallet.
+- `UserConfirmation`: confirm signing, transaction, resource, alias, and
+  preimage actions before the core asks the paired wallet.
 - `ThemeHost`: stream the host theme into the runtime.
 - `PreimageHost`: submit and look up preimages through the host-selected backend.
-- `ChatPlatform`: create product-scoped native chat rooms, register product chat bots, post messages into rooms, and
-  stream the product's room list.
-- `PermissionStatusHost`: report the OS status of a device capability without prompting, so a stored grant can be
-  revalidated before it is acted on.
-- `PocketPlatform`: stream the product's Pocket card collection and remove a card from it. The host owns the collection
-  and decides which cards are privileged.
-- `ContactsPlatform`: resolve opaque handles to contacts, render single or multiple selection pickers, and place
-  host-owned contact names over product surfaces. `contacts` is the only required method; `pick_contact` and
-  `pick_contacts` default to `Unsupported`, never a fake selection. The multi-picker receives a host-private
-  `ContactSelection` record of resolved accounts. Confirmed empty selection is distinct from dismissal, and unresolved
-  initial handles fail closed. Session and directory generations are checked across host calls. `place_contact_labels`
-  is independent of Profile grants; products receive neither names nor availability. Placements are serialized and
-  cleared at connection teardown and session change. Hosts call `notify_contacts_changed` when a contact is removed or
-  blocked, invalidating cached handles. Their label layers clear stale names and refresh the live placement from the
-  current directory.
-- `ProfilePlatform`: show a product-referenced profile in host-owned UI, show a contact's shared profile naming the
-  contact who sent it, and draw the avatars of contacts who shared one over a chat product. The host resolves, decrypts
-  and renders each reference; nothing returns to the product but acceptance. Naming the contact is optional and presents
-  the reference alone by default; drawing avatars is optional and draws nothing by default.
+- `ChatPlatform`: create product-scoped native chat rooms, register product
+  chat bots, post messages into rooms, and stream the product's room list.
+- `PermissionStatusHost`: report the OS status of a device capability without
+  prompting, so a stored grant can be revalidated before it is acted on.
+- `PocketPlatform`: stream the product's Pocket card collection and remove a
+  card from it. The host owns the collection and decides which cards are
+  privileged.
+- `ContactsPlatform`: resolve opaque handles to contacts, render single or multiple
+  selection pickers, and place host-owned contact names over product surfaces.
+  `contacts` is the only required method; `pick_contact` and `pick_contacts`
+  default to `Unsupported`, never a fake selection. The multi-picker receives a
+  host-private `ContactSelection` record of resolved accounts. Confirmed empty
+  selection is distinct from dismissal, and unresolved initial handles fail closed.
+  Session and directory generations are checked across host calls.
+  `place_contact_labels` is independent of Profile grants; products receive neither
+  names nor availability. Placements are serialized and cleared at connection
+  teardown and session change. Hosts call `notify_contacts_changed` when a contact
+  is removed or blocked, invalidating cached handles. Their label layers clear stale
+  names and refresh the live placement from the current directory.
+- `ProfilePlatform`: show a product-referenced profile in host-owned UI, show
+  a contact's shared profile naming the contact who sent it, and draw the
+  avatars of contacts who shared one over a chat product. The host resolves,
+  decrypts and renders each reference; nothing returns to the product but
+  acceptance. Naming the contact is optional and presents the reference alone
+  by default; drawing avatars is optional and draws nothing by default.
 
-`Platform` is a blanket-implemented supertrait that combines the capability traits above except `ChatPlatform`,
-`ContactsPlatform`, `PermissionStatusHost`, `PocketPlatform` and `ProfilePlatform`, which `OptionalPlatform` lists
-instead: a host supplies each only when it can serve it. Codegen reads `OptionalPlatform` to emit each listed capability
-as an optional group on the host-callback surface.
+`Platform` is a blanket-implemented supertrait that combines the capability
+traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,
+`PocketPlatform` and `ProfilePlatform`, which `OptionalPlatform` lists instead:
+a host supplies each only when it can serve it. Codegen reads `OptionalPlatform` to emit each listed
+capability as an optional group on the host-callback surface.
 
-Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and omitting `ContactsPlatform`,
-`PocketPlatform` or `ProfilePlatform` does the same for Contacts, Pocket or Profile calls. Omitting
-`PermissionStatusHost` leaves device grants resolving from stored state alone, which is what a host with no OS
-permission model does anyway. Serving it gates both halves of the surface: a device permission request and a status read
-through `CoreAdmin` resolve the same two gates, so a settings screen never reports a capability as usable when the OS
-refuses it.
+Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
+omitting `ContactsPlatform`, `PocketPlatform` or `ProfilePlatform` does the same
+for Contacts, Pocket or Profile calls.
+Omitting `PermissionStatusHost` leaves device grants resolving from stored
+state alone, which is what a host with no OS permission model does anyway.
+Serving it gates both halves of the surface: a device permission request and a
+status read through `CoreAdmin` resolve the same two gates, so a settings
+screen never reports a capability as usable when the OS refuses it.
 
 ### Core-Owned Admin API
 
-`CoreAdmin` is not part of the host-provided `Platform` callback surface. It is the core-owned control API exposed to
-host UI for logout, pairing cancellation, session-store refresh, and permission administration.
+`CoreAdmin` is not part of the host-provided `Platform` callback surface. It is
+the core-owned control API exposed to host UI for logout, pairing cancellation,
+session-store refresh, and permission administration.
 
-It also serves the session's X25519 chat identity private key. Public session material a host needs to address the
-identity or the paired device travels on `SessionUiInfo` instead; only the secret requires this deliberate call.
+It also serves the session's X25519 chat identity private key. Public session
+material a host needs to address the identity or the paired device travels on
+`SessionUiInfo` instead; only the secret requires this deliberate call.
 
 ## Wire envelope
 
