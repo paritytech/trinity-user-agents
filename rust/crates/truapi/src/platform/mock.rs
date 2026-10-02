@@ -1187,20 +1187,22 @@ impl ThemeHost for MockPlatform {
 }
 
 impl LocaleHost for MockPlatform {
-	fn subscribe_locale(
-		&self,
-	) -> BoxStream<'static, Result<latest::HostLocaleSubscribeItem, latest::GenericError>> {
-		let item =
-			latest::HostLocaleSubscribeItem { language_tag: self.config.language_tag.clone() };
-		Box::pin(
-			stream::once(async move {
-				Ok::<latest::HostLocaleSubscribeItem, latest::GenericError>(item)
-			})
-			.chain(stream::pending::<
-				Result<latest::HostLocaleSubscribeItem, latest::GenericError>,
-			>()),
-		)
-	}
+    fn subscribe_locale(
+        &self,
+    ) -> BoxStream<'static, Result<latest::HostLocaleSubscribeItem, latest::GenericError>> {
+        let item = latest::HostLocaleSubscribeItem {
+            language_tag: self.config.language_tag.clone(),
+            time_zone: None,
+        };
+        Box::pin(
+            stream::once(async move {
+                Ok::<latest::HostLocaleSubscribeItem, latest::GenericError>(item)
+            })
+            .chain(stream::pending::<
+                Result<latest::HostLocaleSubscribeItem, latest::GenericError>,
+            >()),
+        )
+    }
 }
 
 impl PreimageHost for MockPlatform {

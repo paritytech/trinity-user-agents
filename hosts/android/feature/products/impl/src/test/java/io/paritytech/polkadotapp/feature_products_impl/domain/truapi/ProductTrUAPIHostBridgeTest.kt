@@ -1,11 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
-import io.mockk.coEvery
-import io.mockk.coVerify
-import io.mockk.every
-import io.mockk.mockk
-import io.mockk.verify
-import io.parity.truapi.HostBridge
+import android.content.Context
+import io.paritytech.polkadotapp.feature_settings_api.domain.language.AppLanguageProvider
+import kotlinx.coroutines.flow.flowOf
+import uniffi.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
@@ -49,9 +47,12 @@ class ProductTrUAPIHostBridgeTest {
         confirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
         dotNsTldProvider = mock(DotNsTldProvider::class.java),
-        pocketCardStore = mockk { every { observeCards() } returns emptyFlow() },
-        productGameReminder = gameReminder,
-        scope = scope,
+        pocketCardStore = mock(PocketCardStore::class.java),
+        context = mock(Context::class.java),
+        appLanguageProvider = object : AppLanguageProvider {
+            override val languageTag = flowOf("en-US")
+        },
+        scope = CoroutineScope(StandardTestDispatcher(testScheduler)),
     )
 
     @Test

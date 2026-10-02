@@ -159,9 +159,15 @@ pub trait HostCallbacks: Send + Sync {
 	/// current item in its subscription stream.
 	async fn lookup_preimage(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;
 
-	/// Current host theme, named variant included. The native shim emits this
-	/// as the current item in its subscription stream.
-	fn current_theme(&self) -> Result<v01::HostThemeSubscribeItem, HostRejection>;
+    /// Locale the host currently presents its interface in. The native shim
+    /// emits this as the current item in its subscription stream.
+    fn current_locale(&self) -> Result<crate::latest::HostLocaleSubscribeItem, HostRejection>;
+
+    /// Convert UTC timestamps with the host's calendar and time-zone database.
+    async fn localize_timestamps(
+        &self,
+        request: crate::latest::HostLocaleLocalizeTimestampsRequest,
+    ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, HostRejection>;
 
 	/// Locale the host currently presents its interface in. The native shim
 	/// emits this as the current item in its subscription stream.

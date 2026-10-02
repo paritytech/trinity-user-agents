@@ -1,8 +1,5 @@
 import type { RequiredHostCallbacks } from "./generated/host-callbacks.js";
-import {
-  unavailableHopProvider,
-  unavailableNativeChatFilesHost,
-} from "./adapter-support.js";
+import { localizeTimestamps } from "./locale.js";
 
 /** `HostCallbacks` with every optional member required, for exhaustive test fixtures. */
 export type CompleteHostCallbacks = RequiredHostCallbacks;
@@ -59,7 +56,7 @@ export function makeHostCallbacks(
       async *lookupPreimage() {},
     },
     theme: { async *subscribeTheme() {} },
-    locale: { async *subscribeLocale() {} },
+    locale: { async *subscribeLocale() {}, localizeTimestamps },
     chain: {
       connect: async () => ({
         send() {},

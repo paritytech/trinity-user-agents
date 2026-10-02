@@ -39,6 +39,35 @@ use truapi::{
 		},
 	},
 };
+use truapi::versioned::locale::{
+    HostLocaleSubscribeError, HostLocaleSubscribeItem, HostLocaleSubscribeRequest,
+    HostLocaleLocalizeTimestampsError, HostLocaleLocalizeTimestampsRequest,
+    HostLocaleLocalizeTimestampsResponse,
+};
+use truapi::versioned::notifications::{
+    HostPushNotificationCancelError, HostPushNotificationCancelRequest,
+    HostPushNotificationCancelResponse, HostPushNotificationError, HostPushNotificationRequest,
+    HostPushNotificationResponse,
+};
+use truapi::versioned::permissions::{
+    HostDevicePermissionError, HostDevicePermissionRequest, HostDevicePermissionResponse,
+    RemotePermissionError, RemotePermissionRequest, RemotePermissionResponse,
+};
+use truapi::versioned::system::{
+    HostFeatureSupportedError, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
+    HostGetProductContextError, HostGetProductContextRequest, HostGetProductContextResponse,
+    HostInfoError, HostInfoRequest, HostInfoResponse, HostNavigateToError, HostNavigateToRequest,
+    HostNavigateToResponse,
+};
+use truapi::versioned::theme::{
+    HostThemeSubscribeError, HostThemeSubscribeItem, HostThemeSubscribeRequest,
+};
+use truapi::versioned::worker::{
+    HostWorkerBeginOperationError, HostWorkerBeginOperationRequest,
+    HostWorkerBeginOperationResponse, HostWorkerEndOperationError, HostWorkerEndOperationRequest,
+    HostWorkerEndOperationResponse,
+};
+use truapi::{CallContext, CallError, Subscription, v01, v02};
 
 use crate::{
 	host_internal::product_manifest::Granted,
@@ -422,24 +451,51 @@ impl Theme for ProductRuntimeHost {
 
 #[truapi::async_trait]
 impl Locale for ProductRuntimeHost {
-	#[instrument(skip_all, fields(runtime.method = "locale.subscribe"))]
-	async fn subscribe(
-		&self,
-		_cx: &CallContext,
-		request: HostLocaleSubscribeRequest,
-	) -> Subscription<HostLocaleSubscribeItem, CallError<HostLocaleSubscribeError>> {
-		version(request)
-			.exec(|()| async move {
-				let stream = self.connection.platform.subscribe_locale().map(|item| {
-					item.map_err(|error| {
-						warn!(reason = %error.reason, "locale platform stream failed");
-						CallError::HostFailure { reason: error.reason }
-					})
-				});
-				Subscription::new(stream)
-			})
-			.await
-	}
+    #[instrument(skip_all, fields(runtime.method = "locale.subscribe"))]
+    async fn subscribe(
+        &self,
+        _cx: &CallContext,
+        _request: HostLocaleSubscribeRequest,
+    ) -> Subscription<HostLocaleSubscribeItem, CallError<HostLocaleSubscribeError>> {
+        let stream = self.platform.subscribe_locale().map(|item| match item {
+            Ok(item) => Ok(HostLocaleSubscribeItem::V2(item)),
+            Err(error) => {
+                warn!(reason = %error.reason, "locale platform stream failed");
+                Err(CallError::HostFailure {
+                    reason: error.reason,
+                })
+            }
+        });
+        Subscription::new(stream)
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "locale.localize_timestamps"))]
+    async fn localize_timestamps(
+        &self,
+        _cx: &CallContext,
+        request: HostLocaleLocalizeTimestampsRequest,
+    ) -> Result<HostLocaleLocalizeTimestampsResponse, CallError<HostLocaleLocalizeTimestampsError>> {
+        let request = request.into_latest();
+        if request.timestamps_ms.len() > 128
+            || request.timestamps_ms.iter().any(|timestamp| *timestamp > 253_402_300_799_999)
+            || request.language_tag.is_empty()
+            || request.time_zone.is_empty()
+        {
+            return Err(CallError::Domain(HostLocaleLocalizeTimestampsError::V1(
+                truapi::latest::GenericError { reason: "Invalid local time conversion request".into() },
+            )));
+        }
+        let count = request.timestamps_ms.len();
+        let response = self.platform.localize_timestamps(request).await.map_err(|error| {
+            CallError::Domain(HostLocaleLocalizeTimestampsError::V1(error))
+        })?;
+        if response.timestamps.len() != count {
+            return Err(CallError::HostFailure {
+                reason: "Host returned an incomplete local time conversion".into(),
+            });
+        }
+        Ok(HostLocaleLocalizeTimestampsResponse::V1(response))
+    }
 }
 
 // `Notifications` delegates to the platform so hosts can own scheduling and

@@ -1104,13 +1104,16 @@ impl ThemeHost for CliPlatform {
 }
 
 impl LocaleHost for CliPlatform {
-	fn subscribe_locale(
-		&self,
-	) -> BoxStream<'static, Result<api::HostLocaleSubscribeItem, api::GenericError>> {
-		Box::pin(stream::once(async {
-			Ok(api::HostLocaleSubscribeItem { language_tag: "en".to_string() })
-		}))
-	}
+    fn subscribe_locale(
+        &self,
+    ) -> BoxStream<'static, Result<api::HostLocaleSubscribeItem, api::GenericError>> {
+        Box::pin(stream::once(async {
+            Ok(api::HostLocaleSubscribeItem {
+                language_tag: "en".to_string(),
+                time_zone: None,
+            })
+        }))
+    }
 }
 
 impl PreimageHost for CliPlatform {

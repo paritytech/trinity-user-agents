@@ -973,10 +973,10 @@ impl NativeProductExecution {
 		self.events.notify_theme_changed(theme);
 	}
 
-	/// Push a host locale replacement to this execution's subscriptions.
-	pub fn notify_locale_changed(&self, locale: v01::HostLocaleSubscribeItem) {
-		self.events.notify_locale_changed(locale);
-	}
+    /// Push a host locale replacement to this execution's subscriptions.
+    pub fn notify_locale_changed(&self, locale: crate::latest::HostLocaleSubscribeItem) {
+        self.events.notify_locale_changed(locale);
+    }
 
 	/// Push a preimage lookup replacement to this execution's subscriptions.
 	pub fn notify_preimage_changed(&self, key: Vec<u8>, value: Option<Vec<u8>>) {

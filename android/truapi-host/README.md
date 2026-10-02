@@ -98,6 +98,8 @@ cannot replace it. The callback is Host-private; outgoing memo material must not
 supplies this contract, not an Android native Coinage service implementation. Regenerate Kotlin and native binaries
 together when updating it.
 
+`HostBridge.currentLocale` includes the system BCP 47 language tag and actual time-zone identifier. Its default `localizeTimestamps` implementation uses `java.time` to format each instant in the requested language and zone, including daylight-saving transitions; grouping keys are Gregorian `YYYY-MM-DD`. The SDK has no application `Context`, so embeddings must observe app-language and `ACTION_TIMEZONE_CHANGED` updates and call `execution.notifyLocaleChanged`, unregistering observers on teardown. The in-repository product host does this for each execution. Custom language selectors must also override `currentLocale`. Direct users of generated callbacks must implement `localizeTimestamps`, either supplying a formatter or throwing `HostRejection.Rejected` when conversion is unavailable.
+
 ## Chat
 
 A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `listRooms`)

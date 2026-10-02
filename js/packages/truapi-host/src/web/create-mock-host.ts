@@ -49,6 +49,7 @@ import type {
   UserConfirmationReview,
 } from "../generated/host-callbacks.js";
 import type { ProductRuntimeConfig } from "../runtime.js";
+import { localizeTimestamps } from "../locale.js";
 
 /** How the mock answers a permission prompt for one capability. */
 export type PermissionPolicy = "allow-all" | "deny-all";
@@ -398,6 +399,8 @@ export interface MockHostConfig {
   theme?: ThemeVariant;
   /** BCP 47 tag emitted by `subscribeLocale`. Default `"en"`. */
   languageTag?: string;
+  /** IANA time zone emitted by `subscribeLocale`. Default is the host zone. */
+  timeZone?: string;
   /** Whether `confirmUserAction` confirms reviewed actions. Default `true`. */
   confirmUserActions?: boolean;
   /** The scanner's answer. Unset serves no scanner, so scans are `Unsupported`. */
@@ -863,6 +866,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     chainClosed = false,
     chainProxies = [],
     languageTag = "en",
+    timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone,
     faults = {},
     scanner,
     supportedChains = {
@@ -1373,13 +1377,14 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
 
     locale: {
-      async *subscribeLocale(): AsyncGenerator<
-        Result<HostLocaleSubscribeItem, GenericError>
-      > {
-        yield ok({ languageTag });
-        // A live subscription never ends, matching `subscribeTheme`.
-        await new Promise<never>(() => {});
+      subscribeLocale() {
+        return liveSubscription<HostLocaleSubscribeItem>(
+          { languageTag, timeZone },
+          subscriptionClosers,
+          () => () => {},
+        );
       },
+      localizeTimestamps,
     },
 
     preimage: {

@@ -270,6 +270,13 @@ pub mod latest {
         LatestOf<versioned::local_storage::HostLocalStorageReadError>;
     /// Locale the host currently presents its interface in.
     pub type HostLocaleSubscribeItem = LatestOf<versioned::locale::HostLocaleSubscribeItem>;
+    /// Batched host-local calendar conversion request.
+    pub type HostLocaleLocalizeTimestampsRequest =
+        LatestOf<versioned::locale::HostLocaleLocalizeTimestampsRequest>;
+    /// Batched host-local calendar conversion result.
+    pub type HostLocaleLocalizeTimestampsResponse =
+        LatestOf<versioned::locale::HostLocaleLocalizeTimestampsResponse>;
+    pub use crate::v02::HostLocaleLocalizedTimestamp;
     /// Navigation request error.
     pub type HostNavigateToError = LatestOf<versioned::system::HostNavigateToError>;
     /// The calling product's Pocket cards.

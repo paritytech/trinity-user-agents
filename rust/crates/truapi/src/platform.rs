@@ -3252,10 +3252,19 @@ pub trait ThemeHost: Send + Sync {
 }
 
 /// Host locale source.
+#[async_trait]
 pub trait LocaleHost: Send + Sync {
-	/// Emits the currently selected locale immediately, then future changes.
-	fn subscribe_locale(&self)
-	-> BoxStream<'static, Result<HostLocaleSubscribeItem, GenericError>>;
+    /// Emits the currently selected locale immediately, then future changes.
+    fn subscribe_locale(&self)
+    -> BoxStream<'static, Result<HostLocaleSubscribeItem, GenericError>>;
+
+    /// Convert a bounded UTC batch using the supplied host locale snapshot.
+    async fn localize_timestamps(
+        &self,
+        _request: crate::latest::HostLocaleLocalizeTimestampsRequest,
+    ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, GenericError> {
+        Err(GenericError { reason: "Local time conversion is unavailable".into() })
+    }
 }
 
 /// Host preimage backend. The core builds, signs, and submits the Bulletin

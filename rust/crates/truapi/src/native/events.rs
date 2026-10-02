@@ -11,14 +11,17 @@ use super::subscribers::Subscribers;
 /// connections that wait on them.
 #[derive(Default)]
 pub struct NativeEventBus {
-	theme_changes: Mutex<Subscribers<(), Result<v01::HostThemeSubscribeItem, v01::GenericError>>>,
-	locale_changes: Mutex<Subscribers<(), Result<v01::HostLocaleSubscribeItem, v01::GenericError>>>,
-	preimage_changes: Mutex<Vec<PreimageSubscription>>,
-	storage_changes: Mutex<Vec<StorageSubscription>>,
-	chain_events: Mutex<NativeChainEvents>,
-	chat_room_changes: Mutex<Subscribers<(), v01::HostChatListSubscribeItem>>,
-	pocket_card_changes:
-		Mutex<Subscribers<(), Result<v01::HostPocketListSubscribeItem, v01::GenericError>>>,
+    theme_changes:
+        Mutex<Vec<mpsc::UnboundedSender<Result<v01::HostThemeSubscribeItem, v01::GenericError>>>>,
+    locale_changes:
+        Mutex<Vec<mpsc::UnboundedSender<Result<crate::latest::HostLocaleSubscribeItem, v01::GenericError>>>>,
+    preimage_changes: Mutex<Vec<PreimageSubscription>>,
+    storage_changes: Mutex<Vec<StorageSubscription>>,
+    chain_events: Mutex<NativeChainEvents>,
+    chat_room_changes: Mutex<Vec<mpsc::UnboundedSender<v01::HostChatListSubscribeItem>>>,
+    pocket_card_changes: Mutex<
+        Vec<mpsc::UnboundedSender<Result<v01::HostPocketListSubscribeItem, v01::GenericError>>>,
+    >,
 }
 
 #[derive(Default)]
@@ -59,26 +62,26 @@ impl NativeEventBus {
 			.send(&(), &Ok(theme));
 	}
 
-	/// Stream the locale: `current` first, then every host change.
-	pub fn subscribe_locale(
-		&self,
-		current: Result<v01::HostLocaleSubscribeItem, v01::GenericError>,
-	) -> BoxStream<'static, Result<v01::HostLocaleSubscribeItem, v01::GenericError>> {
-		let (tx, rx) = mpsc::unbounded();
-		self.locale_changes
-			.lock()
-			.expect("native locale subscribers mutex poisoned")
-			.register((), tx);
-		stream::once(async move { current }).chain(rx).boxed()
-	}
+    /// Stream the locale: `current` first, then every host change.
+    pub fn subscribe_locale(
+        &self,
+        current: Result<crate::latest::HostLocaleSubscribeItem, v01::GenericError>,
+    ) -> BoxStream<'static, Result<crate::latest::HostLocaleSubscribeItem, v01::GenericError>> {
+        let (tx, rx) = mpsc::unbounded();
+        self.locale_changes
+            .lock()
+            .expect("native locale subscribers mutex poisoned")
+            .push(tx);
+        stream::once(async move { current }).chain(rx).boxed()
+    }
 
-	/// Deliver a host locale change to every live locale subscriber.
-	pub fn notify_locale_changed(&self, locale: v01::HostLocaleSubscribeItem) {
-		self.locale_changes
-			.lock()
-			.expect("native locale subscribers mutex poisoned")
-			.send(&(), &Ok(locale));
-	}
+    /// Deliver a host locale change to every live locale subscriber.
+    pub fn notify_locale_changed(&self, locale: crate::latest::HostLocaleSubscribeItem) {
+        self.locale_changes
+            .lock()
+            .expect("native locale subscribers mutex poisoned")
+            .retain(|tx| tx.unbounded_send(Ok(locale.clone())).is_ok());
+    }
 
 	/// Stream later host changes to the preimage stored under `key`.
 	pub fn subscribe_preimage_changes(

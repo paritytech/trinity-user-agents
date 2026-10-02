@@ -617,13 +617,24 @@ impl ThemeHost for CallbackPlatform {
 	}
 }
 
+#[async_trait]
 impl LocaleHost for CallbackPlatform {
-	fn subscribe_locale(
-		&self,
-	) -> BoxStream<'static, Result<v01::HostLocaleSubscribeItem, v01::GenericError>> {
-		let current = self.callbacks.current_locale().map_err(v01::GenericError::from);
-		self.events.subscribe_locale(current)
-	}
+    fn subscribe_locale(
+        &self,
+    ) -> BoxStream<'static, Result<crate::latest::HostLocaleSubscribeItem, v01::GenericError>> {
+        let current = self
+            .callbacks
+            .current_locale()
+            .map_err(v01::GenericError::from);
+        self.events.subscribe_locale(current)
+    }
+
+    async fn localize_timestamps(
+        &self,
+        request: crate::latest::HostLocaleLocalizeTimestampsRequest,
+    ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, crate::latest::GenericError> {
+        self.callbacks.localize_timestamps(request).await.map_err(Into::into)
+    }
 }
 
 impl PreimageHost for CallbackPlatform {

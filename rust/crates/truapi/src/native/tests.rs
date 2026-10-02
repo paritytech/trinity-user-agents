@@ -151,48 +151,42 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 }
 
 pub struct EventCallbacks {
-	pub logs: Mutex<Vec<String>>,
-	pub face_requests: Mutex<Vec<bool>>,
-	pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
-	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
-	pub chat_bot_status: Mutex<v01::ChatBotRegistrationStatus>,
-	pub chat_registered_bots: Mutex<Vec<(String, String, String)>>,
-	pub chat_bot_rejection: Mutex<Option<String>>,
-	pub chat_post_rejection: Mutex<Option<String>>,
-	pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent, Option<String>)>>,
-	pub chat_room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
-	pub pocket_cards: Mutex<Vec<v01::PocketCard>>,
-	pub pocket_removed: Mutex<Vec<String>>,
-	pub theme: Mutex<v01::HostThemeSubscribeItem>,
-	pub locale: Mutex<v01::HostLocaleSubscribeItem>,
-	pub preimages: Mutex<PreimageFixtureEntries>,
-	pub auth_states: Mutex<Vec<AuthState>>,
-	pub chain_id: Mutex<Option<u32>>,
-	pub on_chain_connect: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-	pub chain_connects: Mutex<Vec<Vec<u8>>>,
-	pub chain_sends: Mutex<Vec<(u32, String)>>,
-	pub chain_closes: Mutex<Vec<u32>>,
-	/// Worker demand transitions, in arrival order.
-	pub worker_demand: Mutex<Vec<(String, WorkerTransition)>>,
-	/// Devices reported as paired, in arrival order.
-	pub paired_devices: Mutex<Vec<PairedSsoPeer>>,
-	/// Every `durable_work_changed` report, in order.
-	pub durable_work: Mutex<Vec<bool>>,
-	/// Capability this host reports as refused by the OS, if any.
-	pub os_refused: Option<v01::HostDevicePermissionRequest>,
-	/// Configurable prompt outcome for grant, denial, and callback failure tests.
-	pub remote_permission_result: Result<PermissionDecision, HostRejection>,
-	pub remote_permission_reply: Mutex<
-		Option<futures::channel::oneshot::Receiver<Result<PermissionDecision, HostRejection>>>,
-	>,
-	pub core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
-	/// Disclosure consent is distinct from boolean action confirmation.
-	pub permission_confirmation_result: PermissionDecision,
-	/// Counts prompts across the execution's separate connections.
-	pub remote_permission_calls: std::sync::atomic::AtomicUsize,
-	pub remote_permission_products: Mutex<Vec<(ProductId, ProductExecutionKind)>>,
-	/// Counts device permission prompts.
-	pub device_permission_calls: std::sync::atomic::AtomicUsize,
+    pub logs: Mutex<Vec<String>>,
+    pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
+    pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
+    pub chat_bot_status: Mutex<v01::ChatBotRegistrationStatus>,
+    pub chat_registered_bots: Mutex<Vec<(String, String, String)>>,
+    pub chat_bot_rejection: Mutex<Option<String>>,
+    pub chat_post_rejection: Mutex<Option<String>>,
+    pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent)>>,
+    pub pocket_cards: Mutex<Vec<v01::PocketCard>>,
+    pub pocket_removed: Mutex<Vec<String>>,
+    pub theme: Mutex<v01::HostThemeSubscribeItem>,
+    pub locale: Mutex<crate::latest::HostLocaleSubscribeItem>,
+    pub preimages: Mutex<PreimageFixtureEntries>,
+    pub auth_states: Mutex<Vec<AuthState>>,
+    pub chain_id: Mutex<Option<u32>>,
+    pub on_chain_connect: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    pub chain_connects: Mutex<Vec<Vec<u8>>>,
+    pub chain_sends: Mutex<Vec<(u32, String)>>,
+    pub chain_closes: Mutex<Vec<u32>>,
+    /// Worker demand transitions, in arrival order.
+    pub worker_demand: Mutex<Vec<(String, WorkerTransition)>>,
+    /// Devices reported as paired, in arrival order.
+    pub paired_devices: Mutex<Vec<PairedSsoPeer>>,
+    /// Capability this host reports as refused by the OS, if any.
+    pub os_refused: Option<v01::HostDevicePermissionRequest>,
+    /// Configurable prompt outcome for grant, denial, and callback failure tests.
+    pub remote_permission_result: Result<PermissionDecision, HostRejection>,
+    pub remote_permission_reply: Mutex<
+        Option<futures::channel::oneshot::Receiver<Result<PermissionDecision, HostRejection>>>,
+    >,
+    pub core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+    /// Disclosure consent is distinct from boolean action confirmation.
+    pub permission_confirmation_result: PermissionDecision,
+    /// Counts prompts across the execution's separate connections.
+    pub remote_permission_calls: std::sync::atomic::AtomicUsize,
+    pub remote_permission_products: Mutex<Vec<(String, ProductExecutionKind)>>,
 }
 
 impl EventCallbacks {
@@ -201,45 +195,44 @@ impl EventCallbacks {
 		Self { os_refused: Some(capability), ..Self::new() }
 	}
 
-	pub fn new() -> Self {
-		Self {
-			logs: Mutex::new(Vec::new()),
-			chat_room_status: Mutex::new(v01::ChatRoomRegistrationStatus::New),
-			chat_created_rooms: Mutex::new(Vec::new()),
-			chat_bot_status: Mutex::new(v01::ChatBotRegistrationStatus::New),
-			chat_registered_bots: Mutex::new(Vec::new()),
-			chat_bot_rejection: Mutex::new(None),
-			chat_post_rejection: Mutex::new(None),
-			chat_room_footers: Mutex::new(Vec::new()),
-			chat_posted: Mutex::new(Vec::new()),
-			pocket_cards: Mutex::new(Vec::new()),
-			pocket_removed: Mutex::new(Vec::new()),
-			theme: Mutex::new(v01::HostThemeSubscribeItem {
-				name: v01::ThemeName::Default,
-				variant: v01::ThemeVariant::Light,
-			}),
-			locale: Mutex::new(v01::HostLocaleSubscribeItem { language_tag: "en".to_string() }),
-			preimages: Mutex::new(Vec::new()),
-			auth_states: Mutex::new(Vec::new()),
-			chain_id: Mutex::new(None),
-			on_chain_connect: Mutex::new(None),
-			chain_connects: Mutex::new(Vec::new()),
-			chain_sends: Mutex::new(Vec::new()),
-			chain_closes: Mutex::new(Vec::new()),
-			worker_demand: Mutex::new(Vec::new()),
-			paired_devices: Mutex::new(Vec::new()),
-			durable_work: Mutex::new(Vec::new()),
-			os_refused: None,
-			remote_permission_result: Ok(PermissionDecision::Deny),
-			remote_permission_reply: Mutex::new(None),
-			core_storage: Mutex::default(),
-			permission_confirmation_result: PermissionDecision::Deny,
-			remote_permission_calls: std::sync::atomic::AtomicUsize::new(0),
-			device_permission_calls: std::sync::atomic::AtomicUsize::new(0),
-			remote_permission_products: Mutex::new(Vec::new()),
-			face_requests: Mutex::new(Vec::new()),
-		}
-	}
+    pub fn new() -> Self {
+        Self {
+            logs: Mutex::new(Vec::new()),
+            chat_room_status: Mutex::new(v01::ChatRoomRegistrationStatus::New),
+            chat_created_rooms: Mutex::new(Vec::new()),
+            chat_bot_status: Mutex::new(v01::ChatBotRegistrationStatus::New),
+            chat_registered_bots: Mutex::new(Vec::new()),
+            chat_bot_rejection: Mutex::new(None),
+            chat_post_rejection: Mutex::new(None),
+            chat_posted: Mutex::new(Vec::new()),
+            pocket_cards: Mutex::new(Vec::new()),
+            pocket_removed: Mutex::new(Vec::new()),
+            theme: Mutex::new(v01::HostThemeSubscribeItem {
+                name: v01::ThemeName::Default,
+                variant: v01::ThemeVariant::Light,
+            }),
+            locale: Mutex::new(crate::latest::HostLocaleSubscribeItem {
+                time_zone: None,
+                language_tag: "en".to_string(),
+            }),
+            preimages: Mutex::new(Vec::new()),
+            auth_states: Mutex::new(Vec::new()),
+            chain_id: Mutex::new(None),
+            on_chain_connect: Mutex::new(None),
+            chain_connects: Mutex::new(Vec::new()),
+            chain_sends: Mutex::new(Vec::new()),
+            chain_closes: Mutex::new(Vec::new()),
+            worker_demand: Mutex::new(Vec::new()),
+            paired_devices: Mutex::new(Vec::new()),
+            os_refused: None,
+            remote_permission_result: Ok(PermissionDecision::Deny),
+            remote_permission_reply: Mutex::new(None),
+            core_storage: Mutex::default(),
+            permission_confirmation_result: PermissionDecision::Deny,
+            remote_permission_calls: std::sync::atomic::AtomicUsize::new(0),
+            remote_permission_products: Mutex::new(Vec::new()),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -254,170 +247,177 @@ impl HostCallbacks for EventCallbacks {
 			.push((product_id.into(), transition));
 	}
 
-	fn device_paired(&self, device: PairedSsoPeer) {
-		self.paired_devices.lock().expect("paired device mutex poisoned").push(device);
-	}
-
-	fn durable_work_changed(&self, pending: bool) {
-		self.durable_work.lock().expect("durable work mutex poisoned").push(pending);
-	}
-	async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
-		Ok(())
-	}
-	async fn push_notification(
-		&self,
-		_request: v01::HostPushNotificationRequest,
-	) -> Result<u32, HostRejection> {
-		Ok(0)
-	}
-	fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
-		Ok(())
-	}
-	async fn device_permission(
-		&self,
-		_product: ProductExecutionConfig,
-		_request: v01::HostDevicePermissionRequest,
-	) -> Result<PermissionDecision, HostRejection> {
-		self.device_permission_calls.fetch_add(1, Ordering::SeqCst);
-		Ok(PermissionDecision::Deny)
-	}
-	async fn device_permission_status(
-		&self,
-		request: v01::HostDevicePermissionRequest,
-	) -> Result<DevicePermissionStatus, HostRejection> {
-		Ok(if self.os_refused == Some(request) {
-			DevicePermissionStatus::Denied
-		} else {
-			DevicePermissionStatus::NotApplicable
-		})
-	}
-	async fn set_expanded_card_face_shown(
-		&self,
-		shown: bool,
-	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-		self.face_requests.lock().expect("face requests mutex poisoned").push(shown);
-		Ok(crate::platform::ExpandedCardFaceOutcome::Applied)
-	}
-	async fn remote_permission(
-		&self,
-		product: ProductExecutionConfig,
-		_request: v01::RemotePermission,
-	) -> Result<PermissionDecision, HostRejection> {
-		self.remote_permission_calls.fetch_add(1, Ordering::SeqCst);
-		self.remote_permission_products
-			.lock()
-			.unwrap()
-			.push((product.product_id, product.execution_kind));
-		let reply = self.remote_permission_reply.lock().unwrap().take();
-		match reply {
-			Some(reply) => reply.await.unwrap(),
-			None => self.remote_permission_result.clone(),
-		}
-	}
-	fn auth_state_changed(&self, state: AuthState) {
-		self.auth_states.lock().expect("auth state mutex poisoned").push(state);
-	}
-	async fn core_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
-		Ok(self.core_storage.lock().unwrap().get(&key).cloned())
-	}
-	async fn core_storage_write(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), HostRejection> {
-		self.core_storage.lock().unwrap().insert(key, value);
-		Ok(())
-	}
-	async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection> {
-		self.core_storage.lock().unwrap().remove(&key);
-		Ok(())
-	}
-	fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
-		self.chain_connects
-			.lock()
-			.expect("chain connects mutex poisoned")
-			.push(genesis_hash);
-		let on_connect = self.on_chain_connect.lock().unwrap().take();
-		if let Some(on_connect) = on_connect {
-			on_connect();
-		}
-		Ok(*self.chain_id.lock().expect("chain id mutex poisoned"))
-	}
-	fn chain_send(&self, connection_id: u32, request: String) -> Result<(), HostRejection> {
-		self.chain_sends
-			.lock()
-			.expect("chain sends mutex poisoned")
-			.push((connection_id, request));
-		Ok(())
-	}
-	fn chain_close(&self, connection_id: u32) -> Result<(), HostRejection> {
-		self.chain_closes
-			.lock()
-			.expect("chain closes mutex poisoned")
-			.push(connection_id);
-		Ok(())
-	}
-	async fn confirm_user_action(
-		&self,
-		_review: UserConfirmationReview,
-	) -> Result<bool, HostRejection> {
-		Ok(false)
-	}
-	async fn confirm_permission(
-		&self,
-		_review: UserConfirmationReview,
-	) -> Result<PermissionDecision, HostRejection> {
-		Ok(self.permission_confirmation_result)
-	}
-	async fn lookup_preimage(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
-		Ok(self
-			.preimages
-			.lock()
-			.expect("preimage map mutex poisoned")
-			.iter()
-			.find(|(stored_key, _)| stored_key == &key)
-			.and_then(|(_, value)| value.clone()))
-	}
-	fn current_theme(&self) -> Result<v01::HostThemeSubscribeItem, HostRejection> {
-		Ok(self.theme.lock().expect("theme mutex poisoned").clone())
-	}
-	fn current_locale(&self) -> Result<v01::HostLocaleSubscribeItem, HostRejection> {
-		Ok(self.locale.lock().expect("locale mutex poisoned").clone())
-	}
-	async fn feature_supported(
-		&self,
-		_request: v01::HostFeatureSupportedRequest,
-	) -> Result<bool, HostRejection> {
-		Ok(false)
-	}
-	fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
-		Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
-	}
-	async fn local_storage_read(
-		&self,
-		_key: String,
-	) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
-		Ok(None)
-	}
-	async fn local_storage_write(
-		&self,
-		_key: String,
-		_value: Vec<u8>,
-	) -> Result<(), v01::HostLocalStorageReadError> {
-		Ok(())
-	}
-	async fn local_storage_clear(
-		&self,
-		_key: String,
-	) -> Result<(), v01::HostLocalStorageReadError> {
-		Ok(())
-	}
-	async fn begin_operation(
-		&self,
-		_product_id: ProductId,
-		_label: String,
-	) -> Result<u32, HostRejection> {
-		Ok(1)
-	}
-	async fn end_operation(&self, _product_id: ProductId, _id: u32) -> Result<(), HostRejection> {
-		Ok(())
-	}
+    fn device_paired(&self, device: PairedSsoPeer) {
+        self.paired_devices
+            .lock()
+            .expect("paired device mutex poisoned")
+            .push(device);
+    }
+    async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
+        Ok(())
+    }
+    async fn push_notification(
+        &self,
+        _request: v01::HostPushNotificationRequest,
+    ) -> Result<u32, HostRejection> {
+        Ok(0)
+    }
+    fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
+        Ok(())
+    }
+    async fn device_permission(
+        &self,
+        _product: ProductExecutionConfig,
+        _request: v01::HostDevicePermissionRequest,
+    ) -> Result<PermissionDecision, HostRejection> {
+        Ok(PermissionDecision::Deny)
+    }
+    async fn device_permission_status(
+        &self,
+        request: v01::HostDevicePermissionRequest,
+    ) -> Result<DevicePermissionStatus, HostRejection> {
+        Ok(if self.os_refused == Some(request) {
+            DevicePermissionStatus::Denied
+        } else {
+            DevicePermissionStatus::NotApplicable
+        })
+    }
+    async fn remote_permission(
+        &self,
+        product: ProductExecutionConfig,
+        _request: v01::RemotePermission,
+    ) -> Result<PermissionDecision, HostRejection> {
+        self.remote_permission_calls.fetch_add(1, Ordering::SeqCst);
+        self.remote_permission_products
+            .lock()
+            .unwrap()
+            .push((product.product_id, product.execution_kind));
+        let reply = self.remote_permission_reply.lock().unwrap().take();
+        match reply {
+            Some(reply) => reply.await.unwrap(),
+            None => self.remote_permission_result.clone(),
+        }
+    }
+    fn auth_state_changed(&self, state: AuthState) {
+        self.auth_states
+            .lock()
+            .expect("auth state mutex poisoned")
+            .push(state);
+    }
+    async fn core_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+        Ok(self.core_storage.lock().unwrap().get(&key).cloned())
+    }
+    async fn core_storage_write(
+        &self,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    ) -> Result<(), HostRejection> {
+        self.core_storage.lock().unwrap().insert(key, value);
+        Ok(())
+    }
+    async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection> {
+        self.core_storage.lock().unwrap().remove(&key);
+        Ok(())
+    }
+    fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
+        self.chain_connects
+            .lock()
+            .expect("chain connects mutex poisoned")
+            .push(genesis_hash);
+        let on_connect = self.on_chain_connect.lock().unwrap().take();
+        if let Some(on_connect) = on_connect {
+            on_connect();
+        }
+        Ok(*self.chain_id.lock().expect("chain id mutex poisoned"))
+    }
+    fn chain_send(&self, connection_id: u32, request: String) -> Result<(), HostRejection> {
+        self.chain_sends
+            .lock()
+            .expect("chain sends mutex poisoned")
+            .push((connection_id, request));
+        Ok(())
+    }
+    fn chain_close(&self, connection_id: u32) -> Result<(), HostRejection> {
+        self.chain_closes
+            .lock()
+            .expect("chain closes mutex poisoned")
+            .push(connection_id);
+        Ok(())
+    }
+    async fn confirm_user_action(
+        &self,
+        _review: UserConfirmationReview,
+    ) -> Result<bool, HostRejection> {
+        Ok(false)
+    }
+    async fn confirm_permission(
+        &self,
+        _review: UserConfirmationReview,
+    ) -> Result<PermissionDecision, HostRejection> {
+        Ok(self.permission_confirmation_result)
+    }
+    async fn lookup_preimage(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+        Ok(self
+            .preimages
+            .lock()
+            .expect("preimage map mutex poisoned")
+            .iter()
+            .find(|(stored_key, _)| stored_key == &key)
+            .and_then(|(_, value)| value.clone()))
+    }
+    fn current_theme(&self) -> Result<v01::HostThemeSubscribeItem, HostRejection> {
+        Ok(self.theme.lock().expect("theme mutex poisoned").clone())
+    }
+    fn current_locale(&self) -> Result<crate::latest::HostLocaleSubscribeItem, HostRejection> {
+        Ok(self.locale.lock().expect("locale mutex poisoned").clone())
+    }
+    async fn localize_timestamps(
+        &self,
+        _request: crate::latest::HostLocaleLocalizeTimestampsRequest,
+    ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, HostRejection> {
+        Err(HostRejection::Rejected { reason: "Local time conversion is unavailable".into() })
+    }
+    async fn feature_supported(
+        &self,
+        _request: v01::HostFeatureSupportedRequest,
+    ) -> Result<bool, HostRejection> {
+        Ok(false)
+    }
+    fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
+        Ok(crate::platform::HostChainSet {
+            network: "paseo".to_string(),
+            chains: Vec::new(),
+        })
+    }
+    async fn local_storage_read(
+        &self,
+        _key: String,
+    ) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
+        Ok(None)
+    }
+    async fn local_storage_write(
+        &self,
+        _key: String,
+        _value: Vec<u8>,
+    ) -> Result<(), v01::HostLocalStorageReadError> {
+        Ok(())
+    }
+    async fn local_storage_clear(
+        &self,
+        _key: String,
+    ) -> Result<(), v01::HostLocalStorageReadError> {
+        Ok(())
+    }
+    async fn begin_operation(
+        &self,
+        _product_id: String,
+        _label: String,
+    ) -> Result<u32, HostRejection> {
+        Ok(1)
+    }
+    async fn end_operation(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -1084,17 +1084,26 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 
 #[test]
 fn native_locale_subscription_emits_current_then_notified_changes() {
-	let (callbacks, events, platform) = event_platform();
-	let mut stream = platform.subscribe_locale();
-	let switched = v01::HostLocaleSubscribeItem { language_tag: "zh-Hans".to_string() };
+    let (callbacks, events, platform) = event_platform();
+    let mut stream = platform.subscribe_locale();
+    let switched = crate::latest::HostLocaleSubscribeItem {
+        time_zone: Some("Asia/Shanghai".to_string()),
+        language_tag: "zh-Hans".to_string(),
+    };
 
 	let first = futures::executor::block_on(stream.next()).unwrap();
 	*callbacks.locale.lock().expect("locale mutex poisoned") = switched.clone();
 	events.notify_locale_changed(switched.clone());
 	let second = futures::executor::block_on(stream.next()).unwrap();
 
-	assert_eq!(first.unwrap(), v01::HostLocaleSubscribeItem { language_tag: "en".to_string() });
-	assert_eq!(second.unwrap(), switched);
+    assert_eq!(
+        first.unwrap(),
+        crate::latest::HostLocaleSubscribeItem {
+            time_zone: None,
+            language_tag: "en".to_string(),
+        }
+    );
+    assert_eq!(second.unwrap(), switched);
 }
 
 #[test]
@@ -1830,132 +1839,147 @@ fn start_ws_bridge_twice_returns_already_running() {
 			Ok(PermissionDecision::Deny)
 		}
 
-		fn on_core_log(&self, _marker: String, _detail: String) {}
-		fn worker_demand_changed(&self, _product_id: ProductId, _transition: WorkerTransition) {}
-		fn durable_work_changed(&self, _pending: bool) {}
-		fn device_paired(&self, _device: PairedSsoPeer) {}
-		async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
-			Ok(())
-		}
-		async fn push_notification(
-			&self,
-			_request: v01::HostPushNotificationRequest,
-		) -> Result<u32, HostRejection> {
-			Ok(0)
-		}
-		fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
-			Ok(())
-		}
-		async fn device_permission(
-			&self,
-			_product: ProductExecutionConfig,
-			_request: v01::HostDevicePermissionRequest,
-		) -> Result<PermissionDecision, HostRejection> {
-			Ok(PermissionDecision::Deny)
-		}
-		async fn device_permission_status(
-			&self,
-			_request: v01::HostDevicePermissionRequest,
-		) -> Result<DevicePermissionStatus, HostRejection> {
-			Ok(DevicePermissionStatus::NotApplicable)
-		}
-		async fn set_expanded_card_face_shown(
-			&self,
-			_shown: bool,
-		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
-		}
-		async fn remote_permission(
-			&self,
-			_product: ProductExecutionConfig,
-			_request: v01::RemotePermission,
-		) -> Result<PermissionDecision, HostRejection> {
-			Ok(PermissionDecision::Deny)
-		}
-		fn auth_state_changed(&self, _state: AuthState) {}
-		async fn core_storage_read(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
-			Ok(None)
-		}
-		async fn core_storage_write(
-			&self,
-			_key: Vec<u8>,
-			_value: Vec<u8>,
-		) -> Result<(), HostRejection> {
-			Ok(())
-		}
-		async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
-			Ok(())
-		}
-		fn chain_connect(&self, _genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
-			Ok(None)
-		}
-		fn chain_send(&self, _connection_id: u32, _request: String) -> Result<(), HostRejection> {
-			Ok(())
-		}
-		fn chain_close(&self, _connection_id: u32) -> Result<(), HostRejection> {
-			Ok(())
-		}
-		async fn confirm_user_action(
-			&self,
-			_review: UserConfirmationReview,
-		) -> Result<bool, HostRejection> {
-			Ok(false)
-		}
-		async fn lookup_preimage(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
-			Ok(None)
-		}
-		fn current_theme(&self) -> Result<v01::HostThemeSubscribeItem, HostRejection> {
-			Ok(v01::HostThemeSubscribeItem {
-				name: v01::ThemeName::Default,
-				variant: v01::ThemeVariant::Light,
-			})
-		}
-		fn current_locale(&self) -> Result<v01::HostLocaleSubscribeItem, HostRejection> {
-			Ok(v01::HostLocaleSubscribeItem { language_tag: "en".to_string() })
-		}
-		async fn feature_supported(
-			&self,
-			_request: v01::HostFeatureSupportedRequest,
-		) -> Result<bool, HostRejection> {
-			Ok(false)
-		}
-		fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
-			Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
-		}
-		async fn local_storage_read(
-			&self,
-			_key: String,
-		) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
-			Ok(None)
-		}
-		async fn local_storage_write(
-			&self,
-			_key: String,
-			_value: Vec<u8>,
-		) -> Result<(), v01::HostLocalStorageReadError> {
-			Ok(())
-		}
-		async fn local_storage_clear(
-			&self,
-			_key: String,
-		) -> Result<(), v01::HostLocalStorageReadError> {
-			Ok(())
-		}
-		async fn begin_operation(
-			&self,
-			_product_id: ProductId,
-			_label: String,
-		) -> Result<u32, HostRejection> {
-			Ok(1)
-		}
-		async fn end_operation(
-			&self,
-			_product_id: ProductId,
-			_id: u32,
-		) -> Result<(), HostRejection> {
-			Ok(())
-		}
-	}
+        fn on_core_log(&self, _marker: String, _detail: String) {}
+        fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
+        fn device_paired(&self, _device: PairedSsoPeer) {}
+        async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
+            Ok(())
+        }
+        async fn push_notification(
+            &self,
+            _request: v01::HostPushNotificationRequest,
+        ) -> Result<u32, HostRejection> {
+            Ok(0)
+        }
+        fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
+            Ok(())
+        }
+        async fn device_permission(
+            &self,
+            _product: ProductExecutionConfig,
+            _request: v01::HostDevicePermissionRequest,
+        ) -> Result<PermissionDecision, HostRejection> {
+            Ok(PermissionDecision::Deny)
+        }
+        async fn device_permission_status(
+            &self,
+            _request: v01::HostDevicePermissionRequest,
+        ) -> Result<DevicePermissionStatus, HostRejection> {
+            Ok(DevicePermissionStatus::NotApplicable)
+        }
+        async fn remote_permission(
+            &self,
+            _product: ProductExecutionConfig,
+            _request: v01::RemotePermission,
+        ) -> Result<PermissionDecision, HostRejection> {
+            Ok(PermissionDecision::Deny)
+        }
+        fn auth_state_changed(&self, _state: AuthState) {}
+        async fn core_storage_read(
+            &self,
+            _key: Vec<u8>,
+        ) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(None)
+        }
+        async fn core_storage_write(
+            &self,
+            _key: Vec<u8>,
+            _value: Vec<u8>,
+        ) -> Result<(), HostRejection> {
+            Ok(())
+        }
+        async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
+            Ok(())
+        }
+        fn chain_connect(&self, _genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
+            Ok(None)
+        }
+        fn chain_send(
+            &self,
+            _connection_id: u32,
+            _request: String,
+        ) -> Result<(), HostRejection> {
+            Ok(())
+        }
+        fn chain_close(&self, _connection_id: u32) -> Result<(), HostRejection> {
+            Ok(())
+        }
+        async fn confirm_user_action(
+            &self,
+            _review: UserConfirmationReview,
+        ) -> Result<bool, HostRejection> {
+            Ok(false)
+        }
+        async fn lookup_preimage(
+            &self,
+            _key: Vec<u8>,
+        ) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(None)
+        }
+        fn current_theme(&self) -> Result<v01::HostThemeSubscribeItem, HostRejection> {
+            Ok(v01::HostThemeSubscribeItem {
+                name: v01::ThemeName::Default,
+                variant: v01::ThemeVariant::Light,
+            })
+        }
+        fn current_locale(&self) -> Result<crate::latest::HostLocaleSubscribeItem, HostRejection> {
+            Ok(crate::latest::HostLocaleSubscribeItem {
+                time_zone: None,
+                language_tag: "en".to_string(),
+            })
+        }
+        async fn localize_timestamps(
+            &self,
+            _request: crate::latest::HostLocaleLocalizeTimestampsRequest,
+        ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, HostRejection> {
+            Err(HostRejection::Rejected { reason: "Local time conversion is unavailable".into() })
+        }
+        async fn feature_supported(
+            &self,
+            _request: v01::HostFeatureSupportedRequest,
+        ) -> Result<bool, HostRejection> {
+            Ok(false)
+        }
+        fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
+            Ok(crate::platform::HostChainSet {
+                network: "paseo".to_string(),
+                chains: Vec::new(),
+            })
+        }
+        async fn local_storage_read(
+            &self,
+            _key: String,
+        ) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
+            Ok(None)
+        }
+        async fn local_storage_write(
+            &self,
+            _key: String,
+            _value: Vec<u8>,
+        ) -> Result<(), v01::HostLocalStorageReadError> {
+            Ok(())
+        }
+        async fn local_storage_clear(
+            &self,
+            _key: String,
+        ) -> Result<(), v01::HostLocalStorageReadError> {
+            Ok(())
+        }
+        async fn begin_operation(
+            &self,
+            _product_id: String,
+            _label: String,
+        ) -> Result<u32, HostRejection> {
+            Ok(1)
+        }
+        async fn end_operation(
+            &self,
+            _product_id: String,
+            _id: u32,
+        ) -> Result<(), HostRejection> {
+            Ok(())
+        }
+    }
 
 	let execution = native_product_execution(Arc::new(Noop), "dotli.dot");
 	let _first = execution.start_ws_bridge(0).expect("first start must succeed");
@@ -1993,134 +2017,154 @@ fn pending_permission_decision_does_not_stall_bridge() {
 			Ok(PermissionDecision::Deny)
 		}
 
-		fn on_core_log(&self, _marker: String, _detail: String) {}
-		fn worker_demand_changed(&self, _product_id: ProductId, _transition: WorkerTransition) {}
-		fn durable_work_changed(&self, _pending: bool) {}
-		fn device_paired(&self, _device: PairedSsoPeer) {}
-		async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
-			Ok(())
-		}
-		async fn push_notification(
-			&self,
-			_request: v01::HostPushNotificationRequest,
-		) -> Result<u32, HostRejection> {
-			Ok(0)
-		}
-		fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
-			Ok(())
-		}
-		async fn device_permission(
-			&self,
-			_product: ProductExecutionConfig,
-			_request: v01::HostDevicePermissionRequest,
-		) -> Result<PermissionDecision, HostRejection> {
-			self.permission_entered.store(true, Ordering::SeqCst);
-			self.release.lock().await.recv().await.expect("release signal");
-			Ok(PermissionDecision::AllowAlways)
-		}
-		async fn device_permission_status(
-			&self,
-			_request: v01::HostDevicePermissionRequest,
-		) -> Result<DevicePermissionStatus, HostRejection> {
-			Ok(DevicePermissionStatus::NotApplicable)
-		}
-		async fn set_expanded_card_face_shown(
-			&self,
-			_shown: bool,
-		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
-		}
-		async fn remote_permission(
-			&self,
-			_product: ProductExecutionConfig,
-			_request: v01::RemotePermission,
-		) -> Result<PermissionDecision, HostRejection> {
-			Ok(PermissionDecision::Deny)
-		}
-		fn auth_state_changed(&self, _state: AuthState) {}
-		async fn core_storage_read(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
-			Ok(None)
-		}
-		async fn core_storage_write(
-			&self,
-			_key: Vec<u8>,
-			_value: Vec<u8>,
-		) -> Result<(), HostRejection> {
-			Ok(())
-		}
-		async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
-			Ok(())
-		}
-		fn chain_connect(&self, _genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
-			Ok(None)
-		}
-		fn chain_send(&self, _connection_id: u32, _request: String) -> Result<(), HostRejection> {
-			Ok(())
-		}
-		fn chain_close(&self, _connection_id: u32) -> Result<(), HostRejection> {
-			Ok(())
-		}
-		async fn confirm_user_action(
-			&self,
-			_review: UserConfirmationReview,
-		) -> Result<bool, HostRejection> {
-			Ok(false)
-		}
-		async fn lookup_preimage(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
-			Ok(None)
-		}
-		fn current_theme(&self) -> Result<v01::HostThemeSubscribeItem, HostRejection> {
-			Ok(v01::HostThemeSubscribeItem {
-				name: v01::ThemeName::Default,
-				variant: v01::ThemeVariant::Light,
-			})
-		}
-		fn current_locale(&self) -> Result<v01::HostLocaleSubscribeItem, HostRejection> {
-			Ok(v01::HostLocaleSubscribeItem { language_tag: "en".to_string() })
-		}
-		async fn feature_supported(
-			&self,
-			_request: v01::HostFeatureSupportedRequest,
-		) -> Result<bool, HostRejection> {
-			Ok(true)
-		}
-		fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
-			Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
-		}
-		async fn local_storage_read(
-			&self,
-			_key: String,
-		) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
-			Ok(None)
-		}
-		async fn local_storage_write(
-			&self,
-			_key: String,
-			_value: Vec<u8>,
-		) -> Result<(), v01::HostLocalStorageReadError> {
-			Ok(())
-		}
-		async fn local_storage_clear(
-			&self,
-			_key: String,
-		) -> Result<(), v01::HostLocalStorageReadError> {
-			Ok(())
-		}
-		async fn begin_operation(
-			&self,
-			_product_id: ProductId,
-			_label: String,
-		) -> Result<u32, HostRejection> {
-			Ok(1)
-		}
-		async fn end_operation(
-			&self,
-			_product_id: ProductId,
-			_id: u32,
-		) -> Result<(), HostRejection> {
-			Ok(())
-		}
-	}
+        fn on_core_log(&self, _marker: String, _detail: String) {}
+        fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
+        fn device_paired(&self, _device: PairedSsoPeer) {}
+        async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
+            Ok(())
+        }
+        async fn push_notification(
+            &self,
+            _request: v01::HostPushNotificationRequest,
+        ) -> Result<u32, HostRejection> {
+            Ok(0)
+        }
+        fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
+            Ok(())
+        }
+        async fn device_permission(
+            &self,
+            _product: ProductExecutionConfig,
+            _request: v01::HostDevicePermissionRequest,
+        ) -> Result<PermissionDecision, HostRejection> {
+            self.permission_entered.store(true, Ordering::SeqCst);
+            self.release
+                .lock()
+                .await
+                .recv()
+                .await
+                .expect("release signal");
+            Ok(PermissionDecision::AllowAlways)
+        }
+        async fn device_permission_status(
+            &self,
+            _request: v01::HostDevicePermissionRequest,
+        ) -> Result<DevicePermissionStatus, HostRejection> {
+            Ok(DevicePermissionStatus::NotApplicable)
+        }
+        async fn remote_permission(
+            &self,
+            _product: ProductExecutionConfig,
+            _request: v01::RemotePermission,
+        ) -> Result<PermissionDecision, HostRejection> {
+            Ok(PermissionDecision::Deny)
+        }
+        fn auth_state_changed(&self, _state: AuthState) {}
+        async fn core_storage_read(
+            &self,
+            _key: Vec<u8>,
+        ) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(None)
+        }
+        async fn core_storage_write(
+            &self,
+            _key: Vec<u8>,
+            _value: Vec<u8>,
+        ) -> Result<(), HostRejection> {
+            Ok(())
+        }
+        async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
+            Ok(())
+        }
+        fn chain_connect(&self, _genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
+            Ok(None)
+        }
+        fn chain_send(
+            &self,
+            _connection_id: u32,
+            _request: String,
+        ) -> Result<(), HostRejection> {
+            Ok(())
+        }
+        fn chain_close(&self, _connection_id: u32) -> Result<(), HostRejection> {
+            Ok(())
+        }
+        async fn confirm_user_action(
+            &self,
+            _review: UserConfirmationReview,
+        ) -> Result<bool, HostRejection> {
+            Ok(false)
+        }
+        async fn lookup_preimage(
+            &self,
+            _key: Vec<u8>,
+        ) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(None)
+        }
+        fn current_theme(&self) -> Result<v01::HostThemeSubscribeItem, HostRejection> {
+            Ok(v01::HostThemeSubscribeItem {
+                name: v01::ThemeName::Default,
+                variant: v01::ThemeVariant::Light,
+            })
+        }
+        fn current_locale(&self) -> Result<crate::latest::HostLocaleSubscribeItem, HostRejection> {
+            Ok(crate::latest::HostLocaleSubscribeItem {
+                time_zone: None,
+                language_tag: "en".to_string(),
+            })
+        }
+        async fn localize_timestamps(
+            &self,
+            _request: crate::latest::HostLocaleLocalizeTimestampsRequest,
+        ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, HostRejection> {
+            Err(HostRejection::Rejected { reason: "Local time conversion is unavailable".into() })
+        }
+        async fn feature_supported(
+            &self,
+            _request: v01::HostFeatureSupportedRequest,
+        ) -> Result<bool, HostRejection> {
+            Ok(true)
+        }
+        fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
+            Ok(crate::platform::HostChainSet {
+                network: "paseo".to_string(),
+                chains: Vec::new(),
+            })
+        }
+        async fn local_storage_read(
+            &self,
+            _key: String,
+        ) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
+            Ok(None)
+        }
+        async fn local_storage_write(
+            &self,
+            _key: String,
+            _value: Vec<u8>,
+        ) -> Result<(), v01::HostLocalStorageReadError> {
+            Ok(())
+        }
+        async fn local_storage_clear(
+            &self,
+            _key: String,
+        ) -> Result<(), v01::HostLocalStorageReadError> {
+            Ok(())
+        }
+        async fn begin_operation(
+            &self,
+            _product_id: String,
+            _label: String,
+        ) -> Result<u32, HostRejection> {
+            Ok(1)
+        }
+        async fn end_operation(
+            &self,
+            _product_id: String,
+            _id: u32,
+        ) -> Result<(), HostRejection> {
+            Ok(())
+        }
+    }
 
 	let (release_tx, release_rx) = tokio::sync::mpsc::channel::<()>(1);
 	let permission_entered = Arc::new(AtomicBool::new(false));

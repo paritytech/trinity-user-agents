@@ -32,6 +32,14 @@ the selected variant. `ProductRuntimeConfig` configures the pairing host and req
 constructor's configuration requires `runtimeConfig.networkSuffix` in addition: the bare TLD (`dot`, `paseo`, or
 `testnet`) matching the People chain and the wallet's onboarding configuration.
 
+`locale.subscribe` V2 reports the host's BCP 47 language tag and optional actual time-zone identifier.
+Implement `locale.localizeTimestamps` with the exported `localizeTimestamps` helper to format batches of up
+to 128 Unix-millisecond instants using JavaScript `Intl` and historical daylight-saving rules. Each result
+contains a Gregorian `YYYY-MM-DD` grouping key and localized time, date and detailed date/time strings.
+Invalid zones and out-of-range instants reject rather than substituting UTC. Publish a new locale
+subscription value when the host language or zone changes. A missing time zone means local conversion
+is unavailable; it is not UTC. The headless CLI deliberately has no local-time formatting engine.
+
 `runtime.createProvider(product, callbacks?)` optionally binds platform callbacks to one product execution while
 retaining the same shared native host. Omit the second argument to use the host's default callbacks. Pass a complete
 `WebWorkerHostCallbacks` bundle (not a partial override) when each iframe or worker connection owns its own consent UI.

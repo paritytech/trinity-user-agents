@@ -11,6 +11,8 @@ Either host can be driven by a **product script** you write: a JS/TS file that r
 script and exits with its status. Without `--script`, both roles open a full-screen terminal UI when stdin and stdout
 are TTYs.
 
+The headless host reports its English interface language but has no native locale/time-zone formatting engine. Its locale subscription therefore reports no time zone, and `locale.localizeTimestamps` returns a domain error explaining that local time conversion is unavailable. Products must not interpret that absence as UTC or use a fixed offset as local time.
+
 One binary, `truapi-host`:
 
 | Command          | Role                                                                                                                                                                                                                             |

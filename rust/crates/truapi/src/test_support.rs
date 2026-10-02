@@ -1967,13 +1967,16 @@ impl ThemeHost for StubPlatform {
 }
 
 impl LocaleHost for StubPlatform {
-	fn subscribe_locale(
-		&self,
-	) -> BoxStream<'static, Result<v01::HostLocaleSubscribeItem, v01::GenericError>> {
-		Box::pin(stream::once(async {
-			Ok(v01::HostLocaleSubscribeItem { language_tag: "zh-Hans".to_string() })
-		}))
-	}
+    fn subscribe_locale(
+        &self,
+    ) -> BoxStream<'static, Result<crate::latest::HostLocaleSubscribeItem, v01::GenericError>> {
+        Box::pin(stream::once(async {
+            Ok(crate::latest::HostLocaleSubscribeItem {
+                time_zone: None,
+                language_tag: "zh-Hans".to_string(),
+            })
+        }))
+    }
 }
 
 #[crate::platform::async_trait]
