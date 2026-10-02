@@ -7,6 +7,12 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import java.lang.ref.WeakReference
 
+/**
+ * A mutable, thread-safe holder for a modality-specific API bound onto a shared worker (e.g. chat
+ * messaging). Set when a driver attaches, cleared when it detaches. The value is held weakly so a
+ * live worker never keeps its driver alive, and read once per call so a concurrent rebind cannot
+ * tear a partially updated pair.
+ */
 interface ModalityApiSlot<T : Any> {
     val bound: Flow<T?>
 

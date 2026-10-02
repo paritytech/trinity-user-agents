@@ -21,6 +21,7 @@ export const REGISTER_BOT_GAP = [
   { method: "Chat/register_bot", details: /no bot registry|not supported/ },
 ];
 
+/** The `method` and `details` of every ❌ row in a report. */
 export function diagnosisFailures(report) {
   const failures = [];
   for (const line of report.split("\n")) {
@@ -34,7 +35,11 @@ export function diagnosisFailures(report) {
   return failures;
 }
 
-/** Throws unless every failed row is one of `acceptedFailures`. */
+/**
+ * Validate a successful Chat report and attach the native host label.
+ *
+ * Throws unless every failed row is one of `acceptedFailures`.
+ */
 export function labelChatDiagnosisReport(
   report,
   host,

@@ -65,7 +65,7 @@ class ProductChatExtension(
     private val runningWorker = DeferredProductWorker()
     private val messageRenderer = ProductsMessageRenderer(appContext, product, runningWorker)
 
-    internal class Disposed : Exception("the product's chat extension was disposed")
+    private class Disposed : Exception("the product's chat extension was disposed")
 
     private var botScope: CoroutineScope? = null
 
@@ -94,7 +94,9 @@ class ProductChatExtension(
                 .onEach { message -> routeMessage(message) }
                 .launchIn(scope)
 
-            // Bind chat before the worker's started hook, so an initial message routes.
+            // Enable chat messaging before the worker's started hook so an initial/welcome message
+            // routes. The reference is released from the finally so a dispose that races boot never
+            // leaks the acquisition.
             val reference = workerRefCounter.acquire(product.id, "chat:${product.id.value}")
             try {
                 reference.enableModalityApi(WorkerModalityApi.Chat(messaging))

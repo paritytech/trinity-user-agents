@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.retryWhen
+import timber.log.Timber
 import uniffi.truapi.ProductRuntimeException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -20,6 +21,18 @@ internal fun <T> Flow<T>.retryWhileConnecting(
     val connecting = cause is ProductRuntimeException.NotConnected && attempt < attempts
     if (connecting) delay(retryDelay)
     connecting
+}
+
+/**
+ * A stream that fails is opened again, for as long as it is collected. Ending instead would leave
+ * what is on screen static for the worker's whole life: a new render is only opened when a
+ * different execution is published, and a stop publishes none. The backoff counts every failure
+ * of one collection and does not shrink after a successful draw.
+ */
+internal fun <T> Flow<T>.reopenAfterFailure(what: String): Flow<T> = retryWhen { failure, attempt ->
+    Timber.w(failure, "%s ended, reopening", what)
+    delay(reopenBackoff(attempt))
+    true
 }
 
 /** Doubling from [BACKOFF_BASE] to [MAX_BACKOFF]: a slow surface is picked up at once, a broken one is not asked on a loop. */

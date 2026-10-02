@@ -9,15 +9,12 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPo
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.retryWhen
-import timber.log.Timber
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.RenderContext
@@ -50,7 +47,7 @@ class TrUAPIPocketFaceStreams @Inject constructor(
                 workers.execution(key.productId)
                     .filterNotNull()
                     .flatMapLatest { execution -> execution.faces(key) }
-                    .retryAfterStreamEnd(key),
+                    .reopenAfterFailure("Pocket face stream for ${key.cardId.value}"),
             )
         } finally {
             runtime.releaseWorker(key.productId.value)
@@ -61,17 +58,6 @@ class TrUAPIPocketFaceStreams @Inject constructor(
         find(key.productId, key.cardId)
             .logFailure("Pocket face ${key.cardId.value} has no published card; it keeps the face it has")
             .isSuccess
-
-    /**
-     * A render that fails is opened again on the same worker. Ending here instead would leave the
-     * card static for the worker's whole life: the stream above only opens a new render when a
-     * different execution is published, and a stop publishes none.
-     */
-    private fun <T> Flow<T>.retryAfterStreamEnd(key: PocketCardKey): Flow<T> = retryWhen { failure, attempt ->
-        Timber.w(failure, "Pocket face stream for %s ended, reopening", key.cardId.value)
-        delay(reopenBackoff(attempt))
-        true
-    }
 
     override fun sendAction(key: PocketCardKey, actionId: String, payload: ByteArray) {
         val execution = workers.currentExecution(key.productId) ?: return

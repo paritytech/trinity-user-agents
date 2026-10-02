@@ -16,14 +16,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -31,10 +28,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onCompletion
-import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.onStart
-import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -45,7 +38,6 @@ import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.RenderContext
-import kotlin.time.Duration.Companion.milliseconds
 
 class TrUAPIChatWorker(
     private val productId: ProductId,
@@ -96,34 +88,19 @@ class TrUAPIChatWorker(
         messageData: DataByteArray,
     ): Flow<Result<JsWidget>> {
         if (roomId == null) return flowOf(roomlessFailure("render"))
-        return channelFlow {
-            val outcome = runCatching {
-                workers.executionState(productId)
-                    .distinctUntilChanged()
-                    .flatMapLatest { state ->
-                        when (state) {
-                            // Reported, not thrown: a later execution must still be able to draw.
-                            is WorkerExecutionState.Failed ->
-                                flowOf(Result.failure(ExecutionUnavailableException(state.reason)))
-                            null -> emptyFlow()
-                            is WorkerExecutionState.Running -> {
-                                reopeningChatRender(
-                                    state.execution,
-                                    roomId.value,
-                                    messageId,
-                                    messageType,
-                                    messageData.value,
-                                )
-                            }
-                        }
-                    }
-                    .collect { send(it) }
+        val context = RenderContext.ChatMessage(roomId = roomId.value, messageId = messageId, messageType = messageType)
+        return workers.executionState(productId)
+            .distinctUntilChanged()
+            .flatMapLatest { state ->
+                when (state) {
+                    // Reported, not thrown: a later execution must still be able to draw.
+                    is WorkerExecutionState.Failed ->
+                        flowOf(Result.failure(ExecutionUnavailableException(state.reason)))
+                    null -> emptyFlow()
+                    is WorkerExecutionState.Running -> state.execution.chatRender(context, messageData.value)
+                }
             }
-            outcome.exceptionOrNull()?.let { failure ->
-                if (failure is CancellationException) throw failure
-                trySend(Result.failure(failure))
-            }
-        }.conflate()
+            .conflate()
     }
 
     override fun dispatchEvent(event: JsUiEvent) {
@@ -163,63 +140,25 @@ class TrUAPIChatWorker(
                 "TrUAPI worker for ${productId.value} did not report a running execution in time",
             )
 
-    private fun reopeningChatRender(
-        execution: TrUAPIProductExecution,
-        roomId: String,
-        messageId: ChatMessageId,
-        messageType: String,
-        payload: ByteArray,
-    ): Flow<Result<JsWidget>> {
-        val context = RenderContext.ChatMessage(roomId = roomId, messageId = messageId, messageType = messageType)
-        var everDrew = false
-        var drewThisAttempt = false
-        var lastFailure: Throwable? = null
-
-        // Wrapped, so a retry re-asks the execution for a render instead of re-collecting a spent one.
-        return flow {
-            emitAll(
-                execution.render(ProductRendererRenderRequest(context, payload))
-                    .retryWhileConnecting()
-                    // Above the retry: a conversion failure is a stream failure, not a silent drop.
-                    .map { it.toJsWidget() }
-                    .onStart { drewThisAttempt = false }
-                    .onEach {
-                        drewThisAttempt = true
-                        everDrew = true
-                    }
-                    .onCompletion { cause -> if (cause == null && !drewThisAttempt) throw StreamDrewNothing() },
-            )
+    // Reopened under flatMapLatest, not above it: a stop or a replacement execution then cancels
+    // the backoff wait, and a failure cannot overtake the node drawn just before it by cancelling
+    // the scope that drains flatMapLatest's channel.
+    private fun TrUAPIProductExecution.chatRender(context: RenderContext.ChatMessage, payload: ByteArray): Flow<Result<JsWidget>> =
+        flow {
+            var drew = false
+            render(ProductRendererRenderRequest(context, payload))
+                .retryWhileConnecting()
+                .collect { node ->
+                    drew = true
+                    emit(Result.success(node.toJsWidget()))
+                }
+            // A stream closed before its first tree would otherwise leave the cell loading for the
+            // execution's whole life; a card keeps its last face, a cell has none.
+            if (!drew) throw StreamDrewNothing()
         }
-            .retryWhen { cause, attempt ->
-                if (cause is CancellationException) return@retryWhen false
-                if (cause !is StreamDrewNothing) lastFailure = cause
-                val reopening = attempt < RENDER_ATTEMPTS - 1
-                if (reopening) {
-                    if (cause is StreamDrewNothing) {
-                        Timber.d("TrUAPI chat render for %s/%s drew nothing (attempt %d); reopening", productId.value, messageId, attempt + 1)
-                    } else {
-                        Timber.w(cause, "TrUAPI chat render for %s/%s failed (attempt %d); reopening", productId.value, messageId, attempt + 1)
-                    }
-                    delay(REOPEN_DELAY)
-                }
-                reopening
-            }
-            .map { Result.success(it) }
-            .catch { cause ->
-                // The execution went away, not the render: end quietly and let the replacement draw.
-                if (cause is CancellationException) return@catch
-                if (!everDrew) {
-                    emit(
-                        Result.failure(
-                            IllegalStateException(
-                                "TrUAPI render for ${productId.value} message '$messageId' never drew after $RENDER_ATTEMPTS attempts",
-                                lastFailure ?: cause,
-                            ),
-                        ),
-                    )
-                }
-            }
-    }
+            // The execution went away, not the render: end quietly and let the replacement draw.
+            .catch { cause -> if (cause !is CancellationException) throw cause }
+            .reopenAfterFailure("TrUAPI chat render for ${productId.value}/${context.messageId}")
 
     private class StreamDrewNothing : Exception("the render stream ended without drawing")
 
@@ -232,8 +171,5 @@ class TrUAPIChatWorker(
 
     private companion object {
         const val NATIVE_PEER = "native"
-
-        const val RENDER_ATTEMPTS = 3
-        val REOPEN_DELAY = 500.milliseconds
     }
 }

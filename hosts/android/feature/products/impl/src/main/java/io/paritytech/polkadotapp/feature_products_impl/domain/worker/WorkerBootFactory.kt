@@ -11,6 +11,11 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUA
 import kotlinx.coroutines.CoroutineScope
 import javax.inject.Inject
 
+/**
+ * Builds and starts a product's headless worker. Injected into [ProductWorkerRefCounter] once at
+ * startup so the ref counter can be exercised without a real runtime, and so the product dependency
+ * graph is assembled before any worker boots.
+ */
 interface WorkerBootFactory {
     suspend fun boot(
         productId: ProductId,

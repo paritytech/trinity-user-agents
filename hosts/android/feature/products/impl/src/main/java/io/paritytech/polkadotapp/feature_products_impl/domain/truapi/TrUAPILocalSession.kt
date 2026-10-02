@@ -38,6 +38,7 @@ class TrUAPILocalSessionSource @Inject constructor(
 
         TrUAPILocalSession(
             secret = accountSecretsStorage.requireMetaAccountPassphrase(account.id).entropy,
+            // Display metadata only, so a missing username still yields a session.
             liteUsername = localUsernameStorage.getValue()?.getDisplayUsername(),
         )
     }

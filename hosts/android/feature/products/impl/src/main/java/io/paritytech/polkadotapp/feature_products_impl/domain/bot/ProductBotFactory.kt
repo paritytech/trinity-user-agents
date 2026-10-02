@@ -7,6 +7,10 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWork
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Factory for creating [ProductChatExtension] instances. The worker each extension drives is owned
+ * by [ProductWorkerRefCounter], not built here.
+ */
 @Singleton
 class ProductBotFactory @Inject constructor(
     @param:ApplicationContext private val appContext: Context,

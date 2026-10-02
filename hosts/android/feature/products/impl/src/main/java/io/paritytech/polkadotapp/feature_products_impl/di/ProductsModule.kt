@@ -8,6 +8,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
+import dagger.multibindings.Multibinds
 import io.paritytech.polkadotapp.common.BuildConfig
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
@@ -66,6 +67,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.r
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.external.ProductExternalExtensionProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.menu.ProductChatMenuInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.menu.RealProductChatMenuInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductMessageRenderObserver
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.RealProductSessionController
 import io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy.RealDeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
@@ -153,6 +155,9 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 internal interface ProductsModule {
+    @Multibinds
+    fun messageRenderObservers(): Set<ProductMessageRenderObserver>
+
     @Binds
     @Singleton
     fun bindWidgetSerializer(impl: ScaleWidgetSerializer): JsWidgetSerializer

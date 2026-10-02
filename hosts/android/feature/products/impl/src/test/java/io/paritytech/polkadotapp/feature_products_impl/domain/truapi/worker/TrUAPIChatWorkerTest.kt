@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -53,6 +54,7 @@ import uniffi.truapi.ProductRuntimeException
 import uniffi.truapi.RenderContext
 import uniffi.truapi.RendererNode
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 
 class TrUAPIChatWorkerTest {
     private val productId = ProductId.fromStoredValue("chat.dot")
@@ -153,44 +155,32 @@ class TrUAPIChatWorkerTest {
     }
 
     @Test
-    fun `render attempts exhausted by repeated failures carry the last cause`() = runTest {
+    fun `a stream that keeps failing is reopened for as long as the cell is collected`() = runTest {
         val execution: TrUAPIProductExecution = mock()
-        val boom1 = IllegalStateException("boom1")
-        val boom2 = IllegalStateException("boom2")
-        val boom3 = IllegalStateException("boom3")
-        whenever(execution.render(any())).thenReturn(
-            flow { throw boom1 },
-            flow { throw boom2 },
-            flow { throw boom3 },
-        )
-        val worker = worker(workers = runningWorkers(execution))
-
-        val results = worker.renderMessage(roomId, messageId, messageType, messageData).toList()
-
-        verify(execution, times(3)).render(any())
-        assertEquals(1, results.size)
-        assertSame(boom3, results.single().exceptionOrNull()?.cause)
-    }
-
-    @Test
-    fun `a failure after drawing never becomes a visible error`() = runTest {
-        val execution: TrUAPIProductExecution = mock()
+        var opened = 0
         whenever(execution.render(any())).thenReturn(
             flow {
+                opened++
                 emit(RendererNode.Nil)
                 throw IllegalStateException("boom")
             },
         )
-        val worker = worker(workers = runningWorkers(execution))
+        val worker = worker(workers = runningWorkers(execution), scope = CoroutineScope(StandardTestDispatcher(testScheduler)))
 
-        val results = worker.renderMessage(roomId, messageId, messageType, messageData).toList()
+        val results = mutableListOf<Result<JsWidget>>()
+        val collector = launch {
+            worker.renderMessage(roomId, messageId, messageType, messageData).collect { results += it }
+        }
+        advanceTimeBy(5.minutes)
 
+        // Gaps of 1, 2, 4, 8, 16 and then 30 seconds: five minutes hold 14 openings, past any bounded attempt count.
+        assertEquals(14, opened)
         assertTrue("a node that drew must not be replaced by an error", results.all { it.isSuccess })
-        verify(execution, times(3)).render(any())
+        collector.cancel()
     }
 
     @Test
-    fun `a NotConnected retry does not consume a render attempt`() = runTest {
+    fun `a NotConnected refusal is retried on the same render`() = runTest {
         val execution: TrUAPIProductExecution = mock()
         var collected = 0
         val flakyThenDraws = flow<RendererNode> {

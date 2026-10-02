@@ -188,7 +188,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     )
 
     companion object {
-        // Generous: a cold WebView on a slow device takes a while to report ready.
+        // Generous: a cold WebView on a slow device fetching a worker archive over dotNS.
         private val READY_TIMEOUT = 60.seconds
 
         val EXECUTION_WAIT_TIMEOUT = READY_TIMEOUT + 30.seconds

@@ -4,7 +4,6 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
-import io.paritytech.polkadotapp.common.BuildConfig
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -13,9 +12,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_impl.domain.bot.e2e.E2EAcks
-import io.paritytech.polkadotapp.feature_products_impl.domain.bot.e2e.E2ERuntimeMarkers
-import io.paritytech.polkadotapp.feature_products_impl.domain.bot.e2e.E2E_LOG_TAG
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductMessageRenderObserver
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,7 +20,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
-import timber.log.Timber
 
 /**
  * ViewModel for rendering a single Products message.
@@ -39,7 +35,7 @@ class ProductsMessageViewModel @AssistedInject constructor(
     @Assisted private val product: Product,
     // Dagger cannot take a value class here: Kotlin mangles the factory method name.
     @Assisted("roomId") private val roomId: String?,
-    private val e2eMarkers: E2ERuntimeMarkers,
+    private val renderObservers: Set<@JvmSuppressWildcards ProductMessageRenderObserver>,
 ) : BaseViewModel() {
     private val room = roomId?.let(::ProductChatIdParameter)
 
@@ -72,10 +68,7 @@ class ProductsMessageViewModel @AssistedInject constructor(
             .logFailure("Error receiving render update  for message $messageId in ${product.id}")
             .onSuccess { widget ->
                 _state.value = LoadingState.Loaded(widget)
-
-                if (BuildConfig.DEBUG && e2eMarkers.enabled) {
-                    Timber.tag(E2E_LOG_TAG).i(E2EAcks.customRendererUpdate(product.id.value))
-                }
+                renderObservers.forEach { it.onMessageRendered(product.id) }
             }
             .onFailure { error ->
                 _state.value = LoadingState.Error(error)

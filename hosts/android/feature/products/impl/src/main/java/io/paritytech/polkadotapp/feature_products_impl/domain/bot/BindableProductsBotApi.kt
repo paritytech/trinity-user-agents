@@ -17,6 +17,9 @@ import kotlinx.coroutines.flow.flowOf
 
 private const val MESSAGING_NOT_SUPPORTED_CODE = "messaging_not_supported"
 
+// The ProductsBotApi a shared worker boots with. General host calls always work through
+// BaseProductsBotApi; the chat-messaging calls route to whatever ProductChatMessaging is bound in
+// chatSlot, and fail cleanly when nothing is bound.
 class BindableProductsBotApi(
     hostApiInteractor: HostApiInteractor,
     callingProductIdProvider: CallingProductIdProvider,
