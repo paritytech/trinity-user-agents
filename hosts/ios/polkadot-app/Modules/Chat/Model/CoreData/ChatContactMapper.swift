@@ -48,12 +48,7 @@ extension ChatContactMapper: CoreDataMapperProtocol {
 
         let ownKeyId = try Chat.Contact.Own(entity: entity)
 
-        let source: Chat.Contact.Source =
-            if let game = entity.game {
-                .game(UInt32(game.gameIndex), game.gameDate)
-            } else {
-                .chat
-            }
+        let source: Chat.Contact.Source = .chat
 
         let devices = (entity.devices as? Set<CDContactDevice>)?.compactMap { deviceEntity -> Chat.PeerDevice? in
             guard let statementAccountId = deviceEntity.statementAccountId,
@@ -113,7 +108,6 @@ extension ChatContactMapper: CoreDataMapperProtocol {
         entity.acceptedAt = model.acceptedAt
 
         try populateDevices(entity: entity, from: model, using: context)
-        try populateGame(entity: entity, from: model, using: context)
     }
 }
 
@@ -133,31 +127,6 @@ extension ChatContactMapper {
             deviceEntity.statementAccountId = device.statementAccountId
             deviceEntity.encryptionPublicKey = device.encryptionPublicKey
             deviceEntity.contact = entity
-        }
-    }
-
-    private func populateGame(
-        entity: CoreDataEntity,
-        from model: DataProviderModel,
-        using context: NSManagedObjectContext
-    ) throws {
-        switch model.source {
-        case .chat:
-            entity.game = nil
-        case let .game(index, date) where entity.game?.gameIndex == Int32(index):
-            entity.game?.gameDate = date
-        case let .game(index, date):
-            let gameIndex = Int32(index)
-            let predicate = NSPredicate(
-                format: "%K == %d",
-                #keyPath(CDContactGame.gameIndex),
-                gameIndex
-            )
-            let game: CDContactGame = try (context.first(for: predicate))
-                ?? context.insertNew(CDContactGame.self)
-            game.gameIndex = gameIndex
-            game.gameDate = date
-            entity.game = game
         }
     }
 }
