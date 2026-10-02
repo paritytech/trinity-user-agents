@@ -280,7 +280,10 @@ impl PairingHostRuntime {
     /// Call whenever a contact is removed or blocked.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.notify_contacts_changed"))]
     pub fn notify_contacts_changed(&self) {
-        self.services.contact_handles.clear();
+        self.services.invalidate_contacts();
+        self.services
+            .contact_avatars
+            .contacts_changed(&self.services.spawner);
     }
 
     /// Build a product-facing runtime from this pairing host.
@@ -948,7 +951,10 @@ impl SigningHostRuntime {
     /// Call whenever a contact is removed or blocked.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.notify_contacts_changed"))]
     pub fn notify_contacts_changed(&self) {
-        self.services.contact_handles.clear();
+        self.services.invalidate_contacts();
+        self.services
+            .contact_avatars
+            .contacts_changed(&self.services.spawner);
     }
 
     /// Install the host's [`DevicePairingObserver`], told whenever a device
@@ -1935,7 +1941,7 @@ impl ProductRuntime {
     /// Embedders holding the host runtime may notify it instead.
     pub fn notify_contacts_changed(&self) {
         let services = self.admin.product_runtime.services();
-        services.contact_handles.clear();
+        services.invalidate_contacts();
         services.contact_avatars.contacts_changed(&services.spawner);
     }
 
@@ -2172,33 +2178,36 @@ impl ProductRuntime {
 		self.transport.set_debug_sink(channel_id, sink);
 	}
 
-	/// Dispose this host core. Idempotent.
-	///
-	/// Disposal suppresses future outgoing frames, aborts in-flight dispatch
-	/// futures, and cancels active subscriptions.
-	#[instrument(skip_all, fields(runtime.method = "product_runtime.dispose"))]
-	pub fn dispose(&self) {
-		// Aborting under the lock can wake code that re-enters disposal.
-		if self.disposed.load(Ordering::Acquire) {
-			return;
-		}
-		{
-			let mut in_flight =
-				self.in_flight.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-			if self.disposed.swap(true, Ordering::AcqRel) {
-				return;
-			}
-			for (_, handle) in in_flight.drain() {
-				handle.abort();
-			}
-		}
-		let connection = self.admin.product_runtime.connection();
-		connection.detach_chat();
-		connection.detach_renderer();
-		connection.release_open_operations();
-		self.host_subscriptions.close();
-		self.core.cancel_subscriptions();
-	}
+    /// Dispose this host core. Idempotent.
+    ///
+    /// Disposal suppresses future outgoing frames, aborts in-flight dispatch
+    /// futures, and cancels active subscriptions.
+    #[instrument(skip_all, fields(runtime.method = "product_runtime.dispose"))]
+    pub fn dispose(&self) {
+        // Aborting under the lock can wake code that re-enters disposal.
+        if self.disposed.load(Ordering::Acquire) {
+            return;
+        }
+        {
+            let mut in_flight = self
+                .in_flight
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if self.disposed.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            for (_, handle) in in_flight.drain() {
+                handle.abort();
+            }
+        }
+        self.admin.product_runtime.detach_chat();
+        self.admin.product_runtime.detach_renderer();
+        self.admin.product_runtime.release_open_operations();
+        self.admin.product_runtime.release_contact_avatars();
+        self.admin.product_runtime.release_contact_labels();
+        self.host_subscriptions.close();
+        self.core.cancel_subscriptions();
+    }
 }
 
 struct SinkTransport {

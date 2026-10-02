@@ -382,6 +382,7 @@ fn emit_wasm_adapter(
 fn optional_host_adapter(trait_name: &str) -> Option<&'static str> {
     match trait_name {
         "CoinageWalletHost" => Some("coinageWalletHostAdapter"),
+        "ContactsPlatform" => Some("contactsHostAdapter"),
         "ProfilePlatform" => Some("profileHostAdapter"),
         _ => None,
     }
@@ -1667,6 +1668,9 @@ fn emit_host_callback_composites(
     let required_members = composes
         .iter()
         .map(|trait_name| {
+            if trait_name == "ContactsPlatform" {
+                return format!("  {}?: ContactsPlatform;", callback_namespace(trait_name));
+            }
             format!(
                 "  {}{}: Required<{}>;",
                 callback_namespace(trait_name),

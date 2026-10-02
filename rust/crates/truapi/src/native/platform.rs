@@ -47,36 +47,34 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 
-	async fn pick_contact(
-		&self,
-		product: &ProductContext,
-	) -> Result<crate::platform::HostContactPick, v01::GenericError> {
-		self.contacts
-			.pick_contact(product.product_id.clone())
-			.await
-			.map_err(|error| v01::GenericError { reason: error.to_string() })
-	}
-}
+    async fn pick_contact(
+        &self,
+        product: &ProductContext,
+    ) -> Result<crate::platform::HostContactPick, v01::GenericError> {
+        self.contacts
+            .pick_contact(product.product_id.clone())
+            .await
+            .map_err(|error| v01::GenericError {
+                reason: error.to_string(),
+            })
+    }
 
-/// [`crate::platform::ScannerPlatform`] served by host-provided
-/// [`NativeScannerCallbacks`]; constructed only when the host passed one.
-pub struct ScannerCallbackPlatform {
-	/// Host viewfinder.
-	pub scanner: Arc<dyn NativeScannerCallbacks>,
-}
+    async fn pick_contacts(
+        &self,
+        product: &ProductContext,
+        selection: crate::platform::ContactSelection,
+    ) -> Result<crate::platform::HostContactsPick, v01::GenericError> {
+        self.contacts.pick_contacts(product.product_id.clone(), selection).await
+            .map_err(|error| v01::GenericError { reason: error.to_string() })
+    }
 
-#[async_trait]
-impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
-	async fn scan_code(
-		&self,
-		product: &ProductContext,
-		request: &truapi::latest::HostScannerScanRequest,
-	) -> Result<crate::platform::HostScan, v01::GenericError> {
-		self.scanner
-			.scan_code(product.product_id.clone(), product.execution_kind, request.clone())
-			.await
-			.map_err(|error| v01::GenericError { reason: error.to_string() })
-	}
+    async fn place_contact_labels(
+        &self,
+        product: &ProductContext,
+        placed: crate::platform::PlacedContactLabels,
+    ) -> Result<bool, crate::latest::HostContactsPlaceLabelsError> {
+        self.contacts.place_contact_labels(product.product_id.clone(), placed).await.map(|()| true)
+    }
 }
 
 /// Every [`crate::platform::Platform`] trait served by one execution's

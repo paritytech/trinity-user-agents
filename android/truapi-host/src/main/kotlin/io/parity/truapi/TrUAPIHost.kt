@@ -50,42 +50,57 @@ import uniffi.truapi.RendererNode
 import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.ThemeName
 import uniffi.truapi.ThemeVariant
-import uniffi.truapi.HostLocalStorageReadError
-import uniffi.truapi.HostNavigateToError
-import uniffi.truapi_platform.AuthState
-import uniffi.truapi_platform.HostChainSet
-import uniffi.truapi_platform.NativeChatFilePickRequest
-import uniffi.truapi_platform.NativeChatPickedFile
-import uniffi.truapi_platform.NativeChatFileExportRequest
-import uniffi.truapi_platform.NativeCoinageRequest
-import uniffi.truapi_platform.NativeCoinageResponse
-import uniffi.truapi_platform.PermissionAuthorizationRequest
-import uniffi.truapi_platform.PermissionAuthorizationStatus
-import uniffi.truapi_platform.UserConfirmationReview
-import uniffi.truapi_server.HostCallbacks
-import uniffi.truapi_server.NativeChatCallbacks
-import uniffi.truapi_server.NativeCoinageCallbacks
-import uniffi.truapi_server.NativeCoinageCallbackResult
-import uniffi.truapi_server.NativePocketCallbacks
-import uniffi.truapi_server.NativePocketRemoval
-import uniffi.truapi_server.NativeRendererObserver
-import uniffi.truapi_server.NativeDevicePermissionStatus
-import uniffi.truapi_server.NativeProductExecution
-import uniffi.truapi_server.NativeTrUApiHostRuntime
-import uniffi.truapi_server.ProductRuntimeException
-import uniffi.truapi_server.HostNavigateRejection
-import uniffi.truapi_server.HostRejection
-import uniffi.truapi_server.HostStorageException
-import uniffi.truapi_platform.ProductExecutionKind as UniFfiProductExecutionKind
-import uniffi.truapi_server.NativeRenewalTargetException
-import uniffi.truapi_server.NativeRuntimeConfigException
-import uniffi.truapi_server.NativeStatementRenewalTarget
-import uniffi.truapi_server.StatementRenewalReport
-import uniffi.truapi_server.SsoRequestOutcome
-import uniffi.truapi_server.WsBridgeEndpoint
-import uniffi.truapi_server.WsBridgeStartException
-import uniffi.truapi_server.NativeHostRuntimeConfig as UniFfiNativeHostRuntimeConfig
-import uniffi.truapi_server.NativeProductExecutionConfig as UniFfiNativeProductExecutionConfig
+import uniffi.truapi.NativeChatFilePickRequest
+import uniffi.truapi.NativeChatPickedFile
+import uniffi.truapi.NativeChatFileExportRequest
+import uniffi.truapi.NativeCoinageRequest
+import uniffi.truapi.NativeCoinageResponse
+import uniffi.truapi.NativeCoinageCallbacks
+import uniffi.truapi.NativeCoinageCallbackResult
+import uniffi.truapi.AuthState
+import uniffi.truapi.HostChainSet
+import uniffi.truapi.PermissionAuthorizationRequest
+import uniffi.truapi.PermissionAuthorizationStatus
+import uniffi.truapi.PermissionDecision
+import uniffi.truapi.UserConfirmationReview
+import uniffi.truapi.DbStatus
+import uniffi.truapi.HostCallbacks
+import uniffi.truapi.ChatBotRegistrationStatus
+import uniffi.truapi.NativeChatCallbacks
+import uniffi.truapi.NativeCoreDatabaseException
+import uniffi.truapi.ChatRoomRegistrationStatus
+import uniffi.truapi.NativePocketCallbacks
+import uniffi.truapi.NativePocketRemoval
+import uniffi.truapi.NativeRendererObserver
+import uniffi.truapi.DevicePermissionStatus
+import uniffi.truapi.NativeProductExecution
+import uniffi.truapi.NativeTrUApiHostRuntime
+import uniffi.truapi.NativeAnnouncedPairing
+import uniffi.truapi.PairedSsoPeer
+import uniffi.truapi.ResponderExit
+import uniffi.truapi.ProductRuntimeException
+import uniffi.truapi.HostNavigateToException
+import uniffi.truapi.HostRejection
+import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.localhostBridgeBootstrapScript
+import uniffi.truapi.NativeRuntimeConfigException
+import uniffi.truapi.StatementRenewalTarget
+import uniffi.truapi.TrackedStatementRenewalTarget
+import uniffi.truapi.StatementRenewalReport
+import uniffi.truapi.WorkerTransition
+import uniffi.truapi.WsBridgeEndpoint
+import uniffi.truapi.WsBridgeStartException
+import uniffi.truapi.HostRuntimeConfig
+import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.HostContactLookup
+import uniffi.truapi.HostContactMatches
+import uniffi.truapi.HostContactPick
+import uniffi.truapi.ContactSelection
+import uniffi.truapi.HostContactsPick
+import uniffi.truapi.PlacedContactLabels
+import uniffi.truapi.HostContactsPlaceLabelsException
+import uniffi.truapi.NativeContactsCallbacks
+import uniffi.truapi.SsoRequestOutcome
 
 /** Package metadata. */
 object TrUAPIHost {
@@ -926,6 +941,17 @@ interface ContactsHostBridge {
      */
     @Throws(HostRejection::class)
     suspend fun pickContact(productId: String): HostContactPick
+
+    /** Edit the complete audience; cancelling does not confirm an empty one. */
+    @Throws(HostRejection::class)
+    suspend fun pickContacts(productId: String, selection: ContactSelection): HostContactsPick =
+        HostContactsPick.Unsupported
+
+    /** Replace names on the host surface without exposing them to products. */
+    @Throws(HostContactsPlaceLabelsException::class)
+    suspend fun placeContactLabels(productId: String, placed: PlacedContactLabels) {
+        throw HostContactsPlaceLabelsException.Unsupported()
+    }
 }
 
 private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : NativeContactsCallbacks {
@@ -933,28 +959,26 @@ private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : 
         withHostRejection { bridge.contacts(lookup) }
 
     override suspend fun pickContact(productId: String): HostContactPick =
-        withHostRejection { bridge.pickContact(productId) }
-}
+        try {
+            bridge.pickContact(productId)
+        } catch (error: HostRejection) {
+            throw error
+        } catch (error: Throwable) {
+            throw HostRejection.Rejected(hostRejectionReason(error))
+        }
 
-/**
- * Draws the viewfinder for `scanner.scan`, following the rules on the core's
- * `ScannerPlatform`. Closes it when the coroutine is cancelled.
- */
-interface ScannerHostBridge {
-    @Throws(HostRejection::class)
-    suspend fun scanCode(
-        productId: String,
-        executionKind: ProductExecutionKind,
-        request: HostScannerScanRequest,
-    ): HostScan
-}
+    override suspend fun pickContacts(productId: String, selection: ContactSelection): HostContactsPick =
+        withHostRejection { bridge.pickContacts(productId, selection) }
 
-private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : NativeScannerCallbacks {
-    override suspend fun scanCode(
-        productId: String,
-        executionKind: ProductExecutionKind,
-        request: HostScannerScanRequest,
-    ): HostScan = withHostRejection { bridge.scanCode(productId, executionKind, request) }
+    override suspend fun placeContactLabels(productId: String, placed: PlacedContactLabels) {
+        try {
+            bridge.placeContactLabels(productId, placed)
+        } catch (error: HostContactsPlaceLabelsException) {
+            throw error
+        } catch (error: Throwable) {
+            throw HostContactsPlaceLabelsException.Unknown("contact label callback failed")
+        }
+    }
 }
 
 private class PocketCallbackAdapter(private val bridge: PocketHostBridge) : NativePocketCallbacks {

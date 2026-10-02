@@ -90,6 +90,12 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostNavigateToError {
 	}
 }
 
+impl From<uniffi::UnexpectedUniFFICallbackError> for crate::latest::HostContactsPlaceLabelsError {
+    fn from(_: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        Self::Unknown { reason: "contact label callback failed".into() }
+    }
+}
+
 impl From<v01::GenericError> for HostRejection {
 	fn from(err: v01::GenericError) -> Self {
 		HostRejection::Rejected { reason: err.reason }

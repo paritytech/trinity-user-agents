@@ -201,12 +201,38 @@ pub mod latest {
     pub type HostChatPostMessageResponse = LatestOf<versioned::chat::HostChatPostMessageResponse>;
     /// Native chat message posting failure.
     pub type HostChatPostMessageError = LatestOf<versioned::chat::HostChatPostMessageError>;
-    /// Host-to-product custom render work request.
-    pub type ProductChatCustomMessageRenderRequest =
-        LatestOf<versioned::chat::ProductChatCustomMessageRenderRequest>;
-    /// Product-to-host custom renderer tree.
-    pub type ProductChatCustomMessageRenderItem =
-        LatestOf<versioned::chat::ProductChatCustomMessageRenderItem>;
+    /// Action triggered inside a product-rendered body, delivered to the worker.
+    pub type HostRendererActionSubscribeItem =
+        LatestOf<versioned::renderer::HostRendererActionSubscribeItem>;
+    /// Host-to-product render request for one body.
+    pub type ProductRendererRenderRequest =
+        LatestOf<versioned::renderer::ProductRendererRenderRequest>;
+    /// Product-to-host renderer tree.
+    pub type ProductRendererRenderItem = LatestOf<versioned::renderer::ProductRendererRenderItem>;
+    /// Contact picker request.
+    pub type HostContactsPickRequest = LatestOf<versioned::contacts::HostContactsPickRequest>;
+    /// Contact picker outcome.
+    pub type HostContactsPickResponse = LatestOf<versioned::contacts::HostContactsPickResponse>;
+    /// Contact picker failure.
+    pub type HostContactsPickError = LatestOf<versioned::contacts::HostContactsPickError>;
+    /// Multi-contact picker request.
+    pub type HostContactsPickManyRequest =
+        LatestOf<versioned::contacts::HostContactsPickManyRequest>;
+    /// Multi-contact picker result.
+    pub type HostContactsPickManyResponse =
+        LatestOf<versioned::contacts::HostContactsPickManyResponse>;
+    /// Multi-contact picker failure.
+    pub type HostContactsPickManyError = LatestOf<versioned::contacts::HostContactsPickManyError>;
+    /// Host-owned contact name placement.
+    pub type HostContactsPlaceLabelsRequest =
+        LatestOf<versioned::contacts::HostContactsPlaceLabelsRequest>;
+    /// Contact label placement acknowledgment.
+    pub type HostContactsPlaceLabelsResponse =
+        LatestOf<versioned::contacts::HostContactsPlaceLabelsResponse>;
+    /// Contact label placement failure.
+    pub type HostContactsPlaceLabelsError =
+        LatestOf<versioned::contacts::HostContactsPlaceLabelsError>;
+    pub use crate::v01::{ContactLabelSlot, ContactPickManyOutcome};
     /// Contextual alias derivation result.
     pub type HostAccountGetAliasResponse =
         LatestOf<versioned::account::HostAccountGetAliasResponse>;

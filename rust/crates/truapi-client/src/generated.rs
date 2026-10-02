@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "0bd782cc4aca62dc";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "53d14bc59149b8ba";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1197,6 +1197,60 @@ impl ResultSubscriptionMethod for CoinPaymentListenForPayment {
     type Request = truapi::versioned::coin_payment::HostCoinPaymentListenForRequest;
     type Item = truapi::versioned::coin_payment::HostCoinPaymentListenForItem;
     type Error = truapi::versioned::coin_payment::HostCoinPaymentListenForError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `contacts_pick_many` method marker.
+pub struct ContactsPickMany;
+impl ContactsPickMany {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Contacts",
+        method: "pick_many",
+        wire_name: "contacts_pick_many",
+        request_type: "truapi::versioned::contacts::HostContactsPickManyRequest",
+        response_type: "truapi::versioned::contacts::HostContactsPickManyResponse",
+        error_type: Some("truapi::versioned::contacts::HostContactsPickManyError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 20,
+            method_id: 1,
+        }),
+    };
+}
+impl RequestMethod for ContactsPickMany {
+    type Request = truapi::versioned::contacts::HostContactsPickManyRequest;
+    type Response = truapi::versioned::contacts::HostContactsPickManyResponse;
+    type Error = truapi::versioned::contacts::HostContactsPickManyError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `contacts_place_labels` method marker.
+pub struct ContactsPlaceLabels;
+impl ContactsPlaceLabels {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Contacts",
+        method: "place_labels",
+        wire_name: "contacts_place_labels",
+        request_type: "truapi::versioned::contacts::HostContactsPlaceLabelsRequest",
+        response_type: "truapi::versioned::contacts::HostContactsPlaceLabelsResponse",
+        error_type: Some("truapi::versioned::contacts::HostContactsPlaceLabelsError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 20,
+            method_id: 2,
+        }),
+    };
+}
+impl RequestMethod for ContactsPlaceLabels {
+    type Request = truapi::versioned::contacts::HostContactsPlaceLabelsRequest;
+    type Response = truapi::versioned::contacts::HostContactsPlaceLabelsResponse;
+    type Error = truapi::versioned::contacts::HostContactsPlaceLabelsError;
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -2607,6 +2661,9 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     CoinPaymentDeposit::DESCRIPTOR,
     CoinPaymentRefund::DESCRIPTOR,
     CoinPaymentListenForPayment::DESCRIPTOR,
+    ContactsPick::DESCRIPTOR,
+    ContactsPickMany::DESCRIPTOR,
+    ContactsPlaceLabels::DESCRIPTOR,
     EntropyDerive::DESCRIPTOR,
     JamPeerTransportDial::DESCRIPTOR,
     JamPeerTransportOpen::DESCRIPTOR,
@@ -2692,6 +2749,9 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     CoinPaymentDeposit::DESCRIPTOR,
     CoinPaymentRefund::DESCRIPTOR,
     CoinPaymentListenForPayment::DESCRIPTOR,
+    ContactsPick::DESCRIPTOR,
+    ContactsPickMany::DESCRIPTOR,
+    ContactsPlaceLabels::DESCRIPTOR,
     EntropyDerive::DESCRIPTOR,
     JamPeerTransportDial::DESCRIPTOR,
     JamPeerTransportOpen::DESCRIPTOR,
@@ -2783,6 +2843,9 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     CoinPaymentDeposit::DESCRIPTOR,
     CoinPaymentRefund::DESCRIPTOR,
     CoinPaymentListenForPayment::DESCRIPTOR,
+    ContactsPick::DESCRIPTOR,
+    ContactsPickMany::DESCRIPTOR,
+    ContactsPlaceLabels::DESCRIPTOR,
     EntropyDerive::DESCRIPTOR,
     JamPeerTransportDial::DESCRIPTOR,
     JamPeerTransportOpen::DESCRIPTOR,

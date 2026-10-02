@@ -3786,6 +3786,57 @@ pub enum HostContactPick {
 	Unsupported,
 }
 
+/// Host-private initial selection for a multi-contact picker.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ContactSelection {
+    /// Resolved accounts to preselect, deduplicated and bounded to 256.
+    pub selected: Vec<Bytes32>,
+}
+
+/// The user's complete selection in a host-owned multi-contact picker.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum HostContactsPick {
+    /// Confirmed accounts, including an empty selection. Never sent to products.
+    Picked {
+        /// Chosen contact accounts, at most 256.
+        accounts: Vec<Bytes32>,
+    },
+    /// The user cancelled without changing the selection.
+    Dismissed,
+    /// There are no contacts to show.
+    NoContacts,
+    /// This host cannot present a multi-contact picker.
+    Unsupported,
+}
+
+/// One contact name to render in host-owned UI, without any Profile grant.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct PlacedContactLabel {
+    /// Stable, product-chosen placement id.
+    pub slot: u32,
+    /// Resolved contact account, never sent to the product.
+    pub account: Bytes32,
+    /// Name bounds in surface units.
+    pub rect: AvatarRect,
+    /// Visible region in surface units.
+    pub clip: AvatarRect,
+}
+
+/// Complete replacement of names drawn over one product connection.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct PlacedContactLabels {
+    /// Width of the product surface.
+    pub surface_width: u32,
+    /// Height of the product surface.
+    pub surface_height: u32,
+    /// Host-resolved names to draw. Empty clears the placement.
+    pub labels: Vec<PlacedContactLabel>,
+}
+
 /// Host-owned contact picker, drawn from the chat lists the host's chat
 /// extensions hold.
 ///
@@ -3809,72 +3860,52 @@ pub trait ContactsPlatform: Send + Sync {
 		lookup: &HostContactLookup,
 	) -> Result<HostContactMatches, GenericError>;
 
-	/// Present the contact picker on behalf of `product` and return the user's
-	/// choice.
-	///
-	/// Defaults to [`HostContactPick::Unsupported`], so a Rust host that
-	/// implements [`Self::contacts`] alone still compiles and its products get
-	/// a truthful answer rather than a dismissal they would retry forever.
-	///
-	/// A JS host reaches the same answer by another route: the generated
-	/// surface types this method optional, but a capability group counts as
-	/// served only when every callback in it is present, so omitting this one
-	/// makes the whole group absent and `contacts.pick` answers `Unsupported`
-	/// before any of it is reached.
-	///
-	/// The core cannot draw UI, so a selection has to come from the host; the
-	/// whole point is that the host renders the names rather than shipping
-	/// them to the product. `product` is passed so the host can say who is
-	/// asking; it is not a filter. A host with no contacts answers
-	/// [`HostContactPick::NoContacts`] instead of drawing an empty overlay.
-	async fn pick_contact(
-		&self,
-		_product: &ProductContext,
-	) -> Result<HostContactPick, GenericError> {
-		Ok(HostContactPick::Unsupported)
-	}
-}
+    /// Present the contact picker on behalf of `product` and return the user's
+    /// choice.
+    ///
+    /// Defaults to [`HostContactPick::Unsupported`], so a Rust host that
+    /// implements [`Self::contacts`] alone still compiles and its products get
+    /// a truthful answer rather than a dismissal they would retry forever.
+    ///
+    /// JS adapters apply the same unsupported default when the host omits UI.
+    ///
+    /// The core cannot draw UI, so a selection has to come from the host; the
+    /// whole point is that the host renders the names rather than shipping
+    /// them to the product. `product` is passed so the host can say who is
+    /// asking; it is not a filter. A host with no contacts answers
+    /// [`HostContactPick::NoContacts`] instead of drawing an empty overlay.
+    async fn pick_contact(
+        &self,
+        _product: &ProductContext,
+    ) -> Result<HostContactPick, GenericError> {
+        Ok(HostContactPick::Unsupported)
+    }
 
-/// How the host's scanner ended.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum HostScan {
-	/// The user scanned a code the request accepts.
-	Scanned {
-		/// The code's content.
-		text: String,
-		/// The code's format.
-		format: CodeFormat,
-	},
-	/// The user closed the viewfinder without scanning.
-	Dismissed,
-	/// The device has no camera, or the user refused the host application one.
-	/// The host has already told the user how to turn it on.
-	CameraUnavailable,
-	/// The requesting App or Widget is not the screen the user sees, so the
-	/// host opened nothing. A Worker's request was already checked by the core
-	/// and is never answered this way.
-	NotVisible,
-}
+    /// Edit the complete selection in host-owned UI. Cancellation is not an
+    /// empty confirmed selection. Accounts and names stay host-side.
+    async fn pick_contacts(
+        &self,
+        _product: &ProductContext,
+        _selection: ContactSelection,
+    ) -> Result<HostContactsPick, GenericError> {
+        Ok(HostContactsPick::Unsupported)
+    }
 
-/// Host-owned viewfinder for QR codes and barcodes. Optional. The Swift and
-/// Kotlin bridges and the JS `scanner` callbacks follow the same rules.
-///
-/// - Title the viewfinder with the product id. Show `request.hint` under it as the product's words.
-/// - Pass every code the camera reads to a `ScanFilter` built from `request`, and never follow a
-///   scanned link.
-/// - Answer [`HostScan::NotVisible`] for an App or Widget that is not on screen. A Worker reaching
-///   the host already passed the core's tap check.
-/// - Close the viewfinder when the core drops the future, and close any still open before opening
-///   another. A JS host is not told about a drop.
-#[async_trait]
-pub trait ScannerPlatform: Send + Sync {
-	/// Open the viewfinder on behalf of `product` and wait for the user.
-	async fn scan_code(
-		&self,
-		product: &ProductContext,
-		request: &HostScannerScanRequest,
-	) -> Result<HostScan, GenericError>;
+    /// Draw names from the host's contact directory, with an account fallback
+    /// when no username exists. Profile sharing must not affect labels.
+    ///
+    /// Replace the connection's previous placement, and clear it on navigation
+    /// or disconnect. On directory invalidation, clear stale names and refresh
+    /// the live placement from current contacts. No per-contact result is returned.
+    /// Returns whether this host supports label placement, never whether any
+    /// individual contact resolved. JS adapters return false for omitted UI.
+    async fn place_contact_labels(
+        &self,
+        _product: &ProductContext,
+        _placed: PlacedContactLabels,
+    ) -> Result<bool, truapi::latest::HostContactsPlaceLabelsError> {
+        Ok(false)
+    }
 }
 
 /// Combined platform interface. A host must provide every capability trait

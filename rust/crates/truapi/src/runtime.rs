@@ -139,6 +139,8 @@ use truapi::versioned::chat::{
 };
 use truapi::versioned::contacts::{
     HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse,
+    HostContactsPickManyError, HostContactsPickManyRequest, HostContactsPickManyResponse,
+    HostContactsPlaceLabelsError, HostContactsPlaceLabelsRequest, HostContactsPlaceLabelsResponse,
 };
 use truapi::versioned::pocket::{
     HostPocketListSubscribeError, HostPocketListSubscribeItem, HostPocketListSubscribeRequest,
@@ -379,362 +381,15 @@ pub struct ProductRuntimeHost {
     open_operations: Mutex<HashSet<u32>>,
 }
 
-/// Per-connection adapters, permissions, channels and open operation demand.
-pub struct ProductConnection {
-	services: Arc<RuntimeServices>,
-	platform: Arc<dyn Platform>,
-	chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
-	/// Live OS permission state for this connection, when the host serves it.
-	permission_status: Option<Arc<dyn crate::platform::PermissionStatusHost>>,
-	/// Permission requests and consuming operations can arrive on different connections.
-	temporary_permissions: Arc<TemporaryPermissions>,
-	session_state: Arc<SessionState>,
-	product: ProductContext,
-	core_instance: u64,
-	/// This product runtime's own view of the chain. A node budgets follows and
-	/// concurrent operations per connection, so a connection shared with another
-	/// product makes those budgets collide.
-	chain: crate::chain_runtime::ChainRuntime,
-	chat: Arc<ActionChannel<HostChatActionSubscribeItem>>,
-	renderer: Arc<ActionChannel<HostRendererActionSubscribeItem>>,
-	pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
-	game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
-	/// Control of the card face above this connection's Widget, when the host draws one.
-	expanded_card: Option<Arc<dyn crate::platform::ExpandedCardHost>>,
-	open_operations: Mutex<HashSet<u32>>,
-}
-
-/// How long after a tap a Worker may still open the scanner, as browsers bound
-/// transient user activation.
-pub const USER_TAP_WINDOW_SECS: u64 = 5;
-
-impl Drop for ProductConnection {
-	fn drop(&mut self) {
-		// This runtime owns its chain connections outright, so they go with it.
-		self.chain.release_scope();
-		self.release_open_operations();
-	}
-}
-
-impl ProductConnection {
-	/// Whether the host published a renderer action, which only the user
-	/// causes, within the last [`USER_TAP_WINDOW_SECS`]. A Worker may scan only
-	/// shortly after one, because it has no screen the user could be looking at.
-	pub fn recently_tapped(&self) -> bool {
-		self.renderer.published_within(USER_TAP_WINDOW_SECS)
-	}
-
-	/// Role-neutral services shared with the owning host runtime.
-	pub fn services(&self) -> &Arc<RuntimeServices> {
-		&self.services
-	}
-
-	fn permissions_service(&self) -> PermissionsService<'_, dyn Platform, dyn Platform> {
-		PermissionsService::new(self.platform.as_ref(), self.platform.as_ref(), &self.product)
-			.with_status_host(self.permission_status.as_deref())
-			.with_temporary_permissions(self.temporary_permissions.clone())
-	}
-
-	/// Trusted executable kind attached to this product connection.
-	pub fn execution_kind(&self) -> crate::platform::ProductExecutionKind {
-		self.product.execution_kind
-	}
-
-	/// Whether this product holds `scope` over `target`: always over itself,
-	/// and over another product only as that product's manifest grants it.
-	async fn holds_cross_product_scope(&self, target: &ProductId, scope: Granted) -> bool {
-		if target == self.product_id() {
-			return true;
-		}
-		product_manifest::grants_scope(
-			&self.services,
-			&*self.platform,
-			self.product_id(),
-			target,
-			scope,
-		)
-		.await
-	}
-
-	fn product_id(&self) -> &ProductId {
-		&self.product.product_id
-	}
-
-	// Foreign reads must keep the authorized owner, not the calling product.
-	fn product_storage_key(&self, owner: &ProductId, key: String) -> String {
-		ProductStorageKey::new(owner.clone(), key).encode()
-	}
-
-	fn follow_id(&self, id: &str) -> String {
-		format!("c{}:{id}", self.core_instance)
-	}
-
-	/// Read stored authorization, including the current OS gate for device access.
-	#[instrument(skip_all, fields(runtime.method = "permissions.authorization_status"))]
-	pub async fn permission_authorization_status(
-		&self,
-		request: PermissionAuthorizationRequest,
-	) -> Result<PermissionAuthorizationStatus, latest::GenericError> {
-		let service = self.permissions_service();
-		service.authorization_status(&request).await
-	}
-
-	/// Read stored authorizations, including current OS gates for device access.
-	#[instrument(skip_all, fields(runtime.method = "permissions.authorization_statuses"))]
-	pub async fn permission_authorization_statuses(
-		&self,
-		requests: Vec<PermissionAuthorizationRequest>,
-	) -> Result<Vec<PermissionAuthorizationStatus>, latest::GenericError> {
-		let service = self.permissions_service();
-		service.authorization_statuses(&requests).await
-	}
-
-	/// Store authorization; `NotDetermined` clears the saved decision.
-	#[instrument(skip_all, fields(runtime.method = "permissions.set_authorization_status"))]
-	pub async fn set_permission_authorization_status(
-		&self,
-		request: PermissionAuthorizationRequest,
-		status: PermissionAuthorizationStatus,
-	) -> Result<(), latest::GenericError> {
-		let service = self.permissions_service();
-		service.set_authorization_status(&request, status).await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "permissions.remote_authorization"))]
-	async fn remote_permission_authorization(
-		&self,
-		permission: latest::RemotePermission,
-	) -> Result<PermissionAuthorizationStatus, String> {
-		let service = self.permissions_service();
-		service
-			.authorize_remote(latest::RemotePermissionRequest { permission })
-			.await
-			.map_err(|err| format!("permission storage failed: {err:?}"))
-	}
-
-	/// Require remote authorization, prompting only when no decision is stored.
-	async fn require_remote_permission<E>(
-		&self,
-		permission: latest::RemotePermission,
-		denied_error: E,
-	) -> Result<(), CallError<E>> {
-		match self.remote_permission_authorization(permission).await {
-			Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
-			Ok(
-				PermissionAuthorizationStatus::Denied |
-				PermissionAuthorizationStatus::NotDetermined,
-			) => Err(CallError::Domain(denied_error)),
-			Err(reason) => Err(CallError::HostFailure { reason }),
-		}
-	}
-
-	async fn confirm_user_action_if_needed(
-		&self,
-		review: UserConfirmationReview,
-	) -> Result<bool, v01::GenericError> {
-		if self.product_id().has_trusted_remote_permissions() {
-			return Ok(true);
-		}
-		self.platform.confirm_user_action(review).await
-	}
-
-	/// Confirm a signature with one of `owner`'s accounts. When the account
-	/// belongs to another product, the user is asked once per kind and owning
-	/// product for the rest of this execution. Prompts open one at a time, and a
-	/// signature the user already approved never waits for one.
-	async fn confirm_signature(
-		&self,
-		kind: CrossProductSignatureKind,
-		owner: &ProductId,
-		review: impl FnOnce() -> UserConfirmationReview,
-	) -> Result<bool, v01::GenericError> {
-		if owner == self.product_id() {
-			return self.confirm_user_action_if_needed(review()).await;
-		}
-		let approval = cross_product_signature_key(self.product_id(), owner, kind);
-		let permissions = &self.temporary_permissions;
-		if permissions.authorize(&approval, false) {
-			return Ok(true);
-		}
-		let _prompt = permissions.signature_prompt().await;
-		if permissions.authorize(&approval, false) {
-			return Ok(true);
-		}
-		let approved = self.confirm_user_action_if_needed(review()).await?;
-		if approved {
-			permissions.grant(approval);
-		}
-		Ok(approved)
-	}
-
-	async fn require_chain_submit<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
-		self.require_remote_permission(latest::RemotePermission::ChainSubmit, denied_error)
-			.await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "permissions.identity_disclosure_authorization"))]
-	async fn identity_disclosure_authorization(
-		&self,
-	) -> Result<PermissionAuthorizationStatus, String> {
-		let request = PermissionAuthorizationRequest::IdentityDisclosure;
-		let service = self.permissions_service();
-		let cached = service
-			.authorization_status(&request)
-			.await
-			.map_err(|err| format!("permission storage failed: {err:?}"))?;
-		if cached != PermissionAuthorizationStatus::NotDetermined {
-			return Ok(cached);
-		}
-
-		// A dismissed confirmation must not persist a refusal.
-		let decision = match self
-			.platform
-			.confirm_permission(UserConfirmationReview::IdentityDisclosure(
-				IdentityDisclosureReview { product_id: self.product_id().clone() },
-			))
-			.await
-		{
-			Ok(decision) => decision,
-			Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
-		};
-		let status = match decision {
-			PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
-			PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
-			PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
-		};
-		service
-			.set_authorization_status(&request, status)
-			.await
-			.map_err(|err| format!("permission storage failed: {err:?}"))?;
-		Ok(status)
-	}
-
-	/// Chat access policy for this connection; see [`chat_platform_for`].
-	fn native_chat_platform(
-		&self,
-	) -> Result<Arc<dyn crate::platform::ChatPlatform>, crate::host_core::ProductRuntimeError> {
-		chat_platform_for(
-			self.product.execution_kind,
-			self.session_state.current().is_some(),
-			self.chat_platform.as_ref(),
-		)
-	}
-
-	fn chat_platform<E>(&self) -> Result<Arc<dyn crate::platform::ChatPlatform>, CallError<E>> {
-		self.native_chat_platform().map_err(|error| match error {
-			crate::host_core::ProductRuntimeError::Denied => CallError::Denied,
-			_ => CallError::Unsupported,
-		})
-	}
-
-	/// End this connection's Chat action stream.
-	pub fn detach_chat(&self) {
-		self.chat.detach();
-	}
-
-	/// Buffer one host-authored Chat action for this connection's product,
-	/// behind the same access policy as every other Chat entry point.
-	pub fn publish_chat_action(
-		&self,
-		action: truapi::versioned::chat::HostChatActionSubscribeItem,
-	) -> Result<(), crate::host_core::ProductRuntimeError> {
-		self.native_chat_platform()?;
-		self.chat.publish(action)
-	}
-
-	/// Renderer access policy for this connection; see [`renderer_access_for`].
-	pub fn renderer_access(&self) -> Result<(), crate::host_core::ProductRuntimeError> {
-		renderer_access_for(self.product.execution_kind)
-	}
-
-	/// Hold worker demand until the matching [`Self::release_worker_reference`].
-	pub fn acquire_worker_reference(&self) {
-		self.services.worker_ledger.acquire(&self.product.product_id);
-	}
-
-	/// Release one core-held reference on this connection's product worker.
-	pub fn release_worker_reference(&self) {
-		self.services.worker_ledger.release(&self.product.product_id);
-	}
-
-	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.
-	async fn begin_operation_with_host(
-		&self,
-		label: String,
-	) -> Result<latest::HostWorkerBeginOperationResponse, latest::HostWorkerOperationError> {
-		let (tx, rx) = futures::channel::oneshot::channel();
-		let platform = self.platform.clone();
-		let product = self.product.clone();
-		(self.services.spawner)(Box::pin(async move {
-			let begun = platform.begin_operation(&product, label).await;
-			if let Err(Ok(response)) = tx.send(begun) {
-				let _ = platform.end_operation(&product, response.id).await;
-			}
-		}));
-		rx.await.unwrap_or_else(|_| {
-			Err(latest::HostWorkerOperationError::Unknown {
-				reason: "the host did not answer".to_string(),
-			})
-		})
-	}
-
-	/// Hold worker demand until this operation ends or the connection closes.
-	fn hold_worker_for_operation(&self, id: u32) {
-		if self.open_operations.lock().expect("open operations mutex poisoned").insert(id) {
-			self.acquire_worker_reference();
-		}
-	}
-
-	/// Release all operation demand immediately and schedule host cleanup.
-	/// Repeated calls leave already released operations alone.
-	pub fn release_open_operations(&self) {
-		let open = core::mem::take(
-			&mut *self.open_operations.lock().expect("open operations mutex poisoned"),
-		);
-		if open.is_empty() {
-			return;
-		}
-		for _ in &open {
-			self.release_worker_reference();
-		}
-		let platform = self.platform.clone();
-		let product = self.product.clone();
-		(self.services.spawner)(Box::pin(async move {
-			for id in open {
-				let _ = platform.end_operation(&product, id).await;
-			}
-		}));
-	}
-
-	/// Release one open operation's demand; unknown ids leave demand unchanged.
-	fn release_worker_for_operation(&self, id: u32) {
-		if self.open_operations.lock().expect("open operations mutex poisoned").remove(&id) {
-			self.release_worker_reference();
-		}
-	}
-
-	/// End the renderer action stream this connection's product is reading.
-	pub fn detach_renderer(&self) {
-		self.renderer.detach();
-	}
-
-	/// Buffer one renderer action for this connection's product.
-	pub fn publish_renderer_action(
-		&self,
-		item: HostRendererActionSubscribeItem,
-	) -> Result<(), crate::host_core::ProductRuntimeError> {
-		self.renderer_access()?;
-		self.renderer.publish(item)
-	}
-
-	fn pocket_platform<E>(&self) -> Result<Arc<dyn crate::platform::PocketPlatform>, CallError<E>> {
-		if self.product.execution_kind != crate::platform::ProductExecutionKind::Worker ||
-			self.session_state.current().is_none()
-		{
-			return Err(CallError::Denied);
-		}
-		self.pocket_platform.clone().ok_or(CallError::Unsupported)
-	}
+/// A connection that goes away without ending its operations still owes the
+/// ledger their references, so the host is told to stop rather than keeping a
+/// worker alive for a product that is gone.
+impl Drop for ProductRuntimeHost {
+    fn drop(&mut self) {
+        self.release_open_operations();
+        self.release_contact_avatars();
+        self.release_contact_labels();
+    }
 }
 
 impl ProductRuntimeHost {
@@ -1198,11 +853,11 @@ impl ProductRuntimeHost {
         let service = self.permissions_service();
         let contacts_changed = matches!(request, PermissionAuthorizationRequest::ChatAuthority);
         if contacts_changed {
-            self.services.contact_handles.clear();
+            self.services.invalidate_contacts();
         }
         let result = service.set_authorization_status(&request, status).await;
         if contacts_changed {
-            self.services.contact_handles.clear();
+            self.services.invalidate_contacts();
         }
         result
     }
@@ -1679,6 +1334,11 @@ impl ProductRuntimeHost {
             .release(self.core_instance, &self.services.spawner);
     }
 
+    /// Clear this connection's host-owned contact names and prevent late draws.
+    pub fn release_contact_labels(&self) {
+        self.services.contact_labels.release(self.core_instance, &self.services.spawner);
+    }
+
     /// Drop the worker reference a pending operation held. An id that is not
     /// open releases nothing, which is what keeps `end_operation` idempotent.
     pub fn release_worker_for_operation(&self, id: u32) {
@@ -1909,15 +1569,17 @@ async fn resolve_contact_accounts(
 
 #[crate::platform::async_trait]
 impl Contacts for ProductRuntimeHost {
-	#[instrument(skip_all, fields(runtime.method = "contacts.pick"))]
-	async fn pick(
-		&self,
-		cx: &CallContext,
-		request: HostContactsPickRequest,
-	) -> Result<HostContactsPickResponse, CallError<HostContactsPickError>> {
-		version(request)
-			.exec(|_request| async move {
-				let (platform, handles) = self.contacts_picker()?;
+    #[instrument(skip_all, fields(runtime.method = "contacts.pick"))]
+    async fn pick(
+        &self,
+        cx: &CallContext,
+        _request: HostContactsPickRequest,
+    ) -> Result<HostContactsPickResponse, CallError<HostContactsPickError>> {
+        let wrap = HostContactsPickError::V1;
+        let session = self.authority.current_session();
+        let (platform, handles) = self
+            .contacts_picker()
+            .map_err(|error| contacts_error(error, wrap))?;
 
 				let unknown = |error: latest::GenericError| {
 					CallError::Domain(latest::HostContactsPickError::Unknown {
@@ -1925,45 +1587,203 @@ impl Contacts for ProductRuntimeHost {
 					})
 				};
 
-				// Read before the picker opens: a removal signalled while the user is
-				// choosing must not be undone by caching their choice.
-				let generation = self.connection.services.contact_handles.generation();
-				let outcome =
-					match until_cancelled(cx, platform.pick_contact(&self.connection.product))
-						.await
-						.map_err(|cancelled| {
-							CallError::Domain(latest::HostContactsPickError::Unknown {
-								reason: cancelled.to_string(),
-							})
-						})?
-						.map_err(unknown)?
-					{
-						crate::platform::HostContactPick::Picked { account } => {
-							let handle = handles.mint(&account);
-							self.connection
-								.services
-								.contact_handles
-								.insert(handle, account, generation);
-							latest::ContactPickOutcome::Picked {
-								handle: latest::ContactHandle { bytes: handle },
-							}
-						},
-						crate::platform::HostContactPick::Dismissed => {
-							latest::ContactPickOutcome::Dismissed
-						},
-						crate::platform::HostContactPick::NoContacts => {
-							latest::ContactPickOutcome::NoContacts
-						},
-						// A host that resolves contacts but cannot present them is a
-						// framework-level gap, not an outcome the user produced.
-						crate::platform::HostContactPick::Unsupported => {
-							return Err(CallError::Unsupported);
-						},
-					};
-				Ok(latest::HostContactsPickResponse { outcome })
-			})
-			.await
-	}
+        // Read before the picker opens: a removal signalled while the user is
+        // choosing must not be undone by caching their choice.
+        let generation = self.services.contact_handles.generation();
+        if self.authority.current_session() != session {
+            return Err(CallError::Domain(wrap(v01::HostContactsPickError::NotConnected)));
+        }
+        let picked = until_cancelled(cx, platform.pick_contact(&self.product))
+            .await
+            .map_err(|_| CallError::Cancelled)?;
+        if self.authority.current_session() != session {
+            return Err(CallError::Domain(wrap(v01::HostContactsPickError::NotConnected)));
+        }
+        if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
+            return Err(CallError::Cancelled);
+        }
+        let outcome = match picked.map_err(unknown)? {
+            crate::platform::HostContactPick::Picked { account } => {
+                let handle = handles.mint(&account);
+                self.services
+                    .contact_handles
+                    .insert(handle, account, generation);
+                v01::ContactPickOutcome::Picked {
+                    handle: v01::ContactHandle { bytes: handle },
+                }
+            }
+            crate::platform::HostContactPick::Dismissed => v01::ContactPickOutcome::Dismissed,
+            crate::platform::HostContactPick::NoContacts => v01::ContactPickOutcome::NoContacts,
+            // A host that resolves contacts but cannot present them is a
+            // framework-level gap, not an outcome the user produced.
+            crate::platform::HostContactPick::Unsupported => return Err(CallError::Unsupported),
+        };
+        Ok(HostContactsPickResponse::V1(
+            v01::HostContactsPickResponse { outcome },
+        ))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "contacts.pick_many"))]
+    async fn pick_many(
+        &self,
+        cx: &CallContext,
+        request: HostContactsPickManyRequest,
+    ) -> Result<HostContactsPickManyResponse, CallError<HostContactsPickManyError>> {
+        use crate::latest::{ContactHandle, ContactPickManyOutcome, HostContactsPickManyError as Error};
+        let error = |error| CallError::Domain(HostContactsPickManyError::V1(error));
+        let HostContactsPickManyRequest::V1(request) = request;
+        let selected = contacts::selected_handles(request.selected)
+            .ok_or_else(|| error(Error::InvalidSelection))?;
+        let session = self.authority.current_session();
+        let (platform, handles) = self.contacts_picker().map_err(|failure| match failure {
+            CallError::Unsupported => CallError::Unsupported,
+            CallError::Domain(v01::HostContactsPickError::NotConnected) => error(Error::NotConnected),
+            _ => error(Error::Unknown { reason: "contact picker unavailable".into() }),
+        })?;
+        let generation = self.services.contact_handles.generation();
+        if self.authority.current_session() != session {
+            return Err(error(Error::NotConnected));
+        }
+        let resolved = until_cancelled(
+            cx,
+            resolve_contact_accounts(&self.services, platform.as_ref(), &handles, &selected),
+        ).await.map_err(|_| CallError::Cancelled)?;
+        if self.authority.current_session() != session {
+            return Err(error(Error::NotConnected));
+        }
+        if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
+            return Err(CallError::Cancelled);
+        }
+        let accounts = resolved
+            .map_err(|_| error(Error::Unknown { reason: "contact lookup failed".into() }))?
+            .into_iter()
+            .map(|(_, account)| account)
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| error(Error::InvalidSelection))?;
+        let picked = until_cancelled(cx, platform.pick_contacts(&self.product, crate::platform::ContactSelection { selected: accounts }))
+            .await
+            .map_err(|_| CallError::Cancelled)?;
+        if self.authority.current_session() != session {
+            return Err(error(Error::NotConnected));
+        }
+        if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
+            return Err(CallError::Cancelled);
+        }
+        let outcome = match picked.map_err(|_| error(Error::Unknown {
+            reason: "contact picker failed".into(),
+        }))? {
+            crate::platform::HostContactsPick::Picked { accounts } => {
+                let accounts = contacts::selected_accounts(accounts).ok_or_else(|| error(Error::Unknown {
+                    reason: "contact selection exceeds the limit".into(),
+                }))?;
+                let selected = accounts.into_iter().map(|account| {
+                    let bytes = handles.mint(&account);
+                    self.services.contact_handles.insert(bytes, account, generation);
+                    ContactHandle { bytes }
+                }).collect();
+                ContactPickManyOutcome::Picked { handles: selected }
+            }
+            crate::platform::HostContactsPick::Dismissed => ContactPickManyOutcome::Dismissed,
+            crate::platform::HostContactsPick::NoContacts => ContactPickManyOutcome::NoContacts,
+            crate::platform::HostContactsPick::Unsupported => return Err(CallError::Unsupported),
+        };
+        Ok(HostContactsPickManyResponse::V1(crate::latest::HostContactsPickManyResponse { outcome }))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "contacts.place_labels"))]
+    async fn place_labels(
+        &self,
+        cx: &CallContext,
+        request: HostContactsPlaceLabelsRequest,
+    ) -> Result<HostContactsPlaceLabelsResponse, CallError<HostContactsPlaceLabelsError>> {
+        use crate::latest::HostContactsPlaceLabelsError as Error;
+        if self.product.execution_kind != crate::platform::ProductExecutionKind::App {
+            return Err(CallError::Denied);
+        }
+        let error = |error| CallError::Domain(HostContactsPlaceLabelsError::V1(error));
+        let HostContactsPlaceLabelsRequest::V1(request) = request;
+        if !contacts::valid_label_placement(&request) {
+            return Err(error(Error::InvalidPlacement));
+        }
+        let session = self.authority.current_session();
+        let (platform, handles) = self.contacts_picker().map_err(|failure| match failure {
+            CallError::Unsupported => CallError::Unsupported,
+            CallError::Domain(v01::HostContactsPickError::NotConnected) => error(Error::NotConnected),
+            _ => error(Error::Unknown { reason: "contact labels unavailable".into() }),
+        })?;
+        let placement = self.services.contact_labels.for_runtime(self.core_instance, platform.clone(), &self.product);
+        let mut surface = placement.surface.lock().await;
+        if placement.is_closed() || cx.cancel().is_cancelled() {
+            return Err(CallError::Cancelled);
+        }
+        let generation = self.services.contact_handles.generation();
+        if self.authority.current_session() != session {
+            return Err(error(Error::NotConnected));
+        }
+        let requested: Vec<_> = request.slots.iter().map(|slot| slot.handle.bytes).collect();
+        let resolved = until_cancelled(
+            cx,
+            resolve_contact_accounts(&self.services, platform.as_ref(), &handles, &requested),
+        ).await.map_err(|_| CallError::Cancelled)?;
+        if self.authority.current_session() != session {
+            return Err(error(Error::NotConnected));
+        }
+        if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
+            return Err(CallError::Cancelled);
+        }
+        let resolved = resolved.unwrap_or_else(|_| requested.into_iter().map(|handle| (handle, None)).collect());
+        let labels = request.slots.into_iter().zip(resolved).filter_map(|(slot, (_, account))| {
+            account.map(|account| crate::platform::PlacedContactLabel {
+                slot: slot.slot,
+                account,
+                rect: slot.rect,
+                clip: slot.clip,
+            })
+        }).collect();
+        if placement.is_closed() {
+            return Err(CallError::Cancelled);
+        }
+        *surface = Some((request.surface_width, request.surface_height, generation));
+        let result = platform.place_contact_labels(&self.product, crate::platform::PlacedContactLabels {
+            surface_width: request.surface_width,
+            surface_height: request.surface_height,
+            labels,
+        }).await;
+        if self.authority.current_session() != session
+            || cx.cancel().is_cancelled()
+            || placement.is_closed()
+        {
+            let _ = platform.place_contact_labels(&self.product, crate::platform::PlacedContactLabels {
+                surface_width: request.surface_width,
+                surface_height: request.surface_height,
+                labels: Vec::new(),
+            }).await;
+            return Err(if self.authority.current_session() != session {
+                error(Error::NotConnected)
+            } else {
+                CallError::Cancelled
+            });
+        }
+        if matches!(result, Ok(false) | Err(Error::Unsupported)) {
+            return Err(CallError::Unsupported);
+        }
+        Ok(HostContactsPlaceLabelsResponse::V1(crate::latest::HostContactsPlaceLabelsResponse {}))
+    }
+}
+
+/// Re-wrap a latest-payload picker error into its versioned envelope.
+fn contacts_error<E>(
+    error: CallError<v01::HostContactsPickError>,
+    wrap: fn(v01::HostContactsPickError) -> E,
+) -> CallError<E> {
+    match error {
+        CallError::Domain(domain) => CallError::Domain(wrap(domain)),
+        CallError::Denied => CallError::Denied,
+        CallError::Unsupported => CallError::Unsupported,
+        CallError::MalformedFrame { reason } => CallError::MalformedFrame { reason },
+        CallError::HostFailure { reason } => CallError::HostFailure { reason },
+        CallError::Cancelled => CallError::Cancelled,
+    }
 }
 
 #[crate::platform::async_trait]

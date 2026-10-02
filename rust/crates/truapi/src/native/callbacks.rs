@@ -350,128 +350,25 @@ pub trait NativeContactsCallbacks: Send + Sync {
 		lookup: crate::platform::HostContactLookup,
 	) -> Result<crate::platform::HostContactMatches, HostRejection>;
 
-	/// Present the picker on behalf of `product_id` and report what the user
-	/// did. A host with no contacts answers `NoContacts`
-	/// instead of drawing an empty overlay.
-	async fn pick_contact(
-		&self,
-		product_id: ProductId,
-	) -> Result<crate::platform::HostContactPick, HostRejection>;
-}
+    /// Present the picker on behalf of `product_id` and report what the user
+    /// did. A host with no contacts answers `NoContacts`
+    /// instead of drawing an empty overlay.
+    async fn pick_contact(
+        &self,
+        product_id: String,
+    ) -> Result<crate::platform::HostContactPick, HostRejection>;
 
-/// Native payment engine, which pays from the user's balance to an account.
-/// A host passes an implementation to
-/// [`NativeTrUApiHostRuntime::set_payment_callbacks`] and reports each later
-/// status with [`NativeTrUApiHostRuntime::notify_payment_status`].
-///
-/// [`NativeTrUApiHostRuntime::set_payment_callbacks`]: super::NativeTrUApiHostRuntime::set_payment_callbacks
-/// [`NativeTrUApiHostRuntime::notify_payment_status`]: super::NativeTrUApiHostRuntime::notify_payment_status
-#[uniffi::export(rust, foreign)]
-#[async_trait::async_trait]
-pub trait NativePaymentCallbacks: Send + Sync {
-	/// Ask the user to approve payment `request` for `product_id`, returning
-	/// once the user has decided: `Ok` when they authorized it and the host
-	/// took it on. Its id is unique across products. Its amount is a decimal
-	/// string of CASH units.
-	async fn request_payment(
-		&self,
-		product_id: ProductId,
-		request: v01::HostPaymentRequest,
-	) -> Result<(), v01::HostPaymentError>;
+    /// Edit the complete selected audience in host-owned UI.
+    async fn pick_contacts(
+        &self,
+        product_id: String,
+        selection: crate::platform::ContactSelection,
+    ) -> Result<crate::platform::HostContactsPick, HostRejection>;
 
-	/// The current status of `product_id`'s payment `id`, or `None` when the
-	/// host holds no such payment.
-	fn payment_status(
-		&self,
-		product_id: ProductId,
-		id: crate::Bytes32,
-	) -> Result<Option<v01::HostPaymentStatusSubscribeItem>, HostRejection>;
-}
-
-/// Native top-up engine, which claims a source's funds into the user's
-/// balance. A host passes an implementation to
-/// [`NativeTrUApiHostRuntime::set_top_up_callbacks`] and reports each later
-/// status with [`NativeTrUApiHostRuntime::notify_top_up_status`].
-///
-/// [`NativeTrUApiHostRuntime::set_top_up_callbacks`]: super::NativeTrUApiHostRuntime::set_top_up_callbacks
-/// [`NativeTrUApiHostRuntime::notify_top_up_status`]: super::NativeTrUApiHostRuntime::notify_top_up_status
-#[uniffi::export(rust, foreign)]
-#[async_trait::async_trait]
-pub trait NativeTopUpCallbacks: Send + Sync {
-	/// Start top-up `request` for `product_id`, returning once the host has
-	/// accepted it. Its amount is a decimal string of CASH units.
-	async fn top_up(
-		&self,
-		product_id: ProductId,
-		request: v01::HostPaymentTopUpRequest,
-	) -> Result<(), v01::HostPaymentTopUpError>;
-
-	/// The current status of `product_id`'s top-up `id`, or `None` when the
-	/// host holds no such top-up.
-	fn top_up_status(
-		&self,
-		product_id: ProductId,
-		id: crate::Bytes32,
-	) -> Result<Option<v01::HostPaymentTopUpStatusSubscribeItem>, HostRejection>;
-}
-
-/// Native balance view, which shares the user's spendable balance with a
-/// product. A host passes an implementation to
-/// [`NativeTrUApiHostRuntime::set_balance_callbacks`] and reports each change
-/// with [`NativeTrUApiHostRuntime::notify_balance`].
-///
-/// [`NativeTrUApiHostRuntime::set_balance_callbacks`]: super::NativeTrUApiHostRuntime::set_balance_callbacks
-/// [`NativeTrUApiHostRuntime::notify_balance`]: super::NativeTrUApiHostRuntime::notify_balance
-#[uniffi::export(rust, foreign)]
-#[async_trait::async_trait]
-pub trait NativeBalanceCallbacks: Send + Sync {
-	/// The current balance of `purse` (`None` for the main purse), as a
-	/// decimal string of CASH units: what a payment request can spend right
-	/// now. The balance is the user's, the same for every product;
-	/// `product_id` names the asking product only for the host's own records.
-	/// The core has already checked the product's balance access.
-	async fn balance(
-		&self,
-		product_id: ProductId,
-		purse: Option<u32>,
-	) -> Result<u128, v01::HostPaymentBalanceSubscribeError>;
-}
-
-/// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.
-/// Installed with [`NativeTrUApiHostRuntime::set_scanner_callbacks`].
-#[uniffi::export(rust, foreign)]
-#[async_trait::async_trait]
-pub trait NativeScannerCallbacks: Send + Sync {
-	/// Open the viewfinder on behalf of `product_id`'s execution of
-	/// `execution_kind` and report how it ended.
-	async fn scan_code(
-		&self,
-		product_id: ProductId,
-		execution_kind: crate::platform::ProductExecutionKind,
-		request: truapi::latest::HostScannerScanRequest,
-	) -> Result<crate::platform::HostScan, HostRejection>;
-}
-
-/// Native funding overlay. A host with a funding modality passes an
-/// implementation to [`NativeTrUApiHostRuntime::set_funding_callbacks`];
-/// without one, funding requests answer `Unsupported`.
-///
-/// [`NativeTrUApiHostRuntime::set_funding_callbacks`]: super::NativeTrUApiHostRuntime::set_funding_callbacks
-#[uniffi::export(rust, foreign)]
-#[async_trait::async_trait]
-pub trait NativeFundingCallbacks: Send + Sync {
-	/// Show the funding overlay for session `intent`, which `product_id`
-	/// opened, or the host itself when `None`, on the screen `direction`
-	/// names, and report whether the user started or dismissed it. `amount`
-	/// is a decimal string of CASH units.
-	async fn present_funding(
-		&self,
-		product_id: Option<ProductId>,
-		intent: String,
-		direction: v01::FundingDirection,
-		amount: Option<u128>,
-	) -> Result<crate::platform::FundingPresentOutcome, HostRejection>;
-
-	/// A session's status changed, for host UI such as the in-flight pill.
-	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);
+    /// Replace the names drawn over a product surface without returning names.
+    async fn place_contact_labels(
+        &self,
+        product_id: String,
+        placed: crate::platform::PlacedContactLabels,
+    ) -> Result<(), crate::latest::HostContactsPlaceLabelsError>;
 }

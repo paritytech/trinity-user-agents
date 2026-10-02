@@ -116,6 +116,14 @@ authenticated, ready peers from authorized native Chat products, scopes them to 
 and never exposes a product or SSO directory method. Actors opened on this version are durably indexed; historical
 unindexed Chat products must be opened once before their peers can appear. Pairing hosts do not supply this directory.
 
+Contacts trait 20 retains the single picker at method 0, adds `pickMany({ selected })` at method 1, and
+`placeLabels({ surfaceWidth, surfaceHeight, slots })` at method 2. Multi-select confirmation returns only
+wallet-scoped handles, including a confirmed empty selection; dismissal never edits the audience. Host-owned
+labels show directory usernames or account fallbacks independently of Profile photos, without returning names,
+accounts or per-slot availability. Selections and placements are bounded to 256 entries; unresolved initial
+selections fail closed. Hosts implement `pickContacts(product, ContactSelection)` and
+`placeContactLabels(product, PlacedContactLabels)` through the canonical native/WASM/worker callbacks.
+
 The [native Chat/main-purse RFC](docs/rfcs/native-chat-main-purse.md) specifies the method 12 request/response and
 compatibility contract, device eligibility, custody-before-ACK rule, and delivery versus clearing semantics. It is a
 draft for review in #709, not an approved standard or a release claim. It builds on

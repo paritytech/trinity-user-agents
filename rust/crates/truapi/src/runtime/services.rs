@@ -65,6 +65,8 @@ pub struct RuntimeServices {
     /// Contact handles already resolved, shared by every product runtime of
     /// this host and emptied when the host says its contacts changed.
     pub contact_handles: Arc<crate::runtime::contacts::ContactHandleCache>,
+    /// Connection-owned label layers, cleared on session change and teardown.
+    pub contact_labels: crate::runtime::contacts::ContactLabelPlacements,
     /// Host observer told when a device finishes pairing with this signing
     /// host. Unset leaves a paired device unannounced.
     device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
@@ -194,6 +196,7 @@ impl RuntimeServices {
             identity_backend: OnceLock::new(),
             contacts_platform: OnceLock::new(),
             contact_handles: Default::default(),
+            contact_labels: Default::default(),
             device_pairing_observer: OnceLock::new(),
             asset_hub_chain_genesis_hash,
             worker_ledger: WorkerLedger::default(),
@@ -286,10 +289,28 @@ impl RuntimeServices {
 		self.balance_platform.get().cloned()
 	}
 
-	/// The host's Pocket adapter, when one is installed.
-	pub fn pocket_platform(&self) -> Option<Arc<dyn PocketPlatform>> {
-		self.pocket_platform.get().cloned()
-	}
+    /// Invalidate handle resolutions; host label layers refresh their live directory view.
+    pub fn invalidate_contacts(&self) {
+        self.contact_handles.clear();
+    }
+
+    /// Forget handles and labels belonging to the preceding wallet session.
+    pub fn contacts_session_changed(&self) {
+        self.invalidate_contacts();
+        self.contact_labels.session_changed(self.contact_handles.generation(), &self.spawner);
+    }
+
+    /// Install the host's device-pairing observer.
+    ///
+    /// Set-once, like every optional capability, so the surface that announces
+    /// a new device cannot change hands between two pairings. Returns whether
+    /// this call installed it.
+    pub fn install_device_pairing_observer(
+        &self,
+        observer: Arc<dyn DevicePairingObserver>,
+    ) -> bool {
+        self.device_pairing_observer.set(observer).is_ok()
+    }
 
 	/// Install the host's Game adapter.
 	///

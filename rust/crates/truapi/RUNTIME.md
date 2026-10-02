@@ -477,90 +477,24 @@ for raw bytes signed inside the `<Bytes>` watermark.
 - `PocketPlatform`: stream the product's Pocket card collection and remove a
   card from it. The host owns the collection and decides which cards are
   privileged.
-- `FundingPlatform`: show the native funding overlay for a session, with its
-  direction and amount and the product that opened it, and report whether the
-  user started or dismissed it. Installed with `set_funding_platform`; the
-  Balance card opens sessions with `open_funding`. The core owns the sessions,
-  persists them, expires them, and answers Funding calls `Unsupported` while no
-  overlay is installed.
-  Native hosts reach this through `NativeTrUApiHostRuntime`:
-  `set_funding_callbacks` (the overlay), `open_funding`,
-  `funding_session`, `funding_sessions`, `funding_history`,
-  `cancel_funding` and `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
-  The host owns the funding history. A session is stored only once the user
-  starts it in the overlay. `funding_sessions` lists sessions in flight first,
-  then ended ones the host has not recorded, each newest first. An ended
-  session is handed to the host through `funding_session_changed` each time
-  funding resumes until the host calls `acknowledge_funding_session`, so the
-  host's history writes every outcome once. After that the core keeps the
-  newest 64 recorded sessions per product in full and compacts older ones
-  into the session pack (intent, owner, direction, amounts, outcome and
-  times), which it never trims, so a product watching a compacted session
-  still gets its terminal item. It keeps the 200 newest ended sessions the
-  host has not recorded in full too, and compacts older ones the same way.
-  `funding_history` lists every ended session the host recorded or the core
-  compacted, as a summary newest first, so a host that lost its history
-  rebuilds it from there. A product opens a session with
-  `request({ id, direction, amount? })` and watches it with
-  `statusSubscribe({ id })`; the core keeps it under the id hashed with the
-  product, so a product that reloads under the overlay still finds it, and a
-  reused id answers `AlreadyExists`. The overlay runs on a task of its own,
-  so a request that goes away cannot leave the session presenting; one the
-  user dismisses ends its watchers as `Failed { Cancelled }`. Sessions and
-  the pack are versioned blobs: a corrupt one is set aside under
-  `FundingSessionsUnreadable`, and one in a newer format is left untouched
-  while funding answers a host failure. Products see a session in flight as
-  `InProgress`.
-- `BalancePlatform`: stream what a payment request can spend right now, the
-  current value first and then each change. Installed with
-  `set_balance_platform`; native hosts use `set_balance_callbacks` with
-  `notify_balance`. The core requires a session and the product's
-  `BalanceAccess` remote permission, asking for it on the first subscription
-  and answering `PermissionDenied` when the user refuses. The balance is the
-  user's, per purse: one `notify_balance` reaches every product following the
-  purse, and the core checks each product's permission again before passing a
-  balance on, so a revoked grant ends that product's stream with
-  `PermissionDenied`. A host `InsufficientBalance` reaches a product without
-  that permission as `Rejected`. Without a balance view, `balanceSubscribe`
-  answers `Unsupported`.
-- `PaymentPlatform`: pay from the user's balance to an account once the user
-  approves, and stream each payment's status by its caller-chosen id.
-  Installed with `set_payment_platform`; native hosts use
-  `set_payment_callbacks` with `notify_payment_status`. The core requires a
-  session and hands the host each id hashed with the product. Without it,
-  `request` and `statusSubscribe` answer `Unsupported`.
-- `TopUpPlatform`: claim a top-up source's funds into the user's balance and
-  stream each top-up's status. Installed with `set_top_up_platform`; native
-  hosts use `set_top_up_callbacks` with `notify_top_up_status`. The core
-  requires a session, checks the source keys, passes a `ProductAccount`
-  source through for the host to derive, and hands the host each id hashed
-  with the product. The host owns claiming, retries, partial claims and
-  persistence. Without it, `topUp` and `topUpStatusSubscribe` answer
-  `Unsupported`.
-- `ExpandedCardHost`: show or hide the card face drawn above an opened card's
-  Widget. It is carried per product connection on `ConnectionAdapters`, so only
-  the Widget under a card reaches that card.
-- `ContactsPlatform`: resolve the handles a transaction names to contacts, and
-  render the picker that selects one. `contacts` is the only required method; `pick_contact`
-  defaults to `Unsupported`, so a host serving no picker says so rather than
-  looking like a user who declined. The host owns the UI, so the list never
-  reaches the product — only a handle for the selection does. The core caches
-  resolved handles; a host calls `notify_contacts_changed` on its runtime when
-  a contact is removed or blocked.
-- `GamePlatform`: hold the game product's next-game reminder and drop it.
-  The core serves Game only to `dim2`, on every network, and answers
-  `Unsupported` to any other product without calling the host. A host
-  keeps one reminder per product: a schedule replaces the reminder the same
-  product already holds. The core asks for no per-product consent: the host
-  asks the OS for what the reminder needs, rings an alarm where the OS allows
-  one and delivers a notification otherwise, may add a calendar event, and
-  keeps the reminder across app kill and reboot. A schedule the host cannot
-  hold fails as a host failure carrying its reason.
-- `ScannerPlatform`: open the host's QR and barcode viewfinder. Before calling
-  it the core refuses an invalid request, a Worker the user has not tapped in
-  the last 5 seconds, and a second open scan. After, it refuses a code the
-  request does not accept and any pairing request. The trait's docs list what
-  the host must do.
+- `ContactsPlatform`: resolve opaque handles to contacts, render single or multiple
+  selection pickers, and place host-owned contact names over product surfaces.
+  `contacts` is the only required method; `pick_contact` and `pick_contacts`
+  default to `Unsupported`, never a fake selection. The multi-picker receives a
+  host-private `ContactSelection` record of resolved accounts. Confirmed empty
+  selection is distinct from dismissal, and unresolved initial handles fail closed.
+  Session and directory generations are checked across host calls.
+  `place_contact_labels` is independent of Profile grants; products receive neither
+  names nor availability. Placements are serialized and cleared at connection
+  teardown and session change. Hosts call `notify_contacts_changed` when a contact
+  is removed or blocked, invalidating cached handles. Their label layers clear stale
+  names and refresh the live placement from the current directory.
+- `ProfilePlatform`: show a product-referenced profile in host-owned UI, show
+  a contact's shared profile naming the contact who sent it, and draw the
+  avatars of contacts who shared one over a chat product. The host resolves,
+  decrypts and renders each reference; nothing returns to the product but
+  acceptance. Naming the contact is optional and presents the reference alone
+  by default; drawing avatars is optional and draws nothing by default.
 
 `Platform` is a blanket-implemented supertrait that combines the capability
 traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,

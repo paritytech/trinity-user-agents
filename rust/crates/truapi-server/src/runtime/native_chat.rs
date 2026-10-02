@@ -248,7 +248,7 @@ impl NativeChatRegistry {
         product: &str,
     ) -> Result<(), ChatError> {
         let mut uncertain = self.state.products.lock().await;
-        context.services.contact_handles.clear();
+        context.services.invalidate_contacts();
         let cache = self.state.cache.lock().clone();
         let key = (
             (context.session.public_key, context.genesis_hash),

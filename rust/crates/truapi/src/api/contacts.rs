@@ -1,19 +1,17 @@
 //! Unified [`Contacts`] trait.
 
-use crate::{
-	CallContext, CallError,
-	versioned::contacts::{
-		HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse,
-	},
-	wire, wire_trait,
+use crate::versioned::contacts::{
+    HostContactsPickError, HostContactsPickManyError, HostContactsPickManyRequest,
+    HostContactsPickManyResponse, HostContactsPickRequest, HostContactsPickResponse,
+    HostContactsPlaceLabelsError, HostContactsPlaceLabelsRequest, HostContactsPlaceLabelsResponse,
 };
 
 /// User-mediated access to the user's contacts.
 ///
 /// A product never reads the contact list. It opens the host's picker; the host
 /// renders an overlay from the chat lists its chat extensions hold, and
-/// returns only the person the user selected. Names, accounts, and every other
-/// contact the user did not pick stay host-side.
+/// returns only handles for the people the user selected. Names, accounts, and
+/// every other contact the user did not pick stay host-side.
 ///
 /// That is also why there is no permission to request: the user choosing a
 /// contact in host UI is the consent, and a product that is never handed the
@@ -55,6 +53,52 @@ pub trait Contacts: Send + Sync {
         _cx: &CallContext,
         _request: HostContactsPickRequest,
     ) -> Result<HostContactsPickResponse, CallError<HostContactsPickError>> {
+        Err(CallError::unavailable())
+    }
+
+    /// Edit a complete selection in the host's multi-select contact picker.
+    ///
+    /// `selected` preselects existing handles. Confirming none returns `Picked`
+    /// with an empty `handles` list; dismissing never changes the selection.
+    /// Unresolvable initial handles reject the entire request.
+    ///
+    /// ```ts
+    /// const result = await truapi.contacts.pickMany({ selected: [] });
+    /// assert(result.isOk(), "contacts.pickMany failed:", result);
+    /// if (result.value.outcome.tag === "Picked") {
+    ///   console.log("confirmed handles:", result.value.outcome.value.handles);
+    /// }
+    /// ```
+    #[wire(id = 1)]
+    async fn pick_many(
+        &self,
+        _cx: &CallContext,
+        _request: HostContactsPickManyRequest,
+    ) -> Result<HostContactsPickManyResponse, CallError<HostContactsPickManyError>> {
+        Err(CallError::unavailable())
+    }
+
+    /// Draw contact names in host-owned rectangles over the product surface.
+    ///
+    /// Labels do not require a shared Profile photo or disclosure. The response
+    /// reveals no name, identity or per-slot availability. Each call replaces
+    /// the previous placement; empty `slots` clears it.
+    ///
+    /// ```ts
+    /// // Empty placement clears this product's host-owned labels.
+    /// const result = await truapi.contacts.placeLabels({
+    ///   surfaceWidth: 640,
+    ///   surfaceHeight: 480,
+    ///   slots: [],
+    /// });
+    /// assert(result.isOk(), "contacts.placeLabels failed:", result);
+    /// ```
+    #[wire(id = 2)]
+    async fn place_labels(
+        &self,
+        _cx: &CallContext,
+        _request: HostContactsPlaceLabelsRequest,
+    ) -> Result<HostContactsPlaceLabelsResponse, CallError<HostContactsPlaceLabelsError>> {
         Err(CallError::unavailable())
     }
 }

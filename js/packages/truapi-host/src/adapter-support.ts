@@ -12,11 +12,27 @@ import type { ChainConnect, ChainConnection, HopConnect } from "./runtime.js";
 import type {
   ChainProvider,
   CoinageWalletHost,
+  ContactsPlatform,
   HopProvider,
   JsonRpcConnection,
   NativeChatFilesHost,
   ProfilePlatform,
 } from "./generated/host-callbacks.js";
+
+/** Optional Contacts UI stays unsupported rather than confirming an empty selection. */
+export function contactsHostAdapter(
+  host: ContactsPlatform | undefined,
+): Required<ContactsPlatform> | undefined {
+  if (host === undefined) return undefined;
+  return {
+    contacts: (lookup) => host.contacts(lookup),
+    pickContact: (product) => host.pickContact?.(product) ?? Promise.resolve({ tag: "Unsupported" }),
+    pickContacts: (product, selection) =>
+      host.pickContacts?.(product, selection) ?? Promise.resolve({ tag: "Unsupported" }),
+    placeContactLabels: (product, placed) =>
+      host.placeContactLabels?.(product, placed) ?? Promise.resolve(false),
+  };
+}
 
 type WireResult<T, E> =
   | { success: true; value: T }
