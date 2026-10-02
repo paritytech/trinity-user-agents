@@ -193,7 +193,7 @@ export function coinageWalletHostAdapter(
 /**
  * A profile host built before `presentContactProfile` still shows a contact's
  * profile: without it, the contact's reference is presented as
- * `presentProfile` would, the core's own default, rather than failing.
+ * `presentProfile` would. Empty-profile feedback requires the contact callback.
  */
 export function profileHostAdapter(
   host: Required<ProfilePlatform> | undefined,
@@ -202,8 +202,15 @@ export function profileHostAdapter(
     return host;
   return {
     presentProfile: (product, request) => host.presentProfile(product, request),
-    presentContactProfile: (product, presented) =>
-      host.presentProfile(product, { reference: presented.reference }),
+    presentContactProfile: (product, presented) => {
+      if (presented.shared === undefined)
+        return Promise.reject(
+          new Error("Contact profile feedback is unavailable"),
+        );
+      return host.presentProfile(product, {
+        reference: presented.shared.reference,
+      });
+    },
     placeContactAvatars: (product, placed) =>
       host.placeContactAvatars(product, placed),
   };

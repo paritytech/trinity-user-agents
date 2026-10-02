@@ -138,6 +138,11 @@ accounts or per-slot availability. Selections and placements are bounded to 256 
 selections fail closed. Hosts implement `pickContacts(product, ContactSelection)` and
 `placeContactLabels(product, PlacedContactLabels)` through the canonical native/WASM/worker callbacks.
 
+Profile V2 presentation opens host-owned feedback even when no live contact reference has arrived.
+`PresentedContactProfile.shared` holds the reference and freshness timestamp when present; `None` requests an
+empty-profile view. The host receives the verified contact name, while the product receives the same success reply
+for shared and absent information. Storage failures and invalid handles are not presented as an empty profile.
+
 The [native Chat/main-purse RFC](docs/rfcs/native-chat-main-purse.md) specifies the method 12 request/response and
 compatibility contract, device eligibility, custody-before-ACK rule, and delivery versus clearing semantics. It is a
 draft for review in #709, not an approved standard or a release claim. It builds on

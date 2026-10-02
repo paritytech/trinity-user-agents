@@ -168,15 +168,19 @@ and preserves its legacy app digest, so migration alone does not broaden or rese
 V1 `present_contact` reads only the caller's app-scoped grant and preserves its existing errors. It cannot probe personal
 grants through `NotShared`. V2 accepts a peer or verified Contacts handle, selects the live app grant then personal
 fallback, and answers uniformly for an absent, unknown or unreadable profile, including host drawing failures.
-Neither path returns the reference. The core hands a found reference to
-`ProfilePlatform::present_contact_profile(product, PresentedContactProfile { reference, peer_identity, shared_at,
-username })`. `shared_at` is a frame freshness timestamp; personal grants advance it monotonically even when a newer
-revision arrives from an actor with an older clock. `username` is the host's own name for the contact, never one from
+Neither path returns the reference. The core calls
+`ProfilePlatform::present_contact_profile(product, PresentedContactProfile { shared, peer_identity, username })`.
+`shared` is `Some(SharedContactProfile { reference, shared_at })` for a live reference and `None` for a genuinely absent
+or retracted V2 reference. The host opens friendly empty-profile feedback for `None`, without claiming that unreadable
+storage or an invalid reference means nothing was shared. `shared_at` is a frame freshness timestamp; personal grants
+advance it monotonically even when a newer revision arrives from an actor with an older clock. `username` is the host's
+own name for the contact, never one from
 the product: the name the calling product's Chat roster holds for
 that peer, verified when the contact was bound or first authenticated, else the peer's verified dotNS name. The core
 waits at most 2 seconds for it and passes `None` when it knows none, so a slow directory never holds the drawer back; the
-host then names the contact generically, never by address. The default calls `present_profile` with the reference
-alone, so a host that does not implement it shows the profile as before.
+host then names the contact generically, never by address. The default can call `present_profile` for a shared reference;
+empty-profile feedback requires the contact presenter. The core rechecks the wallet and handle generation before either
+presentation, so a late lookup cannot open another wallet's contact.
 
 ### Provenance
 

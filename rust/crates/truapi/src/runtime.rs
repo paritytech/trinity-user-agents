@@ -2446,27 +2446,28 @@ impl Profile for ProductRuntimeHost {
                 }));
             }
         };
-        let Some((reference, shared_at)) = received.and_then(|received| {
-            received
-                .reference
-                .map(|reference| (reference, received.timestamp))
-        }) else {
-            return if version >= 2 {
-                Ok(success())
-            } else {
-                Err(domain(v01::HostProfilePresentContactError::NotShared))
-            };
-        };
-        // A stored reference passed the same screen when it arrived; check
-        // again rather than trust storage.
-        if !is_screened_profile_reference(&reference) {
-            if version >= 2 {
-                return Ok(success());
+        let shared = match received.and_then(|received| {
+            received.reference.map(|reference| crate::platform::SharedContactProfile {
+                reference,
+                shared_at: received.timestamp,
+            })
+        }) {
+            Some(shared) => {
+                // A stored reference passed the same screen when it arrived;
+                // check again rather than trust storage.
+                if !is_screened_profile_reference(&shared.reference) {
+                    if version >= 2 {
+                        return Ok(success());
+                    }
+                    return Err(domain(
+                        v01::HostProfilePresentContactError::InvalidReference,
+                    ));
+                }
+                Some(shared)
             }
-            return Err(domain(
-                v01::HostProfilePresentContactError::InvalidReference,
-            ));
-        }
+            None if version >= 2 => None,
+            None => return Err(domain(v01::HostProfilePresentContactError::NotShared)),
+        };
         let username = self.contact_username(&peer_identity).await;
         if self.profile_owner() != Some(owner)
             || (matches!(contact, ProfileContact::Handle { .. })
@@ -2478,9 +2479,8 @@ impl Profile for ProductRuntimeHost {
             .present_contact_profile(
                 &self.product,
                 crate::platform::PresentedContactProfile {
-                    reference,
+                    shared,
                     peer_identity,
-                    shared_at,
                     username,
                 },
             )

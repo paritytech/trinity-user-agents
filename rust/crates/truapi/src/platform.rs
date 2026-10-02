@@ -3498,27 +3498,30 @@ pub trait GamePlatform: Send + Sync {
 		starts_at: u64,
 	) -> Result<(), GenericError>;
 
-    /// Show a profile a Chat contact shared with the user, for the product
-    /// that asked with `profile.presentContact`. Same contract as
-    /// [`ProfilePlatform::present_profile`]: return once it is shown, and
-    /// report an unparseable reference as `InvalidReference`.
+    /// Show a Chat contact's shared profile, or host-owned feedback when no
+    /// profile is shared. Return once it is shown, without waiting for dismissal.
+    /// Report an unparseable shared reference as `InvalidReference`.
     ///
     /// The core holds this reference because it arrived over the
     /// authenticated Chat channel from `peer_identity`'s own device, so the
     /// host can name that contact as who shared it, rather than the product
     /// that asked. It cannot vouch for more: the record behind the reference
     /// is not signed by its owner, so a contact can forward someone else's
-    /// reference. The default presents it as
-    /// [`ProfilePlatform::present_profile`] would, without the contact.
+    /// reference. The default presents a shared profile as
+    /// [`ProfilePlatform::present_profile`] would, without the contact, and
+    /// reports an error when empty-profile feedback is unsupported.
     async fn present_contact_profile(
         &self,
         product: &ProductContext,
         presented: PresentedContactProfile,
     ) -> Result<(), HostProfilePresentError> {
+        let shared = presented.shared.ok_or_else(|| HostProfilePresentError::Unknown {
+            reason: "Contact profile feedback is unavailable".to_string(),
+        })?;
         self.present_profile(
             product,
             HostProfilePresentRequest {
-                reference: presented.reference,
+                reference: shared.reference,
             },
         )
         .await
@@ -3545,23 +3548,19 @@ pub trait GamePlatform: Send + Sync {
     }
 }
 
-/// A profile a Chat contact shared with the user, with the contact who sent
-/// it.
-#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+/// Host-only presentation of a contact's shared profile or its absence.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(
     all(feature = "runtime", not(target_arch = "wasm32")),
     derive(uniffi::Record)
 )]
 pub struct PresentedContactProfile {
-    /// The profile reference the contact disclosed. A bearer capability, as
-    /// in [`ProfilePlatform::present_profile`].
-    pub reference: String,
-    /// The contact whose authenticated Chat device delivered the reference:
-    /// who shared it, not necessarily whose profile it is.
+    /// The profile currently shared with the user. `None` means no received,
+    /// unretracted profile, never a storage or loading failure.
+    pub shared: Option<SharedContactProfile>,
+    /// The contact being presented. When shared, their authenticated Chat
+    /// device delivered the reference, not necessarily their own profile.
     pub peer_identity: [u8; 32],
-    /// The share's freshness timestamp, as in [`PlacedAvatar::shared_at`].
-    /// Personal grants advance it monotonically across relay actors.
-    pub shared_at: u64,
     /// The contact's username, when the core knows one: the name its Chat
     /// roster holds for `peer_identity`, verified when the contact was bound
     /// or first authenticated, else the peer's verified dotNS name. Never a
@@ -3570,13 +3569,26 @@ pub struct PresentedContactProfile {
     pub username: Option<String>,
 }
 
-impl core::fmt::Debug for PresentedContactProfile {
+/// A profile reference received from an authenticated Chat contact.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct SharedContactProfile {
+    /// The profile reference the contact disclosed. A bearer capability, as
+    /// in [`ProfilePlatform::present_profile`].
+    pub reference: String,
+    /// The share's freshness timestamp, as in [`PlacedAvatar::shared_at`].
+    /// Personal grants advance it monotonically across relay actors.
+    pub shared_at: u64,
+}
+
+impl core::fmt::Debug for SharedContactProfile {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("PresentedContactProfile")
+        f.debug_struct("SharedContactProfile")
             .field("reference", &"[REDACTED]")
-            .field("peer_identity", &self.peer_identity)
             .field("shared_at", &self.shared_at)
-            .field("username", &self.username)
             .finish()
     }
 }

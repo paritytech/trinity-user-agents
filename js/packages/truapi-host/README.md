@@ -188,15 +188,16 @@ when the user dismisses it. The reference is a bearer capability: the host fetch
 profile's bytes never return to the product. The core forwards only references that are non-empty, at most 2048 bytes
 and printable ASCII without whitespace; parsing the format is the host's.
 
-`profile.presentContactProfile(product, presented)` shows the profile a Chat contact shared when a chat product calls
-`profile.presentContact`. `presented` carries the `reference`, the `peerIdentity` of the contact whose authenticated
-Chat device delivered it, the `sharedAt` freshness timestamp (`bigint`) and, when the core knows it, the contact's
-`username`, so the drawer can say who shared it rather than which product asked. The username is the one the core's
+`profile.presentContactProfile(product, presented)` opens host-owned contact profile UI when a product calls
+`profile.presentContact`. `presented` carries the `peerIdentity`, an optional `shared` record containing the bearer
+`reference` and `sharedAt` freshness timestamp (`bigint`), and the contact's optional verified `username`.
+An absent `shared` requests friendly empty-profile feedback, not a fetch or an error. The username is the one the core's
 Chat roster verified for that contact, else the contact's verified dotNS name, looked up for at most 2 seconds; never a
 name from the product. Without one, name the contact generically, never by address. It names who sent the reference,
 not whose profile it is: the record is not signed by its owner, and a contact can forward someone else's. Same contract
-as `presentProfile` otherwise. A `profile` group without it, from a host built before it, has contacts' profiles
-presented through `presentProfile`.
+as `presentProfile` otherwise. The default adapter can present a shared reference through `presentProfile`;
+hosts implement `presentContactProfile` to show empty-profile feedback. V2 never reports availability or rendering
+failures to the product. A failed reference lookup is not represented as an empty profile.
 
 `profile.placeContactAvatars(product, placed)` draws contacts' avatars over a chat product. `placed` carries the
 product's surface size and, per avatar, the product's `slot` id, a square `rect`, the `clip` region it is cut to, all in

@@ -3957,7 +3957,7 @@ fn profile_handle_presentation_hides_absence_and_removed_contacts_in_an_unrelate
     let platform = stub_platform();
     let account = [0xa1; 32];
     let contacts = StubContactsPlatform::picking(account);
-    let presented = Arc::new(RecordingProfilePlatform::default());
+    let presented = Arc::new(RecordingContactProfilePlatform::default());
     let mut host = contacts_host("notes.dot", platform.clone(), Some(contacts.clone()), true);
     host.profile_platform = Some(presented.clone());
     let handle = picked_handle(&host);
@@ -3984,6 +3984,17 @@ fn profile_handle_presentation_hides_absence_and_removed_contacts_in_an_unrelate
         "legacy raw-peer requests must not reveal that a personal profile became available"
     );
     assert_eq!(present_selected_contact(&host, selected), success);
+    futures::executor::block_on(profile::record_personal_received_reference(
+        platform.as_ref(),
+        owner_of(&host),
+        account,
+        "seity.dot".into(),
+        2,
+        2,
+        None,
+    ))
+    .unwrap();
+    assert_eq!(present_selected_contact(&host, selected), success);
     assert_eq!(
         present_selected_contact(
             &host,
@@ -4002,13 +4013,120 @@ fn profile_handle_presentation_hides_absence_and_removed_contacts_in_an_unrelate
     assert_eq!(present_selected_contact(&host, selected), success);
     assert_eq!(
         presented
-            .presented
+            .contacts
             .lock()
-            .expect("presented mutex poisoned")
+            .expect("contacts mutex poisoned")
             .as_slice(),
-        [("notes.dot".to_string(), CONTACTS_REFERENCE.to_string())],
-        "only a current verified contact reaches host UI, never the reference or availability response",
+        [
+            ("notes.dot".to_string(), crate::platform::PresentedContactProfile {
+                shared: None,
+                peer_identity: account,
+                username: None,
+            }),
+            ("notes.dot".to_string(), crate::platform::PresentedContactProfile {
+                shared: Some(crate::platform::SharedContactProfile {
+                    reference: CONTACTS_REFERENCE.to_string(),
+                    shared_at: 1,
+                }),
+                peer_identity: account,
+                username: None,
+            }),
+            ("notes.dot".to_string(), crate::platform::PresentedContactProfile {
+                shared: None,
+                peer_identity: account,
+                username: None,
+            }),
+        ],
+        "absence and retraction reach only host UI; invalid or removed handles do not",
     );
+}
+
+#[test]
+fn profile_v2_read_failures_and_invalid_references_are_not_presented_as_absence() {
+    for invalid_reference in [false, true] {
+        let platform = Arc::new(StubPlatform {
+            local_storage_error: (!invalid_reference).then_some("storage unavailable"),
+            ..Default::default()
+        });
+        let presenter = Arc::new(RecordingContactProfilePlatform::default());
+        let host = signed_in(
+            profile_host_on(platform.clone(), egui_chat(), Some(presenter.clone())),
+            WALLET,
+        );
+        let account = [0xa1; 32];
+        if invalid_reference {
+            futures::executor::block_on(profile::record_received_reference(
+                platform.as_ref(),
+                owner_of(&host),
+                "egui-chat.dot",
+                account,
+                "seity.dot".into(),
+                1,
+                Some("invalid stored reference".into()),
+            ))
+            .unwrap();
+        }
+        assert_eq!(
+            present_selected_contact(
+                &host,
+                truapi::latest::ProfileContact::Peer { peer_identity: account },
+            ),
+            Ok(HostProfilePresentContactResponse::V2),
+        );
+        assert!(presenter.contacts.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn profile_v2_empty_presentation_is_discarded_after_a_wallet_switch_during_lookup() {
+    struct DelayedContacts {
+        release: parking_lot::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+        account: [u8; 32],
+    }
+    #[truapi::async_trait]
+    impl crate::platform::ContactsPlatform for DelayedContacts {
+        async fn contacts(
+            &self,
+            _lookup: &crate::platform::HostContactLookup,
+        ) -> Result<crate::platform::HostContactMatches, truapi::latest::GenericError> {
+            let release = self.release.lock().take().unwrap();
+            release.await.unwrap();
+            Ok(crate::platform::HostContactMatches {
+                accounts: vec![Some(self.account)],
+            })
+        }
+    }
+    let (release, wait) = futures::channel::oneshot::channel();
+    let contacts = Arc::new(DelayedContacts {
+        release: parking_lot::Mutex::new(Some(wait)),
+        account: [0xa1; 32],
+    });
+    let presenter = Arc::new(RecordingContactProfilePlatform::default());
+    let mut host = contacts_host("notes.dot", stub_platform(), Some(contacts), true);
+    host.profile_platform = Some(presenter.clone());
+    let (_, handles) = host.contacts_picker().unwrap();
+    let handle = truapi::latest::ContactHandle {
+        bytes: handles.mint(&[0xa1; 32]),
+    };
+    futures::executor::block_on(async {
+        let context = CallContext::default();
+        let presentation = Profile::present_contact(
+            &host,
+            &context,
+            HostProfilePresentContactRequest::V2(truapi::latest::HostProfilePresentContactRequest {
+                contact: truapi::latest::ProfileContact::Handle { handle },
+            }),
+        );
+        futures::pin_mut!(presentation);
+        assert!(futures::poll!(presentation.as_mut()).is_pending());
+        host.test_session_state().set_session(SessionInfo {
+            public_key: [0x99; 32],
+            ..session_info()
+        });
+        release.send(()).unwrap();
+        assert_eq!(presentation.await, Ok(HostProfilePresentContactResponse::V2));
+    });
+    assert!(presenter.contacts.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -4034,6 +4152,14 @@ fn profile_v2_presentation_does_not_expose_host_parse_failures() {
         WALLET,
     );
     let account = [0xa1; 32];
+    assert_eq!(
+        present_selected_contact(
+            &host,
+            truapi::latest::ProfileContact::Peer { peer_identity: account },
+        ),
+        Ok(HostProfilePresentContactResponse::V2),
+        "an adapter without empty-profile feedback must not expose absence",
+    );
     futures::executor::block_on(profile::record_received_reference(
         platform.as_ref(),
         owner_of(&host),
@@ -4339,9 +4465,11 @@ fn profile_present_contact_names_the_contact_who_shared_it() {
         [(
             "egui-chat.dot".to_string(),
             crate::platform::PresentedContactProfile {
-                reference: CONTACTS_REFERENCE.to_string(),
+                shared: Some(crate::platform::SharedContactProfile {
+                    reference: CONTACTS_REFERENCE.to_string(),
+                    shared_at: 1_700_000_000_500,
+                }),
                 peer_identity: alice,
-                shared_at: 1_700_000_000_500,
                 // A paired host's Chat roster lives on the signing host.
                 username: None,
             }

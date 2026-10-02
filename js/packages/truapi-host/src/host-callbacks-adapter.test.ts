@@ -904,37 +904,15 @@ describe("createWasmRawCallbacks", () => {
       executionKind: "App",
     });
     const presented = {
-      reference: "seity-contacts:v1:ab",
+      shared: {
+        reference: "seity-contacts:v1:ab",
+        sharedAt: 1_700_000_000_500n,
+      },
       peerIdentity: new Uint8Array(32).fill(0xa1),
-      sharedAt: 1_700_000_000_500n,
       username: "alice.01",
     };
 
-    it("hands the host the contact who shared the profile", async () => {
-      const contacts: (typeof presented)[] = [];
-      const references: string[] = [];
-      const raw = createWasmRawCallbacks(
-        makeHostCallbacks({
-          profile: {
-            presentProfile: async (_product, request) => {
-              references.push(request.reference);
-            },
-            presentContactProfile: async (_product, contact) => {
-              contacts.push(contact);
-            },
-          },
-        }),
-      );
-
-      await raw.presentContactProfile!(
-        product,
-        PresentedContactProfile.enc(presented),
-      );
-      expect(contacts).toEqual([presented]);
-      expect(references).toEqual([]);
-    });
-
-    it("presents the reference alone for a host built before it", async () => {
+    it("preserves shared profiles without fabricating a reference for empty feedback on older hosts", async () => {
       const references: string[] = [];
       const legacy = {
         async presentProfile(
@@ -954,7 +932,13 @@ describe("createWasmRawCallbacks", () => {
         product,
         PresentedContactProfile.enc(presented),
       );
-      expect(references).toEqual([presented.reference]);
+      await expect(
+        raw.presentContactProfile!(
+          product,
+          PresentedContactProfile.enc({ ...presented, shared: undefined }),
+        ),
+      ).rejects.toThrow("Contact profile feedback is unavailable");
+      expect(references).toEqual([presented.shared.reference]);
     });
   });
 });
