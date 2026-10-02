@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "7c073d1a8c5db314";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "f7be28c22289b365";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -254,6 +254,33 @@ impl RequestMethod for AccountProductDeviceChat {
     type Response = truapi::versioned::account::HostProductDeviceChatResponse;
     type Error = truapi::versioned::account::HostProductDeviceChatError;
     const RESPONSE_VERSIONED: bool = true;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `account_product_device_chat` method marker.
+pub struct AccountProductDeviceChat;
+impl AccountProductDeviceChat {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Account",
+        method: "product_device_chat",
+        wire_name: "account_product_device_chat",
+        request_type: "truapi::versioned::account::HostProductDeviceChatRequest",
+        response_type: "truapi::versioned::account::HostProductDeviceChatResponse",
+        error_type: Some("truapi::versioned::account::HostProductDeviceChatError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 2,
+            method_id: 12,
+        }),
+    };
+}
+impl RequestMethod for AccountProductDeviceChat {
+    type Request = truapi::versioned::account::HostProductDeviceChatRequest;
+    type Response = truapi::versioned::account::HostProductDeviceChatResponse;
+    type Error = truapi::versioned::account::HostProductDeviceChatError;
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
