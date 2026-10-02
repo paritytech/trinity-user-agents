@@ -21,12 +21,9 @@ impl AccountConnectionStatusSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 18,
-            stop_id: 19,
-            interrupt_id: 20,
-            receive_id: 21,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 2,
+            method_id: 0,
         }),
     };
 }
@@ -50,10 +47,9 @@ impl AccountGetAccount {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 22,
-            response_id: 23,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 2,
+            method_id: 1,
         }),
     };
 }
@@ -79,10 +75,9 @@ impl AccountGetAccountAlias {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 24,
-            response_id: 25,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 2,
+            method_id: 2,
         }),
     };
 }
@@ -108,10 +103,9 @@ impl AccountCreateAccountProof {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 26,
-            response_id: 27,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 2,
+            method_id: 3,
         }),
     };
 }
@@ -137,10 +131,9 @@ impl AccountSignVrf {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 164,
-            response_id: 165,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 2,
+            method_id: 7,
         }),
     };
 }
@@ -166,10 +159,9 @@ impl AccountRegisterRingVrfKey {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 168,
-            response_id: 169,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 2,
+            method_id: 8,
         }),
     };
 }
@@ -195,10 +187,9 @@ impl AccountListRingVrfKeys {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 170,
-            response_id: 171,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 2,
+            method_id: 9,
         }),
     };
 }
@@ -224,10 +215,9 @@ impl AccountRingVrfSign {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 172,
-            response_id: 173,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 2,
+            method_id: 10,
         }),
     };
 }
@@ -281,10 +271,9 @@ impl AccountGetLegacyAccounts {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 28,
-            response_id: 29,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 2,
+            method_id: 4,
         }),
     };
 }
@@ -310,10 +299,9 @@ impl AccountGetUserId {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 110,
-            response_id: 111,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 2,
+            method_id: 5,
         }),
     };
 }
@@ -339,10 +327,9 @@ impl AccountRequestLogin {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 112,
-            response_id: 113,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 2,
+            method_id: 6,
         }),
     };
 }
@@ -368,12 +355,9 @@ impl ChainFollowHeadSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 76,
-            stop_id: 77,
-            interrupt_id: 78,
-            receive_id: 79,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 3,
+            method_id: 0,
         }),
     };
 }
@@ -397,10 +381,9 @@ impl ChainGetHeadHeader {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 80,
-            response_id: 81,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 3,
+            method_id: 1,
         }),
     };
 }
@@ -426,10 +409,9 @@ impl ChainGetHeadBody {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 82,
-            response_id: 83,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 3,
+            method_id: 2,
         }),
     };
 }
@@ -455,10 +437,9 @@ impl ChainGetHeadStorage {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 84,
-            response_id: 85,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 3,
+            method_id: 3,
         }),
     };
 }
@@ -484,10 +465,9 @@ impl ChainCallHead {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 86,
-            response_id: 87,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 3,
+            method_id: 4,
         }),
     };
 }
@@ -513,10 +493,9 @@ impl ChainUnpinHead {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 88,
-            response_id: 89,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 3,
+            method_id: 5,
         }),
     };
 }
@@ -542,10 +521,9 @@ impl ChainContinueHead {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 90,
-            response_id: 91,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 3,
+            method_id: 6,
         }),
     };
 }
@@ -571,10 +549,9 @@ impl ChainStopHeadOperation {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 92,
-            response_id: 93,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 3,
+            method_id: 7,
         }),
     };
 }
@@ -600,10 +577,9 @@ impl ChainGetSpecGenesisHash {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 94,
-            response_id: 95,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 3,
+            method_id: 8,
         }),
     };
 }
@@ -629,10 +605,9 @@ impl ChainGetSpecChainName {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 96,
-            response_id: 97,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 3,
+            method_id: 9,
         }),
     };
 }
@@ -658,10 +633,9 @@ impl ChainGetSpecProperties {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 98,
-            response_id: 99,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 3,
+            method_id: 10,
         }),
     };
 }
@@ -687,10 +661,9 @@ impl ChainBroadcastTransaction {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 100,
-            response_id: 101,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 3,
+            method_id: 11,
         }),
     };
 }
@@ -716,10 +689,9 @@ impl ChainStopTransaction {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 102,
-            response_id: 103,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 3,
+            method_id: 12,
         }),
     };
 }
@@ -745,10 +717,9 @@ impl ChainGetChainInfo {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 166,
-            response_id: 167,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 3,
+            method_id: 13,
         }),
     };
 }
@@ -774,10 +745,9 @@ impl ChatCreateRoom {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Worker),
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 38,
-            response_id: 39,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 4,
+            method_id: 0,
         }),
     };
 }
@@ -803,10 +773,9 @@ impl ChatRegisterBot {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Worker),
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 40,
-            response_id: 41,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 4,
+            method_id: 1,
         }),
     };
 }
@@ -832,12 +801,9 @@ impl ChatListSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Worker),
-        sensitive: false,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 42,
-            stop_id: 43,
-            interrupt_id: 44,
-            receive_id: 45,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 4,
+            method_id: 2,
         }),
     };
 }
@@ -861,10 +827,9 @@ impl ChatPostMessage {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Worker),
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 46,
-            response_id: 47,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 4,
+            method_id: 3,
         }),
     };
 }
@@ -890,12 +855,9 @@ impl ChatActionSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Worker),
-        sensitive: false,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 48,
-            stop_id: 49,
-            interrupt_id: 50,
-            receive_id: 51,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 4,
+            method_id: 4,
         }),
     };
 }
@@ -948,10 +910,9 @@ impl CoinPaymentCreatePurse {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 136,
-            response_id: 137,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 5,
+            method_id: 0,
         }),
     };
 }
@@ -977,10 +938,9 @@ impl CoinPaymentQueryPurse {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 138,
-            response_id: 139,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 5,
+            method_id: 1,
         }),
     };
 }
@@ -1006,12 +966,9 @@ impl CoinPaymentRebalancePurse {
         kind: MethodKind::ResultSubscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 140,
-            stop_id: 141,
-            interrupt_id: 142,
-            receive_id: 143,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 5,
+            method_id: 2,
         }),
     };
 }
@@ -1036,12 +993,9 @@ impl CoinPaymentDeletePurse {
         kind: MethodKind::ResultSubscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 144,
-            stop_id: 145,
-            interrupt_id: 146,
-            receive_id: 147,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 5,
+            method_id: 3,
         }),
     };
 }
@@ -1066,10 +1020,9 @@ impl CoinPaymentCreateReceivable {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 148,
-            response_id: 149,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 5,
+            method_id: 4,
         }),
     };
 }
@@ -1095,10 +1048,9 @@ impl CoinPaymentCreateCheque {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 150,
-            response_id: 151,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 5,
+            method_id: 5,
         }),
     };
 }
@@ -1124,12 +1076,9 @@ impl CoinPaymentDeposit {
         kind: MethodKind::ResultSubscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 152,
-            stop_id: 153,
-            interrupt_id: 154,
-            receive_id: 155,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 5,
+            method_id: 6,
         }),
     };
 }
@@ -1154,12 +1103,9 @@ impl CoinPaymentRefund {
         kind: MethodKind::ResultSubscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 156,
-            stop_id: 157,
-            interrupt_id: 158,
-            receive_id: 159,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 5,
+            method_id: 7,
         }),
     };
 }
@@ -1184,19 +1130,42 @@ impl CoinPaymentListenForPayment {
         kind: MethodKind::ResultSubscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 160,
-            stop_id: 161,
-            interrupt_id: 162,
-            receive_id: 163,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 5,
+            method_id: 8,
         }),
     };
 }
 impl ResultSubscriptionMethod for CoinPaymentListenForPayment {
     type Request = truapi::versioned::coin_payment::HostCoinPaymentListenForRequest;
     type Item = truapi::versioned::coin_payment::HostCoinPaymentListenForItem;
-    type Error = truapi::versioned::coin_payment::HostCoinPaymentListenForError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `contacts_pick` method marker.
+pub struct ContactsPick;
+impl ContactsPick {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Contacts",
+        method: "pick",
+        wire_name: "contacts_pick",
+        request_type: "truapi::versioned::contacts::HostContactsPickRequest",
+        response_type: "truapi::versioned::contacts::HostContactsPickResponse",
+        error_type: Some("truapi::versioned::contacts::HostContactsPickError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 20,
+            method_id: 0,
+        }),
+    };
+}
+impl RequestMethod for ContactsPick {
+    type Request = truapi::versioned::contacts::HostContactsPickRequest;
+    type Response = truapi::versioned::contacts::HostContactsPickResponse;
+    type Error = truapi::versioned::contacts::HostContactsPickError;
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -1268,10 +1237,9 @@ impl EntropyDerive {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 108,
-            response_id: 109,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 6,
+            method_id: 0,
         }),
     };
 }
@@ -1486,10 +1454,9 @@ impl LocalStorageRead {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 12,
-            response_id: 13,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 7,
+            method_id: 0,
         }),
     };
 }
@@ -1515,10 +1482,9 @@ impl LocalStorageWrite {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 14,
-            response_id: 15,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 7,
+            method_id: 1,
         }),
     };
 }
@@ -1544,10 +1510,9 @@ impl LocalStorageClear {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 16,
-            response_id: 17,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 7,
+            method_id: 2,
         }),
     };
 }
@@ -1555,7 +1520,33 @@ impl RequestMethod for LocalStorageClear {
     type Request = truapi::versioned::local_storage::HostLocalStorageClearRequest;
     type Response = truapi::versioned::local_storage::HostLocalStorageClearResponse;
     type Error = truapi::versioned::local_storage::HostLocalStorageClearError;
-    const RESPONSE_VERSIONED: bool = true;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `local_storage_subscribe` method marker.
+pub struct LocalStorageSubscribe;
+impl LocalStorageSubscribe {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "LocalStorage",
+        method: "subscribe",
+        wire_name: "local_storage_subscribe",
+        request_type: "truapi::versioned::local_storage::HostLocalStorageSubscribeRequest",
+        response_type: "truapi::versioned::local_storage::HostLocalStorageChangeItem",
+        error_type: Some("truapi::versioned::local_storage::HostLocalStorageSubscribeError"),
+        kind: MethodKind::Subscription,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 7,
+            method_id: 3,
+        }),
+    };
+}
+impl SubscriptionMethod for LocalStorageSubscribe {
+    type Request = truapi::versioned::local_storage::HostLocalStorageSubscribeRequest;
+    type Error = truapi::versioned::local_storage::HostLocalStorageSubscribeError;
+    type Item = truapi::versioned::local_storage::HostLocalStorageChangeItem;
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -1573,12 +1564,9 @@ impl LocaleSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 194,
-            stop_id: 195,
-            interrupt_id: 196,
-            receive_id: 197,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 16,
+            method_id: 0,
         }),
     };
 }
@@ -1629,10 +1617,9 @@ impl NotificationsSendPushNotification {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 4,
-            response_id: 5,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 0,
         }),
     };
 }
@@ -1658,10 +1645,9 @@ impl NotificationsCancelPushNotification {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 134,
-            response_id: 135,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 1,
         }),
     };
 }
@@ -1687,12 +1673,9 @@ impl PaymentBalanceSubscribe {
         kind: MethodKind::ResultSubscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 118,
-            stop_id: 119,
-            interrupt_id: 120,
-            receive_id: 121,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 9,
+            method_id: 0,
         }),
     };
 }
@@ -1717,10 +1700,9 @@ impl PaymentRequest {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 124,
-            response_id: 125,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 9,
+            method_id: 2,
         }),
     };
 }
@@ -1746,12 +1728,9 @@ impl PaymentStatusSubscribe {
         kind: MethodKind::ResultSubscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 126,
-            stop_id: 127,
-            interrupt_id: 128,
-            receive_id: 129,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 9,
+            method_id: 3,
         }),
     };
 }
@@ -1776,10 +1755,9 @@ impl PaymentTopUp {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 122,
-            response_id: 123,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 9,
+            method_id: 1,
         }),
     };
 }
@@ -1805,10 +1783,9 @@ impl PermissionsRequestDevicePermission {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 8,
-            response_id: 9,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 10,
+            method_id: 0,
         }),
     };
 }
@@ -1834,10 +1811,9 @@ impl PermissionsRequestRemotePermission {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 10,
-            response_id: 11,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 10,
+            method_id: 1,
         }),
     };
 }
@@ -1845,7 +1821,114 @@ impl RequestMethod for PermissionsRequestRemotePermission {
     type Request = truapi::versioned::permissions::RemotePermissionRequest;
     type Response = truapi::versioned::permissions::RemotePermissionResponse;
     type Error = truapi::versioned::permissions::RemotePermissionError;
-    const RESPONSE_VERSIONED: bool = true;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `permissions_authorize_remote_permission` method marker.
+pub struct PermissionsAuthorizeRemotePermission;
+impl PermissionsAuthorizeRemotePermission {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Permissions",
+        method: "authorize_remote_permission",
+        wire_name: "permissions_authorize_remote_permission",
+        request_type: "truapi::versioned::permissions::RemotePermissionRequest",
+        response_type: "truapi::versioned::permissions::RemotePermissionResponse",
+        error_type: Some("truapi::versioned::permissions::RemotePermissionError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 10,
+            method_id: 2,
+        }),
+    };
+}
+impl RequestMethod for PermissionsAuthorizeRemotePermission {
+    type Request = truapi::versioned::permissions::RemotePermissionRequest;
+    type Response = truapi::versioned::permissions::RemotePermissionResponse;
+    type Error = truapi::versioned::permissions::RemotePermissionError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `permissions_authorize_device_permission` method marker.
+pub struct PermissionsAuthorizeDevicePermission;
+impl PermissionsAuthorizeDevicePermission {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Permissions",
+        method: "authorize_device_permission",
+        wire_name: "permissions_authorize_device_permission",
+        request_type: "truapi::versioned::permissions::HostDevicePermissionRequest",
+        response_type: "truapi::versioned::permissions::HostDevicePermissionResponse",
+        error_type: Some("truapi::versioned::permissions::HostDevicePermissionError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 10,
+            method_id: 3,
+        }),
+    };
+}
+impl RequestMethod for PermissionsAuthorizeDevicePermission {
+    type Request = truapi::versioned::permissions::HostDevicePermissionRequest;
+    type Response = truapi::versioned::permissions::HostDevicePermissionResponse;
+    type Error = truapi::versioned::permissions::HostDevicePermissionError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `pocket_list_subscribe` method marker.
+pub struct PocketListSubscribe;
+impl PocketListSubscribe {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Pocket",
+        method: "list_subscribe",
+        wire_name: "pocket_list_subscribe",
+        request_type: "truapi::versioned::pocket::HostPocketListSubscribeRequest",
+        response_type: "truapi::versioned::pocket::HostPocketListSubscribeItem",
+        error_type: Some("truapi::versioned::pocket::HostPocketListSubscribeError"),
+        kind: MethodKind::Subscription,
+        direction: Direction::ProductToHost,
+        required_execution: Some(ExecutionKind::Worker),
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 18,
+            method_id: 0,
+        }),
+    };
+}
+impl SubscriptionMethod for PocketListSubscribe {
+    type Request = truapi::versioned::pocket::HostPocketListSubscribeRequest;
+    type Error = truapi::versioned::pocket::HostPocketListSubscribeError;
+    type Item = truapi::versioned::pocket::HostPocketListSubscribeItem;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `pocket_remove_card` method marker.
+pub struct PocketRemoveCard;
+impl PocketRemoveCard {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Pocket",
+        method: "remove_card",
+        wire_name: "pocket_remove_card",
+        request_type: "truapi::versioned::pocket::HostPocketRemoveCardRequest",
+        response_type: "truapi::versioned::pocket::HostPocketRemoveCardResponse",
+        error_type: Some("truapi::versioned::pocket::HostPocketRemoveCardError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: Some(ExecutionKind::Worker),
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 18,
+            method_id: 1,
+        }),
+    };
+}
+impl RequestMethod for PocketRemoveCard {
+    type Request = truapi::versioned::pocket::HostPocketRemoveCardRequest;
+    type Response = truapi::versioned::pocket::HostPocketRemoveCardResponse;
+    type Error = truapi::versioned::pocket::HostPocketRemoveCardError;
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -1863,12 +1946,9 @@ impl PreimageLookupSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 64,
-            stop_id: 65,
-            interrupt_id: 66,
-            receive_id: 67,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 11,
+            method_id: 0,
         }),
     };
 }
@@ -1892,10 +1972,9 @@ impl PreimageSubmit {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 68,
-            response_id: 69,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 11,
+            method_id: 1,
         }),
     };
 }
@@ -2165,10 +2244,9 @@ impl ResourceAllocationRequest {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 130,
-            response_id: 131,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 12,
+            method_id: 0,
         }),
     };
 }
@@ -2194,10 +2272,9 @@ impl SigningCreateTransaction {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 30,
-            response_id: 31,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 13,
+            method_id: 0,
         }),
     };
 }
@@ -2223,10 +2300,9 @@ impl SigningCreateTransactionWithLegacyAccount {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 32,
-            response_id: 33,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 13,
+            method_id: 1,
         }),
     };
 }
@@ -2252,10 +2328,9 @@ impl SigningSignRawWithLegacyAccount {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 34,
-            response_id: 35,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 13,
+            method_id: 2,
         }),
     };
 }
@@ -2281,10 +2356,9 @@ impl SigningSignPayloadWithLegacyAccount {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 36,
-            response_id: 37,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 13,
+            method_id: 3,
         }),
     };
 }
@@ -2310,10 +2384,9 @@ impl SigningSignRaw {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 114,
-            response_id: 115,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 13,
+            method_id: 4,
         }),
     };
 }
@@ -2339,10 +2412,9 @@ impl SigningSignPayload {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 116,
-            response_id: 117,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 13,
+            method_id: 5,
         }),
     };
 }
@@ -2350,7 +2422,60 @@ impl RequestMethod for SigningSignPayload {
     type Request = truapi::versioned::signing::HostSignPayloadRequest;
     type Response = truapi::versioned::signing::HostSignPayloadResponse;
     type Error = truapi::versioned::signing::HostSignPayloadError;
-    const RESPONSE_VERSIONED: bool = true;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `signing_sign_raw_unwatermarked_deprecated` method marker.
+pub struct SigningSignRawUnwatermarkedDeprecated;
+impl SigningSignRawUnwatermarkedDeprecated {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Signing",
+        method: "sign_raw_unwatermarked_deprecated",
+        wire_name: "signing_sign_raw_unwatermarked_deprecated",
+        request_type: "truapi::versioned::signing::HostSignRawRequest",
+        response_type: "truapi::versioned::signing::HostSignRawResponse",
+        error_type: Some("truapi::versioned::signing::HostSignRawError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 13,
+            method_id: 6,
+        }),
+    };
+}
+impl RequestMethod for SigningSignRawUnwatermarkedDeprecated {
+    type Request = truapi::versioned::signing::HostSignRawRequest;
+    type Response = truapi::versioned::signing::HostSignRawResponse;
+    type Error = truapi::versioned::signing::HostSignRawError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `signing_sign_raw_unwatermarked_deprecated_with_legacy_account` method marker.
+pub struct SigningSignRawUnwatermarkedDeprecatedWithLegacyAccount;
+impl SigningSignRawUnwatermarkedDeprecatedWithLegacyAccount {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Signing",
+        method: "sign_raw_unwatermarked_deprecated_with_legacy_account",
+        wire_name: "signing_sign_raw_unwatermarked_deprecated_with_legacy_account",
+        request_type: "truapi::versioned::signing::HostSignRawWithLegacyAccountRequest",
+        response_type: "truapi::versioned::signing::HostSignRawWithLegacyAccountResponse",
+        error_type: Some("truapi::versioned::signing::HostSignRawWithLegacyAccountError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 13,
+            method_id: 7,
+        }),
+    };
+}
+impl RequestMethod for SigningSignRawUnwatermarkedDeprecatedWithLegacyAccount {
+    type Request = truapi::versioned::signing::HostSignRawWithLegacyAccountRequest;
+    type Response = truapi::versioned::signing::HostSignRawWithLegacyAccountResponse;
+    type Error = truapi::versioned::signing::HostSignRawWithLegacyAccountError;
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -2368,12 +2493,9 @@ impl StatementStoreSubscribe {
         kind: MethodKind::ResultSubscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 56,
-            stop_id: 57,
-            interrupt_id: 58,
-            receive_id: 59,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 14,
+            method_id: 0,
         }),
     };
 }
@@ -2400,10 +2522,9 @@ impl StatementStoreCreateProof {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 60,
-            response_id: 61,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 14,
+            method_id: 1,
         }),
     };
 }
@@ -2431,10 +2552,9 @@ impl StatementStoreCreateProofAuthorized {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 132,
-            response_id: 133,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 14,
+            method_id: 3,
         }),
     };
 }
@@ -2462,10 +2582,9 @@ impl StatementStoreSubmit {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: true,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 62,
-            response_id: 63,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 14,
+            method_id: 2,
         }),
     };
 }
@@ -2491,10 +2610,9 @@ impl SystemHandshake {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 0,
-            response_id: 1,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 1,
+            method_id: 0,
         }),
     };
 }
@@ -2520,10 +2638,9 @@ impl SystemFeatureSupported {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 2,
-            response_id: 3,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 1,
+            method_id: 1,
         }),
     };
 }
@@ -2549,10 +2666,9 @@ impl SystemNavigateTo {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 6,
-            response_id: 7,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 1,
+            method_id: 2,
         }),
     };
 }
@@ -2578,10 +2694,9 @@ impl SystemHostInfo {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 192,
-            response_id: 193,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 1,
+            method_id: 3,
         }),
     };
 }
@@ -2607,10 +2722,9 @@ impl SystemGetProductContext {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Request(RequestFrameIds {
-            request_id: 190,
-            response_id: 191,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 1,
+            method_id: 4,
         }),
     };
 }
@@ -2636,18 +2750,69 @@ impl ThemeSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        sensitive: false,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 104,
-            stop_id: 105,
-            interrupt_id: 106,
-            receive_id: 107,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 15,
+            method_id: 0,
         }),
     };
 }
 impl SubscriptionMethod for ThemeSubscribe {
     type Request = ();
     type Item = truapi::versioned::theme::HostThemeSubscribeItem;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `worker_begin_operation` method marker.
+pub struct WorkerBeginOperation;
+impl WorkerBeginOperation {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Worker",
+        method: "begin_operation",
+        wire_name: "worker_begin_operation",
+        request_type: "truapi::versioned::worker::HostWorkerBeginOperationRequest",
+        response_type: "truapi::versioned::worker::HostWorkerBeginOperationResponse",
+        error_type: Some("truapi::versioned::worker::HostWorkerBeginOperationError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: Some(ExecutionKind::Worker),
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 19,
+            method_id: 0,
+        }),
+    };
+}
+impl RequestMethod for WorkerBeginOperation {
+    type Request = truapi::versioned::worker::HostWorkerBeginOperationRequest;
+    type Response = truapi::versioned::worker::HostWorkerBeginOperationResponse;
+    type Error = truapi::versioned::worker::HostWorkerBeginOperationError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `worker_end_operation` method marker.
+pub struct WorkerEndOperation;
+impl WorkerEndOperation {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Worker",
+        method: "end_operation",
+        wire_name: "worker_end_operation",
+        request_type: "truapi::versioned::worker::HostWorkerEndOperationRequest",
+        response_type: "truapi::versioned::worker::HostWorkerEndOperationResponse",
+        error_type: Some("truapi::versioned::worker::HostWorkerEndOperationError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: Some(ExecutionKind::Worker),
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 19,
+            method_id: 1,
+        }),
+    };
+}
+impl RequestMethod for WorkerEndOperation {
+    type Request = truapi::versioned::worker::HostWorkerEndOperationRequest;
+    type Response = truapi::versioned::worker::HostWorkerEndOperationResponse;
+    type Error = truapi::versioned::worker::HostWorkerEndOperationError;
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
