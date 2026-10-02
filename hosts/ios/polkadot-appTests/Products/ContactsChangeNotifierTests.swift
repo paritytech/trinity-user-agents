@@ -57,6 +57,7 @@ private let bob = Data(repeating: 0xB0, count: 32)
 
 private final class RemovalCounter {
     var count = 0
+    var isEmpty: Bool { count == 0 }
 }
 
 private func makeNotifier() -> (FakeContactDataProviderFactory, RemovalCounter, ContactsChangeNotifier) {
