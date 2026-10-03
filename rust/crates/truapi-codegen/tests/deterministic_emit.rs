@@ -1,59 +1,52 @@
-//! Integration coverage for deterministic Rust and TypeScript emission.
+//! Integration test for deterministic protocol code generation.
 //!
-//! Nightly rustdoc uses a dedicated target directory so concurrent `cargo doc`
-//! invocations cannot replace its input. Nightly Rust is required; install it
-//! with `rustup toolchain install nightly`.
+//! Protocol rustdoc uses a dedicated target directory, separate from concurrent
+//! runtime documentation. The nightly named in `nightly-toolchain` is required;
+//! `TRUAPI_NIGHTLY_TOOLCHAIN` overrides it.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// The dated nightly CI runs, unless `TRUAPI_NIGHTLY_TOOLCHAIN` names another.
 fn nightly_toolchain() -> String {
-    std::env::var("TRUAPI_NIGHTLY_TOOLCHAIN").unwrap_or_else(|_| "nightly".to_string())
+    std::env::var("TRUAPI_NIGHTLY_TOOLCHAIN").unwrap_or_else(|_| {
+        include_str!("../../../../nightly-toolchain")
+            .trim()
+            .to_string()
+    })
 }
 
-/// Path to the rustdoc JSON of `truapi`'s protocol definitions alone, the
-/// input codegen reads the API from, building it on first use.
+/// Build the protocol definitions with the same nightly used by codegen.
 fn produce_rustdoc_json(workspace_root: &Path) -> PathBuf {
-    run_rustdoc_json(
-        workspace_root,
-        &workspace_root
-            .join("target/codegen-test-rustdoc/truapi_--no-default-features_--features_host-api"),
-        "truapi",
-        &["--no-default-features", "--features", "host-api"],
-    )
-}
-
-/// One `cargo +nightly rustdoc --output-format json` invocation, returning
-/// the path to the JSON it wrote.
-fn run_rustdoc_json(
-    workspace_root: &Path,
-    target_dir: &Path,
-    package: &str,
-    cargo_args: &[&str],
-) -> PathBuf {
-    let mut command = Command::new("cargo");
-    command
-        .arg(format!("+{}", nightly_toolchain()))
-        .args(["rustdoc", "-p", package])
-        .args(cargo_args)
-        .arg("--target-dir")
-        .arg(target_dir)
+    let target_dir = workspace_root
+        .join("target/codegen-test-rustdoc/truapi_--no-default-features_--features_host-api");
+    let toolchain = nightly_toolchain();
+    let output = Command::new("cargo")
+        .arg(format!("+{toolchain}"))
+        .args([
+            "rustdoc",
+            "-p",
+            "truapi",
+            "--no-default-features",
+            "--features",
+            "host-api",
+            "--target-dir",
+        ])
+        .arg(&target_dir)
         .args(["--", "-Z", "unstable-options", "--output-format", "json"])
-        .current_dir(workspace_root);
-    let output = command.output().expect(
-        "failed to spawn nightly rustdoc; install the selected nightly toolchain via rustup",
-    );
+        .current_dir(workspace_root)
+        .output()
+        .expect("failed to spawn rustdoc; install the pinned nightly named in nightly-toolchain");
     assert!(
         output.status.success(),
-        "`cargo +nightly rustdoc -p {package}` failed (status {}); nightly toolchain is required.\nstdout:\n{}\nstderr:\n{}",
+        "`cargo +{toolchain} rustdoc -p truapi` failed (status {}); that nightly toolchain is required.\nstdout:\n{}\nstderr:\n{}",
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
-    let json_name = package.replace('-', "_");
-    let json = target_dir.join(format!("doc/{json_name}.json"));
+    let json = target_dir.join("doc/truapi.json");
     assert!(
         json.exists(),
         "rustdoc JSON not found at {} after successful rustdoc invocation",

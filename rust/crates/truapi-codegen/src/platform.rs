@@ -264,15 +264,14 @@ fn collect_api_type_paths(
                             || module.strip_prefix('v').is_some_and(|v| {
                                 !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())
                             }))
+                        && let Some(name) = path.path.last()
                     {
-                        if let Some(name) = path.path.last() {
-                            let public_path = format!("truapi::{module}::{name}");
-                            if paths
-                                .insert(name.clone(), public_path.clone())
-                                .is_some_and(|old| old != public_path)
-                            {
-                                bail!("platform API type `{name}` uses conflicting Rust versions");
-                            }
+                        let public_path = format!("truapi::{module}::{name}");
+                        if paths
+                            .insert(name.clone(), public_path.clone())
+                            .is_some_and(|old| old != public_path)
+                        {
+                            bail!("platform API type `{name}` uses conflicting Rust versions");
                         }
                     }
                 }

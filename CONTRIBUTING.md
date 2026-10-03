@@ -108,6 +108,11 @@ Every target that compiles the `truapi` runtime depends on `check-generated`, so
 missing generated file names itself and points at `make codegen` instead of
 failing inside rustc.
 
+The codegen integration test runs the generator twice to check deterministic
+output. Generated callback contracts are exercised by the Rust/WASM builds,
+TypeScript consumers, and host runtime tests, rather than checked-in copies of
+generated source.
+
 ## Pull requests
 
 Maintainers merge pull requests by squashing all commits and editing the commit message if necessary using the GitHub
