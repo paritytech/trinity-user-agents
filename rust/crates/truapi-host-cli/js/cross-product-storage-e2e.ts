@@ -26,6 +26,11 @@
 //   read-again       dim2.paseo reads once more, so a refusal above cannot be
 //                    the value having expired or gone.
 
+import type { HostContext, TrUApiClient } from "./script-types.d.ts";
+
+declare const truapi: TrUApiClient;
+declare const host: HostContext;
+
 const OWNER = "peopl.paseo";
 const GRANTED = "dim2.paseo";
 const UNTRUSTED = "stash.paseo";
