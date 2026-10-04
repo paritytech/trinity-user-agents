@@ -1540,7 +1540,7 @@ pub enum CoreStorageKey {
     },
     /// Versioned bounded receiving ledger, shared across product executions.
     /// Host product/account deletion must invoke ReceivingService::revoke first.
-    #[codec(index = 13)]
+    #[codec(index = 20)]
     NotificationReceiving,
 }
 
