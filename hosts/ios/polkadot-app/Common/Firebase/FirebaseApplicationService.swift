@@ -263,7 +263,7 @@ private extension FirebaseApplicationService {
                 #if UNSTABLE
                     "unstable"
                 #elseif NIGHTLY
-                    "nightly"
+                    "safetynet"
                 #else
                     "release"
                 #endif
