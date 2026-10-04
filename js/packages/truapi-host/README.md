@@ -168,6 +168,13 @@ only after the exact verified product is ready in the correct unlocked account
 and environment. It must never silently switch accounts or navigate `event.route`
 as a URL. That route is an opaque product token.
 
+Call `setActiveAccount(account, environment, genesis)` only from the host's current,
+authenticated account selection, before updating or binding product authority.
+Fence asynchronous login callbacks and stale tabs before this call. Replacing
+that scope durably revokes mismatched authorities, including products no longer
+open. Passing `undefined` pauses authority without discarding consent; do not use
+it for ordinary page/product closure, suspension, or a transient network outage.
+
 Read `getAuthority(productId)` to recover the durable generation. It returns the
 canonical authority plus `revoked`; reuse a live matching scope's generation
 across reloads, and increment it for account/artifact replacement or explicit
@@ -177,8 +184,10 @@ scope, then `bindExecution` with an immutable snapshot. Forward page-core
 the callback product ID against the trusted execution closure. The worker calls
 canonical `commandForExecution`, including its post-consent scope recheck.
 Call execution `ready()` once the verified product is ready and `close()` on
-suspension. Suspension/lock retains enrollment; logout must await local `revoke`
-before forgetting identity. `revoke` never waits for relay deletion.
+suspension. Suspension/lock retains enrollment. Explicit logout/account removal
+must await local `revokeAll()` before forgetting identity; it covers closed
+products and retains durable remote-deletion intent. Use scoped `revoke(productId)`
+for artifact replacement or removing one product. Neither waits for relay deletion.
 
 Call `enableWebPush(vapidPublicKey)` directly from a user gesture. Obtain the
 trusted relay's VAPID key from `GET /v2/config`, not a product-provided URL.

@@ -22,9 +22,14 @@ export interface BrowserReceivingAuthorityState extends ReceivingAuthority {
 export interface BrowserReceivingClient {
   getAuthority(productId: string): Promise<BrowserReceivingAuthorityState | undefined>;
   updateAuthority(authority: ReceivingAuthority): Promise<void>;
+  /** Update only from the current trusted host selection, never a product claim.
+   * Undefined pauses; closing a product/page must not call this method. */
+  setActiveAccount(account: string | undefined, environment: string, genesis: string): Promise<void>;
   bindExecution(authority: ReceivingAuthority): Promise<BrowserReceivingExecution>;
   enableWebPush(vapidPublicKey: string): Promise<void>;
   revoke(productId: string): Promise<void>;
+  /** Explicit host logout/erase, including products with no open execution. */
+  revokeAll(): Promise<void>;
   refresh(): Promise<void>;
   close(): void;
 }
@@ -70,6 +75,7 @@ export function createBrowserReceivingClient(options: BrowserReceivingClientOpti
   return {
     getAuthority: (productId: string) => request<BrowserReceivingAuthorityState | undefined>("getAuthority", productId),
     updateAuthority: (authority: ReceivingAuthority) => request<void>("authority", structuredClone(authority)),
+    setActiveAccount: (account, environment, genesis) => request<void>("activeAccount", { account, environment, genesis }),
     async bindExecution(authority: ReceivingAuthority): Promise<BrowserReceivingExecution> {
       const snapshot = structuredClone(authority);
       let id = await request<string>("bind", snapshot);
@@ -121,6 +127,7 @@ export function createBrowserReceivingClient(options: BrowserReceivingClientOpti
       finally { await request("refresh"); }
     },
     revoke: (productId: string) => request<void>("revoke", productId),
+    revokeAll: () => request<void>("revokeAll"),
     refresh: () => request<void>("refresh"),
     close() {
       for (const id of executions) void request("unbind", { id }).catch(() => {});

@@ -28,6 +28,7 @@ export interface BrowserReceivingWorkerOptions {
 }
 
 interface AuthorityEntry { authority: ReceivingAuthority; revoked: boolean }
+interface AccountScope { account: string; environment: string; genesis: string }
 interface Execution { authority: ReceivingAuthority; clientId: string; ready: boolean }
 interface Activation { authority: ReceivingAuthority; revision: bigint; eventId: string; expiresAt: bigint }
 interface Wake { v: 2; deviceId: string; routeToken: string; messageId: string; revision: number }
@@ -37,6 +38,10 @@ function sameScope(left: ReceivingAuthority, right: ReceivingAuthority): boolean
   return left.productId === right.productId && left.account === right.account &&
     left.environment === right.environment && left.artifact === right.artifact &&
     left.genesis === right.genesis && left.generation === right.generation;
+}
+
+function sameAccount(scope: AccountScope, authority: ReceivingAuthority): boolean {
+  return scope.account === authority.account && scope.environment === authority.environment && scope.genesis === authority.genesis;
 }
 
 class ReceiverDatabase {
@@ -132,6 +137,8 @@ export function installBrowserReceivingWorker(options: BrowserReceivingWorkerOpt
   async function liveAuthority(product: string): Promise<ReceivingAuthority | undefined> {
     const entry = await database.get<AuthorityEntry>(`authority:${product}`);
     if (!entry || entry.revoked) return undefined;
+    const account = await database.get<AccountScope>("activeAccount");
+    if (!account || !sameAccount(account, entry.authority)) return undefined;
     const destination = await database.get<PushSubscriptionJSON>("destination");
     return { ...entry.authority, osPermission: Notification.permission === "granted",
       transportReady: Boolean(destination?.endpoint) };
@@ -337,8 +344,52 @@ export function installBrowserReceivingWorker(options: BrowserReceivingWorkerOpt
         const entry = await database.get<AuthorityEntry>(`authority:${String(value)}`);
         return entry ? { ...entry.authority, revoked: entry.revoked } : undefined;
       }
+      case "activeAccount": {
+        if (!value || (value.account !== undefined && (typeof value.account !== "string" || !/^[0-9a-f]{64}$/.test(value.account))) ||
+            typeof value.environment !== "string" || value.environment.length < 1 || value.environment.length > 128 ||
+            typeof value.genesis !== "string" || !/^[0-9a-f]{64}$/.test(value.genesis)) throw new Error("invalid receiving account scope");
+        const account: AccountScope | undefined = value.account === undefined ? undefined
+          : { account: value.account, environment: value.environment, genesis: value.genesis };
+        // Commit this fence without waiting behind an outstanding consent prompt.
+        await database.put("activeAccount", account);
+        for (const [id, execution] of executions) {
+          if (!account || !sameAccount(account, execution.authority)) executions.delete(id);
+        }
+        if (account) {
+          for (const [key, entry] of await database.entries<AuthorityEntry>("authority:")) {
+            if (entry.revoked || sameAccount(account, entry.authority)) continue;
+            await database.update<AuthorityEntry>(key, current => current && !sameAccount(account, current.authority)
+              ? { ...current, revoked: true } : current);
+            await withCore(async receiver => {
+              const current = await database.get<AuthorityEntry>(key);
+              if (!current?.revoked) return;
+              await receiver.receivingRevoke(entry.authority.productId);
+              await revokeEnrollments(entry.authority.productId);
+            });
+          }
+        }
+        return;
+      }
+      case "revokeAll": {
+        // Durable host-global fence comes first; absent products are included.
+        await database.put("activeAccount", undefined);
+        executions.clear();
+        const entries = await database.entries<AuthorityEntry>("authority:");
+        for (const [key] of entries) {
+          await database.update<AuthorityEntry>(key, current => current ? { ...current, revoked: true } : current);
+        }
+        await withCore(async receiver => {
+          for (const [, entry] of entries) {
+            await receiver.receivingRevoke(entry.authority.productId);
+            await revokeEnrollments(entry.authority.productId);
+          }
+        });
+        return;
+      }
       case "authority": {
         const authority = ReceivingAuthority.dec(ReceivingAuthority.enc(value));
+        const account = await database.get<AccountScope>("activeAccount");
+        if (!account || !sameAccount(account, authority)) throw new Error("receiving account is not active");
         let replaced = false;
         // This transaction deliberately does not wait behind a consent prompt. Core rechecks it after consent.
         await database.update<AuthorityEntry>(`authority:${authority.productId}`, previous => {
