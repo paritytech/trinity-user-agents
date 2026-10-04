@@ -119,6 +119,16 @@ public protocol HostBridge: NativeChatFilesHost {
     /// Cancel a previously scheduled notification id.
     func cancelNotification(id: UInt32) throws
 
+    /// Resident bridge: current host scope even with products closed.
+    /// Product bridge: immutable verified artifact/account scope captured at execution creation.
+    func receiverAuthority(productId: String) async throws -> ReceivingAuthority?
+    /// Request receiving consent separately from OS notification permission.
+    func receiverConsent(authority: ReceivingAuthority, watches: [ReceivingWatch]) async throws -> Bool
+    /// Wake synchronization without waiting for a provider or network.
+    func receiverChanged() async throws
+    /// Forward to the sole receiving owner, or return nil to use the native engine.
+    func receiverCommand(productId: String, action: UInt8, payload: Data) async throws -> Data?
+
     /// Prompt for a device-level permission `product` requested on the main
     /// actor, suspending until the user decides. Preserve the approval lifetime.
     func devicePermission(
@@ -361,6 +371,14 @@ public extension HostBridge {
     func onCoreLog(marker: String, detail: String) {}
     func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32 { 0 }
     func cancelNotification(id: UInt32) throws {}
+    func receiverAuthority(productId: String) async throws -> ReceivingAuthority? { nil }
+    func receiverConsent(authority: ReceivingAuthority, watches: [ReceivingWatch]) async throws -> Bool {
+        throw HostRejection.rejected(reason: "background receiving unsupported")
+    }
+    func receiverChanged() async throws {
+        throw HostRejection.rejected(reason: "background receiving unsupported")
+    }
+    func receiverCommand(productId: String, action: UInt8, payload: Data) async throws -> Data? { nil }
     func authStateChanged(state: AuthState) {}
     func chainConnect(genesisHash: Data) throws -> UInt32? { nil }
     func allowedHopEndpoints(bulletinGenesisHash: Data) async throws -> [String] { [] }
@@ -646,6 +664,24 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     func cancelNotification(id: UInt32) throws {
         try withHostRejection {
             try bridge.cancelNotification(id: id)
+        }
+    }
+
+    func receiverAuthority(productId: String) async throws -> ReceivingAuthority? {
+        try await withHostRejection { try await bridge.receiverAuthority(productId: productId) }
+    }
+
+    func receiverConsent(authority: ReceivingAuthority, watches: [ReceivingWatch]) async throws -> Bool {
+        try await withHostRejection { try await bridge.receiverConsent(authority: authority, watches: watches) }
+    }
+
+    func receiverChanged() async throws {
+        try await withHostRejection { try await bridge.receiverChanged() }
+    }
+
+    func receiverCommand(productId: String, action: UInt8, payload: Data) async throws -> Data? {
+        try await withHostRejection {
+            try await bridge.receiverCommand(productId: productId, action: action, payload: payload)
         }
     }
 
@@ -1021,6 +1057,62 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     public func disconnect() {
         inner.disconnect()
+    }
+
+    /// All durable registrations; inspect `syncPending` before synchronizing.
+    public func receivingPending() async throws -> [ReceivingRegistration] {
+        try await inner.receivingPending()
+    }
+
+    public func receivingSynchronized(productId: String, revision: UInt64) async throws -> Bool {
+        try await inner.receivingSynchronized(productId: productId, revision: revision)
+    }
+
+    public func receivingIngest(
+        productId: String, revision: UInt64, watchId: String,
+        actualGenesis: String, actualChannel: String, actualTopics: [String], frame: Data
+    ) async throws -> [ReceivingEvent] {
+        try await inner.receivingIngest(productId: productId, revision: revision, watchId: watchId,
+                                        actualGenesis: actualGenesis, actualChannel: actualChannel, actualTopics: actualTopics, frame: frame)
+    }
+
+    public func receivingIngestStatement(
+        productId: String, revision: UInt64, watchId: String,
+        actualGenesis: String, statement: Data
+    ) async throws -> [ReceivingEvent] {
+        try await inner.receivingIngestStatement(productId: productId, revision: revision, watchId: watchId,
+                                                 actualGenesis: actualGenesis, statement: statement)
+    }
+
+    /// Reserve a display only after the core rechecks current authority and receipts.
+    public func receivingPrepareDisplay(productId: String, revision: UInt64, eventId: String) async throws -> ReceivingEvent? {
+        try await inner.receivingPrepareDisplay(productId: productId, revision: revision, eventId: eventId)
+    }
+
+    /// Read-only authorization before opening a verified product, with sequence zero.
+    public func receivingValidateActivation(productId: String, revision: UInt64, eventId: String) async throws -> ReceivingEvent? {
+        try await inner.receivingValidateActivation(productId: productId, revision: revision, eventId: eventId)
+    }
+
+    public func receivingConfirmDisplay(productId: String, revision: UInt64, eventId: String) async throws {
+        try await inner.receivingConfirmDisplay(productId: productId, revision: revision, eventId: eventId)
+    }
+
+    /// Clear only an explicitly failed display; an unknown outcome remains pending.
+    public func receivingCancelDisplay(productId: String, revision: UInt64, eventId: String) async throws {
+        try await inner.receivingCancelDisplay(productId: productId, revision: revision, eventId: eventId)
+    }
+
+    public func receivingActivate(productId: String, revision: UInt64, eventId: String) async throws -> ReceivingEvent? {
+        try await inner.receivingActivate(productId: productId, revision: revision, eventId: eventId)
+    }
+
+    public func receivingRevoke(productId: String) async throws {
+        try await inner.receivingRevoke(productId: productId)
+    }
+
+    public func receivingMarkTransportChanged(productId: String) async throws {
+        try await inner.receivingMarkTransportChanged(productId: productId)
     }
 
     /// Take one reference on the product's worker for a modality holder that

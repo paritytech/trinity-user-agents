@@ -118,6 +118,12 @@ pub mod latest {
         Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
         StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
         TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature,
+        HostNotificationReceiverStatus, HostNotificationReceivingError,
+        HostNotificationReceiptResult,
+        HostNotificationReplaceReceiverRequest, HostNotificationDisableReceiverRequest,
+        HostNotificationRecordReceiptRequest, HostNotificationReceiverEventsRequest,
+        HostNotificationAcknowledgeReceiverEventRequest, ReceivingWatch, ReceivingEvent,
+        ReceivingEventKind, ReceivingReceiptKind,
     };
     pub use crate::v02::{
         HostNativeChatAcknowledgment, HostNativeChatAttachment, HostNativeChatAttachmentKind,

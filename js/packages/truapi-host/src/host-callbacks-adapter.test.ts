@@ -12,6 +12,9 @@ import {
   HostPushNotificationResponse,
   HostThemeSubscribeItem,
   RemotePermissionRequest,
+  ReceivingWatch,
+  ReceivingReceiptKind,
+  HostNotificationReceiptResult,
 } from "@parity/truapi";
 import type {
   GenericError,
@@ -29,6 +32,7 @@ import {
   NativeChatPickedFile,
   NativeCoinageRequest,
   NativeCoinageResponse,
+  ReceivingAuthority,
   PermissionDecision,
   PresentedContactProfile,
   ProductContext,
@@ -36,6 +40,8 @@ import {
   UserConfirmationReview,
 } from "./generated/host-callbacks.js";
 import { makeHostCallbacks, settle } from "./test-support.js";
+import { Vector } from "@parity/truapi/scale";
+import { createNotificationReceiverCallbacks } from "./runtime.js";
 
 // The generated `createWasmRawCallbacks` adapter speaks the symmetric SCALE
 // byte boundary: codec-typed requests arrive as `Uint8Array` and are decoded
@@ -65,6 +71,70 @@ it("preserves one-use permission decisions across the WASM callback", async () =
       reviews: [review],
     });
   }
+});
+
+it("keeps receiving authority host-owned and preserves forever mute across SCALE", async () => {
+  const authority: ReceivingAuthority = {
+    productId: "playground.dot", account: "11".repeat(32), environment: "paseo",
+    artifact: "22".repeat(32), genesis: "33".repeat(32), generation: 7n,
+    osPermission: true, transportReady: false,
+  };
+  const watches: ReceivingWatch[] = [{
+    id: "group", genesis: authority.genesis, channel: "44".repeat(32),
+    topics: ["55".repeat(32)], senders: ["66".repeat(32)],
+    expiresAt: 1_800_000_000_000n, mutedUntil: (1n << 64n) - 1n, route: "/group",
+  }];
+  const calls: unknown[] = [];
+  const raw = createWasmRawCallbacks(makeHostCallbacks({
+    notifications: {
+      receiverAuthority: async (productId) => {
+        calls.push(productId);
+        return authority;
+      },
+      receiverConsent: async (scope, policies) => {
+        calls.push({ scope, policies });
+        return false;
+      },
+      receiverCommand: async (productId, action, payload) => {
+        calls.push({ productId, action, payload });
+        throw new Error("owner unavailable");
+      },
+    },
+  }));
+  const encoded = await raw.receiverAuthority("playground.dot");
+  expect(ReceivingAuthority.dec(encoded!)).toEqual(authority);
+  expect(await raw.receiverConsent(ReceivingAuthority.enc(authority), Vector(ReceivingWatch).enc(watches))).toBe(false);
+  const payload = new Uint8Array([1, 2]);
+  await expect(raw.receiverCommand("playground.dot", 4, payload)).rejects.toThrow("owner unavailable");
+  expect(calls).toEqual([
+    "playground.dot", { scope: authority, policies: watches },
+    { productId: "playground.dot", action: 4, payload },
+  ]);
+});
+
+it("does not claim receiving support when callbacks are absent", async () => {
+  const raw = createWasmRawCallbacks(makeHostCallbacks());
+  expect(await raw.receiverAuthority("playground.dot")).toBeUndefined();
+  expect(await raw.receiverCommand("playground.dot", 2, new Uint8Array())).toBeUndefined();
+  await expect(raw.receiverChanged()).rejects.toThrow("background receiving unsupported");
+  const standalone = createNotificationReceiverCallbacks({
+    readReceivingState: () => undefined,
+    writeReceivingState: () => { throw new Error("storage unavailable"); },
+  });
+  expect(await standalone.receiverAuthority("playground.dot")).toBeUndefined();
+  await expect(standalone.receiverConsent(new Uint8Array(), new Uint8Array())).rejects.toThrow("background receiving unsupported");
+  await expect(standalone.receiverChanged()).rejects.toThrow("background receiving unsupported");
+  await expect(standalone.writeReceivingState(new Uint8Array())).rejects.toThrow("storage unavailable");
+});
+
+it("preserves confirmed versus pending display in the receipt wire payload", () => {
+  expect(ReceivingReceiptKind.enc("Foreground")).toEqual(new Uint8Array([0]));
+  expect(ReceivingReceiptKind.enc("Read")).toEqual(new Uint8Array([1]));
+  expect(ReceivingReceiptKind.enc("Displayed")).toEqual(new Uint8Array([2]));
+  expect(HostNotificationReceiptResult.enc({ displayed: false, displayPending: true }))
+    .toEqual(new Uint8Array([0, 1]));
+  expect(HostNotificationReceiptResult.dec(new Uint8Array([1, 0])))
+    .toEqual({ displayed: true, displayPending: false });
 });
 
 const defaultTheme = (variant: ThemeVariant): HostThemeSubscribeItemValue => ({

@@ -202,6 +202,16 @@ navigation and requires `Notifications` for push delivery. Hosts preserve the us
 `Deny` choice; Rust owns one-use grants for Rust-backed executions. Android permission prompts belong to one request and
 close when it finishes or is cancelled, including cancellation while the app is backgrounded.
 
+Background receiving appends actions 2–7 to Notifications without changing send/cancel.
+The resident Rust service owns consent, revision-fenced watches, authenticated delivery,
+receipts and activation; each product execution supplies an immutable verified authority.
+The browser's single-writer `WasmNotificationReceiver` uses the same service without
+starting a wallet or product runtime. Enrollment needs a host receiving adapter and
+separate consent; unsupported hosts report that explicitly. Logout revokes locally
+without waiting for a relay. See the [host receiving contract](js/packages/truapi-host/README.md)
+and [product notification helpers](js/packages/truapi/README.md). These hooks do not
+establish OS/provider delivery guarantees or replace the separate PolkaVM runtime.
+
 The shared Rust core asks blessed products (`peopl`, `dim2` and `stash`,
 on every supported network) only for device permissions and legacy-account signing.
 All other operations it handles bypass permission prompts and recorded decisions.
