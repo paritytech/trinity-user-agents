@@ -40,7 +40,6 @@ import {
   UserConfirmationReview,
 } from "./generated/host-callbacks.js";
 import { makeHostCallbacks, settle } from "./test-support.js";
-import { Vector } from "@parity/truapi/scale";
 import { createNotificationReceiverCallbacks } from "./runtime.js";
 
 // The generated `createWasmRawCallbacks` adapter speaks the symmetric SCALE
@@ -49,6 +48,11 @@ import { createNotificationReceiverCallbacks } from "./runtime.js";
 // `Uint8Array`. Primitives, strings and byte blobs pass through unchanged.
 
 const GENESIS = `0x${"11".repeat(32)}` as `0x${string}`;
+
+it("keeps receiving state at its native SCALE slot rather than another host capability's slot", () => {
+  expect(CoreStorageKey.enc({ tag: "NotificationReceiving" })).toEqual(new Uint8Array([20]));
+  expect(CoreStorageKey.dec(new Uint8Array([20])).tag).toBe("NotificationReceiving");
+});
 
 it("preserves one-use permission decisions across the WASM callback", async () => {
   const review = {

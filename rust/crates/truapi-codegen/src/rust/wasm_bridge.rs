@@ -881,8 +881,10 @@ mod tests {
     use crate::platform::{PlatformParam, PlatformReturn};
 
     fn context() -> BridgeCtx<'static> {
+        static API_TYPE_PATHS: BTreeMap<String, String> = BTreeMap::new();
         BridgeCtx {
             api_types: BTreeMap::new(),
+            api_type_paths: &API_TYPE_PATHS,
             codec_types: BTreeSet::new(),
             local_types: ["ReceivingAuthority"].into_iter().collect(),
             local_codec_types: ["ReceivingAuthority"].into_iter().collect(),

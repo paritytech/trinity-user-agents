@@ -373,10 +373,10 @@ public extension HostBridge {
     func cancelNotification(id: UInt32) throws {}
     func receiverAuthority(productId: String) async throws -> ReceivingAuthority? { nil }
     func receiverConsent(authority: ReceivingAuthority, watches: [ReceivingWatch]) async throws -> Bool {
-        throw HostRejection.rejected(reason: "background receiving unsupported")
+        throw HostRejection.Rejected(reason: "background receiving unsupported")
     }
     func receiverChanged() async throws {
-        throw HostRejection.rejected(reason: "background receiving unsupported")
+        throw HostRejection.Rejected(reason: "background receiving unsupported")
     }
     func receiverCommand(productId: String, action: UInt8, payload: Data) async throws -> Data? { nil }
     func authStateChanged(state: AuthState) {}

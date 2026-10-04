@@ -47,6 +47,8 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 - Message catch-up receipts preserve an already queued notification activation until the product explicitly acknowledges its sequence.
 - Generated WASM bridges preserve owned `String` parameters instead of emitting unsized `str` arguments.
+- Generated host tagged-union codecs preserve explicit SCALE discriminants, including receiving storage slot 20 when slots 13–19 are absent from the generic runtime.
+- Swift's unsupported receiving callbacks use the generated native rejection case.
 
 - persist typed Statement Store allowance approvals and denials per product and
   account selector for implicit, idempotent provisioning; explicit requests for
