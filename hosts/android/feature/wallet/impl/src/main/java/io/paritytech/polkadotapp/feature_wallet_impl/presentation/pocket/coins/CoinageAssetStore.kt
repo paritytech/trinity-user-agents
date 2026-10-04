@@ -13,9 +13,9 @@ import java.util.concurrent.Executors
  * Everything the coin renderer draws with, decoded once: the meshes, the struck-relief atlas, the studio
  * environment, the shaders and the constants the material reads.
  *
- * All of it is exported by `paritytech/coinage-viz` (`npm run export:native`, which writes
- * `public/native/assets`) and vendored under `assets/coinage`. The constants arrive as data rather than as
- * code, so a material change is a file change here.
+ * All of it is exported by the maintainers' internal coinage reference implementation and vendored under
+ * `assets/coinage`. The constants arrive as data rather than as code, so a material change is a file change
+ * here.
  *
  * That project has done its job and nothing regenerates these files. Changing a coin face, a shape or the
  * studio means reproducing the export, and it needs four things that were never upstreamed. Written down

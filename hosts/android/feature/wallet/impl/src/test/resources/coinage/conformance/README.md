@@ -1,3 +1,3 @@
-Conformance vectors copied verbatim from `paritytech/coinage-viz`
-(`public/native/assets/conformance/`). Regenerate them there with
-`npm run export:native`; do not hand-edit them here.
+Conformance vectors copied verbatim from the maintainers' internal
+coinage reference implementation. Regenerated and re-exported by the
+maintainers; do not hand-edit them here.

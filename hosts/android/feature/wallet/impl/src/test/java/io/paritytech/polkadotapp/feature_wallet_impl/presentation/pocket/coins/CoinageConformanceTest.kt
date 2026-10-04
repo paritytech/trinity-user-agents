@@ -7,8 +7,9 @@ import org.junit.Test
 import kotlin.math.abs
 
 /**
- * Checks the ported layout and motion against the vectors `coinage-viz` exports, so the strip on the phone is
- * the strip in the reference rather than something that merely resembles it.
+ * Checks the ported layout and motion against the vectors the maintainers' internal coinage reference
+ * implementation exports, so the strip on the phone is the strip in the reference rather than something that
+ * merely resembles it.
  *
  * The vectors are vendored verbatim under `resources/coinage/conformance` and shared with the iOS port, so a
  * drift between the two platforms shows up here rather than on a screen.

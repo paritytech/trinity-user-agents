@@ -10,8 +10,8 @@ import kotlin.math.sqrt
 /**
  * The summary strip: every coin at a fixed height, in a fixed width.
  *
- * Ported line for line from `src/layout/strip.js` in the `coinage-viz` reference and checked against its
- * conformance vectors, so the two stay the same strip.
+ * Ported line for line from the strip layout in the maintainers' internal coinage reference implementation
+ * and checked against its conformance vectors, so the two stay the same strip.
  *
  * As coins are added the strip gives ground in a fixed order. First the margins close, from ten points
  * toward four, which is why ten coins keep their full margin and nothing jumps at the coin that first does
