@@ -43,6 +43,14 @@ import { createNotificationReceiverCallbacks } from "./runtime.js";
 
 const GENESIS = `0x${"11".repeat(32)}` as `0x${string}`;
 
+it("keeps receiving state at its native SCALE slot rather than a reserved storage slot", () => {
+  expect(CoreStorageKey.enc({ tag: "NotificationReceiving" })).toEqual(new Uint8Array([20]));
+  expect(CoreStorageKey.dec(new Uint8Array([20])).tag).toBe("NotificationReceiving");
+  for (let index = 13; index < 20; index++) {
+    expect(() => CoreStorageKey.dec(new Uint8Array([index]))).toThrow();
+  }
+});
+
 it("preserves one-use permission decisions across the WASM callback", async () => {
   const review = {
     tag: "IdentityDisclosure" as const,
