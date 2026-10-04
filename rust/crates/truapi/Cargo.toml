@@ -47,6 +47,7 @@ runtime = [
     "dep:blake2b_simd",
     "dep:sp-crypto-hashing",
     "dep:schnorrkel",
+    "dep:ed25519-dalek",
     "dep:substrate-bip39",
     "dep:zeroize",
     "dep:getrandom",
@@ -110,6 +111,7 @@ nanoid = { workspace = true, optional = true }
 blake2b_simd = { workspace = true, optional = true }
 sp-crypto-hashing = { workspace = true, optional = true }
 schnorrkel = { workspace = true, features = ["alloc", "getrandom"], optional = true }
+ed25519-dalek = { workspace = true, optional = true }
 substrate-bip39 = { workspace = true, optional = true }
 zeroize = { workspace = true, features = ["alloc", "derive"], optional = true }
 getrandom = { workspace = true, features = ["js"], optional = true }

@@ -41,6 +41,81 @@ Request methods take the inner request value directly. The transport adds the wi
 Requests reject with `RequestTimeoutError` when no matching response arrives within 120 seconds.
 Pass `{ requestTimeoutMs }` to `createTransport` to select a different positive deadline.
 
+## Authenticated notification envelopes
+
+`@parity/truapi/notification-envelope` provides synchronous Ed25519/SHA-256 helpers
+for browsers, Node and Bun without requiring Web Crypto:
+
+- `signNotificationHeader(metadata, opaqueBytes, seed32)` signs a header that an
+  application can add to its existing standard Envelope as a `truapiNotification`
+  text assertion with `JSON.stringify(header)`. Existing application assertions and
+  byte leaves need not change.
+- `signNotificationEnvelope(metadata, opaqueBytes, seed32)` emits a minimal standard
+  carrier containing the byte leaf and its reserved assertion.
+- `verifyNotificationEnvelopes(frame, actualGenesis, actualChannel, actualTopics, nowMs)`
+  returns all eligible `{ header, carrier }` candidates. Invalid candidate metadata
+  or proofs are omitted; malformed/ambiguous containers throw.
+- `authenticateNotificationEnvelopes(frame, actualGenesis, actualChannel, actualTopics)`
+  verifies stored history without current-time notification eligibility.
+- `authenticateNotificationHeader(json, opaqueBytes)` authenticates optional stored
+  metadata directly, without constructing or copying a carrier. It checks strict
+  JSON, static bounds, byte digest and signature only. It establishes **neither
+  actual source nor current-time eligibility, enrollment or sender approval**.
+  Hosts and relays must use the whole-carrier verification APIs above.
+- The singular `verifyNotificationEnvelope`, `authenticateNotificationEnvelope` and
+  `decodeNotificationEnvelope` require exactly one candidate. Decode does not verify
+  authenticity. `encodeNotificationEnvelope(header, opaqueBytes)` only validates
+  structure. `notificationSigningBytes(header)` exposes the signed tuple.
+
+Callers must enforce product binding, enrollment, approved senders, mute and replay
+policy. A watch's topics must be a subset of the **signed header topics**, which
+must themselves be present in the actual source topics. Unsigned extra actual topics
+never broaden the authenticated watch scope. Genesis and channel match exactly.
+
+The container uses the base [Gordian Envelope grammar](https://datatracker.ietf.org/doc/html/draft-mcnally-envelope-12#section-3):
+outer CBOR tag 200, leaf tag 201, node arrays and single-entry assertion maps.
+The parser traverses standard nodes without interpreting application predicates.
+Each reserved assertion contains strict JSON text; its `ciphertextDigest` must
+resolve to a byte leaf somewhere in the same container. Byte leaves are indexed by
+SHA-256 once per traversal, so a nested assertion can authenticate an existing
+opaque leaf without decorating or copying it. Application fields unrelated to
+the reserved assertion are not authenticated by this header.
+
+The notification profile accepts canonical definite-length integer-only dCBOR
+leaves, NFC text, sorted map keys and digest-sorted unique node assertions.
+Floats and unsupported Envelope extensions are rejected. Limits are 256 KiB for
+the complete frame (`MAX_FULL_FRAME_BYTES`), 240 KiB per referenced byte leaf,
+16 KiB per JSON header, 32 candidates globally, 128 assertions per node,
+4096 CBOR items and depth 16. Duplicate reserved assertions on one node are rejected.
+`isNotificationEnvelope(frame)` performs bounded structural traversal, returning
+false for valid unmarked base Envelopes and non-Envelope bytes, and true when a
+reserved assertion exists even if its JSON/proof is invalid. Malformed containers
+throw: callers must drop them, never fall back to another authentication path.
+Returned byte witnesses are copied to prevent later input mutation changing them.
+
+Header fields are exactly `v`, `product`, `genesis`, `channel`, `topics`, `eventId`,
+`createdAt`, `expiresAt`, `ciphertextDigest`, `senderKey` and `signature`.
+Duplicate, missing and unknown fields are rejected. Version is 1; product matches
+`[a-z0-9._-]{1,128}`. Hashes, channel, topics and raw keys are 32-byte lowercase hex
+without `0x`; signatures are 64-byte lowercase hex. Signed topics are ordered and
+distinct, with one to four entries. Safe-integer epoch-millisecond timestamps have
+exclusive expiry, a maximum 24-hour lifetime and a maximum 60-second future skew.
+JSON integer spellings cannot contain a minus sign, decimal point or exponent.
+
+The Ed25519 acceptance profile matches Rust's `ed25519-dalek::verify_strict` with
+canonical point encodings: valid canonical A and R, scalar S below the subgroup
+order, no small-order A or R, and the exact uncofactored equation
+`R = [S]B - [SHA512(R || A || signingBytes) mod L]A`. Mixed-order points are not
+blanket-rejected if they satisfy this exact equation. The JS helper uses Noble's
+point/scalar/hash primitives directly because Noble's `verify`, even with
+`zip215: false`, checks a cofactored equation and therefore has different acceptance.
+
+Signed bytes are whitespace-free UTF-8 JSON of
+`["truapi:notification:v1",v,product,genesis,channel,topics,eventId,createdAt,expiresAt,ciphertextDigest,senderKey]`.
+This matches the Rust runtime verifier. Signing metadata omits `v`,
+`ciphertextDigest`, `senderKey` and `signature`, which the helper derives.
+No product codec, decryption key or notification permission is provided.
+
 ## Subscriptions
 
 Streaming methods return a small Observable-compatible object:

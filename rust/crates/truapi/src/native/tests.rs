@@ -265,6 +265,19 @@ impl EventCallbacks {
 
 #[async_trait::async_trait]
 impl HostCallbacks for EventCallbacks {
+    async fn receiver_authority(&self, _: String) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection> {
+        Ok(None)
+    }
+    async fn receiver_consent(&self, _: crate::platform::ReceivingAuthority, _: Vec<crate::latest::ReceivingWatch>) -> Result<bool, HostRejection> {
+        Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+    }
+    async fn receiver_changed(&self) -> Result<(), HostRejection> {
+        Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+    }
+    async fn receiver_command(&self, _: String, _: u8, _: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+        Ok(None)
+    }
+
     fn on_core_log(&self, marker: String, _detail: String) {
         self.logs.lock().expect("logs mutex poisoned").push(marker);
     }
@@ -1914,6 +1927,19 @@ fn start_ws_bridge_twice_returns_already_running() {
     struct Noop;
     #[async_trait::async_trait]
     impl HostCallbacks for Noop {
+        async fn receiver_authority(&self, _: String) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection> {
+            Ok(None)
+        }
+        async fn receiver_consent(&self, _: crate::platform::ReceivingAuthority, _: Vec<crate::latest::ReceivingWatch>) -> Result<bool, HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_changed(&self) -> Result<(), HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_command(&self, _: String, _: u8, _: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(None)
+        }
+
         async fn confirm_permission(
             &self,
             _review: UserConfirmationReview,
@@ -2089,6 +2115,19 @@ fn pending_permission_decision_does_not_stall_bridge() {
 
     #[async_trait::async_trait]
     impl HostCallbacks for GatedPermissionCallbacks {
+        async fn receiver_authority(&self, _: String) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection> {
+            Ok(None)
+        }
+        async fn receiver_consent(&self, _: crate::platform::ReceivingAuthority, _: Vec<crate::latest::ReceivingWatch>) -> Result<bool, HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_changed(&self) -> Result<(), HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_command(&self, _: String, _: u8, _: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(None)
+        }
+
         async fn confirm_permission(
             &self,
             _review: UserConfirmationReview,

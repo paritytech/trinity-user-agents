@@ -4,6 +4,7 @@
 // these interfaces so the worker can name it in a statically analysable import.
 
 import type { PermissionAuthorizationRuntime } from "./worker-permission-authorization.js";
+import type { RawNotificationReceiver, RawReceivingRuntime } from "./runtime.js";
 
 /** Cancellable handle on one live render stream inside the core. */
 export interface WorkerRendererSubscription {
@@ -46,7 +47,7 @@ export interface WorkerProductRuntime {
 export type WorkerTransition = "Start" | "Stop";
 
 /** The long-lived pairing-host runtime product cores are created from. */
-export interface WorkerPairingHostRuntime extends PermissionAuthorizationRuntime {
+export interface WorkerPairingHostRuntime extends PermissionAuthorizationRuntime, RawReceivingRuntime {
   productRuntime(
     product: unknown,
     coreCallbacks: unknown,
@@ -104,6 +105,8 @@ export interface WorkerSigningHostRuntime extends WorkerPairingHostRuntime {
 /** Module surface the wasm-pack glue exports. */
 export interface WasmModuleShape {
   default: (input?: unknown) => Promise<unknown>;
+  /** Wallet-free receiver for the host's single durable service-worker owner. */
+  WasmNotificationReceiver: new (callbacks: unknown) => RawNotificationReceiver;
   WasmPairingHostRuntime: new (
     callbacks: unknown,
     hostConfig: unknown,

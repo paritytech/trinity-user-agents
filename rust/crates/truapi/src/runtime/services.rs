@@ -32,6 +32,8 @@ const STATEMENT_CACHE_MAX_ENTRIES: usize = 64;
 pub struct RuntimeServices {
     /// Host platform backing all syscalls.
     pub platform: Arc<dyn Platform>,
+    /// Durable receiving survives all product connections closing.
+    pub receiving: Arc<crate::runtime::receiving::ReceivingService>,
     /// Host identity reported to products via `System::host_info`.
     pub host_info: HostInfo,
     /// Host chat adapter, when the host serves the Chat capability. `None`
@@ -112,6 +114,10 @@ impl RuntimeServices {
             StatementStoreRpc::new(platform.clone(), people_chain_genesis_hash, spawner.clone());
         let bulletin = BulletinRpc::new(chain.clone(), bulletin_chain_genesis_hash);
         Arc::new(Self {
+            receiving: Arc::new(crate::runtime::receiving::ReceivingService::new(
+                platform.clone(),
+                spawner.clone(),
+            )),
             platform,
             host_info,
             chat_platform: None,

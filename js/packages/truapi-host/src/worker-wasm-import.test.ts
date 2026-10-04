@@ -21,6 +21,7 @@ const GLUE_EXPORTS = [
   "default",
   "WasmPairingHostRuntime",
   "WasmProductRuntime",
+  "WasmNotificationReceiver",
   "setLogLevel",
 ] as const;
 

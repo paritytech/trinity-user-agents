@@ -257,6 +257,22 @@ fn emit_wasm_adapter(
         "#,
     )
     .unwrap();
+    let needs_scale = traits.iter().flat_map(|t| &t.methods).any(|method| {
+        let vector_codec = |ty: &TypeRef| {
+            let ty = match ty { TypeRef::Option(inner) => inner.as_ref(), other => other };
+            matches!(ty, TypeRef::Vec(_))
+                && encoded_codec_expr(ty, codec_types, local_codec_types).is_some()
+        };
+        method.params.iter().any(|p| vector_codec(&p.type_ref))
+            || match &method.return_shape.inner {
+                PlatformInner::Result { ok, .. } | PlatformInner::Plain(ok) => vector_codec(ok),
+                PlatformInner::Stream(item) => vector_codec(stream_item(item)),
+                _ => false,
+            }
+    });
+    if needs_scale {
+        out.push_str("import * as S from \"@parity/truapi/scale\";\n");
+    }
     emit_import_block(&mut out, false, "@parity/truapi", &imports);
     emit_import_block(&mut out, true, "@parity/truapi", &extra_types);
     emit_import_block(
@@ -811,7 +827,7 @@ fn emit_raw_callbacks(
                 local_codec_types,
                 platform_trait_names,
             );
-            out.push_str(&if optional {
+            out.push_str(&if optional || method.has_default {
                 mark_member_optional(&member)
             } else {
                 member
@@ -1006,11 +1022,15 @@ fn adapter_arg(
     local_codec_types: &BTreeSet<String>,
 ) -> String {
     let name = to_camel_case(&param.name);
+    if let Some(codec) = encoded_codec_expr(&param.type_ref, codec_types, local_codec_types) {
+        return format!("{codec}.dec({name})");
+    }
     match &param.type_ref {
-        TypeRef::Named { name: ty, .. }
-            if codec_types.contains(ty) || local_codec_types.contains(ty) =>
+        TypeRef::Option(inner)
+            if encoded_codec_expr(inner, codec_types, local_codec_types).is_some() =>
         {
-            format!("{ty}.dec({name})")
+            let codec = encoded_codec_expr(inner, codec_types, local_codec_types).unwrap();
+            format!("{name} == null ? undefined : {codec}.dec({name})")
         }
         TypeRef::Primitive(p) if matches!(p.as_str(), "u64" | "u128" | "i64" | "i128") => {
             format!("BigInt({name})")
@@ -1126,6 +1146,11 @@ fn validate_adapter_codec_boundary_type(
     position: &str,
     method_name: &str,
 ) -> Result<()> {
+    if encoded_codec_expr(ty, codec_types, local_codec_types).is_some()
+        || matches!(ty, TypeRef::Option(inner) if encoded_codec_expr(inner, codec_types, local_codec_types).is_some())
+    {
+        return Ok(());
+    }
     if contains_non_direct_codec_type(ty, codec_types, local_codec_types) {
         bail!(
             "unsupported compound codec type in host callback `{method_name}` {position}: {ty:?}"
@@ -1134,11 +1159,7 @@ fn validate_adapter_codec_boundary_type(
     Ok(())
 }
 
-/// The WASM adapter only knows how to translate a direct codec payload:
-/// `Codec` maps to raw `Uint8Array` and the adapter emits `Codec.dec/enc`.
-/// Containers such as `Vec<Codec>`, `Option<Codec>`, or `(Codec, ...)` would
-/// still be declared as raw bytes at the WASM boundary, but no generated code
-/// knows how to encode or decode the container. Reject those shapes at codegen.
+/// Reject compound shapes for which the bridge has no shared codec lowering.
 fn contains_non_direct_codec_type(
     ty: &TypeRef,
     codec_types: &BTreeSet<String>,
@@ -1172,6 +1193,23 @@ fn contains_non_direct_codec_type(
     walk(ty, false, codec_types, local_codec_types)
 }
 
+fn encoded_codec_expr(
+    ty: &TypeRef,
+    codec_types: &BTreeSet<String>,
+    local_codec_types: &BTreeSet<String>,
+) -> Option<String> {
+    match ty {
+        TypeRef::Named { name, args }
+            if args.is_empty() && (codec_types.contains(name) || local_codec_types.contains(name)) =>
+        {
+            Some(name.clone())
+        }
+        TypeRef::Vec(inner) => encoded_codec_expr(inner, codec_types, local_codec_types)
+            .map(|codec| format!("S.Vector({codec})")),
+        _ => None,
+    }
+}
+
 /// The adapter implementation expression for a unary callback: decode codec
 /// params, call the typed host method, SCALE-encode a codec result.
 fn adapter_unary_impl(
@@ -1189,13 +1227,14 @@ fn adapter_unary_impl(
         .collect::<Vec<_>>()
         .join(", ");
     let call = format!("{host_method}({args})");
-    let body = match ok {
-        TypeRef::Named { name: ty, .. }
-            if codec_types.contains(ty) || local_codec_types.contains(ty) =>
-        {
-            format!("{ty}.enc(await {call})")
-        }
-        _ => format!("await {call}"),
+    let body = if let Some(codec) = encoded_codec_expr(ok, codec_types, local_codec_types) {
+        format!("{codec}.enc(await {call})")
+    } else if let TypeRef::Option(inner) = ok
+        && let Some(codec) = encoded_codec_expr(inner, codec_types, local_codec_types)
+    {
+        format!("{{ const value = await {call}; return value == null ? undefined : {codec}.enc(value); }}")
+    } else {
+        format!("await {call}")
     };
     Ok(format!("async ({params}) => {body}"))
 }
@@ -1922,14 +1961,6 @@ mod tests {
     fn wasm_adapter_rejects_compound_codec_return_shapes() {
         let codec = named("HostFeatureSupportedResponse");
         assert_rejects_compound_codec(
-            method_with_return(TypeRef::Vec(Box::new(codec.clone()))),
-            "return value",
-        );
-        assert_rejects_compound_codec(
-            method_with_return(TypeRef::Option(Box::new(codec.clone()))),
-            "return value",
-        );
-        assert_rejects_compound_codec(
             method_with_return(TypeRef::Tuple(vec![codec])),
             "return value",
         );
@@ -1939,16 +1970,36 @@ mod tests {
     fn wasm_adapter_rejects_compound_codec_param_shapes() {
         let codec = named("HostFeatureSupportedRequest");
         assert_rejects_compound_codec(
-            method_with_param(TypeRef::Vec(Box::new(codec.clone()))),
-            "parameter `request`",
-        );
-        assert_rejects_compound_codec(
-            method_with_param(TypeRef::Option(Box::new(codec.clone()))),
-            "parameter `request`",
-        );
-        assert_rejects_compound_codec(
             method_with_param(TypeRef::Tuple(vec![codec])),
             "parameter `request`",
         );
+    }
+
+    #[test]
+    fn wasm_adapter_encodes_optional_and_vector_codec_results() {
+        for (shape, expected) in [
+            (TypeRef::Vec(Box::new(named("HostFeatureSupportedResponse"))),
+                "S.Vector(HostFeatureSupportedResponse).enc(await callbacks.features.featureSupported("),
+            (TypeRef::Option(Box::new(named("HostFeatureSupportedResponse"))),
+                "value == null ? undefined : HostFeatureSupportedResponse.enc(value)"),
+        ] {
+            let definition = platform_with_method(method_with_return(shape));
+            let output = emit_wasm_adapter(&definition, &codec_types(), &BTreeSet::new()).unwrap();
+            assert!(output.contains(expected), "{output}");
+        }
+    }
+
+    #[test]
+    fn wasm_adapter_decodes_optional_and_vector_codec_parameters() {
+        for (shape, expected) in [
+            (TypeRef::Vec(Box::new(named("HostFeatureSupportedRequest"))),
+                "S.Vector(HostFeatureSupportedRequest).dec(request)"),
+            (TypeRef::Option(Box::new(named("HostFeatureSupportedRequest"))),
+                "request == null ? undefined : HostFeatureSupportedRequest.dec(request)"),
+        ] {
+            let definition = platform_with_method(method_with_param(shape));
+            let output = emit_wasm_adapter(&definition, &codec_types(), &BTreeSet::new()).unwrap();
+            assert!(output.contains(expected), "{output}");
+        }
     }
 }
