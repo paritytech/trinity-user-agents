@@ -1162,6 +1162,10 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         const entry = pushedNotifications.find((n) => n.id === id);
         if (entry) entry.cancelled = true;
       },
+      async receiverAuthority() { return undefined; },
+      async receiverConsent() { throw new Error("background receiving unsupported"); },
+      async receiverChanged() { throw new Error("background receiving unsupported"); },
+      async receiverCommand() { return undefined; },
     },
 
     game: {

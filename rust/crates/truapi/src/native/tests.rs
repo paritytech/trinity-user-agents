@@ -237,15 +237,38 @@ impl EventCallbacks {
 
 #[async_trait::async_trait]
 impl HostCallbacks for EventCallbacks {
-	fn on_core_log(&self, marker: String, _detail: String) {
-		self.logs.lock().expect("logs mutex poisoned").push(marker);
-	}
-	fn worker_demand_changed(&self, product_id: ProductId, transition: WorkerTransition) {
-		self.worker_demand
-			.lock()
-			.expect("worker demand mutex poisoned")
-			.push((product_id.into(), transition));
-	}
+    async fn pick_chat_files(&self, _: crate::platform::NativeChatFilePickRequest) -> Result<Vec<crate::platform::NativeChatPickedFile>, HostRejection> { unavailable_chat_files() }
+    async fn read_chat_file(&self, _: String, _: u64, _: u32) -> Result<Vec<u8>, HostRejection> { unavailable_chat_files() }
+    async fn release_chat_file(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+    async fn begin_chat_file_export(&self, _: crate::platform::NativeChatFileExportRequest) -> Result<Option<String>, HostRejection> { unavailable_chat_files() }
+    async fn write_chat_file_export(&self, _: String, _: u64, _: Vec<u8>) -> Result<(), HostRejection> { unavailable_chat_files() }
+    async fn finish_chat_file_export(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+    async fn cancel_chat_file_export(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+    async fn identity_username_candidates(&self, _: String, _: Vec<u8>) -> Result<Vec<Vec<u8>>, HostRejection> { Err(HostRejection::Rejected { reason: "no identity provider in fixture".into() }) }
+    async fn allowed_hop_endpoints(&self, _: Vec<u8>) -> Result<Vec<String>, HostRejection> { Ok(Vec::new()) }
+    fn hop_connect(&self, _: Vec<u8>, _: String) -> Result<Option<u32>, HostRejection> { Ok(None) }
+    async fn receiver_authority(&self, _: String) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection> {
+        Ok(None)
+    }
+    async fn receiver_consent(&self, _: crate::platform::ReceivingAuthority, _: Vec<crate::latest::ReceivingWatch>) -> Result<bool, HostRejection> {
+        Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+    }
+    async fn receiver_changed(&self) -> Result<(), HostRejection> {
+        Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+    }
+    async fn receiver_command(&self, _: String, _: u8, _: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+        Ok(None)
+    }
+
+    fn on_core_log(&self, marker: String, _detail: String) {
+        self.logs.lock().expect("logs mutex poisoned").push(marker);
+    }
+    fn worker_demand_changed(&self, product_id: String, transition: WorkerTransition) {
+        self.worker_demand
+            .lock()
+            .expect("worker demand mutex poisoned")
+            .push((product_id, transition));
+    }
 
     fn device_paired(&self, device: PairedSsoPeer) {
         self.paired_devices
@@ -1829,16 +1852,39 @@ fn runtime_config_rejects_non_https_host_icon() {
 /// `AlreadyRunning` rather than silently leaking a worker thread.
 #[test]
 fn start_ws_bridge_twice_returns_already_running() {
-	struct Noop;
-	#[async_trait::async_trait]
-	impl HostCallbacks for Noop {
-		async fn confirm_permission(
-			&self,
-			_review: UserConfirmationReview,
-		) -> Result<PermissionDecision, HostRejection> {
-			Ok(PermissionDecision::Deny)
-		}
+    struct Noop;
+    #[async_trait::async_trait]
+    impl HostCallbacks for Noop {
+        async fn pick_chat_files(&self, _: crate::platform::NativeChatFilePickRequest) -> Result<Vec<crate::platform::NativeChatPickedFile>, HostRejection> { unavailable_chat_files() }
+        async fn read_chat_file(&self, _: String, _: u64, _: u32) -> Result<Vec<u8>, HostRejection> { unavailable_chat_files() }
+        async fn release_chat_file(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn begin_chat_file_export(&self, _: crate::platform::NativeChatFileExportRequest) -> Result<Option<String>, HostRejection> { unavailable_chat_files() }
+        async fn write_chat_file_export(&self, _: String, _: u64, _: Vec<u8>) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn finish_chat_file_export(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn cancel_chat_file_export(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn identity_username_candidates(&self, _: String, _: Vec<u8>) -> Result<Vec<Vec<u8>>, HostRejection> { Err(HostRejection::Rejected { reason: "no identity provider in fixture".into() }) }
+        async fn allowed_hop_endpoints(&self, _: Vec<u8>) -> Result<Vec<String>, HostRejection> { Ok(Vec::new()) }
+        fn hop_connect(&self, _: Vec<u8>, _: String) -> Result<Option<u32>, HostRejection> { Ok(None) }
+        async fn receiver_authority(&self, _: String) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection> {
+            Ok(None)
+        }
+        async fn receiver_consent(&self, _: crate::platform::ReceivingAuthority, _: Vec<crate::latest::ReceivingWatch>) -> Result<bool, HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_changed(&self) -> Result<(), HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_command(&self, _: String, _: u8, _: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(None)
+        }
 
+        async fn confirm_permission(
+            &self,
+            _review: UserConfirmationReview,
+        ) -> Result<PermissionDecision, HostRejection> {
+            Ok(PermissionDecision::Deny)
+        }
+    
         fn on_core_log(&self, _marker: String, _detail: String) {}
         fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
         fn device_paired(&self, _device: PairedSsoPeer) {}
@@ -2017,6 +2063,38 @@ fn pending_permission_decision_does_not_stall_bridge() {
 			Ok(PermissionDecision::Deny)
 		}
 
+    #[async_trait::async_trait]
+    impl HostCallbacks for GatedPermissionCallbacks {
+        async fn pick_chat_files(&self, _: crate::platform::NativeChatFilePickRequest) -> Result<Vec<crate::platform::NativeChatPickedFile>, HostRejection> { unavailable_chat_files() }
+        async fn read_chat_file(&self, _: String, _: u64, _: u32) -> Result<Vec<u8>, HostRejection> { unavailable_chat_files() }
+        async fn release_chat_file(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn begin_chat_file_export(&self, _: crate::platform::NativeChatFileExportRequest) -> Result<Option<String>, HostRejection> { unavailable_chat_files() }
+        async fn write_chat_file_export(&self, _: String, _: u64, _: Vec<u8>) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn finish_chat_file_export(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn cancel_chat_file_export(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn identity_username_candidates(&self, _: String, _: Vec<u8>) -> Result<Vec<Vec<u8>>, HostRejection> { Err(HostRejection::Rejected { reason: "no identity provider in fixture".into() }) }
+        async fn allowed_hop_endpoints(&self, _: Vec<u8>) -> Result<Vec<String>, HostRejection> { Ok(Vec::new()) }
+        fn hop_connect(&self, _: Vec<u8>, _: String) -> Result<Option<u32>, HostRejection> { Ok(None) }
+        async fn receiver_authority(&self, _: String) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection> {
+            Ok(None)
+        }
+        async fn receiver_consent(&self, _: crate::platform::ReceivingAuthority, _: Vec<crate::latest::ReceivingWatch>) -> Result<bool, HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_changed(&self) -> Result<(), HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_command(&self, _: String, _: u8, _: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(None)
+        }
+
+        async fn confirm_permission(
+            &self,
+            _review: UserConfirmationReview,
+        ) -> Result<PermissionDecision, HostRejection> {
+            Ok(PermissionDecision::Deny)
+        }
+    
         fn on_core_log(&self, _marker: String, _detail: String) {}
         fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
         fn device_paired(&self, _device: PairedSsoPeer) {}

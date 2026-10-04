@@ -69,14 +69,38 @@ pub trait HostCallbacks: Send + Sync {
 	/// Cancel a notification by id.
 	fn cancel_notification(&self, id: u32) -> Result<(), HostRejection>;
 
-	/// Prompt the user for a device-level permission (camera, mic, ...)
-	/// `product` requested; the host preserves whether approval applies once
-	/// or always.
-	async fn device_permission(
-		&self,
-		product: ProductExecutionConfig,
-		request: v01::HostDevicePermissionRequest,
-	) -> Result<PermissionDecision, HostRejection>;
+    /// Runtime callbacks return current host scope, including while products are closed.
+    /// Per-execution callbacks return the immutable verified artifact/account scope
+    /// captured at execution creation, never the latest replacement scope.
+    async fn receiver_authority(
+        &self,
+        product_id: String,
+    ) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection>;
+
+    /// Request consent distinct from OS notification permission.
+    async fn receiver_consent(
+        &self,
+        authority: crate::platform::ReceivingAuthority,
+        watches: Vec<crate::latest::ReceivingWatch>,
+    ) -> Result<bool, HostRejection>;
+
+    /// Wake asynchronous transport synchronization without awaiting network I/O.
+    async fn receiver_changed(&self) -> Result<(), HostRejection>;
+
+    /// Optionally forward a trusted product receiving command to its sole owner.
+    /// `None` uses the native resident engine; failure must not select another owner.
+    async fn receiver_command(
+        &self, product_id: String, action: u8, payload: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, HostRejection>;
+
+    /// Prompt the user for a device-level permission (camera, mic, ...)
+    /// `product` requested; the host preserves whether approval applies once
+    /// or always.
+    async fn device_permission(
+        &self,
+        product: ProductExecutionConfig,
+        request: v01::HostDevicePermissionRequest,
+    ) -> Result<PermissionDecision, HostRejection>;
 
 	/// Report the OS status of a device capability without prompting.
 	///

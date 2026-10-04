@@ -94,164 +94,184 @@ pub type StorageWriteHook = Arc<dyn Fn() + Send + Sync>;
 /// can exercise its delegation paths without pulling in a real backend.
 #[derive(Default)]
 pub struct StubPlatform {
-	pub device_permission_decisions:
-		Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
-	pub device_permission_requests: Mutex<Vec<v01::HostDevicePermissionRequest>>,
-	/// Product passed to each permission prompt, in order.
-	pub permission_prompt_products: Mutex<Vec<ProductContext>>,
-	pub remote_permission_denied: bool,
-	pub remote_permission_decisions:
-		Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
-	/// Every `remote_permission` request, in order, so a test can assert which
-	/// domains reached the prompt and that a stored grant suppresses a re-ask.
-	pub remote_permission_requests: Arc<Mutex<Vec<v01::RemotePermissionRequest>>>,
-	/// URLs handed to `navigate_to`. Empty means the gate blocked before the
-	/// platform was ever reached.
-	pub navigations: Arc<Mutex<Vec<String>>>,
-	pub account_alias_confirmed: bool,
-	pub account_alias_error: Option<&'static str>,
-	pub create_proof_confirmed: bool,
-	pub create_proof_error: Option<&'static str>,
-	pub account_access_confirmed: bool,
-	pub account_access_error: Option<&'static str>,
-	pub account_access_reviews: Arc<Mutex<Vec<AccountAccessReview>>>,
-	/// Permission answers retain their lifetime separately from action confirmations.
-	pub permission_confirmation_decisions:
-		Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
-	/// Inverted so the derived default (`false`) approves, matching the
-	/// pre-consent behavior where a cold own-account resolve was not gated.
-	pub product_subtree_denied: bool,
-	pub product_subtree_reviews: Arc<Mutex<Vec<ProductSubtreeReview>>>,
-	pub identity_disclosure_confirmed: bool,
-	pub identity_disclosure_error: Option<&'static str>,
-	pub identity_disclosure_calls: Arc<AtomicUsize>,
-	pub sign_payload_confirmed: bool,
-	/// Every `SignPayload` review passed to `confirm_user_action`, in order.
-	/// Empty proves an AutoSigning grant suppressed the prompt.
-	pub sign_payload_reviews: Arc<Mutex<Vec<SignPayloadReview>>>,
-	pub sign_payload_error: Option<&'static str>,
-	pub sign_raw_confirmed: bool,
-	pub sign_raw_error: Option<&'static str>,
-	pub sign_raw_reviews: Arc<Mutex<Vec<SignRawReview>>>,
-	pub sign_vrf_confirmed: bool,
-	pub sign_vrf_error: Option<&'static str>,
-	pub sign_vrf_reviews: Arc<Mutex<Vec<SignVrfReview>>>,
-	/// Every `StatementStoreProductSign` review passed to `confirm_user_action`, in order.
-	pub statement_store_product_sign_reviews: Arc<Mutex<Vec<StatementStoreProductSignReview>>>,
-	pub create_transaction_confirmed: bool,
-	/// Every `CreateTransaction` review passed to `confirm_user_action`, in
-	/// order. Empty proves an AutoSigning grant suppressed the prompt.
-	pub create_transaction_reviews: Arc<Mutex<Vec<CreateTransactionReview>>>,
-	pub create_transaction_error: Option<&'static str>,
-	/// Pause a transaction review until the test releases its confirmation.
-	pub create_transaction_confirmation_gate:
-		Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
-	pub resource_allocation_confirmed: bool,
-	pub resource_allocation_error: Option<&'static str>,
-	/// Pause a resource review until the test releases its confirmation.
-	pub resource_allocation_confirmation_gate:
-		Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
-	/// Every `ResourceAllocation` review passed to `confirm_user_action`, in order.
-	pub resource_allocation_reviews: Arc<Mutex<Vec<ResourceAllocationReview>>>,
-	pub session_blob: Option<Vec<u8>>,
-	pub session_error: Option<&'static str>,
-	pub session_clears: Arc<Mutex<usize>>,
-	pub session_writes: Arc<Mutex<Vec<Vec<u8>>>>,
-	pub on_auth_session_write: Arc<Mutex<Option<StorageWriteHook>>>,
-	/// Every `auth_state_changed` emission in order.
-	pub auth_states: Arc<Mutex<Vec<AuthState>>>,
-	/// Invoked after each recorded auth state, outside any stub lock, so a
-	/// test can react to a transition (e.g. cancel the login it observes).
-	pub on_auth_state: Arc<Mutex<Option<AuthStateHook>>>,
-	/// When true, `subscribe_theme` returns a never-ending stream.
-	pub theme_stream_pending: bool,
-	/// Set when the pending theme stream is dropped.
-	pub theme_stream_dropped: Arc<AtomicBool>,
-	pub pairing_success_response: bool,
-	/// Deliver an authenticated wallet pending status and then stay open.
-	pub pairing_pending_response: bool,
-	/// Deliver a wallet failure status on the pairing subscription.
-	pub pairing_failure_response: bool,
-	/// Deliver the pairing success statement only through a snapshot
-	/// query page; the live subscription stays silent.
-	pub pairing_success_via_query: bool,
-	/// Acknowledge the pairing subscription and then publish nothing, the
-	/// shape a peer answering on a different SSO envelope presents: subscribed
-	/// to the topic, with no statement this host can open ever arriving.
-	pub pairing_silent_after_subscribe: bool,
-	pub notification_id: u32,
-	pub pushed_notifications: Arc<Mutex<Vec<v01::HostPushNotificationRequest>>>,
-	pub cancelled_notifications: Arc<Mutex<Vec<u32>>>,
-	pub sent_rpc: Arc<Mutex<Vec<String>>>,
-	pub rpc_responses: Vec<String>,
-	/// Responses keyed by JSON-RPC method, answered as each request arrives with
-	/// that request's own id echoed back. A `state_call` is keyed by the runtime
-	/// API it names instead, so metadata and view-function reads stay separable.
-	///
-	/// Unlike `rpc_responses` this assumes nothing about request order and waits
-	/// indefinitely for the next request, so a slow step between two requests
-	/// cannot outrun the response pump. Prefer it whenever a test drives a path
-	/// that decodes metadata or does other work between calls.
-	pub rpc_method_responses: Vec<(&'static str, String)>,
-	/// Hold the first connection's `rpc_method_responses` answers until the
-	/// test releases them.
-	pub rpc_method_responses_gate: Arc<Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
-	pub sso_response_script: Option<SsoResponseScript>,
-	/// Every genesis hash handed to `connect`, in order. Lets a test assert
-	/// *which* chain a lookup reached, not merely that it reached one: the
-	/// hashes a host is configured with are same-typed `[u8; 32]` passed
-	/// positionally, so a transposed pair still connects and still answers.
-	pub chain_connects: Arc<Mutex<Vec<[u8; 32]>>>,
-	/// When set, `connect` fails with this reason.
-	pub chain_connect_error: Option<&'static str>,
-	/// When set, `connect` to this one chain fails, while every other chain
-	/// still connects.
-	pub unreachable_genesis: Option<[u8; 32]>,
-	/// When true, the connection's response stream ends instead of staying
-	/// pending. A follow opened over it then yields `None` rather than waiting
-	/// out `OPERATION_TIMEOUT`, which is the difference between a test that
-	/// asserts a lookup failed and a test that spends ten seconds proving it.
-	pub chain_responses_end: bool,
-	/// When true, `connect` stays pending forever.
-	/// Hold every core-storage read pending forever, standing in for a host
-	/// callback that is never answered.
-	pub core_storage_pending: bool,
-	pub chain_connect_pending: bool,
-	/// Set when a `chain_connect_pending` connect future is dropped.
-	pub pending_connect_dropped: Arc<AtomicBool>,
-	/// Value returned by `lookup_preimage`, if any. Tests set this to a
-	/// forged value to exercise the in-core integrity check.
-	pub preimage_lookup_value: Option<Vec<u8>>,
-	pub local_storage: Arc<Mutex<std::collections::HashMap<String, Vec<u8>>>>,
-	/// Every product storage write that reached the platform, in order, so a
-	/// test can see which writes the core skipped.
-	pub local_storage_writes: Arc<Mutex<Vec<StorageWrite>>>,
-	/// Open `subscribe_storage` streams by namespaced key; `write` and
-	/// `clear` push each change to the matching ones.
-	pub storage_subscribers: Arc<Mutex<Vec<(String, StorageChangeSender)>>>,
-	/// Every `begin_operation` as `(product_id, label)`, in order. The
-	/// returned id is the call's 1-based position.
-	pub begun_operations: Arc<Mutex<Vec<(ProductId, String)>>>,
-	/// Every `end_operation` as `(product_id, id)`, in order.
-	pub ended_operations: Arc<Mutex<Vec<(ProductId, u32)>>>,
-	/// Held open by a test so `begin_operation` is still in flight while the
-	/// dispatch awaiting it goes away.
-	pub begin_operation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
-	/// When set, `end_operation` records the call and then fails with this
-	/// reason, standing in for a host that drops the operation and still
-	/// reports an error.
-	pub end_operation_error: Option<&'static str>,
-	/// When set, product/core storage reads fail with this reason.
-	pub local_storage_error: Option<&'static str>,
-	/// When set, core-storage writes and clears fail with this reason. Unlike
-	/// `local_storage_error` a test can set it mid-flow, after the reads it
-	/// needs have succeeded.
-	pub core_storage_write_error: Mutex<Option<&'static str>>,
-	/// When set, only `PermissionAuthorization` reads fail. Narrower than
-	/// `local_storage_error`, which fails every key: a test that needs the
-	/// manifest cache to answer while the stored permission decision is
-	/// unreadable cannot use the broad knob.
-	pub permission_storage_error: Option<&'static str>,
+    pub native_chat_files: Option<Arc<dyn NativeChatFilesHost>>,
+    pub guard_main_purse_storage: bool,
+    pub main_purse_storage_accesses: AtomicUsize,
+    pub device_permission_decisions:
+        Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
+    pub device_permission_requests: Mutex<Vec<v01::HostDevicePermissionRequest>>,
+    /// Product passed to each permission prompt, in order.
+    pub permission_prompt_products: Mutex<Vec<ProductContext>>,
+    pub remote_permission_denied: bool,
+    pub remote_permission_decisions:
+        Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
+    /// Every `remote_permission` request, in order, so a test can assert which
+    /// domains reached the prompt and that a stored grant suppresses a re-ask.
+    pub remote_permission_requests: Arc<Mutex<Vec<v01::RemotePermissionRequest>>>,
+    /// URLs handed to `navigate_to`. Empty means the gate blocked before the
+    /// platform was ever reached.
+    pub navigations: Arc<Mutex<Vec<String>>>,
+    pub account_alias_confirmed: bool,
+    pub account_alias_error: Option<&'static str>,
+    pub create_proof_confirmed: bool,
+    pub create_proof_error: Option<&'static str>,
+    pub account_access_confirmed: bool,
+    pub account_access_error: Option<&'static str>,
+    pub account_access_reviews: Arc<Mutex<Vec<AccountAccessReview>>>,
+    /// Permission answers retain their lifetime separately from action confirmations.
+    pub permission_confirmation_decisions:
+        Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
+    /// Inverted so the derived default (`false`) approves, matching the
+    /// pre-consent behavior where a cold own-account resolve was not gated.
+    pub profile_disclosure_confirmed: bool,
+    pub profile_disclosure_reviews: Arc<Mutex<Vec<ProfileDisclosureReview>>>,
+    pub product_subtree_denied: bool,
+    pub product_subtree_reviews: Arc<Mutex<Vec<ProductSubtreeReview>>>,
+    pub identity_disclosure_confirmed: bool,
+    pub identity_disclosure_error: Option<&'static str>,
+    pub identity_disclosure_calls: Arc<AtomicUsize>,
+    pub chat_authority_confirmed: bool,
+    pub chat_authority_error: Option<&'static str>,
+    pub chat_authority_reviews: Arc<parking_lot::Mutex<Vec<ChatAuthorityReview>>>,
+    /// One-shot payment decisions are independent of every reusable permission.
+    /// The derived default denies spending.
+    pub main_purse_chat_payment_confirmed: bool,
+    pub main_purse_chat_payment_error: Option<&'static str>,
+    pub main_purse_chat_payment_reviews: Arc<Mutex<Vec<MainPurseChatPaymentReview>>>,
+    pub sign_payload_confirmed: bool,
+    /// Every `SignPayload` review passed to `confirm_user_action`, in order.
+    /// Empty proves an AutoSigning grant suppressed the prompt.
+    pub sign_payload_reviews: Arc<Mutex<Vec<SignPayloadReview>>>,
+    pub sign_payload_error: Option<&'static str>,
+    pub sign_raw_confirmed: bool,
+    pub sign_raw_error: Option<&'static str>,
+    pub sign_raw_reviews: Arc<Mutex<Vec<SignRawReview>>>,
+    pub sign_vrf_confirmed: bool,
+    pub sign_vrf_error: Option<&'static str>,
+    pub sign_vrf_reviews: Arc<Mutex<Vec<SignVrfReview>>>,
+    /// Every `StatementStoreProductSign` review passed to `confirm_user_action`, in order.
+    pub statement_store_product_sign_reviews: Arc<Mutex<Vec<StatementStoreProductSignReview>>>,
+    pub create_transaction_confirmed: bool,
+    /// Every `CreateTransaction` review passed to `confirm_user_action`, in
+    /// order. Empty proves an AutoSigning grant suppressed the prompt.
+    pub create_transaction_reviews: Arc<Mutex<Vec<CreateTransactionReview>>>,
+    pub create_transaction_error: Option<&'static str>,
+    /// Pause a transaction review until the test releases its confirmation.
+    pub create_transaction_confirmation_gate:
+        Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+    pub resource_allocation_confirmed: bool,
+    pub resource_allocation_error: Option<&'static str>,
+    /// Pause a resource review until the test releases its confirmation.
+    pub resource_allocation_confirmation_gate:
+        Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+    /// Every `ResourceAllocation` review passed to `confirm_user_action`, in order.
+    pub resource_allocation_reviews: Arc<Mutex<Vec<ResourceAllocationReview>>>,
+    pub session_blob: Option<Vec<u8>>,
+    pub session_error: Option<&'static str>,
+    pub session_clears: Arc<Mutex<usize>>,
+    pub session_writes: Arc<Mutex<Vec<Vec<u8>>>>,
+    pub on_auth_session_write: Arc<Mutex<Option<StorageWriteHook>>>,
+    /// Every `auth_state_changed` emission in order.
+    pub auth_states: Arc<Mutex<Vec<AuthState>>>,
+    /// Invoked after each recorded auth state, outside any stub lock, so a
+    /// test can react to a transition (e.g. cancel the login it observes).
+    pub on_auth_state: Arc<Mutex<Option<AuthStateHook>>>,
+    /// When true, `subscribe_theme` returns a never-ending stream.
+    pub theme_stream_pending: bool,
+    /// Set when the pending theme stream is dropped.
+    pub theme_stream_dropped: Arc<AtomicBool>,
+    pub pairing_success_response: bool,
+    /// Deliver an authenticated wallet pending status and then stay open.
+    pub pairing_pending_response: bool,
+    /// Deliver a wallet failure status on the pairing subscription.
+    pub pairing_failure_response: bool,
+    /// Deliver the pairing success statement only through a snapshot
+    /// query page; the live subscription stays silent.
+    pub pairing_success_via_query: bool,
+    /// Acknowledge the pairing subscription and then publish nothing, the
+    /// shape a peer answering on a different SSO envelope presents: subscribed
+    /// to the topic, with no statement this host can open ever arriving.
+    pub pairing_silent_after_subscribe: bool,
+    pub notification_id: u32,
+    pub pushed_notifications: Arc<Mutex<Vec<v01::HostPushNotificationRequest>>>,
+    pub cancelled_notifications: Arc<Mutex<Vec<u32>>>,
+    pub receiving_authority: parking_lot::Mutex<Option<crate::platform::ReceivingAuthority>>,
+    pub receiving_consent: AtomicBool,
+    pub receiving_prompts: AtomicUsize,
+    pub receiving_consent_gate: parking_lot::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+    pub receiving_write_failure: AtomicBool,
+    pub sent_rpc: Arc<Mutex<Vec<String>>>,
+    pub rpc_responses: Vec<String>,
+    /// Responses keyed by JSON-RPC method, answered as each request arrives with
+    /// that request's own id echoed back. A `state_call` is keyed by the runtime
+    /// API it names instead, so metadata and view-function reads stay separable.
+    ///
+    /// Unlike `rpc_responses` this assumes nothing about request order and waits
+    /// indefinitely for the next request, so a slow step between two requests
+    /// cannot outrun the response pump. Prefer it whenever a test drives a path
+    /// that decodes metadata or does other work between calls.
+    pub rpc_method_responses: Vec<(&'static str, String)>,
+    /// Hold the first connection's `rpc_method_responses` answers until the
+    /// test releases them.
+    pub rpc_method_responses_gate: Arc<Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
+    pub sso_response_script: Option<SsoResponseScript>,
+    /// Every genesis hash handed to `connect`, in order. Lets a test assert
+    /// *which* chain a lookup reached, not merely that it reached one: the
+    /// hashes a host is configured with are same-typed `[u8; 32]` passed
+    /// positionally, so a transposed pair still connects and still answers.
+    pub chain_connects: Arc<Mutex<Vec<[u8; 32]>>>,
+    /// Host-private, no-network HOP script. Unconfigured fixtures fail closed.
+    pub hop_provider: Option<Arc<dyn HopProvider>>,
+    /// When set, `connect` fails with this reason.
+    pub chain_connect_error: Option<&'static str>,
+    /// When set, `connect` to this one chain fails, while every other chain
+    /// still connects.
+    pub unreachable_genesis: Option<[u8; 32]>,
+    /// When true, the connection's response stream ends instead of staying
+    /// pending. A follow opened over it then yields `None` rather than waiting
+    /// out `OPERATION_TIMEOUT`, which is the difference between a test that
+    /// asserts a lookup failed and a test that spends ten seconds proving it.
+    pub chain_responses_end: bool,
+    /// When true, `connect` stays pending forever.
+    /// Hold every core-storage read pending forever, standing in for a host
+    /// callback that is never answered.
+    pub core_storage_pending: bool,
+    pub chain_connect_pending: bool,
+    /// Set when a `chain_connect_pending` connect future is dropped.
+    pub pending_connect_dropped: Arc<AtomicBool>,
+    /// Value returned by `lookup_preimage`, if any. Tests set this to a
+    /// forged value to exercise the in-core integrity check.
+    pub preimage_lookup_value: Option<Vec<u8>>,
+    pub local_storage: Arc<Mutex<std::collections::HashMap<String, Vec<u8>>>>,
+    /// Mutable per-slot faults let lifecycle tests recover without replacing
+    /// the backing platform (and thereby bypassing process-local ownership).
+    pub core_read_failures: parking_lot::Mutex<std::collections::HashSet<String>>,
+    pub core_write_failures: parking_lot::Mutex<std::collections::HashSet<String>>,
+    /// Every product storage write that reached the platform, in order, so a
+    /// test can see which writes the core skipped.
+    pub local_storage_writes: Arc<Mutex<Vec<StorageWrite>>>,
+    /// Open `subscribe_storage` streams by namespaced key; `write` and
+    /// `clear` push each change to the matching ones.
+    pub storage_subscribers: Arc<Mutex<Vec<(String, StorageChangeSender)>>>,
+    /// Every `begin_operation` as `(product_id, label)`, in order. The
+    /// returned id is the call's 1-based position.
+    pub begun_operations: Arc<Mutex<Vec<(String, String)>>>,
+    /// Every `end_operation` as `(product_id, id)`, in order.
+    pub ended_operations: Arc<Mutex<Vec<(String, u32)>>>,
+    /// Held open by a test so `begin_operation` is still in flight while the
+    /// dispatch awaiting it goes away.
+    pub begin_operation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+    /// When set, `end_operation` records the call and then fails with this
+    /// reason, standing in for a host that drops the operation and still
+    /// reports an error.
+    pub end_operation_error: Option<&'static str>,
+    /// When set, product/core storage reads fail with this reason.
+    pub local_storage_error: Option<&'static str>,
+    /// When set, only `PermissionAuthorization` reads fail. Narrower than
+    /// `local_storage_error`, which fails every key: a test that needs the
+    /// manifest cache to answer while the stored permission decision is
+    /// unreadable cannot use the broad knob.
+    pub permission_storage_error: Option<&'static str>,
 }
 
 /// One product storage write as the platform saw it: namespaced key and bytes.
@@ -1073,38 +1093,50 @@ impl PlatformCoreStorage for StubPlatform {
 			.cloned())
 	}
 
-	async fn write_core_storage(
-		&self,
-		key: CoreStorageKey,
-		value: Vec<u8>,
-	) -> Result<(), v01::GenericError> {
-		if let CoreStorageKey::AuthSession = key {
-			self.session_writes
-				.lock()
-				.expect("session write list mutex poisoned")
-				.push(value);
-			let hook = self
-				.on_auth_session_write
-				.lock()
-				.expect("auth session write hook mutex poisoned")
-				.clone();
-			if let Some(hook) = hook {
-				hook();
-			}
-			return Ok(());
-		}
-		if let Some(reason) = self
-			.local_storage_error
-			.or(*self.core_storage_write_error.lock().expect("write error mutex poisoned"))
-		{
-			return Err(v01::GenericError { reason: reason.to_string() });
-		}
-		self.local_storage
-			.lock()
-			.expect("local storage mutex poisoned")
-			.insert(core_storage_test_key(key), value);
-		Ok(())
-	}
+    async fn write_core_storage(
+        &self,
+        key: CoreStorageKey,
+        value: Vec<u8>,
+    ) -> Result<(), v01::GenericError> {
+        self.check_coinage_storage(&key)?;
+        if self
+            .core_write_failures
+            .lock()
+            .contains(&core_storage_test_key(key.clone()))
+        {
+            return Err(v01::GenericError {
+                reason: "injected core write failure".into(),
+            });
+        }
+        if key == CoreStorageKey::NotificationReceiving && self.receiving_write_failure.load(Ordering::SeqCst) {
+            return Err(v01::GenericError { reason: "receiving storage unavailable".to_owned() });
+        }
+        if let CoreStorageKey::AuthSession = key {
+            self.session_writes
+                .lock()
+                .expect("session write list mutex poisoned")
+                .push(value);
+            let hook = self
+                .on_auth_session_write
+                .lock()
+                .expect("auth session write hook mutex poisoned")
+                .clone();
+            if let Some(hook) = hook {
+                hook();
+            }
+            return Ok(());
+        }
+        if let Some(reason) = self.local_storage_error {
+            return Err(v01::GenericError {
+                reason: reason.to_string(),
+            });
+        }
+        self.local_storage
+            .lock()
+            .expect("local storage mutex poisoned")
+            .insert(core_storage_test_key(key), value);
+        Ok(())
+    }
 
 	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
 		if let CoreStorageKey::AuthSession = key {
@@ -1140,16 +1172,29 @@ impl PlatformNavigation for StubPlatform {
 
 #[crate::platform::async_trait]
 impl PlatformNotifications for StubPlatform {
-	async fn push_notification(
-		&self,
-		notification: v01::HostPushNotificationRequest,
-	) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
-		self.pushed_notifications
-			.lock()
-			.expect("notification list mutex poisoned")
-			.push(notification);
-		Ok(v01::HostPushNotificationResponse { id: self.notification_id })
-	}
+    async fn receiver_authority(&self, product_id: &str) -> Result<Option<crate::platform::ReceivingAuthority>, v01::GenericError> {
+        Ok(self.receiving_authority.lock().clone().filter(|a| a.product_id == product_id))
+    }
+
+    async fn receiver_consent(&self, _authority: crate::platform::ReceivingAuthority, _watches: Vec<crate::latest::ReceivingWatch>) -> Result<bool, v01::GenericError> {
+        self.receiving_prompts.fetch_add(1, Ordering::SeqCst);
+        let gate = self.receiving_consent_gate.lock().take();
+        if let Some(gate) = gate { let _ = gate.await; }
+        Ok(self.receiving_consent.load(Ordering::SeqCst))
+    }
+
+    async fn push_notification(
+        &self,
+        notification: v01::HostPushNotificationRequest,
+    ) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
+        self.pushed_notifications
+            .lock()
+            .expect("notification list mutex poisoned")
+            .push(notification);
+        Ok(v01::HostPushNotificationResponse {
+            id: self.notification_id,
+        })
+    }
 
 	async fn cancel_notification(&self, id: u32) -> Result<(), v01::GenericError> {
 		self.cancelled_notifications

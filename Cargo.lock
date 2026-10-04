@@ -6376,6 +6376,7 @@ dependencies = [
  "chacha20poly1305",
  "console_error_panic_hook",
  "derive_more 2.1.1",
+ "ed25519-dalek",
  "frame-metadata",
  "futures",
  "futures-timer",

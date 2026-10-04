@@ -29,6 +29,14 @@
       "types": "./dist/web/index.d.ts",
       "import": "./dist/web/index.js"
     },
+    "./browser-receiving": {
+      "types": "./dist/browser-receiving.d.ts",
+      "import": "./dist/browser-receiving.js"
+    },
+    "./browser-receiving-worker": {
+      "types": "./dist/browser-receiving-worker.d.ts",
+      "import": "./dist/browser-receiving-worker.js"
+    },
     "./testing": {
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js"

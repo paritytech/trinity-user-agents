@@ -207,39 +207,42 @@ pub fn snake_case(name: &str) -> String {
 /// Collect local types reachable from callback payloads, including transitive
 /// field references, for the Rust WASM and TypeScript host bridges.
 pub fn collect_local_bridge_payload_types(definition: &PlatformDefinition) -> BTreeSet<&str> {
-	let local: BTreeSet<&str> = definition.types.iter().map(|ty| ty.name.as_str()).collect();
-	let mut out = BTreeSet::new();
-	for trait_def in &definition.traits {
-		for method in &trait_def.methods {
-			for param in &method.params {
-				collect_local_from_type(&param.type_ref, &local, &mut out);
-			}
-			match &method.return_shape.inner {
-				PlatformInner::Result { ok, .. } | PlatformInner::Plain(ok) => {
-					collect_local_from_type(ok, &local, &mut out);
-				},
-				PlatformInner::Stream(item) => {
-					collect_local_from_type(stream_item(item), &local, &mut out)
-				},
-				PlatformInner::Unit | PlatformInner::TraitObject(_) => {},
-			}
-		}
-	}
-	let mut changed = true;
-	while changed {
-		changed = false;
-		let referenced = definition
-			.types
-			.iter()
-			.filter(|ty| out.contains(ty.name.as_str()))
-			.collect::<Vec<_>>();
-		for type_def in referenced {
-			let before = out.len();
-			collect_local_from_type_def(type_def, &local, &mut out);
-			changed |= out.len() != before;
-		}
-	}
-	out
+    let local: BTreeSet<&str> = definition.types.iter().map(|ty| ty.name.as_str()).collect();
+    let mut out = BTreeSet::new();
+    if local.contains("ReceivingRegistration") {
+        out.insert("ReceivingRegistration");
+    }
+    for trait_def in &definition.traits {
+        for method in &trait_def.methods {
+            for param in &method.params {
+                collect_local_from_type(&param.type_ref, &local, &mut out);
+            }
+            match &method.return_shape.inner {
+                PlatformInner::Result { ok, .. } | PlatformInner::Plain(ok) => {
+                    collect_local_from_type(ok, &local, &mut out);
+                }
+                PlatformInner::Stream(item) => {
+                    collect_local_from_type(stream_item(item), &local, &mut out)
+                }
+                PlatformInner::Unit | PlatformInner::TraitObject(_) => {}
+            }
+        }
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let referenced = definition
+            .types
+            .iter()
+            .filter(|ty| out.contains(ty.name.as_str()))
+            .collect::<Vec<_>>();
+        for type_def in referenced {
+            let before = out.len();
+            collect_local_from_type_def(type_def, &local, &mut out);
+            changed |= out.len() != before;
+        }
+    }
+    out
 }
 
 fn collect_local_from_type_def<'a>(

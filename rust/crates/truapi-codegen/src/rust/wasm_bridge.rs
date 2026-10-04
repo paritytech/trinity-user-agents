@@ -47,6 +47,7 @@ pub fn generate_wasm_bridge(
             WasmPlatform, call_js_function, decode_bytes, decode_js_item, generic, get_function,
             get_optional_function, invoke_bool, invoke_bytes_return, invoke_js_subscription,
             invoke_optional_bytes_return, invoke_optional_string_return, invoke_unit, missing_callback, parse_optional_bytes_item,
+            absent_optional_callback,
         }};
 
         /// JS-side callbacks invoked by the wasm platform bridge. Methods with
@@ -78,41 +79,48 @@ pub fn generate_wasm_bridge(
             pub fn from_js(callbacks: &JsValue) -> Result<Self, JsValue> {{
                 Ok(Self {{
         "#,
-	)
-	.unwrap();
-	for field in bridge_fields(&traits, &trait_names, &optional_traits) {
-		if field.optional {
-			writeln!(
+    )
+    .unwrap();
+    for field in bridge_fields(&traits, &trait_names, &optional_traits) {
+        if field.optional {
+            let fallback = if field.absent_is_none {
+                "absent_optional_callback()".to_string()
+            } else {
+                format!("missing_callback({:?})", field.raw_name)
+            };
+            writeln!(
                 out,
-                "            {}: get_optional_function(callbacks, \"{}\")?\n                .unwrap_or_else(|| missing_callback(\"{}\")),",
-                field.field_name, field.raw_name, field.raw_name
+                "            {}: get_optional_function(callbacks, {:?})?\n                .unwrap_or_else(|| {}),",
+                field.field_name, field.raw_name, fallback
+            ).unwrap();
+        } else {
+            writeln!(
+                out,
+                "            {}: get_function(callbacks, \"{}\")?,",
+                field.field_name, field.raw_name
             )
             .unwrap();
-		} else {
-			writeln!(
-				out,
-				"            {}: get_function(callbacks, \"{}\")?,",
-				field.field_name, field.raw_name
-			)
-			.unwrap();
-		}
-	}
-	for namespace in optional_namespaces(&traits, &optional_traits) {
-		let probes = bridge_fields(&traits, &trait_names, &optional_traits)
-			.into_iter()
-			.filter(|field| field.namespace.as_deref() == Some(namespace.as_str()))
-			.map(|field| {
-				format!("get_optional_function(callbacks, \"{}\")?.is_some()", field.raw_name)
-			})
-			.collect::<Vec<_>>()
-			.join("\n                && ");
-		writeln!(out, "            {namespace}_present: {probes},").unwrap();
-	}
-	out.push_str("        })\n    }\n");
-	for namespace in optional_namespaces(&traits, &optional_traits) {
-		writedoc!(
-			out,
-			r#"
+        }
+    }
+    for namespace in optional_namespaces(&traits, &optional_traits) {
+        let probes = bridge_fields(&traits, &trait_names, &optional_traits)
+            .into_iter()
+            .filter(|field| field.namespace.as_deref() == Some(namespace.as_str()))
+            .map(|field| {
+                format!(
+                    "get_optional_function(callbacks, \"{}\")?.is_some()",
+                    field.raw_name
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n                && ");
+        writeln!(out, "            {namespace}_present: {probes},").unwrap();
+    }
+    out.push_str("        })\n    }\n");
+    for namespace in optional_namespaces(&traits, &optional_traits) {
+        writedoc!(
+            out,
+            r#"
             
                 /// Whether the host supplied every `{namespace}` callback.
                 pub fn has_{namespace}(&self) -> bool {{
@@ -184,33 +192,39 @@ impl<'a> BridgeCtx<'a> {
 		matches!(ty, TypeRef::Named { name, .. } if self.local_codec_types.contains(name.as_str()))
 	}
 
-	fn alias_primitive(&self, ty: &TypeRef) -> Option<&'a str> {
-		let TypeRef::Named { name, .. } = ty else {
-			return None;
-		};
-		let mut seen = BTreeSet::new();
-		let mut current = name.as_str();
-		loop {
-			if !seen.insert(current) {
-				return None;
-			}
-			let TypeDefKind::Alias(target) = &self.api_types.get(current)?.kind else {
-				return None;
-			};
-			match target {
-				TypeRef::Primitive(primitive) => return Some(primitive.as_str()),
-				TypeRef::Named { name, .. } => current = name,
-				_ => return None,
-			}
-		}
-	}
+    fn is_encoded_codec(&self, ty: &TypeRef) -> bool {
+        self.is_api_codec(ty) || self.is_local_codec(ty)
+            || matches!(ty, TypeRef::Vec(inner) if self.is_encoded_codec(inner))
+    }
+
+    fn alias_primitive(&self, ty: &TypeRef) -> Option<&'a str> {
+        let TypeRef::Named { name, .. } = ty else {
+            return None;
+        };
+        let mut seen = BTreeSet::new();
+        let mut current = name.as_str();
+        loop {
+            if !seen.insert(current) {
+                return None;
+            }
+            let TypeDefKind::Alias(target) = &self.api_types.get(current)?.kind else {
+                return None;
+            };
+            match target {
+                TypeRef::Primitive(primitive) => return Some(primitive.as_str()),
+                TypeRef::Named { name, .. } => current = name,
+                _ => return None,
+            }
+        }
+    }
 }
 
 struct BridgeField {
-	field_name: String,
-	raw_name: String,
-	optional: bool,
-	namespace: Option<String>,
+    field_name: String,
+    raw_name: String,
+    optional: bool,
+    absent_is_none: bool,
+    namespace: Option<String>,
 }
 
 /// Callback namespaces of the optional capability traits, in emission order.
@@ -230,20 +244,24 @@ fn bridge_fields(
 	platform_trait_names: &BTreeSet<String>,
 	optional_traits: &BTreeSet<String>,
 ) -> Vec<BridgeField> {
-	let mut fields = Vec::new();
-	for trait_def in traits {
-		let optional = optional_traits.contains(&trait_def.name);
-		let namespace = optional.then(|| snake_case(&callback_namespace(&trait_def.name)));
-		for method in &trait_def.methods {
-			fields.push(BridgeField {
-				field_name: raw_callback_field_name(trait_def, method, platform_trait_names),
-				raw_name: raw_callback_wire_name(trait_def, method, platform_trait_names),
-				optional,
-				namespace: namespace.clone(),
-			});
-		}
-	}
-	fields
+    let mut fields = Vec::new();
+    for trait_def in traits {
+        let optional = optional_traits.contains(&trait_def.name);
+        let namespace = optional.then(|| snake_case(&callback_namespace(&trait_def.name)));
+        for method in &trait_def.methods {
+            fields.push(BridgeField {
+                field_name: raw_callback_field_name(trait_def, method, platform_trait_names),
+                raw_name: raw_callback_wire_name(trait_def, method, platform_trait_names),
+                optional: optional || method.has_default,
+                absent_is_none: method.has_default && matches!(
+                    &method.return_shape.inner,
+                    PlatformInner::Result { ok: TypeRef::Option(_), .. }
+                ),
+                namespace: namespace.clone(),
+            });
+        }
+    }
+    fields
 }
 
 fn requires_manual_trait_impl(
@@ -337,7 +355,21 @@ fn emit_result_method(
             ),
             &map_err,
         )
-    } else if ctx.is_api_codec(ok) || ctx.is_local_codec(ok) || is_scale_vector_result(ok) {
+    } else if let TypeRef::Option(inner) = ok
+        && ctx.is_encoded_codec(inner)
+    {
+        let call = bridge_call(
+            "invoke_optional_bytes_return", &method.name, &args,
+            &[format!("{:?}", format!("{raw} must resolve to Uint8Array, null or undefined"))],
+        );
+        let inner_type = rust_type(inner, ctx)?;
+        formatdoc! {
+            r#"
+            let bytes = {call}.await{map_err}?;
+            bytes.map(|bytes| decode_bytes::<{inner_type}>(bytes, "{raw} response did not decode"){map_err}).transpose()
+            "#
+        }
+    } else if ctx.is_encoded_codec(ok) || is_scale_vector_result(ok) {
         formatdoc_decode_result(method, ok, &raw, &args, &map_err, ctx)?
     } else {
         bail!("unsupported wasm bridge result type for `{raw}`: {ok:?}");
@@ -434,15 +466,23 @@ fn formatdoc_decode_result(
 }
 
 fn rust_params(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<String> {
-	method
-		.params
-		.iter()
-		.map(|param| {
-			let reference = if param.borrowed { "&" } else { "" };
-			Ok(format!("{}: {reference}{}", param.name, rust_type(&param.type_ref, ctx)?))
-		})
-		.collect::<Result<Vec<_>>>()
-		.map(|params| params.join(", "))
+    method
+        .params
+        .iter()
+        .map(|param| {
+            let reference = if param.borrowed { "&" } else { "" };
+            Ok(format!(
+                "{}: {reference}{}",
+                param.name,
+                if param.borrowed && is_string(&param.type_ref) {
+                    "str".to_owned()
+                } else {
+                    rust_type(&param.type_ref, ctx)?
+                }
+            ))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(|params| params.join(", "))
 }
 
 fn method_header(keyword: &str, name: &str, params: &str, ret: Option<&str>) -> String {
@@ -564,22 +604,32 @@ fn js_arg_vec(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<String> {
 }
 
 fn js_arg_expr(name: &str, ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
-	if is_string(ty) {
-		return Ok(format!("JsValue::from_str(&{name})"));
-	}
-	if is_bytes(ty) {
-		return Ok(format!("Uint8Array::from({name}.as_slice()).into()"));
-	}
-	if ctx.is_api_codec(ty) || ctx.is_local_codec(ty) {
-		return Ok(format!("Uint8Array::from({name}.encode().as_slice()).into()"));
-	}
-	if let Some(primitive) = ctx.alias_primitive(ty) {
-		return numeric_js_arg(name, primitive);
-	}
-	if let TypeRef::Primitive(primitive) = ty {
-		return numeric_js_arg(name, primitive);
-	}
-	bail!("unsupported wasm bridge callback parameter `{name}`: {ty:?}")
+    if is_string(ty) {
+        return Ok(format!("JsValue::from_str(&{name})"));
+    }
+    if is_bytes(ty) {
+        return Ok(format!("Uint8Array::from({name}.as_slice()).into()"));
+    }
+    if ctx.is_encoded_codec(ty) {
+        return Ok(format!(
+            "Uint8Array::from({name}.encode().as_slice()).into()"
+        ));
+    }
+    if let TypeRef::Option(inner) = ty {
+        if ctx.is_encoded_codec(inner) {
+            return Ok(format!("{name}.as_ref().map_or(JsValue::UNDEFINED, |value| Uint8Array::from(value.encode().as_slice()).into())"));
+        }
+        if is_bytes(inner) {
+            return Ok(format!("{name}.as_ref().map_or(JsValue::UNDEFINED, |value| Uint8Array::from(value.as_slice()).into())"));
+        }
+    }
+    if let Some(primitive) = ctx.alias_primitive(ty) {
+        return numeric_js_arg(name, primitive);
+    }
+    if let TypeRef::Primitive(primitive) = ty {
+        return numeric_js_arg(name, primitive);
+    }
+    bail!("unsupported wasm bridge callback parameter `{name}`: {ty:?}")
 }
 
 fn numeric_js_arg(name: &str, primitive: &str) -> Result<String> {
@@ -795,4 +845,68 @@ fn indent_body(body: &str, spaces: usize) -> String {
 		.map(|line| if line.is_empty() { String::new() } else { format!("{indent}{line}") })
 		.collect::<Vec<_>>()
 		.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::{PlatformParam, PlatformReturn};
+
+    fn context() -> BridgeCtx<'static> {
+        BridgeCtx {
+            api_types: BTreeMap::new(),
+            codec_types: BTreeSet::new(),
+            local_types: ["ReceivingAuthority"].into_iter().collect(),
+            local_codec_types: ["ReceivingAuthority"].into_iter().collect(),
+        }
+    }
+
+    fn authority_type() -> TypeRef {
+        TypeRef::Named { name: "ReceivingAuthority".into(), args: Vec::new() }
+    }
+
+    #[test]
+    fn optional_codec_result_propagates_callback_failure_before_decode() {
+        let ok = TypeRef::Option(Box::new(authority_type()));
+        let error = TypeRef::Named { name: "GenericError".into(), args: Vec::new() };
+        let method = PlatformMethod {
+            name: "receiver_authority".into(), docs: None,
+            params: vec![PlatformParam { name: "product".into(), type_ref: TypeRef::Primitive("str".into()), borrowed: true }],
+            return_shape: PlatformReturn { is_async: true, inner: PlatformInner::Result { ok: ok.clone(), err: error.clone() } },
+            has_default: true,
+        };
+        let output = emit_result_method(&method, &ok, &error, &context()).unwrap();
+        assert!(output.contains("product: &str"), "{output}");
+        assert!(output.contains(".await.map_err(generic)?;"), "{output}");
+        assert!(output.contains("bytes.map(|bytes| decode_bytes::<crate::platform::ReceivingAuthority>"), "{output}");
+        assert!(output.contains(".transpose()"), "{output}");
+    }
+
+    #[test]
+    fn optional_and_vector_codec_arguments_use_matching_scale_payloads() {
+        let context = context();
+        let vector = TypeRef::Vec(Box::new(authority_type()));
+        assert_eq!(js_arg_expr("watches", &vector, &context).unwrap(),
+            "Uint8Array::from(watches.encode().as_slice()).into()");
+        let optional = TypeRef::Option(Box::new(authority_type()));
+        let output = js_arg_expr("authority", &optional, &context).unwrap();
+        assert!(output.contains("map_or(JsValue::UNDEFINED"));
+        assert!(output.contains("value.encode()"));
+    }
+
+    #[test]
+    fn optional_default_authority_is_absent_not_successful_enrollment() {
+        let method = PlatformMethod {
+            name: "receiver_authority".into(), docs: None, params: Vec::new(),
+            return_shape: PlatformReturn { is_async: true, inner: PlatformInner::Result {
+                ok: TypeRef::Option(Box::new(authority_type())),
+                err: TypeRef::Named { name: "GenericError".into(), args: Vec::new() },
+            } },
+            has_default: true,
+        };
+        let notifications = PlatformTrait { name: "Notifications".into(), docs: None, methods: vec![method] };
+        let fields = bridge_fields(&[&notifications], &BTreeSet::new(), &BTreeSet::new());
+        assert!(fields[0].optional);
+        assert!(fields[0].absent_is_none);
+    }
 }

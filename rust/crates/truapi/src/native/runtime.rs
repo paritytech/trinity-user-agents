@@ -267,16 +267,92 @@ impl NativeTrUApiHostRuntime {
 			.set_funding_platform(Arc::new(FundingCallbackPlatform { funding: callbacks }))
 	}
 
-	/// Open a funding session on the host's own behalf, as the Balance
-	/// card does, and show the overlay. Answers the session id, or `None`
-	/// when the user dismissed it.
-	pub async fn open_funding(
-		&self,
-		direction: v01::FundingDirection,
-		amount: Option<u128>,
-	) -> Result<Option<String>, HostRejection> {
-		Ok(self.runtime.open_funding(direction, amount).await?)
-	}
+    /// Enumerate durable receiving registrations, including synchronized ones.
+    pub async fn receiving_pending(&self) -> Result<Vec<crate::platform::ReceivingRegistration>, HostRejection> {
+        self.runtime.receiving().pending().await.map_err(HostRejection::from)
+    }
+
+    /// Acknowledge exactly the durable revision synchronized by the transport.
+    pub async fn receiving_synchronized(&self, product_id: String, revision: u64) -> Result<bool, HostRejection> {
+        self.runtime.receiving().synchronized(&product_id, revision).await.map_err(HostRejection::from)
+    }
+
+    /// Verify a complete frame against its independently observed chain and topics.
+    pub async fn receiving_ingest(
+        &self, product_id: String, revision: u64, watch_id: String,
+        actual_genesis: String, actual_channel: String, actual_topics: Vec<String>, frame: Vec<u8>,
+    ) -> Result<Vec<crate::latest::ReceivingEvent>, HostRejection> {
+        self.runtime.receiving().ingest(&product_id, revision, watch_id, actual_genesis, actual_channel, actual_topics, frame)
+            .await.map_err(HostRejection::from)
+    }
+
+    /// Decode and authenticate a raw SCALE statement before receiving its frame.
+    pub async fn receiving_ingest_statement(
+        &self, product_id: String, revision: u64, watch_id: String,
+        actual_genesis: String, statement: Vec<u8>,
+    ) -> Result<Vec<crate::latest::ReceivingEvent>, HostRejection> {
+        self.runtime.receiving().ingest_statement(&product_id, revision, watch_id, actual_genesis, statement)
+            .await.map_err(HostRejection::from)
+    }
+
+    /// Reserve display after foreground grace, rechecking receipts and authority.
+    pub async fn receiving_prepare_display(
+        &self, product_id: String, revision: u64, event_id: String,
+    ) -> Result<Option<crate::latest::ReceivingEvent>, HostRejection> {
+        self.runtime.receiving().prepare_display(&product_id, revision, event_id).await.map_err(HostRejection::from)
+    }
+
+    /// Validate a click before loading the verified product, without enqueueing it.
+    pub async fn receiving_validate_activation(
+        &self, product_id: String, revision: u64, event_id: String,
+    ) -> Result<Option<crate::latest::ReceivingEvent>, HostRejection> {
+        self.runtime.receiving().validate_activation(&product_id, revision, event_id).await.map_err(HostRejection::from)
+    }
+
+    /// Clear a reservation only after explicit display failure, not an unknown outcome.
+    pub async fn receiving_cancel_display(
+        &self, product_id: String, revision: u64, event_id: String,
+    ) -> Result<(), HostRejection> {
+        self.runtime.receiving().cancel_display(&product_id, revision, event_id).await.map_err(HostRejection::from)
+    }
+
+    /// Record actual platform display, not enrollment or ingestion.
+    pub async fn receiving_confirm_display(
+        &self, product_id: String, revision: u64, event_id: String,
+    ) -> Result<(), HostRejection> {
+        self.runtime.receiving().confirm_display(&product_id, revision, event_id).await.map_err(HostRejection::from)
+    }
+
+    /// Resolve a click only under current trusted authority, without launching URLs.
+    pub async fn receiving_activate(
+        &self, product_id: String, revision: u64, event_id: String,
+    ) -> Result<Option<crate::latest::ReceivingEvent>, HostRejection> {
+        self.runtime.receiving().activate(&product_id, revision, event_id).await.map_err(HostRejection::from)
+    }
+
+    /// Revoke locally before logout or destructive account erasure.
+    pub async fn receiving_revoke(&self, product_id: String) -> Result<(), HostRejection> {
+        self.runtime.receiving().revoke(&product_id).await.map_err(HostRejection::from)
+    }
+
+    /// Queue synchronization after the host durably rotates its selected transport.
+    pub async fn receiving_mark_transport_changed(&self, product_id: String) -> Result<(), HostRejection> {
+        self.runtime.receiving().mark_transport_changed(&product_id).await.map_err(HostRejection::from)
+    }
+
+    /// Install the host's contacts adapter, which owns the contact list and
+    /// draws the picker.
+    ///
+    /// Set-once, so the picker cannot change hands under a running product.
+    /// Answers whether this call installed it. Call it before opening any
+    /// product execution; a runtime without one answers `contacts.pick` with
+    /// `Unsupported`.
+    pub fn set_contacts_callbacks(&self, callbacks: Arc<dyn NativeContactsCallbacks>) -> bool {
+        self.runtime
+            .set_contacts_platform(Arc::new(ContactsCallbackPlatform {
+                contacts: callbacks,
+            }))
+    }
 
 	/// Session `intent` as the core holds it, for the host's status and
 	/// history views.

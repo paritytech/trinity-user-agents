@@ -297,23 +297,26 @@ fn collect_referenced_local_types(
 	traits: &[PlatformTrait],
 	names: &NameContext,
 ) -> Result<Vec<TypeDef>> {
-	let mut referenced = BTreeSet::new();
-	for trait_def in traits {
-		for method in &trait_def.methods {
-			for param in &method.params {
-				collect_named_types(&param.type_ref, &mut referenced);
-			}
-			match &method.return_shape.inner {
-				// Err types never reach the TS signature (errors throw), so
-				// their names are not emitted either.
-				PlatformInner::Result { ok, .. } => collect_named_types(ok, &mut referenced),
-				PlatformInner::Stream(inner) | PlatformInner::Plain(inner) => {
-					collect_named_types(inner, &mut referenced)
-				},
-				PlatformInner::TraitObject(_) | PlatformInner::Unit => {},
-			}
-		}
-	}
+    let mut referenced = BTreeSet::new();
+    // Resident runtime results are not platform callbacks, but share the
+    // canonical host-side codec surface.
+    referenced.insert("ReceivingRegistration".to_string());
+    for trait_def in traits {
+        for method in &trait_def.methods {
+            for param in &method.params {
+                collect_named_types(&param.type_ref, &mut referenced);
+            }
+            match &method.return_shape.inner {
+                // Err types never reach the TS signature (errors throw), so
+                // their names are not emitted either.
+                PlatformInner::Result { ok, .. } => collect_named_types(ok, &mut referenced),
+                PlatformInner::Stream(inner) | PlatformInner::Plain(inner) => {
+                    collect_named_types(inner, &mut referenced)
+                }
+                PlatformInner::TraitObject(_) | PlatformInner::Unit => {}
+            }
+        }
+    }
 
 	let mut local_type_candidates = BTreeMap::new();
 	for (item_id, item_path) in &krate.paths {
