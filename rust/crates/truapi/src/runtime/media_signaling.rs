@@ -133,28 +133,7 @@ impl MediaSignaling {
         advertisement_topic(&identity).map_err(|_| MediaSignalingError::InvalidPeer)?;
         let secrets = RuntimeSecrets::generate(identity.clone(), REPLAY_CAPACITY)
             .map_err(|_| MediaSignalingError::Unavailable)?;
-        let origin = Instant::now();
-        let inner = Arc::new(Inner {
-            services,
-            authority,
-            session,
-            identity,
-            origin,
-            closed: CancellationToken::default(),
-            state: Mutex::new(State {
-                live: Some(Live {
-                    secrets,
-                    advertisement: None,
-                    connection: None,
-                    clock: EffectiveClock::new(current_unix_secs(), Duration::ZERO),
-                    recipient_certificates: Vec::new(),
-                }),
-                events: VecDeque::with_capacity(EVENT_CAPACITY),
-                terminal: None,
-            }),
-            event_waker: AtomicWaker::new(),
-            lookup_gate: futures::lock::Mutex::new(()),
-        });
+        let inner = Inner::new(services, authority, session, identity, secrets);
         // This owner closes even if startup's future is dropped at any await.
         let owner = Arc::new(Self { inner: inner.clone() });
         let changes = inner.authority.session_state().subscribe();
@@ -186,6 +165,29 @@ impl MediaSignaling {
         }));
         let events = Box::pin(EventStream { inner, ended: false });
         Ok((owner, events))
+    }
+
+    /// Connected endpoint without a transport, for service tests that
+    /// deliver already-authenticated messages directly.
+    #[cfg(test)]
+    pub(super) fn connected_for_test(
+        services: Arc<RuntimeServices>,
+        authority: Arc<dyn ProductAuthority>,
+        session: AuthoritySession,
+        identity: MediaIdentity,
+        advertisement: VerifiedAdvertisement,
+    ) -> (Arc<Self>, BoxStream<'static, Result<MediaSignalingEvent>>) {
+        let secrets = RuntimeSecrets::generate(identity.clone(), REPLAY_CAPACITY).expect("test secrets generate");
+        let inner = Inner::new(services, authority, session, identity, secrets);
+        inner.state.lock().expect("media signaling state poisoned").live.as_mut()
+            .expect("new endpoint is live").advertisement = Some(advertisement);
+        let owner = Arc::new(Self { inner: inner.clone() });
+        (owner, Box::pin(EventStream { inner, ended: false }))
+    }
+
+    #[cfg(test)]
+    pub(super) fn deliver_for_test(&self, message: AuthenticatedMediaMessage) -> Result<()> {
+        self.inner.emit(MediaSignalingEvent::Message(Box::new(message)))
     }
 
     pub(super) fn advertisement(&self) -> Result<VerifiedAdvertisement> {
@@ -342,6 +344,36 @@ impl Drop for MediaSignaling {
 }
 
 impl Inner {
+    fn new(
+        services: Arc<RuntimeServices>,
+        authority: Arc<dyn ProductAuthority>,
+        session: AuthoritySession,
+        identity: MediaIdentity,
+        secrets: RuntimeSecrets,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            services,
+            authority,
+            session,
+            identity,
+            origin: Instant::now(),
+            closed: CancellationToken::default(),
+            state: Mutex::new(State {
+                live: Some(Live {
+                    secrets,
+                    advertisement: None,
+                    connection: None,
+                    clock: EffectiveClock::new(current_unix_secs(), Duration::ZERO),
+                    recipient_certificates: Vec::new(),
+                }),
+                events: VecDeque::with_capacity(EVENT_CAPACITY),
+                terminal: None,
+            }),
+            event_waker: AtomicWaker::new(),
+            lookup_gate: futures::lock::Mutex::new(()),
+        })
+    }
+
     fn ensure_current(&self) -> Result<()> {
         if let Some(error) = self.state.lock().expect("media signaling state poisoned").terminal {
             return Err(error);
