@@ -889,19 +889,21 @@ impl ProductAuthority for SigningHost {
         self.current_local_session()
     }
 
-	async fn product_subtree_public_key(
-		&self,
-		_cx: &CallContext,
-		session: &AuthoritySession,
-		product_id: &ProductId,
-	) -> Result<[u8; 32], AuthorityError> {
-		self.require_current_session(session)?;
-		let entropy = self.root_entropy()?;
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
-		derive_product_subtree_keypair(&root, product_id)
-			.map(|keypair| keypair.public.to_bytes())
-			.map_err(product_authority_error)
-	}
+    async fn refresh_session_identity(&self) -> Result<Option<AuthoritySession>, String> {
+        let Ok(context) = self.local_identity_context() else {
+            return Ok(None);
+        };
+        self.refresh_local_identity(&context.activation_id)
+            .await
+            .map_err(|error| error.reason)?;
+        if !self
+            .local_identity_context()
+            .is_ok_and(|current| current.activation_id == context.activation_id)
+        {
+            return Ok(None);
+        }
+        Ok(self.current_local_session())
+    }
 
 	async fn subtree_resolution_reaches_account_holder(
 		&self,
