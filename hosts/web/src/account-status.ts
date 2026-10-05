@@ -79,28 +79,6 @@ function describeReading(reading: AccountReading): VersionRow {
   };
 }
 
-function slotsRow(readings: AccountReading[]): VersionRow {
-  const label = "Consumer slots";
-  const holder = readings.find((reading) => reading.consumer !== null);
-  if (holder?.consumer == null)
-    return {
-      label,
-      value: "No record",
-      title:
-        "Slots are part of a Resources.Consumers record, and none was found.",
-    };
-  const { slots } = holder.consumer;
-  const occupied = slots.flatMap((slot) =>
-    slot.tag === "Occupied" ? [slot.accountId] : [],
-  );
-  return {
-    label,
-    value: `${occupied.length} of ${slots.length} occupied`,
-    detail: ROLE_LABEL[holder.role].toLowerCase(),
-    title: `Resources.Consumers.stmt_store_slots of this record, as stored. The pallet does not document them. They are not product allowances: the core registers those in Resources.StatementStoreAllowances, by ring alias, and never writes this record. This is not remaining quota.${occupied.length > 0 ? `\nOccupied by:\n${occupied.join("\n")}` : ""}`,
-  };
-}
-
 const RING_NOTE =
   "Members.Members[(collection, ring key)] at the finalized block. The ring key is the one this account's own PeopleLite.LitePeople, or People.AccountToPersonalId and People.People, record names. It is not derived from the recovery phrase here, so this does not prove the key the wallet signs with is the listed one. Diagnostic only: it does not by itself explain a signing failure. A runtime that moved these items reads as no key, not as an error.";
 
@@ -193,7 +171,6 @@ function chainRows(chain: ChainState): VersionRow[] {
     case "done":
       return [
         ...chain.reading.readings.map(describeReading),
-        slotsRow(chain.reading.readings),
         ...ringRows(chain.reading.readings),
         {
           label: "Checked",

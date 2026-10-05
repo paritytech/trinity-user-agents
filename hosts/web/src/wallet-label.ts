@@ -13,6 +13,12 @@ export interface WalletPublicInfo {
   publicKey: string;
   /** A username from the People chain record or the session, when one was found. */
   username?: string;
+  /**
+   * The lite username from the People chain record that the wallet's session
+   * was last given. Sign-in starts the session with it, before the chain is
+   * read again.
+   */
+  sessionUsername?: string;
 }
 
 const KEY_PREFIX = "truapi-web-signing-host:wallet-public:v1:";
@@ -33,10 +39,14 @@ function keyFor(walletId: string, network: string): string {
 
 function isInfo(value: unknown): value is WalletPublicInfo {
   if (typeof value !== "object" || value === null) return false;
-  const { publicKey, username } = value as Record<string, unknown>;
+  const { publicKey, username, sessionUsername } = value as Record<
+    string,
+    unknown
+  >;
   return (
     typeof publicKey === "string" &&
-    (username === undefined || typeof username === "string")
+    (username === undefined || typeof username === "string") &&
+    (sessionUsername === undefined || typeof sessionUsername === "string")
   );
 }
 
@@ -65,27 +75,32 @@ export class WalletPublicInfoStore {
 
   /**
    * Keep what is known for this wallet on this network. A new key replaces an
-   * old one with its username dropped, because the name belonged to the old
-   * key. A name is kept when the key is the same.
+   * old one with its names dropped, because the names belonged to the old
+   * key. A name is kept when the key is the same and `next` does not give
+   * one. A `sessionUsername` of null drops the stored one.
    */
   update(
     walletId: string,
-    next: { publicKey: string; username?: string },
+    next: {
+      publicKey: string;
+      username?: string;
+      sessionUsername?: string | null;
+    },
     network: string = DEFAULT_NETWORK,
   ): void {
     const known = this.get(walletId, network);
-    const username =
-      next.username ??
-      (known?.publicKey === next.publicKey ? known.username : undefined);
+    const sameKey = known?.publicKey === next.publicKey;
+    const username = next.username ?? (sameKey ? known.username : undefined);
+    const sessionUsername =
+      next.sessionUsername === null
+        ? undefined
+        : (next.sessionUsername ??
+          (sameKey ? known.sessionUsername : undefined));
+    const info: WalletPublicInfo = { publicKey: next.publicKey };
+    if (username !== undefined) info.username = username;
+    if (sessionUsername !== undefined) info.sessionUsername = sessionUsername;
     try {
-      this.storage.setItem(
-        keyFor(walletId, network),
-        JSON.stringify(
-          username === undefined
-            ? { publicKey: next.publicKey }
-            : { publicKey: next.publicKey, username },
-        ),
-      );
+      this.storage.setItem(keyFor(walletId, network), JSON.stringify(info));
     } catch {
       // The label falls back to what is known; nothing else depends on this.
     }
@@ -152,4 +167,26 @@ export function usernameFrom(
     if (consumer) return consumer.fullUsername ?? consumer.liteUsername;
   }
   return undefined;
+}
+
+/**
+ * The lite username a local session should carry, from a People chain reading:
+ * the identity account's record first, then the root key's. Null when neither
+ * account has a record. Undefined when the record that would decide it could
+ * not be decoded, so the reading says nothing about the name.
+ */
+export function sessionUsernameFrom(
+  readings: {
+    role: string;
+    consumer: { liteUsername: string } | null;
+    problem?: string;
+  }[],
+): string | null | undefined {
+  for (const role of ["identity", "root"]) {
+    const reading = readings.find((item) => item.role === role);
+    if (reading === undefined) continue;
+    if (reading.problem !== undefined) return undefined;
+    if (reading.consumer) return reading.consumer.liteUsername;
+  }
+  return null;
 }

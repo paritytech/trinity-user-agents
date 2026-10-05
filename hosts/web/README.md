@@ -281,8 +281,7 @@ in DevTools.
   press Refresh. It reads `Resources.Consumers` and `PeopleLite.LitePeople` for the identity account and for the root
   key, at the finalized block, through the host's light client. It shows the username and the Lite or Person
   credibility. "Not found" means only that no record exists for that account. The layouts follow the product SDK's
-  committed People chain metadata, so a runtime that changed them shows "Unreadable". **Consumer slots** is the
-  `stmt_store_slots` field of the record as stored. It is not a product allowance and not remaining quota. **Ring** rows
+  committed People chain metadata, so a runtime that changed them shows "Unreadable". **Ring** rows
   show where `Members.Members` holds the ring key that the account's own `PeopleLite.LitePeople` record (lite), or
   `People.AccountToPersonalId` and `People.People` records (full), name: Onboarding, Included with its ring index, or
   Suspended, read on the same finalized block. "No Members entry" means a key is named and unlisted. "No ring key on
@@ -306,10 +305,14 @@ in DevTools.
   not product accounts, so `getAccount` does not return them, and no exported call does. PGAS needs its asset id and
   decimals from the runtime's metadata, which this page cannot decode without a new dependency.
 
-An imported wallet's session carries no username: the core's local activation takes entropy and an optional lite
-username, and nothing in the exported runtime resolves one afterwards. `account.getUserId` therefore answers `Unknown`
-("No primary username for this session") for an imported wallet. The **Session username** row stays empty, and the
-People chain rows show only what the chain records for the accounts, which is not a username the core reports.
+The core gives a local session only the lite username it is activated with and never looks one up, so this host
+supplies it. After sign-in it reads `Resources.Consumers` for the identity account, then the root key, once per
+account, and on Refresh. When the record's lite username differs from the session's, the host activates the session
+again with it, which closes and reopens the open product, and `account.getUserId` then answers with that name. The
+name is kept with the wallet's public facts, so the next sign-in starts the session with it. A full username is not
+passed on: local activation takes a lite one only. With no record the session has no username, and
+`account.getUserId` answers `Unknown` ("No primary username for this session"). A record that cannot be decoded
+leaves the session as it is.
 
 A failed read changes nothing about the session.
 
