@@ -54,7 +54,6 @@ import io.paritytech.polkadotapp.database.dao.StorageDao
 import io.paritytech.polkadotapp.database.dao.TokenBalanceDao
 import io.paritytech.polkadotapp.database.dao.TokenPriceDao
 import io.paritytech.polkadotapp.database.dao.TrackedExtrinsicDao
-import io.paritytech.polkadotapp.database.dao.VouchersDao
 import io.paritytech.polkadotapp.database.migrations.ChatMessageContentMigration
 import io.paritytech.polkadotapp.database.migrations.Migration10To11
 import io.paritytech.polkadotapp.database.migrations.Migration12To13
@@ -136,7 +135,6 @@ import io.paritytech.polkadotapp.database.model.StorageEntryLocal
 import io.paritytech.polkadotapp.database.model.TokenBalanceLocal
 import io.paritytech.polkadotapp.database.model.TokenPriceLocal
 import io.paritytech.polkadotapp.database.model.TrackedExtrinsicLocal
-import io.paritytech.polkadotapp.database.model.VoucherLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainAssetLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainExplorerLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainExternalApiLocal
@@ -167,7 +165,6 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         ChatMessageProcessingLocal::class,
         ChatMessageReactionLocal::class,
         ChatBotStateLocal::class,
-        VoucherLocal::class,
         SsoSessionLocal::class,
         SsoSessionMetadataLocal::class,
         MessageRevisionLocal::class,
@@ -281,7 +278,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         AutoMigration(from = 64, to = 65),
         // Add pocket_cards (cards the user added to the Pocket) and pocket_card_faces (the newest face drawn for a card)
         AutoMigration(from = 66, to = 67),
-        // Drop the video game tables
+        // Drop the video game and privacy voucher tables
         AutoMigration(from = 67, to = 68, spec = Migration67To68Spec::class),
     ]
 )
@@ -369,7 +366,6 @@ abstract class AppDatabase : RoomDatabase() {
 
     abstract fun messageReactionsDao(): ChatMessageReactionDao
 
-    abstract fun vouchersDao(): VouchersDao
 
     abstract fun chatBotStateDao(): ChatBotStateDao
 

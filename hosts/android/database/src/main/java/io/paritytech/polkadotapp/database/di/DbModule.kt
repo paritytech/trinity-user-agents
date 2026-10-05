@@ -119,10 +119,6 @@ class DbModule {
 
     @Provides
     @Singleton
-    fun provideVouchersDao(appDatabase: AppDatabase) = appDatabase.vouchersDao()
-
-    @Provides
-    @Singleton
     fun provideChatBotStateDao(appDatabase: AppDatabase) = appDatabase.chatBotStateDao()
 
     @Provides
