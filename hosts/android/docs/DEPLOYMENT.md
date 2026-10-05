@@ -215,6 +215,7 @@ without it. JSON values are stored as Remote Config strings.
 | `payment_asset_config` | JSON object | payment asset branding (optional) | `feature/tokens` — `RealPaymentAssetBrandProvider` | `{ "symbol": "CASH", "iconSquareUrl": "https://…/square.svg", "iconWideUrl": "https://…/wide.svg" }` — the payment asset's symbol and logos: a square mark for amounts and chat payments, a wide mark-plus-wordmark for the balance card, as absolute `http(s)` URLs (SVG or PNG). Every field is optional; anything missing or failing to load falls back to `CURRENCY_SYMBOL` and the built-in mark. The last activated value applies at start-up and the object is re-read right after the first sync; logos load on display through the app image loader and are cached by URL, so publish a changed logo under a new URL. |
 | `collectibles_enabled` | boolean | collectibles (optional) | `feature/videogame` | Feature gate for the collectibles webview. |
 | `collectibles_fallback_url` | string (URL) | collectibles (optional) | `feature/videogame` | Fallback URL of the collectibles webview when DotNS resolution fails. |
+| `app_sharing_url` | string (URL) | Share ID on the Pocket tab | `feature/wallet` — `RealAppSharingConfigRepository` | Download link placed in the invite text the ID card shares ("Download it at {link} and add me – my username is {username}."). A plain URL, not JSON-quoted. The share waits briefly for Remote Config to sync; when it does not sync in time or the key is empty, the share reports an error instead of sending a message without a link. |
 
 A chain descriptor in `chains` / `chains_v2` is a JSON object deserialised into
 `chains/src/main/java/io/paritytech/polkadotapp/chains/multiNetwork/chain/remote/model/ChainRemote.kt`
@@ -243,7 +244,7 @@ An empty value counts as missing. Three helpers exist:
 The mandatory set, in the order Gradle reports them when absent:
 `APPLICATION_ID`, `APPLICATION_NAME`, `CONTACT_EMAIL`, `LOG_COLLECTION_EMAIL`,
 `PRIVACY_POLICY_URL`, `TERMS_OF_USE_URL`, `SENTRY_ORG`, `SENTRY_PROJECT`, `CURRENCY_SYMBOL`,
-`NIGHTLY_FUNDING_MNEMONIC`, `GOOGLE_OAUTH_ID`, `FIRESTORE_DATABASE_ID`,
+`FIAT_SYMBOL`, `NIGHTLY_FUNDING_MNEMONIC`, `GOOGLE_OAUTH_ID`, `FIRESTORE_DATABASE_ID`,
 `GOOGLE_PROJECT_ID`.
 
 In GitHub Actions, non-sensitive values from this section can be mapped from GitHub
@@ -296,6 +297,7 @@ or a `BuildConfig` field. Mandatory ones have no fallback; optional ones list th
 | `LOG_COLLECTION_EMAIL`      | `app`                         | yes      | —                              | Recipient address for the in-app "collect logs" debug share action          |
 | `CONTACT_EMAIL`             | `app`                         | yes      | —                              | Recipient address for the "Contact us" action on the Legal & Support screen |
 | `CURRENCY_SYMBOL`           | `common`                      | yes      | —                              | Symbol of the in-app digital currency rendered in the UI                     |
+| `FIAT_SYMBOL`               | `common`                      | yes      | —                              | Fiat symbol prefixed to amounts; `$` also puts the dollar icon on the chat pay button, any other value the neutral cash icon |
 | `FIRESTORE_DATABASE_ID`     | `tools/backup/impl`           | yes      | —                              | Firestore database holding the backup encryption-key records (§4); `(default)` for the project's default database |
 | `NIGHTLY_FUNDING_MNEMONIC`  | `feature/transactions/impl`   | yes      | —                              | Mnemonic of the funding account used to top up accounts on nightly/production test contours |
 | `REFERRAL_WEB_HOST`         | `feature/become-citizen/impl` | no       | `referral.example.com`         | Host of the web app that backs referral (`https`) deeplinks                 |
@@ -528,6 +530,7 @@ jobs:
       LOG_COLLECTION_EMAIL: ${{ vars.LOG_COLLECTION_EMAIL }}
       CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
       CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}
+      FIAT_SYMBOL: ${{ vars.FIAT_SYMBOL }}
       REFERRAL_WEB_HOST: ${{ vars.REFERRAL_WEB_HOST }}
       GAME_RESULTS_FALLBACK_URL: ${{ vars.GAME_RESULTS_FALLBACK_URL }}
       SENTRY_ORG: ${{ vars.SENTRY_ORG }}

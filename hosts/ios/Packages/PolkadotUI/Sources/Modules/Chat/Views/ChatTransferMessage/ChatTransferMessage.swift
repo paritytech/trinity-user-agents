@@ -5,9 +5,9 @@ internal import SnapKit
 
 public struct ChatTransferMessageConfiguration: HashableContentConfiguration {
     let title: String
+    let currencySymbol: String
     let amountText: String
     let tokenSymbol: String
-    let assetIcon: UIImage?
     let originalAmountText: String?
     let state: ChatTransferMessageConfiguration.DirectionalState
     let statusConfiguration: ChatMessageStatusViewConfiguration
@@ -15,6 +15,7 @@ public struct ChatTransferMessageConfiguration: HashableContentConfiguration {
     let titleColor: UIColor
     let amountBackgroundColor: UIColor
     let amountTextColor: UIColor
+    let tokenSymbolColor: UIColor
     let originalAmountTextColor: UIColor
     let side: ChatBubbleTailSide
 
@@ -56,10 +57,8 @@ final class ChatTransferMessageView: UIView, UIContentView, ReactableContentView
         $0.textAlignment = .left
     }
 
-    private typealias AmountRowView = GenericPairValueView<UIImageView, Label>
-
-    /// The original amount sits above the icon + amount row, so the icon centres on the amount alone.
-    private let amountContainerView: GenericBackgroundView<GenericPairValueView<Label, AmountRowView>> =
+    /// The original amount sits above the currency + amount + asset row.
+    private let amountContainerView: GenericBackgroundView<GenericPairValueView<Label, ChatTransferAmountView>> =
         create { container in
             container.insets = UIEdgeInsets(
                 top: DSSpacings.mediumIncreased,
@@ -78,32 +77,14 @@ final class ChatTransferMessageView: UIView, UIContentView, ReactableContentView
             originalAmount.numberOfLines = 1
             originalAmount.textAlignment = .left
             originalAmount.isHidden = true
-
-            let amountRow = amounts.sView
-            amountRow.makeHorizontal()
-            amountRow.spacing = Constants.assetIconSpacing
-            amountRow.stackView.alignment = .center
-
-            let icon = amountRow.fView
-            icon.contentMode = .scaleAspectFit
-            icon.snp.makeConstraints { $0.size.equalTo(Constants.assetIconSize) }
-
-            let amount = amountRow.sView
-            amount.typography = .headlineLarge
-            amount.numberOfLines = 1
-            amount.textAlignment = .left
         }
 
-    private var receivedAmountLabel: Label {
-        amountContainerView.wrappedView.sView.sView
+    var amountView: ChatTransferAmountView {
+        amountContainerView.wrappedView.sView
     }
 
     var originalAmountLabel: Label {
         amountContainerView.wrappedView.fView
-    }
-
-    var assetIconView: UIImageView {
-        amountContainerView.wrappedView.sView.fView
     }
 
     let subtitleIconView: UIImageView = create {
@@ -206,9 +187,13 @@ final class ChatTransferMessageView: UIView, UIContentView, ReactableContentView
         appliedConfiguration = configuration
 
         titleLabel.text = configuration.title
-        receivedAmountLabel.text = configuration.amountText
-        assetIconView.image = configuration.assetIcon ?? UIImage.cashLogo.withRenderingMode(.alwaysTemplate)
-        assetIconView.tintColor = configuration.amountTextColor
+        amountView.bind(
+            currencySymbol: configuration.currencySymbol,
+            amount: configuration.amountText,
+            unit: configuration.tokenSymbol
+        )
+        amountView.amountLabel.textColor = configuration.amountTextColor
+        amountView.unitLabel.textColor = configuration.tokenSymbolColor
 
         originalAmountLabel.textColor = configuration.originalAmountTextColor
         if let originalAmount = configuration.originalAmountText {
@@ -221,7 +206,7 @@ final class ChatTransferMessageView: UIView, UIContentView, ReactableContentView
             ).attributes(for: .left)
             attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
             originalAmountLabel.attributedText = NSAttributedString(
-                string: originalAmount,
+                string: configuration.currencySymbol + originalAmount,
                 attributes: attributes
             )
             originalAmountLabel.isHidden = false
@@ -240,7 +225,6 @@ final class ChatTransferMessageView: UIView, UIContentView, ReactableContentView
 
         statusView.configuration = configuration.statusConfiguration
 
-        receivedAmountLabel.textColor = configuration.amountTextColor
         amountContainerView.applyBackgroundStyle(configuration.amountBackgroundColor, cornerRadius: 12)
         titleLabel.textColor = configuration.titleColor
 
@@ -342,8 +326,6 @@ extension ChatTransferMessageView: AccessibilityBound {
 
 private extension ChatTransferMessageView {
     enum Constants {
-        static let assetIconSize = CGSize(width: 20, height: 22)
-        static let assetIconSpacing = DSSpacings.small
         static let bubbleLeadingInset = DSSpacings.medium
         static let bubbleTrailingInset = DSSpacings.small
         static let rowSpacing = DSSpacings.small

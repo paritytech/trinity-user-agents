@@ -123,15 +123,16 @@ struct TrUAPIWsBridgeTests {
 }
 
 private extension TrUAPIWsBridgeTests {
-    static func makeHostRuntimeConfig() -> HostRuntimeConfig {
-        HostRuntimeConfig(
+    static func makeHostRuntimeConfig() throws -> HostRuntimeConfig {
+        try HostRuntimeConfig(
             hostName: "truapi-host-tests",
             peopleChainGenesisHash: Data(repeating: 0, count: 32),
             bulletinChainGenesisHash: Data(repeating: 0, count: 32),
             // Non-zero: all-zero is the "no Asset Hub" sentinel, and this
             // fixture is not exercising that case.
             assetHubChainGenesisHash: Data(repeating: 1, count: 32),
-            networkSuffix: "paseo"
+            networkSuffix: "paseo",
+            databaseDirectory: temporaryDatabaseDirectory()
         )
     }
 
@@ -205,6 +206,14 @@ final class StubCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
 // protocol extension supplies every optional callback and a new one cannot
 // leave this file behind. Only the six requirements without a default are
 // written out, plus the core log recorder.
+/// A fresh directory for one runtime's core database.
+func temporaryDatabaseDirectory() throws -> String {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory.path
+}
+
 final class StubHostBridge: HostBridge, @unchecked Sendable {
     let storage: HostStorageBackend = StubStorage()
     let coreStorage: HostCoreStorageBackend = StubCoreStorage()

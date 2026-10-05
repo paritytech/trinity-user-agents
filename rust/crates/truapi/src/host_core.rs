@@ -572,6 +572,30 @@ impl SigningHostRuntime {
         self.signing_host.set_grant_allowances_unchecked(granted);
     }
 
+    /// The product's hard-subtree public key, derived from the active session
+    /// root, or `None` while no session is active.
+    ///
+    /// A signing host holds the root, so it answers this locally where a
+    /// pairing host has to ask the Account Holder.
+    pub fn product_subtree_public_key(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<[u8; 32]>, v01::GenericError> {
+        self.signing_host
+            .derive_subtree_public_key(product_id)
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
+    /// Answer these resource tags as refused, replacing any earlier set.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub fn set_withheld_resources(&self, tags: Vec<String>) {
+        self.signing_host.set_withheld_resources(tags);
+    }
+
     /// Build a long-lived signing-host runtime around a platform implementation.
     /// Optional capabilities are answered `Unsupported`;
     /// [`Self::with_platforms`] serves them.
@@ -691,6 +715,24 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_device_pairing_observer"))]
     pub fn set_device_pairing_observer(&self, observer: Arc<dyn DevicePairingObserver>) -> bool {
         self.services.install_device_pairing_observer(observer)
+    }
+
+    /// Install the core-owned database that durable consumers share.
+    ///
+    /// Set-once, so durable state cannot move to another file under a running
+    /// consumer. Returns whether this call installed it.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
+    pub fn set_core_db(&self, db: crate::store::Db) -> bool {
+        self.services.install_core_db(db)
+    }
+
+    /// Reports the core database's state.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn core_database_status(
+        &self,
+    ) -> Result<crate::store::DbStatus, crate::store::DbError> {
+        self.services.core_db()?.status().await
     }
 
     /// Build a product-facing runtime from this signing host.
@@ -3450,6 +3492,54 @@ mod tests {
 
         assert!(runtime.set_device_pairing_observer(Arc::new(Inert)));
         assert!(!runtime.set_device_pairing_observer(Arc::new(Inert)));
+    }
+
+    /// Every durable consumer shares one core database: a second installer
+    /// must not swap it, and a host that configured none gets a clear error
+    /// rather than a silently missing store.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_core_database_is_installed_once_and_reports_when_missing() {
+        use crate::store::{Db, DbConfig, DbError, DbLocation};
+        use futures::executor::block_on;
+        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
+
+        let config = SigningHostConfig::new(
+            HostInfo {
+                name: "Polkadot Mobile".to_string(),
+                icon: None,
+                version: None,
+                platform: truapi::latest::HostPlatform::Unknown,
+            },
+            PlatformInfo::default(),
+            [0; 32],
+            [0xbb; 32],
+            [0xcc; 32],
+            "paseo".to_string(),
+        )
+        .expect("signing host config is valid");
+        let runtime =
+            SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
+        let db_config = DbConfig {
+            location: DbLocation::Memory,
+            migrations: || rusqlite_migration::Migrations::new(Vec::new()),
+            readers: 1,
+        };
+
+        assert!(matches!(
+            runtime.services.core_db(),
+            Err(DbError::NotConfigured)
+        ));
+        let installed = block_on(Db::open(db_config.clone())).expect("database opens");
+        let other = block_on(Db::open(db_config)).expect("database opens");
+        assert!(runtime.set_core_db(installed));
+        assert!(!runtime.set_core_db(other));
+
+        let db = runtime.services.core_db().expect("installed database is served");
+        let answer: i64 =
+            block_on(db.write(|tx| Ok(tx.query_row("SELECT 42", [], |row| row.get(0))?)))
+                .expect("installed database serves writes");
+        assert_eq!(answer, 42);
     }
 
     #[test]

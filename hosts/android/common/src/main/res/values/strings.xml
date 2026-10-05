@@ -738,6 +738,7 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="identity_card_rank_member">Member</string>
     <string name="pocket_id_share_subtitle">Show this QR to someone who wants to add you as a contact or send you %1$s</string>
     <string name="pocket_id_share_scan_title">Scan with a camera</string>
+    <string name="pocket_id_share_message">Hey! I’m using the Polkadot app for chat. It’s private and easy to use. Download it at %1$s and add me – my username is %2$s.</string>
 
     <string name="send_payment_toolbar_title">Send Payment</string>
     <string name="send_payment_search_placeholder">Type username or wallet address</string>
@@ -745,7 +746,7 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="send_payment_open_chat_message">You need to first establish a chat before sending a payment</string>
 
     <string name="send_enter_amount_placeholder">Enter Amount</string>
-    <string name="send_enter_amount_ready_to_send">Ready to send</string>
+    <string name="send_enter_amount_ready_to_send">Ready</string>
     <string name="send_enter_amount_privacy_cost_hint">Extra %1$s is spendable, but at the risk of reducing your privacy</string>
     <string name="send_enter_amount_not_enough_funds_error">You don’t have enough funds</string>
     <string name="send_enter_amount_cash_title">%1$s</string>
@@ -1056,18 +1057,17 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="chat_search_section_apps">APPS</string>
     <string name="chat_search_section_chats">CHATS AND CONTACTS</string>
     <string name="chat_search_section_messages">MESSAGES</string>
-    <string name="address_section_previous_payments">Previous payments</string>
-    <string name="address_section_my_contacts">My Contacts</string>
-    <string name="send_payment_section_global_search">Global search</string>
     <string name="chat_search_recents_header">RECENT</string>
     <string name="chat_search_recents_clear">CLEAR</string>
     <string name="chat_search_recent_menu_remove">Remove from Recents</string>
     <string name="chat_search_error_message">Search failed. Please try again</string>
 
+    <string name="search_section_recent">RECENT</string>
+    <string name="search_section_contacts">CONTACTS</string>
+    <string name="search_section_all_users">ALL USERS</string>
+
     <string name="add_contact_search_placeholder">Type username</string>
-    <string name="add_contact_recents_header">RECENTS</string>
     <string name="add_contact_no_recent_searches">No recent searches</string>
-    <string name="add_contact_users_header">USERS</string>
     <string name="add_contact_bottom_sheet_message">Add a contact\nand start a chat with\n%1$s</string>
     <string name="add_contact_bottom_sheet_description">After you enter the chat, make sure <b>%1$s</b> starts one with you as well, or your message may not be seen.</string>
     <string name="add_contact_bottom_sheet_button_text">Add to Contacts</string>
@@ -1514,7 +1514,7 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="splash_waiting_for_network_title">Waiting for network connection…</string>
     <string name="splash_waiting_for_network_message">Turn off Airplane Mode or check your internet</string>
 
-    <string name="pocket_digital_dollar_title">Balance Card</string>
+    <string name="pocket_digital_dollar_title">%1$s Card</string>
     <string name="pocket_digital_dollar_card_title">%1$s</string>
     <string name="pocket_digital_dollar_faucet_top_up">Faucet Top Up</string>
     <string name="pocket_collectibles_open_button">View collectibles</string>
@@ -1536,10 +1536,11 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="pocket_deeplink_unknown_card">This product doesn\'t publish that card.</string>
     <string name="pocket_deeplink_no_pocket">This product has no Pocket cards.</string>
     <string name="pocket_deeplink_malformed">That Pocket link is incomplete.</string>
-    <string name="pocket_coinage_balance_title">Balance</string>
+    <string name="pocket_error_share_id_failed">Couldn\'t share your ID. Try again.</string>
+    <string name="pocket_coinage_balance_title">Total</string>
     <string name="pocket_coinage_ready">Ready</string>
     <string name="pocket_coinage_clearing">Clearing</string>
-    <string name="pocket_coinage_total_balance">Total Balance</string>
+    <string name="pocket_coinage_total_balance">Total</string>
     <string name="pocket_coinage_share_logs">Share Coinage Logs</string>
     <string name="pocket_debug_features_title">Debug features</string>
     <string name="pocket_debug_features_subtitle">Not visible in production</string>
@@ -1548,13 +1549,8 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="pocket_debug_breakdown_pending">Pending</string>
     <string name="pocket_debug_breakdown_can_spend_gaining">Can spend gaining privacy</string>
     <string name="pocket_coinage_show_details">Show Details</string>
-    <string name="pocket_coinage_key_title">How to read this</string>
-    <string name="pocket_coinage_key_hops">Coins show one circle per past payment. Dots represent other coins that moved with the payment.</string>
-    <string name="pocket_coinage_key_unknown">A thin red and orange line means we have no record for that part of the coin\'s past.</string>
-    <string name="pocket_coinage_key_block">A single block means no past payments at all. The shorter it is, the more fungible the coin.</string>
-    <string name="pocket_coinage_key_voucher">Coins that gain privacy. The solid block is how fungible they will be at best; the striped part is the current level.</string>
 
-    <string name="payment_privacy_mode_title">%1$s Privacy Mode</string>
+    <string name="payment_privacy_mode_title">Payments Privacy Mode</string>
     <string name="payment_privacy_mode_fastest_label">Fastest</string>
     <string name="payment_privacy_mode_fastest_description">Fastest payments, lower privacy</string>
     <string name="payment_privacy_mode_fastest_accessibility">Fastest. Fastest payments, lower privacy.</string>

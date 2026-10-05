@@ -49,7 +49,7 @@ pub enum SessionCommand {
     Current,
     /// List sessions for the active network.
     List,
-    /// Switch to or create the named session.
+    /// Restore or provision the named session, including unfinished setup.
     Switch(String),
     /// Permanently clear one named session or every session for the network.
     Clear(sessions::SessionClearTarget),
@@ -871,7 +871,7 @@ pub const HELP_TEXT: &str = "\
 /product                show the current product
 /product <id>           switch product and reconnect product clients
 /session                show the current session and path
-/session <name>         switch to or create a session
+/session <name>         restore or provision a session; retry unfinished setup
 /session --mnemonic \"<phrase>\" import an existing signer as its username session
 /session --list         list sessions for this network
 /session --clear <name> permanently clear one session

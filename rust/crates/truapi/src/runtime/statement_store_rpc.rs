@@ -24,8 +24,12 @@ use crate::host_logic::statement_store::{
 use crate::host_rpc_client::HostRpcClient;
 use crate::subscription::Spawner;
 
-const SSO_NO_ALLOWANCE_RETRY_ATTEMPTS: usize = 5;
-const SSO_NO_ALLOWANCE_RETRY_DELAY: Duration = Duration::from_secs(1);
+/// One attempt plus ten retries, 2 s apart, matching the native iOS and Android hosts.
+const SSO_NO_ALLOWANCE_RETRY_ATTEMPTS: usize = 11;
+#[cfg(not(test))]
+const SSO_NO_ALLOWANCE_RETRY_DELAY: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const SSO_NO_ALLOWANCE_RETRY_DELAY: Duration = Duration::from_millis(1);
 
 /// Error opening a statement-store RPC client over the host platform.
 #[derive(Debug, Error)]
@@ -181,7 +185,7 @@ pub async fn submit_sso(
         match submit(rpc_client, statement.clone()).await {
             Ok(()) => return Ok(()),
             Err(reason)
-                if is_transient_no_allowance(&reason)
+                if is_no_allowance_rejection(&reason)
                     && attempt < SSO_NO_ALLOWANCE_RETRY_ATTEMPTS =>
             {
                 warn!(
@@ -198,7 +202,8 @@ pub async fn submit_sso(
     unreachable!("the bounded SSO submit loop always returns")
 }
 
-fn is_transient_no_allowance(reason: &str) -> bool {
+/// Whether a [`submit`] failure is a `noAllowance` rejection.
+pub fn is_no_allowance_rejection(reason: &str) -> bool {
     reason.contains("noAllowance")
 }
 
@@ -222,14 +227,14 @@ pub fn rpc_error_message(error: subxt_rpcs::Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::is_transient_no_allowance;
+    use super::is_no_allowance_rejection;
 
     #[test]
-    fn identifies_no_allowance_submit_rejections_for_retry() {
-        assert!(is_transient_no_allowance(
+    fn identifies_no_allowance_submit_rejections() {
+        assert!(is_no_allowance_rejection(
             r#"statement_submit not accepted: {"reason":"noAllowance","status":"rejected"}"#
         ));
-        assert!(!is_transient_no_allowance(
+        assert!(!is_no_allowance_rejection(
             r#"statement_submit not accepted: {"reason":"badProof","status":"rejected"}"#
         ));
     }

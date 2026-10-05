@@ -20,6 +20,7 @@ use crate::host_internal::sso_messages::{
 };
 use crate::runtime::AnnouncedPairing;
 use crate::runtime::sso_remote::sso_message_id;
+use crate::store::{Db, core_db_config};
 use crate::subscription::Spawner;
 use crate::{PairedSsoPeer, ResponderExit, SigningHostRuntime};
 
@@ -30,7 +31,7 @@ use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
     ProductExecutionConfig,
 };
-use super::errors::HostRejection;
+use super::errors::{HostRejection, NativeCoreDatabaseError};
 use super::executor::shared_native_executor;
 use super::events::NativeEventBus;
 use super::platform::{
@@ -66,6 +67,12 @@ impl NativeTrUApiHostRuntime {
                 reason: err.to_string(),
             }
         })?;
+        let directory = &runtime_config.database_directory;
+        let core_db = futures::executor::block_on(Db::open(core_db_config(directory))).map_err(
+            |err| NativeRuntimeConfigError::DatabaseUnavailable {
+                reason: format!("{}: {err}", directory.display()),
+            },
+        )?;
         let events = Arc::new(NativeEventBus::default());
         let platform = Arc::new(CallbackPlatform {
             callbacks: callbacks.clone(),
@@ -87,6 +94,10 @@ impl NativeTrUApiHostRuntime {
         assert!(
             runtime.set_device_pairing_observer(platform),
             "a freshly built runtime installs its device pairing observer once"
+        );
+        assert!(
+            runtime.set_core_db(core_db),
+            "a freshly built runtime installs its core database once"
         );
         if let Some(secret) = runtime_config.local_session_secret {
             futures::executor::block_on(runtime.activate_local_session_with_identity(
@@ -519,6 +530,17 @@ impl NativeTrUApiHostRuntime {
                 .activate_local_session_with_identity(secret, lite_username),
         )
         .map_err(Into::into)
+    }
+
+    /// Reports the core database's SQLite version, schema version and file
+    /// path.
+    pub async fn core_database_status(
+        &self,
+    ) -> Result<crate::store::DbStatus, NativeCoreDatabaseError> {
+        self.runtime
+            .core_database_status()
+            .await
+            .map_err(Into::into)
     }
 
     /// Answer one decrypted SSO remote message from a wallet-managed
@@ -1265,5 +1287,55 @@ mod tests {
                 )
             );
         });
+    }
+
+    #[test]
+    fn the_runtime_opens_the_core_database_at_startup() {
+        // Durable work resumes as soon as the runtime exists, so the database
+        // has to be open before the first call reaches it.
+        let dir = tempfile::tempdir().unwrap();
+        let host = NativeTrUApiHostRuntime::with_runtime_config(
+            Arc::new(EventCallbacks::new()),
+            HostRuntimeConfig {
+                database_directory: dir.path().to_string_lossy().into_owned(),
+                ..native_host_runtime_config()
+            },
+        )
+        .expect("host runtime config should be valid");
+
+        let status = futures::executor::block_on(host.core_database_status())
+            .expect("the core database is open");
+
+        let file = dir
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join(crate::store::CORE_DB_FILE);
+        assert_eq!(
+            status.path,
+            Some(file.to_string_lossy().into_owned()),
+            "the database lives in the configured directory"
+        );
+    }
+
+    #[test]
+    fn a_missing_database_directory_fails_runtime_creation() {
+        // A wrong directory must stop the host at startup, not surface later
+        // as durable work that cannot be recorded.
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("absent");
+
+        let result = NativeTrUApiHostRuntime::with_runtime_config(
+            Arc::new(EventCallbacks::new()),
+            HostRuntimeConfig {
+                database_directory: missing.to_string_lossy().into_owned(),
+                ..native_host_runtime_config()
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(NativeRuntimeConfigError::DatabaseUnavailable { .. })
+        ));
     }
 }

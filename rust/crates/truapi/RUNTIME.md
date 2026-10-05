@@ -209,6 +209,18 @@ proof contexts. Configuration keeps local activation and key derivation
 available offline. The core validates supported suffixes but does not
 automatically check that the configured suffix matches the chain.
 
+### Core database
+
+Native signing hosts (iOS, Android, the CLI) give the core a directory for its
+own SQLite database (`store` module, bundled SQLite through `rusqlite` and
+`async-sqlite`). The runtime opens `core.sqlite3` there at startup, so a
+missing or unwritable directory stops it from starting. Keep the directory out
+of device backups: it holds durable-transaction state that must not be restored
+onto another device. The required `HostRuntimeConfig.database_directory` sets
+it on iOS and Android, `SigningHostRuntime::set_core_db` on any other embedder,
+and `core_database_status()` reports the SQLite version, schema version and
+path. Web hosts do not compile the store.
+
 ### The two roles
 
 Both implement the role-neutral **`ProductAuthority`** trait; each owns its

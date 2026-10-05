@@ -9,7 +9,7 @@ Mirrors step 1 of `docs/local-e2e-testing.md`. Run from the repo root:
 
 ```bash
 cargo build --workspace --all-targets --all-features
-cargo +nightly fmt --check
+cargo +$(cat nightly-toolchain) fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
@@ -33,7 +33,7 @@ codegen and macro crates depend on `truapi`.
 
 ## Failure modes
 
-- `cargo +nightly` missing → install with `rustup toolchain install nightly`
+- the pinned nightly missing → install with `rustup toolchain install "$(cat nightly-toolchain)"`
   (also needed for codegen rustdoc JSON).
 - rust-analyzer flags errors but `cargo build` is clean → ignore the editor
   diagnostic. The authoritative source is `cargo`.

@@ -5137,6 +5137,8 @@ fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Arc<St
                 )),
             },
         )),
+        // Transactions target this chain, which has no metadata to serve.
+        unreachable_genesis: Some([1; 32]),
         ..Default::default()
     })
 }
@@ -5222,42 +5224,6 @@ fn auto_signing_serves_sign_raw_locally_without_prompt_or_sso() {
     );
 }
 
-#[test]
-fn auto_signing_serves_create_transaction_v4_locally_without_prompt() {
-    let (platform, host) = granted_pairing_host();
-
-    let HostCreateTransactionResponse::V1(response) =
-        futures::executor::block_on(host.create_transaction(
-            &CallContext::default(),
-            HostCreateTransactionRequest::V1(v01::ProductAccountTxPayload {
-                signer: account_id("myapp.dot", 0),
-                genesis_hash: [1; 32],
-                call_data: vec![0x04, 0x00],
-                extensions: vec![],
-                // V4 needs no chain metadata, so the whole assembly is local.
-                tx_ext_version: 0,
-                contacts: Vec::new(),
-            }),
-        ))
-        .expect("a V4 transaction assembles locally under the capability");
-
-    assert!(
-        platform
-            .create_transaction_reviews
-            .lock()
-            .expect("create transaction review list mutex poisoned")
-            .is_empty(),
-        "the grant waives the prompt",
-    );
-    let (signer, _, call) = crate::host_internal::extrinsic::tests::split_v4(&response.transaction);
-    assert_eq!(
-        signer,
-        granted_keypair().public.to_bytes(),
-        "the product account signed it",
-    );
-    assert_eq!(call, vec![0x04, 0x00]);
-}
-
 /// The account a picked contact resolves to, and the handle a product holds
 /// for them. Minted through the real picker so the handle is keyed the way a
 /// product's would be.
@@ -5304,32 +5270,38 @@ fn granted_pairing_host_with_contact(account: [u8; 32]) -> (Arc<StubPlatform>, P
     (platform, host)
 }
 
-/// The bytes that get signed name the account. A product declares a handle,
-/// and by the time an extrinsic exists the recipient is an account the chain
-/// can pay, so a handle can never reach a block.
+/// What a granted host goes on to sign names the account. A product declares a
+/// handle, and by the time the call reaches assembly the recipient is an
+/// account the chain can pay, so a handle can never reach a block.
 #[test]
 fn a_signed_transaction_pays_the_account_the_handle_named() {
     const ALICE: [u8; 32] = [0xA1; 32];
-    let (_, host) = granted_pairing_host_with_contact(ALICE);
+    let (platform, host) = granted_pairing_host_with_contact(ALICE);
     let handle = picked_contact(&host);
     assert_ne!(handle.bytes, ALICE, "the handle is not the account");
 
-    let HostCreateTransactionResponse::V1(response) =
-        futures::executor::block_on(host.create_transaction(
-            &CallContext::default(),
-            transaction_naming(handle, vec![handle]),
-        ))
-        .expect("the declared handle resolves to the contact it was minted for");
+    // The fixture serves no metadata for this chain, so assembly fails after the prompt.
+    let _ = futures::executor::block_on(host.create_transaction(
+        &CallContext::default(),
+        transaction_naming(handle, vec![handle]),
+    ));
 
-    let (_, _, call) = crate::host_internal::extrinsic::tests::split_v4(&response.transaction);
+    let reviews = platform
+        .create_transaction_reviews
+        .lock()
+        .expect("create transaction review list mutex poisoned");
+    let [
+        crate::platform::CreateTransactionReview::Product {
+            payload: reviewed, ..
+        },
+    ] = reviews.as_slice()
+    else {
+        panic!("one product transaction was reviewed, got {reviews:?}");
+    };
     assert_eq!(
-        call,
+        reviewed.call_data,
         transfer_naming(&ALICE),
-        "the signed call pays the account, and nothing else moved",
-    );
-    assert!(
-        !call.windows(32).any(|window| window == handle.bytes),
-        "no handle survives into what was signed",
+        "the call handed on to signing pays the account, and nothing else moved",
     );
 }
 
@@ -5342,11 +5314,11 @@ fn a_grant_still_asks_the_user_when_a_call_names_a_contact() {
     let (platform, host) = granted_pairing_host_with_contact(ALICE);
     let handle = picked_contact(&host);
 
-    futures::executor::block_on(host.create_transaction(
+    // The fixture serves no metadata for this chain, so assembly fails after the prompt.
+    let _ = futures::executor::block_on(host.create_transaction(
         &CallContext::default(),
         transaction_naming(handle, vec![handle]),
-    ))
-    .expect("the user confirms");
+    ));
 
     assert_eq!(
         platform

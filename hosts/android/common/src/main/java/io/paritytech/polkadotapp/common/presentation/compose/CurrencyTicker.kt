@@ -7,14 +7,13 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
-import io.paritytech.polkadotapp.design.theme.lightCounterpart
+import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 
 @Composable
 fun String.withCurrencyTickerStyle(style: TextStyle): AnnotatedString {
     val ticker = LocalPaymentAssetBrand.current.symbol
-    val spanStyle = rememberTickerSpanStyle(style)
+    val spanStyle = rememberTickerSpanStyle()
 
     return remember(this, ticker, spanStyle) {
         buildAnnotatedString {
@@ -27,7 +26,7 @@ fun String.withCurrencyTickerStyle(style: TextStyle): AnnotatedString {
 @Composable
 fun AnnotatedString.withCurrencyTickerStyle(style: TextStyle): AnnotatedString {
     val ticker = LocalPaymentAssetBrand.current.symbol
-    val spanStyle = rememberTickerSpanStyle(style)
+    val spanStyle = rememberTickerSpanStyle()
 
     return remember(this, ticker, spanStyle) {
         buildAnnotatedString {
@@ -53,12 +52,16 @@ internal fun tickerRanges(source: String, ticker: String): List<TextRange> {
 }
 
 @Composable
-private fun rememberTickerSpanStyle(style: TextStyle): SpanStyle {
-    val family = style.fontFamily
+private fun rememberTickerSpanStyle(): SpanStyle {
+    val smallCaps = PolkadotTheme.typography.smallCaps.headlineMedium
 
-    return remember(family) {
-        val light = family.lightCounterpart()
-        SpanStyle(fontFamily = light, fontWeight = light?.let { FontWeight.Light })
+    return remember(smallCaps) {
+        // Only the face is taken: the ticker keeps the size of the text it sits in.
+        SpanStyle(
+            fontFamily = smallCaps.fontFamily,
+            fontWeight = smallCaps.fontWeight,
+            fontFeatureSettings = smallCaps.fontFeatureSettings
+        )
     }
 }
 

@@ -118,7 +118,7 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
     }
 
     private func apply(_ brand: PaymentAssetBrand) {
-        assetLogo = brand.wideIcon
+        assetLogo = brand.squareIcon
         assetSymbol = brand.symbol
 
         guard viewModel.balanceCardModel != nil else { return }

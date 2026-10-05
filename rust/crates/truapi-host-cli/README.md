@@ -35,7 +35,7 @@ same-account reconnect without the external signer-bot service.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
 truapi-host signing-host
 ```
 
@@ -91,7 +91,7 @@ clears the other: installing removes a `cargo install` copy, and
 install without replacing it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash -s -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash -s -- --uninstall
 ```
 
 `make e2e-cli-update` exercises the whole chain locally: it packages the binary,
@@ -209,7 +209,7 @@ for any other product id, and a mismatch only surfaces later, as a
 `PermissionDenied` on the first signature.
 
 Two players on one machine means two hosts, each with its own session and port
-(`--session bob --frame-listen 127.0.0.1:9956`), and a second product instance
+(`--session bobsmith --frame-listen 127.0.0.1:9956`), and a second product instance
 pointed at the second port. Sessions isolate the signer, the storage and the
 permissions.
 
@@ -259,7 +259,7 @@ Commands always start with `/`:
 | `/product` | Show the currently selected product. |
 | `/product <id>` | Switch the product used by future scripts and frame connections. |
 | `/session` | Show the current session name, path, and user id (signing host). |
-| `/session <name>` | Switch to or create an isolated signing-host session. |
+| `/session <name>` | Restore or create an isolated signing-host session, retrying unfinished setup even for the current name. |
 | `/session --mnemonic "<phrase>"` | Import an existing signer as a durable session. |
 | `/session --list` | List user sessions for the current network. |
 | `/session --clear <name>` | Permanently clear one signing-host session. |
@@ -296,7 +296,9 @@ pairing responder.
 
 Typing `/` opens autocomplete. Up/Down selects a completion; with the menu
 closed it navigates process-local command history. Tab inserts a completion,
-and `/script` completes filesystem paths. Mnemonic characters are masked while
+and `/script` completes filesystem paths. Enter submits `/session <name>` as
+typed; use Tab first to insert a suggested exact session name.
+Mnemonic characters are masked while
 typing and mnemonic commands are never retained in command history or the
 transcript. Ctrl-U/Ctrl-D scroll by half a
 viewport, End restores auto-follow, Esc closes autocomplete, and Ctrl-C clears
@@ -385,13 +387,16 @@ Managed sessions isolate signer accounts, product/core storage, and permissions.
 Once a signer identity is known, its public session name is the Lite username
 and its files live under
 `<base-path>/v2/<network>/<username>_signing_host`. Provisional named sessions
-are promoted to that user-owned root, so an old name such as `pgtest` does not
-remain the durable namespace. That name keeps selecting the session it created:
-the promoted session records the name it was created under, so `--session
-pgtest` and `/session --clear pgtest` both act on it instead of provisioning a
-second identity beside it. Once that session is cleared the name is free again. The selected username is
-remembered per network but is not repeated in the status bar as a separate
-session field.
+are promoted to that user-owned root. `--session workbench` and `/session
+workbench` select the most recently created local session whose username base
+is `workbench`. Creation order comes from the stored account timestamp, not the
+numerical alias: `workbench.07` can be newer than `workbench.42`. Use the full
+username, such as `--session workbench.42`, to select that exact session.
+If that numbered username is not saved locally, selection fails without creating
+another account.
+Promoted sessions also retain their original names as aliases. The selected
+username is remembered per network but is not repeated in the status bar as a
+separate session field.
 `default` remains only as a compatibility/bootstrap location until a username
 is resolved. It is hidden from session completion and listing and cannot be
 selected with `/session default`. User session names contain lowercase ASCII
@@ -410,31 +415,39 @@ username. On success, the resolved identity username becomes the session name;
 only an account absent from both sources uses a deterministic
 `imported-<key fingerprint>` name and connects the account without username
 metadata. The mnemonic is written to that session's `0600` account store and
-the exact account record is remembered for restart. An invalid phrase or an
-account without ring membership on the selected network leaves the current
-runtime active. A username-less session can sign and connect, but
+the exact account record is restored on restart and when switching sessions.
+An invalid phrase or an account without ring membership on the selected network
+leaves the current runtime active. A username-less session can sign and connect, but
 `account.getUserId()` cannot return a primary username until one source has a
 record. Use the interactive command when practical: putting the same command in
 `exec` also puts the phrase in your shell's arguments/history.
 
 New auto-managed accounts use the session name as their Lite username prefix;
-characters other than lowercase letters are omitted. For example, session
-`pgtest` creates usernames beginning with `pgtest`. An explicit
-`--lite-username-prefix` takes precedence, and `default` retains the historical
-`headless` prefix. Prefixes are used unchanged because dotNS assigns the
-numerical alias; session names with fewer than six letters use `session`.
+digits and separators are omitted. The derived base must contain at least six
+lowercase ASCII letters. A new `/session foo` fails immediately with a too-short
+username-base error, before network onboarding. For example, session `pgtest`
+requests the base `pgtest` when no matching local session exists. `--session`
+selects this base; there is no separate username-prefix option. `default` retains
+the `headless` base. Existing saved accounts and aliases can still be selected
+by their original names.
+The backend assigns a numerical alias to the unchanged base. An exhausted base
+reports an error; the CLI does not generate alternative bases or random suffixes.
+The base is saved with the pending account, so retrying unfinished setup keeps
+the same identity.
 `--reserved-username <label>` additionally reserves a
 full-person base name on dotNS for a newly created account, to be claimed later
 with `register-name`; the CLI refuses labels the registrar has already minted.
 The selected username and last script reference are cached in `session.json`
 inside the displayed session path. Legacy session-local scripts use a portable
-filename; managed projects and explicit scripts use an absolute path. On restart, an
-already-provisioned local signer is activated from disk without an
+filename; managed projects and explicit scripts use an absolute path. On restart
+or session switching, an already-provisioned local signer is activated from disk without an
 identity-backend or ring-membership round trip, and bare `/script` restores that
 session's editor context. A session with no signer yet reports
 `<not provisioned>` and the transcript prompts the user to run
-`/session <name>`. Inspecting with bare `/session` never starts network
-onboarding; naming a different session creates and connects its user.
+`/session <name>`. Naming a session creates and connects its user if needed,
+including when that name is already selected but setup is unfinished. Selecting
+an already-connected session keeps its signer and product connections.
+Inspecting with bare `/session` never starts network onboarding.
 
 Each managed session stores all of its paired hosts in `paired-hosts.json`.
 Mutations are serialized through `paired-hosts.json.lock`. `/pair` inserts or
@@ -487,11 +500,22 @@ another identity. A session directory without an account store is not an
 identity and is never reselected. This makes one `--base-path` per caller the
 supported way to hold a reusable signer.
 
-Select or create a session at startup with:
+Restore or create a signer at interactive startup with:
 
 ```bash
-truapi-host signing-host --session alice
+truapi-host signing-host --session aliceuser
 ```
+
+Provisioning runs in the terminal UI, where progress and errors are visible.
+If it fails or is cancelled, retry with `/session aliceuser`. Starting without
+`--session` restores a cached signer but waits for an operation that needs one
+before creating an account. `--serve` and script execution also ensure a signer
+is ready.
+
+In `exec` mode, `--session` selects the session for the slash command. Inspection,
+listing, help, and clearing do not provision accounts. Use
+`signing-host --session aliceuser exec '/session aliceuser'` to explicitly restore or
+create the signer without opening the UI.
 
 `--session` cannot be combined with `--account` or `--mnemonic`. A host
 started with an explicit mnemonic reports an `ephemeral` session and does not

@@ -1081,9 +1081,11 @@ impl ProductStorageKey {
 
 /// Product-scoped key-value storage.
 ///
-/// The core namespaces product keys before calling this trait. Host
-/// implementations may treat `key` as opaque or decode it with
-/// [`ProductStorageKey`] when their physical storage is separated by product.
+/// The core namespaces product keys before calling this trait, and the key
+/// names the product that owns the value. Host implementations may treat
+/// `key` as opaque in one shared store. A host that separates physical storage
+/// by product must decode the owner with [`ProductStorageKey`] on read, since
+/// that owner is another product on a granted foreign read.
 /// Storage errors are pinned to `v01` rather than taken from `truapi::latest`.
 /// The read error gained a cross-product refusal in v0.2 that the core decides
 /// before it ever calls a host, so a host has no way to produce it and should
@@ -1092,10 +1094,11 @@ impl ProductStorageKey {
 pub trait ProductStorage: Send + Sync {
     /// Read a value by key.
     ///
-    /// Always the calling product's own storage. A read addressed at another
-    /// product is adjudicated in the core against that product's manifest and
-    /// refused there, so a host is never asked to enforce a grant and has no
-    /// variant for one.
+    /// `key` belongs to the calling product, or to another product the core
+    /// has already found granting the caller read access in its manifest. The
+    /// core refuses every other foreign read itself, so a host is never asked
+    /// to enforce a grant and has no variant for one. Writes and clears always
+    /// carry the calling product's own keys.
     async fn read(
         &self,
         key: String,

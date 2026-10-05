@@ -29,3 +29,7 @@ class AutoFundFailedPresentationError(cause: Throwable) :
 class ShareCoinageLogsFailedPresentationError(cause: Throwable) :
     PresentationThrowable(cause),
     PresentationError by StringResPresentationError(RCommon.string.pocket_error_share_coinage_logs_failed)
+
+class ShareIdFailedPresentationError(cause: Throwable) :
+    PresentationThrowable(cause),
+    PresentationError by StringResPresentationError(RCommon.string.pocket_error_share_id_failed)

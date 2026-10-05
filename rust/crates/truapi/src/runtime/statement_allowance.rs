@@ -798,18 +798,22 @@ pub async fn scan_collections(
     target: &[u8; 32],
     reuse_existing: bool,
 ) -> Result<Vec<CollectionScan>, StatementAllowanceError> {
-    let mut scans = Vec::new();
-    for candidate in candidates {
+    let supported = candidates.iter().filter(|candidate| {
         let collection = candidate.collection;
-        if !collection.is_supported(metadata) {
+        let supported = collection.is_supported(metadata);
+        if !supported {
             debug!(%collection, "chain declares no slot budget for this collection");
-            continue;
         }
+        supported
+    });
+    // Read concurrently, then settled in candidate order, so a lite member does
+    // not wait on the empty People row before its own is read.
+    let selections = futures::future::join_all(supported.map(|candidate| async move {
         let selection = slot::scan_slot_excluding(
             rpc,
             metadata,
             slot::SlotScan {
-                collection,
+                collection: candidate.collection,
                 entropy: candidate.entropy,
                 network_suffix,
                 period,
@@ -819,10 +823,16 @@ pub async fn scan_collections(
             },
         )
         .await;
+        (candidate, selection)
+    }))
+    .await;
+    let mut scans = Vec::new();
+    for (candidate, selection) in selections {
+        let collection = candidate.collection;
         match selection {
             Ok(selection) => {
                 // An allowance already held settles the question, so the
-                // remaining collections are reads nobody needs.
+                // remaining collections' scans are dropped.
                 let settled = matches!(selection, SlotSelection::AlreadyAllocated(_));
                 scans.push(CollectionScan {
                     collection,
@@ -2242,15 +2252,12 @@ mod tests {
         let candidates = pooled_candidates();
         let target = [0x22; 32];
 
-        let responses = [
-            // People: an undecodable storage value fails this collection's scan.
-            r#""zz""#.to_string(),
-            // LitePeople: the target holds seq 3.
-            "null".to_string(),
-            "null".to_string(),
-            "null".to_string(),
-            occupied(target, 4_000),
-        ];
+        let null = || "null".to_string();
+        // People: an undecodable storage value fails this collection's scan.
+        let people = std::iter::once(r#""zz""#.to_string()).chain(std::iter::repeat_with(null).take(19));
+        // LitePeople: the target holds seq 3.
+        let lite = (0..10).map(|seq| if seq == 3 { occupied(target, 4_000) } else { null() });
+        let responses: Vec<String> = people.chain(lite).collect();
         let scripted = ScriptedRpc::new(responses.iter().map(String::as_str).collect::<Vec<_>>());
         let rpc = RpcClient::new(HostRpcClient::new(scripted));
 
@@ -2271,13 +2278,20 @@ mod tests {
         );
     }
 
-    /// Storage reads the scripted transport served.
+    /// Storage keys the scripted transport read, one per key of a batched read.
     fn storage_reads(scripted: &ScriptedRpc) -> usize {
         scripted
             .calls()
             .iter()
-            .filter(|(method, _)| method == "state_getStorage")
-            .count()
+            .map(|(method, params)| match method.as_str() {
+                "state_getStorage" => 1,
+                "state_queryStorageAt" => serde_json::from_str::<serde_json::Value>(params)
+                    .expect("batched read params are JSON")[0]
+                    .as_array()
+                    .map_or(0, Vec::len),
+                _ => 0,
+            })
+            .sum()
     }
 
     /// A full table is no longer a dead end: the oldest slot the runtime allows

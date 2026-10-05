@@ -36,6 +36,7 @@
 		A5B437012E96B82E00CFF21D /* MessageExchangeKit in Frameworks */ = {isa = PBXBuildFile; productRef = A5B437002E96B82E00CFF21D /* MessageExchangeKit */; };
 		A5B5899C2F5F0F4E00A9458D /* OperationExt in Frameworks */ = {isa = PBXBuildFile; productRef = A5B5899B2F5F0F4E00A9458D /* OperationExt */; };
 		A5C0DE022FDB2A5C00000002 /* Revive in Frameworks */ = {isa = PBXBuildFile; productRef = A5C0DE012FDB2A5C00000001 /* Revive */; };
+		A5F553C33066BB820077443B /* IssueMonitoring in Frameworks */ = {isa = PBXBuildFile; productRef = A5F553C23066BB820077443B /* IssueMonitoring */; };
 		A5FB979E2F855E9D001A2D6A /* FoundationExt in Frameworks */ = {isa = PBXBuildFile; productRef = A5FB979D2F855E9D001A2D6A /* FoundationExt */; };
 		B10000022F7C000000000AAA /* Products in Frameworks */ = {isa = PBXBuildFile; productRef = B10000012F7C000000000AAA /* Products */; };
 		B10000042F7C000000000BBB /* BulletinChain in Frameworks */ = {isa = PBXBuildFile; productRef = B10000032F7C000000000BBB /* BulletinChain */; };
@@ -348,6 +349,7 @@
 				A5A948F22F4CA925001E5150 /* ExtrinsicServiceExt in Frameworks */,
 				0C2A9D532F868F4F00E753AE /* SubstrateSdkExt in Frameworks */,
 				A57CAF662F45ECB70066D722 /* StructuredConcurrency in Frameworks */,
+				A5F553C33066BB820077443B /* IssueMonitoring in Frameworks */,
 				0CEC59AC2F08EBFC0009CC37 /* FoundationExt in Frameworks */,
 				EA11ACCE000000000000B001 /* ExternalAccessibility in Frameworks */,
 				0C62514C2F50808100A92259 /* HandoffService in Frameworks */,
@@ -515,6 +517,7 @@
 				CC0CC0602FBA000100CCAA06 /* EventCenter */,
 				2D0A51D62FFE94810095ECAE /* BackgroundExecution */,
 				B1A2C3D42F8A000000000002 /* BlurHash */,
+				A5F553C23066BB820077443B /* IssueMonitoring */,
 			);
 			productName = "polkadot-app";
 			productReference = A5EDAAD52E93ECAF005DDA62 /* polkadot-app.app */;
@@ -1877,6 +1880,10 @@
 		A5C0DE012FDB2A5C00000001 /* Revive */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Revive;
+		};
+		A5F553C23066BB820077443B /* IssueMonitoring */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = IssueMonitoring;
 		};
 		A5FB979D2F855E9D001A2D6A /* FoundationExt */ = {
 			isa = XCSwiftPackageProductDependency;

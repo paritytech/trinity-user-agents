@@ -53,14 +53,73 @@ import type { ProductRuntimeConfig } from "../runtime.js";
 export type PermissionPolicy = "allow-all" | "deny-all";
 
 /**
+ * The denying policy under the name `@parity/host-api-test-sdk` gives it.
+ *
+ * Recognised rather than merely unequal to `"allow-all"`: a policy name the
+ * mock does not know is refused, so a typo says so instead of denying every
+ * permission with nothing to explain the refusals.
+ */
+export type PermissionPolicyAlias = "reject-all";
+
+/** Resolve a policy name, rejecting one that means nothing here. */
+function normalizePermissionPolicy(
+  behavior: PermissionPolicy | PermissionPolicyAlias,
+): PermissionPolicy {
+  if (behavior === "allow-all" || behavior === "deny-all") return behavior;
+  if (behavior === "reject-all") return "deny-all";
+  throw new Error(
+    `testHost \`setPermissionBehavior\` does not know the policy ` +
+      `"${String(behavior)}". Use "allow-all", or "deny-all" (which ` +
+      `\`@parity/host-api-test-sdk\` spells "reject-all").`,
+  );
+}
+
+/** The core's product-storage key prefix, up to and including its version. */
+const CORE_PRODUCT_STORAGE_PREFIX = /^truapi:product-storage:v\d+:/;
+
+/**
+ * The product's own key inside a core-namespaced one, or `undefined`.
+ *
+ * Reading the tail rather than any `:key` suffix is what keeps a prefixed store
+ * distinct from an unprefixed one: a product writing `demo:mykey` and `mykey`
+ * produces two keys that both end in `:mykey`, so a suffix search for `mykey`
+ * answers with whichever comes first and a test asserting they do not collide
+ * can never fail.
+ *
+ * The product id is length-prefixed by the core precisely because it may hold
+ * colons -- `localhost:3000` is an ordinary one -- so the length is what says
+ * where the id ends, not the next separator.
+ */
+export function coreProductStorageKey(stored: string): string | undefined {
+  const prefix = CORE_PRODUCT_STORAGE_PREFIX.exec(stored);
+  if (!prefix) return undefined;
+  const rest = stored.slice(prefix[0].length);
+  const separator = rest.indexOf(":");
+  if (separator < 0) return undefined;
+  const length = Number(rest.slice(0, separator));
+  if (!Number.isInteger(length) || length < 0) return undefined;
+  const afterId = rest.slice(separator + 1 + length);
+  return afterId.startsWith(":") ? afterId.slice(1) : undefined;
+}
+
+/**
  * A chain the host will proxy to, rather than answer from memory.
  *
  * Matched on `genesisHash`: the core asks for a chain by hash, so the hash here
  * must be the *real* one of the endpoint, not a {@link MOCK_GENESIS}
  * placeholder, and the runtime config must carry the same value.
  */
-import { createLoopbackStatements } from "./loopback-statements.js";
-import type { LoopbackStatements } from "./loopback-statements.js";
+import {
+  createLoopbackStatements,
+  decodeStatement,
+  encodeStatement,
+  TOPIC_FIELD_TAGS,
+} from "./loopback-statements.js";
+import type {
+  LoopbackStatements,
+  RetainedStatement,
+  StatementInput,
+} from "./loopback-statements.js";
 
 export interface ChainProxy {
   /**
@@ -226,6 +285,25 @@ export interface OpenOperation {
  * Field names are `@parity/host-api-test-sdk`'s `PermissionLogEntry`, so an
  * assertion written against that shape reads this one.
  */
+/**
+ * One statement the store holds, in the shape a suite reads it.
+ *
+ * Field names are `@parity/host-api-test-sdk`'s `StatementEntry`, so an
+ * assertion written against that shape reads this one.
+ */
+export interface StatementEntry {
+  /** Topics the statement carries, `0x`-hex, in the order encoded. */
+  topics: string[];
+  /** The statement's payload, or `undefined` when it carries none. */
+  data: string | undefined;
+  /** The signature proof, when the statement carries a signing one. */
+  proof: { signature: string; signer: string } | undefined;
+  /** True when the product submitted it, false when a test injected it. */
+  fromProduct: boolean;
+  /** When the store took it, as epoch milliseconds. */
+  timestamp: number;
+}
+
 export interface PermissionLogEntry {
   /** The request's tag, the same key `grantPermission` takes. */
   tag: string;
@@ -235,6 +313,17 @@ export interface PermissionLogEntry {
   approved: boolean;
   /** Which prompt surface asked. */
   kind: PermissionKind;
+  /**
+   * The answer's lifetime, as the core records it.
+   *
+   * A mock policy is two-valued, so this is `AllowAlways` or `Deny`; a host
+   * that offered `AllowOnce` would record that instead. Carried because an
+   * assertion on a refusal reads the lifetime, not just the boolean: a suite
+   * checking that a denial was durable has nothing else to look at.
+   */
+  decision: PermissionDecision;
+  /** When the mock answered, as epoch milliseconds. */
+  timestamp: number;
 }
 
 /**
@@ -363,27 +452,33 @@ export interface MockHost {
   /** Notifications the core asked the host to show, in order. */
   getNotificationLog(): NotificationLogEntry[];
   /**
-   * Deliver a SCALE-encoded signed statement to the product as a chain
-   * notification, returning how many live subscriptions it reached. Zero means
-   * the product is not subscribed yet: subscribe first, then inject.
+   * Deliver a statement to the product as a chain notification, answering the
+   * entry the store retained.
    *
-   * The bytes are the wire form, not a structured statement. The core decodes
-   * what the chain would have sent it, so anything else is dropped during
-   * decode with no error a suite can see.
+   * Takes the topics and payload as a structure, or the SCALE wire bytes the
+   * chain would have sent. Retained either way, so a suite that injects before
+   * its product subscribes has the statement replayed to it on subscribe
+   * rather than losing it.
    */
-  injectStatement(statement: Uint8Array | string): number;
+  injectStatement(statement: StatementInput | Uint8Array | string): StatementEntry;
   /** Statements injected so far, in order, as `0x` hex. */
   getInjectedStatements(): string[];
   /**
-   * Statements the product submitted, as `0x` hex, read off the chain
-   * transport.
+   * Every statement the store holds, submitted or injected, in order.
+   *
+   * Decoded, because the wire form is the core's business: a suite asserting on
+   * a topic or a payload should not have to know the codec to read one back.
+   */
+  getStatements(): StatementEntry[];
+  /**
+   * Statements the product submitted, decoded, read off the chain transport.
    *
    * The core sends `statement_submit` without consulting an allowance, so a
    * product that signs its own statements is observable here. One that asks the
    * host to sign first (`createProofAuthorized`) needs a statement allowance to
    * get that far, and this stays empty until it has one.
    */
-  getSubmittedStatements(): string[];
+  getSubmittedStatements(): StatementEntry[];
   /** Forget the injected statements. Delivered ones cannot be recalled. */
   clearStatements(): void;
   /** Raw JSON-RPC the core sent over the chain connection, in order. */
@@ -425,7 +520,7 @@ export interface MockHost {
    */
   getConnectionStatus(): ChainStatus;
   /** Switch the answer both permission prompts fall back to. */
-  setPermissionBehavior(behavior: PermissionPolicy): void;
+  setPermissionBehavior(behavior: PermissionPolicy | PermissionPolicyAlias): void;
   /**
    * Release the mock's state and drop every live subscription.
    *
@@ -477,6 +572,19 @@ export interface MockHost {
    * impossible to replace.
    */
   getProductStorage(): Record<string, Uint8Array>;
+  /**
+   * The value the product stored under `key`, decoded as UTF-8.
+   *
+   * Synchronous, because `@parity/host-api-test-sdk` publishes it that way and
+   * a suite compares the result inside a `page.waitForFunction` predicate.
+   * The core namespaces the key before the host sees it, so this reads the
+   * product's own key out of that shape rather than matching the whole string.
+   *
+   * `undefined` for a value that is not UTF-8, the same answer a key nothing
+   * wrote gets: read those through {@link MockHost.getProductStorage}, which
+   * hands back bytes.
+   */
+  getProductStorageValue(key: string): string | undefined;
   /** Seeded preimage values. */
   getPreimages(): Uint8Array[];
   /** Drop the recorded navigations. */
@@ -557,6 +665,19 @@ function normalizeHash(hash: string | Uint8Array): string {
  * would cross-talk, and releasing one would leave its listeners on a socket the
  * other still holds. A single-chain suite is not safe from it.
  */
+/** Record a `statement_submit` the core sent to a real chain. */
+function recordChainSubmission(request: string, into: RetainedStatement[]): void {
+  try {
+    const frame = JSON.parse(request) as { method?: string; params?: unknown[] };
+    if (frame.method !== "statement_submit") return;
+    const [statement] = frame.params ?? [];
+    if (typeof statement !== "string") return;
+    into.push({ encoded: statement, fromProduct: true, timestamp: Date.now() });
+  } catch {
+    // A frame that is not JSON is not a submission.
+  }
+}
+
 function connectToChain(
   proxy: ChainProxy,
   sentRpc: string[],
@@ -566,6 +687,7 @@ function connectToChain(
   // type is generated from the protocol and must not grow test-only members.
   injectors?: Set<(frame: string) => void>,
   disconnectors?: Set<() => void>,
+  submissions?: RetainedStatement[],
 ): JsonRpcConnection {
   const socket = new WebSocket(proxy.rpcUrl);
   const queued: string[] = [];
@@ -643,6 +765,7 @@ function connectToChain(
   return {
     send(request) {
       sentRpc.push(request);
+      if (submissions) recordChainSubmission(request, submissions);
       // Served here rather than forwarded, so the statement flows work with no
       // chain behind them. Everything else still goes out.
       if (loopback?.handle(request, deliver)) return;
@@ -742,6 +865,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   const chainInjectors = new Set<(frame: string) => void>();
   const chainDisconnectors = new Set<() => void>();
   const injectedStatements: string[] = [];
+  // Submissions and injections seen on a real chain transport, so the readers
+  // answer the same shape whether or not the store is served in-page.
+  const chainStatements: RetainedStatement[] = [];
   const loopbackStatements = createLoopbackStatements();
   const usingLoopback = (chainProxies ?? []).some(
     (proxy) => proxy.loopbackStatements,
@@ -817,7 +943,14 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         : enforcePermissions
           ? false
           : granted(policy);
-    permissionLog.push({ tag, value, approved, kind });
+    permissionLog.push({
+      tag,
+      value,
+      approved,
+      kind,
+      decision: decision(approved),
+      timestamp: Date.now(),
+    });
     return approved;
   };
 
@@ -843,6 +976,55 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
               )
             : inner,
         )}`;
+  /**
+   * Drop the core's stored answer for `permission`, so the next request asks
+   * again.
+   *
+   * The core answers a settled permission from its own storage without calling
+   * the host, which is the real behaviour. It also means that changing the
+   * mock's answer after the first request changes nothing a product can see:
+   * the decision it is now going to get was recorded before. A suite setting an
+   * answer is saying what the host should reply, so the recorded one has to go
+   * with it.
+   *
+   * Matched on the serialised key because the mock holds keys as strings: every
+   * permission is named in its own key, a device one as `"Camera"` and a remote
+   * one as `"ChainSubmit"`, so the quoted name selects that permission's slots
+   * and no others.
+   */
+  const forgetStoredAuthorization = (permission: string): void => {
+    const prefix = "core:PermissionAuthorization:";
+    const needle = JSON.stringify(permission);
+    for (const key of [...storage.keys()]) {
+      if (key.startsWith(prefix) && key.includes(needle)) storage.delete(key);
+    }
+  };
+
+  /** Decode a retained statement into the shape a suite reads. */
+  const asEntry = (statement: RetainedStatement): StatementEntry => {
+    // An undecodable statement is still reported, with nothing claimed about
+    // its contents: a suite chasing one it injected by hand has something to
+    // see, where dropping it looks like the injection never happened.
+    const fields = decodeStatement(statement.encoded) ?? [];
+    const proof = fields.find((field) => field.tag === "Proof")?.value as
+      | { tag: string; value: { signature: string; signer: string } }
+      | undefined;
+    return {
+      topics: fields
+        .filter((field) => TOPIC_FIELD_TAGS.includes(field.tag))
+        .map((field) => String(field.value).toLowerCase()),
+      data: fields.find((field) => field.tag === "Data")?.value as
+        | string
+        | undefined,
+      proof:
+        proof && proof.tag !== "OnChain"
+          ? { signature: proof.value.signature, signer: proof.value.signer }
+          : undefined,
+      fromProduct: statement.fromProduct,
+      timestamp: statement.timestamp,
+    };
+  };
+
   const granted = (policy: PermissionPolicy): boolean => policy === "allow-all";
   // A mock policy is two-valued, so a grant is durable and a refusal is
   // durable. `AllowOnce` is a host answer the mock has no knob to ask for.
@@ -1035,6 +1217,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
             proxy.loopbackStatements ? loopbackStatements : undefined,
             chainInjectors,
             chainDisconnectors,
+            chainStatements,
           );
           chainStatus = "Connected";
           return connection;
@@ -1053,6 +1236,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         return {
           send(request) {
             sentRpc.push(request);
+            recordChainSubmission(request, chainStatements);
           },
           async *responses(): AsyncGenerator<string> {
             try {
@@ -1199,24 +1383,19 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     getNavigationLog: () => [...navigations],
     getNotificationLog: () => pushedNotifications.map((n) => ({ ...n })),
     injectStatement: (statement) => {
-      if (usingLoopback) {
-        const encoded =
-          typeof statement === "string"
-            ? statement.startsWith("0x")
-              ? statement
-              : `0x${statement}`
-            : `0x${hex(statement)}`;
-        injectedStatements.push(encoded);
-        return loopbackStatements.inject(encoded);
-      }
       const encoded =
         typeof statement === "string"
           ? statement.startsWith("0x")
             ? statement
             : `0x${statement}`
-          : `0x${hex(statement)}`;
+          : statement instanceof Uint8Array
+            ? `0x${hex(statement)}`
+            : encodeStatement(statement);
       injectedStatements.push(encoded);
-      let delivered = 0;
+      if (usingLoopback) return asEntry(loopbackStatements.inject(encoded));
+
+      const entry = { encoded, fromProduct: false, timestamp: Date.now() };
+      chainStatements.push(entry);
       for (const subscription of statementSubscriptions) {
         // The envelope the chain sends, not the bare statement: the core reads
         // `result.data.statements`, so a bare value decodes to nothing.
@@ -1232,31 +1411,25 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
           },
         });
         for (const injector of chainInjectors) injector(frame);
-        delivered += 1;
       }
-      return delivered;
+      return asEntry(entry);
     },
     getInjectedStatements: () => [...injectedStatements],
+    getStatements: () =>
+      (usingLoopback ? loopbackStatements.statements() : chainStatements).map(
+        asEntry,
+      ),
     getSubmittedStatements: () =>
-      usingLoopback
-        ? loopbackStatements.submitted()
-        : sentRpc.flatMap((request) => {
-        try {
-          const frame = JSON.parse(request) as {
-            method?: string;
-            params?: unknown[];
-          };
-          if (frame.method !== "statement_submit") return [];
-          const [statement] = frame.params ?? [];
-          return typeof statement === "string" ? [statement] : [];
-        } catch {
-          // A frame that is not JSON is not a submission.
-            return [];
-          }
-        }),
+      (usingLoopback ? loopbackStatements.submitted() : chainStatements)
+        .filter((entry) => entry.fromProduct)
+        .map(asEntry),
     clearStatements: () => {
       injectedStatements.length = 0;
       loopbackStatements.clear();
+      // The chain path retains its own list, which `getStatements` and
+      // `getSubmittedStatements` read when the loopback store is off. Leaving it
+      // would carry one case's statements into the next.
+      chainStatements.length = 0;
     },
     sentRpc: () => [...sentRpc],
     authStates: () => [...authStates],
@@ -1281,8 +1454,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       authStates.at(-1)?.tag === "Connected",
     getConnectionStatus: () => chainStatus,
     setPermissionBehavior: (behavior) => {
-      devicePermissions = behavior;
-      remotePermissions = behavior;
+      const policy = normalizePermissionPolicy(behavior);
+      devicePermissions = policy;
+      remotePermissions = policy;
     },
     dispose() {
       this.reset();
@@ -1301,12 +1475,15 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         .sort(),
     grantPermission: (permission) => {
       permissionDecisions.set(permission, true);
+      forgetStoredAuthorization(permission);
     },
     revokePermission: (permission) => {
       permissionDecisions.set(permission, false);
+      forgetStoredAuthorization(permission);
     },
     resetPermission: (permission) => {
       permissionDecisions.delete(permission);
+      forgetStoredAuthorization(permission);
     },
     setEnforcePermissions: (enforce) => {
       enforcePermissions = enforce;
@@ -1347,6 +1524,26 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         if (key.startsWith(prefix)) entries[key.slice(prefix.length)] = value;
       }
       return entries;
+    },
+    getProductStorageValue: (key: string) => {
+      const prefix = productKey("");
+      for (const [stored, value] of storage) {
+        if (!stored.startsWith(prefix)) continue;
+        const local = stored.slice(prefix.length);
+        const namespaced = coreProductStorageKey(local);
+        // Falls back to the whole key for a value written straight through the
+        // host seam, which never passed through the core's namespacing.
+        if ((namespaced ?? local) !== key) continue;
+        try {
+          return new TextDecoder("utf-8", { fatal: true }).decode(value);
+        } catch {
+          // A lenient decode answers replacement characters, which read as a
+          // value the product wrote. An absence instead sends a suite to
+          // `getProductStorage`, which hands back the bytes themselves.
+          return undefined;
+        }
+      }
+      return undefined;
     },
     getPreimages: () => [...preimages.values()],
     clearNavigationLog: () => {

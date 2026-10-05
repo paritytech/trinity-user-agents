@@ -175,6 +175,7 @@ extension ResourcesPallet.AsResourcesTxExtension: TransactionExtending {
     public func implicit(
         using _: DynamicScaleEncodingFactoryProtocol,
         metadata _: RuntimeMetadataProtocol,
+        extensionVersion _: UInt8,
         context _: RuntimeJsonContext?
     ) throws -> Data? {
         nil
@@ -187,14 +188,14 @@ extension ResourcesPallet.AsResourcesTxExtension: TransactionExtending {
         context: RuntimeJsonContext?
     ) throws -> TransactionExtension.Explicit? {
         guard let info else {
-            return try TransactionExtension.Explicit(
+            return TransactionExtension.Explicit(
                 from: .null,
                 txExtensionId: txExtensionId,
                 metadata: metadata
             )
         }
 
-        let payloadFactory = ImplicationSignaturePayloadFactory(extrinsicVersion: extrinsicVersion)
+        let payloadFactory = ImplicationSignaturePayloadFactory(formatVersion: extrinsicVersion.formatVersion)
         let payload = try payloadFactory.createPayload(from: implication, using: encodingFactory)
         let message = try payload.blake2b32()
 
@@ -208,7 +209,7 @@ extension ResourcesPallet.AsResourcesTxExtension: TransactionExtending {
 
         let json = try mode.toScaleCompatibleJSON(with: context?.toRawContext())
 
-        return try TransactionExtension.Explicit(
+        return TransactionExtension.Explicit(
             from: json,
             txExtensionId: txExtensionId,
             metadata: metadata

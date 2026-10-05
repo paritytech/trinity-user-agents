@@ -7,7 +7,7 @@ import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonS
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
-import io.paritytech.polkadotapp.design.components.icon.vectors.CashOutlined
+import io.paritytech.polkadotapp.design.components.icon.vectors.DollarIcon
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 
 @Composable
@@ -17,7 +17,7 @@ internal fun PayButton(
 ) {
     PolkadotIconButton(
         modifier = modifier,
-        icon = NovaIcons.CashOutlined,
+        icon = NovaIcons.DollarIcon,
         onClick = onClick,
         style = PolkadotButtonStyle.secondary(),
         size = PolkadotIconButtonSize.mediumIncreased(),

@@ -121,7 +121,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         navigation: NavigationPolicy,
     ) = object : HostBridge {
         override val storage: HostStorage =
-            EncryptedHostStorage(encryptedPreferences, productStorageNamespace(callingProductId.value))
+            EncryptedHostStorage(encryptedPreferences, callingProductId.value)
 
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
 

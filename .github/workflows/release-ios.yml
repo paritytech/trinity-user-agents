@@ -100,19 +100,19 @@ jobs:
         with:
           node-version: "22"
 
-      # codegen.sh formats its generated Rust with `cargo +nightly fmt`.
-      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+      # codegen.sh formats its generated Rust with the pinned nightly rustfmt.
+      - uses: ./.github/actions/rust-nightly
         with:
-          toolchain: nightly
           components: rustfmt
 
       - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           shared-key: ios-host-release
+          save: "false"
 
       # The truapi runtime declares its generated modules unconditionally and they are
       # gitignored, so the crate does not compile until codegen has run.

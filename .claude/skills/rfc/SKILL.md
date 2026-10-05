@@ -12,6 +12,7 @@ and need no prior approval here.
 
 ## Mechanics
 
+- Title the pull request `docs(rfc): <title>`, per the [`semver-pr-title`](../semver-pr-title/SKILL.md) skill. `RFC: <Title>` is the form for the tracking issue.
 - File `docs/rfcs/<kebab-title>.md` from [docs/rfcs/0001-template.md](../../../docs/rfcs/0001-template.md). **Do not
   number it** and **do not touch `_index.md`** — `number-rfc.yml` assigns the number on merge to `main` and rebuilds the
   index from the files on disk.

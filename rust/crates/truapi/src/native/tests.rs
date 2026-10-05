@@ -605,6 +605,13 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
         bulletin_chain_genesis_hash: vec![0xbb; 32],
         asset_hub_chain_genesis_hash: vec![0xcc; 32],
         network_suffix: "paseo".to_string(),
+        // Every runtime opens its own database; the directory is left for the
+        // OS to clean so the fixture can stay a plain value.
+        database_directory: tempfile::tempdir()
+            .unwrap()
+            .keep()
+            .to_string_lossy()
+            .into_owned(),
         local_session_secret: Some(vec![7; 32]),
         local_session_lite_username: Some("alice".to_string()),
     }

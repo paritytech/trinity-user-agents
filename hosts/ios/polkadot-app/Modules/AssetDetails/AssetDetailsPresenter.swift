@@ -24,13 +24,12 @@ final class AssetDetailsPresenter {
 
     private let chainAsset: ChainAsset
     private var balance: Decimal = 0
-    /// Classified alongside the balance figures, so the rows and the bar always account for
+    /// Classified alongside the balance figures, so the coins and the figures always account for
     /// exactly the total shown above them.
     private var holdings: CoinageHoldings = .empty
-    /// The domain's three buckets for the real holdings, totalled by the balance service.
+    /// Ready and Clearing for the real holdings, totalled by the balance service.
     private var coinageAmounts: CoinageAmounts?
-    /// Loaded from chain state; needed to price individual holdings.
-    private var denominationContext: DenominationBreakdownContext?
+    /// Loaded from chain state; the balance is shown against it.
     private var price: PriceData?
     let logger: LoggerProtocol
 
@@ -58,8 +57,10 @@ final class AssetDetailsPresenter {
     }
 
     private func provideAssetBalance() {
+        // One configuration for every figure this screen shows: the fiat symbol in front, and the
+        // asset symbol left to whoever sets the figure, since only some of them name it.
         let balanceViewModelFactory = PrimitiveBalanceViewModelFactory(
-            targetAssetInfo: chainAsset.asset.digitalDollarDisplayInfo.withoutSymbol,
+            targetAssetInfo: chainAsset.asset.digitalDollarFigureDisplayInfo,
             formatterFactory: balanceFormatterFactory
         )
 
@@ -151,11 +152,6 @@ extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
         case let .failure(error):
             wireframe.present(error: error, from: view)
         }
-    }
-
-    func didReceive(denominationContext: DenominationBreakdownContext) {
-        self.denominationContext = denominationContext
-        provideCoinageBreakdown()
     }
 
     func didReceive(coinageAmounts: CoinageAmounts, holdings: CoinageHoldings) {
@@ -289,10 +285,9 @@ private extension AssetDetailsPresenter {
 
 private extension AssetDetailsPresenter {
     func provideCoinageBreakdown() {
-        func formatted(from decimal: Decimal, includeSymbol: Bool = true) -> String {
-            let assetInfo = chainAsset.asset.digitalDollarDisplayInfo
+        func formatted(from decimal: Decimal, as assetInfo: AssetBalanceDisplayInfo) -> String {
             let balanceViewModelFactory = PrimitiveBalanceViewModelFactory(
-                targetAssetInfo: includeSymbol ? assetInfo : assetInfo.withoutSymbol,
+                targetAssetInfo: assetInfo,
                 formatterFactory: balanceFormatterFactory
             )
             return balanceViewModelFactory.balanceFromPrice(
@@ -303,35 +298,18 @@ private extension AssetDetailsPresenter {
             .amount
         }
 
-        let context = denominationContext
-        let holdings = holdings
-
-        // Pulled out of the map closure below: inlining it defeats the type checker.
-        func amount(forExponent exponent: Int16) -> String? {
-            guard let context else { return nil }
-
-            return formatted(from: context.amount(forExponent: exponent), includeSymbol: false)
-        }
-
-        let rows = CoinageBreakdownFactory.rows(from: holdings).map { row in
-            CoinageHoldingViewModel(
-                id: row.id,
-                amount: amount(forExponent: row.exponent),
-                status: row.status
-            )
-        }
-
         let amounts = coinageAmounts ?? .zero
+        // Only the headline names the asset after its figure; the run markers set an amount beside
+        // a label on one small line, where the headline above has already said what is counted.
+        let figureInfo = chainAsset.asset.digitalDollarFigureDisplayInfo
+        let strip = CoinageBreakdownFactory.stripCoins(CoinageBreakdownFactory.rows(from: holdings))
 
         let breakdown = CoinageBalanceBreakdownViewModel(
-            totalBalance: formatted(from: amounts.total, includeSymbol: false),
-            availableNowBalance: formatted(from: amounts.availableNow, includeSymbol: false),
-            gainingPrivacyBalance: formatted(from: amounts.gainingPrivacy, includeSymbol: false),
+            totalBalance: formatted(from: amounts.total, as: figureInfo),
+            availableNowBalance: formatted(from: amounts.availableNow, as: figureInfo),
+            gainingPrivacyBalance: formatted(from: amounts.gainingPrivacy, as: figureInfo),
             symbol: chainAsset.asset.digitalDollarDisplayInfo.symbol,
-            composition: context.map {
-                CoinageBreakdownFactory.composition(of: holdings, context: $0)
-            } ?? .empty,
-            holdings: rows
+            strip: strip
         )
         view?.didReceive(coinageBreakdown: breakdown)
     }

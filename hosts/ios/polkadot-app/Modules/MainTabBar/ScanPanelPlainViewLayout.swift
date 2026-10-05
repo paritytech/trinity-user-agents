@@ -7,6 +7,7 @@ import UIKit
 /// search. `EmbeddedQRScannerViewLayout` is a bare preview now, so the insets and the startup
 /// placeholder live here.
 final class ScanPanelPlainViewLayout: UIView {
+    let grabber = DSPanelGrabberView()
     let searchButton = SearchContactFieldButton()
 
     /// Stands in for the camera while `AVCaptureSession` configures and starts, which takes
@@ -22,7 +23,12 @@ final class ScanPanelPlainViewLayout: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
 
+        addSubview(grabber)
         addSubview(searchButton)
+
+        grabber.snp.makeConstraints { make in
+            make.top.leading.trailing.equalToSuperview()
+        }
     }
 
     @available(*, unavailable)
@@ -35,7 +41,8 @@ final class ScanPanelPlainViewLayout: UIView {
         insertSubview(scannerView, at: 1)
 
         scannerView.snp.makeConstraints { make in
-            make.top.leading.trailing.equalToSuperview().inset(DSSpacings.mediumIncreased)
+            make.top.equalTo(grabber.snp.bottom).offset(DSSpacings.mediumIncreased)
+            make.leading.trailing.equalToSuperview().inset(DSSpacings.mediumIncreased)
         }
 
         placeholderView.snp.makeConstraints { make in

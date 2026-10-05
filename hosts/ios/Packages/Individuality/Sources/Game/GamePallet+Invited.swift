@@ -33,7 +33,7 @@ extension GamePallet.GameAsInvitedExtension: OnlyExplicitTransactionExtending {
     ) throws -> TransactionExtension.Explicit? {
         let json = try toScaleCompatibleJSON(with: context?.toRawContext())
 
-        return try TransactionExtension.Explicit(
+        return TransactionExtension.Explicit(
             from: json,
             txExtensionId: txExtensionId,
             metadata: metadata

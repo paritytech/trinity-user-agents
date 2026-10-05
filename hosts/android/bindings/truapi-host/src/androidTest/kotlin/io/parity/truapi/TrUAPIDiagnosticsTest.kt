@@ -22,6 +22,7 @@ import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ProductExecutionKind
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.io.path.createTempDirectory
 
 /**
  * End-to-end host check: build the TrUAPI core with a local signing session
@@ -109,6 +110,7 @@ class TrUAPIDiagnosticsTest {
             bulletinChainGenesisHash = ByteArray(32),
             assetHubChainGenesisHash = ByteArray(32),
             networkSuffix = "paseo",
+            databaseDirectory = createTempDirectory("truapi").toString(),
             // 32 bytes of BIP-39 entropy → a deterministic local signing session
             // (no SSO pairing, fully offline).
             localSessionSecret = ByteArray(32) { (it + 1).toByte() },

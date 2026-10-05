@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import android.content.Context
 import dagger.Lazy
+import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import uniffi.truapi.HostRuntimeConfig
@@ -59,6 +61,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class TrUAPIHostRuntimeProvider @Inject constructor(
+    @param:ApplicationContext private val context: Context,
     private val chainRegistry: ChainRegistry,
     private val knownChains: KnownChains,
     private val chainDirectory: TrUAPIChainDirectory,
@@ -154,6 +157,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             networkSuffix = networkSuffix,
             localSessionSecret = localSession?.secret,
             localSessionLiteUsername = localSession?.liteUsername,
+            databaseDirectory = context.noBackupFilesDir.resolve(DATABASE_DIRECTORY).apply { mkdirs() }.absolutePath,
         )
     }
 
@@ -271,6 +275,13 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
          * `getTldRetrying` polls until it succeeds, so the boot needs its own bound.
          */
         const val TLD_RESOLVE_TIMEOUT_MS = 30_000L
+
+        /**
+         * Core database directory, under `noBackupFilesDir`: a durable-transaction
+         * ledger restored onto another device would act on transactions that
+         * already settled.
+         */
+        const val DATABASE_DIRECTORY = "truapi"
     }
 }
 

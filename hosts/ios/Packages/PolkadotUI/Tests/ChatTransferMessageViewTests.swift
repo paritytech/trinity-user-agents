@@ -4,50 +4,48 @@ import UIKit
 
 @MainActor
 struct ChatTransferMessageViewTests {
-    @Test("Without a remote logo the card draws the bundled mark tinted like the amount")
-    func fallsBackToBundledMark() {
-        let configuration = makeConfiguration(assetIcon: nil)
+    @Test("The amount row shows the currency symbol before the amount and the asset after it")
+    func rendersCurrencyAndAsset() {
+        let configuration = makeConfiguration()
         let view = ChatTransferMessageView(configuration: configuration)
 
-        let image = view.assetIconView.image
-        #expect(image != nil)
-        #expect(image?.renderingMode == .alwaysTemplate)
-        #expect(view.assetIconView.isHidden == false)
-        #expect(view.assetIconView.tintColor == configuration.amountTextColor)
+        #expect(view.amountView.amountLabel.text == "$20")
+        #expect(view.amountView.unitLabel.text == "CASH")
+        #expect(view.amountView.amountLabel.textColor == configuration.amountTextColor)
+        #expect(view.amountView.unitLabel.textColor == configuration.tokenSymbolColor)
     }
 
-    @Test("A remote logo is drawn as delivered")
-    func drawsRemoteLogo() {
-        let remote = UIImage.solidRed
-        let view = ChatTransferMessageView(configuration: makeConfiguration(assetIcon: remote))
-
-        #expect(view.assetIconView.image === remote)
-        #expect(view.assetIconView.isHidden == false)
+    @Test("The row steps down the typography ladder as the amount grows")
+    func scalesWithAmount() {
+        #expect(makeView(amount: "20").amountView.typography == .headlineLarge)
+        #expect(makeView(amount: "20,000").amountView.typography == .headlineSmall)
+        #expect(makeView(amount: "2,000,000").amountView.typography == .titleExtraLarge)
     }
 
-    @Test("Reapplying a configuration without a logo restores the bundled mark")
-    func reappliedConfigurationRestoresMark() {
-        let view = ChatTransferMessageView(configuration: makeConfiguration(assetIcon: .solidRed))
+    @Test("The asset is set in the small caps face at the amount's size")
+    func assetFollowsAmountSize() {
+        let view = makeView(amount: "20")
+        let amountFont = view.amountView.amountLabel.font
+        let unitFont = view.amountView.unitLabel.font
 
-        view.configuration = makeConfiguration(assetIcon: nil)
-
-        #expect(view.assetIconView.image?.renderingMode == .alwaysTemplate)
+        #expect(unitFont?.pointSize == amountFont?.pointSize)
+        #expect(unitFont?.fontName == UIFont.app(.smallCapsHeadlineMedium).fontName)
     }
 
     @Test("A short claim strikes the original amount through and warns that it differs")
     func partialClaimShowsOriginalAmount() {
-        let configuration = makeConfiguration(assetIcon: nil, state: .outgoing(.claimed), originalAmountText: "50")
+        let configuration = makeConfiguration(state: .outgoing(.claimed), originalAmountText: "50")
         let view = ChatTransferMessageView(configuration: configuration)
 
         #expect(view.originalAmountLabel.isHidden == false)
-        #expect(view.originalAmountLabel.attributedText?.string == "50")
+        #expect(view.originalAmountLabel.attributedText?.string == "$50")
         #expect(view.subtitleLabel.text == String(localized: .transferStatusAmountDiffers))
         #expect(view.subtitleIconView.isHidden)
     }
 
     @Test("A failed transfer renders its status in the error tint")
     func failedRendersErrorTint() {
-        let view = ChatTransferMessageView(configuration: makeConfiguration(assetIcon: nil, state: .incoming(.failed)))
+        let view = ChatTransferMessageView(configuration: makeConfiguration(state: .incoming(.failed)))
 
         #expect(view.subtitleLabel.text == String(localized: .transferStatusError))
         #expect(view.subtitleLabel.textColor == .fgError)
@@ -56,16 +54,20 @@ struct ChatTransferMessageViewTests {
 }
 
 private extension ChatTransferMessageViewTests {
+    func makeView(amount: String) -> ChatTransferMessageView {
+        ChatTransferMessageView(configuration: makeConfiguration(amount: amount))
+    }
+
     func makeConfiguration(
-        assetIcon: UIImage?,
+        amount: String = "20",
         state: ChatTransferMessageConfiguration.DirectionalState = .outgoing(.sent),
         originalAmountText: String? = nil
     ) -> ChatTransferMessageConfiguration {
         ChatTransferMessageConfiguration(
             title: "You Sent",
-            amountText: "20",
+            currencySymbol: "$",
+            amountText: amount,
             tokenSymbol: "CASH",
-            assetIcon: assetIcon,
             originalAmountText: originalAmountText,
             state: state,
             statusConfiguration: .init(
@@ -79,6 +81,7 @@ private extension ChatTransferMessageViewTests {
             titleColor: .fgPrimaryInverted,
             amountBackgroundColor: .bgSurfaceNestedInverted,
             amountTextColor: .fgPrimaryInverted,
+            tokenSymbolColor: .fgSecondaryInverted,
             originalAmountTextColor: .fgSecondaryInverted,
             side: .trailing
         )
@@ -87,13 +90,4 @@ private extension ChatTransferMessageViewTests {
 
 private struct FixedTimestampFormatter: TimestampFormatting {
     func string(for _: Date, now _: Date) -> String { "2:33" }
-}
-
-private extension UIImage {
-    static var solidRed: UIImage {
-        UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { context in
-            UIColor.red.setFill()
-            context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
-        }
-    }
 }

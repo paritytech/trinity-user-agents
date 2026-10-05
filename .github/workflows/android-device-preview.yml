@@ -22,10 +22,6 @@ on:
     # the head when someone asked.
     types: [labeled, synchronize]
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
   # The run links its artifact from the pull request, so a reviewer does not
@@ -44,6 +40,13 @@ jobs:
        && github.event.label.name == 'android-device-build')
       || (github.event.action == 'synchronize'
           && contains(github.event.pull_request.labels.*.name, 'android-device-build'))
+    # On the job rather than the workflow. Adding any label starts a run of this
+    # workflow, and a workflow-level group would let that run cancel a build in
+    # progress before its own job is skipped. A skipped job never joins the
+    # group.
+    concurrency:
+      group: android-device-preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -76,6 +79,7 @@ jobs:
           APPLICATION_ID: io.parity.polkadotapp
           APPLICATION_NAME: Polkadot
           CURRENCY_SYMBOL: DOT
+          FIAT_SYMBOL: "$"
           FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
           GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
           GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}

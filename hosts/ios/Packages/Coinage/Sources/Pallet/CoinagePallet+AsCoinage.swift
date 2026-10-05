@@ -193,6 +193,7 @@ extension CoinagePallet.AsCoinageTxExtension: TransactionExtending {
     func implicit(
         using _: DynamicScaleEncodingFactoryProtocol,
         metadata _: RuntimeMetadataProtocol,
+        extensionVersion _: UInt8,
         context _: RuntimeJsonContext?
     ) throws -> Data? {
         nil
@@ -206,7 +207,7 @@ extension CoinagePallet.AsCoinageTxExtension: TransactionExtending {
     ) throws -> TransactionExtension.Explicit? {
         guard let info else {
             let json = JSON.null
-            return try TransactionExtension.Explicit(
+            return TransactionExtension.Explicit(
                 from: json,
                 txExtensionId: txExtensionId,
                 metadata: metadata
@@ -260,7 +261,7 @@ extension CoinagePallet.AsCoinageTxExtension: TransactionExtending {
 
         let json = try mode.toScaleCompatibleJSON(with: context?.toRawContext())
 
-        return try TransactionExtension.Explicit(
+        return TransactionExtension.Explicit(
             from: json,
             txExtensionId: txExtensionId,
             metadata: metadata
@@ -276,7 +277,7 @@ private extension CoinagePallet.AsCoinageTxExtension {
         implication: TransactionExtension.Implication,
         encodingFactory: DynamicScaleEncodingFactoryProtocol
     ) throws -> CoinagePallet.AsUnloadTokenPeopleMode {
-        let payloadFactory = ImplicationSignaturePayloadFactory(extrinsicVersion: extrinsicVersion)
+        let payloadFactory = ImplicationSignaturePayloadFactory(formatVersion: extrinsicVersion.formatVersion)
         let implicationData = try payloadFactory.createPayload(from: implication, using: encodingFactory)
 
         // Alias proofs sign blake2_256(inherited_implication)

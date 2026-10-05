@@ -1,6 +1,6 @@
 {
   "name": "@parity/truapi-debugger",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "description": "In-repo debugger consumer for TrUAPI wire frames: decodes and groups the frames the truapi host tap streams out",
   "license": "MIT",
@@ -34,6 +34,6 @@
     "typescript": "^6.0"
   },
   "dependencies": {
-    "@parity/truapi": "^0.22.0"
+    "@parity/truapi": "^0.23.0"
   }
 }

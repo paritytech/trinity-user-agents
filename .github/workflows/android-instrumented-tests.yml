@@ -44,14 +44,13 @@ jobs:
 
       # The tests run against the app, which applies the Google Services
       # plugin and signs its debug type, so this needs the configuration and
-      # the key rather than compiling bare. Saves its own cache: the key
-      # carries the host triple, so the Linux gate's entry never restores here
-      # and every run would otherwise build the core cold.
+      # the key rather than compiling bare. It restores without saving: it
+      # never runs on main, and its key carries the host triple, so no other
+      # job would read the entry.
       - name: Set up the Android build
         uses: ./.github/actions/setup-android-build
         with:
           require_inputs: "true"
-          save_cache: "true"
           google_services_json_base64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
           keystore_base64: ${{ secrets.CI_GITHUB_KEYSTORE_KEY_FILE }}
           keystore_pass: ${{ secrets.CI_KEYSTORE_PASS }}
@@ -73,6 +72,7 @@ jobs:
           APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
           CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
           CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}
+          FIAT_SYMBOL: ${{ vars.FIAT_SYMBOL || '$' }}
           LOG_COLLECTION_EMAIL: ${{ vars.LOG_COLLECTION_EMAIL }}
           PRIVACY_POLICY_URL: ${{ vars.PRIVACY_POLICY_URL }}
           TERMS_OF_USE_URL: ${{ vars.TERMS_OF_USE_URL }}

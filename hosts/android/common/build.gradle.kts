@@ -13,6 +13,7 @@ android {
 
     defaultConfig {
         buildConfigString("CURRENCY_SYMBOL", localProperties.readSecretOrThrow("CURRENCY_SYMBOL"))
+        buildConfigString("FIAT_SYMBOL", localProperties.readSecretOrThrow("FIAT_SYMBOL"))
 
         buildConfigField("String", "TESTNET_ENVIRONMENT", "\"TESTNET\"")
         buildConfigField("boolean", "ALLOW_SHORT_EVIDENCE_VIDEO", "true")

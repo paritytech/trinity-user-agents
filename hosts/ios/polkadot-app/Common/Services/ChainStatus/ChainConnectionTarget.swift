@@ -31,7 +31,9 @@ enum ChainConnectionTarget: CaseIterable {
         }
     }
 
-    var expectedBlockTime: Duration {
+    /// Used until the registry has the chain: chains sync asynchronously, and `defaultBlockTime`
+    /// is optional in the remote config.
+    var fallbackBlockTime: Duration {
         switch self {
         case .chat,
              .assethub:
@@ -39,6 +41,14 @@ enum ChainConnectionTarget: CaseIterable {
         case .bulletin:
             .seconds(6)
         }
+    }
+
+    func blockTime(from chain: ChainModel?) -> Duration {
+        guard let millis = chain?.defaultBlockTimeMillis, millis > 0 else {
+            return fallbackBlockTime
+        }
+
+        return .milliseconds(millis)
     }
 
     var statusIcon: ChainStatusIcon {

@@ -37,6 +37,10 @@ use truapi::versioned::account::{HostAccountCreateProofRequest, HostAccountGetAl
 use truapi::versioned::resource_allocation::HostRequestResourceAllocationRequest;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
 
+mod scripted_chain;
+
+pub use scripted_chain::{ScriptedProvider, extract_id, notification_sender, wait_for_sent};
+
 /// Block until `condition` holds, failing with `message` after two seconds.
 /// Background runtime tasks run on their own threads, so a test that observes
 /// their effects polls for them instead of assuming an ordering.
@@ -186,6 +190,9 @@ pub struct StubPlatform {
     pub chain_connects: Arc<Mutex<Vec<[u8; 32]>>>,
     /// When set, `connect` fails with this reason.
     pub chain_connect_error: Option<&'static str>,
+    /// When set, `connect` to this one chain fails, while every other chain
+    /// still connects.
+    pub unreachable_genesis: Option<[u8; 32]>,
     /// When true, the connection's response stream ends instead of staying
     /// pending. A follow opened over it then yields `None` rather than waiting
     /// out `OPERATION_TIMEOUT`, which is the difference between a test that
@@ -1769,6 +1776,11 @@ impl ChainProvider for StubPlatform {
         if let Some(reason) = self.chain_connect_error {
             return Err(ProviderError::Host {
                 reason: reason.to_string(),
+            });
+        }
+        if self.unreachable_genesis == Some(genesis_hash) {
+            return Err(ProviderError::Host {
+                reason: "fixture serves no such chain".to_string(),
             });
         }
         if self.chain_connect_pending {

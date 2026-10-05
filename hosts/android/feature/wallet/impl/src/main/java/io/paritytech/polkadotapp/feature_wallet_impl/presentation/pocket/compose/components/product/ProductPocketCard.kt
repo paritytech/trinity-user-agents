@@ -33,7 +33,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.Product
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.CardSizes
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.PocketCardColors
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
-import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
  * A product-backed card: the frame is the host's, the face inside it is the product's tree. The
@@ -48,7 +48,7 @@ fun ProductPocketCard(
     onOpen: ((PocketCardUiModel.ProductCard) -> Unit)?,
     onRemoveRequested: ((PocketCardUiModel.ProductCard) -> Unit)?,
 ) {
-    val currentFace by bindings.face.collectAsStateWithLifecycle(initialValue = null)
+    val currentFace by bindings.face.collectAsStateWithLifecycle()
 
     PolkadotSurface(
         modifier = modifier.testTag(PocketTestTags.PRODUCT_CARD),
@@ -100,7 +100,7 @@ private fun ProductPocketCardPreview() {
                 pinned = false
             ),
             bindings = ProductFaceBindings(
-                face = flowOf(JsWidget.Text(text = "Loyalty", style = JsTypographyStyle.HEADLINE_LARGE)),
+                face = MutableStateFlow(JsWidget.Text(text = "Loyalty", style = JsTypographyStyle.HEADLINE_LARGE)),
                 onFaceAction = { _, _ -> },
                 imageResolver = JsImageResolver { null },
             ),
