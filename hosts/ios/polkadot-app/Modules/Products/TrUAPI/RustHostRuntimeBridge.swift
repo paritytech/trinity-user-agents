@@ -99,6 +99,13 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         }
     }
 
+    /// A run returns by itself once nothing is live, so `false` needs no action.
+    func durableWorkChanged(pending: Bool) {
+        if pending {
+            CoreDurableRecoveryTask.shared.schedule()
+        }
+    }
+
     func supportedChains() throws -> HostChainSet {
         TrUAPISupportedChains.make(chainRegistry: chainRegistry)
     }

@@ -480,6 +480,8 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
 
     <string name="coinage_recovery_worker_notification_title">Confirming payments</string>
     <string name="coinage_recovery_worker_notification_message">Waiting for your recent payments to settle on chain</string>
+    <string name="core_recovery_worker_notification_title">Confirming transactions</string>
+    <string name="core_recovery_worker_notification_message">Waiting for your recent transactions to settle on chain</string>
 
     <string name="revoke_payments_toolbar_title">Revoke Payments</string>
     <string name="revoke_payments_title">Revoke pending payments?</string>

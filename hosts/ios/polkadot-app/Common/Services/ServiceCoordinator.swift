@@ -314,6 +314,7 @@ extension ServiceCoordinator {
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
+        CoreDurableRecoveryTask.shared.attach(truapiRuntimeProvider)
 
         guard
             let signInHostCoordinator = createSignInHostCoordinator(

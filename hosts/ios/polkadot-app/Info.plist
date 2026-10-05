@@ -7,6 +7,7 @@
 		<string>io.novatech.determine.state.refresh</string>
 		<string>io.novatech.person.registration.sync</string>
 		<string>io.novatech.person.self_include.submit</string>
+		<string>io.novatech.truapi.durable.recovery</string>
 	</array>
 	<key>BrandAppGroup</key>
 	<string>group.$(APP_MAIN_BUNDLE)</string>
