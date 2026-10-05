@@ -15,7 +15,6 @@ final class IdentityProfileService {
     private struct UsernameState: Equatable {
         let username: Username?
         let isClaimed: Bool
-        let isPerson: Bool
     }
 
     private let usernameStorage: UsernameStoring
@@ -105,8 +104,7 @@ private extension IdentityProfileService {
     func refreshUsername() {
         let state = UsernameState(
             username: usernameStorage.username,
-            isClaimed: usernameStorage.usernameClaimed,
-            isPerson: usernameStorage.isPerson
+            isClaimed: usernameStorage.usernameClaimed
         )
         usernameContinuation?.yield(state)
     }
