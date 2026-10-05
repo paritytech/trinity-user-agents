@@ -19,9 +19,8 @@ use sso_channel::SsoDisconnectMonitor;
 
 use super::auth_state::AuthStateMachine;
 use super::authority::{
-    AccountHolder, AuthorityError, AuthoritySession,
-    CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
-    authority_session,
+    AccountHolder, AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
+    SignPayloadAuthorityRequest, SignRawAuthorityRequest, authority_session,
 };
 use super::connected_session_ui_info;
 use super::identity::resolve_session_identity_with_chain;
@@ -45,7 +44,6 @@ use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse};
 use truapi::{CallContext, CallError, v01};
-
 
 struct LoginInFlight {
     waiters: Vec<oneshot::Sender<Result<(), String>>>,
@@ -81,6 +79,8 @@ impl Drop for LoginInFlightOwner<'_> {
 #[derive(Default)]
 struct SessionLifecycle {
     epoch: u64,
+    storage_revision: u64,
+    validated_storage_revision: u64,
     external_session_active: bool,
 }
 
@@ -109,7 +109,11 @@ enum StoredSessionActivationError {
     Changed,
 }
 
-type SessionCleanup = Arc<dyn Fn(SessionInfo) -> futures::future::BoxFuture<'static, Result<(), AuthorityError>> + Send + Sync>;
+type SessionCleanup = Arc<
+    dyn Fn(SessionInfo) -> futures::future::BoxFuture<'static, Result<(), AuthorityError>>
+        + Send
+        + Sync,
+>;
 
 /// Remote account authority for a pairing host.
 pub struct SsoAccountHolderClient {
@@ -192,12 +196,21 @@ impl SsoAccountHolderClient {
 
     /// Connect transport session invalidation to the composing host's capability cleanup.
     pub fn set_session_cleanup(&self, cleanup: SessionCleanup) {
-        *self.session_cleanup.lock().expect("session cleanup mutex poisoned") = Some(cleanup);
+        *self
+            .session_cleanup
+            .lock()
+            .expect("session cleanup mutex poisoned") = Some(cleanup);
     }
 
     async fn cleanup_session(&self, session: Option<SessionInfo>) -> Result<(), AuthorityError> {
-        let cleanup = self.session_cleanup.lock().expect("session cleanup mutex poisoned").clone();
-        if let (Some(cleanup), Some(session)) = (cleanup, session) { cleanup(session).await?; }
+        let cleanup = self
+            .session_cleanup
+            .lock()
+            .expect("session cleanup mutex poisoned")
+            .clone();
+        if let (Some(cleanup), Some(session)) = (cleanup, session) {
+            cleanup(session).await?;
+        }
         Ok(())
     }
 
@@ -209,8 +222,40 @@ impl SsoAccountHolderClient {
     /// Signal that the persisted auth session may have changed; the sync task
     /// re-reads it.
     pub fn notify_session_store_changed(&self) {
-        self.advance_session_lifecycle();
+        let mut lifecycle = self
+            .session_lifecycle
+            .lock()
+            .expect("session lifecycle mutex poisoned");
+        lifecycle.storage_revision = lifecycle
+            .storage_revision
+            .checked_add(1)
+            .expect("session storage revision exhausted");
+        lifecycle.external_session_active = false;
+        drop(lifecycle);
         self.session_store_changes.notify();
+    }
+
+    fn session_store_revision(&self) -> u64 {
+        self.session_lifecycle
+            .lock()
+            .expect("session lifecycle mutex poisoned")
+            .storage_revision
+    }
+
+    async fn matching_session_store_revision(
+        &self,
+        expected: &[u8],
+    ) -> Result<Option<u64>, crate::latest::GenericError> {
+        loop {
+            let revision = self.session_store_revision();
+            let stored = self
+                .platform
+                .read_secret_core_storage(SecretCoreStorageKey::AuthSession)
+                .await?;
+            if self.session_store_revision() == revision {
+                return Ok((stored.as_deref() == Some(expected)).then_some(revision));
+            }
+        }
     }
 
     fn advance_session_lifecycle(&self) -> u64 {
@@ -230,7 +275,7 @@ impl SsoAccountHolderClient {
     }
 
     /// Reject completions from a replaced pairing session.
-    pub fn is_session_lifecycle_current(&self, epoch: u64) -> bool {
+    fn is_session_epoch_current(&self, epoch: u64) -> bool {
         self.current_session_lifecycle_epoch() == epoch
     }
 
@@ -288,16 +333,24 @@ impl SsoAccountHolderClient {
         }
     }
 
-    fn current_session(&self) -> Option<AuthoritySession> {
+    fn current_session_snapshot(&self) -> Option<(SessionInfo, AuthoritySession)> {
         let lifecycle = self
             .session_lifecycle
             .lock()
             .expect("session lifecycle mutex poisoned");
-        let mut session = authority_session(&self.session_state.current()?);
+        if lifecycle.validated_storage_revision != lifecycle.storage_revision {
+            return None;
+        }
+        let private = self.session_state.current()?;
+        let mut session = authority_session(&private);
         session
             .validation_id
             .extend_from_slice(&lifecycle.epoch.to_le_bytes());
-        Some(session)
+        Some((private, session))
+    }
+
+    fn current_session(&self) -> Option<AuthoritySession> {
+        self.current_session_snapshot().map(|(_, session)| session)
     }
 
     /// Start the disconnect monitor when a session is already active.
@@ -322,6 +375,7 @@ impl SsoAccountHolderClient {
         let _activation = self.session_store_activation.lock().await;
         let session = crate::host_logic::session::decode_persisted_session(blob)?;
         let activation_epoch = self.advance_session_lifecycle();
+        let storage_revision = self.session_store_revision();
         let resolved = resolve_session_identity_with_chain(
             &self.chain,
             self.host_config.asset_hub_chain_genesis_hash,
@@ -330,7 +384,18 @@ impl SsoAccountHolderClient {
         .await;
         #[cfg(test)]
         self.wait_at_external_session_activation_pause().await;
-        self.set_connected_session_if_current(resolved, activation_epoch, true).await.map_err(|error| error.to_string())?;
+        if !self
+            .set_connected_session_if_current(
+                resolved,
+                activation_epoch,
+                Some(storage_revision),
+                true,
+            )
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            return Err(StoredSessionActivationError::Changed.to_string());
+        }
         Ok(())
     }
 
@@ -361,7 +426,8 @@ impl SsoAccountHolderClient {
         {
             return Ok(());
         }
-        let activation_epoch = self.advance_session_lifecycle();
+        let starting_epoch = self.current_session_lifecycle_epoch();
+        let starting_revision = self.session_store_revision();
         let blob = match self
             .platform
             .read_secret_core_storage(SecretCoreStorageKey::AuthSession)
@@ -369,20 +435,43 @@ impl SsoAccountHolderClient {
         {
             Ok(Some(blob)) => blob,
             Ok(None) => {
-                self.clear_disconnected_session(false).await.map_err(|error| StoredSessionActivationError::Write(error.to_string()))?;
+                self.clear_disconnected_session(false)
+                    .await
+                    .map_err(|error| StoredSessionActivationError::Write(error.to_string()))?;
                 return Err(StoredSessionActivationError::Missing);
             }
             Err(error) => {
-                self.clear_disconnected_session(false).await.map_err(|error| StoredSessionActivationError::Write(error.to_string()))?;
+                self.clear_disconnected_session(false)
+                    .await
+                    .map_err(|error| StoredSessionActivationError::Write(error.to_string()))?;
                 return Err(StoredSessionActivationError::Read(error.reason));
             }
         };
         let session = match crate::host_logic::session::decode_persisted_session(&blob) {
             Ok(session) => session,
             Err(error) => {
-                self.clear_disconnected_session(false).await.map_err(|error| StoredSessionActivationError::Write(error.to_string()))?;
+                self.clear_disconnected_session(false)
+                    .await
+                    .map_err(|error| StoredSessionActivationError::Write(error.to_string()))?;
                 return Err(StoredSessionActivationError::Invalid(error));
             }
+        };
+        let activation_epoch = {
+            let mut lifecycle = self
+                .session_lifecycle
+                .lock()
+                .expect("session lifecycle mutex poisoned");
+            if lifecycle.epoch != starting_epoch {
+                return Err(StoredSessionActivationError::Changed);
+            }
+            if lifecycle.storage_revision == starting_revision
+                && self.session_state.current().as_ref() == Some(&session)
+            {
+                lifecycle.validated_storage_revision = starting_revision;
+                lifecycle.external_session_active = false;
+                return Ok(());
+            }
+            lifecycle.advance()
         };
         let resolved = resolve_session_identity_with_chain(
             &self.chain,
@@ -394,33 +483,51 @@ impl SsoAccountHolderClient {
         // Identity resolution can await chain I/O. Re-read the slot before
         // installation so an older activation cannot overwrite or expose a
         // session replaced while that lookup was in flight.
-        let latest = match self
-            .platform
-            .read_secret_core_storage(SecretCoreStorageKey::AuthSession)
-            .await
-        {
-            Ok(latest) => latest,
-            Err(error) => {
-                self.clear_disconnected_session(false).await.map_err(|error| StoredSessionActivationError::Write(error.to_string()))?;
-                return Err(StoredSessionActivationError::Read(error.reason));
+        let mut storage_revision = match self.matching_session_store_revision(&blob).await {
+            Ok(Some(revision)) => revision,
+            result => {
+                self.clear_disconnected_session(false)
+                    .await
+                    .map_err(|error| StoredSessionActivationError::Write(error.to_string()))?;
+                return Err(match result {
+                    Err(error) => StoredSessionActivationError::Read(error.reason),
+                    _ => StoredSessionActivationError::Changed,
+                });
             }
         };
-        if latest.as_deref() != Some(blob.as_slice()) {
-            self.clear_disconnected_session(false).await.map_err(|error| StoredSessionActivationError::Write(error.to_string()))?;
-            return Err(StoredSessionActivationError::Changed);
-        }
 
-        if !self.is_session_lifecycle_current(activation_epoch) {
+        if !self.is_session_epoch_current(activation_epoch) {
             return Err(StoredSessionActivationError::Changed);
         }
         let resolved_blob = encode_persisted_session(&resolved);
         if resolved_blob != blob {
             self.platform
-                .write_secret_core_storage(SecretCoreStorageKey::AuthSession, resolved_blob)
+                .write_secret_core_storage(SecretCoreStorageKey::AuthSession, resolved_blob.clone())
                 .await
                 .map_err(|error| StoredSessionActivationError::Write(error.reason))?;
+            storage_revision = match self.matching_session_store_revision(&resolved_blob).await {
+                Ok(Some(revision)) => revision,
+                result => {
+                    self.clear_disconnected_session(false)
+                        .await
+                        .map_err(|error| StoredSessionActivationError::Write(error.to_string()))?;
+                    return Err(match result {
+                        Err(error) => StoredSessionActivationError::Read(error.reason),
+                        _ => StoredSessionActivationError::Changed,
+                    });
+                }
+            };
         }
-        if !self.set_connected_session_if_current(resolved, activation_epoch, false).await.map_err(|error| StoredSessionActivationError::Write(error.to_string()))? {
+        if !self
+            .set_connected_session_if_current(
+                resolved,
+                activation_epoch,
+                Some(storage_revision),
+                false,
+            )
+            .await
+            .map_err(|error| StoredSessionActivationError::Write(error.to_string()))?
+        {
             return Err(StoredSessionActivationError::Changed);
         }
         Ok(())
@@ -468,7 +575,7 @@ impl SsoAccountHolderClient {
         product: &ProductContext,
     ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
         let _ = product;
-        if let Some(session) = self.session_state.current() {
+        if let Some((session, _)) = self.current_session_snapshot() {
             self.auth_state
                 .connected(&connected_session_ui_info(&session));
             return Ok(HostRequestLoginResponse::V1(
@@ -480,7 +587,7 @@ impl SsoAccountHolderClient {
             match waiter.await {
                 Ok(Ok(())) => {
                     return Ok(HostRequestLoginResponse::V1(
-                        if self.session_state.current().is_some() {
+                        if self.current_session().is_some() {
                             v01::HostRequestLoginResponse::AlreadyConnected
                         } else {
                             v01::HostRequestLoginResponse::Rejected
@@ -505,6 +612,7 @@ impl SsoAccountHolderClient {
         let mut login_owner = LoginInFlightOwner::new(self);
         let login_generation = self.begin_login_attempt();
         let activation_epoch = self.advance_session_lifecycle();
+        let starting_revision = self.session_store_revision();
         let outcome = match SsoPairingFlow::new(self).request_session().await {
             Ok(outcome) => outcome,
             Err(err) => {
@@ -515,7 +623,7 @@ impl SsoAccountHolderClient {
         match outcome {
             SsoPairingOutcome::Cancelled => {
                 login_owner.finish(Ok(()));
-                if self.session_state.current().is_some() {
+                if self.current_session().is_some() {
                     Ok(HostRequestLoginResponse::V1(
                         v01::HostRequestLoginResponse::AlreadyConnected,
                     ))
@@ -527,26 +635,74 @@ impl SsoAccountHolderClient {
             }
             SsoPairingOutcome::Success(session) => {
                 let _activation = self.session_store_activation.lock().await;
-                if !self.is_current_login_attempt(login_generation) || !self.is_session_lifecycle_current(activation_epoch) {
+                if !self.is_current_login_attempt(login_generation)
+                    || !self.is_session_epoch_current(activation_epoch)
+                    || self.session_store_revision() != starting_revision
+                {
                     login_owner.finish(Ok(()));
-                    return Ok(HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected));
+                    return Ok(HostRequestLoginResponse::V1(
+                        v01::HostRequestLoginResponse::Rejected,
+                    ));
                 }
-                self.platform.write_secret_core_storage(SecretCoreStorageKey::AuthSession, encode_persisted_session(&session)).await
-                    .map_err(|error| { self.auth_state.login_failed(error.reason.clone()); CallError::HostFailure { reason: error.reason } })?;
-                let installed = if self.is_current_login_attempt(login_generation) {
-                    self.set_connected_session_if_current(*session, activation_epoch, false).await
+                let blob = encode_persisted_session(&session);
+                self.platform
+                    .write_secret_core_storage(SecretCoreStorageKey::AuthSession, blob.clone())
+                    .await
+                    .map_err(|error| {
+                        self.auth_state.login_failed(error.reason.clone());
+                        CallError::HostFailure {
+                            reason: error.reason,
+                        }
+                    })?;
+                let storage_revision =
+                    self.matching_session_store_revision(&blob)
+                        .await
+                        .map_err(|error| {
+                            self.auth_state.login_failed(error.reason.clone());
+                            CallError::HostFailure {
+                                reason: error.reason,
+                            }
+                        })?;
+                let installed = if self.is_current_login_attempt(login_generation)
+                    && storage_revision.is_some()
+                {
+                    self.set_connected_session_if_current(
+                        *session,
+                        activation_epoch,
+                        storage_revision,
+                        false,
+                    )
+                    .await
                 } else {
                     Ok(false)
                 };
                 if !matches!(installed, Ok(true)) {
-                    self.platform.clear_secret_core_storage(SecretCoreStorageKey::AuthSession).await
-                        .map_err(|error| { self.auth_state.login_failed(error.reason.clone()); CallError::HostFailure { reason: error.reason } })?;
-                    installed.map_err(|error| { self.auth_state.login_failed(error.to_string()); CallError::HostFailure { reason: error.to_string() } })?;
+                    if storage_revision == Some(self.session_store_revision()) {
+                        self.platform
+                            .clear_secret_core_storage(SecretCoreStorageKey::AuthSession)
+                            .await
+                            .map_err(|error| {
+                                self.auth_state.login_failed(error.reason.clone());
+                                CallError::HostFailure {
+                                    reason: error.reason,
+                                }
+                            })?;
+                    }
+                    installed.map_err(|error| {
+                        self.auth_state.login_failed(error.to_string());
+                        CallError::HostFailure {
+                            reason: error.to_string(),
+                        }
+                    })?;
                     login_owner.finish(Ok(()));
-                    return Ok(HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected));
+                    return Ok(HostRequestLoginResponse::V1(
+                        v01::HostRequestLoginResponse::Rejected,
+                    ));
                 }
                 login_owner.finish(Ok(()));
-                Ok(HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Success))
+                Ok(HostRequestLoginResponse::V1(
+                    v01::HostRequestLoginResponse::Success,
+                ))
             }
         }
     }
@@ -661,7 +817,10 @@ impl SsoAccountHolderClient {
     }
 
     #[instrument(skip_all, fields(runtime.method = "session_store.clear_disconnected"))]
-    async fn clear_disconnected_session(&self, clear_auth_session: bool) -> Result<(), AuthorityError> {
+    async fn clear_disconnected_session(
+        &self,
+        clear_auth_session: bool,
+    ) -> Result<(), AuthorityError> {
         let previous = {
             let mut lifecycle = self
                 .session_lifecycle
@@ -674,10 +833,19 @@ impl SsoAccountHolderClient {
         };
         self.stop_session_channel(previous.as_ref());
         self.auth_state.store_disconnected();
-        let _activation = if clear_auth_session { Some(self.session_store_activation.lock().await) } else { None };
+        let _activation = if clear_auth_session {
+            Some(self.session_store_activation.lock().await)
+        } else {
+            None
+        };
         self.cleanup_session(previous).await?;
         if clear_auth_session {
-            self.platform.clear_secret_core_storage(SecretCoreStorageKey::AuthSession).await.map_err(|error| AuthorityError::Unavailable { reason: error.reason })?;
+            self.platform
+                .clear_secret_core_storage(SecretCoreStorageKey::AuthSession)
+                .await
+                .map_err(|error| AuthorityError::Unavailable {
+                    reason: error.reason,
+                })?;
         }
         Ok(())
     }
@@ -685,7 +853,8 @@ impl SsoAccountHolderClient {
     #[cfg(test)]
     async fn set_connected_session(&self, session: SessionInfo) -> Result<(), AuthorityError> {
         let activation_epoch = self.advance_session_lifecycle();
-        self.set_connected_session_if_current(session, activation_epoch, false).await?;
+        self.set_connected_session_if_current(session, activation_epoch, None, false)
+            .await?;
         Ok(())
     }
 
@@ -693,13 +862,20 @@ impl SsoAccountHolderClient {
         &self,
         session: SessionInfo,
         activation_epoch: u64,
+        storage_revision: Option<u64>,
         external_session: bool,
     ) -> Result<bool, AuthorityError> {
-        if !self.is_session_lifecycle_current(activation_epoch) {
+        if !self.is_session_epoch_current(activation_epoch)
+            || storage_revision.is_some_and(|revision| revision != self.session_store_revision())
+        {
             return Ok(false);
         }
         let prior = self.session_state.current();
-        if let Some(previous) = prior.as_ref() && (previous.public_key != session.public_key || previous.sso.as_ref().map(SsoSessionKey::from_session) != session.sso.as_ref().map(SsoSessionKey::from_session)) {
+        if let Some(previous) = prior.as_ref()
+            && (previous.public_key != session.public_key
+                || previous.sso.as_ref().map(SsoSessionKey::from_session)
+                    != session.sso.as_ref().map(SsoSessionKey::from_session))
+        {
             self.cleanup_session(prior.clone()).await?;
         }
         let previous = {
@@ -707,11 +883,14 @@ impl SsoAccountHolderClient {
                 .session_lifecycle
                 .lock()
                 .expect("session lifecycle mutex poisoned");
-            if lifecycle.epoch != activation_epoch {
+            if lifecycle.epoch != activation_epoch
+                || storage_revision.is_some_and(|revision| revision != lifecycle.storage_revision)
+            {
                 return Ok(false);
             }
             let previous = self.session_state.current();
             self.session_state.set_session(session.clone());
+            lifecycle.validated_storage_revision = lifecycle.storage_revision;
             lifecycle.external_session_active = external_session;
             previous
         };
@@ -738,7 +917,9 @@ impl SsoAccountHolderClient {
             return;
         }
 
-        if let Err(error) = self.clear_disconnected_session(true).await { tracing::error!(%error, "could not persist paired disconnect"); }
+        if let Err(error) = self.clear_disconnected_session(true).await {
+            tracing::error!(%error, "could not persist paired disconnect");
+        }
     }
 
     fn current_sso_session_matches(&self, key: SsoSessionKey) -> bool {
@@ -749,22 +930,35 @@ impl SsoAccountHolderClient {
         &self,
         session: &AuthoritySession,
     ) -> Result<SessionInfo, AuthorityError> {
-        if !self.current_session().is_some_and(|current| {
-            current.validation_id == session.validation_id
-                && current.public_key == session.public_key
-        }) {
+        let (private, current) = self
+            .current_session_snapshot()
+            .ok_or(AuthorityError::Disconnected)?;
+        if current.validation_id != session.validation_id
+            || current.public_key != session.public_key
+        {
             return Err(AuthorityError::Disconnected);
         }
-        self.session_state
-            .current()
-            .ok_or(AuthorityError::Disconnected)
+        Ok(private)
     }
 
     /// Refresh display identity without changing transport capabilities.
-    pub async fn refresh_current_session_identity(&self) -> Result<Option<AuthoritySession>, AuthorityError> {
+    pub async fn refresh_current_session_identity(
+        &self,
+    ) -> Result<Option<AuthoritySession>, AuthorityError> {
         let _activation = self.session_store_activation.lock().await;
-        let epoch = self.current_session_lifecycle_epoch();
-        let Some(current) = self.session_state.current() else { return Ok(None); };
+        let (current, epoch, starting_revision) = {
+            let lifecycle = self
+                .session_lifecycle
+                .lock()
+                .expect("session lifecycle mutex poisoned");
+            if lifecycle.validated_storage_revision != lifecycle.storage_revision {
+                return Ok(None);
+            }
+            let Some(current) = self.session_state.current() else {
+                return Ok(None);
+            };
+            (current, lifecycle.epoch, lifecycle.storage_revision)
+        };
         if current.has_username() || self.host_config.asset_hub_chain_genesis_hash == [0; 32] {
             return Ok(self.current_session());
         }
@@ -772,19 +966,48 @@ impl SsoAccountHolderClient {
             &self.chain,
             self.host_config.asset_hub_chain_genesis_hash,
             current.clone(),
-        ).await;
-        if !self.is_session_lifecycle_current(epoch) || !resolved.has_username() || resolved == current {
+        )
+        .await;
+        if !self.is_session_epoch_current(epoch)
+            || self.session_store_revision() != starting_revision
+            || !resolved.has_username()
+            || resolved == current
+        {
             return Ok(self.current_session());
         }
-        self.platform.write_secret_core_storage(SecretCoreStorageKey::AuthSession, encode_persisted_session(&resolved)).await
-            .map_err(|error| AuthorityError::Unavailable { reason: error.reason })?;
-        let lifecycle = self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
-        if lifecycle.epoch != epoch || !self.session_state.replace_session_if_current(&current, resolved.clone()) {
+        let blob = encode_persisted_session(&resolved);
+        self.platform
+            .write_secret_core_storage(SecretCoreStorageKey::AuthSession, blob.clone())
+            .await
+            .map_err(|error| AuthorityError::Unavailable {
+                reason: error.reason,
+            })?;
+        let Some(storage_revision) =
+            self.matching_session_store_revision(&blob)
+                .await
+                .map_err(|error| AuthorityError::Unavailable {
+                    reason: error.reason,
+                })?
+        else {
+            return Ok(self.current_session());
+        };
+        let mut lifecycle = self
+            .session_lifecycle
+            .lock()
+            .expect("session lifecycle mutex poisoned");
+        if lifecycle.epoch != epoch
+            || lifecycle.storage_revision != storage_revision
+            || !self
+                .session_state
+                .replace_session_if_current(&current, resolved.clone())
+        {
             drop(lifecycle);
             return Ok(self.current_session());
         }
+        lifecycle.validated_storage_revision = storage_revision;
         drop(lifecycle);
-        self.auth_state.connected(&connected_session_ui_info(&resolved));
+        self.auth_state
+            .connected(&connected_session_ui_info(&resolved));
         Ok(self.current_session())
     }
 
@@ -849,14 +1072,6 @@ impl AccountHolder for SsoAccountHolderClient {
         SsoAccountHolderClient::current_session(self)
     }
 
-
-
-
-
-
-
-
-
     async fn product_subtree_public_key(
         &self,
         cx: &CallContext,
@@ -867,10 +1082,6 @@ impl AccountHolder for SsoAccountHolderClient {
         self.remote_product_subtree_public_key(cx, &private_session, product_id)
             .await
     }
-
-
-
-
 
     async fn sign_vrf(
         &self,
@@ -988,14 +1199,6 @@ impl AccountHolder for SsoAccountHolderClient {
         self.remote_allocate_grants(cx, &private_session, product_id, request, policy)
             .await
     }
-
-
-
-
-
-
-
-
 
     async fn sign_statement_store_product_payload(
         &self,

@@ -6529,7 +6529,7 @@ fn store_notification_during_external_activation_restores_persisted_session() {
     activation
         .join()
         .expect("external activation thread panicked")
-        .expect("superseded external activation completes");
+        .expect_err("superseded external activation is rejected");
 
     wait_until(
         || host.test_session_state().current() == Some(persisted.clone()),
@@ -6566,7 +6566,7 @@ fn disconnect_during_external_activation_prevents_stale_reinstallation() {
     activation
         .join()
         .expect("external activation thread panicked")
-        .expect("superseded external activation completes");
+        .expect_err("superseded external activation is rejected");
 
     assert!(
         host.test_session_state().current().is_none(),
@@ -7334,4 +7334,91 @@ fn disconnect_fences_a_restore_that_already_read_the_protected_session() {
             (true, None),
         );
     });
+}
+
+#[test]
+fn external_storage_changes_fence_a_restore_after_its_final_read() {
+    use crate::platform::SecretCoreStorage;
+    use futures::FutureExt;
+
+    for replaced in [false, true] {
+        let stored = sso_session_info();
+        let (resume, paused_read) = futures::channel::oneshot::channel();
+        let platform = Arc::new(StubPlatform {
+            session_blob: Some(crate::host_logic::session::encode_persisted_session(
+                &stored,
+            )),
+            auth_session_read_pauses: Mutex::new([None, Some(paused_read)].into()),
+            ..Default::default()
+        });
+        let (host, pairing_host) =
+            ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+        let mut active = stored.clone();
+        active.public_key = [0x45; 32];
+        install_pairing_session(&host, active);
+        futures::executor::block_on(async {
+            let restore = pairing_host.activate_stored_session();
+            futures::pin_mut!(restore);
+            assert!(restore.as_mut().now_or_never().is_none());
+            if replaced {
+                let mut replacement = stored;
+                replacement.public_key = [0x46; 32];
+                platform
+                    .write_secret_core_storage(
+                        SecretCoreStorageKey::AuthSession,
+                        crate::host_logic::session::encode_persisted_session(&replacement),
+                    )
+                    .await
+                    .unwrap();
+            } else {
+                platform
+                    .clear_secret_core_storage(SecretCoreStorageKey::AuthSession)
+                    .await
+                    .unwrap();
+            }
+            pairing_host.notify_session_store_changed();
+            assert!(
+                host.authority.current_session().is_none(),
+                "old grants are inaccessible before reconciliation finishes"
+            );
+            resume.send(()).unwrap();
+            assert_eq!(
+                (restore.await.is_err(), host.test_session_state().current()),
+                (true, None)
+            );
+        });
+    }
+}
+
+#[test]
+fn duplicate_storage_notification_during_verification_preserves_the_committed_session() {
+    use futures::FutureExt;
+
+    let stored = sso_session_info();
+    let (resume, paused_read) = futures::channel::oneshot::channel();
+    let platform = Arc::new(StubPlatform {
+        session_blob: Some(crate::host_logic::session::encode_persisted_session(
+            &stored,
+        )),
+        auth_session_read_pauses: Mutex::new([None, Some(paused_read)].into()),
+        ..Default::default()
+    });
+    let (host, pairing_host) =
+        ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    futures::executor::block_on(async {
+        let restore = pairing_host.activate_stored_session();
+        futures::pin_mut!(restore);
+        assert!(restore.as_mut().now_or_never().is_none());
+        pairing_host.notify_session_store_changed();
+        resume.send(()).unwrap();
+        restore.await.unwrap();
+    });
+    assert_eq!(
+        (
+            host.test_session_state().current(),
+            *platform.session_clears.lock().unwrap()
+        ),
+        (Some(stored), 0),
+    );
+    assert!(host.authority.current_session().is_some());
 }

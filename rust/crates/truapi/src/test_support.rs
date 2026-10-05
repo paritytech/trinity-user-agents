@@ -19,14 +19,14 @@ use crate::subscription::thread_per_subscription_spawner;
 
 use crate::platform::{
     AccountAccessReview, AuthPresenter, AuthState, ChainProvider,
-    CoreStorage as PlatformCoreStorage, CoreStorageKey, SecretCoreStorage, SecretCoreStorageKey, CreateTransactionReview,
+    CoreStorage as PlatformCoreStorage, CoreStorageKey, CreateTransactionReview,
     Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
     Navigation as PlatformNavigation, Notifications as PlatformNotifications, PairingHostConfig,
     Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext,
     ProductOperations as PlatformProductOperations, ProductStorage as PlatformProductStorage,
-    ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
-    SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
-    UserConfirmationReview,
+    ProductSubtreeReview, ProviderError, ResourceAllocationReview, SecretCoreStorage,
+    SecretCoreStorageKey, SignPayloadReview, SignRawReview, SignVrfReview,
+    StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::Stream;
 use futures::stream::{self, BoxStream, StreamExt};
@@ -141,7 +141,8 @@ pub struct StubPlatform {
     pub resource_allocation_reviews: Arc<Mutex<Vec<ResourceAllocationReview>>>,
     pub session_blob: Option<Vec<u8>>,
     /// Pause selected protected-session reads after their value is captured.
-    pub auth_session_read_pauses: Mutex<std::collections::VecDeque<Option<futures::channel::oneshot::Receiver<()>>>>,
+    pub auth_session_read_pauses:
+        Mutex<std::collections::VecDeque<Option<futures::channel::oneshot::Receiver<()>>>>,
     pub session_error: Option<&'static str>,
     pub session_clears: Arc<Mutex<usize>>,
     pub session_writes: Arc<Mutex<Vec<Vec<u8>>>>,
@@ -1133,8 +1134,29 @@ impl SecretCoreStorage for StubPlatform {
                     reason: reason.to_string(),
                 });
             }
-            let value = self.session_blob.clone();
-            let pause = self.auth_session_read_pauses.lock().unwrap().pop_front().flatten();
+            let value = self
+                .local_storage
+                .lock()
+                .expect("local storage mutex poisoned")
+                .get(&secret_core_storage_test_key(
+                    SecretCoreStorageKey::AuthSession,
+                ))
+                .cloned()
+                .or_else(|| {
+                    (*self
+                        .session_clears
+                        .lock()
+                        .expect("session clear counter mutex poisoned")
+                        == 0)
+                        .then(|| self.session_blob.clone())
+                        .flatten()
+                });
+            let pause = self
+                .auth_session_read_pauses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .flatten();
             if let Some(pause) = pause {
                 let _ = pause.await;
             }
@@ -1162,7 +1184,14 @@ impl SecretCoreStorage for StubPlatform {
             self.session_writes
                 .lock()
                 .expect("session write list mutex poisoned")
-                .push(value);
+                .push(value.clone());
+            self.local_storage
+                .lock()
+                .expect("local storage mutex poisoned")
+                .insert(
+                    secret_core_storage_test_key(SecretCoreStorageKey::AuthSession),
+                    value,
+                );
             let hook = self
                 .on_auth_session_write
                 .lock()
@@ -1185,12 +1214,21 @@ impl SecretCoreStorage for StubPlatform {
         Ok(())
     }
 
-    async fn clear_secret_core_storage(&self, key: SecretCoreStorageKey) -> Result<(), v01::GenericError> {
+    async fn clear_secret_core_storage(
+        &self,
+        key: SecretCoreStorageKey,
+    ) -> Result<(), v01::GenericError> {
         if let SecretCoreStorageKey::AuthSession = key {
             *self
                 .session_clears
                 .lock()
                 .expect("session clear counter mutex poisoned") += 1;
+            self.local_storage
+                .lock()
+                .expect("local storage mutex poisoned")
+                .remove(&secret_core_storage_test_key(
+                    SecretCoreStorageKey::AuthSession,
+                ));
             return Ok(());
         }
         if let Some(reason) = self.local_storage_error {

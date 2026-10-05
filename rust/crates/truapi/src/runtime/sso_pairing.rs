@@ -1078,6 +1078,111 @@ mod tests {
     }
 
     #[test]
+    fn request_login_accepts_its_own_persistence_notification() {
+        let platform = Arc::new(StubPlatform {
+            pairing_success_response: true,
+            ..Default::default()
+        });
+        let (host, pairing_host) =
+            ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+        let notifying_host = Arc::downgrade(&pairing_host);
+        *platform.on_auth_session_write.lock().unwrap() = Some(Arc::new(move || {
+            notifying_host
+                .upgrade()
+                .unwrap()
+                .notify_session_store_changed();
+        }));
+
+        let response = futures::executor::block_on(host.request_login(
+            &CallContext::default(),
+            HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None }),
+        ))
+        .unwrap();
+        assert_eq!(
+            response,
+            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Success)
+        );
+        let session = host
+            .test_session_state()
+            .current()
+            .expect("committed pairing is active");
+        assert_eq!(
+            (
+                platform.session_writes.lock().unwrap().clone(),
+                *platform.session_clears.lock().unwrap()
+            ),
+            (
+                vec![crate::host_logic::session::encode_persisted_session(
+                    &session
+                )],
+                0
+            ),
+        );
+        let epoch = pairing_host.current_session_lifecycle_epoch();
+        pairing_host.notify_session_store_changed();
+        assert!(
+            host.authority.current_session().is_none(),
+            "unverified dirty storage suspends account access"
+        );
+        futures::executor::block_on(pairing_host.activate_stored_session()).unwrap();
+        assert_eq!(pairing_host.current_session_lifecycle_epoch(), epoch);
+        assert!(host.authority.current_session().is_some());
+    }
+
+    #[test]
+    fn request_login_preserves_an_external_session_replacing_its_commit() {
+        let platform = Arc::new(StubPlatform {
+            pairing_success_response: true,
+            ..Default::default()
+        });
+        let (host, pairing_host) =
+            ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+        let replacement = crate::host_logic::session::encode_persisted_session(
+            &crate::test_support::sso_session_info(),
+        );
+        let weak_platform = Arc::downgrade(&platform);
+        let weak_host = Arc::downgrade(&pairing_host);
+        let replaced = replacement.clone();
+        *platform.on_auth_session_write.lock().unwrap() = Some(Arc::new(move || {
+            weak_platform
+                .upgrade()
+                .unwrap()
+                .local_storage
+                .lock()
+                .unwrap()
+                .insert(
+                    secret_core_storage_test_key(SecretCoreStorageKey::AuthSession),
+                    replaced.clone(),
+                );
+            weak_host.upgrade().unwrap().notify_session_store_changed();
+        }));
+        let response = futures::executor::block_on(host.request_login(
+            &CallContext::default(),
+            HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None }),
+        ))
+        .unwrap();
+        assert_eq!(
+            response,
+            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected)
+        );
+        assert_eq!(
+            (
+                platform
+                    .local_storage
+                    .lock()
+                    .unwrap()
+                    .get(&secret_core_storage_test_key(
+                        SecretCoreStorageKey::AuthSession
+                    ))
+                    .cloned(),
+                *platform.session_clears.lock().unwrap(),
+                host.test_session_state().current()
+            ),
+            (Some(replacement), 0, None),
+        );
+    }
+
+    #[test]
     fn request_login_clears_auth_session_when_cancelled_after_persist() {
         let session_writes = Arc::new(Mutex::new(Vec::new()));
         let session_clears = Arc::new(Mutex::new(0));
