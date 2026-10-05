@@ -79,6 +79,20 @@ The embedding app implements `HostBridge` (defined in `TrUAPIHost.swift`): navig
 
 The default `currentLocale` includes the system BCP 47 language tag and actual time-zone identifier. `localizeTimestamps` uses Foundation to format each instant in the requested language and zone, including historical daylight-saving offsets; grouping keys are always Gregorian `YYYY-MM-DD`. Product executions observe system locale and time-zone changes and remove those observers on close. Hosts with an in-app language picker override `currentLocale` and call `notifyLocaleChanged` when that selection changes, preserving the actual time zone. Direct users of generated callbacks must implement `localizeTimestamps`, either supplying a formatter or throwing `HostRejection.Rejected` when conversion is unavailable.
 
+Ordinary notification taps use `HostBridge.activationEvents()` and
+`acknowledgeActivation(sequence:)`, independently of background receiver enrollment.
+The embedder persists a tap before opening or focusing the verified product and
+returns a non-consuming, sequence-ordered batch of at most 32 events. Bind events
+and exact, idempotent acknowledgements to the execution's verified product,
+artifact, account and environment; an event sequence is not a notification id.
+Do not change accounts or navigate an arbitrary URL from an OS payload. Neither
+callback requests notification permission. Hosts without activation support
+reject these callbacks explicitly.
+
+Rebuild the Rust library, UniFFI bindings and Swift/Kotlin adapters together after
+changing these callbacks. Successful binding generation on Linux does not verify
+Swift compilation, OS notification presentation or physical-device APNs delivery.
+
 ## Integrating in an iOS app
 
 Add the package as an SPM dependency and link the `TrUAPIHost` product into the app target:

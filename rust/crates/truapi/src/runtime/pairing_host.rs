@@ -467,17 +467,20 @@ impl PairingHost {
 
     async fn install_external_session(&self, blob: &[u8]) -> Result<(), String> {
         let _activation = self.session_store_activation.lock().await;
-        let session = crate::host_logic::session::decode_persisted_session(blob)?;
+        let mut session = crate::host_logic::session::decode_persisted_session(blob)?;
         let activation_epoch = self.advance_session_lifecycle();
-        let resolved = resolve_session_identity_with_chain(
+        if let Err(reason) = resolve_session_identity_with_chain(
             &self.chain,
             self.host_config.asset_hub_chain_genesis_hash,
-            session,
+            &mut session,
         )
-        .await;
+        .await
+        {
+            warn!(%reason, "external session identity lookup unavailable");
+        }
         #[cfg(test)]
         self.wait_at_external_session_activation_pause().await;
-        self.set_connected_session_if_current(resolved, activation_epoch, true)
+        self.set_connected_session_if_current(session, activation_epoch, true)
             .await;
         Ok(())
     }
@@ -531,19 +534,22 @@ impl PairingHost {
                 return Err(StoredSessionActivationError::Read(error.reason));
             }
         };
-        let session = match crate::host_logic::session::decode_persisted_session(&blob) {
+        let mut resolved = match crate::host_logic::session::decode_persisted_session(&blob) {
             Ok(session) => session,
             Err(error) => {
                 self.clear_disconnected_session(true).await;
                 return Err(StoredSessionActivationError::Invalid(error));
             }
         };
-        let resolved = resolve_session_identity_with_chain(
+        if let Err(reason) = resolve_session_identity_with_chain(
             &self.chain,
             self.host_config.asset_hub_chain_genesis_hash,
-            session,
+            &mut resolved,
         )
-        .await;
+        .await
+        {
+            warn!(%reason, "stored session identity lookup unavailable");
+        }
 
         // Identity resolution can await chain I/O. Re-read the slot before
         // installation so an older activation cannot overwrite or expose a
@@ -1236,27 +1242,30 @@ impl PairingHost {
         require_current_session(&self.session_state, session)
     }
 
-    async fn refresh_current_session_identity(&self) -> Option<AuthoritySession> {
-        let current = self.session_state.current()?;
-        if current.has_username() || self.host_config.asset_hub_chain_genesis_hash == [0; 32] {
-            return Some(authority_session(&current));
+    async fn refresh_current_session_identity(&self) -> Result<Option<AuthoritySession>, String> {
+        let Some(current) = self.session_state.current() else {
+            return Ok(None);
+        };
+        if current.has_username() {
+            return Ok(Some(authority_session(&current)));
         }
 
-        let resolved = resolve_session_identity_with_chain(
+        let mut resolved = current.clone();
+        resolve_session_identity_with_chain(
             &self.chain,
             self.host_config.asset_hub_chain_genesis_hash,
-            current.clone(),
+            &mut resolved,
         )
-        .await;
+        .await?;
         if !resolved.has_username() || resolved == current {
-            return self.current_session();
+            return Ok(self.current_session());
         }
 
         if !self
             .session_state
             .replace_session_if_current(&current, resolved.clone())
         {
-            return self.current_session();
+            return Ok(self.current_session());
         }
         self.auth_state
             .connected(&connected_session_ui_info(&resolved));
@@ -1272,7 +1281,7 @@ impl PairingHost {
             warn!(reason = %err.reason, "refreshed session identity persist failed");
         }
 
-        match self.session_state.current() {
+        Ok(match self.session_state.current() {
             Some(live) if live != resolved => {
                 if let Err(err) = self
                     .platform
@@ -1297,7 +1306,7 @@ impl PairingHost {
                 None
             }
             _ => Some(authority_session(&resolved)),
-        }
+        })
     }
 
     /// Persist and memory-cache a freshly allocated statement-store allowance
@@ -2657,7 +2666,7 @@ impl ProductAuthority for PairingHost {
         PairingHost::disconnect(self).await;
     }
 
-    async fn refresh_session_identity(&self) -> Option<AuthoritySession> {
+    async fn refresh_session_identity(&self) -> Result<Option<AuthoritySession>, String> {
         self.refresh_current_session_identity().await
     }
 

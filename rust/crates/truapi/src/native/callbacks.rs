@@ -50,6 +50,13 @@ pub trait HostCallbacks: Send + Sync {
     /// Cancel a notification by id.
     fn cancel_notification(&self, id: u32) -> Result<(), HostRejection>;
 
+    /// Non-consuming, ordered activation batch for this execution's trusted scope.
+    /// Independent of receiving enrollment and OS permission prompts.
+    async fn activation_events(&self) -> Result<Vec<v01::NotificationActivation>, HostRejection>;
+
+    /// Acknowledge exactly one sequence in the same trusted execution scope.
+    async fn acknowledge_activation(&self, sequence: u64) -> Result<(), HostRejection>;
+
     /// Prompt the user for a device-level permission (camera, mic, ...)
     /// `product` requested; the host preserves whether approval applies once
     /// or always.

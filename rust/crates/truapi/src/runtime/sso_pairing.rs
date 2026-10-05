@@ -275,7 +275,7 @@ impl<'a> SsoPairingFlow<'a> {
             response.peer_statement_account_id,
             response.success.sso_enc_pub_key,
         )?;
-        let session = SessionInfo {
+        let mut session = SessionInfo {
             public_key: response.success.root_account_id,
             sso: Some(sso),
             root_entropy_source: Some(response.success.root_entropy_source),
@@ -285,17 +285,23 @@ impl<'a> SsoPairingFlow<'a> {
             lite_username: None,
             full_username: None,
         };
-        let resolve_session = resolve_session_identity_with_chain(
-            &self.host.chain,
-            self.host.host_config.asset_hub_chain_genesis_hash,
-            session,
-        )
-        .fuse();
-        pin_mut!(resolve_session);
-        let session = futures::select! {
-            _ = cancel => return Ok(SsoPairingOutcome::Cancelled),
-            session = resolve_session => session,
-        };
+        {
+            let resolve_session = resolve_session_identity_with_chain(
+                &self.host.chain,
+                self.host.host_config.asset_hub_chain_genesis_hash,
+                &mut session,
+            )
+            .fuse();
+            pin_mut!(resolve_session);
+            futures::select! {
+                _ = cancel => return Ok(SsoPairingOutcome::Cancelled),
+                result = resolve_session => {
+                    if let Err(reason) = result {
+                        tracing::warn!(%reason, "paired session identity lookup unavailable");
+                    }
+                },
+            }
+        }
         let persist_session = self
             .host
             .platform
