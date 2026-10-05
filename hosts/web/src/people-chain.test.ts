@@ -39,9 +39,7 @@ function consumer(options: {
   full?: string;
   lite: string;
   person?: { demoted: boolean };
-  slots?: ("free" | number)[];
 }): Uint8Array {
-  const slots = options.slots ?? [];
   return Uint8Array.from([
     ...new Uint8Array(65),
     ...(options.full === undefined ? [0] : [1, ...text(options.full)]),
@@ -54,10 +52,6 @@ function consumer(options: {
           options.person.demoted ? 1 : 0,
         ]
       : [0]),
-    slots.length << 2,
-    ...slots.flatMap((slot) =>
-      slot === "free" ? [1] : [0, ...new Uint8Array(32).fill(slot), ...u64(5)],
-    ),
   ]);
 }
 
@@ -72,23 +66,19 @@ describe("storage keys", () => {
 });
 
 describe("Consumers record", () => {
-  test("reads a Lite account with no full name and no slots", () => {
+  // The username a local session is activated with comes from this record,
+  // so a Lite record must decode, not read as unreadable.
+  test("reads a Lite account with no full name", () => {
     expect(decodeConsumer(consumer({ lite: "alice.07" }))).toEqual({
       fullUsername: null,
       liteUsername: "alice.07",
       credibility: { tag: "Lite" },
-      slots: [],
     });
   });
 
-  test("reads a person's names, credibility and slots", () => {
+  test("reads a person's names and credibility", () => {
     const record = decodeConsumer(
-      consumer({
-        full: "alice",
-        lite: "alice.07",
-        person: { demoted: true },
-        slots: [7, "free"],
-      }),
+      consumer({ full: "alice", lite: "alice.07", person: { demoted: true } }),
     );
     expect(record).toEqual({
       fullUsername: "alice",
@@ -99,10 +89,6 @@ describe("Consumers record", () => {
         lastUpdate: 1_700_000_000n,
         demoted: true,
       },
-      slots: [
-        { tag: "Occupied", accountId: `0x${"07".repeat(32)}`, since: 5n },
-        { tag: "Free" },
-      ],
     });
   });
 
@@ -249,7 +235,6 @@ describe("reading an account", () => {
           fullUsername: null,
           liteUsername: "alice.07",
           credibility: { tag: "Lite" },
-          slots: [],
         },
       },
       {

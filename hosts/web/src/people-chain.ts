@@ -7,9 +7,9 @@ import { Reader } from "./scale-reader.js";
 /**
  * Read-only reads of one account's standing on the People chain.
  *
- * `Resources.Consumers` holds the usernames, the credibility and the Statement
- * Store slots of a registered person, and `PeopleLite.LitePeople` marks a Lite
- * person and names its ring key. Ring membership is then read from
+ * `Resources.Consumers` holds the usernames and the credibility of a registered
+ * person, and `PeopleLite.LitePeople` marks a Lite person and names its ring
+ * key. Ring membership is then read from
  * `Members.Members[(collection, ring key)]`. The ring key of a Lite person is in
  * its `LitePeople` record. The key of a full person is reached through
  * `People.AccountToPersonalId` and `People.People`. The layouts follow the
@@ -51,11 +51,6 @@ export function mapKey(prefix: string, account: Uint8Array): HexString {
   return `0x${prefix}${bytesToHex(hashed).slice(2)}${bytesToHex(account).slice(2)}`;
 }
 
-/** A Statement Store slot of a registered person. */
-export type StatementSlot =
-  | { tag: "Occupied"; accountId: HexString; since: bigint }
-  | { tag: "Free" };
-
 /** The credibility a person's record carries. */
 export type Credibility =
   | { tag: "Lite" }
@@ -66,10 +61,13 @@ export interface ConsumerRecord {
   fullUsername: string | null;
   liteUsername: string;
   credibility: Credibility;
-  slots: StatementSlot[];
 }
 
-/** Decode a `Resources.Consumers` value. Throws when it is not the layout this reads. */
+/**
+ * Decode a `Resources.Consumers` value: identifier key, full and lite username,
+ * and credibility, as the live People runtimes store it. Throws when it is not
+ * that layout.
+ */
 export function decodeConsumer(bytes: Uint8Array): ConsumerRecord {
   const reader = new Reader(bytes);
   reader.take(65);
@@ -87,20 +85,8 @@ export function decodeConsumer(bytes: Uint8Array): ConsumerRecord {
     if (demoted > 1) throw new Error("a flag is invalid");
     credibility = { tag: "Person", alias, lastUpdate, demoted: demoted === 1 };
   } else throw new Error("an unknown credibility variant");
-  const slots: StatementSlot[] = [];
-  for (let remaining = reader.compact(); remaining > 0; remaining -= 1) {
-    const tag = reader.u8();
-    if (tag === 0)
-      slots.push({
-        tag: "Occupied",
-        accountId: bytesToHex(reader.take(32)),
-        since: reader.u64(),
-      });
-    else if (tag === 1) slots.push({ tag: "Free" });
-    else throw new Error("an unknown slot variant");
-  }
   reader.finish();
-  return { fullUsername, liteUsername, credibility, slots };
+  return { fullUsername, liteUsername, credibility };
 }
 
 /** Where a ring key stands in `Members.Members`, as the chain stores it. */

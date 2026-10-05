@@ -48,7 +48,11 @@ import {
 } from "./network-choice.js";
 import { ask } from "./prompt.js";
 import { RecentProducts } from "./recents.js";
-import { readPeopleChain } from "./people-chain.js";
+import {
+  readPeopleChain,
+  type AccountReading,
+  type AccountToRead,
+} from "./people-chain.js";
 import {
   readBalance,
   readProductAccount,
@@ -74,6 +78,7 @@ import { versionSections, type VersionRow } from "./versions.js";
 import { bindViewport } from "./viewport.js";
 import {
   WalletPublicInfoStore,
+  sessionUsernameFrom,
   usernameFrom,
   walletLabel,
 } from "./wallet-label.js";
@@ -649,7 +654,9 @@ async function refreshProductChain(): Promise<void> {
 /**
  * Read the signed-in account's standing from the People chain. Read-only, on
  * request and once per account when the fold is first opened; nothing polls.
- * A failed read changes only what this shows, never the session.
+ * A successful read also gives the session its username, through
+ * {@link applySessionUsername}. A failed read changes only what this shows,
+ * never the session.
  */
 async function refreshChainStatus(): Promise<void> {
   const access = chainAccess;
@@ -661,14 +668,14 @@ async function refreshChainStatus(): Promise<void> {
   void refreshProductAllowance();
   void refreshProductChain();
   try {
-    const reading = await readPeopleChain(access.chain, access.genesis.people, [
-      ...(identityAccountId
-        ? [{ role: "identity" as const, accountId: identityAccountId }]
-        : []),
-      { role: "root" as const, accountId: publicKey },
-    ]);
+    const reading = await readPeopleChain(
+      access.chain,
+      access.genesis.people,
+      accountsToRead(publicKey, identityAccountId),
+    );
     if (run !== chainRun) return;
     chainState = { state: "done", checkedAt: new Date(), reading };
+    applySessionUsername(publicKey, reading.readings);
     const found = usernameFrom(reading.readings);
     if (found !== undefined && activeWallet !== null) {
       walletInfo.update(
@@ -686,7 +693,80 @@ async function refreshChainStatus(): Promise<void> {
   renderAccountStatus();
 }
 
-/** Forget the chain state when the account changes, and read again if the fold is open. */
+function accountsToRead(
+  publicKey: AccountToRead["accountId"],
+  identityAccountId: AccountToRead["accountId"] | undefined,
+): AccountToRead[] {
+  return [
+    ...(identityAccountId
+      ? [{ role: "identity" as const, accountId: identityAccountId }]
+      : []),
+    { role: "root" as const, accountId: publicKey },
+  ];
+}
+
+/**
+ * Give the session the lite username the People chain records for it.
+ *
+ * The core gives a local session only the name it is activated with and
+ * never looks one up, so `account.getUserId` answers with this name or with
+ * none. When the chain's name differs from the session's, the session is
+ * activated again with it, which closes and reopens the open product. A
+ * reading for another account, or one whose record could not be decoded,
+ * changes nothing.
+ */
+function applySessionUsername(
+  publicKey: string,
+  readings: AccountReading[],
+): void {
+  const wallet = activeWallet;
+  if (
+    wallet === null ||
+    lastAuthState.tag !== "Connected" ||
+    lastAuthState.value.publicKey !== publicKey
+  )
+    return;
+  const found = sessionUsernameFrom(readings);
+  if (found === undefined) return;
+  walletInfo.update(
+    wallet.id,
+    { publicKey, sessionUsername: found },
+    activeNetwork.id,
+  );
+  if (found === (lastAuthState.value.liteUsername ?? null)) return;
+  void changeSession(async (current) => {
+    if (activeWallet !== wallet) return;
+    await current.activateLocalSession(wallet.entropy, found ?? undefined);
+    log(
+      found === null
+        ? "session username removed: the People chain has no record"
+        : `session username set to ${found} from the People chain`,
+    );
+  });
+}
+
+/**
+ * Read the signed-in account's People chain record for the session username
+ * only. Runs once per account when the status fold is closed; the fold's own
+ * read does the same when it is open.
+ */
+async function syncSessionUsername(): Promise<void> {
+  const access = chainAccess;
+  if (lastAuthState.tag !== "Connected" || access === null) return;
+  const { publicKey, identityAccountId } = lastAuthState.value;
+  try {
+    const reading = await readPeopleChain(
+      access.chain,
+      access.genesis.people,
+      accountsToRead(publicKey, identityAccountId),
+    );
+    applySessionUsername(publicKey, reading.readings);
+  } catch (error) {
+    log(`Session username: ${errorText(error)}`);
+  }
+}
+
+/** Forget the chain state when the account changes, and read it again for the new one. */
 function trackChainAccount(state: AuthState): void {
   const key = state.tag === "Connected" ? state.value.publicKey : null;
   if (key === chainFor) return;
@@ -696,7 +776,9 @@ function trackChainAccount(state: AuthState): void {
   productChainRun += 1;
   productChain = { state: "idle" };
   void refreshProductAllowance();
-  if (key !== null && accountStatusFold.open) void refreshChainStatus();
+  if (key === null) return;
+  if (accountStatusFold.open) void refreshChainStatus();
+  else void syncSessionUsername();
 }
 
 accountStatusRefresh.addEventListener("click", () => {
@@ -779,7 +861,10 @@ function signIn(wallet: Wallet): Promise<void> {
     storage.useWallet(wallet.id, activeNetwork.id);
     activeWallet = wallet;
     try {
-      await runtime.activateLocalSession(wallet.entropy);
+      await runtime.activateLocalSession(
+        wallet.entropy,
+        walletInfo.get(wallet.id, activeNetwork.id)?.sessionUsername,
+      );
     } catch (error) {
       storage.useWallet(null, activeNetwork.id);
       activeWallet = null;
