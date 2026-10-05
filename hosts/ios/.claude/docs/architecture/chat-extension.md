@@ -2,7 +2,7 @@
 
 ## Overview
 
-Chat is a core feature composed of multiple sub-modules under `Modules/Chat/`. It supports real-time messaging via statement store, WebRTC voice/video calls, file attachments, game invitations, and payment requests.
+Chat is a core feature composed of multiple sub-modules under `Modules/Chat/`. It supports real-time messaging via statement store, WebRTC voice/video calls, file attachments, and payment requests.
 
 ## Key Components
 
@@ -10,7 +10,6 @@ Chat is a core feature composed of multiple sub-modules under `Modules/Chat/`. I
 - **Chat** — main chat interface (sub-modules for messages, input, media, etc.)
 - **ChatCall** — voice/video call management
 - **ChatRequestList** — pending chat requests
-- **ChatWithPlayers** — game-integrated chat
 - **ChatAttachments** — file/media attachments
 - **IncomingChatRequest** — incoming request handling
 - **ContactsList** — contacts management
@@ -60,7 +59,7 @@ The optional `thumbnail: Data` field in image and video metadata contains a Blur
 
 ## Hard Rules
 
-1. **Chat extensions must not block the main chat flow** — extensions are additive surfaces (payment requests, game invites). Coinage transfer bubbles are not an extension: they render `Content.Transfer.state`, read from the transfer state row related to the message (see architecture/coinage.md, "Chat transfer lifecycle"). Their lifecycle and failures must not stall message send/receive, scroll, or compose state. Concretely:
+1. **Chat extensions must not block the main chat flow** — extensions are additive surfaces (payment requests). Coinage transfer bubbles are not an extension: they render `Content.Transfer.state`, read from the transfer state row related to the message (see architecture/coinage.md, "Chat transfer lifecycle"). Their lifecycle and failures must not stall message send/receive, scroll, or compose state. Concretely:
    - Extension setup is asynchronous and off the chat send path. Don't `await` extension readiness before letting the user type or send. A still-loading payment extension renders as a placeholder cell; the message above and below it still sends and renders.
    - Extension errors stay inside the extension. A failed `CoinagePaymentProcessingExtension` payment confirmation surfaces an in-cell error state — it does not throw out of the chat interactor or hide the underlying message.
    - Disable extensions at the registry/factory level (`ChatExtensionsRegistry.createDimExtensions`), never via `return nil` inside an extension method. A half-initialized extension that no-ops at runtime can still block the chat flow when other code awaits it.
@@ -78,6 +77,6 @@ The optional `thumbnail: Data` field in image and video metadata contains a Blur
 
 ## Mid-Migration Notes
 
-- Chat is actively evolving with new extensions (game chat, payment requests)
+- Chat is actively evolving with new extensions (payment requests)
 - Statement store communication layer is the north-star for messaging
 - Legacy patterns may exist in older sub-modules; new code follows current architecture
