@@ -314,7 +314,9 @@ pub async fn track(
     signing_host: &WalletAccountHolder,
     targets: Vec<StatementRenewalTarget>,
 ) -> Result<(), String> {
-    let session = signing_host.current_session().ok_or_else(|| "no active wallet for renewal tracking".to_string())?;
+    let session = signing_host
+        .current_session()
+        .ok_or_else(|| "no active wallet for renewal tracking".to_string())?;
     track_for_session(signing_host, &session, targets).await
 }
 
@@ -324,11 +326,25 @@ pub async fn track_for_session(
     session: &AuthoritySession,
     targets: Vec<StatementRenewalTarget>,
 ) -> Result<(), String> {
-    let targets = targets.into_iter().map(StatementRenewalTarget::normalized).collect::<Result<Vec<_>, _>>()?;
+    let targets = targets
+        .into_iter()
+        .map(StatementRenewalTarget::normalized)
+        .collect::<Result<Vec<_>, _>>()?;
     let _persistence = signing_host.persistence.lock().await;
-    signing_host.require_current_session(session).map_err(|error| error.to_string())?;
-    track_targets(signing_host.platform.as_ref(), signing_host.renewal.ledger_lock(), session.public_key, targets).await?;
-    signing_host.require_current_session(session).map(drop).map_err(|error| error.to_string())
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
+    track_targets(
+        signing_host.platform.as_ref(),
+        signing_host.renewal.ledger_lock(),
+        session.public_key,
+        targets,
+    )
+    .await?;
+    signing_host
+        .require_current_session(session)
+        .map(drop)
+        .map_err(|error| error.to_string())
 }
 
 /// Every entry the ledger holds, in the order it was tracked.
@@ -361,7 +377,9 @@ pub async fn untrack_account_for_signing_host(
     signing_host: &WalletAccountHolder,
     account_id: &[u8; 32],
 ) -> Result<bool, String> {
-    let session = signing_host.current_session().ok_or_else(|| "no active wallet for renewal cleanup".to_string())?;
+    let session = signing_host
+        .current_session()
+        .ok_or_else(|| "no active wallet for renewal cleanup".to_string())?;
     untrack_for_session(signing_host, &session, account_id).await
 }
 
@@ -372,9 +390,19 @@ pub async fn untrack_for_session(
     account_id: &[u8; 32],
 ) -> Result<bool, String> {
     let _persistence = signing_host.persistence.lock().await;
-    signing_host.require_current_session(session).map_err(|error| error.to_string())?;
-    let removed = untrack_account(signing_host.platform.as_ref(), signing_host.renewal.ledger_lock(), session.public_key, account_id).await?;
-    signing_host.require_current_session(session).map_err(|error| error.to_string())?;
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
+    let removed = untrack_account(
+        signing_host.platform.as_ref(),
+        signing_host.renewal.ledger_lock(),
+        session.public_key,
+        account_id,
+    )
+    .await?;
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
     Ok(removed)
 }
 
@@ -450,7 +478,9 @@ pub async fn renew_now(
     services: &Arc<RuntimeServices>,
     signing_host: &WalletAccountHolder,
 ) -> Result<StatementRenewalReport, String> {
-    let session = signing_host.current_session().ok_or_else(|| "no active wallet for renewal".to_string())?;
+    let session = signing_host
+        .current_session()
+        .ok_or_else(|| "no active wallet for renewal".to_string())?;
     renew_for_session(services, signing_host, &session).await
 }
 
@@ -460,20 +490,26 @@ pub async fn renew_for_session(
     signing_host: &WalletAccountHolder,
     session: &AuthoritySession,
 ) -> Result<StatementRenewalReport, String> {
-    signing_host.require_current_session(session).map_err(|error| error.to_string())?;
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
     let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
     let period = statement_allowance::slot::current_period(
         current_unix_secs().map_err(|err| err.to_string())?,
     );
     let persistence = signing_host.persistence.lock().await;
-    signing_host.require_current_session(session).map_err(|error| error.to_string())?;
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
     let (targets, pruned) = owned_targets(
         signing_host.platform.as_ref(),
         signing_host.renewal.ledger_lock(),
         owner_key(&entropy)?,
     )
     .await?;
-    signing_host.require_current_session(session).map_err(|error| error.to_string())?;
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
     drop(persistence);
     let resolved = resolve_targets(&entropy, signing_host.network_suffix(), &targets);
     #[cfg(not(target_arch = "wasm32"))]
@@ -487,14 +523,32 @@ pub async fn renew_for_session(
     #[cfg(target_arch = "wasm32")]
     let no_stored_slots = true;
     #[cfg(not(target_arch = "wasm32"))]
-    let stored_slots: Vec<_> = stored_slots.into_iter().filter(|slot| slot.chain == services.statement_store.genesis_hash()).collect();
+    let stored_slots: Vec<_> = stored_slots
+        .into_iter()
+        .filter(|slot| slot.chain == services.statement_store.genesis_hash())
+        .collect();
     #[cfg(not(target_arch = "wasm32"))]
     let no_stored_slots = stored_slots.is_empty();
     #[cfg(not(target_arch = "wasm32"))]
-    if !no_stored_slots && stored_slots.iter().all(|slot| slot.period == i64::from(period))
-        && resolved.iter().all(|target| stored_slots.iter().any(|slot| slot.account == target.account_id)) {
-        signing_host.require_current_session(session).map_err(|error| error.to_string())?;
-        return Ok(StatementRenewalReport { period, outcomes: current_slot_outcomes(&stored_slots, &resolved, period)?, pruned, slots_exhausted: false });
+    if !no_stored_slots
+        && stored_slots
+            .iter()
+            .all(|slot| slot.period == i64::from(period))
+        && resolved.iter().all(|target| {
+            stored_slots
+                .iter()
+                .any(|slot| slot.account == target.account_id)
+        })
+    {
+        signing_host
+            .require_current_session(session)
+            .map_err(|error| error.to_string())?;
+        return Ok(StatementRenewalReport {
+            period,
+            outcomes: current_slot_outcomes(&stored_slots, &resolved, period)?,
+            pruned,
+            slots_exhausted: false,
+        });
     }
     if resolved.is_empty() && no_stored_slots {
         return Ok(StatementRenewalReport {
@@ -535,7 +589,9 @@ pub async fn renew_for_session(
                 .to_string(),
         );
     }
-    signing_host.require_current_session(session).map_err(|error| error.to_string())?;
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
     let context = RenewalChainContext {
         rpc: &rpc,
         metadata: &metadata,
@@ -566,7 +622,9 @@ pub async fn renew_for_session(
         signing_host.renewal.registration_lock(),
     )
     .await;
-    signing_host.require_current_session(session).map_err(|error| error.to_string())?;
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
     report.pruned = pruned;
     Ok(report)
 }
@@ -643,6 +701,225 @@ fn absorb_tick(state: &RenewalState, result: Result<StatementRenewalReport, Stri
         // replacing it with nothing: "the last thing we know" beats "no idea".
         Err(reason) => warn!(%reason, "statement-store renewal tick failed"),
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn current_slot_outcomes(
+    slots: &[crate::store::StatementSlotRecord],
+    targets: &[ResolvedRenewalTarget],
+    period: u32,
+) -> Result<Vec<crate::runtime::statement_allowance::renewal::StatementRenewalOutcome>, String> {
+    use crate::runtime::statement_allowance::renewal::{
+        StatementRenewalOutcome, TargetRenewalStatus,
+    };
+    slots
+        .iter()
+        .filter(|slot| slot.period == i64::from(period))
+        .map(|slot| {
+            let label = targets
+                .iter()
+                .find(|target| target.account_id == slot.account)
+                .map(|target| target.label.clone())
+                .unwrap_or_else(|| hex::encode(slot.account));
+            let seq = u32::try_from(slot.slot)
+                .map_err(|_| "invalid persisted statement slot".to_string())?;
+            Ok(StatementRenewalOutcome {
+                label,
+                status: TargetRenewalStatus::AlreadyAllocated { seq },
+            })
+        })
+        .collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn renew_recorded_slots(
+    context: &RenewalChainContext<'_>,
+    period: u32,
+    targets: &[ResolvedRenewalTarget],
+    slots: Vec<crate::store::StatementSlotRecord>,
+    store: &crate::store::RuntimeStore,
+    holder: &WalletAccountHolder,
+    session: &crate::runtime::authority::AuthoritySession,
+) -> Result<StatementRenewalReport, String> {
+    use crate::runtime::statement_allowance::collection::PersonhoodCollection;
+    use crate::runtime::statement_allowance::renewal::{
+        StatementRenewalOutcome, TargetRenewalStatus,
+    };
+    use crate::runtime::statement_allowance::slot::SlotError;
+    use crate::runtime::statement_allowance::{
+        PooledRegistrationParams, RegistrationOutcome, StatementAllowanceError,
+        register_statement_account_pooled, scan_collections,
+    };
+    use crate::store::{AllowanceRecord, StatementSlotRecord};
+    let chain = context.chain_state.genesis_hash;
+    let slots: Vec<_> = slots
+        .into_iter()
+        .filter(|slot| slot.chain == chain)
+        .collect();
+    let mut claimed = Vec::new();
+    let mut pending = Vec::new();
+    for slot in &slots {
+        let collection = PersonhoodCollection::ALL
+            .into_iter()
+            .find(|collection| collection.to_string() == slot.collection)
+            .ok_or_else(|| "unknown persisted statement collection".to_string())?;
+        if slot.period == i64::from(period) {
+            claimed.push((
+                collection,
+                u32::try_from(slot.slot)
+                    .map_err(|_| "invalid persisted statement slot".to_string())?,
+            ));
+        } else {
+            let label = targets
+                .iter()
+                .find(|target| target.account_id == slot.account)
+                .map(|target| target.label.clone())
+                .unwrap_or_else(|| hex::encode(slot.account));
+            pending.push((slot.account, label, Some(slot.clone())));
+        }
+    }
+    for target in targets {
+        if !slots.iter().any(|slot| slot.account == target.account_id) {
+            pending.push((target.account_id, target.label.clone(), None));
+        }
+    }
+    let mut report = StatementRenewalReport {
+        period,
+        outcomes: current_slot_outcomes(&slots, targets, period)?,
+        pruned: Vec::new(),
+        slots_exhausted: false,
+    };
+    for (account, label, previous) in pending {
+        holder
+            .require_current_session(session)
+            .map_err(|error| error.to_string())?;
+        if report.slots_exhausted {
+            report.outcomes.push(StatementRenewalOutcome {
+                label,
+                status: TargetRenewalStatus::SkippedExhausted,
+            });
+            continue;
+        }
+        let _registration = holder.renewal.registration_lock().lock().await;
+        holder
+            .require_current_session(session)
+            .map_err(|error| error.to_string())?;
+        let reuse_existing = previous.is_none();
+        let scans = scan_collections(
+            context.rpc,
+            context.metadata,
+            context.candidates,
+            context.network_suffix,
+            period,
+            &account,
+            reuse_existing,
+        )
+        .await;
+        holder
+            .require_current_session(session)
+            .map_err(|error| error.to_string())?;
+        let result = match scans {
+            Ok(scans) => {
+                register_statement_account_pooled(
+                    context.rpc,
+                    context.metadata,
+                    context.chain_state,
+                    &scans,
+                    context.memberships,
+                    PooledRegistrationParams {
+                        target: &account,
+                        period,
+                        network_suffix: context.network_suffix,
+                        reuse_existing,
+                        allow_eviction: true,
+                        protected: &claimed,
+                    },
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        };
+        holder
+            .require_current_session(session)
+            .map_err(|error| error.to_string())?;
+        let status = match result {
+            Ok(outcome) => {
+                let (collection, seq, status) = match outcome {
+                    RegistrationOutcome::Registered {
+                        collection,
+                        seq,
+                        block_hash,
+                        ..
+                    } => (
+                        collection,
+                        seq,
+                        TargetRenewalStatus::Registered { seq, block_hash },
+                    ),
+                    RegistrationOutcome::AlreadyAllocated { collection, seq } => (
+                        collection,
+                        seq,
+                        TargetRenewalStatus::AlreadyAllocated { seq },
+                    ),
+                };
+                let now = i64::try_from(
+                    current_unix_secs()
+                        .map_err(|error| error.to_string())?
+                        .saturating_mul(1000),
+                )
+                .map_err(|_| "renewal timestamp overflow".to_string())?;
+                let renewed = StatementSlotRecord {
+                    chain,
+                    collection: collection.to_string(),
+                    period: i64::from(period),
+                    slot: i64::from(seq),
+                    account,
+                    priority: previous.as_ref().map_or(0, |slot| slot.priority),
+                    last_allocated_or_renewed_at: now,
+                };
+                let _persistence = holder.persistence.lock().await;
+                holder
+                    .require_current_session(session)
+                    .map_err(|error| error.to_string())?;
+                match previous {
+                    Some(previous) => store.renew_statement_slot(previous, renewed).await,
+                    None => {
+                        store
+                            .record_allowance(
+                                AllowanceRecord {
+                                    chain,
+                                    resource: "statement-store".to_string(),
+                                    account,
+                                    allocated_at: now,
+                                    priority: None,
+                                    last_renewed_period: None,
+                                },
+                                vec![renewed],
+                            )
+                            .await
+                    }
+                }
+                .map_err(|error| error.to_string())?;
+                holder
+                    .require_current_session(session)
+                    .map_err(|error| error.to_string())?;
+                claimed.push((collection, seq));
+                status
+            }
+            Err(error) => {
+                report.slots_exhausted = matches!(
+                    error,
+                    StatementAllowanceError::Slot(SlotError::NoFreeStatementStoreSlot { .. })
+                );
+                TargetRenewalStatus::Failed {
+                    reason: error.to_string(),
+                }
+            }
+        };
+        report
+            .outcomes
+            .push(StatementRenewalOutcome { label, status });
+    }
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -1190,9 +1467,22 @@ mod tests {
         let storage = MemStorage::default();
         futures::executor::block_on(async {
             let corrupt = vec![0xff; 3];
-            storage.write_core_storage(CoreStorageKey::StatementRenewalTargets, corrupt.clone()).await.unwrap();
-            assert!(track_targets(&storage, &lock(), OWNER, vec![product("a.dot")]).await.is_err());
-            assert_eq!(storage.read_core_storage(CoreStorageKey::StatementRenewalTargets).await.unwrap(), Some(corrupt));
+            storage
+                .write_core_storage(CoreStorageKey::StatementRenewalTargets, corrupt.clone())
+                .await
+                .unwrap();
+            assert!(
+                track_targets(&storage, &lock(), OWNER, vec![product("a.dot")])
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                storage
+                    .read_core_storage(CoreStorageKey::StatementRenewalTargets)
+                    .await
+                    .unwrap(),
+                Some(corrupt)
+            );
         });
     }
 
@@ -1424,209 +1714,4 @@ mod tests {
             assert_eq!(target.clone().normalized(), Ok(target));
         }
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn current_slot_outcomes(
-    slots: &[crate::store::StatementSlotRecord],
-    targets: &[ResolvedRenewalTarget],
-    period: u32,
-) -> Result<Vec<crate::runtime::statement_allowance::renewal::StatementRenewalOutcome>, String> {
-    use crate::runtime::statement_allowance::renewal::{StatementRenewalOutcome, TargetRenewalStatus};
-    slots.iter().filter(|slot| slot.period == i64::from(period)).map(|slot| {
-        let label = targets.iter().find(|target| target.account_id == slot.account).map(|target| target.label.clone()).unwrap_or_else(|| hex::encode(slot.account));
-        let seq = u32::try_from(slot.slot).map_err(|_| "invalid persisted statement slot".to_string())?;
-        Ok(StatementRenewalOutcome { label, status: TargetRenewalStatus::AlreadyAllocated { seq } })
-    }).collect()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-async fn renew_recorded_slots(
-    context: &RenewalChainContext<'_>,
-    period: u32,
-    targets: &[ResolvedRenewalTarget],
-    slots: Vec<crate::store::StatementSlotRecord>,
-    store: &crate::store::RuntimeStore,
-    holder: &WalletAccountHolder,
-    session: &crate::runtime::authority::AuthoritySession,
-) -> Result<StatementRenewalReport, String> {
-    use crate::runtime::statement_allowance::collection::PersonhoodCollection;
-    use crate::runtime::statement_allowance::renewal::{
-        StatementRenewalOutcome, TargetRenewalStatus,
-    };
-    use crate::runtime::statement_allowance::slot::SlotError;
-    use crate::runtime::statement_allowance::{
-        PooledRegistrationParams, RegistrationOutcome, StatementAllowanceError,
-        register_statement_account_pooled, scan_collections,
-    };
-    use crate::store::{AllowanceRecord, StatementSlotRecord};
-    let chain = context.chain_state.genesis_hash;
-    let slots: Vec<_> = slots
-        .into_iter()
-        .filter(|slot| slot.chain == chain)
-        .collect();
-    let mut claimed = Vec::new();
-    let mut pending = Vec::new();
-    for slot in &slots {
-        let collection = PersonhoodCollection::ALL
-            .into_iter()
-            .find(|collection| collection.to_string() == slot.collection)
-            .ok_or_else(|| "unknown persisted statement collection".to_string())?;
-        if slot.period == i64::from(period) {
-            claimed.push((
-                collection,
-                u32::try_from(slot.slot)
-                    .map_err(|_| "invalid persisted statement slot".to_string())?,
-            ));
-        } else {
-            let label = targets
-                .iter()
-                .find(|target| target.account_id == slot.account)
-                .map(|target| target.label.clone())
-                .unwrap_or_else(|| hex::encode(slot.account));
-            pending.push((slot.account, label, Some(slot.clone())));
-        }
-    }
-    for target in targets {
-        if !slots.iter().any(|slot| slot.account == target.account_id) {
-            pending.push((target.account_id, target.label.clone(), None));
-        }
-    }
-    let mut report = StatementRenewalReport {
-        period,
-        outcomes: current_slot_outcomes(&slots, targets, period)?,
-        pruned: Vec::new(),
-        slots_exhausted: false,
-    };
-    for (account, label, previous) in pending {
-        holder
-            .require_current_session(session)
-            .map_err(|error| error.to_string())?;
-        if report.slots_exhausted {
-            report.outcomes.push(StatementRenewalOutcome {
-                label,
-                status: TargetRenewalStatus::SkippedExhausted,
-            });
-            continue;
-        }
-        let _registration = holder.renewal.registration_lock().lock().await;
-        holder
-            .require_current_session(session)
-            .map_err(|error| error.to_string())?;
-        let reuse_existing = previous.is_none();
-        let scans = scan_collections(
-            context.rpc,
-            context.metadata,
-            context.candidates,
-            context.network_suffix,
-            period,
-            &account,
-            reuse_existing,
-        )
-        .await;
-        holder
-            .require_current_session(session)
-            .map_err(|error| error.to_string())?;
-        let result = match scans {
-            Ok(scans) => {
-                register_statement_account_pooled(
-                    context.rpc,
-                    context.metadata,
-                    context.chain_state,
-                    &scans,
-                    context.memberships,
-                    PooledRegistrationParams {
-                        target: &account,
-                        period,
-                        network_suffix: context.network_suffix,
-                        reuse_existing,
-                        allow_eviction: true,
-                        protected: &claimed,
-                    },
-                )
-                .await
-            }
-            Err(error) => Err(error),
-        };
-        holder
-            .require_current_session(session)
-            .map_err(|error| error.to_string())?;
-        let status = match result {
-            Ok(outcome) => {
-                let (collection, seq, status) = match outcome {
-                    RegistrationOutcome::Registered {
-                        collection,
-                        seq,
-                        block_hash,
-                        ..
-                    } => (
-                        collection,
-                        seq,
-                        TargetRenewalStatus::Registered { seq, block_hash },
-                    ),
-                    RegistrationOutcome::AlreadyAllocated { collection, seq } => (
-                        collection,
-                        seq,
-                        TargetRenewalStatus::AlreadyAllocated { seq },
-                    ),
-                };
-                let now = i64::try_from(
-                    current_unix_secs()
-                        .map_err(|error| error.to_string())?
-                        .saturating_mul(1000),
-                )
-                .map_err(|_| "renewal timestamp overflow".to_string())?;
-                let renewed = StatementSlotRecord {
-                    chain,
-                    collection: collection.to_string(),
-                    period: i64::from(period),
-                    slot: i64::from(seq),
-                    account,
-                    priority: previous.as_ref().map_or(0, |slot| slot.priority),
-                    last_allocated_or_renewed_at: now,
-                };
-                let _persistence = holder.persistence.lock().await;
-                holder
-                    .require_current_session(session)
-                    .map_err(|error| error.to_string())?;
-                match previous {
-                    Some(previous) => store.renew_statement_slot(previous, renewed).await,
-                    None => {
-                        store
-                            .record_allowance(
-                                AllowanceRecord {
-                                    chain,
-                                    resource: "statement-store".to_string(),
-                                    account,
-                                    allocated_at: now,
-                                    priority: None,
-                                    last_renewed_period: None,
-                                },
-                                vec![renewed],
-                            )
-                            .await
-                    }
-                }
-                .map_err(|error| error.to_string())?;
-                holder
-                    .require_current_session(session)
-                    .map_err(|error| error.to_string())?;
-                claimed.push((collection, seq));
-                status
-            }
-            Err(error) => {
-                report.slots_exhausted = matches!(
-                    error,
-                    StatementAllowanceError::Slot(SlotError::NoFreeStatementStoreSlot { .. })
-                );
-                TargetRenewalStatus::Failed {
-                    reason: error.to_string(),
-                }
-            }
-        };
-        report
-            .outcomes
-            .push(StatementRenewalOutcome { label, status });
-    }
-    Ok(report)
 }

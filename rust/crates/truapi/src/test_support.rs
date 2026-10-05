@@ -219,7 +219,7 @@ pub struct StubPlatform {
     pub storage_subscribers: Arc<Mutex<Vec<(String, StorageChangeSender)>>>,
     /// Every `begin_operation` as `(product_id, label)`, in order. The
     /// returned id is the call's 1-based position.
-    pub begun_operations: Arc<Mutex<Vec<(String, Option<String>)>>>,
+    pub begun_operations: Mutex<Vec<(String, Option<String>)>>,
     /// Every `end_operation` as `(product_id, id)`, in order.
     pub ended_operations: Arc<Mutex<Vec<(String, u32)>>>,
     /// Held open by a test so `begin_operation` is still in flight while the

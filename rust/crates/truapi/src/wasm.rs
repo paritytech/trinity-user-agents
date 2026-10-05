@@ -1232,8 +1232,11 @@ impl WasmPairingHostRuntime {
 
     /// Clear canonical paired-session state without notifying the peer.
     #[wasm_bindgen(js_name = resetSessionState)]
-    pub async fn reset_session_state(&self) {
-        self.runtime.reset_session_state().await;
+    pub async fn reset_session_state(&self) -> Result<(), JsValue> {
+        self.runtime
+            .reset_session_state()
+            .await
+            .map_err(generic_error_to_js)
     }
 
     /// Take one reference on the product's worker for a modality holder. The

@@ -1164,6 +1164,10 @@ impl Drop for NativeProductExecution {
     }
 }
 
+fn rejection(reason: impl ToString) -> HostRejection {
+    HostRejection::Rejected { reason: reason.to_string() }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1619,8 +1623,4 @@ mod tests {
             reopened.lock_wallet().await.unwrap();
         });
     }
-}
-
-fn rejection(reason: impl ToString) -> HostRejection {
-    HostRejection::Rejected { reason: reason.to_string() }
 }

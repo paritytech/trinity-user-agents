@@ -71,6 +71,7 @@ impl From<StoredAuthorizationStatus> for PermissionAuthorizationStatus {
 }
 
 /// Decode one persisted permission answer for runtime administration.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn decode_persisted_authorization(bytes: &[u8]) -> Result<PermissionAuthorizationStatus, GenericError> {
     let mut input = bytes;
     let status = StoredAuthorizationStatus::decode(&mut input).map_err(|error| GenericError {

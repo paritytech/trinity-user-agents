@@ -340,7 +340,9 @@ async fn establish_pairing_session(
     signing_host: &WalletAccountHolder,
     deeplink: &str,
 ) -> Result<EstablishedPairing, String> {
-    let activation = signing_host.current_session().ok_or_else(|| "signing host has no active local session".to_string())?;
+    let activation = signing_host
+        .current_session()
+        .ok_or_else(|| "signing host has no active local session".to_string())?;
     establish_pairing_for_session(services, signing_host, deeplink, &activation).await
 }
 
@@ -350,7 +352,9 @@ async fn establish_pairing_for_session(
     deeplink: &str,
     activation: &AuthoritySession,
 ) -> Result<EstablishedPairing, String> {
-    signing_host.require_current_session(activation).map_err(|error| error.to_string())?;
+    signing_host
+        .require_current_session(activation)
+        .map_err(|error| error.to_string())?;
     let proposal = PairingProposal::from_deeplink(deeplink)?;
     let peer = proposal.peer;
     let entropy = signing_host
@@ -477,14 +481,18 @@ pub async fn resume_pairing(
     signing_host: Arc<WalletAccountHolder>,
     peer: PairedSsoPeer,
 ) -> Result<ResponderExit, String> {
-    let activation = signing_host.current_session().ok_or_else(|| "wallet is locked".to_string())?;
+    let activation = signing_host
+        .current_session()
+        .ok_or_else(|| "wallet is locked".to_string())?;
     let entropy = signing_host
         .root_entropy()
         .map_err(|err| format!("signing host has no active local session: {err}"))?;
     let root = derive_root_keypair_from_entropy(&entropy)
         .map_err(|err| format!("root account derivation failed: {err}"))?;
     let session = responder_session(&entropy, signing_host.network_suffix(), peer)?;
-    signing_host.require_current_session(&activation).map_err(|error| error.to_string())?;
+    signing_host
+        .require_current_session(&activation)
+        .map_err(|error| error.to_string())?;
     serve_session(
         services,
         signing_host,
@@ -505,7 +513,9 @@ pub async fn disconnect_paired_host(
     signing_host: Arc<WalletAccountHolder>,
     peer: PairedSsoPeer,
 ) -> Result<(), String> {
-    let activation = signing_host.current_session().ok_or_else(|| "wallet is locked".to_string())?;
+    let activation = signing_host
+        .current_session()
+        .ok_or_else(|| "wallet is locked".to_string())?;
     let entropy = signing_host
         .root_entropy()
         .map_err(|err| format!("signing host has no active local session: {err}"))?;
@@ -526,7 +536,9 @@ pub async fn disconnect_paired_host(
         .submit_sso(statement, "sso-responder disconnect")
         .await?;
     let _persistence = signing_host.persistence.lock().await;
-    signing_host.require_current_session(&activation).map_err(|error| error.to_string())?;
+    signing_host
+        .require_current_session(&activation)
+        .map_err(|error| error.to_string())?;
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(store) = services.runtime_store() {
         store
@@ -603,7 +615,9 @@ pub async fn notify_pairing_allowance_allocation(
     signing_host: Arc<WalletAccountHolder>,
     deeplink: &str,
 ) -> Result<AnnouncedPairing, String> {
-    let activation = signing_host.current_session().ok_or_else(|| "signing host has no active local session".to_string())?;
+    let activation = signing_host
+        .current_session()
+        .ok_or_else(|| "signing host has no active local session".to_string())?;
     announce_for_session(&services, &signing_host, deeplink, &activation).await
 }
 
@@ -613,7 +627,9 @@ async fn announce_for_session(
     deeplink: &str,
     activation: &AuthoritySession,
 ) -> Result<AnnouncedPairing, String> {
-    signing_host.require_current_session(activation).map_err(|error| error.to_string())?;
+    signing_host
+        .require_current_session(activation)
+        .map_err(|error| error.to_string())?;
     let peer = PairedSsoPeer::from_deeplink(deeplink)?;
     let entropy = signing_host
         .root_entropy()
@@ -622,10 +638,12 @@ async fn announce_for_session(
         .map_err(|err| format!("responder identity derivation failed: {err}"))?;
     let session = responder_session_from_identity(&identity, peer)?;
 
-    signing_host.require_current_session(activation).map_err(|error| error.to_string())?;
+    signing_host
+        .require_current_session(activation)
+        .map_err(|error| error.to_string())?;
     let pending = v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation);
     submit_handshake_answer(
-        &services,
+        services,
         &session,
         peer,
         &pending,
@@ -666,7 +684,9 @@ async fn serve_session(
     replay_scope: SsoReplayScope,
     activation: AuthoritySession,
 ) -> Result<ResponderExit, String> {
-    signing_host.require_current_session(&activation).map_err(|error| error.to_string())?;
+    signing_host
+        .require_current_session(&activation)
+        .map_err(|error| error.to_string())?;
     let mut changes = signing_host.session_state.subscribe();
     let ended = async {
         while changes.next().await.is_some() {
@@ -675,47 +695,44 @@ async fn serve_session(
             }
         }
         Ok(ResponderExit::SubscriptionEnded)
-    }.fuse();
+    }
+    .fuse();
     let serving = async {
-    let service = SsoAccountHolderService::for_activation(signing_host.clone(), activation.clone());
-    let rpc_client = services
-        .statement_store
-        .client("sso-responder session")
-        .await
-        .map_err(|err| err.to_string())?;
-    let subscription =
-        statement_store_rpc::subscribe_match_all(&rpc_client, &[session.session_id_peer])
+        let service =
+            SsoAccountHolderService::for_activation(signing_host.clone(), activation.clone());
+        let rpc_client = services
+            .statement_store
+            .client("sso-responder session")
             .await
-            .map_err(|err| format!("sso-responder subscribe failed: {err}"))?;
-    let (services, session) = (&services, &session);
-    let pages = futures::stream::unfold(
-        (subscription, DecodeFailureRequestIds::new()),
-        move |(mut subscription, mut decode_failure_request_ids)| async move {
-            let item = subscription.next().await?;
-            let page = match item {
-                Ok(value) => {
-                    read_statements(services, session, &mut decode_failure_request_ids, &value)
-                        .await
-                }
-                Err(err) => Err(format!("sso-responder subscription failed: {err}")),
-            };
-            Some((page, (subscription, decode_failure_request_ids)))
-        },
-    );
-    // Boxed as a trait object so the hosts that await a session need not
-    // lay out this future or prove it `Send`.
-    serve_pages(pages, services.sso_withdrawals(), |incoming| {
-        serve_statement(
-            services,
-            &service,
-            session,
-            replay_scope,
-            incoming,
-        )
-    })
-    .boxed()
-    .await
-    }.fuse();
+            .map_err(|err| err.to_string())?;
+        let subscription =
+            statement_store_rpc::subscribe_match_all(&rpc_client, &[session.session_id_peer])
+                .await
+                .map_err(|err| format!("sso-responder subscribe failed: {err}"))?;
+        let (services, session) = (&services, &session);
+        let pages = futures::stream::unfold(
+            (subscription, DecodeFailureRequestIds::new()),
+            move |(mut subscription, mut decode_failure_request_ids)| async move {
+                let item = subscription.next().await?;
+                let page = match item {
+                    Ok(value) => {
+                        read_statements(services, session, &mut decode_failure_request_ids, &value)
+                            .await
+                    }
+                    Err(err) => Err(format!("sso-responder subscription failed: {err}")),
+                };
+                Some((page, (subscription, decode_failure_request_ids)))
+            },
+        );
+        // Boxed as a trait object so the hosts that await a session need not
+        // lay out this future or prove it `Send`.
+        serve_pages(pages, services.sso_withdrawals(), |incoming| {
+            serve_statement(services, &service, session, replay_scope, incoming)
+        })
+        .boxed()
+        .await
+    }
+    .fuse();
     futures::pin_mut!(ended, serving);
     futures::select! { result = ended => result, result = serving => result }
 }
@@ -1062,17 +1079,38 @@ fn response_cli_summary(
     summary
 }
 
+enum AllocatedResource {
+    StatementStore {
+        collection: String,
+        period: u32,
+        slot: u32,
+    },
+    Bulletin {
+        period: Option<u32>,
+    },
+    SmartContract {
+        period: Option<u32>,
+    },
+}
+
 /// Persist public resource ownership without placing signing material in SQLite.
 async fn record_allocation(
     services: &RuntimeServices,
     holder: &WalletAccountHolder,
     session: &AuthoritySession,
     chain: [u8; 32],
-    resource: &str,
     account: [u8; 32],
-    period: Option<u32>,
-    slot: Option<(String, u32, i64)>,
+    allocation: AllocatedResource,
 ) -> Result<(), AllowanceAllocationError> {
+    let (resource, period, slot) = match allocation {
+        AllocatedResource::StatementStore {
+            collection,
+            period,
+            slot,
+        } => ("statement-store", None, Some((collection, period, slot))),
+        AllocatedResource::Bulletin { period } => ("bulletin", period, None),
+        AllocatedResource::SmartContract { period } => ("smart-contract", period, None),
+    };
     let _persistence = holder.persistence.lock().await;
     holder.require_current_session(session)?;
     #[cfg(not(target_arch = "wasm32"))]
@@ -1087,13 +1125,13 @@ async fn record_allocation(
             })?;
         let slots = slot
             .map(
-                |(collection, slot, priority)| crate::store::StatementSlotRecord {
+                |(collection, period, slot)| crate::store::StatementSlotRecord {
                     chain,
                     collection,
-                    period: i64::from(period.expect("a statement slot has a period")),
+                    period: i64::from(period),
                     slot: i64::from(slot),
                     account,
-                    priority,
+                    priority: 0,
                     last_allocated_or_renewed_at: now,
                 },
             )
@@ -1134,7 +1172,7 @@ pub async fn allocate_statement_store_allowance(
     product_id: &str,
     policy: OnExistingAllowancePolicy,
 ) -> Result<StatementStoreAllocation, AllowanceAllocationError> {
-        use crate::runtime::statement_allowance::{
+    use crate::runtime::statement_allowance::{
         self, PooledRegistrationParams, allocated_in, find_including_rings,
         register_statement_account_pooled, scan_collections,
     };
@@ -1198,10 +1236,12 @@ pub async fn allocate_statement_store_allowance(
             signing_host,
             session,
             chain.state.genesis_hash,
-            "statement-store",
             target,
-            Some(period),
-            Some((collection.to_string(), seq, 0)),
+            AllocatedResource::StatementStore {
+                collection: collection.to_string(),
+                period,
+                slot: seq,
+            },
         )
         .await?;
         allowance_renewal::track_for_session(
@@ -1258,10 +1298,12 @@ pub async fn allocate_statement_store_allowance(
                 signing_host,
                 session,
                 chain.state.genesis_hash,
-                "statement-store",
                 target,
-                Some(period),
-                Some((collection.to_string(), seq, 0)),
+                AllocatedResource::StatementStore {
+                    collection: collection.to_string(),
+                    period,
+                    slot: seq,
+                },
             )
             .await?;
             debug!(
@@ -1279,10 +1321,12 @@ pub async fn allocate_statement_store_allowance(
                 signing_host,
                 session,
                 chain.state.genesis_hash,
-                "statement-store",
                 target,
-                Some(period),
-                Some((collection.to_string(), seq, 0)),
+                AllocatedResource::StatementStore {
+                    collection: collection.to_string(),
+                    period,
+                    slot: seq,
+                },
             )
             .await?;
             debug!(
@@ -1351,10 +1395,8 @@ pub async fn allocate_bulletin_allowance(
             signing_host,
             session,
             services.bulletin.genesis_hash(),
-            "bulletin",
             target,
-            None,
-            None,
+            AllocatedResource::Bulletin { period: None },
         )
         .await?;
         return Ok(allowance.secret.to_bytes().to_vec());
@@ -1435,10 +1477,10 @@ pub async fn allocate_bulletin_allowance(
         signing_host,
         session,
         services.bulletin.genesis_hash(),
-        "bulletin",
         target,
-        Some(period),
-        None,
+        AllocatedResource::Bulletin {
+            period: Some(period),
+        },
     )
     .await?;
     Ok(allowance.secret.to_bytes().to_vec())
@@ -1511,10 +1553,8 @@ pub async fn allocate_smart_contract_allowance(
             signing_host,
             session,
             asset_hub_genesis,
-            "smart-contract",
             target,
-            None,
-            None,
+            AllocatedResource::SmartContract { period: None },
         )
         .await?;
         return Ok(());
@@ -1564,10 +1604,10 @@ pub async fn allocate_smart_contract_allowance(
         signing_host,
         session,
         asset_hub_genesis,
-        "smart-contract",
         target,
-        Some(outcome.day),
-        None,
+        AllocatedResource::SmartContract {
+            period: Some(outcome.day),
+        },
     )
     .await?;
     Ok(())
@@ -1964,7 +2004,10 @@ mod tests {
             futures::pin_mut!(listener);
             assert!(listener.as_mut().now_or_never().is_none());
             holder.lock().await.unwrap();
-            assert_eq!(listener.as_mut().now_or_never(), Some(Ok(ResponderExit::SubscriptionEnded)));
+            assert_eq!(
+                listener.as_mut().now_or_never(),
+                Some(Ok(ResponderExit::SubscriptionEnded))
+            );
         });
     }
 

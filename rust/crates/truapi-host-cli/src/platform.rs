@@ -89,6 +89,11 @@ impl CliStoragePaths {
     }
 }
 
+struct SecretStorage {
+    path: Option<PathBuf>,
+    values: Result<HashMap<Vec<u8>, Vec<u8>>, String>,
+}
+
 /// Headless-host platform shared by both roles.
 pub struct CliPlatform {
     chain: WsChainProvider,
@@ -99,10 +104,9 @@ pub struct CliPlatform {
     /// Device-scoped core slots, kept outside the per-user namespaces that
     /// [`Self::switch_pairing_user_storage`] swaps. Peers address this install
     /// by the key held here, so a user switch must not regenerate it.
-    device_storage: Mutex<Result<HashMap<Vec<u8>, Vec<u8>>, String>>,
+    device_storage: Mutex<SecretStorage>,
     product_storage_dir: Mutex<Option<PathBuf>>,
     core_storage_path: Mutex<Option<PathBuf>>,
-    device_storage_path: Option<PathBuf>,
     state_dir: Mutex<Option<PathBuf>>,
     pairing_scope: Option<PairingStorageScope>,
     bulletin: Arc<BulletinLookup<BitswapRpc>>,
@@ -185,10 +189,12 @@ impl CliPlatform {
             chains: network.host_chain_set(),
             product_storage: Mutex::new(product_storage),
             core_storage: Mutex::new(core_storage),
-            device_storage: Mutex::new(device_storage),
+            device_storage: Mutex::new(SecretStorage {
+                path: device_storage_path,
+                values: device_storage,
+            }),
             product_storage_dir: Mutex::new(product_storage_dir),
             core_storage_path: Mutex::new(core_storage_path),
-            device_storage_path,
             state_dir: Mutex::new(storage.as_ref().map(|paths| paths.state_dir.clone())),
             pairing_scope: storage.and_then(|paths| paths.pairing_scope),
             bulletin: Arc::new(BulletinLookup::new(BitswapRpc::new(network.bulletin_ws))),
@@ -570,9 +576,12 @@ impl SecretCoreStorage for CliPlatform {
             .device_storage
             .lock()
             .expect("secret storage mutex poisoned");
-        let values = storage.as_ref().map_err(|reason| api::GenericError {
-            reason: reason.clone(),
-        })?;
+        let values = storage
+            .values
+            .as_ref()
+            .map_err(|reason| api::GenericError {
+                reason: reason.clone(),
+            })?;
         Ok(values.get(&key.encode()).cloned())
     }
 
@@ -603,7 +612,8 @@ impl CliPlatform {
             .device_storage
             .lock()
             .expect("secret storage mutex poisoned");
-        let values = storage.as_mut().map_err(|reason| api::GenericError {
+        let SecretStorage { path, values } = &mut *storage;
+        let values = values.as_mut().map_err(|reason| api::GenericError {
             reason: reason.clone(),
         })?;
         let mut updated = values.clone();
@@ -615,7 +625,7 @@ impl CliPlatform {
                 updated.remove(&key.encode());
             }
         }
-        if let Some(path) = self.device_storage_path.as_ref() {
+        if let Some(path) = path.as_ref() {
             save_hex_key_map(path, &updated).map_err(|reason| api::GenericError { reason })?;
         }
         *values = updated;
@@ -1400,8 +1410,14 @@ mod tests {
             ApprovalPolicy::AutoAccept,
             None,
         );
-        let path = platform.device_storage_path.as_ref().unwrap();
-        fs::write(path, b"invalid protected store").unwrap();
+        let path = platform
+            .device_storage
+            .lock()
+            .unwrap()
+            .path
+            .clone()
+            .unwrap();
+        fs::write(&path, b"invalid protected store").unwrap();
         let restarted = CliPlatform::new(
             test_network(),
             Some(paths),
@@ -1443,8 +1459,14 @@ mod tests {
                 .write_secret_core_storage(SecretCoreStorageKey::DeviceEncryptionKey, vec![1; 32]),
         )
         .unwrap();
-        let path = platform.device_storage_path.as_ref().unwrap();
-        fs::remove_file(path).unwrap();
+        let path = platform
+            .device_storage
+            .lock()
+            .unwrap()
+            .path
+            .clone()
+            .unwrap();
+        fs::remove_file(&path).unwrap();
         fs::create_dir(path).unwrap();
         assert!(
             futures::executor::block_on(

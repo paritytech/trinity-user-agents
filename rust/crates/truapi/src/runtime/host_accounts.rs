@@ -33,6 +33,12 @@ use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse
 use truapi::{CallContext, CallError, latest as v01};
 use zeroize::{Zeroize, Zeroizing};
 
+#[derive(PartialEq, Eq, Hash)]
+struct ProductSubtreeKey {
+    session: Vec<u8>,
+    product: String,
+}
+
 /// Product host state shared by local and paired account-holder compositions.
 pub struct HostAccounts<H: AccountHolder> {
     holder: Arc<H>,
@@ -43,7 +49,7 @@ pub struct HostAccounts<H: AccountHolder> {
     storage_guard: futures::lock::Mutex<()>,
     generation: AtomicU64,
     wallet_authorizations: Mutex<HashMap<String, WalletAuthorization>>,
-    product_subtrees: Mutex<HashMap<(Vec<u8>, String), [u8; 32]>>,
+    product_subtrees: Mutex<HashMap<ProductSubtreeKey, [u8; 32]>>,
 }
 
 impl<H: AccountHolder + 'static> HostAccounts<H> {
@@ -93,7 +99,10 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
                 .lock()
                 .expect("subtree cache mutex poisoned")
                 .insert(
-                    (session.validation_id, _product_id.to_string()),
+                    ProductSubtreeKey {
+                        session: session.validation_id,
+                        product: _product_id.to_string(),
+                    },
                     _public_key,
                 );
         }
@@ -148,7 +157,9 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
     }
 
     /// Refresh session identity.
-    pub async fn refresh_session_identity(&self) -> Result<Option<AuthoritySession>, AuthorityError> {
+    pub async fn refresh_session_identity(
+        &self,
+    ) -> Result<Option<AuthoritySession>, AuthorityError> {
         self.lifecycle.refresh_session_identity().await
     }
 
@@ -162,7 +173,10 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         let generation = self.generation.load(Ordering::SeqCst);
         self.require_session(session, generation)?;
         let product_id = canonical_product(&product_id)?;
-        let key = (session.validation_id.clone(), product_id.clone());
+        let key = ProductSubtreeKey {
+            session: session.validation_id.clone(),
+            product: product_id.clone(),
+        };
         if let Some(public) = self
             .product_subtrees
             .lock()
@@ -231,7 +245,10 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             .product_subtrees
             .lock()
             .expect("subtree cache mutex poisoned")
-            .contains_key(&(session.validation_id.clone(), product_id.to_string()))
+            .contains_key(&ProductSubtreeKey {
+                session: session.validation_id.clone(),
+                product: product_id.to_string(),
+            })
         {
             return false;
         }
@@ -278,7 +295,18 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         {
             return Ok(AutoSigningGrant::Active);
         }
-        Ok(if !self.requires_host_confirmation() && super::authority::is_blessed_owner(calling_product_id, &account.dot_ns_identifier) { AutoSigningGrant::Active } else { AutoSigningGrant::Absent })
+        Ok(
+            if !self.requires_host_confirmation()
+                && super::authority::is_blessed_owner(
+                    calling_product_id,
+                    &account.dot_ns_identifier,
+                )
+            {
+                AutoSigningGrant::Active
+            } else {
+                AutoSigningGrant::Absent
+            },
+        )
     }
 
     /// Sign vrf.
@@ -318,7 +346,8 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             }),
         )
         .await?;
-        let result = self.holder
+        let result = self
+            .holder
             .sign_vrf(cx, &wallet_session, caller, request)
             .await;
         self.require_session(session, generation)?;
@@ -362,7 +391,8 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             crate::platform::UserConfirmationReview::SignPayload(review),
         )
         .await?;
-        let result = self.holder
+        let result = self
+            .holder
             .sign_payload(cx, &wallet_session, caller, request)
             .await;
         self.require_session(session, generation)?;
@@ -416,7 +446,8 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             crate::platform::UserConfirmationReview::SignRaw(review),
         )
         .await?;
-        let result = self.holder
+        let result = self
+            .holder
             .sign_raw(cx, &wallet_session, caller, request, watermarked)
             .await;
         self.require_session(session, generation)?;
@@ -495,7 +526,8 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             crate::platform::UserConfirmationReview::CreateTransaction(review),
         )
         .await?;
-        let result = self.holder
+        let result = self
+            .holder
             .create_transaction(cx, &wallet_session, caller, request)
             .await;
         self.require_session(session, generation)?;
@@ -510,7 +542,8 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         let generation = self.generation.load(Ordering::SeqCst);
         let session = self.current_session().ok_or(AuthorityError::Disconnected)?;
         self.require_session(&session, generation)?;
-        let result = self.ring_vrf_registry
+        let result = self
+            .ring_vrf_registry
             .providers(session.public_key, ring)
             .await;
         self.require_session(&session, generation)?;
@@ -525,7 +558,8 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         let generation = self.generation.load(Ordering::SeqCst);
         let session = self.current_session().ok_or(AuthorityError::Disconnected)?;
         self.require_session(&session, generation)?;
-        let result = self.ring_vrf_registry
+        let result = self
+            .ring_vrf_registry
             .selected_provider(session.public_key, ring)
             .await;
         self.require_session(&session, generation)?;
@@ -543,7 +577,8 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         self.require_session(&session, generation)?;
         let _guard = self.storage_guard.lock().await;
         self.require_session(&session, generation)?;
-        let result = self.ring_vrf_registry
+        let result = self
+            .ring_vrf_registry
             .select_provider(session.public_key, ring, handle)
             .await;
         self.require_session(&session, generation)?;
@@ -731,7 +766,8 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
                 reason: error.to_string(),
             }
         })?;
-        if private_session.sso.is_some() && request.calling_product_id == owner
+        if private_session.sso.is_some()
+            && request.calling_product_id == owner
             && let Some(mut entries) = self
                 .ring_vrf_registry
                 .complete_owner_entries(private_session.public_key, &owner)
@@ -1152,7 +1188,9 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         let accepted =
             super::until_cancelled(cx, self.services.platform.confirm_user_action(review))
                 .await?
-                .map_err(|error| AuthorityError::HostFailure { reason: format!("signing confirmation failed: {}", error.reason) })?;
+                .map_err(|error| AuthorityError::HostFailure {
+                    reason: format!("signing confirmation failed: {}", error.reason),
+                })?;
         self.require_session(session, generation)?;
         if accepted {
             Ok(())
@@ -1263,7 +1301,10 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             }
             AccountGrant::WalletAuthorization(authorization) => {
                 self.require_session(session, generation)?;
-                let mut authorizations = self.wallet_authorizations.lock().expect("wallet authorizations mutex poisoned");
+                let mut authorizations = self
+                    .wallet_authorizations
+                    .lock()
+                    .expect("wallet authorizations mutex poisoned");
                 self.require_session(session, generation)?;
                 authorizations.insert(product.to_string(), authorization);
                 return Ok(());
@@ -1278,7 +1319,8 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             .platform
             .read_secret_core_storage(key.clone())
             .await
-            .map_err(storage_error)?.map(Zeroizing::new);
+            .map_err(storage_error)?
+            .map(Zeroizing::new);
         let mut records = match previous.as_ref() {
             Some(bytes) => Vec::<StoredGrant>::decode_all(&mut bytes.as_slice())
                 .map_err(|_| invalid_grant())?,
@@ -1345,7 +1387,7 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             .holder
             .allocate_grants(cx, session, product.clone(), request, policy)
             .await?;
-        validate_allocations(&[resource.clone()], &outcomes)?;
+        validate_allocations(core::slice::from_ref(&resource), &outcomes)?;
         match outcomes.into_iter().next().ok_or_else(invalid_grant)? {
             AccountAllocationOutcome::Allocated(grant) => {
                 self.retain_grant(cx, session, generation, &product, grant)
@@ -1443,7 +1485,7 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         self.product_subtrees
             .lock()
             .expect("subtree cache mutex poisoned")
-            .retain(|(_, key), _| key != &product);
+            .retain(|key, _| key.product != product);
         let private = self.current_private_session(&session)?;
         if private.sso.is_some() {
             super::product_subtree::remove_product_subtree(
@@ -1612,29 +1654,54 @@ impl Drop for ProtectedBytes {
 
 impl HostAccounts<super::WalletAccountHolder> {
     /// Compose native product accounts with the wallet activation lifecycle.
-    pub fn native(holder: Arc<super::WalletAccountHolder>, services: Arc<RuntimeServices>) -> Arc<Self> {
+    pub fn native(
+        holder: Arc<super::WalletAccountHolder>,
+        services: Arc<RuntimeServices>,
+    ) -> Arc<Self> {
         Self::new(holder.clone(), services, HostLifecycle::Native(holder))
     }
 }
 
 impl HostAccounts<super::SsoAccountHolderClient> {
     /// Compose the transport client with awaited capability invalidation.
-    pub fn paired(holder: Arc<super::SsoAccountHolderClient>, services: Arc<RuntimeServices>) -> Arc<Self> {
+    pub fn paired(
+        holder: Arc<super::SsoAccountHolderClient>,
+        services: Arc<RuntimeServices>,
+    ) -> Arc<Self> {
         use futures::FutureExt;
-        let accounts = Self::new(holder.clone(), services, HostLifecycle::Paired(holder.clone()));
+        let accounts = Self::new(
+            holder.clone(),
+            services,
+            HostLifecycle::Paired(holder.clone()),
+        );
         let weak = Arc::downgrade(&accounts);
         holder.set_session_cleanup(Arc::new(move |previous| {
             let weak = weak.clone();
             async move {
-                let Some(accounts) = weak.upgrade() else { return Ok(()); };
+                let Some(accounts) = weak.upgrade() else {
+                    return Ok(());
+                };
                 accounts.generation.fetch_add(1, Ordering::SeqCst);
-                accounts.product_subtrees.lock().expect("subtree cache mutex poisoned").clear();
+                accounts
+                    .product_subtrees
+                    .lock()
+                    .expect("subtree cache mutex poisoned")
+                    .clear();
                 let _guard = accounts.storage_guard.lock().await;
                 if let Some(session) = previous.sso.as_ref() {
-                    accounts.services.platform.clear_secret_core_storage(SecretCoreStorageKey::HostAccountGrants { root_public_key: previous.public_key, session_id: Some(super::allowances::session_storage_id(session)) }).await.map_err(storage_error)?;
+                    accounts
+                        .services
+                        .platform
+                        .clear_secret_core_storage(SecretCoreStorageKey::HostAccountGrants {
+                            root_public_key: previous.public_key,
+                            session_id: Some(super::allowances::session_storage_id(session)),
+                        })
+                        .await
+                        .map_err(storage_error)?;
                 }
                 Ok(())
-            }.boxed()
+            }
+            .boxed()
         }));
         accounts
     }
