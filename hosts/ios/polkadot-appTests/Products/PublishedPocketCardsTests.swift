@@ -45,17 +45,15 @@ struct PublishedPocketCardsTests {
         }
     }
 
-    /// Cards are served only behind the flag that declares them, so a worker
-    /// that lists cards without the include publishes none.
+    /// Cards come with the Pocket a worker declares, so a worker that declares
+    /// only chat publishes none.
     @Test
-    func refusesAWorkerThatDoesNotIncludePocket() async {
+    func refusesAWorkerThatDeclaresNoPocket() async {
         let worker = ProductExecutable.Worker(
             identifier: "worker.game.paseo",
             appVersion: .zero,
             entrypoint: "worker.js",
-            includesChat: true,
-            includesPocket: false,
-            pocketCards: [loyalty]
+            modalities: [.chat]
         )
         let cards = PublishedPocketCards(products: gameResolver(worker: worker))
 
@@ -165,9 +163,7 @@ private func workerPublishing(_ cards: [PocketCardDefinition]) -> ProductExecuta
         identifier: "worker.game.paseo",
         appVersion: .zero,
         entrypoint: "worker.js",
-        includesChat: false,
-        includesPocket: true,
-        pocketCards: cards
+        modalities: [.pocket(cards)]
     )
 }
 

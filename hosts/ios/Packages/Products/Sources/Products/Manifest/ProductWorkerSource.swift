@@ -14,7 +14,7 @@ public struct ProductWorkerSource: Hashable, Sendable {
 
 /// Which surface a worker is being started for. A worker declares the surfaces
 /// it serves, and a host must not run it for one it did not declare.
-public enum ProductWorkerModality: Sendable {
+public enum ProductWorkerModality: Hashable, Sendable {
     case chat
     case pocket
 }
@@ -61,9 +61,6 @@ public extension ProductWorkerSource {
 public extension ProductExecutable.Worker {
     /// Whether this worker declares `modality`.
     func serves(_ modality: ProductWorkerModality) -> Bool {
-        switch modality {
-        case .chat: includesChat
-        case .pocket: includesPocket
-        }
+        modalities.contains { $0.kind == modality }
     }
 }

@@ -34,11 +34,16 @@ struct PocketProductCardView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
                 // A card whose product has not drawn yet keeps its place rather
-                // than collapsing the layout around it.
-                Text(title)
-                    .textStyle(.headline16Medium())
-                    .foregroundStyle(Color(.fgSecondary))
-                    .padding(16)
+                // than collapsing the layout around it, and says it is still
+                // coming: a title on its own reads as the card the product meant
+                // to draw.
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(title)
+                        .textStyle(.headline16Medium())
+                        .foregroundStyle(Color(.fgSecondary))
+                    ProgressView()
+                }
+                .padding(16)
             }
         }
         .frame(maxWidth: .infinity)

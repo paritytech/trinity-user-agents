@@ -178,8 +178,8 @@ struct ProductManifestParserTests {
         }
 
         #expect(worker.entrypoint == "src/worker.js")
-        #expect(worker.includesChat)
-        #expect(!worker.includesPocket)
+        #expect(worker.serves(.chat))
+        #expect(!worker.serves(.pocket))
     }
 
     /// A worker serving no user-facing surface is valid and still launches.
@@ -195,8 +195,8 @@ struct ProductManifestParserTests {
             return
         }
 
-        #expect(!worker.includesChat)
-        #expect(!worker.includesPocket)
+        #expect(!worker.serves(.chat))
+        #expect(!worker.serves(.pocket))
     }
 
     // MARK: - Pocket cards
@@ -242,7 +242,7 @@ struct ProductManifestParserTests {
         for cards in [missingTitle, blankPreview] {
             let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
 
-            #expect(worker.includesChat)
+            #expect(worker.serves(.chat))
             #expect(worker.pocketCards.isEmpty)
         }
     }
@@ -262,7 +262,7 @@ struct ProductManifestParserTests {
         let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", pocketSection: section)))
 
         #expect(worker.entrypoint == "src/worker.js")
-        #expect(worker.includesChat)
+        #expect(worker.serves(.chat))
         #expect(worker.pocketCards.isEmpty)
     }
 

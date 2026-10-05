@@ -153,7 +153,7 @@ private extension ProductManifestParser {
             return reject("\(identifier): worker missing entrypoint")
         }
 
-        // Both flags false is valid — the worker runs as background logic with no user-facing
+        // Declaring neither is valid — the worker runs as background logic with no user-facing
         // surface — but an absent flag means the publisher never declared one.
         guard let includesChat = dto.includes?.chat else {
             return reject("\(identifier): worker includes missing 'chat'")
@@ -163,14 +163,19 @@ private extension ProductManifestParser {
             return reject("\(identifier): worker includes missing 'pocket'")
         }
 
+        // Read whatever the flag says, so cards published without the flag are
+        // still reported as the defect they are.
+        let cards = pocketCards(dto.pocket, includesPocket: includesPocket, identifier: identifier)
+        var modalities: [ProductExecutable.Worker.Modality] = []
+        if includesChat { modalities.append(.chat) }
+        if includesPocket { modalities.append(.pocket(cards)) }
+
         return .worker(
             .init(
                 identifier: identifier,
                 appVersion: appVersion,
                 entrypoint: entrypoint,
-                includesChat: includesChat,
-                includesPocket: includesPocket,
-                pocketCards: pocketCards(dto.pocket, includesPocket: includesPocket, identifier: identifier)
+                modalities: modalities
             )
         )
     }

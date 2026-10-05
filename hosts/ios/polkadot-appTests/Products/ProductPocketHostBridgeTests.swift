@@ -1,4 +1,5 @@
 import Foundation
+import os
 import AsyncExtensions
 import Products
 import Testing
@@ -41,6 +42,26 @@ struct ProductPocketHostBridgeTests {
         #expect(try bridge.listCards().isEmpty)
     }
 
+    /// Storage all but always takes a removal, so the core is answered before
+    /// the write lands. One that does not is put right: the card comes back
+    /// into the slice and the core is told, so the product and the Pocket do
+    /// not end up disagreeing about what the Pocket holds.
+    @Test
+    func putsBackACardWhoseRemovalDidNotStore() async throws {
+        let collection = InMemoryPocketCardStore()
+        try await collection.add(loyalty, face: .nil)
+        let bridge = try await makeBridge(collection: collection)
+        let published = Published()
+        bridge.start { published.record($0) }
+        await collection.failWrites()
+
+        #expect(try bridge.removeCard(cardId: "loyalty") == NativePocketRemoval.removed)
+        await published.wait(forPublishes: 2)
+
+        #expect(published.counts == [1, 1])
+        #expect(try bridge.listCards().map(\.cardId) == ["loyalty"])
+    }
+
     /// Removing a card that is not held is a success the core tells apart from
     /// one the host performed.
     @Test
@@ -68,19 +89,24 @@ struct ProductPocketHostBridgeTests {
     /// card changes nothing here at all.
     @Test
     func republishesOnlyWhenItsOwnSliceChanges() async throws {
-        let collection = InMemoryPocketCardStore()
-        let bridge = try await makeBridge(collection: collection)
+        let deliveries = AsyncStream<[PocketCardEntry]>.makeStream()
+        let bridge = ProductPocketHostBridge(
+            productId: "game.paseo",
+            collection: DrivenCollection(deliveries: deliveries.stream)
+        )
+        await bridge.begin()
+
         let published = Published()
         bridge.start { published.record($0) }
 
-        try await collection.add(loyalty, face: .nil)
-        try await settle()
-        try await collection.add(otherProductCard, face: .nil)
-        try await settle()
+        deliveries.continuation.yield([otherProductCard])
+        deliveries.continuation.yield([otherProductCard, loyalty])
+        await published.wait(forPublishes: 2)
 
         // The leading publish is the opening one, of the snapshot as it stood.
-        // The other product's card adds nothing to this product's slice, so
-        // nothing follows it.
+        // Both changes are delivered in order, so a republish for the other
+        // product's card would sit between the two as a repeat of the count
+        // before it.
         #expect(published.counts == [0, 1])
     }
 
@@ -191,20 +217,43 @@ private struct UnreadableCollection: PocketCollection {
     func removeCard(_: PocketCardKey) async throws -> PocketRemoval { throw Unavailable() }
 }
 
-/// The bridge follows the collection in a task, so the assertions wait for it
-/// rather than for a fixed time.
-private func settle() async throws {
-    for _ in 0 ..< 20 {
-        await Task.yield()
+/// A collection the test hands each change to, so they are observed in the
+/// order they were made and an assertion runs on a state that has arrived
+/// rather than after a delay.
+private struct DrivenCollection: PocketCollection {
+    let deliveries: AsyncStream<[PocketCardEntry]>
+
+    func cards() async throws -> [PocketCardEntry] { [] }
+
+    func observeCards() -> AnyAsyncSequence<[PocketCardEntry]> {
+        deliveries.eraseToAnyAsyncSequence()
     }
-    try await Task.sleep(for: .milliseconds(20))
+
+    func removeCard(_: PocketCardKey) async throws -> PocketRemoval { .absent }
 }
 
-/// Records what the bridge asked to republish, without asserting on a mock.
+/// Records what the bridge asked to republish, and lets a test wait for a
+/// publish to land rather than for a delay to pass.
 private final class Published: @unchecked Sendable {
-    private(set) var counts: [Int] = []
+    private let held = OSAllocatedUnfairLock(initialState: [Int]())
+    private let arrivals = AsyncStream<Int>.makeStream()
+
+    var counts: [Int] { held.withLock { $0 } }
 
     func record(_ cards: [PocketCard]) {
-        counts.append(cards.count)
+        let arrived = held.withLock { held -> Int in
+            held.append(cards.count)
+            return held.count
+        }
+        arrivals.continuation.yield(arrived)
+    }
+
+    /// Returns once `count` publishes have landed.
+    func wait(forPublishes count: Int) async {
+        guard counts.count < count else { return }
+
+        for await arrived in arrivals.stream where arrived >= count {
+            return
+        }
     }
 }

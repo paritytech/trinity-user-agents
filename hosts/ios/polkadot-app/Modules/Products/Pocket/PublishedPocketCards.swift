@@ -34,7 +34,7 @@ struct PublishedPocketCards: PublishedPocketCardsResolving {
             throw PocketPublishError.unreadableProduct
         }
 
-        if let worker = resolved.executables.worker, worker.includesPocket {
+        if let worker = resolved.executables.worker, worker.serves(.pocket) {
             guard let definition = worker.pocketCards.first(where: { $0.id == cardId }) else {
                 throw PocketPublishError.unknownCard
             }

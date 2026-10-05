@@ -5,7 +5,7 @@ import Testing
 /// drift apart about which product has one.
 struct ProductWorkerSourceTests {
     @Test func servesAPublishedWorkerThatIncludesTheModality() throws {
-        let resolved = product(worker: worker(includesChat: true, includesPocket: true))
+        let resolved = product(worker: worker(modalities: [.chat, .pocket([])]))
 
         #expect(ProductWorkerSource.published(for: resolved, serving: .chat)?.contentId == "worker.game.dot")
         #expect(ProductWorkerSource.published(for: resolved, serving: .pocket)?.contentId == "worker.game.dot")
@@ -15,7 +15,7 @@ struct ProductWorkerSourceTests {
     /// back to a hand-installed script here would hand a product's cards to a
     /// file the product never published.
     @Test func servesNothingWhenThePublishedWorkerOmitsTheModality() throws {
-        let resolved = product(worker: worker(includesChat: true, includesPocket: false))
+        let resolved = product(worker: worker(modalities: [.chat]))
 
         #expect(ProductWorkerSource.published(for: resolved, serving: .pocket) == nil)
         #expect(ProductWorkerSource.published(for: resolved, serving: .chat) != nil)
@@ -33,13 +33,12 @@ struct ProductWorkerSourceTests {
         #expect(ProductWorkerSource.installedByHand(for: resolved, entryPath: { _ in nil }) == nil)
     }
 
-    private func worker(includesChat: Bool, includesPocket: Bool) -> ProductExecutable.Worker {
+    private func worker(modalities: [ProductExecutable.Worker.Modality]) -> ProductExecutable.Worker {
         ProductExecutable.Worker(
             identifier: "worker.game.dot",
             appVersion: SemVer(major: 1, minor: 0, patch: 0, build: nil),
             entrypoint: "index.js",
-            includesChat: includesChat,
-            includesPocket: includesPocket
+            modalities: modalities
         )
     }
 
