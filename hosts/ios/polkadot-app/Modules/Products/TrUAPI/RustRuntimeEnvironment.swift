@@ -27,7 +27,7 @@ struct RustRuntimeEnvironment {
     struct ExecutionModel {
         let execution: TrUAPIProductExecutionProtocol
         let chainConnections: TrUAPIChainConnecting
-        let osPermissionAsker: OSPermissionAsking
+        let media: NativeMediaBackend
 
         /// Start the localhost ws-bridge and return the bootstrap script to
         /// inject. Called from the runtime's `start`; opening the execution
@@ -46,7 +46,17 @@ struct RustRuntimeEnvironment {
     /// in the runtime's `start` via ``ExecutionModel/startBridge()``. The
     /// execution retains the bridge (callback retainer) and the bridge retains
     /// the pool, so holding `ExecutionModel` pins the whole chain.
-    func makeSPAExecution(
+    func makeSPAExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
+        try makeExecution(productId: productId, routers: routers, kind: .app)
+    }
+
+    /// Open a background-only worker without installing Chat-specific APIs.
+    func makeWorkerExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
+        try makeExecution(productId: productId, routers: routers, kind: .worker)
+    }
+
+    /// Open a chat execution for `productId`. Mirrors ``makeSPAExecution``.
+    func makeChatExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
         cardFace: (any ExpandedCardFaceShowing)?
@@ -103,20 +113,15 @@ private extension RustRuntimeEnvironment {
         let bridges = purpose.makeBridges(dependencies: dependencies)
 
         let execution = try runtime.openProductExecution(
-            bridge: bridges.host,
-            configuration: ProductExecutionConfig(productId: productId, executionKind: purpose.executionKind),
-            chat: bridges.chat,
-            pocket: purpose.pocket,
-            game: gameReminders == nil ? nil : bridges.host
+            bridge: bridge,
+            configuration: ProductExecutionConfig(productId: productId, executionKind: kind),
+            chat: chatBridge,
+            media: bridge.media
         )
 
         bridges.host.attach(execution)
 
-        return ExecutionModel(
-            execution: execution,
-            chainConnections: chainConnections,
-            osPermissionAsker: osPermissionAsker
-        )
+        return ExecutionModel(execution: execution, chainConnections: chainConnections, media: bridge.media)
     }
 
     func makeBridgeDependencies(

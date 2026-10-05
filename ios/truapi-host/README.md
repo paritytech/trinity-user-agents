@@ -573,6 +573,21 @@ any chain work happens.
 > TrUAPI traffic keeps flowing while you wait. The remaining sync callbacks (auth state, storage, core storage, chain,
 > theme, `cancelNotification`) run inline on the dispatcher thread and must return promptly without blocking.
 
+Core storage backends declare a stable `storageIdentifier` for their physical
+store and namespace. Reuse that identifier across adapters and independent host
+runtimes sharing the same store; different stores need different identifiers.
+Backing operations finish their persistence before returning and must be safe
+for concurrent access to different keys. The SDK owns process-wide per-slot
+serialization and exact-byte compare/exchange, including cancellation-safe
+policy-change enqueueing. Initial unanswered snapshots never emit revocation.
+It refreshes the exact permission scope in every live core sharing that store,
+including the writer's shared runtime. Authorized refreshes do not invalidate
+ongoing consent; denied, unanswered or unreadable policy fences only its exact
+scope. The async
+`setPermissionAuthorizationStatus` waits for this fanout only after its native
+setter returns. `refreshPermissionAuthorization` is a read-only host admin call;
+neither operation exposes storage, SDP, ICE, or media tracks to products.
+
 ```swift
 import Foundation
 import WebKit
@@ -587,11 +602,24 @@ final class MyStorage: HostStorageBackend, @unchecked Sendable {
 }
 
 final class MyCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
+    // This example owns a new in-memory store. Persistent adapters instead use
+    // the same stable identifier for every adapter into their physical store.
+    let storageIdentifier = UUID().uuidString
+    private let lock = NSLock()
     private var values: [Data: Data] = [:]
 
-    func read(key: Data) throws -> Data? { values[key] }
-    func write(key: Data, value: Data) throws { values[key] = value }
-    func clear(key: Data) throws { values.removeValue(forKey: key) }
+    func read(key: Data) throws -> Data? {
+        lock.lock(); defer { lock.unlock() }
+        return values[key]
+    }
+    func write(key: Data, value: Data) throws {
+        lock.lock(); defer { lock.unlock() }
+        values[key] = value
+    }
+    func clear(key: Data) throws {
+        lock.lock(); defer { lock.unlock() }
+        values.removeValue(forKey: key)
+    }
 }
 
 final class MyBridge: HostBridge, @unchecked Sendable {
@@ -720,7 +748,7 @@ try TrUAPIHost.installProductScripts(
 webView.load(URLRequest(url: productURL))
 
 // Settings changes apply to subsequent permission-checked operations.
-try execution.setPermissionAuthorizationStatus(
+try await execution.setPermissionAuthorizationStatus(
     request: .remote(RemotePermissionRequest(permission: .remote(domains: ["api.example.com"]))),
     status: .denied
 )
@@ -733,8 +761,60 @@ execution.close()
 runtime.disconnect()
 ```
 
-The product page reads `window.__truapi_localhost.url` (set by the bootstrap script) and passes it to `@parity/truapi`'s
-`createWebSocketProvider(url)`.
+The updated `@parity/truapi` SDK keeps the same client across connection loss. The SDK replaces the socket; interrupted
+operations fail with `ConnectionResetError` and are never replayed. Recreate read/watch subscriptions in the provider
+that owns them. SDKs 0.16.0 and 0.18.0 can still start through the minimal `__HOST_API_PORT__` adapter, but require a
+page reload after a disconnect. Remove that adapter once deployed products adopt the injected client.
+
+The shared container uses the same WebSocket as SDK calls and asks Rust to authorize each fetch or XHR before sending
+it, and each remote WebSocket before connecting. It parses the URL with captured browser primitives and sends its
+hostname to `authorize_remote_permission`; Rust normalizes and checks the domain. Swift supplies the endpoint and
+handles native permission prompts; it does not relay individual network permission messages. An upfront permission
+request and a network operation are separate, so an Allow once decision is consumed by the next permitted operation
+rather than persisted.
+
+XHR keeps native request headers, response types and browser CORS behavior. `open()` configures the request
+synchronously; `send()` waits for permission before sending. Aborting or reopening during that wait cancels the pending
+send. Synchronous XHR is unsupported because it cannot wait for an asynchronous permission decision.
+
+A remote `WebSocket` starts in `CONNECTING` while Rust checks the same domain permission. Allow once permits that
+connection and all its messages; a new connection checks again. Closing while permission is pending prevents the
+connection from opening. Text, binary messages and subprotocols use the native socket after approval. The private host
+connection uses the browser constructor captured before these gates are installed. Product-created sockets receive no
+endpoint exemption.
+
+Forwarded WebSocket events and XHR failures before sending are synthetic, with `isTrusted` set to `false`.
+
+Real-time audio, camera and screen sharing use the canonical TrUAPI Media API.
+Pass a trusted `NativeMediaCallbacks` implementation when opening the execution.
+Its server-local `NativeMedia*` DTOs are converted by value in Rust; the callback
+owns WebRTC, capture and native compositor views. Product JavaScript never receives
+peer connections, media streams, SDP, ICE or native backend handles. Calling consent
+is scoped to the exact product, network and account, independently of microphone,
+camera and system screen-sharing consent.
+
+The installer adds the bootstrap and container scripts before loading. It preserves the host's website data store and
+navigation delegate. Hosts that assemble their own script lists can keep using `LocalhostBridgeBootstrap.script`
+followed by `ContainerScriptBundle.load()`, with the container injected into every frame.
+
+`Worker`, `WebTransport` and direct `getDisplayMedia` screen capture are unavailable
+to product pages. Screen sharing is selected through the trusted Media backend's
+ReplayKit extension, not a product-owned capture API.
+
+Redirects and stylesheet/font loads retain native WebKit behavior. Redirect destinations are not separately authorized
+by the fetch/XHR wrappers; direct DOM resource loads remain outside those wrappers. There is no content-rule
+registration, global settings refresh or installation disposal requirement. Close the execution when its product stops,
+and maintain the host's existing web-view navigation and teardown behavior.
+
+Build the generated JavaScript SDK before the container: from the repository root, run `npm ci --ignore-scripts`,
+`npm run build --prefix js/packages/truapi`, then `npm run build --prefix js/container`. A protocol change also requires
+regenerating the SDK through the repository's normal build pipeline.
+
+`ProductNetworkAccessTests` exercises grant/deny/revocation, one-use fetch, WebRTC and media authorization, native
+redirects, stylesheet/font requests, and preserving a persistent store and existing navigation delegate. Media coverage
+uses a capture stub with the actual private Rust permission transport; it does not require simulator camera hardware.
+The tests require the built container, current Rust bindings and a real WKWebView in the UIKit test host. These
+Apple-only tests cannot run on Linux.
 
 ## Build outputs in detail
 

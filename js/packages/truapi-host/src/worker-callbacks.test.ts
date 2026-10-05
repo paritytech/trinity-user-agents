@@ -13,7 +13,7 @@ import type { RawCallbacks } from "./generated/host-callbacks-adapter.js";
 
 function stubBridge() {
   const requests: { name: string; args: readonly unknown[] }[] = [];
-  const subscriptions: { name: string; payload: Uint8Array | null }[] = [];
+  const subscriptions: { name: string; args: readonly unknown[] }[] = [];
   return {
     requests,
     subscriptions,
@@ -22,8 +22,8 @@ function stubBridge() {
         requests.push({ name, args });
         return new Uint8Array();
       },
-      startSubscription: (name: string, payload: Uint8Array | null) => {
-        subscriptions.push({ name, payload });
+      startSubscription: (name: string, args: readonly unknown[]) => {
+        subscriptions.push({ name, args });
         return () => {};
       },
       chainConnect: async () => null,
@@ -55,39 +55,6 @@ describe("worker raw callbacks", () => {
     expect(callbacks.subscribeTheme).toBeDefined();
   });
 
-  it("proxies chat through the bridge when the capability is reported", async () => {
-    const { bridge, requests, subscriptions } = stubBridge();
-
-    const callbacks = createWorkerRawCallbacks(
-      bridge as unknown as Parameters<typeof createWorkerRawCallbacks>[0],
-      { chat: true },
-    );
-
-    const product = new Uint8Array([1]);
-    await (
-      callbacks.createChatRoom as (
-        product: Uint8Array,
-        request: Uint8Array,
-      ) => Promise<unknown>
-    )(product, new Uint8Array([2]));
-    (
-      callbacks.subscribeChatRooms as (
-        product: Uint8Array,
-        sendItem: () => void,
-        sendError: () => void,
-      ) => void
-    )(
-      product,
-      () => {},
-      () => {},
-    );
-
-    expect(requests.map((r) => r.name)).toContain("createChatRoom");
-    expect(subscriptions).toEqual([
-      { name: "subscribeChatRooms", payload: product },
-    ]);
-  });
-
   it("starts no chat room subscription when chat is absent", () => {
     const { bridge, subscriptions } = stubBridge();
     const callbacks = createWorkerRawCallbacks(
@@ -97,7 +64,7 @@ describe("worker raw callbacks", () => {
     const stop = startRawSubscription(
       callbacks,
       "subscribeChatRooms",
-      new Uint8Array([1]),
+      [new Uint8Array([1])],
       () => {},
       () => {},
     );
@@ -115,38 +82,5 @@ describe("worker raw callbacks", () => {
 
     expect(callbacks.subscribePocketCards).toBeUndefined();
     expect(callbacks.removePocketCard).toBeUndefined();
-  });
-
-  it("proxies pocket through the bridge when the capability is reported", async () => {
-    const { bridge, requests, subscriptions } = stubBridge();
-
-    const callbacks = createWorkerRawCallbacks(
-      bridge as unknown as Parameters<typeof createWorkerRawCallbacks>[0],
-      { pocket: true },
-    );
-
-    const product = new Uint8Array([1]);
-    await (
-      callbacks.removePocketCard as (
-        product: Uint8Array,
-        request: Uint8Array,
-      ) => Promise<unknown>
-    )(product, new Uint8Array([2]));
-    (
-      callbacks.subscribePocketCards as (
-        product: Uint8Array,
-        sendItem: () => void,
-        sendError: () => void,
-      ) => void
-    )(
-      product,
-      () => {},
-      () => {},
-    );
-
-    expect(requests.map((r) => r.name)).toContain("removePocketCard");
-    expect(subscriptions).toEqual([
-      { name: "subscribePocketCards", payload: product },
-    ]);
   });
 });

@@ -1,7 +1,9 @@
 package io.paritytech.polkadotapp.app
 
 import android.Manifest
+import android.net.Uri
 import android.webkit.JavascriptInterface
+import android.webkit.PermissionRequest
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -20,7 +22,6 @@ import io.paritytech.polkadotapp.common.utils.permissions.PermissionAsker
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionResult
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
-import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.DeviceCapabilityPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductWebChromeClient
 import kotlinx.coroutines.CoroutineScope
@@ -34,6 +35,7 @@ import org.junit.runner.RunWith
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.RemotePermission
+import uniffi.truapi.RemotePermissionRequest
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
@@ -42,12 +44,13 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.UUID
 import kotlin.io.path.createTempDirectory
 
 @RunWith(AndroidJUnit4::class)
 class MediaPermissionIntegrationTest {
     @Test
-    fun rustConsentPrecedesNativeCaptureAndAllowOnceIsConsumedOnce() {
+    fun productRawMediaRemainsDeniedDespiteDeviceAndGenericNetworkGrants() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         for (permission in listOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)) {
@@ -56,14 +59,8 @@ class MediaPermissionIntegrationTest {
         val bridge = PermissionBridge()
         val reports = Reports()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-        val permissionAsker = object : PermissionAsker by unused() {
-            override suspend fun askPermission(vararg permissions: String): PermissionResult {
-                bridge.events.add("native:${permissions.single()}")
-                return PermissionResult.GRANTED
-            }
-        }
         val config = HostRuntimeConfig(
-            hostName = "Media permission test",
+            hostName = "Media isolation test",
             peopleChainGenesisHash = ByteArray(32),
             bulletinChainGenesisHash = ByteArray(32),
             assetHubChainGenesisHash = ByteArray(32),
@@ -72,15 +69,29 @@ class MediaPermissionIntegrationTest {
         )
         TrUAPIHostRuntime(bridge, config).use { runtime ->
             runtime.openProductExecution(bridge, ProductExecutionConfig("media.paseo", ProductExecutionKind.APP)).use { execution ->
+                for (capability in listOf(HostDevicePermissionRequest.CAMERA, HostDevicePermissionRequest.MICROPHONE)) {
+                    execution.setPermissionAuthorizationStatus(PermissionAuthorizationRequest.Device(capability), PermissionAuthorizationStatus.AUTHORIZED)
+                }
+                execution.setPermissionAuthorizationStatus(
+                    PermissionAuthorizationRequest.Remote(RemotePermissionRequest(RemotePermission.WebRtc)),
+                    PermissionAuthorizationStatus.AUTHORIZED,
+                )
                 val endpoint = execution.startWsBridge()
                 lateinit var webView: WebView
                 instrumentation.runOnMainSync {
                     webView = WebView(context)
                     webView.settings.javaScriptEnabled = true
-                    webView.webChromeClient = ProductWebChromeClient(
-                        unused(), DeviceCapabilityPermissionHandler(unused(), unused(), permissionAsker),
-                        unused(), unused(), "Media test", FixedProductId(ProductId.fromStoredValue("media.paseo")), scope, null,
-                    )
+                    val chrome = ProductWebChromeClient(unused(), unused(), "Media test",
+                        FixedProductId(ProductId.fromStoredValue("media.paseo")), scope, null)
+                    webView.webChromeClient = chrome
+                    var nativeDenied = false
+                    chrome.onPermissionRequest(object : PermissionRequest() {
+                        override fun getOrigin(): Uri = Uri.parse("http://localhost")
+                        override fun getResources() = arrayOf(RESOURCE_VIDEO_CAPTURE, RESOURCE_AUDIO_CAPTURE)
+                        override fun grant(resources: Array<out String>) { error("Raw native capture was granted") }
+                        override fun deny() { nativeDenied = true }
+                    })
+                    assertTrue("Native capture must be denied independently of script policy", nativeDenied)
                     webView.addJavascriptInterface(reports, "mediaReport")
                     webView.webViewClient = object : WebViewClient() {
                         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest) =
@@ -91,49 +102,13 @@ class MediaPermissionIntegrationTest {
                     )(webView)
                     webView.loadUrl("http://localhost/")
                 }
-                fun call(script: String, expected: String) {
-                    instrumentation.runOnMainSync {
-                        webView.evaluateJavascript(
-                            "Promise.resolve().then(() => $script).then(value => mediaReport.result(String(value)))" +
-                                ".catch(error => mediaReport.result(error.name));",
-                            null,
-                        )
-                    }
-                    assertEquals(script, expected, reports.results.poll(15, TimeUnit.SECONDS))
-                }
                 try {
                     assertTrue("fixture did not load", reports.ready.await(15, TimeUnit.SECONDS))
-                    for ((capability, manifest) in listOf(
-                        HostDevicePermissionRequest.CAMERA to Manifest.permission.CAMERA,
-                        HostDevicePermissionRequest.MICROPHONE to Manifest.permission.RECORD_AUDIO,
-                    )) {
-                        bridge.events.clear()
-                        val name = if (capability == HostDevicePermissionRequest.CAMERA) "Camera" else "Microphone"
-                        bridge.decisions.add(PermissionDecision.DENY)
-                        call("capture('$name')", "NotAllowedError")
-                        assertEquals(listOf("prompt:$capability"), bridge.events.toList())
-
-                        execution.setPermissionAuthorizationStatus(
-                            PermissionAuthorizationRequest.Device(capability), PermissionAuthorizationStatus.NOT_DETERMINED,
-                        )
-                        bridge.decisions.add(PermissionDecision.ALLOW_ONCE)
-                        call(
-                            "window.__HOST_API_CLIENT__.client.permissions.requestDevicePermission('$name')" +
-                                ".match(value => value.granted, error => { throw error; })",
-                            "true",
-                        )
-                        call("capture('$name')", "captured")
-                        assertEquals(
-                            listOf("prompt:$capability", "prompt:$capability", "native:$manifest"),
-                            bridge.events.toList(),
-                        )
-                        bridge.decisions.add(PermissionDecision.DENY)
-                        call("capture('$name')", "NotAllowedError")
-                        assertEquals(
-                            listOf("prompt:$capability", "prompt:$capability", "native:$manifest", "prompt:$capability"),
-                            bridge.events.toList(),
-                        )
+                    instrumentation.runOnMainSync {
+                        webView.evaluateJavascript("probe().then(value => mediaReport.result(value)).catch(error => mediaReport.result(String(error)));", null)
                     }
+                    assertEquals("camera:denied,microphone:denied,display:denied,rtc:denied,fullscreen:denied",
+                        reports.results.poll(15, TimeUnit.SECONDS))
                 } finally {
                     instrumentation.runOnMainSync { webView.destroy() }
                     scope.cancel()
@@ -143,25 +118,19 @@ class MediaPermissionIntegrationTest {
     }
 
     private class PermissionBridge : HostBridge {
-        val decisions = LinkedBlockingQueue<PermissionDecision>()
-        val events = LinkedBlockingQueue<String>()
         override val storage: HostStorage = unused()
         override val coreStorage = object : HostCoreStorage {
+            override val storageIdentifier = "media-isolation-${UUID.randomUUID()}"
             private val values = ConcurrentHashMap<List<Byte>, ByteArray>()
-            override suspend fun read(key: ByteArray): ByteArray? = values[key.toList()]
-            override suspend fun write(key: ByteArray, value: ByteArray) { values[key.toList()] = value }
+            override suspend fun read(key: ByteArray): ByteArray? = values[key.toList()]?.copyOf()
+            override suspend fun write(key: ByteArray, value: ByteArray) { values[key.toList()] = value.copyOf() }
             override suspend fun clear(key: ByteArray) { values.remove(key.toList()) }
         }
         override suspend fun navigateTo(url: String) = Unit
         override suspend fun featureSupported(request: HostFeatureSupportedRequest) = false
         override suspend fun remotePermission(product: ProductExecutionConfig, request: RemotePermission) = PermissionDecision.DENY
-        override suspend fun devicePermission(
-            product: ProductExecutionConfig,
-            request: HostDevicePermissionRequest,
-        ): PermissionDecision {
-            events.add("prompt:$request")
-            return checkNotNull(decisions.poll()) { "Unexpected extra permission prompt" }
-        }
+        override suspend fun devicePermission(product: ProductExecutionConfig, request: HostDevicePermissionRequest): PermissionDecision =
+            error("Raw capture must never prompt through Core Media")
     }
 
     private class Reports {
@@ -179,12 +148,19 @@ class MediaPermissionIntegrationTest {
 
         private const val PAGE = """
             <!doctype html><html><script>
-            async function capture(capability) {
-              const stream = await navigator.mediaDevices.getUserMedia({
-                video: capability === 'Camera', audio: capability === 'Microphone'
-              });
-              stream.getTracks().forEach(track => track.stop());
-              return 'captured';
+            async function probe() {
+              const results = [];
+              for (const [name, operation] of [
+                ['camera', () => navigator.mediaDevices.getUserMedia({video: true})],
+                ['microphone', () => navigator.mediaDevices.getUserMedia({audio: true})],
+                ['display', () => navigator.mediaDevices.getDisplayMedia({video: true})],
+                ['rtc', () => new RTCPeerConnection()],
+                ['fullscreen', () => document.documentElement.requestFullscreen()]
+              ]) {
+                try { const handle = await operation(); if (handle?.getTracks) handle.getTracks().forEach(track => track.stop()); if (handle?.close) handle.close(); results.push(name + ':allowed'); }
+                catch (_) { results.push(name + ':denied'); }
+              }
+              return results.join(',');
             }
             mediaReport.ready();
             </script></html>

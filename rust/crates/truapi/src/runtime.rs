@@ -22,6 +22,9 @@ mod dotns_lookup;
 mod funding;
 mod host_session;
 mod identity;
+mod media;
+mod media_identity;
+mod media_signaling;
 pub mod login_failure;
 mod pairing_host;
 mod payment_id;
@@ -372,6 +375,9 @@ pub struct ProductRuntimeHost {
     chat: Arc<ActionChannel<HostChatActionSubscribeItem>>,
     renderer: Arc<ActionChannel<HostRendererActionSubscribeItem>>,
     pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
+    media_platform: Option<Arc<dyn crate::platform::MediaPlatform>>,
+    media: std::sync::OnceLock<Arc<media::MediaService>>,
+    media_closed: std::sync::atomic::AtomicBool,
     /// Host-assigned ids of this connection's open pending operations, each
     /// holding one worker reference until it ends or the connection is torn
     /// down.
@@ -391,6 +397,7 @@ pub struct ProductRuntimeHost {
 /// worker alive for a product that is gone.
 impl Drop for ProductRuntimeHost {
     fn drop(&mut self) {
+        self.close_media();
         self.release_open_operations();
         self.release_contact_avatars();
         self.release_contact_labels();
@@ -421,6 +428,9 @@ impl ProductRuntimeHost {
             renderer: adapters.renderer,
             pocket_platform: adapters.pocket_platform,
             open_operations: Mutex::new(HashSet::new()),
+            media_platform: adapters.media_platform,
+            media: std::sync::OnceLock::new(),
+            media_closed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -429,20 +439,26 @@ impl ProductRuntimeHost {
 		&self.connection
 	}
 
-	/// Test constructor building a standalone pairing-host runtime.
-	#[cfg(test)]
-	pub fn new<P>(
-		platform: Arc<P>,
-		config: (crate::platform::PairingHostConfig, ProductContext),
-		spawner: Spawner,
-	) -> Self
-	where
-		P: Platform + 'static,
-	{
-		let (host_config, product) = config;
-		let platform: Arc<dyn Platform> = platform;
-		Self::new_pairing_for_tests(platform, host_config, product, spawner).0
-	}
+    /// Trusted connection identity; never supplied by a product frame.
+    pub(crate) fn runtime_id(&self) -> u64 {
+        self.core_instance
+    }
+
+    /// Permission service for this product.
+    ///
+    /// Every device-reaching path is built here so a request and a status read
+    /// resolve the same two gates. Remote, identity-disclosure and
+    /// account-access decisions have no OS gate and are unaffected by the
+    /// status adapter.
+    fn permissions_service(&self) -> PermissionsService<'_, dyn Platform, dyn Platform> {
+        PermissionsService::new(
+            self.platform.as_ref(),
+            self.platform.as_ref(),
+            &self.product,
+        )
+        .with_status_host(self.permission_status.as_deref())
+        .with_temporary_permissions(self.temporary_permissions.clone())
+    }
 
 	/// Compatibility constructor used only by tests that do not exercise
 	/// product-scoped behavior.
@@ -579,6 +595,9 @@ impl ProductRuntimeHost {
             renderer,
             pocket_platform: None,
             open_operations: Mutex::new(HashSet::new()),
+            media_platform: None,
+            media: std::sync::OnceLock::new(),
+            media_closed: std::sync::atomic::AtomicBool::new(false),
         };
         (host, pairing_host)
     }
@@ -848,14 +867,22 @@ impl ProductRuntimeHost {
     }
 
     /// Update a stored permission authorization status. `NotDetermined`
-    /// clears the stored value so the next product request prompts again.
+    /// resets the decision so the next product request prompts again.
     #[instrument(skip_all, fields(runtime.method = "permissions.set_authorization_status"))]
     pub async fn set_permission_authorization_status(
         &self,
         request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus,
     ) -> Result<(), v01::GenericError> {
+        let product_id = self.product_id();
+        if status != PermissionAuthorizationStatus::Authorized {
+            // Stop live resources before waiting for a pending decision or
+            // unavailable storage. Persistence failure must not keep them alive.
+            self.services.notify_media_permission_revoked(&product_id, &request);
+        }
+        let _guard = self.services.media_permission_gate.lock().await;
         let service = self.permissions_service();
+        self.services.advance_media_permission_revision()?;
         let contacts_changed = matches!(request, PermissionAuthorizationRequest::ChatAuthority);
         if contacts_changed {
             self.services.invalidate_contacts();
@@ -864,7 +891,47 @@ impl ProductRuntimeHost {
         if contacts_changed {
             self.services.invalidate_contacts();
         }
-        result
+        result?;
+        if status != PermissionAuthorizationStatus::Authorized {
+            self.services.notify_media_permission_revoked(&product_id, &request);
+        }
+        Ok(())
+    }
+
+    /// Apply a stored policy notification without prompting, writing
+    /// storage, consulting the OS, or starting Media.
+    #[instrument(skip_all, fields(runtime.method = "permissions.refresh_authorization"))]
+    pub(crate) async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), v01::GenericError> {
+        if !matches!(
+            &request,
+            PermissionAuthorizationRequest::Calling { .. }
+                | PermissionAuthorizationRequest::Device(
+                    v01::HostDevicePermissionRequest::Microphone
+                        | v01::HostDevicePermissionRequest::Camera
+                )
+        ) {
+            return Ok(());
+        }
+        let _guard = self.services.media_permission_gate.lock().await;
+        let product_id = self.product_id();
+        let status = self.permissions_service()
+            .stored_authorization_status(request.clone()).await;
+        if matches!(&status, Ok(PermissionAuthorizationStatus::Authorized)) {
+            // Origin notifications include successful grants. Advancing here
+            // would invalidate the next device dialog in the same operation;
+            // exact-byte CAS already rejects stale decisions in other cores.
+            return Ok(());
+        }
+        let revision = self.services.advance_media_permission_revision();
+        // Denied, unanswered, or unreadable policy fails closed only for this
+        // precise product/capability or Calling network/account, even if the
+        // original CAS requester disappeared before locally fencing its denial.
+        self.services.notify_media_permission_revoked(&product_id, &request);
+        status?;
+        revision
     }
 
     #[instrument(skip_all, fields(runtime.method = "permissions.remote_authorization"))]

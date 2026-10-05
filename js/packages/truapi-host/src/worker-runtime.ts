@@ -25,6 +25,7 @@ import {
   handleGetPermissionAuthorizationStatus,
   handleGetPermissionAuthorizationStatuses,
   handleSetPermissionAuthorizationStatus,
+  handleRefreshPermissionAuthorization,
 } from "./worker-permission-authorization.js";
 import type {
   WasmModuleShape,
@@ -115,7 +116,7 @@ function callbackRequest(
 
 function startSubscription<T>(
   name: SubscriptionName,
-  payload: Uint8Array | string | null,
+  args: readonly unknown[],
   sendItem: (value: T) => void,
   sendError: (error: GenericError) => void,
   coreId?: number,
@@ -128,15 +129,17 @@ function startSubscription<T>(
   subscriptionListeners.set(subId, {
     sendItem: sendItem as (value: unknown) => void,
     sendError: (error) => sendError({ reason: error }),
+    privateMedia: name === "mediaBackendEvents",
   });
-  postToMain({
-    kind: "subscriptionStart",
-    subId,
-    name,
-    payload,
-    ...(coreId === undefined ? {} : { coreId }),
-  });
-  return () => {
+  try {
+    postToMain({
+      kind: "subscriptionStart",
+      subId,
+      name,
+      args,
+      ...(coreId === undefined ? {} : { coreId }),
+    });
+  } catch {
     subscriptionListeners.delete(subId);
     sendError({ reason: "Host subscription transport is unavailable" });
     return () => {};
@@ -262,9 +265,14 @@ function buildRawCallbacks(
   return {
     ...createWorkerRawCallbacks(
       {
-        callbackRequest: (name, args) => callbackRequest(name, args, coreId),
-        startSubscription: (name, payload, sendItem, sendError) =>
-          startSubscription(name, payload, sendItem, sendError, coreId),
+        callbackRequest: (name, args) =>
+          callbackRequest(
+            name,
+            args,
+            COINAGE_WALLET_CALLBACKS[name] ? undefined : coreId,
+          ),
+        startSubscription: (name, args, sendItem, sendError) =>
+          startSubscription(name, args, sendItem, sendError, coreId),
         chainConnect,
         hopConnect,
       },
@@ -1119,6 +1127,15 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         msg.requestId,
         msg.request,
         msg.status,
+      );
+      break;
+    case "refreshPermissionAuthorization":
+      void handleRefreshPermissionAuthorization(
+        runtime,
+        postToMain,
+        msg.productId,
+        msg.requestId,
+        msg.request,
       );
       break;
     case "callbackResponse": {

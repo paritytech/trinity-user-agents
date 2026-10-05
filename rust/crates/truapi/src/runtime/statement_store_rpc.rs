@@ -76,19 +76,23 @@ impl StatementStoreRpc {
 		Self { platform, people_chain_genesis_hash, spawner, chain }
 	}
 
-	/// Open a People-chain RPC client already scoped to its genesis hash, for
-	/// the native allowance paths that key the chain-context cache by it.
-	pub async fn chain_client(
-		&self,
-		label: &'static str,
-	) -> Result<crate::runtime::statement_allowance::ChainClient, StatementStoreRpcClientError> {
-		Ok(crate::runtime::statement_allowance::ChainClient::new(
-			crate::runtime::statement_allowance::rpc::RpcClient::new(RpcClient::new(
-				self.request_client(label).await?,
-			)),
-			self.people_chain_genesis_hash,
-		))
-	}
+    /// Trusted network namespace shared by host-owned signaling and authority.
+    pub(crate) fn genesis_hash(&self) -> [u8; 32] {
+        self.people_chain_genesis_hash
+    }
+
+    /// Open a People-chain RPC client already scoped to its genesis hash, for
+    /// allowance paths that key the chain-context cache by it.
+    pub async fn chain_client(
+        &self,
+        label: &'static str,
+    ) -> Result<crate::runtime::statement_allowance::ChainClient, StatementStoreRpcClientError>
+    {
+        Ok(crate::runtime::statement_allowance::ChainClient::new(
+            crate::runtime::statement_allowance::rpc::RpcClient::new(self.client(label).await?),
+            self.people_chain_genesis_hash,
+        ))
+    }
 
 	/// Open a statement-store RPC client over its own host-provided
 	/// People-chain connection, for statement subscriptions.

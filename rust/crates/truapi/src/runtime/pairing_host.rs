@@ -1,6 +1,7 @@
 //! Pairing role: product calls reach a wallet on a paired phone.
 
-mod remote_calls;
+mod media;
+mod sso_channel;
 
 use std::{
 	collections::HashMap,
@@ -48,6 +49,23 @@ use crate::{
 	runtime::vrf,
 	subscription::Spawner,
 };
+use super::statement_store_rpc::StatementStoreRpc;
+use crate::chain_runtime::ChainRuntime;
+use crate::host_internal::extrinsic::build_local_transaction;
+use crate::host_internal::sso_messages::{PaymentTopUpRequest, ProductRequest, RingVrfError};
+use crate::host_internal::transaction::sign_extrinsic_payload;
+use crate::host_logic::entropy::derive_product_entropy_from_source;
+use crate::host_logic::media_protocol::UnsignedAdvertisement;
+use crate::host_logic::product_account::{
+    SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_product_keypair_from_subtree_secret,
+    derive_ring_vrf_entropy_from_domain,
+};
+use crate::host_logic::raw_signing::raw_payload_bytes;
+use crate::host_logic::session::{SessionInfo, SessionState, encode_persisted_session};
+use crate::host_logic::session_store::SessionStoreChangeNotifier;
+use crate::runtime::vrf;
+use crate::session_usernames::SessionUsernames;
+use crate::subscription::Spawner;
 
 use crate::platform::{
 	CoreStorageKey, PairingHostConfig, Platform, ProductId, SignVrfReview, UserConfirmationReview,
@@ -2763,7 +2781,81 @@ impl ProductAuthority for PairingHost {
 		PairingHost::derive_entropy(self, session, product_id, context)
 	}
 
-	fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
-		PairingHost::contacts_handle_key(self, session)
-	}
+    async fn statement_store_allowance_key(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        product_id: String,
+    ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
+        PairingHost::statement_store_allowance_key(self, cx, session, product_id).await
+    }
+
+    async fn bulletin_allowance_key(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        product_id: String,
+    ) -> Result<BulletinAllowanceKey, AuthorityError> {
+        PairingHost::bulletin_allowance_key(self, cx, session, product_id).await
+    }
+
+    async fn refresh_bulletin_allowance_key(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        product_id: String,
+    ) -> Result<BulletinAllowanceKey, AuthorityError> {
+        PairingHost::refresh_bulletin_allowance_key(self, cx, session, product_id).await
+    }
+
+    async fn sign_statement_store_product_payload(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        calling_product_id: Option<&str>,
+        account: v01::ProductAccountId,
+        payload: Vec<u8>,
+    ) -> Result<[u8; 64], AuthorityError> {
+        PairingHost::sign_statement_store_product_payload(
+            self,
+            cx,
+            session,
+            calling_product_id,
+            account,
+            payload,
+        )
+        .await
+    }
+
+    async fn certify_media_endpoint(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        unsigned: UnsignedAdvertisement,
+    ) -> Result<[u8; 64], AuthorityError> {
+        self.certify_paired_media_endpoint(cx, session, unsigned).await
+    }
+
+    fn sign_media_statement(
+        &self,
+        session: &AuthoritySession,
+        payload: Vec<u8>,
+        topics: Vec<[u8; 32]>,
+        expires_at: u64,
+    ) -> Result<Vec<u8>, AuthorityError> {
+        self.sign_paired_media_statement(session, payload, topics, expires_at)
+    }
+
+    fn derive_entropy(
+        &self,
+        session: &AuthoritySession,
+        product_id: &str,
+        context: &[u8],
+    ) -> Result<[u8; 32], AuthorityError> {
+        PairingHost::derive_entropy(self, session, product_id, context)
+    }
+
+    fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
+        PairingHost::contacts_handle_key(self, session)
+    }
 }

@@ -10,13 +10,14 @@ enum WebRTCPeerConnectionFactoryProvider {
         RTCSetMinDebugLogLevel(.none)
     }()
 
-    static func make() -> RTCPeerConnectionFactory {
+    static func make(audioDevice: RTCAudioDevice? = nil) -> RTCPeerConnectionFactory {
         _ = sslInitialization
         let encoderFactory = RTCDefaultVideoEncoderFactory()
         let decoderFactory = RTCDefaultVideoDecoderFactory()
         return RTCPeerConnectionFactory(
             encoderFactory: encoderFactory,
-            decoderFactory: decoderFactory
+            decoderFactory: decoderFactory,
+            audioDevice: audioDevice
         )
     }
 }

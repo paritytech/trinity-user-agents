@@ -1,6 +1,7 @@
 import Foundation
 
 protocol TrUAPILocalStoring: AnyObject, Sendable {
+    var storageIdentifier: String { get }
     func read(key: String) throws -> Data?
     func write(key: String, value: Data) throws
     func clear(key: String) throws
@@ -14,55 +15,79 @@ final class TrUAPILocalStorage: TrUAPILocalStoring, @unchecked Sendable {
     private static let productKeyPrefix = "io.polkadotapp.truapi.product.store"
     private static let coreKeyPrefix = "io.polkadotapp.truapi.core"
 
+    private enum StorageFailure: Error {
+        case invalidValue
+        case persistenceFailed
+    }
+
     private let keyPrefix: String
     private let readPrefix: @Sendable (String) -> String
+    let storageIdentifier: String
     private let defaults: UserDefaults
 
-    convenience init(keyPrefix: String, defaults: UserDefaults) {
-        self.init(keyPrefix: keyPrefix, defaults: defaults) { _ in keyPrefix }
+    convenience init(keyPrefix: String, defaults: UserDefaults, storageDomain: String) {
+        self.init(keyPrefix: keyPrefix, defaults: defaults, storageDomain: storageDomain) { _ in keyPrefix }
     }
 
     private init(
         keyPrefix: String,
         defaults: UserDefaults,
+        storageDomain: String,
         readPrefix: @escaping @Sendable (String) -> String
     ) {
         self.keyPrefix = keyPrefix
         self.readPrefix = readPrefix
         self.defaults = defaults
+        self.storageIdentifier = "\(storageDomain)/\(keyPrefix)"
+    }
+
+    static func createProductLocalStorage(productId: String) -> TrUAPILocalStorage {
+        createProductLocalStorage(productId: productId, defaults: .standard, storageDomain: "UserDefaults.standard")
     }
 
     /// Reads go to the product the core named as the key's owner, which is
     /// another product on a granted foreign read. Writes and clears stay in
     /// `productId`'s store.
     static func createProductLocalStorage(
-        productId: String,
-        defaults: UserDefaults = .standard
+        productId: String, defaults: UserDefaults, storageDomain: String
     ) -> TrUAPILocalStorage {
         let ownPrefix = "\(productKeyPrefix).\(productId)"
         let ownId = ProductStorageKey.normalize(productId)
-        return TrUAPILocalStorage(keyPrefix: ownPrefix, defaults: defaults) { key in
+        return TrUAPILocalStorage(keyPrefix: ownPrefix, defaults: defaults, storageDomain: storageDomain) { key in
             guard let owner = ProductStorageKey.owner(of: key), owner != ownId else { return ownPrefix }
             return "\(productKeyPrefix).\(owner)"
         }
     }
 
-    static func createCoreLocalStorage(
-        defaults: UserDefaults = .standard
-    ) -> TrUAPILocalStorage {
-        TrUAPILocalStorage(keyPrefix: coreKeyPrefix, defaults: defaults)
+    static func createCoreLocalStorage() -> TrUAPILocalStorage {
+        createCoreLocalStorage(defaults: .standard, storageDomain: "UserDefaults.standard")
+    }
+
+    static func createCoreLocalStorage(defaults: UserDefaults, storageDomain: String) -> TrUAPILocalStorage {
+        TrUAPILocalStorage(keyPrefix: coreKeyPrefix, defaults: defaults, storageDomain: storageDomain)
+    }
+
+    func keys() -> [String] {
+        let prefix = "\(keyPrefix)."
+        return defaults.dictionaryRepresentation().keys.compactMap { key in
+            key.hasPrefix(prefix) ? String(key.dropFirst(prefix.count)) : nil
+        }
     }
 
     func read(key: String) throws -> Data? {
-        defaults.data(forKey: "\(readPrefix(key)).\(key)")
+        guard let value = defaults.object(forKey: "\(readPrefix(key)).\(key)") else { return nil }
+        guard let data = value as? Data else { throw StorageFailure.invalidValue }
+        return data
     }
 
     func write(key: String, value: Data) throws {
         defaults.set(value, forKey: storageKey(key))
+        guard defaults.synchronize() else { throw StorageFailure.persistenceFailed }
     }
 
     func clear(key: String) throws {
         defaults.removeObject(forKey: storageKey(key))
+        guard defaults.synchronize() else { throw StorageFailure.persistenceFailed }
     }
 }
 

@@ -9,6 +9,15 @@
 //! Async capability traits use `async_trait` so the combined [`Platform`]
 //! surface can be used as a trait object by the runtime.
 
+pub mod media;
+
+pub use media::{
+    MediaBackendCapabilities, MediaBackendCommand, MediaBackendEvent, MediaBackendPeerState,
+    MediaBackendResponse, MediaDescription, MediaDescriptionKind, MediaIceCandidate, MediaPlatform,
+    MediaConsentRequest, MediaRevocationSource,
+    MediaRevokedPermission,
+};
+
 use std::collections::BTreeSet;
 
 use futures::stream::BoxStream;
@@ -129,7 +138,11 @@ pub struct SigningHostConfig {
 /// A host may create multiple product runtimes from the same long-lived host
 /// runtime, each with its own product context.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+// `Decode` is hand-written below so decoding cannot bypass the validating
+// constructor. Not a doc comment: wire-type docs are emitted into the generated
+// host API, and this is a Rust-side implementation note.
+#[derive(Debug, Clone, PartialEq, Eq, Encode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductContext {
 	/// Product identifier used for account derivation and product-scoped
 	/// storage/permission namespaces.
@@ -277,8 +290,190 @@ impl ProductContext {
 	}
 }
 
+/// Decoding routes through [`ProductContext::new_with_execution`] so a frame
+/// off the wire cannot produce a context the constructor rejects. The runtime
+/// treats a `ProductContext` as already validated (product storage keys are
+/// built with `expect`), and derivation/storage scopes are keyed by
+/// `product_id`, so an unnormalized id would split one logical product across
+/// two scopes.
+impl Decode for ProductContext {
+    fn decode<I: parity_scale_codec::Input>(
+        input: &mut I,
+    ) -> Result<Self, parity_scale_codec::Error> {
+        let product_id = String::decode(input)?;
+        let execution_kind = ProductExecutionKind::decode(input)?;
+        Self::new_with_execution(product_id, execution_kind)
+            .map_err(|_| "ProductContext.product_id is not an accepted product identifier".into())
+    }
+}
+
+/// Whether `identifier` is a product scope the core is allowed to derive for.
+pub fn is_product_identifier(identifier: &str) -> bool {
+    normalize_product_identifier(identifier).is_ok()
+}
+
+/// Top-level domains that dotNS deployments register product names under.
+/// Each network declares its own, so the set spans every network a host can
+/// be pointed at rather than just the production one.
+pub const DOTNS_TLDS: &[&str] = &["dot", "paseo", "testnet"];
+
+/// Whether `normalized` ends in one of [`DOTNS_TLDS`]. Expects an
+/// already-lowercased host with no trailing root dot.
+pub fn has_dotns_tld(normalized: &str) -> bool {
+    normalized
+        .rsplit_once('.')
+        .is_some_and(|(_, tld)| DOTNS_TLDS.contains(&tld))
+}
+
+/// Blessed product labels across every network in [`DOTNS_TLDS`].
+///
+/// These products bypass recorded permissions and prompt only for device access.
+/// They never hold [`RemotePermission::Calling`], which requires scoped consent.
+pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", "dim2", "stash"];
+
 /// Hosts available to every product unless a stored permission decision blocks them.
 pub const BLESSED_REMOTE_DOMAINS: &[&str] = &["fonts.googleapis.com", "fonts.gstatic.com"];
+
+/// Whether `product_id` holds ordinary remote permissions without prompting.
+///
+/// This never authorizes [`RemotePermission::Calling`], which requires scoped consent.
+///
+/// Expects the [`normalize_product_identifier`] form. Matches the whole label
+/// and nothing else: `peopl.dot` and `peopl.paseo` are trusted, while
+/// `app.peopl.dot` and any `localhost` identifier are separate products and are
+/// not. The label is only read out of an id that [`has_dotns_tld`] accepts, so a
+/// widened product-id policy cannot promote an arbitrary single-label host.
+pub fn has_trusted_remote_permissions(product_id: &str) -> bool {
+    has_dotns_tld(product_id)
+        && product_id
+            .rsplit_once('.')
+            .is_some_and(|(label, _tld)| REMOTE_PERMISSION_TRUSTED_LABELS.contains(&label))
+}
+
+/// Whether `product_id` in any accepted spelling holds ordinary remote
+/// permissions without prompting, excluding [`RemotePermission::Calling`].
+///
+/// [`has_trusted_remote_permissions`] reads the normalized form, which is what
+/// the core always holds. A host holds whatever spelling it received, so this
+/// normalizes first and answers `false` for an id that does not normalize at
+/// all: an unrecognised spelling is never read as trusted.
+///
+/// Recorded permission decisions do not affect this policy.
+pub fn normalizes_to_trusted_remote_permissions(product_id: &str) -> bool {
+    normalize_product_identifier(product_id)
+        .is_ok_and(|normalized| has_trusted_remote_permissions(&normalized))
+}
+
+/// The label a development product identifier is served under.
+const LOCALHOST_PRODUCT_LABEL: &str = "localhost";
+
+/// Whether `product_id` is a development localhost product identifier.
+///
+/// Exactly `localhost`, or `localhost:` followed by a port and nothing else.
+/// Hosts grant these a development wildcard, so the match is the whole
+/// identifier: a prefix test would also admit `localhost:8080.evil`, and a
+/// label test would admit a published `localhost.<tld>`, which
+/// [`normalize_product_identifier`] rejects for the same reason.
+pub fn is_localhost_product_identifier(product_id: &str) -> bool {
+    if product_id == LOCALHOST_PRODUCT_LABEL {
+        return true;
+    }
+    product_id
+        .strip_prefix("localhost:")
+        .is_some_and(|port| !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Largest accepted product identifier, in bytes.
+///
+/// Bounds the size of one identifier, not how many exist: a manifest miss
+/// caches its answer keyed by the target and nothing evicts those entries.
+/// Matches the cap on product-supplied chat identifiers.
+pub const PRODUCT_ID_MAX_BYTES: usize = 256;
+
+/// Normalize product identifiers before derivation and policy checks.
+pub fn normalize_product_identifier(
+    product_id: &str,
+) -> Result<String, RuntimeConfigValidationError> {
+    let trimmed = product_id.trim();
+    require_non_empty("product_id", trimmed)?;
+    let normalized = trimmed.nfc().collect::<String>().to_lowercase();
+    // After normalizing, since NFC can change the length. Reported by length
+    // rather than by value: an id that trips this can be arbitrarily large.
+    if normalized.len() > PRODUCT_ID_MAX_BYTES {
+        return Err(RuntimeConfigValidationError::ProductIdTooLong {
+            limit: PRODUCT_ID_MAX_BYTES,
+            actual: normalized.len(),
+        });
+    }
+    if !has_well_formed_labels(&normalized) {
+        return Err(RuntimeConfigValidationError::InvalidProductId {
+            product_id: product_id.to_string(),
+        });
+    }
+    if is_localhost_product_identifier(&normalized) {
+        return Ok(normalized);
+    }
+    // `localhost` is reserved as a label, not only as a bare identifier. A
+    // product published as `localhost.<tld>` would otherwise be one string
+    // comparison away from whatever a host grants the development wildcard.
+    let reserves_localhost = normalized
+        .rsplit_once('.')
+        .is_some_and(|(label, _tld)| label == LOCALHOST_PRODUCT_LABEL);
+    if has_dotns_tld(&normalized) && !reserves_localhost {
+        Ok(normalized)
+    } else {
+        Err(RuntimeConfigValidationError::InvalidProductId {
+            product_id: product_id.to_string(),
+        })
+    }
+}
+
+/// Whether every dot-separated label of a normalized id is well formed.
+///
+/// Only the suffix after the last `.` was ever inspected, so the rest of the id
+/// could be anything the transport carried. Three consequences, all reachable
+/// because a cross-product call takes this string from the wire where it is
+/// self-asserted:
+///
+/// - An empty label. `dim2..dot` and `.dot` both reduce to `""`, so distinct ids
+///   collapse onto one grant key and one manifest cache entry.
+/// - Control and format characters. A NUL or a right-to-left override survives
+///   into [`AccountAccessReview`], which renders the id verbatim in the only
+///   consent prompt this design has, and into every log line carrying it.
+/// - Whitespace and path separators, which let one product's id render like
+///   another's anywhere the comparison is not byte-exact.
+///
+/// Deliberately not an ASCII allowlist: dotNS names are internationalized, so
+/// `tést.dot` is a real id. What is rejected is the class of characters that
+/// carries no name and only confuses a reader or a key.
+fn has_well_formed_labels(normalized: &str) -> bool {
+    /// Zero-width and bidirectional formatting characters. Invisible in every
+    /// rendering, so they make two different ids look identical to a user.
+    fn is_invisible_format(c: char) -> bool {
+        matches!(c,
+            '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{feff}')
+    }
+    let label_ok = |label: &str| {
+        !label.is_empty()
+            && !label.chars().any(|c| {
+                c.is_control()
+                    || c.is_whitespace()
+                    || is_invisible_format(c)
+                    || matches!(c, '/' | '\\')
+            })
+    };
+    if normalized == "localhost" {
+        return true;
+    }
+    if let Some(port) = normalized.strip_prefix("localhost:") {
+        return !port.is_empty() && port.chars().all(|c| c.is_ascii_digit());
+    }
+    normalized.split('.').all(label_ok)
+}
 
 /// Largest accepted length for a product-supplied chat identifier or display
 /// name, in bytes.
@@ -1023,43 +1218,38 @@ pub trait Permissions: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum PermissionAuthorizationRequest {
-	/// Device-level permission such as camera, microphone, or location.
-	Device(HostDevicePermissionRequest),
-	/// Remote/product-scoped permission such as chain submit or HTTP access.
-	Remote(RemotePermissionRequest),
-	/// Product-scoped permission to disclose the user's primary identity.
-	IdentityDisclosure,
-	/// Product-scoped permission to access another product's account context.
-	AccountAccess {
-		/// Product whose account context may be accessed.
-		target_product_id: String,
-	},
-	/// Product-scoped approval to make one kind of signature with another
-	/// product's accounts. It is held in memory only and ends when the product
-	/// execution closes.
-	CrossProductSignature {
-		/// Product whose accounts sign.
-		target_product_id: String,
-		/// Kind of signature the user approved.
-		kind: CrossProductSignatureKind,
-	},
-}
-
-/// A kind of signature a product makes with another product's account.
-///
-/// The user approves each kind separately: approving one never lets another
-/// through without a prompt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum CrossProductSignatureKind {
-	/// `sign_payload`.
-	Payload,
-	/// `create_transaction` naming no contacts.
-	Transaction,
-	/// Watermarked `sign_raw`.
-	Raw,
-	/// A Statement Store product proof.
-	StatementProof,
+    /// Device-level permission such as camera, microphone, or location.
+    Device(HostDevicePermissionRequest),
+    /// Remote/product-scoped permission such as chain submit or HTTP access.
+    Remote(RemotePermissionRequest),
+    /// Product-scoped permission to disclose the user's primary identity.
+    IdentityDisclosure,
+    /// Product-scoped permission to access another product's account context.
+    AccountAccess {
+        /// Product whose account context may be accessed.
+        target_product_id: String,
+    },
+    /// Product-scoped permission to bind and use wallet-held Chat identity authority.
+    #[codec(index = 4)]
+    ChatAuthority,
+    /// Product-scoped permission to ensure Statement Store quota, not increase it.
+    #[codec(index = 5)]
+    StatementStoreAllowance {
+        /// `None` selects the legacy allowance account; `Some` selects a product account.
+        derivation_index: Option<DerivationIndex>,
+    },
+    /// Calling consent for this product's authenticated network and account.
+    ///
+    /// The core resolves both fields from the active authority session, never
+    /// from product-supplied identity claims. Unscoped `Remote(Calling)` grants
+    /// do not authorize this request.
+    #[codec(index = 6)]
+    Calling {
+        /// Genesis hash of the authenticated network.
+        network: [u8; 32],
+        /// Product's authority-derived `Index(0)` sr25519 public key.
+        account: [u8; 32],
+    },
 }
 
 /// Authorization status for a permission request.
@@ -1109,26 +1299,33 @@ pub trait CoreAdmin: Send + Sync {
 		requests: Vec<PermissionAuthorizationRequest>,
 	) -> Result<Vec<PermissionAuthorizationStatus>, GenericError>;
 
-	/// Update a stored permission authorization status. `NotDetermined` clears
-	/// the stored value so the next product request prompts again.
-	async fn set_permission_authorization_status(
-		&self,
-		request: PermissionAuthorizationRequest,
-		status: PermissionAuthorizationStatus,
-	) -> Result<(), GenericError>;
+    /// Update a stored permission authorization status. `NotDetermined` resets
+    /// the decision so the next product request prompts again.
+    async fn set_permission_authorization_status(
+        &self,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), GenericError>;
 
-	/// Read the active session's X25519 chat identity private key, for hosts
-	/// that run their own P2P chat channel for the paired identity.
-	///
-	/// The wallet derives this key from the identity root and shares it during
-	/// pairing; the core retains it verbatim, because a value derived
-	/// host-side would address an identity no existing peer can reach. `None`
-	/// when no session is active.
-	///
-	/// Deliberately not on [`SessionUiInfo`]: that projection rides every
-	/// [`AuthState`] broadcast to all registered [`AuthPresenter`]s, so a
-	/// secret placed there would reach hosts that never asked for it.
-	async fn get_session_chat_identity_key(&self) -> Result<Option<Bytes32>, GenericError>;
+    /// Re-read a stored product decision and fence revoked Media authorization.
+    /// Host-only, read-only, and never prompts or consults OS permission state.
+    async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), GenericError>;
+
+    /// Read the active session's X25519 chat identity private key, for hosts
+    /// that run their own P2P chat channel for the paired identity.
+    ///
+    /// The wallet derives this key from the identity root and shares it during
+    /// pairing; the core retains it verbatim, because a value derived
+    /// host-side would address an identity no existing peer can reach. `None`
+    /// when no session is active.
+    ///
+    /// Deliberately not on [`SessionUiInfo`]: that projection rides every
+    /// [`AuthState`] broadcast to all registered [`AuthPresenter`]s, so a
+    /// secret placed there would reach hosts that never asked for it.
+    async fn get_session_chat_identity_key(&self) -> Result<Option<Bytes32>, GenericError>;
 
 	/// Read the active session's expanded sr25519 statement-store secret, for
 	/// hosts that run their own statement-store traffic. 64 bytes.
@@ -1815,10 +2012,13 @@ pub enum CoreStorageKey {
 /// product-indexed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreStorageKeyDescription {
-	/// Stable storage-key variant name.
-	pub kind: &'static str,
-	/// Product that owns this exact slot, when the key is product-indexed.
-	pub product_id: Option<String>,
+    /// Stable storage-key variant name.
+    pub kind: &'static str,
+    /// Product that owns this exact slot, when the key is product-indexed.
+    pub product_id: Option<String>,
+    /// Exact permission scope for an authorization slot, including inactive accounts.
+    /// No current authority, stored value, or secret material is consulted.
+    pub permission_request: Option<PermissionAuthorizationRequest>,
 }
 
 /// Failure to decode exactly one [`CoreStorageKey`].
@@ -1843,10 +2043,12 @@ pub fn describe_core_storage_key(
     if !input.is_empty() {
         return Err(CoreStorageKeyDescriptionError::TrailingBytes);
     }
+    let mut permission_request = None;
     let (kind, product_id) = match key {
         CoreStorageKey::AuthSession => ("AuthSession", None),
         CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
-        CoreStorageKey::PermissionAuthorization { product_id, .. } => {
+        CoreStorageKey::PermissionAuthorization { product_id, request } => {
+            permission_request = Some(request);
             ("PermissionAuthorization", Some(product_id))
         }
         CoreStorageKey::AllowanceKeys { .. } => ("AllowanceKeys", None),
@@ -1874,7 +2076,7 @@ pub fn describe_core_storage_key(
         }
         CoreStorageKey::NotificationReceiving => ("NotificationReceiving", None),
     };
-    Ok(CoreStorageKeyDescription { kind, product_id })
+    Ok(CoreStorageKeyDescription { kind, product_id, permission_request })
 }
 
 impl CoreStorageKey {
@@ -1937,16 +2139,39 @@ impl CoreStorageKey {
 		}
 	}
 
-	/// Persisted authorization key for one product accessing another product's
-	/// account context.
-	pub fn account_access_authorization(product_id: &str, target_product_id: &str) -> Self {
-		Self::PermissionAuthorization {
-			product_id: product_id.to_string(),
-			request: PermissionAuthorizationRequest::AccountAccess {
-				target_product_id: target_product_id.to_string(),
-			},
-		}
-	}
+    /// Persisted authorization key for wallet-held Chat identity authority.
+    pub fn chat_authority_authorization(product_id: &str) -> Self {
+        Self::PermissionAuthorization {
+            product_id: product_id.to_string(),
+            request: PermissionAuthorizationRequest::ChatAuthority,
+        }
+    }
+
+    /// Persisted authorization for one statement allowance account selector.
+    pub fn statement_store_allowance_authorization(
+        product_id: &str,
+        derivation_index: Option<DerivationIndex>,
+    ) -> Self {
+        Self::PermissionAuthorization {
+            product_id: product_id.to_string(),
+            request: PermissionAuthorizationRequest::StatementStoreAllowance { derivation_index },
+        }
+    }
+
+    /// Persisted calling consent for one canonical product, network, and account.
+    ///
+    /// Callers supply the authenticated network genesis and the product's
+    /// authority-derived `Index(0)` account, not product-provided selectors.
+    pub fn calling_authorization(
+        product_id: &str,
+        network: [u8; 32],
+        account: [u8; 32],
+    ) -> Self {
+        Self::PermissionAuthorization {
+            product_id: product_id.to_string(),
+            request: PermissionAuthorizationRequest::Calling { network, account },
+        }
+    }
 }
 
 /// Canonical storage form for one remote-access domain pattern.
@@ -2038,893 +2263,1203 @@ fn canonical_remote_request(request: &RemotePermissionRequest) -> RemotePermissi
 
 #[cfg(test)]
 mod tests {
-	use super::*;
+    use super::*;
 
-	fn signing_host_config(
-		network_suffix: &str,
-	) -> Result<SigningHostConfig, RuntimeConfigValidationError> {
-		SigningHostConfig::new(
-			HostInfo {
-				name: "Test host".to_string(),
-				icon: None,
-				version: None,
-				platform: HostPlatform::Unknown,
-			},
-			PlatformInfo::default(),
-			[0; 32],
-			[1; 32],
-			[2; 32],
-			network_suffix.to_string(),
-		)
-	}
+    #[test]
+    fn hop_dialing_requires_exact_secure_endpoint_membership() {
+        let allowed = vec!["wss://hop.example/rpc".to_string()];
+        assert!(ensure_allowed_hop_endpoint(&allowed[0], &allowed).is_ok());
+        for endpoint in [
+            "wss://hop.example/rpc/",
+            "wss://HOP.example/rpc",
+            "wss://hop.example:443/rpc",
+            "wss://hop.example/rpc?other=1",
+            "wss://hop.example.evil/rpc",
+        ] {
+            assert!(ensure_allowed_hop_endpoint(endpoint, &allowed).is_err());
+        }
+        // Even malformed trusted configuration must not weaken the dial policy.
+        for endpoint in [
+            "ws://hop.example/rpc",
+            "https://hop.example/rpc",
+            "wss://user:secret@hop.example/rpc",
+            "wss://@hop.example/rpc",
+            "wss://hop.example\\rpc",
+            "wss://hop.example/rpc#fragment",
+            "wss://hop.example/\nrpc",
+            " wss://hop.example/rpc",
+        ] {
+            assert!(ensure_allowed_hop_endpoint(endpoint, &[endpoint.to_string()]).is_err());
+        }
+    }
 
-	#[test]
-	fn a_signing_host_is_configured_for_one_dotns_tld() {
-		for tld in DOTNS_TLDS {
-			let config = signing_host_config(tld).expect("a known TLD is a valid suffix");
-			assert_eq!(config.network_suffix, *tld);
-		}
+    fn signing_host_config(
+        network_suffix: &str,
+    ) -> Result<SigningHostConfig, RuntimeConfigValidationError> {
+        SigningHostConfig::new(
+            HostInfo {
+                name: "Test host".to_string(),
+                icon: None,
+                version: None,
+                platform: HostPlatform::Unknown,
+            },
+            PlatformInfo::default(),
+            [0; 32],
+            [1; 32],
+            [2; 32],
+            network_suffix.to_string(),
+        )
+    }
 
-		assert_eq!(
-			signing_host_config(""),
-			Err(RuntimeConfigValidationError::EmptyField { field: "network_suffix" })
-		);
-		for malformed in [
-			"pasoe",
-			"unknown",
-			".paseo",
-			"peopl.paseo",
-			"Paseo",
-			"pas eo",
-			"a-b",
-			"abcdefghijklmnopq",
-		] {
-			assert_eq!(
-				signing_host_config(malformed),
-				Err(RuntimeConfigValidationError::InvalidNetworkSuffix {
-					network_suffix: malformed.to_string()
-				}),
-				"{malformed:?} must be rejected"
-			);
-		}
-	}
+    #[test]
+    fn a_signing_host_is_configured_for_one_dotns_tld() {
+        for tld in DOTNS_TLDS {
+            let config = signing_host_config(tld).expect("a known TLD is a valid suffix");
+            assert_eq!(config.network_suffix, *tld);
+        }
 
-	fn file_with_url(url: &str) -> ChatMessageContent {
-		ChatMessageContent::File(ChatFile {
-			url: url.to_string(),
-			file_name: "report.pdf".to_string(),
-			mime_type: "application/pdf".to_string(),
-			size_bytes: 1,
-			text: None,
-		})
-	}
+        assert_eq!(
+            signing_host_config(""),
+            Err(RuntimeConfigValidationError::EmptyField {
+                field: "network_suffix"
+            })
+        );
+        for malformed in [
+            "pasoe",
+            "unknown",
+            ".paseo",
+            "peopl.paseo",
+            "Paseo",
+            "pas eo",
+            "a-b",
+            "abcdefghijklmnopq",
+        ] {
+            assert_eq!(
+                signing_host_config(malformed),
+                Err(RuntimeConfigValidationError::InvalidNetworkSuffix {
+                    network_suffix: malformed.to_string()
+                }),
+                "{malformed:?} must be rejected"
+            );
+        }
+    }
 
-	#[test]
-	fn a_message_url_is_screened_like_an_icon() {
-		// The icon field already rejects these. A file card is fetched or
-		// opened the same way, so the same allowlist applies.
-		for hostile in [
-			"javascript:alert(document.cookie)",
-			"file:///etc/passwd",
-			"content://com.host.provider/secret",
-			"data:image/svg+xml,<svg onload=alert(1)>",
-		] {
-			assert_eq!(
-				validate_chat_message_content(file_with_url(hostile)),
-				Err(ChatFieldError::RejectedScheme { field: "url" }),
-				"{hostile} must be rejected"
-			);
-		}
+    fn file_with_url(url: &str) -> ChatMessageContent {
+        ChatMessageContent::File(ChatFile {
+            url: url.to_string(),
+            file_name: "report.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+            size_bytes: 1,
+            text: None,
+        })
+    }
 
-		// Characters a URL parser drops are rejected before it runs, so the
-		// string a host renders is the string the scheme check ran against.
-		for smuggled in [
-			"java\tscript:alert(1)",
-			"\u{0}javascript:alert(1)",
-			"https:/\t/evil.invalid/x",
-			"https://\u{200b}evil.invalid/x",
-			"https://example.invalid/\u{202e}gpj.exe",
-		] {
-			assert_eq!(
-				validate_chat_message_content(file_with_url(smuggled)),
-				Err(ChatFieldError::UnsafeCharacter { field: "url" }),
-				"{smuggled} must be rejected"
-			);
-		}
+    #[test]
+    fn a_message_url_is_screened_like_an_icon() {
+        // The icon field already rejects these. A file card is fetched or
+        // opened the same way, so the same allowlist applies.
+        for hostile in [
+            "javascript:alert(document.cookie)",
+            "file:///etc/passwd",
+            "content://com.host.provider/secret",
+            "data:image/svg+xml,<svg onload=alert(1)>",
+        ] {
+            assert_eq!(
+                validate_chat_message_content(file_with_url(hostile)),
+                Err(ChatFieldError::RejectedScheme { field: "url" }),
+                "{hostile} must be rejected"
+            );
+        }
 
-		// What reaches the host is what the parser resolved.
-		assert_eq!(
-			validate_chat_message_content(file_with_url("https://example.invalid")),
-			Ok(file_with_url("https://example.invalid/"))
-		);
-	}
+        // Characters a URL parser drops are rejected before it runs, so the
+        // string a host renders is the string the scheme check ran against.
+        for smuggled in [
+            "java\tscript:alert(1)",
+            "\u{0}javascript:alert(1)",
+            "https:/\t/evil.invalid/x",
+            "https://\u{200b}evil.invalid/x",
+            "https://example.invalid/\u{202e}gpj.exe",
+        ] {
+            assert_eq!(
+                validate_chat_message_content(file_with_url(smuggled)),
+                Err(ChatFieldError::UnsafeCharacter { field: "url" }),
+                "{smuggled} must be rejected"
+            );
+        }
 
-	#[test]
-	fn a_file_name_cannot_reverse_its_own_extension() {
-		// A bidi override renders `invoice<RLO>gnp.exe` as `invoiceexe.png`
-		// on the download affordance the host draws.
-		let spoofed = ChatMessageContent::File(ChatFile {
-			url: "https://example.invalid/f".to_string(),
-			file_name: "invoice\u{202e}gnp.exe".to_string(),
-			mime_type: "application/pdf".to_string(),
-			size_bytes: 1,
-			text: None,
-		});
-		assert_eq!(
-			validate_chat_message_content(spoofed),
-			Err(ChatFieldError::UnsafeCharacter { field: "fileName" })
-		);
-	}
+        // What reaches the host is what the parser resolved.
+        assert_eq!(
+            validate_chat_message_content(file_with_url("https://example.invalid")),
+            Ok(file_with_url("https://example.invalid/"))
+        );
+    }
 
-	#[test]
-	fn message_content_is_bounded_by_count_and_by_bytes() {
-		let too_many = ChatMessageContent::Actions(ChatActions {
-			text: None,
-			actions: (0..CHAT_ACTIONS_MAX + 1)
-				.map(|index| ChatAction { action_id: format!("a{index}"), title: "go".to_string() })
-				.collect(),
-			layout: truapi::latest::ChatActionLayout::Column,
-		});
-		assert_eq!(
-			validate_chat_message_content(too_many),
-			Err(ChatFieldError::TooMany { field: "actions", limit: CHAT_ACTIONS_MAX })
-		);
+    #[test]
+    fn a_file_name_cannot_reverse_its_own_extension() {
+        // A bidi override renders `invoice<RLO>gnp.exe` as `invoiceexe.png`
+        // on the download affordance the host draws.
+        let spoofed = ChatMessageContent::File(ChatFile {
+            url: "https://example.invalid/f".to_string(),
+            file_name: "invoice\u{202e}gnp.exe".to_string(),
+            mime_type: "application/pdf".to_string(),
+            size_bytes: 1,
+            text: None,
+        });
+        assert_eq!(
+            validate_chat_message_content(spoofed),
+            Err(ChatFieldError::UnsafeCharacter { field: "fileName" })
+        );
+    }
 
-		let too_long = ChatMessageContent::Text { text: "x".repeat(CHAT_BODY_MAX_BYTES + 1) };
-		assert_eq!(
-			validate_chat_message_content(too_long),
-			Err(ChatFieldError::TooLong { field: "text", limit: CHAT_BODY_MAX_BYTES })
-		);
+    #[test]
+    fn message_content_is_bounded_by_count_and_by_bytes() {
+        let too_many = ChatMessageContent::Actions(ChatActions {
+            text: None,
+            actions: (0..CHAT_ACTIONS_MAX + 1)
+                .map(|index| ChatAction {
+                    action_id: format!("a{index}"),
+                    title: "go".to_string(),
+                })
+                .collect(),
+            layout: truapi::latest::ChatActionLayout::Column,
+        });
+        assert_eq!(
+            validate_chat_message_content(too_many),
+            Err(ChatFieldError::TooMany {
+                field: "actions",
+                limit: CHAT_ACTIONS_MAX,
+            })
+        );
 
-		let too_much_media = ChatMessageContent::RichText(ChatRichText {
-			text: None,
-			media: (0..CHAT_MEDIA_MAX + 1)
-				.map(|_| ChatMedia { url: "https://example.invalid/m".to_string() })
-				.collect(),
-		});
-		assert_eq!(
-			validate_chat_message_content(too_much_media),
-			Err(ChatFieldError::TooMany { field: "media", limit: CHAT_MEDIA_MAX })
-		);
-	}
+        let too_long = ChatMessageContent::Text {
+            text: "x".repeat(CHAT_BODY_MAX_BYTES + 1),
+        };
+        assert_eq!(
+            validate_chat_message_content(too_long),
+            Err(ChatFieldError::TooLong {
+                field: "text",
+                limit: CHAT_BODY_MAX_BYTES,
+            })
+        );
 
-	#[test]
-	fn a_message_body_carries_the_text_a_person_typed() {
-		// A chat message is written text: line breaks and tabs are content,
-		// and the bytes must survive so a product can echo-compare them.
-		let markdown = "# Report\n\n| a | b |\n| - | - |\n\tindented\n";
-		assert_eq!(
-			validate_chat_message_content(ChatMessageContent::Text { text: markdown.to_string() }),
-			Ok(ChatMessageContent::Text { text: markdown.to_string() })
-		);
+        let too_much_media = ChatMessageContent::RichText(ChatRichText {
+            text: None,
+            media: (0..CHAT_MEDIA_MAX + 1)
+                .map(|_| ChatMedia {
+                    url: "https://example.invalid/m".to_string(),
+                })
+                .collect(),
+        });
+        assert_eq!(
+            validate_chat_message_content(too_much_media),
+            Err(ChatFieldError::TooMany {
+                field: "media",
+                limit: CHAT_MEDIA_MAX,
+            })
+        );
+    }
 
-		// Neither trimmed nor NFC-normalized.
-		let unnormalized = "  cafe\u{301}  ";
-		assert_eq!(
-			validate_chat_message_content(ChatMessageContent::Text {
-				text: unnormalized.to_string(),
-			}),
-			Ok(ChatMessageContent::Text { text: unnormalized.to_string() })
-		);
+    #[test]
+    fn a_message_body_carries_the_text_a_person_typed() {
+        // A chat message is written text: line breaks and tabs are content,
+        // and the bytes must survive so a product can echo-compare them.
+        let markdown = "# Report\n\n| a | b |\n| - | - |\n\tindented\n";
+        assert_eq!(
+            validate_chat_message_content(ChatMessageContent::Text {
+                text: markdown.to_string(),
+            }),
+            Ok(ChatMessageContent::Text {
+                text: markdown.to_string(),
+            })
+        );
 
-		// The bidi and zero-width screen still applies.
-		assert_eq!(
-			validate_chat_message_content(ChatMessageContent::Text {
-				text: "pay \u{202e}yletamitigel".to_string(),
-			}),
-			Err(ChatFieldError::UnsafeCharacter { field: "text" })
-		);
-	}
+        // Neither trimmed nor NFC-normalized.
+        let unnormalized = "  cafe\u{301}  ";
+        assert_eq!(
+            validate_chat_message_content(ChatMessageContent::Text {
+                text: unnormalized.to_string(),
+            }),
+            Ok(ChatMessageContent::Text {
+                text: unnormalized.to_string(),
+            })
+        );
 
-	#[test]
-	fn a_reaction_keeps_the_emoji_a_person_picked() {
-		// Subdivision flags encode as tag characters, which a display label
-		// rejects and a picked glyph must not.
-		for emoji in [
-			"\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}",
-			"\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}",
-			"\u{2764}\u{fe0f}",
-			"\u{1f1ee}\u{1f1f3}",
-		] {
-			assert_eq!(
-				validate_chat_message_content(ChatMessageContent::Reaction(ChatReaction {
-					message_id: "message-1".to_string(),
-					emoji: emoji.to_string(),
-				})),
-				Ok(ChatMessageContent::Reaction(ChatReaction {
-					message_id: "message-1".to_string(),
-					emoji: emoji.to_string(),
-				})),
-				"{emoji:?} must survive"
-			);
-		}
-	}
+        // The bidi and zero-width screen still applies.
+        assert_eq!(
+            validate_chat_message_content(ChatMessageContent::Text {
+                text: "pay \u{202e}yletamitigel".to_string(),
+            }),
+            Err(ChatFieldError::UnsafeCharacter { field: "text" })
+        );
+    }
 
-	#[test]
-	fn every_screened_field_rejects_its_own_hostile_value() {
-		// One case per screen, so removing any single one fails a test.
-		let media = ChatMessageContent::RichText(ChatRichText {
-			text: None,
-			media: vec![ChatMedia { url: "javascript:alert(1)".to_string() }],
-		});
-		assert_eq!(
-			validate_chat_message_content(media),
-			Err(ChatFieldError::RejectedScheme { field: "url" })
-		);
+    #[test]
+    fn a_reaction_keeps_the_emoji_a_person_picked() {
+        // Subdivision flags encode as tag characters, which a display label
+        // rejects and a picked glyph must not.
+        for emoji in [
+            "\u{1f3f4}\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}",
+            "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}",
+            "\u{2764}\u{fe0f}",
+            "\u{1f1ee}\u{1f1f3}",
+        ] {
+            assert_eq!(
+                validate_chat_message_content(ChatMessageContent::Reaction(ChatReaction {
+                    message_id: "message-1".to_string(),
+                    emoji: emoji.to_string(),
+                })),
+                Ok(ChatMessageContent::Reaction(ChatReaction {
+                    message_id: "message-1".to_string(),
+                    emoji: emoji.to_string(),
+                })),
+                "{emoji:?} must survive"
+            );
+        }
+    }
 
-		let action = ChatMessageContent::Actions(ChatActions {
-			text: None,
-			actions: vec![ChatAction {
-				action_id: "app\u{200d}rove".to_string(),
-				title: "Approve".to_string(),
-			}],
-			layout: truapi::latest::ChatActionLayout::Column,
-		});
-		assert_eq!(
-			validate_chat_message_content(action),
-			Err(ChatFieldError::UnsafeCharacter { field: "actionId" })
-		);
+    #[test]
+    fn every_screened_field_rejects_its_own_hostile_value() {
+        // One case per screen, so removing any single one fails a test.
+        let media = ChatMessageContent::RichText(ChatRichText {
+            text: None,
+            media: vec![ChatMedia {
+                url: "javascript:alert(1)".to_string(),
+            }],
+        });
+        assert_eq!(
+            validate_chat_message_content(media),
+            Err(ChatFieldError::RejectedScheme { field: "url" })
+        );
 
-		let mime = ChatMessageContent::File(ChatFile {
-			url: "https://example.invalid/f".to_string(),
-			file_name: "f".to_string(),
-			mime_type: "text/\u{202e}nialp".to_string(),
-			size_bytes: 1,
-			text: None,
-		});
-		assert_eq!(
-			validate_chat_message_content(mime),
-			Err(ChatFieldError::UnsafeCharacter { field: "mimeType" })
-		);
+        let action = ChatMessageContent::Actions(ChatActions {
+            text: None,
+            actions: vec![ChatAction {
+                action_id: "app\u{200d}rove".to_string(),
+                title: "Approve".to_string(),
+            }],
+            layout: truapi::latest::ChatActionLayout::Column,
+        });
+        assert_eq!(
+            validate_chat_message_content(action),
+            Err(ChatFieldError::UnsafeCharacter { field: "actionId" })
+        );
 
-		let custom_type = ChatMessageContent::Custom(ChatCustomMessage {
-			message_type: "  ".to_string(),
-			payload: Vec::new(),
-		});
-		assert_eq!(
-			validate_chat_message_content(custom_type),
-			Err(ChatFieldError::Empty { field: "messageType" })
-		);
+        let mime = ChatMessageContent::File(ChatFile {
+            url: "https://example.invalid/f".to_string(),
+            file_name: "f".to_string(),
+            mime_type: "text/\u{202e}nialp".to_string(),
+            size_bytes: 1,
+            text: None,
+        });
+        assert_eq!(
+            validate_chat_message_content(mime),
+            Err(ChatFieldError::UnsafeCharacter { field: "mimeType" })
+        );
 
-		let payload = ChatMessageContent::Custom(ChatCustomMessage {
-			message_type: "vote".to_string(),
-			payload: vec![0; CHAT_CUSTOM_PAYLOAD_MAX_BYTES + 1],
-		});
-		assert_eq!(
-			validate_chat_message_content(payload),
-			Err(ChatFieldError::TooLong { field: "payload", limit: CHAT_CUSTOM_PAYLOAD_MAX_BYTES })
-		);
+        let custom_type = ChatMessageContent::Custom(ChatCustomMessage {
+            message_type: "  ".to_string(),
+            payload: Vec::new(),
+        });
+        assert_eq!(
+            validate_chat_message_content(custom_type),
+            Err(ChatFieldError::Empty {
+                field: "messageType"
+            })
+        );
 
-		let emoji = ChatMessageContent::Reaction(ChatReaction {
-			message_id: "message-1".to_string(),
-			emoji: "\u{202e}".to_string(),
-		});
-		assert_eq!(
-			validate_chat_message_content(emoji),
-			Err(ChatFieldError::UnsafeCharacter { field: "emoji" })
-		);
+        let payload = ChatMessageContent::Custom(ChatCustomMessage {
+            message_type: "vote".to_string(),
+            payload: vec![0; CHAT_CUSTOM_PAYLOAD_MAX_BYTES + 1],
+        });
+        assert_eq!(
+            validate_chat_message_content(payload),
+            Err(ChatFieldError::TooLong {
+                field: "payload",
+                limit: CHAT_CUSTOM_PAYLOAD_MAX_BYTES,
+            })
+        );
 
-		// The removal variant screens the same fields as the addition.
-		let removed = ChatMessageContent::ReactionRemoved(ChatReaction {
-			message_id: "  ".to_string(),
-			emoji: "\u{1f3b2}".to_string(),
-		});
-		assert_eq!(
-			validate_chat_message_content(removed),
-			Err(ChatFieldError::Empty { field: "messageId" })
-		);
+        let emoji = ChatMessageContent::Reaction(ChatReaction {
+            message_id: "message-1".to_string(),
+            emoji: "\u{202e}".to_string(),
+        });
+        assert_eq!(
+            validate_chat_message_content(emoji),
+            Err(ChatFieldError::UnsafeCharacter { field: "emoji" })
+        );
 
-		// Every optional body, not just the one `Text` carries.
-		let bidi = "pay \u{202e}yletamitigel".to_string();
-		let bodies = [
-			ChatMessageContent::RichText(ChatRichText {
-				text: Some(bidi.clone()),
-				media: Vec::new(),
-			}),
-			ChatMessageContent::Actions(ChatActions {
-				text: Some(bidi.clone()),
-				actions: Vec::new(),
-				layout: truapi::latest::ChatActionLayout::Column,
-			}),
-			ChatMessageContent::File(ChatFile {
-				url: "https://example.invalid/f".to_string(),
-				file_name: "f".to_string(),
-				mime_type: "text/plain".to_string(),
-				size_bytes: 1,
-				text: Some(bidi),
-			}),
-		];
-		for body in bodies {
-			assert_eq!(
-				validate_chat_message_content(body.clone()),
-				Err(ChatFieldError::UnsafeCharacter { field: "text" }),
-				"{body:?} must screen its body"
-			);
-		}
+        // The removal variant screens the same fields as the addition.
+        let removed = ChatMessageContent::ReactionRemoved(ChatReaction {
+            message_id: "  ".to_string(),
+            emoji: "\u{1f3b2}".to_string(),
+        });
+        assert_eq!(
+            validate_chat_message_content(removed),
+            Err(ChatFieldError::Empty { field: "messageId" })
+        );
 
-		let title = ChatMessageContent::Actions(ChatActions {
-			text: None,
-			actions: vec![ChatAction {
-				action_id: "approve".to_string(),
-				title: "Approve\u{202e}".to_string(),
-			}],
-			layout: truapi::latest::ChatActionLayout::Column,
-		});
-		assert_eq!(
-			validate_chat_message_content(title),
-			Err(ChatFieldError::UnsafeCharacter { field: "title" })
-		);
-	}
+        // Every optional body, not just the one `Text` carries.
+        let bidi = "pay \u{202e}yletamitigel".to_string();
+        let bodies = [
+            ChatMessageContent::RichText(ChatRichText {
+                text: Some(bidi.clone()),
+                media: Vec::new(),
+            }),
+            ChatMessageContent::Actions(ChatActions {
+                text: Some(bidi.clone()),
+                actions: Vec::new(),
+                layout: truapi::latest::ChatActionLayout::Column,
+            }),
+            ChatMessageContent::File(ChatFile {
+                url: "https://example.invalid/f".to_string(),
+                file_name: "f".to_string(),
+                mime_type: "text/plain".to_string(),
+                size_bytes: 1,
+                text: Some(bidi),
+            }),
+        ];
+        for body in bodies {
+            assert_eq!(
+                validate_chat_message_content(body.clone()),
+                Err(ChatFieldError::UnsafeCharacter { field: "text" }),
+                "{body:?} must screen its body"
+            );
+        }
 
-	#[test]
-	fn an_icon_is_screened_and_resolved_like_a_message_url() {
-		// `validate_chat_icon` shares the url path's screen and resolution, and
-		// is reached from `create_room` and `register_bot` rather than here.
-		assert_eq!(
-			validate_chat_icon("icon", "https://example.invalid/\u{202e}gpj.exe"),
-			Err(ChatFieldError::UnsafeCharacter { field: "icon" })
-		);
-		assert_eq!(
-			validate_chat_icon("icon", "https://example.invalid").unwrap(),
-			"https://example.invalid/"
-		);
-		assert_eq!(validate_chat_icon("icon", "  ").unwrap(), "");
-	}
+        let title = ChatMessageContent::Actions(ChatActions {
+            text: None,
+            actions: vec![ChatAction {
+                action_id: "approve".to_string(),
+                title: "Approve\u{202e}".to_string(),
+            }],
+            layout: truapi::latest::ChatActionLayout::Column,
+        });
+        assert_eq!(
+            validate_chat_message_content(title),
+            Err(ChatFieldError::UnsafeCharacter { field: "title" })
+        );
+    }
 
-	#[test]
-	fn a_name_cannot_break_its_own_line() {
-		// U+2028 and U+2029 are Zl/Zp, not Cc, so `char::is_control` misses
-		// them -- yet they break a line exactly like the `\n` this rejects,
-		// which is what hides an extension on a one-line download affordance.
-		for separator in ['\u{2028}', '\u{2029}'] {
-			let spoofed = ChatMessageContent::File(ChatFile {
-				url: "https://example.invalid/f".to_string(),
-				file_name: format!("invoice.pdf{separator}        .exe"),
-				mime_type: "application/pdf".to_string(),
-				size_bytes: 1,
-				text: None,
-			});
-			assert_eq!(
-				validate_chat_message_content(spoofed),
-				Err(ChatFieldError::UnsafeCharacter { field: "fileName" }),
-				"{separator:?} must be rejected in a name"
-			);
-		}
-	}
+    #[test]
+    fn an_icon_is_screened_and_resolved_like_a_message_url() {
+        // `validate_chat_icon` shares the url path's screen and resolution, and
+        // is reached from `create_room` and `register_bot` rather than here.
+        assert_eq!(
+            validate_chat_icon("icon", "https://example.invalid/\u{202e}gpj.exe"),
+            Err(ChatFieldError::UnsafeCharacter { field: "icon" })
+        );
+        assert_eq!(
+            validate_chat_icon("icon", "https://example.invalid").unwrap(),
+            "https://example.invalid/"
+        );
+        assert_eq!(validate_chat_icon("icon", "  ").unwrap(), "");
+    }
 
-	#[test]
-	fn a_url_budget_applies_to_what_the_host_receives() {
-		// Resolution percent-encodes, so a URL measured on arrival can land
-		// nearly three times over budget.
-		// Each of these is 3 bytes raw and 9 percent-encoded, so the arriving
-		// string fits the budget and the resolved one does not.
-		let padded = format!("https://example.invalid/{}", "\u{4e00}".repeat(300));
-		assert!(padded.len() <= CHAT_URL_MAX_BYTES);
-		assert_eq!(
-			validate_chat_message_content(file_with_url(&padded)),
-			Err(ChatFieldError::TooLong { field: "url", limit: CHAT_URL_MAX_BYTES })
-		);
-	}
+    #[test]
+    fn a_name_cannot_break_its_own_line() {
+        // U+2028 and U+2029 are Zl/Zp, not Cc, so `char::is_control` misses
+        // them -- yet they break a line exactly like the `\n` this rejects,
+        // which is what hides an extension on a one-line download affordance.
+        for separator in ['\u{2028}', '\u{2029}'] {
+            let spoofed = ChatMessageContent::File(ChatFile {
+                url: "https://example.invalid/f".to_string(),
+                file_name: format!("invoice.pdf{separator}        .exe"),
+                mime_type: "application/pdf".to_string(),
+                size_bytes: 1,
+                text: None,
+            });
+            assert_eq!(
+                validate_chat_message_content(spoofed),
+                Err(ChatFieldError::UnsafeCharacter { field: "fileName" }),
+                "{separator:?} must be rejected in a name"
+            );
+        }
+    }
 
-	#[test]
-	fn action_ids_that_normalize_alike_are_rejected() {
-		// Normalization maps these onto one key. Accepting both would give the
-		// user two buttons whose trigger the product cannot tell apart.
-		let colliding = ChatMessageContent::Actions(ChatActions {
-			text: None,
-			actions: vec![
-				ChatAction { action_id: "approve".to_string(), title: "Approve".to_string() },
-				ChatAction { action_id: " approve ".to_string(), title: "Reject".to_string() },
-			],
-			layout: truapi::latest::ChatActionLayout::Column,
-		});
-		assert_eq!(
-			validate_chat_message_content(colliding),
-			Err(ChatFieldError::Duplicate { field: "actionId" })
-		);
+    #[test]
+    fn a_url_budget_applies_to_what_the_host_receives() {
+        // Resolution percent-encodes, so a URL measured on arrival can land
+        // nearly three times over budget.
+        // Each of these is 3 bytes raw and 9 percent-encoded, so the arriving
+        // string fits the budget and the resolved one does not.
+        let padded = format!("https://example.invalid/{}", "\u{4e00}".repeat(300));
+        assert!(padded.len() <= CHAT_URL_MAX_BYTES);
+        assert_eq!(
+            validate_chat_message_content(file_with_url(&padded)),
+            Err(ChatFieldError::TooLong {
+                field: "url",
+                limit: CHAT_URL_MAX_BYTES,
+            })
+        );
+    }
 
-		// A literal repeat is the same defect without the normalization step.
-		let repeated = ChatMessageContent::Actions(ChatActions {
-			text: None,
-			actions: vec![
-				ChatAction { action_id: "approve".to_string(), title: "Approve".to_string() },
-				ChatAction { action_id: "approve".to_string(), title: "Reject".to_string() },
-			],
-			layout: truapi::latest::ChatActionLayout::Column,
-		});
-		assert_eq!(
-			validate_chat_message_content(repeated),
-			Err(ChatFieldError::Duplicate { field: "actionId" })
-		);
-	}
+    #[test]
+    fn action_ids_that_normalize_alike_are_rejected() {
+        // Normalization maps these onto one key. Accepting both would give the
+        // user two buttons whose trigger the product cannot tell apart.
+        let colliding = ChatMessageContent::Actions(ChatActions {
+            text: None,
+            actions: vec![
+                ChatAction {
+                    action_id: "approve".to_string(),
+                    title: "Approve".to_string(),
+                },
+                ChatAction {
+                    action_id: " approve ".to_string(),
+                    title: "Reject".to_string(),
+                },
+            ],
+            layout: truapi::latest::ChatActionLayout::Column,
+        });
+        assert_eq!(
+            validate_chat_message_content(colliding),
+            Err(ChatFieldError::Duplicate { field: "actionId" })
+        );
 
-	#[test]
-	fn a_file_name_cannot_address_a_path() {
-		// A host joining this onto a cache directory must not be handed a
-		// separator or a parent reference.
-		for traversal in [
-			"../../../../data/data/io.parity.wallet/files/session.json",
-			"..",
-			"a/b.txt",
-			"a\\b.txt",
-			"C:evil.exe",
-		] {
-			assert_eq!(
-				validate_chat_message_content(ChatMessageContent::File(ChatFile {
-					url: "https://example.invalid/f".to_string(),
-					file_name: traversal.to_string(),
-					mime_type: "application/pdf".to_string(),
-					size_bytes: 1,
-					text: None,
-				})),
-				Err(ChatFieldError::PathComponent { field: "fileName" }),
-				"{traversal:?} must be rejected"
-			);
-		}
-	}
+        // A literal repeat is the same defect without the normalization step.
+        let repeated = ChatMessageContent::Actions(ChatActions {
+            text: None,
+            actions: vec![
+                ChatAction {
+                    action_id: "approve".to_string(),
+                    title: "Approve".to_string(),
+                },
+                ChatAction {
+                    action_id: "approve".to_string(),
+                    title: "Reject".to_string(),
+                },
+            ],
+            layout: truapi::latest::ChatActionLayout::Column,
+        });
+        assert_eq!(
+            validate_chat_message_content(repeated),
+            Err(ChatFieldError::Duplicate { field: "actionId" })
+        );
+    }
 
-	#[test]
-	fn a_url_budget_is_measured_after_resolution_on_every_field() {
-		// Percent-encoding grows a non-ASCII path threefold, so a value that
-		// arrives inside its cap can leave well past it. Measuring the arriving
-		// string alone let an icon through at three times its budget.
-		let long_path = "\u{00e9}".repeat(CHAT_ICON_MAX_BYTES / 4);
-		let icon = format!("https://icons.invalid/{long_path}");
-		assert!(icon.len() <= CHAT_ICON_MAX_BYTES, "arrives inside its cap");
-		assert!(
-			Url::parse(&icon).expect("a parsable https url").to_string().len() >
-				CHAT_ICON_MAX_BYTES,
-			"resolves past it"
-		);
+    #[test]
+    fn a_file_name_cannot_address_a_path() {
+        // A host joining this onto a cache directory must not be handed a
+        // separator or a parent reference.
+        for traversal in [
+            "../../../../data/data/io.parity.wallet/files/session.json",
+            "..",
+            "a/b.txt",
+            "a\\b.txt",
+            "C:evil.exe",
+        ] {
+            assert_eq!(
+                validate_chat_message_content(ChatMessageContent::File(ChatFile {
+                    url: "https://example.invalid/f".to_string(),
+                    file_name: traversal.to_string(),
+                    mime_type: "application/pdf".to_string(),
+                    size_bytes: 1,
+                    text: None,
+                })),
+                Err(ChatFieldError::PathComponent { field: "fileName" }),
+                "{traversal:?} must be rejected"
+            );
+        }
+    }
 
-		assert_eq!(
-			validate_chat_icon("icon", &icon),
-			Err(ChatFieldError::TooLong { field: "icon", limit: CHAT_ICON_MAX_BYTES })
-		);
+    #[test]
+    fn a_url_budget_is_measured_after_resolution_on_every_field() {
+        // Percent-encoding grows a non-ASCII path threefold, so a value that
+        // arrives inside its cap can leave well past it. Measuring the arriving
+        // string alone let an icon through at three times its budget.
+        let long_path = "\u{00e9}".repeat(CHAT_ICON_MAX_BYTES / 4);
+        let icon = format!("https://icons.invalid/{long_path}");
+        assert!(icon.len() <= CHAT_ICON_MAX_BYTES, "arrives inside its cap");
+        assert!(
+            Url::parse(&icon)
+                .expect("a parsable https url")
+                .to_string()
+                .len()
+                > CHAT_ICON_MAX_BYTES,
+            "resolves past it"
+        );
 
-		let message_url =
-			format!("https://files.invalid/{}", "\u{00e9}".repeat(CHAT_URL_MAX_BYTES / 4));
-		assert!(message_url.len() <= CHAT_URL_MAX_BYTES);
-		assert_eq!(
-			validate_chat_url("url", &message_url),
-			Err(ChatFieldError::TooLong { field: "url", limit: CHAT_URL_MAX_BYTES })
-		);
-	}
+        assert_eq!(
+            validate_chat_icon("icon", &icon),
+            Err(ChatFieldError::TooLong {
+                field: "icon",
+                limit: CHAT_ICON_MAX_BYTES,
+            })
+        );
 
-	#[test]
-	fn a_url_must_not_carry_credentials() {
-		// `Url::to_string` keeps `user:pass@`, so a host handed this would
-		// fetch with the credentials and log them.
-		for field_url in [
-			"https://user:pass@example.invalid/avatar.png",
-			"https://user@example.invalid/avatar.png",
-		] {
-			assert_eq!(
-				validate_chat_icon("icon", field_url),
-				Err(ChatFieldError::Credentials { field: "icon" }),
-				"{field_url:?} must be rejected"
-			);
-			assert_eq!(
-				validate_chat_url("url", field_url),
-				Err(ChatFieldError::Credentials { field: "url" }),
-				"{field_url:?} must be rejected"
-			);
-		}
-	}
+        let message_url = format!(
+            "https://files.invalid/{}",
+            "\u{00e9}".repeat(CHAT_URL_MAX_BYTES / 4)
+        );
+        assert!(message_url.len() <= CHAT_URL_MAX_BYTES);
+        assert_eq!(
+            validate_chat_url("url", &message_url),
+            Err(ChatFieldError::TooLong {
+                field: "url",
+                limit: CHAT_URL_MAX_BYTES,
+            })
+        );
+    }
 
-	#[test]
-	fn reachability_is_the_hosts_decision_and_the_docs_say_so() {
-		// Named rather than incidental: the trait doc tells a host these pass
-		// and that fetching them is its own call. A core that guessed would
-		// break a host serving its own media from localhost, so if this ever
-		// starts rejecting, the doc has to change with it.
-		for reachable_only_by_the_host in [
-			"https://127.0.0.1:9944/rpc",
-			"https://[::1]/admin",
-			"https://169.254.169.254/latest/meta-data/",
-			"https://10.0.0.1/internal",
-		] {
-			assert!(
-				validate_chat_url("url", reachable_only_by_the_host).is_ok(),
-				"{reachable_only_by_the_host:?} is the host's call, not the core's"
-			);
-		}
-	}
+    #[test]
+    fn a_url_must_not_carry_credentials() {
+        // `Url::to_string` keeps `user:pass@`, so a host handed this would
+        // fetch with the credentials and log them.
+        for field_url in [
+            "https://user:pass@example.invalid/avatar.png",
+            "https://user@example.invalid/avatar.png",
+        ] {
+            assert_eq!(
+                validate_chat_icon("icon", field_url),
+                Err(ChatFieldError::Credentials { field: "icon" }),
+                "{field_url:?} must be rejected"
+            );
+            assert_eq!(
+                validate_chat_url("url", field_url),
+                Err(ChatFieldError::Credentials { field: "url" }),
+                "{field_url:?} must be rejected"
+            );
+        }
+    }
 
-	#[test]
-	fn the_published_limits_are_the_enforced_limits() {
-		// `Chat::post_message`'s doc states these numbers to products in prose,
-		// so a test asserting `CONST + 1` would let the constant drift away
-		// from the contract without failing.
-		assert_eq!(CHAT_BODY_MAX_BYTES, 16 * 1024);
-		assert_eq!(CHAT_URL_MAX_BYTES, 2048);
-		assert_eq!(CHAT_ACTIONS_MAX, 32);
-		assert_eq!(CHAT_MEDIA_MAX, 32);
-		assert_eq!(CHAT_CUSTOM_PAYLOAD_MAX_BYTES, 256 * 1024);
-		assert_eq!(CHAT_FIELD_MAX_BYTES, 256);
-	}
+    #[test]
+    fn reachability_is_the_hosts_decision_and_the_docs_say_so() {
+        // Named rather than incidental: the trait doc tells a host these pass
+        // and that fetching them is its own call. A core that guessed would
+        // break a host serving its own media from localhost, so if this ever
+        // starts rejecting, the doc has to change with it.
+        for reachable_only_by_the_host in [
+            "https://127.0.0.1:9944/rpc",
+            "https://[::1]/admin",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://10.0.0.1/internal",
+        ] {
+            assert!(
+                validate_chat_url("url", reachable_only_by_the_host).is_ok(),
+                "{reachable_only_by_the_host:?} is the host's call, not the core's"
+            );
+        }
+    }
 
-	#[test]
-	fn a_reaction_names_its_message_as_an_identifier() {
-		// `message_id` addresses a message the way `room_id` addresses a room,
-		// so it gets the identifier screen rather than the display one.
-		let confusable = ChatMessageContent::Reaction(ChatReaction {
-			message_id: "message\u{200d}-1".to_string(),
-			emoji: "\u{1f3b2}".to_string(),
-		});
-		assert_eq!(
-			validate_chat_message_content(confusable),
-			Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
-		);
+    #[test]
+    fn the_published_limits_are_the_enforced_limits() {
+        // `Chat::post_message`'s doc states these numbers to products in prose,
+        // so a test asserting `CONST + 1` would let the constant drift away
+        // from the contract without failing.
+        assert_eq!(CHAT_BODY_MAX_BYTES, 16 * 1024);
+        assert_eq!(CHAT_URL_MAX_BYTES, 2048);
+        assert_eq!(CHAT_ACTIONS_MAX, 32);
+        assert_eq!(CHAT_MEDIA_MAX, 32);
+        assert_eq!(CHAT_CUSTOM_PAYLOAD_MAX_BYTES, 256 * 1024);
+        assert_eq!(CHAT_FIELD_MAX_BYTES, 256);
+    }
 
-		let blank = ChatMessageContent::Reaction(ChatReaction {
-			message_id: "   ".to_string(),
-			emoji: "\u{1f3b2}".to_string(),
-		});
-		assert_eq!(
-			validate_chat_message_content(blank),
-			Err(ChatFieldError::Empty { field: "messageId" })
-		);
-	}
+    #[test]
+    fn a_reaction_names_its_message_as_an_identifier() {
+        // `message_id` addresses a message the way `room_id` addresses a room,
+        // so it gets the identifier screen rather than the display one.
+        let confusable = ChatMessageContent::Reaction(ChatReaction {
+            message_id: "message\u{200d}-1".to_string(),
+            emoji: "\u{1f3b2}".to_string(),
+        });
+        assert_eq!(
+            validate_chat_message_content(confusable),
+            Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
+        );
 
-	#[test]
-	fn auth_session_storage_key_has_stable_encoding() {
-		assert_eq!(CoreStorageKey::AuthSession.encode(), [0]);
-	}
+        let blank = ChatMessageContent::Reaction(ChatReaction {
+            message_id: "   ".to_string(),
+            emoji: "\u{1f3b2}".to_string(),
+        });
+        assert_eq!(
+            validate_chat_message_content(blank),
+            Err(ChatFieldError::Empty { field: "messageId" })
+        );
+    }
 
-	#[test]
-	fn sso_responder_request_ledger_key_has_stable_encoding() {
-		let key = CoreStorageKey::SsoResponderRequestLedger {
-			root_public_key: [0x11; 32],
-			peer_statement_account_id: [0x22; 32],
-			peer_encryption_public_key: [0x33; 32],
-		};
-		let mut expected = vec![11];
-		expected.extend([0x11; 32]);
-		expected.extend([0x22; 32]);
-		expected.extend([0x33; 32]);
+    #[test]
+    fn auth_session_storage_key_has_stable_encoding() {
+        assert_eq!(CoreStorageKey::AuthSession.encode(), [0]);
+    }
 
-		assert_eq!(key.encode(), expected);
-	}
+    #[test]
+    fn sso_responder_request_ledger_key_has_stable_encoding() {
+        let key = CoreStorageKey::SsoResponderRequestLedger {
+            root_public_key: [0x11; 32],
+            peer_statement_account_id: [0x22; 32],
+            peer_encryption_public_key: [0x33; 32],
+        };
+        let mut expected = vec![11];
+        expected.extend([0x11; 32]);
+        expected.extend([0x22; 32]);
+        expected.extend([0x33; 32]);
 
-	#[test]
-	fn product_context_encoding_matches_the_generated_host_codec() {
-		// The generated TS host codec is
-		// `S.Struct({productId: S.str, executionKind: S.Status("App", "Widget", "Worker")})`,
-		// so the field order and the variant indices below are the wire
-		// contract every JS host decodes against. The JS half of this pair is
-		// `product context encoding matches the Rust platform codec` in
-		// `js/packages/truapi-host/src/host-callbacks-adapter.test.ts`, which
-		// asserts the same bytes through that generated codec.
-		assert_eq!(ProductExecutionKind::App.encode(), [0]);
-		assert_eq!(ProductExecutionKind::Widget.encode(), [1]);
-		assert_eq!(ProductExecutionKind::Worker.encode(), [2]);
+        assert_eq!(key.encode(), expected);
+    }
 
-		let context = ProductContext::new_with_execution(
-			ProductId::for_test("app.dot"),
-			ProductExecutionKind::Worker,
-		);
-		assert_eq!(context.encode(), [28, b'a', b'p', b'p', b'.', b'd', b'o', b't', 2]);
-		assert_eq!(ProductContext::decode(&mut context.encode().as_slice()), Ok(context));
-	}
+    #[test]
+    fn product_context_encoding_matches_the_generated_host_codec() {
+        // The generated TS host codec is
+        // `S.Struct({productId: S.str, executionKind: S.Status("App", "Widget", "Worker")})`,
+        // so the field order and the variant indices below are the wire
+        // contract every JS host decodes against. The JS half of this pair is
+        // `product context encoding matches the Rust platform codec` in
+        // `js/packages/truapi-host/src/host-callbacks-adapter.test.ts`, which
+        // asserts the same bytes through that generated codec.
+        assert_eq!(ProductExecutionKind::App.encode(), [0]);
+        assert_eq!(ProductExecutionKind::Widget.encode(), [1]);
+        assert_eq!(ProductExecutionKind::Worker.encode(), [2]);
 
-	#[test]
-	fn product_context_decoding_rejects_ids_the_constructor_rejects() {
-		// Hand-built frames, not values this crate can encode: `Decode` must
-		// apply the same product-id policy as the constructor so decoding
-		// cannot mint a context with an unscoped or empty product id.
-		for product_id in ["evil.com", "", "  "] {
-			let frame = (product_id.to_string(), ProductExecutionKind::App).encode();
-			assert!(
-				ProductContext::decode(&mut frame.as_slice()).is_err(),
-				"{product_id:?} must not decode into a ProductContext"
-			);
-		}
-	}
+        let context =
+            ProductContext::new_with_execution("app.dot".to_string(), ProductExecutionKind::Worker)
+                .expect("product id is valid");
+        assert_eq!(
+            context.encode(),
+            [28, b'a', b'p', b'p', b'.', b'd', b'o', b't', 2]
+        );
+        assert_eq!(
+            ProductContext::decode(&mut context.encode().as_slice()),
+            Ok(context)
+        );
+    }
 
-	#[test]
-	fn product_context_decoding_normalizes_the_product_id() {
-		// Derivation and product-scoped storage are keyed by `product_id`, so
-		// a non-canonical id off the wire has to land in the same scope the
-		// constructor would produce rather than opening a second one.
-		let frame = ("App.DOT".to_string(), ProductExecutionKind::App).encode();
-		let decoded = ProductContext::decode(&mut frame.as_slice()).expect("product id normalizes");
-		assert_eq!(decoded.product_id.as_str(), "app.dot");
-		assert_eq!(decoded, ProductContext::new(ProductId::for_test("app.dot")));
-	}
+    #[test]
+    fn product_context_decoding_rejects_ids_the_constructor_rejects() {
+        // Hand-built frames, not values this crate can encode: `Decode` must
+        // apply the same product-id policy as the constructor so decoding
+        // cannot mint a context with an unscoped or empty product id.
+        for product_id in ["evil.com", "", "  "] {
+            let frame = (product_id.to_string(), ProductExecutionKind::App).encode();
+            assert!(
+                ProductContext::decode(&mut frame.as_slice()).is_err(),
+                "{product_id:?} must not decode into a ProductContext"
+            );
+        }
+    }
 
-	#[test]
-	fn core_storage_key_description_is_strict_and_product_scoped() {
-		let permission = CoreStorageKey::device_permission_authorization(
-			"product.dot",
-			&HostDevicePermissionRequest::Camera,
-		)
-		.encode();
-		assert_eq!(
-			describe_core_storage_key(&permission),
-			Ok(CoreStorageKeyDescription {
-				kind: "PermissionAuthorization",
-				product_id: Some("product.dot".to_string()),
-			})
-		);
-		for (key, kind, product_id) in [
-			(CoreStorageKey::AuthSession, "AuthSession", None),
-			(CoreStorageKey::PairingDeviceIdentity, "PairingDeviceIdentity", None),
-			(
-				CoreStorageKey::AllowanceKeys { session_id: "session".to_string() },
-				"AllowanceKeys",
-				None,
-			),
-			(CoreStorageKey::LastProcessedPairingStatement, "LastProcessedPairingStatement", None),
-			(
-				CoreStorageKey::AutoSigningKey { product_id: "product.dot".to_string() },
-				"AutoSigningKey",
-				Some("product.dot"),
-			),
-			(CoreStorageKey::AutoSigningKeys, "AutoSigningKeys", None),
-			(
-				CoreStorageKey::RingVrfRegistry { root_public_key: [0x42; 32] },
-				"RingVrfRegistry",
-				None,
-			),
-			(CoreStorageKey::StatementRenewalTargets, "StatementRenewalTargets", None),
-			(CoreStorageKey::DeviceEncryptionKey, "DeviceEncryptionKey", None),
-			(
-				CoreStorageKey::SsoResponderRequestLedger {
-					root_public_key: [0x11; 32],
-					peer_statement_account_id: [0x22; 32],
-					peer_encryption_public_key: [0x33; 32],
-				},
-				"SsoResponderRequestLedger",
-				None,
-			),
-			(CoreStorageKey::FundingSessions, "FundingSessions", None),
-			(CoreStorageKey::FundingSessionsUnreadable, "FundingSessionsUnreadable", None),
-			(CoreStorageKey::FundingSessionPack, "FundingSessionPack", None),
-		] {
-			let description = describe_core_storage_key(&key.encode()).expect("valid key");
-			assert_eq!(description.kind, kind);
-			assert_eq!(description.product_id.as_deref(), product_id);
-		}
+    #[test]
+    fn product_context_decoding_normalizes_the_product_id() {
+        // Derivation and product-scoped storage are keyed by `product_id`, so
+        // a non-canonical id off the wire has to land in the same scope the
+        // constructor would produce rather than opening a second one.
+        let frame = ("App.DOT".to_string(), ProductExecutionKind::App).encode();
+        let decoded = ProductContext::decode(&mut frame.as_slice()).expect("product id normalizes");
+        assert_eq!(decoded.product_id, "app.dot");
+        assert_eq!(
+            decoded,
+            ProductContext::new("app.dot".to_string()).expect("product id is valid")
+        );
+    }
 
-		assert_eq!(
-			describe_core_storage_key(&[]),
-			Err(CoreStorageKeyDescriptionError::InvalidEncoding)
-		);
-		let mut trailing = CoreStorageKey::AuthSession.encode();
-		trailing.push(0);
-		assert_eq!(
-			describe_core_storage_key(&trailing),
-			Err(CoreStorageKeyDescriptionError::TrailingBytes)
-		);
-		assert_eq!(
-			describe_core_storage_key(&[u8::MAX]),
-			Err(CoreStorageKeyDescriptionError::InvalidEncoding)
-		);
-	}
+    #[test]
+    fn trusted_remote_permission_labels_match_the_bare_product_label() {
+        for product_id in [
+            "peopl.dot",
+            "peopl.paseo",
+            "peopl.testnet",
+            "dim2.dot",
+            "dim2.paseo",
+            "dim2.testnet",
+            "stash.dot",
+        ] {
+            assert!(
+                has_trusted_remote_permissions(product_id),
+                "{product_id} must hold remote permissions without a prompt"
+            );
+        }
+        for product_id in [
+            "app.peopl.dot",
+            "sub.dim2.paseo",
+            "app.dim2.testnet",
+            "dim2.com",
+            "notdim2.dot",
+            "peopl",
+            "peopl.com",
+            "peoplx.dot",
+            "my-peopl.dot",
+            "localhost",
+            "localhost:3000",
+            "",
+            "dot",
+        ] {
+            assert!(
+                !has_trusted_remote_permissions(product_id),
+                "{product_id} is a separate product and must prompt"
+            );
+        }
+    }
 
-	#[test]
-	fn permission_authorization_keys_separate_product_and_request_variants() {
-		let camera = CoreStorageKey::device_permission_authorization(
-			"product.dot",
-			&HostDevicePermissionRequest::Camera,
-		);
-		let other_product = CoreStorageKey::device_permission_authorization(
-			"other.dot",
-			&HostDevicePermissionRequest::Camera,
-		);
-		let remote = CoreStorageKey::remote_permission_authorization(
-			"product.dot",
-			&RemotePermissionRequest { permission: RemotePermission::ChainSubmit },
-		);
-		let identity = CoreStorageKey::identity_disclosure_authorization("product.dot");
-		let other_product_identity = CoreStorageKey::identity_disclosure_authorization("other.dot");
-		let account_access =
-			CoreStorageKey::account_access_authorization("product.dot", "target.dot");
-		let other_target = CoreStorageKey::account_access_authorization("product.dot", "other.dot");
+    #[test]
+    fn a_published_product_cannot_take_the_localhost_label() {
+        // Hosts grant a development wildcard to a localhost product, so the
+        // label must not be reachable from dotNS.
+        for product_id in ["localhost.dot", "localhost.paseo", "LOCALHOST.DOT"] {
+            assert!(
+                normalize_product_identifier(product_id).is_err(),
+                "{product_id} must not be a valid product identifier"
+            );
+            assert!(
+                !is_localhost_product_identifier(product_id),
+                "{product_id} must not read as the development wildcard"
+            );
+        }
+        for product_id in ["localhost", "localhost:3000"] {
+            assert!(is_localhost_product_identifier(product_id), "{product_id}");
+        }
+        // A prefix test would admit these; the whole identifier has to match.
+        for product_id in ["localhost:3000.evil.dot", "localhost:", "localhost:80a"] {
+            assert!(
+                !is_localhost_product_identifier(product_id),
+                "{product_id} must not read as the development wildcard"
+            );
+        }
+        // Still a normal product, sharing only the prefix.
+        assert!(normalize_product_identifier("localhosting.dot").is_ok());
+    }
 
-		assert_ne!(camera, other_product);
-		assert_ne!(camera, remote);
-		assert_ne!(camera, identity);
-		assert_ne!(remote, identity);
-		assert_ne!(identity, other_product_identity);
-		assert_ne!(account_access, other_target);
-		assert_ne!(account_access, camera);
-	}
+    #[test]
+    fn trusted_remote_permissions_normalize_the_spellings_a_host_holds() {
+        // Both the UniFFI and wasm exports answer through this, and a host
+        // holds an id in whatever spelling it received rather than the
+        // normalized form the core passes internally.
+        for product_id in [
+            "peopl.dot",
+            "PEOPL.DOT",
+            "  peopl.dot  ",
+            "dim2.paseo",
+            " DIM2.TESTNET ",
+            "stash.dot",
+        ] {
+            assert!(
+                normalizes_to_trusted_remote_permissions(product_id),
+                "{product_id} is a first-party product in any accepted spelling"
+            );
+        }
+        for product_id in [
+            "app.peopl.dot",
+            "peopl",
+            "notpeopl.dot",
+            "localhost:3000",
+            "",
+            "   ",
+        ] {
+            assert!(
+                !normalizes_to_trusted_remote_permissions(product_id),
+                "{product_id} must not be read as trusted"
+            );
+        }
+    }
 
-	#[test]
-	fn remote_domain_candidates_match_legacy_wildcard_coverage() {
-		assert_eq!(
-			remote_domain_candidates("api.example.com"),
-			["api.example.com", "*.example.com", "*"]
-		);
-		assert_eq!(
-			remote_domain_candidates("deep.api.example.com"),
-			["deep.api.example.com", "*.api.example.com", "*.example.com", "*"]
-		);
-		assert_eq!(remote_domain_candidates("example.com"), ["example.com", "*"]);
-		assert_eq!(remote_domain_candidates("wallet.dot"), ["wallet.dot", "*"]);
-		// A single-label host has no parent to wildcard over.
-		assert_eq!(remote_domain_candidates("localhost"), ["localhost", "*"]);
-		// A stored pattern resolves to itself, not to a duplicated entry.
-		assert_eq!(remote_domain_candidates("*.example.com"), ["*.example.com", "*"]);
-		assert_eq!(remote_domain_candidates("*"), ["*"]);
-		assert_eq!(remote_domain_candidates("*.com"), ["*.com", "*"]);
-		assert_eq!(
-			remote_domain_candidates("*.api.example.com"),
-			["*.api.example.com", "*.example.com", "*"]
-		);
-		assert_eq!(remote_domain_candidates("example.co.uk"), ["example.co.uk", "*.co.uk", "*"]);
-		assert_eq!(remote_domain_candidates("127.0.0.1"), ["127.0.0.1", "*"]);
-		assert_eq!(remote_domain_candidates("[::1]"), ["[::1]", "*"]);
-		assert_eq!(
-			remote_domain_candidates("DEEP.API.Bücher.Example."),
-			[
-				"deep.api.xn--bcher-kva.example",
-				"*.api.xn--bcher-kva.example",
-				"*.xn--bcher-kva.example",
-				"*",
-			]
-		);
-		for (pattern, valid) in [
-			("example.com", true),
-			("localhost", true),
-			("127.0.0.1", true),
-			("[::1]", true),
-			("*", true),
-			("*.example.com", true),
-			("*.co.uk", true),
-			("*.Bücher.example.", true),
-			("*.com", false),
-			("*.dot", false),
-			("*.127.0.0.1", false),
-			("*.0.1", false),
-			("*.[::1]", false),
-			("*..com", false),
-			("api.*.com", false),
-			("", false),
-		] {
-			assert_eq!(is_valid_remote_domain_pattern(pattern), valid, "{pattern}");
-		}
-	}
+    #[test]
+    fn every_trusted_remote_permission_label_is_a_product_identifier() {
+        // A label that product-id validation rejects would never reach the
+        // permission engine, so the whitelist entry would be silently inert.
+        for label in REMOTE_PERMISSION_TRUSTED_LABELS {
+            for tld in DOTNS_TLDS {
+                let product_id = format!("{label}.{tld}");
+                assert!(
+                    is_product_identifier(&product_id),
+                    "{product_id} must be an accepted product identifier"
+                );
+                assert!(
+                    has_trusted_remote_permissions(&product_id),
+                    "{product_id} must be recognized as trusted"
+                );
+            }
+        }
+    }
 
-	#[test]
-	fn remote_domain_normalization_is_shared_by_both_ends_of_a_lookup() {
-		// The forms enforcement can hand in from a real URL host all collapse
-		// onto the one key a grant is stored under.
-		for spelling in ["API.Example.COM", "api.example.com.", "  api.example.com  "] {
-			assert_eq!(normalize_remote_domain(spelling), "api.example.com");
-		}
-		// IDNA: a non-ASCII host and its punycode spelling are one site, so
-		// they must be one slot and one prompt.
-		assert_eq!(normalize_remote_domain("Bücher.example"), "xn--bcher-kva.example");
-		assert_eq!(normalize_remote_domain("xn--bcher-kva.example"), "xn--bcher-kva.example");
-		// The wildcard marker is not part of the host and survives untouched.
-		assert_eq!(normalize_remote_domain("*.Example.COM"), "*.example.com");
-		assert_eq!(normalize_remote_domain("*.Bücher.example"), "*.xn--bcher-kva.example");
-		assert_eq!(normalize_remote_domain("*"), "*");
-		// A canonicalized bundle keys the same as the candidate list built from
-		// a live host, which is what makes the grant visible to enforcement.
-		assert_eq!(
-			CoreStorageKey::remote_domain_authorization("product.dot", "API.Example.COM."),
-			CoreStorageKey::remote_domain_authorization(
-				"product.dot",
-				&remote_domain_candidates("api.example.com.")[0]
-			)
-		);
-	}
+    #[test]
+    fn trusted_remote_permission_labels_are_bare_lowercase_labels() {
+        // The predicate compares against the label of an already-normalized id,
+        // so an entry carrying a TLD or an uppercase letter can never match.
+        for label in REMOTE_PERMISSION_TRUSTED_LABELS {
+            assert!(!label.contains('.'), "{label} must not carry a TLD");
+            assert_eq!(*label, label.to_lowercase(), "{label} must be lowercase");
+        }
+    }
 
-	#[test]
-	fn remote_domain_authorization_key_matches_the_one_element_bundle() {
-		// Enforcement keys a single host; a product granting that one domain
-		// must land in the same slot, or the grant is invisible to the gate.
-		assert_eq!(
-			CoreStorageKey::remote_domain_authorization("product.dot", "Example.COM"),
-			CoreStorageKey::remote_permission_authorization(
-				"product.dot",
-				&RemotePermissionRequest {
-					permission: RemotePermission::Remote {
-						domains: vec!["example.com".to_string()],
-					},
-				}
-			)
-		);
-		assert_ne!(
-			CoreStorageKey::remote_domain_authorization("product.dot", "example.com"),
-			CoreStorageKey::remote_domain_authorization("product.dot", "*.example.com")
-		);
-		assert_ne!(
-			CoreStorageKey::remote_domain_authorization("product.dot", "example.com"),
-			CoreStorageKey::remote_domain_authorization("other.dot", "example.com")
-		);
-	}
+    #[test]
+    fn an_identifier_carrying_no_name_is_rejected() {
+        // Each of these reached the manifest grant key, the cache key, the only
+        // consent prompt in this design and every log line, because only the
+        // suffix after the last dot was ever inspected.
+        for id in [
+            "dim2\u{0}.dot",        // NUL, into a prompt rendered verbatim
+            "\u{202e}dim2.dot",     // right-to-left override
+            "dim2\u{200b}.dot",     // zero width space
+            "a b c.dot",            // whitespace
+            "../../etc/passwd.dot", // path separators
+            "dim2..dot",            // empty label: collapses onto other ids
+            ".dot",                 // same empty label
+        ] {
+            assert!(
+                normalize_product_identifier(id).is_err(),
+                "{id:?} carries no product name and must not normalize"
+            );
+        }
+    }
 
-	#[test]
-	fn remote_permission_authorization_key_canonicalizes_domain_sets() {
-		let unsorted = RemotePermissionRequest {
-			permission: RemotePermission::Remote {
-				domains: vec!["b.example.com".into(), "a.example.com".into()],
-			},
-		};
-		let sorted = RemotePermissionRequest {
-			permission: RemotePermission::Remote {
-				domains: vec!["a.example.com".into(), "b.example.com".into()],
-			},
-		};
-		assert_eq!(
-			CoreStorageKey::remote_permission_authorization("product.dot", &unsorted),
-			CoreStorageKey::remote_permission_authorization("product.dot", &sorted)
-		);
+    #[test]
+    fn an_internationalized_identifier_is_still_an_identifier() {
+        // The rejection above is a hazard list, not an ASCII allowlist: dotNS
+        // names are internationalized and these are real ids.
+        for id in ["Tést.DOT", "münchen.dot", "dim2-two.dot", "localhost:3000"] {
+            assert!(
+                normalize_product_identifier(id).is_ok(),
+                "{id:?} is a legitimate product id"
+            );
+        }
+    }
 
-		let mixed = RemotePermissionRequest {
-			permission: RemotePermission::Remote {
-				domains: vec!["Example.COM".into(), "a.com".into(), "a.com".into()],
-			},
-		};
-		let canonical = RemotePermissionRequest {
-			permission: RemotePermission::Remote {
-				domains: vec!["a.com".into(), "example.com".into()],
-			},
-		};
-		assert_eq!(
-			CoreStorageKey::remote_permission_authorization("product.dot", &mixed),
-			CoreStorageKey::remote_permission_authorization("product.dot", &canonical)
-		);
-	}
+    #[test]
+    fn an_overlong_product_id_is_not_an_identifier() {
+        // Only the suffix after the last `.` is checked, so every length of
+        // this is otherwise a valid, distinct, wire-supplied cache key.
+        let label = "a".repeat(PRODUCT_ID_MAX_BYTES);
+        let overlong = format!("{label}.dot");
+        assert!(overlong.len() > PRODUCT_ID_MAX_BYTES);
+        assert!(
+            !is_product_identifier(&overlong),
+            "a product id past the cap must be rejected, not stored"
+        );
 
-	#[test]
-	fn remote_permission_authorization_key_handles_separator_chars_in_domains() {
-		let injecting = RemotePermissionRequest {
-			permission: RemotePermission::Remote {
-				domains: vec!["a|b".into(), "c,d".into(), "remote:web-rtc".into()],
-			},
-		};
-		let benign_same_set = RemotePermissionRequest {
-			permission: RemotePermission::Remote {
-				domains: vec!["x".into(), "y".into(), "z".into()],
-			},
-		};
-		let injecting_key =
-			CoreStorageKey::remote_permission_authorization("product.dot", &injecting);
-		let benign_key =
-			CoreStorageKey::remote_permission_authorization("product.dot", &benign_same_set);
-		assert_ne!(injecting_key, benign_key);
+        // A huge id alone would pass with the cap off by any amount.
+        let at_cap = format!("{}.dot", "a".repeat(PRODUCT_ID_MAX_BYTES - 4));
+        assert_eq!(at_cap.len(), PRODUCT_ID_MAX_BYTES);
+        assert!(
+            is_product_identifier(&at_cap),
+            "an id exactly at the cap is still valid"
+        );
+    }
 
-		let webrtc = RemotePermissionRequest { permission: RemotePermission::WebRtc };
-		assert_ne!(
-			injecting_key,
-			CoreStorageKey::remote_permission_authorization("product.dot", &webrtc)
-		);
+    #[test]
+    fn core_storage_key_description_is_strict_and_product_scoped() {
+        let permission = CoreStorageKey::device_permission_authorization(
+            "product.dot",
+            &HostDevicePermissionRequest::Camera,
+        )
+        .encode();
+        assert_eq!(
+            describe_core_storage_key(&permission),
+            Ok(CoreStorageKeyDescription {
+                kind: "PermissionAuthorization",
+                product_id: Some("product.dot".to_string()),
+                permission_request: Some(PermissionAuthorizationRequest::Device(
+                    HostDevicePermissionRequest::Camera,
+                )),
+            })
+        );
+        for (key, kind, product_id) in [
+            (CoreStorageKey::AuthSession, "AuthSession", None),
+            (
+                CoreStorageKey::PairingDeviceIdentity,
+                "PairingDeviceIdentity",
+                None,
+            ),
+            (
+                CoreStorageKey::AllowanceKeys {
+                    session_id: "session".to_string(),
+                },
+                "AllowanceKeys",
+                None,
+            ),
+            (
+                CoreStorageKey::LastProcessedPairingStatement,
+                "LastProcessedPairingStatement",
+                None,
+            ),
+            (
+                CoreStorageKey::AutoSigningKey {
+                    product_id: "product.dot".to_string(),
+                },
+                "AutoSigningKey",
+                Some("product.dot"),
+            ),
+            (CoreStorageKey::AutoSigningKeys, "AutoSigningKeys", None),
+            (
+                CoreStorageKey::RingVrfRegistry {
+                    root_public_key: [0x42; 32],
+                },
+                "RingVrfRegistry",
+                None,
+            ),
+            (
+                CoreStorageKey::StatementRenewalTargets,
+                "StatementRenewalTargets",
+                None,
+            ),
+            (
+                CoreStorageKey::DeviceEncryptionKey,
+                "DeviceEncryptionKey",
+                None,
+            ),
+            (
+                CoreStorageKey::SsoResponderRequestLedger {
+                    root_public_key: [0x11; 32],
+                    peer_statement_account_id: [0x22; 32],
+                    peer_encryption_public_key: [0x33; 32],
+                },
+                "SsoResponderRequestLedger",
+                None,
+            ),
+        ] {
+            let description = describe_core_storage_key(&key.encode()).expect("valid key");
+            assert_eq!(description.kind, kind);
+            assert_eq!(description.product_id.as_deref(), product_id);
+        }
 
-		let injecting_reordered = RemotePermissionRequest {
-			permission: RemotePermission::Remote {
-				domains: vec!["remote:web-rtc".into(), "c,d".into(), "a|b".into()],
-			},
-		};
-		assert_eq!(
-			injecting_key,
-			CoreStorageKey::remote_permission_authorization("product.dot", &injecting_reordered)
-		);
-	}
+        assert_eq!(
+            describe_core_storage_key(&[]),
+            Err(CoreStorageKeyDescriptionError::InvalidEncoding)
+        );
+        let mut trailing = CoreStorageKey::AuthSession.encode();
+        trailing.push(0);
+        assert_eq!(
+            describe_core_storage_key(&trailing),
+            Err(CoreStorageKeyDescriptionError::TrailingBytes)
+        );
+        assert_eq!(
+            describe_core_storage_key(&[u8::MAX]),
+            Err(CoreStorageKeyDescriptionError::InvalidEncoding)
+        );
+    }
 
-	/// A host decodes reviews with its own codec. If a discriminant moves, a
-	/// host one version apart shows the user a different consent prompt from
-	/// the one its answer approves.
-	#[test]
-	fn review_discriminants_do_not_move() {
-		let discriminants = [
-			UserConfirmationReview::AccountAccess(AccountAccessReview {
-				requesting_product_id: ProductId::for_test("caller.dot"),
-				target_product_id: ProductId::for_test("target.dot"),
-			}),
-			UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
-				product_id: ProductId::for_test("caller.dot"),
-			}),
-		]
-		.map(|review| review.encode()[0]);
+    #[test]
+    fn permission_authorization_keys_separate_product_and_request_variants() {
+        let camera = CoreStorageKey::device_permission_authorization(
+            "product.dot",
+            &HostDevicePermissionRequest::Camera,
+        );
+        let other_product = CoreStorageKey::device_permission_authorization(
+            "other.dot",
+            &HostDevicePermissionRequest::Camera,
+        );
+        let remote = CoreStorageKey::remote_permission_authorization(
+            "product.dot",
+            &RemotePermissionRequest {
+                permission: RemotePermission::ChainSubmit,
+            },
+        );
+        let identity = CoreStorageKey::identity_disclosure_authorization("product.dot");
+        let other_product_identity = CoreStorageKey::identity_disclosure_authorization("other.dot");
+        let account_access =
+            CoreStorageKey::account_access_authorization("product.dot", "target.dot");
+        let other_target = CoreStorageKey::account_access_authorization("product.dot", "other.dot");
+        let chat_authority = CoreStorageKey::chat_authority_authorization("product.dot");
+        let other_product_chat = CoreStorageKey::chat_authority_authorization("other.dot");
 
-		assert_eq!(discriminants, [9, 11]);
-	}
+        assert_ne!(camera, other_product);
+        assert_ne!(camera, remote);
+        assert_ne!(camera, identity);
+        assert_ne!(remote, identity);
+        assert_ne!(identity, other_product_identity);
+        assert_ne!(account_access, other_target);
+        assert_ne!(account_access, camera);
+        assert_ne!(chat_authority, identity);
+        assert_ne!(chat_authority, account_access);
+        assert_ne!(chat_authority, other_product_chat);
+    }
+
+    #[test]
+    fn remote_domain_candidates_match_legacy_wildcard_coverage() {
+        assert_eq!(
+            remote_domain_candidates("api.example.com"),
+            ["api.example.com", "*.example.com", "*"]
+        );
+        assert_eq!(
+            remote_domain_candidates("deep.api.example.com"),
+            [
+                "deep.api.example.com",
+                "*.api.example.com",
+                "*.example.com",
+                "*"
+            ]
+        );
+        assert_eq!(
+            remote_domain_candidates("example.com"),
+            ["example.com", "*"]
+        );
+        assert_eq!(remote_domain_candidates("wallet.dot"), ["wallet.dot", "*"]);
+        // A single-label host has no parent to wildcard over.
+        assert_eq!(remote_domain_candidates("localhost"), ["localhost", "*"]);
+        // A stored pattern resolves to itself, not to a duplicated entry.
+        assert_eq!(
+            remote_domain_candidates("*.example.com"),
+            ["*.example.com", "*"]
+        );
+        assert_eq!(remote_domain_candidates("*"), ["*"]);
+        assert_eq!(remote_domain_candidates("*.com"), ["*.com", "*"]);
+        assert_eq!(
+            remote_domain_candidates("*.api.example.com"),
+            ["*.api.example.com", "*.example.com", "*"]
+        );
+        assert_eq!(
+            remote_domain_candidates("example.co.uk"),
+            ["example.co.uk", "*.co.uk", "*"]
+        );
+        assert_eq!(remote_domain_candidates("127.0.0.1"), ["127.0.0.1", "*"]);
+        assert_eq!(remote_domain_candidates("[::1]"), ["[::1]", "*"]);
+        assert_eq!(
+            remote_domain_candidates("DEEP.API.Bücher.Example."),
+            [
+                "deep.api.xn--bcher-kva.example",
+                "*.api.xn--bcher-kva.example",
+                "*.xn--bcher-kva.example",
+                "*",
+            ]
+        );
+        for (pattern, valid) in [
+            ("example.com", true),
+            ("localhost", true),
+            ("127.0.0.1", true),
+            ("[::1]", true),
+            ("*", true),
+            ("*.example.com", true),
+            ("*.co.uk", true),
+            ("*.Bücher.example.", true),
+            ("*.com", false),
+            ("*.dot", false),
+            ("*.127.0.0.1", false),
+            ("*.0.1", false),
+            ("*.[::1]", false),
+            ("*..com", false),
+            ("api.*.com", false),
+            ("", false),
+        ] {
+            assert_eq!(is_valid_remote_domain_pattern(pattern), valid, "{pattern}");
+        }
+    }
+
+    #[test]
+    fn remote_domain_normalization_is_shared_by_both_ends_of_a_lookup() {
+        // The forms enforcement can hand in from a real URL host all collapse
+        // onto the one key a grant is stored under.
+        for spelling in ["API.Example.COM", "api.example.com.", "  api.example.com  "] {
+            assert_eq!(normalize_remote_domain(spelling), "api.example.com");
+        }
+        // IDNA: a non-ASCII host and its punycode spelling are one site, so
+        // they must be one slot and one prompt.
+        assert_eq!(
+            normalize_remote_domain("Bücher.example"),
+            "xn--bcher-kva.example"
+        );
+        assert_eq!(
+            normalize_remote_domain("xn--bcher-kva.example"),
+            "xn--bcher-kva.example"
+        );
+        // The wildcard marker is not part of the host and survives untouched.
+        assert_eq!(normalize_remote_domain("*.Example.COM"), "*.example.com");
+        assert_eq!(
+            normalize_remote_domain("*.Bücher.example"),
+            "*.xn--bcher-kva.example"
+        );
+        assert_eq!(normalize_remote_domain("*"), "*");
+        // A canonicalized bundle keys the same as the candidate list built from
+        // a live host, which is what makes the grant visible to enforcement.
+        assert_eq!(
+            CoreStorageKey::remote_domain_authorization("product.dot", "API.Example.COM."),
+            CoreStorageKey::remote_domain_authorization(
+                "product.dot",
+                &remote_domain_candidates("api.example.com.")[0]
+            )
+        );
+    }
+
+    #[test]
+    fn remote_domain_authorization_key_matches_the_one_element_bundle() {
+        // Enforcement keys a single host; a product granting that one domain
+        // must land in the same slot, or the grant is invisible to the gate.
+        assert_eq!(
+            CoreStorageKey::remote_domain_authorization("product.dot", "Example.COM"),
+            CoreStorageKey::remote_permission_authorization(
+                "product.dot",
+                &RemotePermissionRequest {
+                    permission: RemotePermission::Remote {
+                        domains: vec!["example.com".to_string()],
+                    },
+                }
+            )
+        );
+        assert_ne!(
+            CoreStorageKey::remote_domain_authorization("product.dot", "example.com"),
+            CoreStorageKey::remote_domain_authorization("product.dot", "*.example.com")
+        );
+        assert_ne!(
+            CoreStorageKey::remote_domain_authorization("product.dot", "example.com"),
+            CoreStorageKey::remote_domain_authorization("other.dot", "example.com")
+        );
+    }
+
+    #[test]
+    fn remote_permission_authorization_key_canonicalizes_domain_sets() {
+        let unsorted = RemotePermissionRequest {
+            permission: RemotePermission::Remote {
+                domains: vec!["b.example.com".into(), "a.example.com".into()],
+            },
+        };
+        let sorted = RemotePermissionRequest {
+            permission: RemotePermission::Remote {
+                domains: vec!["a.example.com".into(), "b.example.com".into()],
+            },
+        };
+        assert_eq!(
+            CoreStorageKey::remote_permission_authorization("product.dot", &unsorted),
+            CoreStorageKey::remote_permission_authorization("product.dot", &sorted)
+        );
+
+        let mixed = RemotePermissionRequest {
+            permission: RemotePermission::Remote {
+                domains: vec!["Example.COM".into(), "a.com".into(), "a.com".into()],
+            },
+        };
+        let canonical = RemotePermissionRequest {
+            permission: RemotePermission::Remote {
+                domains: vec!["a.com".into(), "example.com".into()],
+            },
+        };
+        assert_eq!(
+            CoreStorageKey::remote_permission_authorization("product.dot", &mixed),
+            CoreStorageKey::remote_permission_authorization("product.dot", &canonical)
+        );
+    }
+
+    #[test]
+    fn remote_permission_authorization_key_handles_separator_chars_in_domains() {
+        let injecting = RemotePermissionRequest {
+            permission: RemotePermission::Remote {
+                domains: vec!["a|b".into(), "c,d".into(), "remote:web-rtc".into()],
+            },
+        };
+        let benign_same_set = RemotePermissionRequest {
+            permission: RemotePermission::Remote {
+                domains: vec!["x".into(), "y".into(), "z".into()],
+            },
+        };
+        let injecting_key =
+            CoreStorageKey::remote_permission_authorization("product.dot", &injecting);
+        let benign_key =
+            CoreStorageKey::remote_permission_authorization("product.dot", &benign_same_set);
+        assert_ne!(injecting_key, benign_key);
+
+        let webrtc = RemotePermissionRequest {
+            permission: RemotePermission::WebRtc,
+        };
+        assert_ne!(
+            injecting_key,
+            CoreStorageKey::remote_permission_authorization("product.dot", &webrtc)
+        );
+
+        let injecting_reordered = RemotePermissionRequest {
+            permission: RemotePermission::Remote {
+                domains: vec!["remote:web-rtc".into(), "c,d".into(), "a|b".into()],
+            },
+        };
+        assert_eq!(
+            injecting_key,
+            CoreStorageKey::remote_permission_authorization("product.dot", &injecting_reordered)
+        );
+    }
 }
 
 /// Host-private persistence for core-owned state.
@@ -2954,8 +3489,23 @@ pub trait CoreStorage: Send + Sync {
 		value: Vec<u8>,
 	) -> Result<(), GenericError>;
 
-	/// Clear a core-owned value by typed slot.
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError>;
+    /// Clear a core-owned value by typed slot.
+    async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError>;
+
+    /// Atomically replace exactly `expected` decoded bytes in this physical slot.
+    /// `None` differs from an empty value. Serialize with every write, clear and
+    /// compare-exchange across all cores sharing the store, through actual
+    /// persistence completion even if the requesting future is dropped.
+    /// On persisted success, `notify_on_success` enqueues `core_storage_changed`
+    /// before completion even if the requester was cancelled. Initial unanswered
+    /// snapshots pass false; explicit policy decisions pass true.
+    async fn compare_exchange_core_storage(&self, key: CoreStorageKey, expected: Option<Vec<u8>>, replacement: Vec<u8>, notify_on_success: bool) -> Result<bool, GenericError>;
+
+    /// Nonblocking notification after an explicit policy decision or reset.
+    /// Queue deferred refreshes for every core group sharing the store and exact
+    /// product, including the writer. Never await or reenter a core here. Raw
+    /// writes/clears and CAS with `notify_on_success == false` must not emit this.
+    fn core_storage_changed(&self, key: CoreStorageKey);
 }
 
 /// Decoded session fields a host shell needs to render account UI without
@@ -3256,38 +3806,57 @@ pub struct ProductSubtreeReview {
 	pub product_id: ProductId,
 }
 
+/// Immutable calling-consent context resolved by the trusted core.
+///
+/// Approval applies only to this exact canonical product, authenticated network,
+/// and authority-derived account. It neither grants camera/microphone access nor
+/// carries over to another account or network.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct CallingReview {
+    /// Canonical product requesting calling authority.
+    pub product_id: String,
+    /// Genesis hash of the authenticated network.
+    pub network: [u8; 32],
+    /// Product's authority-derived `Index(0)` sr25519 public key.
+    pub account: [u8; 32],
+}
+
 /// Review shown before a user-confirmed core action continues.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum UserConfirmationReview {
-	/// Sign a SCALE payload with a product or legacy account.
-	SignPayload(SignPayloadReview),
-	/// Sign raw bytes with a product or legacy account.
-	SignRaw(SignRawReview),
-	/// Sign a Statement Store proof payload with a product account.
-	StatementStoreProductSign(StatementStoreProductSignReview),
-	/// Create a transaction with a product or legacy account.
-	CreateTransaction(CreateTransactionReview),
-	/// Allow a product to derive a contextual alias for a ring.
-	AccountAlias(AccountAliasReview),
-	/// Allow a product to create a ring-VRF proof for a ring.
-	CreateProof(CreateProofReview),
-	/// Allow a product to learn the user's primary identity.
-	IdentityDisclosure(IdentityDisclosureReview),
-	/// Allocate resources for the requesting product.
-	ResourceAllocation(ResourceAllocationReview),
-	// Index 8 stays unused so a host whose codec is older or newer than the
-	// core cannot decode one review as another.
-	/// Allow a product to access another product account.
-	#[codec(index = 9)]
-	AccountAccess(AccountAccessReview),
-	/// Sign an RFC-0023 VRF transcript with a product account.
-	#[codec(index = 10)]
-	SignVrf(SignVrfReview),
-	/// Resolve a product's own account subtree over SSO.
-	#[codec(index = 11)]
-	ProductSubtree(ProductSubtreeReview),
+    /// Sign a SCALE payload with a product or legacy account.
+    SignPayload(SignPayloadReview),
+    /// Sign raw bytes with a product or legacy account.
+    SignRaw(SignRawReview),
+    /// Sign a Statement Store proof payload with a product account.
+    StatementStoreProductSign(StatementStoreProductSignReview),
+    /// Create a transaction with a product or legacy account.
+    CreateTransaction(CreateTransactionReview),
+    /// Allow a product to derive a contextual alias for a ring.
+    AccountAlias(AccountAliasReview),
+    /// Allow a product to create a ring-VRF proof for a ring.
+    CreateProof(CreateProofReview),
+    /// Allow a product to learn the user's primary identity.
+    IdentityDisclosure(IdentityDisclosureReview),
+    /// Allocate resources for the requesting product.
+    ResourceAllocation(ResourceAllocationReview),
+    /// Submit a preimage to the host-selected backend.
+    PreimageSubmit(PreimageSubmitReview),
+    /// Allow a product to access another product account.
+    AccountAccess(AccountAccessReview),
+    /// Sign an RFC-0023 VRF transcript with a product account.
+    SignVrf(SignVrfReview),
+    /// Resolve a product's own account subtree over SSO.
+    ProductSubtree(ProductSubtreeReview),
+    /// Allow a product to bind and use wallet-held Chat identity authority.
+    ChatAuthority(ChatAuthorityReview),
+    /// Confirm this exact main-purse payment; never eligible for auto-approval.
+    MainPurseChatPayment(MainPurseChatPaymentReview),
+    /// Allow calling only in the immutable authenticated product/account/network scope.
+    Calling(CallingReview),
 }
 
 /// Local user confirmation UI for sensitive core-owned operations.
@@ -4043,21 +4612,23 @@ impl<T> Platform for T where
 /// with `Unsupported`. Codegen reads this list to emit each capability as an
 /// optional group on the host-callback surface.
 pub trait OptionalPlatform:
-	ChatPlatform
-	+ ContactsPlatform
-	+ PermissionStatusHost
-	+ PocketPlatform
-	+ GamePlatform
-	+ ScannerPlatform
+    ChatPlatform
+    + ContactsPlatform
+    + PermissionStatusHost
+    + PocketPlatform
+    + IdentityBackendHost
+    + CoinageWalletHost
+    + MediaPlatform
 {
 }
 
 impl<T> OptionalPlatform for T where
-	T: ChatPlatform
-		+ ContactsPlatform
-		+ PermissionStatusHost
-		+ PocketPlatform
-		+ GamePlatform
-		+ ScannerPlatform
+    T: ChatPlatform
+        + ContactsPlatform
+        + PermissionStatusHost
+        + PocketPlatform
+        + IdentityBackendHost
+        + CoinageWalletHost
+        + MediaPlatform
 {
 }

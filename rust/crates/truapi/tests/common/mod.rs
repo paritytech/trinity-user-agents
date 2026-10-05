@@ -2,6 +2,7 @@ mod spawner;
 pub use spawner::test_spawner;
 
 use futures::stream::{self, BoxStream};
+use parity_scale_codec::Encode;
 use truapi::frame::ProtocolMessage;
 use truapi::platform::{
     AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, Features, HostInfo,
@@ -34,7 +35,11 @@ pub fn test_runtime_config() -> (PairingHostConfig, ProductContext) {
 
 /// Platform stub whose callbacks return fixed no-op values, enough for
 /// wire-shape tests that only inspect emitted frames.
-pub struct WireShapePlatform;
+#[derive(Default)]
+pub struct WireShapePlatform {
+    core_storage: parking_lot::Mutex<std::collections::HashMap<Vec<u8>, Vec<u8>>>,
+    storage_changes: parking_lot::Mutex<Vec<CoreStorageKey>>,
+}
 
 #[truapi::platform::async_trait]
 impl ProductStorage for WireShapePlatform {
@@ -160,22 +165,47 @@ impl AuthPresenter for WireShapePlatform {}
 
 #[truapi::platform::async_trait]
 impl CoreStorage for WireShapePlatform {
-	async fn read_core_storage(
-		&self,
-		_key: CoreStorageKey,
-	) -> Result<Option<Vec<u8>>, v01::GenericError> {
-		Ok(None)
-	}
-	async fn write_core_storage(
-		&self,
-		_key: CoreStorageKey,
-		_value: Vec<u8>,
-	) -> Result<(), v01::GenericError> {
-		Ok(())
-	}
-	async fn clear_core_storage(&self, _key: CoreStorageKey) -> Result<(), v01::GenericError> {
-		Ok(())
-	}
+    async fn read_core_storage(
+        &self,
+        key: CoreStorageKey,
+    ) -> Result<Option<Vec<u8>>, v01::GenericError> {
+        Ok(self.core_storage.lock().get(&key.encode()).cloned())
+    }
+    async fn write_core_storage(
+        &self,
+        key: CoreStorageKey,
+        value: Vec<u8>,
+    ) -> Result<(), v01::GenericError> {
+        self.core_storage.lock().insert(key.encode(), value);
+        Ok(())
+    }
+    async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
+        self.core_storage.lock().remove(&key.encode());
+        Ok(())
+    }
+
+    async fn compare_exchange_core_storage(
+        &self,
+        key: CoreStorageKey,
+        expected: Option<Vec<u8>>,
+        replacement: Vec<u8>,
+        notify_on_success: bool,
+    ) -> Result<bool, v01::GenericError> {
+        let encoded = key.encode();
+        let mut storage = self.core_storage.lock();
+        if storage.get(&encoded) != expected.as_ref() {
+            return Ok(false);
+        }
+        storage.insert(encoded, replacement);
+        if notify_on_success {
+            self.core_storage_changed(key);
+        }
+        Ok(true)
+    }
+
+    fn core_storage_changed(&self, key: CoreStorageKey) {
+        self.storage_changes.lock().push(key);
+    }
 }
 
 #[truapi::platform::async_trait]

@@ -73,48 +73,60 @@ impl PermissionPolicy {
 /// (e.g. that a sign-payload review fired) even when the chain parks afterward.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfirmKind {
-	/// [`UserConfirmationReview::SignPayload`].
-	SignPayload,
-	/// [`UserConfirmationReview::SignRaw`].
-	SignRaw,
-	/// [`UserConfirmationReview::CreateTransaction`].
-	CreateTransaction,
-	/// [`UserConfirmationReview::AccountAlias`].
-	AccountAlias,
-	/// [`UserConfirmationReview::CreateProof`].
-	CreateProof,
-	/// [`UserConfirmationReview::ResourceAllocation`].
-	ResourceAllocation,
-	/// [`UserConfirmationReview::IdentityDisclosure`].
-	IdentityDisclosure,
-	/// [`UserConfirmationReview::AccountAccess`].
-	AccountAccess,
-	/// [`UserConfirmationReview::StatementStoreProductSign`].
-	StatementStoreProductSign,
-	/// [`UserConfirmationReview::SignVrf`].
-	SignVrf,
-	/// [`UserConfirmationReview::ProductSubtree`].
-	ProductSubtree,
+    /// [`UserConfirmationReview::SignPayload`].
+    SignPayload,
+    /// [`UserConfirmationReview::SignRaw`].
+    SignRaw,
+    /// [`UserConfirmationReview::CreateTransaction`].
+    CreateTransaction,
+    /// [`UserConfirmationReview::AccountAlias`].
+    AccountAlias,
+    /// [`UserConfirmationReview::CreateProof`].
+    CreateProof,
+    /// [`UserConfirmationReview::ResourceAllocation`].
+    ResourceAllocation,
+    /// [`UserConfirmationReview::PreimageSubmit`].
+    PreimageSubmit,
+    /// [`UserConfirmationReview::IdentityDisclosure`].
+    IdentityDisclosure,
+    /// [`UserConfirmationReview::AccountAccess`].
+    AccountAccess,
+    /// [`UserConfirmationReview::StatementStoreProductSign`].
+    StatementStoreProductSign,
+    /// [`UserConfirmationReview::SignVrf`].
+    SignVrf,
+    /// [`UserConfirmationReview::ProductSubtree`].
+    ProductSubtree,
+    /// [`UserConfirmationReview::ChatAuthority`].
+    ChatAuthority,
+    /// [`UserConfirmationReview::MainPurseChatPayment`].
+    MainPurseChatPayment,
+    /// [`UserConfirmationReview::Calling`].
+    Calling,
 }
 
 impl ConfirmKind {
-	fn of(review: &UserConfirmationReview) -> Self {
-		match review {
-			UserConfirmationReview::SignPayload(_) => ConfirmKind::SignPayload,
-			UserConfirmationReview::SignRaw(_) => ConfirmKind::SignRaw,
-			UserConfirmationReview::CreateTransaction(_) => ConfirmKind::CreateTransaction,
-			UserConfirmationReview::AccountAlias(_) => ConfirmKind::AccountAlias,
-			UserConfirmationReview::CreateProof(_) => ConfirmKind::CreateProof,
-			UserConfirmationReview::ResourceAllocation(_) => ConfirmKind::ResourceAllocation,
-			UserConfirmationReview::IdentityDisclosure(_) => ConfirmKind::IdentityDisclosure,
-			UserConfirmationReview::AccountAccess(_) => ConfirmKind::AccountAccess,
-			UserConfirmationReview::StatementStoreProductSign(_) => {
-				ConfirmKind::StatementStoreProductSign
-			},
-			UserConfirmationReview::SignVrf(_) => ConfirmKind::SignVrf,
-			UserConfirmationReview::ProductSubtree(_) => ConfirmKind::ProductSubtree,
-		}
-	}
+    fn of(review: &UserConfirmationReview) -> Self {
+        match review {
+            UserConfirmationReview::SignPayload(_) => ConfirmKind::SignPayload,
+            UserConfirmationReview::SignRaw(_) => ConfirmKind::SignRaw,
+            UserConfirmationReview::CreateTransaction(_) => ConfirmKind::CreateTransaction,
+            UserConfirmationReview::AccountAlias(_) => ConfirmKind::AccountAlias,
+            UserConfirmationReview::CreateProof(_) => ConfirmKind::CreateProof,
+            UserConfirmationReview::ResourceAllocation(_) => ConfirmKind::ResourceAllocation,
+            UserConfirmationReview::PreimageSubmit(_) => ConfirmKind::PreimageSubmit,
+            UserConfirmationReview::IdentityDisclosure(_) => ConfirmKind::IdentityDisclosure,
+            UserConfirmationReview::AccountAccess(_) => ConfirmKind::AccountAccess,
+            UserConfirmationReview::StatementStoreProductSign(_) => {
+                ConfirmKind::StatementStoreProductSign
+            }
+            UserConfirmationReview::SignVrf(_) => ConfirmKind::SignVrf,
+            UserConfirmationReview::ProductSubtree(_) => ConfirmKind::ProductSubtree,
+            UserConfirmationReview::ChatAuthority(_) => ConfirmKind::ChatAuthority,
+            UserConfirmationReview::MainPurseChatPayment(_) => ConfirmKind::MainPurseChatPayment,
+            UserConfirmationReview::Calling(_) => ConfirmKind::Calling,
+        }
+    }
 }
 
 /// Which prompt surface a permission decision came from.
@@ -266,44 +278,43 @@ impl Default for MockConfig {
 /// through another.
 #[derive(Clone)]
 pub struct MockPlatform {
-	config: Arc<MockConfig>,
-	storage: Arc<Mutex<HashMap<String, Vec<u8>>>>,
-	preimages: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
-	navigations: Arc<Mutex<Vec<String>>>,
-	notifications: Arc<Mutex<Vec<latest::HostPushNotificationRequest>>>,
-	cancelled_notifications: Arc<Mutex<Vec<u32>>>,
-	reviews: Arc<Mutex<Vec<UserConfirmationReview>>>,
-	auth_states: Arc<Mutex<Vec<AuthState>>>,
-	sent_rpc: Arc<Mutex<Vec<String>>>,
-	/// Starts at 1: the id is what a product cancels by, and one that treats
-	/// 0 as "no id" cannot cancel the first notification it ever schedules.
-	next_notification_id: Arc<AtomicU32>,
-	/// Explicit per-permission answers, keyed by `Display` form. Set by
-	/// `grant_permission` / `revoke_permission`; overrides the config policy.
-	permission_decisions: Arc<Mutex<BTreeMap<String, bool>>>,
-	/// When set, a permission with no explicit answer is denied instead of
-	/// falling back to the config policy.
-	enforce_permissions: Arc<AtomicBool>,
-	permission_log: Arc<Mutex<Vec<PermissionLogEntry>>>,
-	chat_rooms: Arc<Mutex<BTreeMap<String, latest::ChatRoom>>>,
-	chat_bots: Arc<Mutex<BTreeMap<String, latest::HostChatRegisterBotRequest>>>,
-	chat_messages: Arc<Mutex<Vec<ChatMessageRecord>>>,
-	/// Live `subscribe_chat_rooms` streams, fed a fresh list on every change.
-	chat_room_subscribers:
-		Arc<Mutex<Vec<mpsc::UnboundedSender<latest::HostChatListSubscribeItem>>>>,
-	next_chat_message_id: Arc<AtomicU32>,
-	next_operation_id: Arc<AtomicU32>,
-	open_operations: Arc<Mutex<Vec<OpenOperation>>>,
-	/// Current theme. Seeded from the config and replaced by `set_theme`.
-	theme: Arc<Mutex<latest::ThemeVariant>>,
-	theme_subscribers: Arc<Mutex<Vec<mpsc::UnboundedSender<latest::HostThemeSubscribeItem>>>>,
-	/// What the next scan answers. Starts as a dismissal.
-	scan_answer: Arc<Mutex<HostScan>>,
-	storage_subscribers:
-		Arc<Mutex<HashMap<String, Vec<mpsc::UnboundedSender<latest::HostLocalStorageChangeItem>>>>>,
-	chain_status: Arc<Mutex<ChainStatus>>,
-	/// One per live connection; sending ends that connection's response stream.
-	chain_disconnectors: Arc<Mutex<Vec<mpsc::UnboundedSender<()>>>>,
+    config: Arc<MockConfig>,
+    storage: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    core_storage_changes: Arc<Mutex<Vec<CoreStorageKey>>>,
+    preimages: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
+    navigations: Arc<Mutex<Vec<String>>>,
+    notifications: Arc<Mutex<Vec<latest::HostPushNotificationRequest>>>,
+    cancelled_notifications: Arc<Mutex<Vec<u32>>>,
+    reviews: Arc<Mutex<Vec<UserConfirmationReview>>>,
+    auth_states: Arc<Mutex<Vec<AuthState>>>,
+    sent_rpc: Arc<Mutex<Vec<String>>>,
+    /// Starts at 1: the id is what a product cancels by, and one that treats
+    /// 0 as "no id" cannot cancel the first notification it ever schedules.
+    next_notification_id: Arc<AtomicU32>,
+    /// Explicit per-permission answers, keyed by `Display` form. Set by
+    /// `grant_permission` / `revoke_permission`; overrides the config policy.
+    permission_decisions: Arc<Mutex<BTreeMap<String, bool>>>,
+    /// When set, a permission with no explicit answer is denied instead of
+    /// falling back to the config policy.
+    enforce_permissions: Arc<AtomicBool>,
+    permission_log: Arc<Mutex<Vec<PermissionLogEntry>>>,
+    chat_rooms: Arc<Mutex<BTreeMap<String, latest::ChatRoom>>>,
+    chat_bots: Arc<Mutex<BTreeMap<String, latest::HostChatRegisterBotRequest>>>,
+    chat_messages: Arc<Mutex<Vec<ChatMessageRecord>>>,
+    /// Live `subscribe_chat_rooms` streams, fed a fresh list on every change.
+    chat_room_subscribers:
+        Arc<Mutex<Vec<mpsc::UnboundedSender<latest::HostChatListSubscribeItem>>>>,
+    next_chat_message_id: Arc<AtomicU32>,
+    next_operation_id: Arc<AtomicU32>,
+    open_operations: Arc<Mutex<Vec<OpenOperation>>>,
+    /// Current theme. Seeded from the config and replaced by `set_theme`.
+    theme: Arc<Mutex<latest::ThemeVariant>>,
+    theme_subscribers: Arc<Mutex<Vec<mpsc::UnboundedSender<latest::HostThemeSubscribeItem>>>>,
+    storage_subscribers:
+        Arc<Mutex<HashMap<String, Vec<mpsc::UnboundedSender<latest::HostLocalStorageChangeItem>>>>>,
+    chain_status: Arc<Mutex<ChainStatus>>,
+    /// One per live connection; sending ends that connection's response stream.
+    chain_disconnectors: Arc<Mutex<Vec<mpsc::UnboundedSender<()>>>>,
 }
 
 impl Default for MockPlatform {
@@ -319,48 +330,60 @@ impl MockPlatform {
 		Self::with_config(MockConfig::default())
 	}
 
-	/// Build a mock platform with explicit behavior.
-	pub fn with_config(config: MockConfig) -> Self {
-		let theme = config.theme;
-		Self {
-			config: Arc::new(config),
-			storage: Arc::new(Mutex::new(HashMap::new())),
-			preimages: Arc::new(Mutex::new(HashMap::new())),
-			navigations: Arc::new(Mutex::new(Vec::new())),
-			notifications: Arc::new(Mutex::new(Vec::new())),
-			cancelled_notifications: Arc::new(Mutex::new(Vec::new())),
-			reviews: Arc::new(Mutex::new(Vec::new())),
-			auth_states: Arc::new(Mutex::new(Vec::new())),
-			sent_rpc: Arc::new(Mutex::new(Vec::new())),
-			next_notification_id: Arc::new(AtomicU32::new(1)),
-			permission_decisions: Arc::new(Mutex::new(BTreeMap::new())),
-			enforce_permissions: Arc::new(AtomicBool::new(false)),
-			permission_log: Arc::new(Mutex::new(Vec::new())),
-			chat_rooms: Arc::new(Mutex::new(BTreeMap::new())),
-			chat_bots: Arc::new(Mutex::new(BTreeMap::new())),
-			chat_messages: Arc::new(Mutex::new(Vec::new())),
-			chat_room_subscribers: Arc::new(Mutex::new(Vec::new())),
-			next_chat_message_id: Arc::new(AtomicU32::new(0)),
-			next_operation_id: Arc::new(AtomicU32::new(0)),
-			open_operations: Arc::new(Mutex::new(Vec::new())),
-			theme: Arc::new(Mutex::new(theme)),
-			theme_subscribers: Arc::new(Mutex::new(Vec::new())),
-			scan_answer: Arc::new(Mutex::new(HostScan::Dismissed)),
-			storage_subscribers: Arc::new(Mutex::new(HashMap::new())),
-			chain_status: Arc::new(Mutex::new(ChainStatus::Idle)),
-			chain_disconnectors: Arc::new(Mutex::new(Vec::new())),
-		}
-	}
+    /// Build a mock platform with explicit behavior.
+    pub fn with_config(config: MockConfig) -> Self {
+        let theme = config.theme;
+        Self {
+            config: Arc::new(config),
+            storage: Arc::new(Mutex::new(HashMap::new())),
+            core_storage_changes: Arc::new(Mutex::new(Vec::new())),
+            preimages: Arc::new(Mutex::new(HashMap::new())),
+            navigations: Arc::new(Mutex::new(Vec::new())),
+            notifications: Arc::new(Mutex::new(Vec::new())),
+            cancelled_notifications: Arc::new(Mutex::new(Vec::new())),
+            reviews: Arc::new(Mutex::new(Vec::new())),
+            auth_states: Arc::new(Mutex::new(Vec::new())),
+            sent_rpc: Arc::new(Mutex::new(Vec::new())),
+            next_notification_id: Arc::new(AtomicU32::new(1)),
+            permission_decisions: Arc::new(Mutex::new(BTreeMap::new())),
+            enforce_permissions: Arc::new(AtomicBool::new(false)),
+            permission_log: Arc::new(Mutex::new(Vec::new())),
+            chat_rooms: Arc::new(Mutex::new(BTreeMap::new())),
+            chat_bots: Arc::new(Mutex::new(BTreeMap::new())),
+            chat_messages: Arc::new(Mutex::new(Vec::new())),
+            chat_room_subscribers: Arc::new(Mutex::new(Vec::new())),
+            next_chat_message_id: Arc::new(AtomicU32::new(0)),
+            next_operation_id: Arc::new(AtomicU32::new(0)),
+            open_operations: Arc::new(Mutex::new(Vec::new())),
+            theme: Arc::new(Mutex::new(theme)),
+            theme_subscribers: Arc::new(Mutex::new(Vec::new())),
+            storage_subscribers: Arc::new(Mutex::new(HashMap::new())),
+            chain_status: Arc::new(Mutex::new(ChainStatus::Idle)),
+            chain_disconnectors: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
 
 	/// URLs the core asked the host to open, in order.
 	pub fn navigations(&self) -> Vec<String> {
 		self.navigations.lock().expect("navigations poisoned").clone()
 	}
 
-	/// Notifications the core asked the host to show, in order.
-	pub fn pushed_notifications(&self) -> Vec<latest::HostPushNotificationRequest> {
-		self.notifications.lock().expect("notifications poisoned").clone()
-	}
+    /// Explicit core-storage policy notifications queued across every clone.
+    /// Raw writes and clears do not appear here.
+    pub fn core_storage_changes(&self) -> Vec<CoreStorageKey> {
+        self.core_storage_changes
+            .lock()
+            .expect("core storage changes poisoned")
+            .clone()
+    }
+
+    /// Notifications the core asked the host to show, in order.
+    pub fn pushed_notifications(&self) -> Vec<latest::HostPushNotificationRequest> {
+        self.notifications
+            .lock()
+            .expect("notifications poisoned")
+            .clone()
+    }
 
 	/// Notification ids the core asked the host to cancel, in order.
 	pub fn cancelled_notifications(&self) -> Vec<u32> {
@@ -908,13 +931,49 @@ impl CoreStorage for MockPlatform {
 		Ok(())
 	}
 
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), latest::GenericError> {
-		if let Some(reason) = &self.config.faults.storage_error {
-			return Err(latest::GenericError { reason: reason.clone() });
-		}
-		self.storage.lock().expect("storage poisoned").remove(&core_key(&key));
-		Ok(())
-	}
+    async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), latest::GenericError> {
+        if let Some(reason) = &self.config.faults.storage_error {
+            return Err(latest::GenericError {
+                reason: reason.clone(),
+            });
+        }
+        self.storage
+            .lock()
+            .expect("storage poisoned")
+            .remove(&core_key(&key));
+        Ok(())
+    }
+
+    async fn compare_exchange_core_storage(
+        &self,
+        key: CoreStorageKey,
+        expected: Option<Vec<u8>>,
+        replacement: Vec<u8>,
+        notify_on_success: bool,
+    ) -> Result<bool, latest::GenericError> {
+        if let Some(reason) = &self.config.faults.storage_error {
+            return Err(latest::GenericError {
+                reason: reason.clone(),
+            });
+        }
+        let mut storage = self.storage.lock().expect("storage poisoned");
+        let slot = core_key(&key);
+        if storage.get(&slot) != expected.as_ref() {
+            return Ok(false);
+        }
+        storage.insert(slot, replacement);
+        if notify_on_success {
+            self.core_storage_changed(key);
+        }
+        Ok(true)
+    }
+
+    fn core_storage_changed(&self, key: CoreStorageKey) {
+        self.core_storage_changes
+            .lock()
+            .expect("core storage changes poisoned")
+            .push(key);
+    }
 }
 
 #[async_trait]
@@ -1011,15 +1070,15 @@ fn device_permission_key(request: &latest::HostDevicePermissionRequest) -> &'sta
 /// would make the key depend on what the product asked for and leave the
 /// permission impossible to grant ahead of the request.
 fn remote_permission_key(permission: &latest::RemotePermission) -> &'static str {
-	use latest::RemotePermission as Permission;
-	match permission {
-		Permission::Remote { .. } => "Remote",
-		Permission::WebRtc => "WebRtc",
-		Permission::ChainSubmit => "ChainSubmit",
-		Permission::PreimageSubmit => "PreimageSubmit",
-		Permission::StatementSubmit => "StatementSubmit",
-		Permission::BalanceAccess => "BalanceAccess",
-	}
+    use latest::RemotePermission as Permission;
+    match permission {
+        Permission::Remote { .. } => "Remote",
+        Permission::WebRtc => "WebRtc",
+        Permission::ChainSubmit => "ChainSubmit",
+        Permission::PreimageSubmit => "PreimageSubmit",
+        Permission::StatementSubmit => "StatementSubmit",
+        Permission::Calling => "Calling",
+    }
 }
 
 /// A mock policy is two-valued, so a grant is durable and a refusal is durable.

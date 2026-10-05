@@ -39,6 +39,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     let storage: HostStorageBackend
     let coreStorage: HostCoreStorageBackend
+    let media: NativeMediaBackend
 
     private let dependencies: Dependencies
     private let cardFace: (any ExpandedCardFaceShowing)?
@@ -50,7 +51,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     init(dependencies: Dependencies, cardFace: (any ExpandedCardFaceShowing)? = nil) {
         self.dependencies = dependencies
-        self.cardFace = cardFace
+        media = NativeMediaBackend(productId: dependencies.productId)
         storage = ProductStorageBackend(storage: dependencies.productStorage)
         coreStorage = CoreStorageBackend(storage: dependencies.coreStorage)
     }
@@ -229,6 +230,10 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func authStateChanged(state: AuthState) {
+        switch state {
+        case .disconnected, .loginFailed: media.authorityLost()
+        default: break
+        }
         let details =
             switch state {
             case .disconnected:
@@ -334,14 +339,14 @@ extension HostDevicePermissionRequest {
 
 extension RemotePermission {
     /// Maps the TrUAPI remote permission to the Products domain request.
-    func toDomainRequest() -> Products.RemotePermissionRequest {
+    func toDomainRequest() -> Products.RemotePermissionRequest? {
         switch self {
         case let .remote(domains): .remote(domains: domains)
         case .webRtc: .webRTC
         case .chainSubmit: .chainSubmit
         case .preimageSubmit: .preimageSubmit
         case .statementSubmit: .statementSubmit
-        case let .jamPeers(genesis): .jamPeers(genesis: genesis.toHex(includePrefix: true))
+        case .calling: nil
         }
     }
 }

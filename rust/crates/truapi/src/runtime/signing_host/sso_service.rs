@@ -30,7 +30,21 @@ use crate::host_internal::sso_messages::{
     SignRawWithLegacyAccountRequest, SignRawWithLegacyAccountResponse, SignRequest, SignResponse,
     SignVrfResponse, SsoAllocatedResource, SsoAllocationOutcome, SsoProductDeviceChatOperation,
     StatementStoreProductSignRequest, StatementStoreProductSignResponse,
+    MediaEndpointCertificationError, MediaEndpointCertificationRequest,
+    MediaEndpointCertificationResponse,
 };
+use crate::host_internal::sso_wire::ResponseOutcome;
+use crate::host_logic::statement_store::validate_unsigned_statement_signing_payload;
+use crate::host_logic::product_account::{
+    derive_ring_vrf_domain_entropy, product_public_key_to_address,
+};
+use crate::runtime::authority::{
+    AuthoritySession, CreateTransactionAuthorityRequest, ProductAuthority,
+    ProductDeviceChatAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
+    chat_requires_preimage_submit,
+    AuthorityError,
+};
+use crate::runtime::sso_service::{Dispatch, SsoReply, SsoRequestContext};
 
 /// Handler error once the pairing host has withdrawn the request; never
 /// posted, because a withdrawn request has no response.
@@ -368,14 +382,33 @@ impl SigningHostSsoService {
 		payload
 	}
 
-	/// Derive a contextual alias for a registered ring-VRF key.
-	async fn get_account_alias(
-		&self,
-		cx: &SsoRequestContext,
-		request: ProductRequest<api::HostAccountGetAliasRequest>,
-	) -> GetAccountAliasResponse {
-		self.signing_host.account_alias(&cx.call, &cx.session, request).await
-	}
+    /// Consent-free private certification; no generic raw-signing or Chat path.
+    async fn media_endpoint_certification(
+        &self,
+        cx: &SsoRequestContext,
+        request: MediaEndpointCertificationRequest,
+    ) -> MediaEndpointCertificationResponse {
+        self.signing_host
+            .certify_encoded_media_endpoint(
+                &cx.session,
+                &request.product_id,
+                &request.unsigned_advertisement,
+            )
+            .map_err(|error| match error {
+                AuthorityError::Disconnected => MediaEndpointCertificationError::Disconnected,
+                AuthorityError::Rejected => MediaEndpointCertificationError::Rejected,
+                _ => MediaEndpointCertificationError::Unavailable,
+            })
+    }
+
+    /// Sign a payload or raw bytes with a product account.
+    async fn sign(&self, cx: &SsoRequestContext, request: SignRequest) -> SignResponse {
+        let payload = self.serve_sign(cx, request).await;
+        if let Err(reason) = &payload {
+            warn!(%reason, "sign request failed");
+        }
+        payload
+    }
 
 	/// Allocate SSO-backed resources for a product.
 	async fn resource_allocation(

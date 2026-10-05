@@ -15,7 +15,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::platform::{
-    ChatPlatform, CoinageWalletHost, ContactsPlatform, PermissionStatusHost, PocketPlatform,
+    ChatPlatform, CoinageWalletHost, ContactsPlatform, MediaPlatform, PermissionStatusHost,
+    PocketPlatform,
 };
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
@@ -292,6 +293,12 @@ impl PairingHostRuntime {
             .contacts_changed(&self.services.spawner);
     }
 
+    /// Install the complete Media backend once, before serving products.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_media_platform"))]
+    pub fn set_media_platform(&self, platform: Arc<dyn MediaPlatform>) -> bool {
+        self.services.install_media_platform(platform)
+    }
+
     /// Build a product-facing runtime from this pairing host.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_runtime"))]
     pub fn product_runtime(
@@ -499,22 +506,31 @@ impl PairingHostRuntime {
 		self.services.contact_handles.clear();
 	}
 
-	/// Build a product-facing runtime from this pairing host.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_runtime"))]
-	pub fn product_runtime(
-		&self,
-		product: ProductContext,
-		sink: Arc<dyn FrameSink>,
-	) -> ProductRuntime {
-		ProductRuntime::new(
-			self.services.clone(),
-			self.pairing_host.clone(),
-			self.pairing_host.session().clone(),
-			product,
-			ConnectionAdapters::from_services(&self.services),
-			sink,
-		)
-	}
+    /// Resolve the current immutable Calling slot for trusted host settings.
+    pub async fn calling_permission_authorization_request(
+        &self,
+        product_id: &str,
+    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .calling_permission_authorization_request()
+            .await
+    }
+
+    /// Read a stored permission authorization status for a product without prompting.
+    ///
+    /// A device capability also resolves the host application's OS gate, so an
+    /// OS refusal reads as `Denied` whatever is stored. Remote,
+    /// identity-disclosure and account-access decisions have no OS gate.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.permission_authorization_status", product_id = %product_id))]
+    pub async fn permission_authorization_status(
+        &self,
+        product_id: &str,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .permission_authorization_status(request)
+            .await
+    }
 
 	/// Build a product-scoped administration handle from this pairing host.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_admin"))]
@@ -528,215 +544,29 @@ impl PairingHostRuntime {
 		)
 	}
 
-	/// Disconnect the active account-authority session.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.disconnect_session"))]
-	pub async fn disconnect_session(&self) {
-		self.pairing_host.session().disconnect().await;
-	}
+    /// Update a stored permission authorization status for a product.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
+    pub async fn set_permission_authorization_status(
+        &self,
+        product_id: &str,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .set_permission_authorization_status(request, status)
+            .await
+    }
 
-	/// Log out and discard the old pairing keypair.
-	///
-	/// The next product login request generates a fresh pairing identity and
-	/// presents a new deeplink suitable for another signing host.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
-	pub async fn logout(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.logout_and_reset_pairing()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
-	}
-
-	/// Clear one product's capability state while preserving the active
-	/// session and unrelated products.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(
-		&self,
-		product_id: &ProductId,
-	) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.clear_product_state(product_id)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
-	}
-
-	/// Registered providers available for an internal well-known-ring feature.
-	pub async fn ring_vrf_providers(
-		&self,
-		ring: &v01::RingLocation,
-	) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
-		self.pairing_host.ring_vrf_providers(ring).await.map_err(ring_vrf_admin_error)
-	}
-
-	/// Current provider selected for an internal well-known-ring feature.
-	pub async fn selected_ring_vrf_provider(
-		&self,
-		ring: &v01::RingLocation,
-	) -> Result<Option<v01::ProductAccountId>, v01::GenericError> {
-		self.pairing_host
-			.selected_ring_vrf_provider(ring)
-			.await
-			.map_err(ring_vrf_admin_error)
-	}
-
-	/// Select a registered provider for an internal well-known-ring feature.
-	pub async fn select_ring_vrf_provider(
-		&self,
-		ring: v01::RingLocation,
-		handle: v01::ProductAccountId,
-	) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.select_ring_vrf_provider(ring, handle)
-			.await
-			.map_err(ring_vrf_admin_error)
-	}
-
-	/// Reference counts per product worker, shared by every connection of
-	/// this host.
-	pub fn worker_ledger(&self) -> &WorkerLedger {
-		&self.services.worker_ledger
-	}
-
-	/// Read the active session's X25519 chat identity private key, for hosts
-	/// running their own P2P chat channel for the paired identity.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.session_chat_identity_key"))]
-	pub fn session_chat_identity_key(&self) -> Option<[u8; 32]> {
-		self.pairing_host.session().session_state().current()?.identity_chat_private_key
-	}
-
-	/// Read the active session's sr25519 statement-store secret, for hosts
-	/// running their own statement-store traffic against the advertised account.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_statement_key"))]
-	pub fn device_statement_key(&self) -> Option<[u8; 64]> {
-		Some(self.pairing_host.session().session_state().current()?.sso?.ss_secret)
-	}
-
-	/// Read this device's X25519 encryption secret, for hosts running device
-	/// sync. Generated and persisted on first read.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_encryption_key"))]
-	pub async fn device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
-		self.services
-			.device_encryption_secret()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
-	}
-
-	/// Resolve `product_id`'s hard-subtree public key from the cache, the
-	/// persisted slot, or the Account Holder. `timeout_ms` bounds that wait.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_subtree_public_key"))]
-	pub async fn product_subtree_public_key(
-		&self,
-		product_id: &ProductId,
-		timeout_ms: Option<u32>,
-	) -> Result<Option<[u8; 32]>, v01::GenericError> {
-		product_subtree_public_key(self.pairing_host.as_ref(), product_id, timeout_ms).await
-	}
-
-	/// Clear the canonical paired session and all capability caches/storage
-	/// without sending a peer-disconnect notice.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.reset_session_state"))]
-	pub async fn reset_session_state(&self) {
-		self.pairing_host.session().reset_session_state().await;
-	}
-
-	/// Start or join the pairing-host login flow for one product.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.login", %product_id))]
-	pub async fn login(
-		&self,
-		product_id: &ProductId,
-	) -> Result<v01::HostRequestLoginResponse, v01::GenericError> {
-		let product = product_context(product_id);
-		match self.pairing_host.session().request_login(&product).await {
-			Ok(response) => Ok(response),
-			Err(error) => Err(v01::GenericError { reason: pairing_login_error_reason(error) }),
-		}
-	}
-
-	/// Cancel an in-flight SSO pairing request. A no-op when no pairing is
-	/// active.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.cancel_pairing"))]
-	pub fn cancel_pairing(&self) {
-		self.pairing_host.session().cancel_login();
-	}
-
-	/// Activate a canonical session blob supplied by an external encrypted
-	/// session owner without writing the blob to core storage.
-	///
-	/// Success means decoding, username resolution, replacement fencing, and
-	/// connected-session installation have completed.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_external_session"))]
-	pub async fn activate_external_session(&self, blob: &[u8]) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.session()
-			.activate_external_session(blob)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
-	}
-
-	/// Await restoration of the persisted auth-session blob.
-	///
-	/// Success means decoding, username resolution, stale-read fencing, and
-	/// connected-session installation have completed, so product frames may
-	/// immediately use the restored authority session.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_stored_session"))]
-	pub async fn activate_stored_session(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.session()
-			.activate_stored_session()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
-	}
-
-	/// Notify the pairing runtime that the persisted auth-session blob may
-	/// have changed and should be re-read.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.notify_session_store_changed"))]
-	pub fn notify_session_store_changed(&self) {
-		self.pairing_host.session().notify_session_store_changed();
-	}
-
-	/// Read a stored permission authorization status for a product without prompting.
-	///
-	/// A device capability also resolves the host application's OS gate, so an
-	/// OS refusal reads as `Denied` whatever is stored. Remote,
-	/// identity-disclosure and account-access decisions have no OS gate.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.permission_authorization_status", product_id = %product_id))]
-	pub async fn permission_authorization_status(
-		&self,
-		product_id: &ProductId,
-		request: PermissionAuthorizationRequest,
-	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		self.product_admin(product_context(product_id))
-			.permission_authorization_status(request)
-			.await
-	}
-
-	/// Read stored permission authorization statuses for a product without prompting.
-	///
-	/// A device capability also resolves the host application's OS gate, so an
-	/// OS refusal reads as `Denied` whatever is stored. Remote,
-	/// identity-disclosure and account-access decisions have no OS gate.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.permission_authorization_statuses", product_id = %product_id))]
-	pub async fn permission_authorization_statuses(
-		&self,
-		product_id: &ProductId,
-		requests: Vec<PermissionAuthorizationRequest>,
-	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-		self.product_admin(product_context(product_id))
-			.permission_authorization_statuses(requests)
-			.await
-	}
-
-	/// Update a stored permission authorization status for a product.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
-	pub async fn set_permission_authorization_status(
-		&self,
-		product_id: &ProductId,
-		request: PermissionAuthorizationRequest,
-		status: PermissionAuthorizationStatus,
-	) -> Result<(), v01::GenericError> {
-		self.product_admin(product_context(product_id))
-			.set_permission_authorization_status(request, status)
-			.await
-	}
+    /// Re-read a product's stored authorization after another core changes it.
+    pub async fn refresh_permission_authorization(
+        &self,
+        product_id: &str,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .refresh_permission_authorization(request)
+            .await
+    }
 }
 
 fn pairing_login_error_reason(
@@ -989,6 +819,30 @@ impl SigningHostRuntime {
         self.services.install_device_pairing_observer(observer)
     }
 
+    /// Install the core-owned database that durable consumers share.
+    ///
+    /// Set-once, so durable state cannot move to another file under a running
+    /// consumer. Returns whether this call installed it.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
+    pub fn set_core_db(&self, db: crate::store::Db) -> bool {
+        self.services.install_core_db(db)
+    }
+
+    /// Reports the core database's state.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn core_database_status(
+        &self,
+    ) -> Result<crate::store::DbStatus, crate::store::DbError> {
+        self.services.core_db()?.status().await
+    }
+
+    /// Install the complete Media backend once, before serving products.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_media_platform"))]
+    pub fn set_media_platform(&self, platform: Arc<dyn MediaPlatform>) -> bool {
+        self.services.install_media_platform(platform)
+    }
+
     /// Build a product-facing runtime from this signing host.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_runtime"))]
     pub fn product_runtime(
@@ -1136,14 +990,27 @@ impl SigningHostRuntime {
 		Ok(self.services.cancel_funding(intent).await?)
 	}
 
-	/// One funding session as the core holds it, for the host's own status
-	/// and history views.
-	pub fn funding_session(
-		&self,
-		intent: &str,
-	) -> Option<crate::host_logic::funding::FundingSession> {
-		self.services.funding().get(intent)
-	}
+    /// Resolve the current immutable Calling slot for trusted host settings.
+    pub async fn calling_permission_authorization_request(
+        &self,
+        product_id: &str,
+    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .calling_permission_authorization_request()
+            .await
+    }
+
+    /// Read a stored permission authorization status without prompting.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_status", product_id = %product_id))]
+    pub async fn permission_authorization_status(
+        &self,
+        product_id: &str,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .permission_authorization_status(request)
+            .await
+    }
 
 	/// Open a funding session on the host's own behalf, as the Balance card's
 	/// Add and Withdraw do, and show the overlay. Returns the session id, or
@@ -1168,12 +1035,28 @@ impl SigningHostRuntime {
 		self.services.install_game_platform(platform)
 	}
 
-	/// Install the host's [`TopUpPlatform`], which claims funds into the
-	/// balance. Set-once. Returns whether this call installed it.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_top_up_platform"))]
-	pub fn set_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
-		self.services.install_top_up_platform(platform)
-	}
+    /// Re-read a product's stored authorization after another core changes it.
+    pub async fn refresh_permission_authorization(
+        &self,
+        product_id: &str,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .refresh_permission_authorization(request)
+            .await
+    }
+
+    /// Activate a wallet-local session from host-held secret material (raw
+    /// BIP-39 entropy).
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session"))]
+    pub async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), v01::GenericError> {
+        self.signing_host
+            .activate_local_session(secret)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
 
 	/// Install the host's [`PaymentPlatform`], which pays from the user's
 	/// balance once the user approves. Set-once; returns whether this call
@@ -1615,6 +1498,7 @@ pub struct ConnectionAdapters {
     pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
     pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
     pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
+    pub media_platform: Option<Arc<dyn MediaPlatform>>,
 }
 
 impl ConnectionAdapters {
@@ -1629,6 +1513,7 @@ impl ConnectionAdapters {
             chat: Arc::new(ActionChannel::chat()),
             renderer: Arc::new(ActionChannel::renderer()),
             pocket_platform: services.pocket_platform(),
+            media_platform: services.media_platform(),
         }
     }
 }
@@ -1686,18 +1571,27 @@ impl HostAdmin {
 		self.host_session.disconnect().await;
 	}
 
-	/// Read a stored permission authorization status without prompting.
-	///
-	/// A device capability also resolves the host application's OS gate, so an
-	/// OS refusal reads as `Denied` whatever is stored. Remote,
-	/// identity-disclosure and account-access decisions have no OS gate.
-	#[instrument(skip_all, fields(runtime.method = "host_admin.permission_authorization_status"))]
-	pub async fn permission_authorization_status(
-		&self,
-		request: PermissionAuthorizationRequest,
-	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		self.product_runtime.connection().permission_authorization_status(request).await
-	}
+    /// Resolve Calling's authority-derived scope without prompting or opening Media.
+    pub async fn calling_permission_authorization_request(
+        &self,
+    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+        self.product_runtime.calling_permission_authorization_request().await
+    }
+
+    /// Read a stored permission authorization status without prompting.
+    ///
+    /// A device capability also resolves the host application's OS gate, so an
+    /// OS refusal reads as `Denied` whatever is stored. Remote,
+    /// identity-disclosure and account-access decisions have no OS gate.
+    #[instrument(skip_all, fields(runtime.method = "host_admin.permission_authorization_status"))]
+    pub async fn permission_authorization_status(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+        self.product_runtime
+            .permission_authorization_status(request)
+            .await
+    }
 
 	/// Read stored permission authorization statuses without prompting.
 	///
@@ -1715,18 +1609,25 @@ impl HostAdmin {
 			.await
 	}
 
-	/// Update a stored permission authorization status.
-	#[instrument(skip_all, fields(runtime.method = "host_admin.set_permission_authorization_status"))]
-	pub async fn set_permission_authorization_status(
-		&self,
-		request: PermissionAuthorizationRequest,
-		status: PermissionAuthorizationStatus,
-	) -> Result<(), v01::GenericError> {
-		self.product_runtime
-			.connection()
-			.set_permission_authorization_status(request, status)
-			.await
-	}
+    /// Update a stored permission authorization status.
+    #[instrument(skip_all, fields(runtime.method = "host_admin.set_permission_authorization_status"))]
+    pub async fn set_permission_authorization_status(
+        &self,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), v01::GenericError> {
+        self.product_runtime
+            .set_permission_authorization_status(request, status)
+            .await
+    }
+
+    /// Re-read stored product authorization without prompting or writing.
+    pub async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), v01::GenericError> {
+        self.product_runtime.refresh_permission_authorization(request).await
+    }
 }
 
 #[crate::platform::async_trait]
@@ -1758,13 +1659,20 @@ impl CoreAdmin for HostAdmin {
 		HostAdmin::set_permission_authorization_status(self, request, status).await
 	}
 
-	async fn get_session_chat_identity_key(&self) -> Result<Option<[u8; 32]>, v01::GenericError> {
-		Ok(self
-			.host_session
-			.session_state()
-			.current()
-			.and_then(|session| session.identity_chat_private_key))
-	}
+    async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), v01::GenericError> {
+        HostAdmin::refresh_permission_authorization(self, request).await
+    }
+
+    async fn get_session_chat_identity_key(&self) -> Result<Option<[u8; 32]>, v01::GenericError> {
+        Ok(self
+            .authority
+            .session_state()
+            .current()
+            .and_then(|session| session.identity_chat_private_key))
+    }
 
 	async fn get_device_statement_key(&self) -> Result<Option<Vec<u8>>, v01::GenericError> {
 		Ok(self
@@ -1871,15 +1779,37 @@ impl ProductRuntimeControl {
 		Ok(&self.connection)
 	}
 
-	/// Publish one host-authored Chat action into this connection's action
-	/// stream, buffering it until the product subscribes.
-	pub fn publish_chat_action(
-		&self,
-		action: v01::HostChatActionSubscribeItem,
-	) -> Result<(), ProductRuntimeError> {
-		self.connection()?
-			.publish_chat_action(truapi::versioned::chat::HostChatActionSubscribeItem::V1(action))
-	}
+    /// Resolve the active connection's immutable Calling scope for host settings.
+    pub async fn calling_permission_authorization_request(
+        &self,
+    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+        let runtime = self.runtime().map_err(|_| v01::GenericError {
+            reason: "Product runtime is closed".into(),
+        })?;
+        runtime.calling_permission_authorization_request().await
+    }
+
+    /// Re-read this connection's stored authorization without starting Media.
+    pub async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), v01::GenericError> {
+        let runtime = self.runtime().map_err(|_| v01::GenericError {
+            reason: "Product runtime is closed".into(),
+        })?;
+        runtime.refresh_permission_authorization(request).await
+    }
+
+    /// Publish one host-authored Chat action into this connection's action
+    /// stream, buffering it until the product subscribes.
+    pub fn publish_chat_action(
+        &self,
+        action: v01::HostChatActionSubscribeItem,
+    ) -> Result<(), ProductRuntimeError> {
+        self.runtime()?.publish_chat_action(
+            truapi::versioned::chat::HostChatActionSubscribeItem::V1(action),
+        )
+    }
 
 	/// Publish one action triggered inside a product-rendered body into this
 	/// connection's renderer action stream, buffering it until the product
@@ -2073,16 +2003,21 @@ impl ProductRuntime {
 		}
 	}
 
-	/// Push one SCALE-encoded protocol frame into the dispatcher.
-	///
-	/// Calls after [`Self::dispose`] are ignored and return `Ok(())` without
-	/// decoding. If dispose happens while a dispatch is in flight, the dispatch
-	/// is aborted and this method still returns `Ok(())`.
-	#[instrument(skip_all, fields(runtime.method = "product_runtime.receive_frame"))]
-	pub async fn receive_frame(&self, frame: Vec<u8>) -> Result<(), ProductRuntimeError> {
-		if self.disposed.load(Ordering::Acquire) {
-			return Ok(());
-		}
+    /// Trusted connection identity for binding host-only adapters.
+    pub fn runtime_id(&self) -> u64 {
+        self.admin.product_runtime.runtime_id()
+    }
+
+    /// Push one SCALE-encoded protocol frame into the dispatcher.
+    ///
+    /// Calls after [`Self::dispose`] are ignored and return `Ok(())` without
+    /// decoding. If dispose happens while a dispatch is in flight, the dispatch
+    /// is aborted and this method still returns `Ok(())`.
+    #[instrument(skip_all, fields(runtime.method = "product_runtime.receive_frame"))]
+    pub async fn receive_frame(&self, frame: Vec<u8>) -> Result<(), ProductRuntimeError> {
+        if self.disposed.load(Ordering::Acquire) {
+            return Ok(());
+        }
 
 		// Tap inbound before decode, so a corrupt frame is still observed.
 		if let Some((channel_id, debug)) = self.transport.debug() {
@@ -2149,18 +2084,25 @@ impl ProductRuntime {
 		self.admin.disconnect_session().await;
 	}
 
-	/// Read a stored permission authorization status without prompting.
-	///
-	/// A device capability also resolves the host application's OS gate, so an
-	/// OS refusal reads as `Denied` whatever is stored. Remote,
-	/// identity-disclosure and account-access decisions have no OS gate.
-	#[instrument(skip_all, fields(runtime.method = "product_runtime.permission_authorization_status"))]
-	pub async fn permission_authorization_status(
-		&self,
-		request: PermissionAuthorizationRequest,
-	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		self.admin.permission_authorization_status(request).await
-	}
+    /// Resolve Calling's authority-derived scope without prompting or opening Media.
+    pub async fn calling_permission_authorization_request(
+        &self,
+    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+        self.control().calling_permission_authorization_request().await
+    }
+
+    /// Read a stored permission authorization status without prompting.
+    ///
+    /// A device capability also resolves the host application's OS gate, so an
+    /// OS refusal reads as `Denied` whatever is stored. Remote,
+    /// identity-disclosure and account-access decisions have no OS gate.
+    #[instrument(skip_all, fields(runtime.method = "product_runtime.permission_authorization_status"))]
+    pub async fn permission_authorization_status(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+        self.admin.permission_authorization_status(request).await
+    }
 
 	/// Read stored permission authorization statuses without prompting.
 	///
@@ -2175,29 +2117,39 @@ impl ProductRuntime {
 		self.admin.permission_authorization_statuses(requests).await
 	}
 
-	/// Update a stored permission authorization status. `NotDetermined`
-	/// clears the stored value so the next product request prompts again.
-	#[instrument(skip_all, fields(runtime.method = "product_runtime.set_permission_authorization_status"))]
-	pub async fn set_permission_authorization_status(
-		&self,
-		request: PermissionAuthorizationRequest,
-		status: PermissionAuthorizationStatus,
-	) -> Result<(), v01::GenericError> {
-		self.admin.set_permission_authorization_status(request, status).await
-	}
+    /// Update a stored permission authorization status. `NotDetermined`
+    /// resets the decision so the next product request prompts again.
+    #[instrument(skip_all, fields(runtime.method = "product_runtime.set_permission_authorization_status"))]
+    pub async fn set_permission_authorization_status(
+        &self,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), v01::GenericError> {
+        self.admin
+            .set_permission_authorization_status(request, status)
+            .await
+    }
 
-	/// Install a dev-only [`DebugSink`] that observes every product frame in
-	/// both directions for `channel_id`. Absent by default and inert in
-	/// production.
-	///
-	/// The sink cannot FAIL a dispatch - a panic is contained at both tap sites -
-	/// but it can STALL one: `emit` is called synchronously on the frame path, and
-	/// nothing here bounds how long it may take. Read [`DebugSink::emit`] before
-	/// implementing one; a sink that may be slow must own its own queue and return
-	/// immediately.
-	pub fn set_debug_sink(&self, channel_id: ChannelId, sink: Arc<dyn DebugSink>) {
-		self.transport.set_debug_sink(channel_id, sink);
-	}
+    /// Re-read stored authorization after a host-private storage notification.
+    pub async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), v01::GenericError> {
+        self.control().refresh_permission_authorization(request).await
+    }
+
+    /// Install a dev-only [`DebugSink`] that observes every product frame in
+    /// both directions for `channel_id`. Absent by default and inert in
+    /// production.
+    ///
+    /// The sink cannot FAIL a dispatch - a panic is contained at both tap sites -
+    /// but it can STALL one: `emit` is called synchronously on the frame path, and
+    /// nothing here bounds how long it may take. Read [`DebugSink::emit`] before
+    /// implementing one; a sink that may be slow must own its own queue and return
+    /// immediately.
+    pub fn set_debug_sink(&self, channel_id: ChannelId, sink: Arc<dyn DebugSink>) {
+        self.transport.set_debug_sink(channel_id, sink);
+    }
 
     /// Dispose this host core. Idempotent.
     ///
@@ -2205,7 +2157,11 @@ impl ProductRuntime {
     /// futures, and cancels active subscriptions.
     #[instrument(skip_all, fields(runtime.method = "product_runtime.dispose"))]
     pub fn dispose(&self) {
-        // Aborting under the lock can wake code that re-enters disposal.
+        if self.disposed.load(Ordering::Acquire) {
+            return;
+        }
+        // Fence Media before transport disposal or in-flight dispatch abortion.
+        self.admin.product_runtime.close_media();
         if self.disposed.load(Ordering::Acquire) {
             return;
         }

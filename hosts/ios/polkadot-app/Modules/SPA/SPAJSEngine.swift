@@ -19,7 +19,7 @@ final class SPAJSEngine: NSObject, @unchecked Sendable {
     private let navigationDecisionHandler: SPANavigationDecisionHandling?
 
     var onNavigationIntercepted: ((URL) -> Void)?
-    var onDeeplinkRequested: ((URL) -> Void)?
+    var onProcessTerminated: (() -> Void)?
 
     init(
         webView: WKWebView,
@@ -223,6 +223,11 @@ extension SPAJSEngine: WKNavigationDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if let onProcessTerminated {
+            state = .error("Product process terminated")
+            onProcessTerminated()
+            return
+        }
         logger.error("WebView process terminated, attempting recovery reload")
         webView.reload()
     }

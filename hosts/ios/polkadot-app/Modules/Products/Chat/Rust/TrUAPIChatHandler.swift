@@ -181,9 +181,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         // because the surface is the product's and another runtime may hold it.
         context.chat.unbind(owner: self)
 
-        // A release, not a close. The product's cards may still be asking for
-        // the same worker, and the core stops it once the last request goes.
-        releaseWorker()
+        await executionModel?.media.close()
+        await destroyEngineResources()
 
         logger.debug("Rust chat runtime disposed for: \(productId)")
     }
@@ -199,15 +198,52 @@ private extension TrUAPIChatHandler {
 
         request = .asking
 
-        // Returns once the worker is up, because everything the bot does next,
-        // its welcome message first of all, is published through the execution.
+        let bootstrapScript = try model.startBridge()
+        let scriptsFactory = RustRuntimeScriptsFactory(bootstrapScript: bootstrapScript)
+        let jsEngine = try await bootEngine(
+            scripts: scriptsFactory.makeScripts(),
+            media: model.media
+        )
+        try checkNotDisposed()
+
+        let modBridge = JSESModuleBridge(engine: jsEngine)
+        await modBridge.install()
+
+        try checkNotDisposed()
+        moduleBridge = modBridge
+
+        try await modBridge.executeScript(url: productUrl)
+
+        logger.debug("Rust chat runtime started for: \(productUrl)")
+    }
+
+    func bootEngine(
+        scripts: [JSEngineScript],
+        media: NativeMediaBackend
+    ) async throws -> JSEngineProtocol {
+        let jsEngine = engineFactory()
         do {
-            _ = try await workers.ensureWorker(for: productId)
+            await jsEngine.registerJSDeviceCapabilityHandler { _ in .denied }
+            try checkNotDisposed()
+            try await jsEngine.initialize(with: scripts)
+            guard await jsEngine.getState() == .ready else {
+                throw ScriptExecutorError.engineInitFailed
+            }
+            try checkNotDisposed()
         } catch {
             settleRequest()
             throw error
         }
-        settleRequest()
+        await media.watchEngine {
+            switch await jsEngine.getState() {
+            case .destroyed, .error: return false
+            default: return true
+            }
+        }
+        guard !disposed else {
+            await jsEngine.destroy()
+            throw CancellationError()
+        }
 
         try checkNotDisposed()
         startRoomsForwarding()

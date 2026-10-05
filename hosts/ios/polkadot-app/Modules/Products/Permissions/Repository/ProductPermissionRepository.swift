@@ -1,6 +1,7 @@
 import Foundation
 import Operation_iOS
 import Products
+import TrUAPIHost
 
 final class ProductPermissionRepository: @unchecked Sendable {
     private let storageFacade: StorageFacadeProtocol
@@ -97,6 +98,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         clearOneTimeGrant(for: grant.identifier)
 
         try await repository.saveOperation({ [grant] }, { [] }).asyncExecute()
+        notifyMediaRevocation(productId: productId, permissions: [permission])
     }
 
     func revoke(productId: String, permission: ProductPermission) async throws {
@@ -108,6 +110,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         clearOneTimeGrant(for: identifier)
 
         try await repository.saveOperation({ [] }, { [identifier] }).asyncExecute()
+        notifyMediaRevocation(productId: productId, permissions: [permission])
     }
 
     func revoke(productId: String, permissions: [ProductPermission]) async throws {
@@ -122,9 +125,11 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         }
 
         try await repository.saveOperation({ [] }, { identifiers }).asyncExecute()
+        notifyMediaRevocation(productId: productId, permissions: permissions)
     }
 
     func revokeAllByProduct(productId: String) async throws {
+        try await TrUAPIMediaPermissionSettings(productId: productId).revokeAll()
         let allGrants = try await getAllByProduct(productId: productId)
         let identifiers = allGrants.map(\.identifier)
 
@@ -169,6 +174,20 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
 }
 
 private extension ProductPermissionRepository {
+    func notifyMediaRevocation(productId: String, permissions: [ProductPermission]) {
+        let revoked: [NativeMediaRevokedPermission] = permissions.compactMap {
+            switch $0 {
+            case .deviceCapability(.camera): .camera
+            case .deviceCapability(.microphone): .microphone
+            default: nil
+            }
+        }
+        for permission in revoked {
+            NotificationCenter.default.post(name: NativeMediaBackend.permissionRevokedNotification, object: nil,
+                userInfo: ["productId": productId, "permission": permission])
+        }
+    }
+
     func hasOneTimeGrant(for key: String) -> Bool {
         oneTimeLock.lock()
         defer { oneTimeLock.unlock() }

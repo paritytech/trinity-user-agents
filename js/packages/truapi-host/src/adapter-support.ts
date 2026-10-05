@@ -92,35 +92,54 @@ function pumpIterator<T>(
   label: string,
   onError?: (error: GenericError) => void,
   onComplete?: () => void,
+  privateMedia = false,
 ): () => void {
   let stopped = false;
-  void (async () => {
-    try {
-      while (!stopped) {
-        const next = await iterator.next();
-        if (stopped || next.done) return;
-        onItem(next.value);
-      }
-    } catch (err) {
-      if (!stopped) {
-        console.error(`[truapi host callbacks] ${label} failed`);
-        onError?.({ reason: errorMessage(err) });
-      }
-    } finally {
-      if (!stopped) onComplete?.();
-    }
-  })();
-  return () => {
+  const close = (): void => {
     if (stopped) return;
     stopped = true;
     try {
       void Promise.resolve(iterator.return?.()).catch(() => {
-        console.error(`[truapi host callbacks] ${label} cleanup failed`);
+        if (!privateMedia)
+          console.error(`[truapi host callbacks] ${label} cleanup failed`);
       });
     } catch {
-      console.error(`[truapi host callbacks] ${label} cleanup failed`);
+      if (!privateMedia)
+        console.error(`[truapi host callbacks] ${label} cleanup failed`);
     }
   };
+  void (async () => {
+    try {
+      while (!stopped) {
+        const next = await iterator.next();
+        if (stopped) return;
+        if (next.done) {
+          if (privateMedia) onError?.({ reason: "media backend failure" });
+          return;
+        }
+        onItem(next.value);
+      }
+    } catch (err) {
+      if (stopped) return;
+      if (!privateMedia)
+        console.error(`[truapi host callbacks] ${label} failed`);
+      const reason = privateMedia
+        ? errorMessage(err) === "media event overflow"
+          ? "media event overflow"
+          : "media backend failure"
+        : errorMessage(err);
+      onError?.({ reason });
+    } finally {
+      if (!stopped) {
+        try {
+          onComplete?.();
+        } finally {
+          close();
+        }
+      }
+    }
+  })();
+  return close;
 }
 
 /**
@@ -132,12 +151,15 @@ export function driveResultStream<T>(
   stream: MaybeAsyncIterable<StreamResult<T, GenericError>>,
   sendItem: (value: T) => void,
   sendError: (error: GenericError) => void,
+  privateMedia = false,
 ): () => void {
   return pumpIterator(
     toAsyncIterator(stream),
     (value) => sendItem(unwrapStreamResult(value)),
     "subscription",
     sendError,
+    undefined,
+    privateMedia,
   );
 }
 

@@ -88,23 +88,14 @@ pub enum RemotePermission {
     /// Submitting statements on behalf of the user via `remote_statement_store_submit`.
     #[display("submit statements")]
     StatementSubmit,
-    /// Read-only peer access over JAMNP-S QUIC/WebTransport to the validators
-    /// of one JAM chain, through the `JamPeerTransport` service.
+    /// Host-owned Media calling, scoped to authenticated product/account/network.
     ///
-    /// The app names the endpoints it dials; the grant covers only peers of
-    /// `genesis`. Every byte received is untrusted, and the grant carries no
-    /// account, signing or submission authority.
-    #[display(
-        "connections to JAM network 0x{:02x}{:02x}{:02x}{:02x}…",
-        genesis[0],
-        genesis[1],
-        genesis[2],
-        genesis[3]
-    )]
-    JamPeers {
-        /// Genesis header hash of the JAM chain whose peers may be dialed.
-        genesis: [u8; 32],
-    },
+    /// Distinct from browser-realm WebRtc. Receive-only sessions still require
+    /// this grant; microphone and camera additionally require device grants.
+    /// Screen selection is exclusively a trusted host picker, not a permission
+    /// to enumerate or name capture sources. Revocation ends affected sessions.
+    #[display("media calling")]
+    Calling,
 }
 
 /// remote-permission request (RFC 0002).

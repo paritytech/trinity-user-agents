@@ -10,11 +10,9 @@ enum DefaultProductWorkerFactoryError: Error {
     case invalidNativeApi
 }
 
-/// Boots one product's headless native worker for the ``ProductWorkerManager``.
-///
-/// This is the single place the native worker is assembled — the same wiring the
-/// chat bot used inline before unification, now sourced by product id so SPA,
-/// operations and chat all keep the one shared instance alive.
+/// Boots the product's shared worker for ``ProductWorkerManager``. Declared
+/// background-only workers use the Rust product boundary; the legacy Chat
+/// worker path keeps its existing native API and messaging lifecycle.
 final class DefaultProductWorkerFactory: ProductWorkerFactory, @unchecked Sendable {
     private let productResolver: ProductResolving
     private let dotNsResolver: DotNsResolverProtocol
@@ -81,8 +79,31 @@ final class DefaultProductWorkerFactory: ProductWorkerFactory, @unchecked Sendab
             logger: logger
         )
 
-        let nativeApi = try makeNativeApi(productId: productId)
+        if resolved.executables.worker?.includesChat == false {
+            guard let runtimeProvider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() else {
+                throw DefaultProductWorkerFactoryError.dependenciesUnavailable
+            }
+            let environment = RustRuntimeEnvironment(
+                runtime: try runtimeProvider.sharedRuntime(),
+                chainRegistry: chainRegistry,
+                notificationScheduler: ProductNotificationScheduler.shared,
+                ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
+                hostProvider: hostProvider,
+                logger: logger
+            )
+            let execution = try environment.makeWorkerExecution(
+                productId: productId, routers: ProductRoutersFacade.worker()
+            )
+            let worker = RustProductWorker(
+                productUrl: engineContext.productUrl,
+                execution: execution,
+                engineFactory: engineContext.engineFactory
+            )
+            try await worker.start()
+            return worker
+        }
 
+        let nativeApi = try makeNativeApi(productId: productId)
         let scriptExecutor = ProductsScriptExecutor(
             productUrl: engineContext.productUrl,
             scriptsFactory: nativeScriptsFactory,
@@ -156,14 +177,17 @@ private extension DefaultProductWorkerFactory {
     }
 
     func workerSource(for resolved: ResolvedProduct) -> ProductWorkerSource? {
-        ProductWorkerSource.published(for: resolved, serving: .chat)
-            ?? ProductWorkerSource.installedByHand(for: resolved) {
-                productFileProvider.manualScriptEntryPath(productId: $0)
-            }
+        if let worker = resolved.executables.worker {
+            return ProductWorkerSource(contentId: worker.identifier, entryRelativePath: worker.entrypoint)
+        }
+
+        return productFileProvider.manualScriptEntryPath(productId: resolved.id).map {
+            ProductWorkerSource(contentId: resolved.id, entryRelativePath: $0)
+        }
     }
 
     func warmWorkerArchive(of resolved: ResolvedProduct) async {
-        guard let published = ProductWorkerSource.published(for: resolved, serving: .chat) else { return }
+        guard let worker = resolved.executables.worker else { return }
 
         do {
             _ = try await dotNsResolver.resolveToLocalURL(dotNsName: published.contentId)

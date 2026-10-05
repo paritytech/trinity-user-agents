@@ -80,6 +80,7 @@ class TrUAPIDiagnosticsTest {
             )
             override val coreStorage = PrefsHostCoreStorage(
                 context.getSharedPreferences("truapi_core_storage", android.content.Context.MODE_PRIVATE),
+                java.io.File(context.applicationInfo.dataDir, "shared_prefs/truapi_core_storage.xml").canonicalPath,
             )
             override fun onCoreLog(marker: String, detail: String) {
                 synchronized(logs) { logs.add("$marker: $detail") }

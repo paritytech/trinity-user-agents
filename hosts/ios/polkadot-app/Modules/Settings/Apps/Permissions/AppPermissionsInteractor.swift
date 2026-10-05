@@ -11,6 +11,8 @@ final class AppPermissionsInteractor {
     private let logger: LoggerProtocol
 
     private var subscriptionTask: Task<Void, Never>?
+    private var mediaSubscriptionTask: Task<Void, Never>?
+    private var mediaMutationTask: Task<Void, Never>?
 
     init(
         productId: ProductId,
@@ -28,6 +30,8 @@ final class AppPermissionsInteractor {
 
     deinit {
         subscriptionTask?.cancel()
+        mediaSubscriptionTask?.cancel()
+        mediaMutationTask?.cancel()
     }
 }
 
@@ -41,10 +45,26 @@ extension AppPermissionsInteractor: AppPermissionsInteractorInputProtocol {
 
             do {
                 for try await grants in stream {
-                    await self?.presenter?.didReceive(grants: grants)
+                    let legacy = grants.filter { grant in
+                        switch grant.permission {
+                        case .deviceCapability(.camera), .deviceCapability(.microphone): return false
+                        default: return true
+                        }
+                    }
+                    await self?.presenter?.didReceive(grants: legacy)
                 }
             } catch {
                 logger.error("App permissions subscription error: \(error)")
+            }
+        }
+        mediaSubscriptionTask = Task { [weak self, productId] in
+            let updates = NotificationCenter.default.notifications(named: TrUAPIMediaPermissionSettings.didChange)
+            await self?.refreshMediaPermissions()
+            for await update in updates {
+                guard !Task.isCancelled else { return }
+                if update.userInfo?["productId"] as? String == productId {
+                    await self?.refreshMediaPermissions()
+                }
             }
         }
     }
@@ -68,6 +88,28 @@ extension AppPermissionsInteractor: AppPermissionsInteractorInputProtocol {
             } catch {
                 logger.error("Failed to revoke product permissions: \(error)")
             }
+        }
+    }
+
+    func setMediaPermission(_ setting: TrUAPIMediaPermissionSetting, allowed: Bool) {
+        mediaMutationTask?.cancel()
+        mediaMutationTask = Task { [weak self, productId, logger] in
+            do {
+                try await TrUAPIMediaPermissionSettings(productId: productId).set(setting, allowed: allowed)
+            } catch {
+                logger.warning("Media permission change was not applied")
+            }
+            await self?.refreshMediaPermissions()
+        }
+    }
+
+    private func refreshMediaPermissions() async {
+        do {
+            let settings = try await TrUAPIMediaPermissionSettings(productId: productId).snapshot()
+            await presenter?.didReceive(mediaPermissions: settings)
+        } catch {
+            logger.warning("Media permissions are unavailable")
+            await presenter?.didReceive(mediaPermissions: [])
         }
     }
 }

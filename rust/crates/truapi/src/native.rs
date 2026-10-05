@@ -21,6 +21,7 @@ mod config;
 mod errors;
 mod events;
 mod executor;
+mod media;
 mod platform;
 mod renderer;
 mod runtime;
@@ -41,9 +42,8 @@ pub use callbacks::{
 	NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
-pub use errors::{
-	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
-};
+pub use errors::{HostRejection, NativeCoreDatabaseError};
+pub use media::{NativeMediaCallbacks, NativeMediaError, NativeMediaEventSink};
 pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
@@ -67,19 +67,32 @@ pub fn parse_navigate(input: String) -> NavigateDecision {
 	dotns::parse_navigate(&input)
 }
 
-/// The `@parity/truapi-host` release this core was built from, which the
-/// native host packages share.
-#[uniffi::export]
-pub fn truapi_host_version() -> String {
-	env!("CARGO_PKG_VERSION").to_string()
+/// Strictly decoded storage metadata for host-private namespace routing.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct NativeCoreStorageKeyDescription {
+    /// Stable core storage slot kind.
+    pub kind: String,
+    /// Product owning this slot, absent for wallet-owned state.
+    pub product_id: Option<String>,
+    /// Scoped authorization represented by this slot, absent for other storage.
+    pub permission_request: Option<crate::platform::PermissionAuthorizationRequest>,
 }
 
-/// The development product a debug build opens for an address the developer
-/// typed. Hosts call it only in development builds, since the product it
-/// returns runs with the core's development wildcard or as a named product.
+/// Describe exactly one encoded storage key without duplicating SCALE in hosts.
 #[uniffi::export]
-pub fn parse_dev_server(input: String) -> Result<DevServerProduct, DevServerError> {
-	input.parse()
+pub fn native_describe_core_storage_key(
+    encoded: Vec<u8>,
+) -> Result<NativeCoreStorageKeyDescription, HostRejection> {
+    let description = crate::platform::describe_core_storage_key(&encoded).map_err(|error| {
+        HostRejection::Rejected {
+            reason: error.to_string(),
+        }
+    })?;
+    Ok(NativeCoreStorageKeyDescription {
+        kind: description.kind.to_owned(),
+        product_id: description.product_id,
+        permission_request: description.permission_request,
+    })
 }
 
 /// The bridge script a host injects into a product's web view, for the `port`

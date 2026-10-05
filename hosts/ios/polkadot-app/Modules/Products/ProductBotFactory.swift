@@ -77,10 +77,11 @@ private extension ProductBotFactory {
     /// gets none. That is a valid background-only worker, and a bot for it
     /// would take a reference on a modality the product never declared.
     ///
-    /// A script installed by hand through debug settings stands in for a product
-    /// that has published no worker at all.
-    func servesChat(_ resolved: ResolvedProduct) -> Bool {
-        if ProductWorkerSource.published(for: resolved, serving: .chat) != nil { return true }
+    /// A worker declaring `includes.chat: false` is driven by ProductWorkerManager
+    /// as a plain Rust worker, never adapted to the Chat protocol.
+    func workerSource(for resolved: ResolvedProduct) -> ProductWorkerSource? {
+        if let worker = resolved.executables.worker {
+            guard worker.includesChat else { return nil }
 
         return ProductWorkerSource.installedByHand(for: resolved) {
             productFileProvider.manualScriptEntryPath(productId: $0)

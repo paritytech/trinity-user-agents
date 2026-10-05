@@ -20,18 +20,18 @@ use truapi::{
 	},
 };
 
-use crate::{
-	host_internal::{
-		extrinsic::LocalTransactionError,
-		sso_messages::{ProductRequest, RingVrfError},
-		transaction::ExtrinsicPayloadError,
-	},
-	host_logic::{
-		raw_signing::RawPayloadError,
-		session::{SessionInfo, SessionState},
-		statement_store::statement_public_key_from_secret,
-	},
+use crate::host_internal::extrinsic::LocalTransactionError;
+use crate::host_internal::sso_messages::{PaymentTopUpRequest, ProductRequest, RingVrfError};
+use crate::host_internal::transaction::ExtrinsicPayloadError;
+use crate::host_logic::media_protocol::{
+    CLOCK_SKEW, MAX_ADVERTISEMENT_LIFETIME, MAX_PACKET_BYTES, UnsignedAdvertisement,
 };
+use crate::host_logic::raw_signing::RawPayloadError;
+use crate::host_logic::session::{SessionInfo, SessionState};
+use crate::host_logic::statement_store::{
+    StatementField, statement_fields_from_v01, statement_public_key_from_secret,
+};
+use crate::unix_time::current_unix_secs;
 
 /// Core-only Bulletin key, zeroized on drop and redacted in diagnostics.
 #[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop, derive_more::Debug)]
@@ -623,8 +623,109 @@ pub trait ProductAuthority: Send + Sync {
 		context: &[u8],
 	) -> Result<[u8; 32], AuthorityError>;
 
-	/// Core-only root-derived key for stable contact handles across products.
-	fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;
+    /// Drop the product's cached statement-store allowance key if it is
+    /// `public_key`. Only the local signing host caches that key; the default
+    /// does nothing.
+    fn forget_statement_store_allowance_key(&self, _product_id: &str, _public_key: [u8; 32]) {}
+
+    /// Return Bulletin allowance key material for the calling product.
+    async fn bulletin_allowance_key(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        product_id: String,
+    ) -> Result<BulletinAllowanceKey, AuthorityError>;
+
+    /// Evict any cached Bulletin allowance key for the product and allocate a
+    /// fresh one, increasing the existing allowance.
+    ///
+    /// Called after a submission is rejected for an exhausted/missing
+    /// allowance, where reusing the cached key would loop forever.
+    async fn refresh_bulletin_allowance_key(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        product_id: String,
+    ) -> Result<BulletinAllowanceKey, AuthorityError>;
+
+    /// Sign exact statement-store proof bytes with a product-derived account.
+    async fn sign_statement_store_product_payload(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        calling_product_id: Option<&str>,
+        account: ProductAccountId,
+        payload: Vec<u8>,
+    ) -> Result<[u8; 64], AuthorityError>;
+
+    /// Certify a core-owned endpoint with the canonical product's Index(0) key.
+    /// This private domain is never reachable through product raw signing.
+    async fn certify_media_endpoint(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        unsigned: UnsignedAdvertisement,
+    ) -> Result<[u8; 64], AuthorityError>;
+
+    /// Sign private Media transport with existing identity/session allowance.
+    /// `expires_at` is UTC seconds, not an encoded Statement Store expiry.
+    fn sign_media_statement(
+        &self,
+        session: &AuthoritySession,
+        payload: Vec<u8>,
+        topics: Vec<[u8; 32]>,
+        expires_at: u64,
+    ) -> Result<Vec<u8>, AuthorityError>;
+
+    /// Derive product-scoped entropy for a connected session.
+    fn derive_entropy(
+        &self,
+        session: &AuthoritySession,
+        product_id: &str,
+        context: &[u8],
+    ) -> Result<[u8; 32], AuthorityError>;
+
+    /// Key material for minting contact handles.
+    ///
+    /// Product-independent by construction, unlike [`Self::derive_entropy`]: one
+    /// contact must hash to the same handle in every product. Derived from the
+    /// session's root entropy source, which both roles hold and which no product
+    /// can reach — a handle keyed on anything public would be recoverable by
+    /// hashing candidate accounts.
+    fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;
+}
+
+/// Bound the private transport independently of the eventual network submit.
+/// No channel is set: multiple live packets on one inbox must not replace one another.
+pub(super) fn media_statement_fields(
+    payload: Vec<u8>,
+    topics: Vec<[u8; 32]>,
+    expires_at: u64,
+) -> Result<Vec<StatementField>, AuthorityError> {
+    let now = current_unix_secs();
+    let latest = now
+        .checked_add(MAX_ADVERTISEMENT_LIFETIME)
+        .and_then(|time| time.checked_add(CLOCK_SKEW))
+        .ok_or(AuthorityError::Rejected)?;
+    if payload.is_empty()
+        || payload.len() > MAX_PACKET_BYTES
+        || topics.is_empty()
+        || topics.len() > 4
+        || expires_at <= now
+        || expires_at > latest
+        || expires_at > u32::MAX as u64
+    {
+        return Err(AuthorityError::Rejected);
+    }
+    statement_fields_from_v01(truapi::v01::Statement {
+        expiry: Some(expires_at << 32),
+        topics,
+        data: Some(payload),
+        proof: None,
+        decryption_key: None,
+        channel: None,
+    })
+    .map_err(|_| AuthorityError::Rejected)
 }
 
 /// Build the neutral authority-session snapshot for `session`.

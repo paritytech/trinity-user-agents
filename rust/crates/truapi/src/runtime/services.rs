@@ -4,19 +4,19 @@
 //! and signing hosts. Pairing state, signing state, active sessions, and role
 //! controls live on the concrete role objects.
 
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::{
-	collections::VecDeque,
-	sync::{Arc, Mutex, OnceLock},
-};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure};
 use crate::host_logic::worker::WorkerLedger;
 use crate::platform::{
-    CoinageWalletHost, HostInfo, JsonRpcConnection, PermissionStatusHost, Platform,
+    CoinageWalletHost, HostInfo, JsonRpcConnection, PermissionAuthorizationRequest,
+    PermissionStatusHost, Platform,
 };
 use crate::runtime::bulletin_rpc::BulletinRpc;
 use crate::runtime::signing_host::DevicePairingObserver;
+use crate::runtime::media::MediaService;
 use crate::runtime::statement_store_rpc::StatementStoreRpc;
 use crate::subscription::Spawner;
 use async_trait::async_trait;
@@ -72,6 +72,21 @@ pub struct RuntimeServices {
     /// Host observer told when a device finishes pairing with this signing
     /// host. Unset leaves a paired device unannounced.
     device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
+    /// Core-owned database, installed once at startup by a host that
+    /// configured one. Unset makes every durable consumer report
+    /// [`DbError::NotConfigured`].
+    #[cfg(not(target_arch = "wasm32"))]
+    core_db: OnceLock<Db>,
+    /// Complete optional capture/RTC/compositor backend; absent is Unsupported.
+    media_platform: OnceLock<Arc<dyn crate::platform::MediaPlatform>>,
+    /// Serializes Media's final authorization/commit with administrative revocation.
+    /// Never held while presenting consent UI.
+    pub(crate) media_permission_gate: futures::lock::Mutex<()>,
+    /// Invalidates outstanding consent on every permission mutation, including
+    /// an undetermined-to-undetermined administrative reset.
+    media_permission_revision: AtomicU64,
+    /// Live product Media services, without retaining product runtimes.
+    media: Mutex<Vec<Weak<MediaService>>>,
     /// Asset Hub the dotNS contracts are deployed on. All-zero says this host
     /// has none, which leaves every manifest unresolvable.
     asset_hub_chain_genesis_hash: [u8; 32],
@@ -204,6 +219,12 @@ impl RuntimeServices {
             contact_handles: Default::default(),
             contact_labels: Default::default(),
             device_pairing_observer: OnceLock::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            core_db: OnceLock::new(),
+            media_platform: OnceLock::new(),
+            media_permission_gate: futures::lock::Mutex::new(()),
+            media_permission_revision: AtomicU64::new(0),
+            media: Mutex::new(Vec::new()),
             asset_hub_chain_genesis_hash,
             worker_ledger: WorkerLedger::default(),
             chain,
@@ -338,10 +359,77 @@ impl RuntimeServices {
 		self.contacts_platform.set(platform).is_ok()
 	}
 
-	/// The host's contacts adapter, when one is installed.
-	pub fn contacts_platform(&self) -> Option<Arc<dyn ContactsPlatform>> {
-		self.contacts_platform.get().cloned()
-	}
+    /// Install the complete Media backend once, before serving products.
+    pub(crate) fn install_media_platform(
+        &self,
+        platform: Arc<dyn crate::platform::MediaPlatform>,
+    ) -> bool {
+        self.media_platform.set(platform).is_ok()
+    }
+
+    /// The complete host Media backend, when installed.
+    pub(crate) fn media_platform(&self) -> Option<Arc<dyn crate::platform::MediaPlatform>> {
+        self.media_platform.get().cloned()
+    }
+
+    pub(crate) fn register_media(&self, media: &Arc<MediaService>) {
+        let mut registry = self.media.lock().expect("media registry mutex poisoned");
+        registry.retain(|entry| entry.strong_count() != 0);
+        let media = Arc::downgrade(media);
+        if !registry.iter().any(|entry| entry.ptr_eq(&media)) {
+            registry.push(media);
+        }
+    }
+
+    pub(crate) fn media_permission_revision(&self) -> u64 {
+        self.media_permission_revision.load(Ordering::Acquire)
+    }
+
+    /// Reserve a fresh revision before a permission write while holding the
+    /// gate. Exhaustion fails closed rather than wrapping to an old prompt.
+    pub(crate) fn advance_media_permission_revision(&self) -> Result<(), latest::GenericError> {
+        self.media_permission_revision
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |revision| revision.checked_add(1))
+            .map(|_| ())
+            .map_err(|_| latest::GenericError {
+                reason: "Permission revision exhausted".into(),
+            })
+    }
+
+    /// Called after a successful administrative denial/reset, with the permission
+    /// gate still held. Each service synchronously fences matching resources
+    /// before arranging asynchronous backend cleanup.
+    pub(crate) fn notify_media_permission_revoked(
+        &self,
+        product_id: &str,
+        request: &PermissionAuthorizationRequest,
+    ) {
+        let media = {
+            let mut registry = self.media.lock().expect("media registry mutex poisoned");
+            registry.retain(|entry| entry.strong_count() != 0);
+            registry.iter().filter_map(Weak::upgrade).collect::<Vec<_>>()
+        };
+        // Cleanup may invoke the host's spawner. Do not hold the registry mutex
+        // across callbacks or destruction of the last strong runtime reference.
+        for media in media {
+            if media.product_id() == product_id {
+                media.permissions_revoked(request);
+            }
+        }
+    }
+
+    /// This device's persisted X25519 encryption secret, created on first use.
+    ///
+    /// The only supported way to reach the key: it bundles the serialization
+    /// guard with the read, so no caller can race another into generating a
+    /// second secret and overwriting the one peers were told to address.
+    pub async fn device_encryption_secret(&self) -> Result<[u8; 32], String> {
+        let _guard = self.device_encryption_key.lock().await;
+        crate::host_logic::device_key::read_or_create_device_encryption_secret(
+            self.platform.as_ref(),
+        )
+        .await
+    }
 
 	/// Install the host's scanner. Answers whether this call was the one that
 	/// installed it.
