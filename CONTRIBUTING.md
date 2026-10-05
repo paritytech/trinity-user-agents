@@ -3,7 +3,7 @@
 ## Reporting Issues
 
 If you have found what you think is a bug,
-please [file an issue](https://github.com/paritytech/host-rust-core/issues/new/choose).
+please [file an issue](https://github.com/paritytech/trinity-user-agents/issues/new/choose).
 
 ## Suggesting New Features
 

@@ -6,7 +6,7 @@ per session by `ProductRuntimeSettings` (debug toggle, default TrUAPI).
 
 ## Rules at a glance
 
-1. **`blocking`** — A new host call added without a referenced RFC stating its permission model. New host calls are protocol: they live in the Rust core (`paritytech/host-rust-core`) and, on the native runtime, in a `HostCallHandlerGroup`. If no RFC or the RFC is silent on permissions, escalate to the user; don't invent a policy.
+1. **`blocking`** — A new host call added without a referenced RFC stating its permission model. New host calls are protocol: they live in the Rust core (`paritytech/trinity-user-agents`) and, on the native runtime, in a `HostCallHandlerGroup`. If no RFC or the RFC is silent on permissions, escalate to the user; don't invent a policy.
 2. **`blocking`** — `ProductId` constructed from arbitrary strings. Always `ProductId.fromUrl(uri)` / `fromStoredValue(...)`.
 3. **`blocking`** — WebView ownership ambiguity: two classes both call `destroy()` on the same WebView. Single owner.
 4. **`major`** — Container script loading split inconsistently across environments. Use `ContainerInjectionStrategy` uniformly.
@@ -140,7 +140,7 @@ Handler groups in code (today):
 
 ### Adding a new host call — **always RFC-first**
 
-A new host call is a public protocol surface. New host calls **require an RFC** in `paritytech/host-rust-core` that states:
+A new host call is a public protocol surface. New host calls **require an RFC** in `paritytech/trinity-user-agents` that states:
 - Method name, params, response.
 - **Permission model** — what permission this call requires (if any), how the user grants it, scoping per product.
 - Caching / subscription semantics.
@@ -318,7 +318,7 @@ Native runtime: `StorageHostCalls` provides a per-product key-value store namesp
 
 ## Pocket — the host-owned card collection
 
-Spec: host-rust-core RFC "Pocket modality" (#609), core implementation #706, on top of Unified Renderer (#633) and
+Spec: trinity-user-agents RFC "Pocket modality" (#609), core implementation #706, on top of Unified Renderer (#633) and
 Worker Lifecycle (#632). The host owns the collection and is its only writer; a product observes its own cards over
 the wire (`Pocket::list_subscribe`) and may remove one (`Pocket::remove_card`). There is no add call: a card enters
 when the user follows a `polkadotapp://<product>.<tld>/-/pocket/add?card=<id>` deeplink and approves the sheet. The
@@ -366,7 +366,7 @@ draws its face live and gives it up on its Remove button.
 | Concept | Goes in |
 |---|---|
 | New host call (native runtime) | `feature/products/impl/.../hostApi/handlerGroups/<Name>HostCalls.kt` + `ProductsBotApi` method |
-| New host call (TrUAPI) | RFC + implementation in `paritytech/host-rust-core` (the `truapi` runtime); a `HostBridge` callback here only if a new native capability is needed |
+| New host call (TrUAPI) | RFC + implementation in `paritytech/trinity-user-agents` (the `truapi` runtime); a `HostBridge` callback here only if a new native capability is needed |
 | New `HostBridge` callback wiring | `feature/products/impl/.../domain/truapi/ProductTrUAPIHostBridge.kt`, delegating to `HostApiInteractor` |
 | New review-variant mapping | `feature/products/impl/.../domain/truapi/ConfirmationReviewMapping.kt` + `ConfirmationReviewMappingTest` |
 | New `NavigationPolicy` variant | `feature/products/impl/.../hostApi/navigation/NavigationPolicy.kt` |

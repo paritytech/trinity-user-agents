@@ -921,7 +921,7 @@ mod tests {
     mod orchestration {
         use super::*;
         use crate::chain_runtime::{RuntimeChainProvider, RuntimeFailure};
-        use crate::host_internal::extrinsic::tests::BULLETIN_METADATA_BYTES;
+        use crate::host_internal::extrinsic::tests::{bulletin_runtime_call, system_events};
         use crate::platform::JsonRpcConnection;
         use crate::subscription::thread_per_subscription_spawner;
         use async_trait::async_trait;
@@ -929,13 +929,9 @@ mod tests {
         use futures::channel::mpsc;
         use futures::stream::BoxStream;
         use parity_scale_codec::{Compact, Encode};
-        use scale_info::{PortableRegistry, TypeDef, TypeDefPrimitive};
         use serde_json::{Value as JsonValue, json};
         use std::collections::VecDeque;
         use std::sync::{Arc, Mutex};
-        use subxt::events::Phase;
-        use subxt::ext::scale_encode::{EncodeAsFields, Field};
-        use subxt::ext::scale_value::{Primitive, Value as ScaleValue};
 
         const FOLLOW_ID: &str = "bulletin-follow";
         const BLOCK_HASH: &str =
@@ -1331,25 +1327,10 @@ mod tests {
         }
 
         fn runtime_call_output(method: &str, validation_outcome: ValidationOutcome) -> Vec<u8> {
+            if let Some(output) = bulletin_runtime_call(method) {
+                return output;
+            }
             match method {
-                "Core_version" => (
-                    "bulletin",
-                    "bulletin",
-                    1u32,
-                    1u32,
-                    1u32,
-                    Vec::<([u8; 8], u32)>::new(),
-                    1u32,
-                )
-                    .encode(),
-                "Metadata_metadata_versions" => vec![14u32].encode(),
-                "Metadata_metadata_at_version" => {
-                    let mut output = vec![1];
-                    Compact(u32::try_from(BULLETIN_METADATA_BYTES.len()).unwrap())
-                        .encode_to(&mut output);
-                    output.extend_from_slice(BULLETIN_METADATA_BYTES);
-                    output
-                }
                 "AccountNonceApi_account_nonce" => 0u32.encode(),
                 "TaggedTransactionQueue_validate_transaction"
                     if validation_outcome == ValidationOutcome::Valid =>
@@ -1372,96 +1353,11 @@ mod tests {
         }
 
         fn success_events() -> Vec<u8> {
-            system_events("ExtrinsicSuccess")
+            system_events(&[(0, "ExtrinsicSuccess")])
         }
 
         fn failed_events() -> Vec<u8> {
-            system_events("ExtrinsicFailed")
-        }
-
-        fn system_events(event_name: &str) -> Vec<u8> {
-            let metadata = ArcMetadata::from(bulletin_metadata());
-            let system = metadata.pallet_by_name("System").unwrap();
-            let event = system
-                .event_variants()
-                .unwrap()
-                .iter()
-                .find(|event| event.name == event_name)
-                .unwrap();
-            let values = ScaleValue::unnamed_composite(
-                event
-                    .fields
-                    .iter()
-                    .map(|field| default_value(metadata.types(), field.ty.id)),
-            );
-            let mut fields = event
-                .fields
-                .iter()
-                .map(|field| Field::new(field.ty.id, field.name.as_deref()));
-
-            let mut bytes = Vec::new();
-            Compact(1u32).encode_to(&mut bytes);
-            Phase::ApplyExtrinsic(0).encode_to(&mut bytes);
-            system.event_index().encode_to(&mut bytes);
-            event.index.encode_to(&mut bytes);
-            values
-                .encode_as_fields_to(&mut fields, metadata.types(), &mut bytes)
-                .unwrap();
-            Vec::<[u8; 32]>::new().encode_to(&mut bytes);
-            bytes
-        }
-
-        fn default_value(types: &PortableRegistry, type_id: u32) -> ScaleValue {
-            let ty = types.resolve(type_id).expect("metadata type exists");
-            match &ty.type_def {
-                TypeDef::Composite(composite) => ScaleValue::unnamed_composite(
-                    composite
-                        .fields
-                        .iter()
-                        .map(|field| default_value(types, field.ty.id)),
-                ),
-                TypeDef::Variant(variants) => {
-                    let variant = variants.variants.first().expect("variant exists");
-                    ScaleValue::unnamed_variant(
-                        variant.name.clone(),
-                        variant
-                            .fields
-                            .iter()
-                            .map(|field| default_value(types, field.ty.id)),
-                    )
-                }
-                TypeDef::Sequence(_) => ScaleValue::unnamed_composite([]),
-                TypeDef::Array(array) => ScaleValue::unnamed_composite(
-                    (0..array.len).map(|_| default_value(types, array.type_param.id)),
-                ),
-                TypeDef::Tuple(tuple) => ScaleValue::unnamed_composite(
-                    tuple
-                        .fields
-                        .iter()
-                        .map(|field| default_value(types, field.id)),
-                ),
-                TypeDef::Primitive(primitive) => match primitive {
-                    TypeDefPrimitive::Bool => ScaleValue::bool(false),
-                    TypeDefPrimitive::Char => ScaleValue::char('\0'),
-                    TypeDefPrimitive::Str => ScaleValue::string(""),
-                    TypeDefPrimitive::U8
-                    | TypeDefPrimitive::U16
-                    | TypeDefPrimitive::U32
-                    | TypeDefPrimitive::U64
-                    | TypeDefPrimitive::U128 => ScaleValue::u128(0),
-                    TypeDefPrimitive::U256 => ScaleValue::primitive(Primitive::U256([0; 32])),
-                    TypeDefPrimitive::I8
-                    | TypeDefPrimitive::I16
-                    | TypeDefPrimitive::I32
-                    | TypeDefPrimitive::I64
-                    | TypeDefPrimitive::I128 => ScaleValue::i128(0),
-                    TypeDefPrimitive::I256 => ScaleValue::primitive(Primitive::I256([0; 32])),
-                },
-                TypeDef::Compact(_) => ScaleValue::u128(0),
-                TypeDef::BitSequence(_) => {
-                    ScaleValue::bit_sequence(subxt::ext::scale_bits::Bits::new())
-                }
-            }
+            system_events(&[(0, "ExtrinsicFailed")])
         }
 
         fn allowance_fixture() -> BulletinAllowanceKey {

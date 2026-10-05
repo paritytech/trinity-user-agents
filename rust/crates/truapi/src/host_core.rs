@@ -572,6 +572,30 @@ impl SigningHostRuntime {
         self.signing_host.set_grant_allowances_unchecked(granted);
     }
 
+    /// The product's hard-subtree public key, derived from the active session
+    /// root, or `None` while no session is active.
+    ///
+    /// A signing host holds the root, so it answers this locally where a
+    /// pairing host has to ask the Account Holder.
+    pub fn product_subtree_public_key(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<[u8; 32]>, v01::GenericError> {
+        self.signing_host
+            .derive_subtree_public_key(product_id)
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
+    /// Answer these resource tags as refused, replacing any earlier set.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub fn set_withheld_resources(&self, tags: Vec<String>) {
+        self.signing_host.set_withheld_resources(tags);
+    }
+
     /// Build a long-lived signing-host runtime around a platform implementation.
     /// Optional capabilities are answered `Unsupported`;
     /// [`Self::with_platforms`] serves them.

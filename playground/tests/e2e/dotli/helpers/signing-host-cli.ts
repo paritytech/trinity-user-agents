@@ -12,7 +12,7 @@ export interface SigningHostCliConfig {
   cwd: string;
   basePath: string;
   network: string;
-  liteUsernamePrefix?: string;
+  session?: string;
 }
 
 export interface SigningHostExit {
@@ -39,8 +39,8 @@ export function signingHostPairArgs(
     config.basePath,
     "--auto-accept",
   ];
-  if (config.liteUsernamePrefix !== undefined) {
-    args.push("--lite-username-prefix", config.liteUsernamePrefix);
+  if (config.session !== undefined) {
+    args.push("--session", config.session);
   }
   args.push("exec", `/pair ${deeplink}`);
   return args;

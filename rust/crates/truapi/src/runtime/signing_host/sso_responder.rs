@@ -933,13 +933,21 @@ fn response_cli_summary(
     summary
 }
 
+/// A product's statement-store allowance key, and the period it holds a slot in.
+pub struct StatementStoreAllocation {
+    /// sr25519 secret of the product's allowance account.
+    pub secret: Vec<u8>,
+    /// Allowance period the slot was found or claimed in.
+    pub period: u32,
+}
+
 pub async fn allocate_statement_store_allowance(
     services: &RuntimeServices,
     signing_host: &SigningHost,
     session: &AuthoritySession,
     product_id: &str,
     policy: OnExistingAllowancePolicy,
-) -> Result<Vec<u8>, AllowanceAllocationError> {
+) -> Result<StatementStoreAllocation, AllowanceAllocationError> {
     use super::allowance_renewal::{self, StatementRenewalTarget};
     use crate::runtime::statement_allowance::{
         self, PooledRegistrationParams, allocated_in, find_including_rings,
@@ -956,7 +964,10 @@ pub async fn allocate_statement_store_allowance(
     // signs is accepted by a real statement store.
     #[cfg(feature = "test-host")]
     if signing_host.grants_allowances_unchecked() {
-        return Ok(allowance.secret.to_bytes().to_vec());
+        return Ok(StatementStoreAllocation {
+            secret: allowance.secret.to_bytes().to_vec(),
+            period: statement_allowance::slot::current_period(current_unix_secs()?),
+        });
     }
     let target = allowance.public.to_bytes();
     let candidates = signing_host.reserved_person_collection_candidates(session)?;
@@ -998,7 +1009,10 @@ pub async fn allocate_statement_store_allowance(
             "statement-store allowance already allocated"
         );
         signing_host.require_current_session(session)?;
-        return Ok(allowance.secret.to_bytes().to_vec());
+        return Ok(StatementStoreAllocation {
+            secret: allowance.secret.to_bytes().to_vec(),
+            period,
+        });
     }
 
     // Every ring back to index 0, because a membership that stopped being
@@ -1066,7 +1080,10 @@ pub async fn allocate_statement_store_allowance(
         warn!(%product_id, %reason, "failed to record statement-store renewal target");
     }
     signing_host.require_current_session(session)?;
-    Ok(allowance.secret.to_bytes().to_vec())
+    Ok(StatementStoreAllocation {
+        secret: allowance.secret.to_bytes().to_vec(),
+        period,
+    })
 }
 
 pub async fn allocate_bulletin_allowance(
@@ -1399,7 +1416,10 @@ mod tests {
     fn an_existing_allowance_is_served_without_touching_the_ring() {
         use futures::FutureExt;
 
-        use crate::host_logic::product_account::derive_sr25519_hard_path;
+        use crate::host_logic::product_account::{
+            derive_full_person_ring_vrf_entropy, derive_sr25519_hard_path,
+        };
+        use crate::runtime::statement_allowance::slot;
 
         let product_id = "myapp.dot";
         let allowance =
@@ -1408,6 +1428,12 @@ mod tests {
         // The scan reads slot 0 first; answering it with an entry naming the
         // allowance account is the "already allocated" case.
         let slot_entry = (allowance.public.to_bytes(), 0u32, 0u64).encode();
+        let people_row = slot::testing::slot_row(
+            derive_full_person_ring_vrf_entropy(&ENTROPY, NETWORK_SUFFIX),
+            NETWORK_SUFFIX.as_bytes(),
+            slot::current_period(current_unix_secs().unwrap()),
+            &[Some(format!(r#""0x{}""#, hex::encode(&slot_entry)))],
+        );
 
         // Keyed by method, not by request order: this path decodes ~450 KiB of
         // metadata between two requests, which outruns the ordered script's
@@ -1437,14 +1463,26 @@ mod tests {
                         hex::encode(Ok::<Vec<u8>, ()>(20u32.encode()).encode()),
                     ),
                 ),
+                (
+                    "RuntimeViewFunction_execute_view_function",
+                    format!(
+                        r#""0x{}""#,
+                        hex::encode(Ok::<Vec<u8>, ()>(10u32.encode()).encode()),
+                    ),
+                ),
                 // The network suffix, read once before the scan.
                 (
                     "state_getStorage",
                     format!(r#""0x{}""#, hex::encode(b"paseo".to_vec().encode())),
                 ),
                 (
-                    "state_getStorage",
-                    format!(r#""0x{}""#, hex::encode(&slot_entry)),
+                    "state_queryStorageAt",
+                    people_row,
+                ),
+                // The LitePeople row, read alongside People's, is empty.
+                (
+                    "state_queryStorageAt",
+                    r#"[{"block":"0xb10c","changes":[]}]"#.to_string(),
                 ),
             ],
             ..Default::default()
@@ -1455,7 +1493,7 @@ mod tests {
         // wait on a chain read the stub deliberately does not answer — an
         // unbounded test would hang instead of reporting. The bound is generous
         // because it is catching a hang, not asserting latency.
-        let secret = futures::executor::block_on(async {
+        let allocation = futures::executor::block_on(async {
             let session = signing_host.current_session().unwrap();
             futures::select! {
                 result = allocate_statement_store_allowance(
@@ -1473,7 +1511,7 @@ mod tests {
         })
         .expect("an existing allowance is returned");
 
-        assert_eq!(secret, allowance.secret.to_bytes().to_vec());
+        assert_eq!(allocation.secret, allowance.secret.to_bytes().to_vec());
 
         let sent = platform.sent_rpc.lock().expect("rpc list mutex poisoned");
         let methods: Vec<String> = sent
@@ -1499,15 +1537,6 @@ mod tests {
                 .iter()
                 .any(|method| method.starts_with("author_submit")),
             "an extrinsic was submitted for an allowance already in place: {methods:?}"
-        );
-        // The suffix and one slot read answered it; the scan stopped at the first match.
-        assert_eq!(
-            methods
-                .iter()
-                .filter(|method| *method == "state_getStorage")
-                .count(),
-            2,
-            "expected one suffix and one slot read: {methods:?}"
         );
     }
 

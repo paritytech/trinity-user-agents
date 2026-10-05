@@ -158,7 +158,7 @@ cargo build -p truapi-host-cli
 The published route is the installer script, which needs no Rust toolchain:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
 ```
 
 It resolves the current stable version from the `truapi-host-cli-stable`
@@ -375,8 +375,7 @@ truapi-host signing-host [options] [exec '<slash-command>']
 | `--deeplink <url>` | none | Answer a pairing deeplink after initialization. |
 | `--mnemonic <phrase>` | none | Use raw BIP-39 entropy as an ephemeral local signer. |
 | `--account <name>` | none | Use one named account from the default account store. |
-| `--session <name>` | remembered session | Restore or create a managed session. |
-| `--lite-username-prefix <prefix>` | session-derived | Prefix for newly generated Lite username bases. |
+| `--session <name>` | remembered session | Select an exact username or the newest local session for a username base; restore or provision at interactive startup. In `exec`, select the command's session. |
 | `--reserved-username <label>` | none | Full-person base name a newly created auto account reserves on dotNS alongside its lite username (§12.3). |
 | `--base-path <path>` | section 12.1 | Base directory; managed state lives under its `v2/` subdirectory. |
 | `--network <preset>` | `paseo-next-v2` | Select the complete endpoint/genesis preset (`paseo-next-v2`, `previewnet`). |
@@ -395,9 +394,9 @@ startup:
 - `--serve` with `--script` or `exec`;
 - `--mnemonic` with `--account`;
 - `--mnemonic` with `--session`;
-- `--mnemonic` with `--lite-username-prefix` or `--reserved-username`;
+- `--mnemonic` with `--reserved-username`;
 - `--account` with `--session`;
-- `--account` with `--lite-username-prefix` or `--reserved-username`; and
+- `--account` with `--reserved-username`; and
 - a `--reserved-username` that is not a full-person base label (lowercase ASCII
   letters only, 6 to 32 bytes).
 
@@ -417,12 +416,17 @@ terminals. The signing host:
 3. activates a cached signer without a network onboarding round trip;
 4. binds and reports the product-frame listener;
 5. restores a responder for every paired host saved in the selected managed
-   session;
-6. starts `--deeplink`, when supplied, as an additional `/pair` operation; and
+   session when its signer is ready;
+6. runs `--deeplink` as a `/pair` operation when supplied, otherwise restores or
+   provisions an explicitly named `--session`; and
 7. enters the command loop.
 
-Signer provisioning is otherwise lazy. Merely starting the UI, using `/help`,
-using `/product`, or inspecting sessions does not create a new account.
+The startup operation runs through the interactive operation loop, with progress,
+cancellation, and error reporting. Pairing prepares the selected signer itself;
+cancelling startup does not queue another attempt.
+
+Signer provisioning is otherwise lazy. Starting the UI without `--session`,
+using `/help`, using `/product`, or inspecting sessions does not create a new account.
 
 ### 6.3 One-shot `--script`
 
@@ -449,6 +453,11 @@ truapi-host signing-host [parent options] exec '<slash-command>'
 - exits after the command.
 
 Parent options must appear before `exec`.
+
+`--session` selects the command's context without provisioning by itself.
+Inspection, listing, help, and clearing stay local. `exec '/session <name>'`
+explicitly restores or provisions that signer, including an unfinished current
+session. An explicit `--deeplink` still performs its requested pairing operation.
 
 For example:
 
@@ -1192,7 +1201,7 @@ auto-managed for slot rotation.
 
 A new auto account:
 
-1. acquires `accounts.json.lock`;
+1. acquires `accounts.json.lock` and validates its username base before onboarding;
 2. generates a 12-word mnemonic;
 3. derives the RFC-0022 `uid.<tld>` index-0 sr25519 identity account;
 4. chooses `auto-<n>` as its local name;
@@ -1227,10 +1236,17 @@ retried once. The CLI accepts both the legacy flat availability map and the
 dotSpark v1 envelope whose per-name value carries a `status` field.
 
 The default Lite username prefix is `headless`. For a non-default session, the
-prefix is its lowercase letters with digits and separators removed; a name
-with fewer than six letters becomes `session`. `--lite-username-prefix`
-overrides this and must contain at least six lowercase ASCII letters. The
-requested base is used unchanged because dotNS assigns its numerical alias.
+prefix is its lowercase ASCII letters with digits and separators removed. A new
+account requires at least six letters in that base. `/session foo` fails
+immediately with a too-short username-base error, before network onboarding.
+`--session` selects the base; there is no separate username-prefix option.
+This validation applies to account creation; existing saved accounts and
+aliases still restore by their original names.
+
+The backend assigns the numerical alias. An available base is used unchanged;
+the CLI does not append random suffixes or try alternative bases. It saves the
+base in the pending account before registration, so retries reuse it. Exhausted
+bases report an error. Invalid or unexpected availability responses are errors.
 
 ### 12.4 Cached startup
 
@@ -1275,11 +1291,20 @@ Managed session names must:
 At startup the initial session is:
 
 1. `ephemeral` for explicit mnemonic mode;
-2. explicit `--session`, resolved through the name each promoted session
-   records itself as created under, so a name promoted away still selects the
-   session it created;
+2. explicit `--session`, resolved by full username, username base, or a promoted
+   session's original name;
 3. `default` for explicit `--account`; or
 4. the network's remembered `current-session`.
+
+`--session workbench` and `/session workbench` select the most recently created
+local session whose username base is `workbench`. Creation order uses the stored
+account creation timestamp, not the numerical alias. `workbench.07` can be newer
+than `workbench.42`; `--session workbench.42` selects that exact session. A missing
+numbered username is an error and does not create another account. Base matches
+compare the complete username base, so `workbench` does not select
+`workbenchtest.42`. If the newest matches have equal creation timestamps, the
+caller must select an exact username. With no saved base or alias match, a base
+name supplies the base for a new account.
 
 A missing or stale `current-session` resolves against the provisioned sessions
 rather than falling back to `default`: exactly one session holding an account
@@ -1306,10 +1331,14 @@ an actionable transcript notice directing the user to `/session <name>`.
 `/session --list` includes the network directories ending in `_signing_host`.
 The active session is marked with `*`.
 
-`/session <name>` provisions the target before replacing the current runtime:
+`/session <name>` restores or provisions the target before replacing the current
+runtime. Selecting the current name only returns immediately when its signer is
+ready; an unfinished session retries setup. A saved account binding selects that
+exact account, including imported accounts without usernames. Ready local
+accounts are activated from disk without repeating network onboarding.
 
 1. validate and create its provisional profile;
-2. resolve or create its signer;
+2. restore its bound or cached signer, or provision it if needed;
 3. promote it to the resolved username directory;
 4. load its remembered script and storage;
 5. build and activate the replacement runtime;

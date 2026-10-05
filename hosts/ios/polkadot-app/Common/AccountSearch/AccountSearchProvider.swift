@@ -45,48 +45,165 @@ final class AccountSearchProvider<RecentPayload: Sendable>: AccountSearching {
         sourcesChangedNotifier.sequence()
     }
 
-    func search(query: String?) async throws -> AccountSearchSections<RecentPayload, MatchPayload> {
-        let recent = stateLock.withLock { $0.recentRows }
+    func searchPhases(
+        query: String?
+    ) -> AsyncThrowingStream<AccountSearchSections<RecentPayload, MatchPayload>, Error> {
+        let (stream, continuation) = AsyncThrowingStream<Sections, Error>.makeStream()
 
-        async let blockedIds = fetchBlockedAccountIds()
-        let matches = try await fetchMatches(for: query)
+        let task = Task { await emitPhases(query: query, continuation: continuation) }
+        continuation.onTermination = { _ in task.cancel() }
 
-        let excluded = try await blockedIds.union([ownAccountId])
-        return AccountSearchComposer.compose(
-            query: query,
-            recent: recent,
-            contacts: matches.contacts,
-            global: matches.global,
-            excluding: excluded
-        )
+        return stream
     }
 }
 
 private extension AccountSearchProvider {
+    typealias Sections = AccountSearchSections<RecentPayload, MatchPayload>
+    typealias PhaseContinuation = AsyncThrowingStream<Sections, Error>.Continuation
+
     struct State {
         var recentRows: [SearchRow<RecentPayload>] = []
         var recentSubscriptionTask: Task<Void, Never>?
+        var cachedGlobal: CachedGlobal?
+    }
+
+    /// The last successful global rows and the normalized query they belong to, so a restart of
+    /// the same or a related query keeps them on screen instead of blanking for one round trip.
+    struct CachedGlobal {
+        let query: String
+        let rows: [SearchRow<MatchPayload>]
+    }
+
+    /// Everything a phase needs except the global rows, so successive phases of one search
+    /// compose from the same local snapshot.
+    struct SectionsContext {
+        let query: String?
+        let recent: [SearchRow<RecentPayload>]
+        let contacts: [SearchRow<MatchPayload>]
+        let excluded: Set<AccountId>
+
+        func sections(global: AccountSearchGlobal<SearchRow<MatchPayload>> = .loaded([])) -> Sections {
+            AccountSearchComposer.compose(
+                query: query,
+                recent: recent,
+                contacts: contacts,
+                global: global,
+                excluding: excluded
+            )
+        }
+    }
+
+    func emitPhases(query: String?, continuation: PhaseContinuation) async {
+        defer { continuation.finish() }
+
+        do {
+            if let query, !query.isEmpty {
+                try await emitQueryPhases(query: query, continuation: continuation)
+            } else {
+                try await emitAllContactsPhase(continuation: continuation)
+            }
+        } catch {
+            continuation.finish(throwing: error)
+        }
     }
 
     /// An empty query lists every stored contact and skips the global lookup entirely.
-    func fetchMatches(
-        for query: String?
-    ) async throws -> (contacts: [SearchRow<MatchPayload>], global: [SearchRow<MatchPayload>]) {
-        guard let query, !query.isEmpty else {
-            let contacts = try await fetchLocalContacts(matching: nil, accountId: nil)
-            return (contacts: contacts, global: [])
-        }
+    func emitAllContactsPhase(continuation: PhaseContinuation) async throws {
+        async let blockedIds = fetchBlockedAccountIds()
+        let contacts = try await fetchLocalContacts(matching: nil, accountId: nil)
+        let excluded = try await blockedIds.union([ownAccountId])
 
+        let context = SectionsContext(
+            query: nil,
+            recent: currentRecentRows(),
+            contacts: contacts,
+            excluded: excluded
+        )
+
+        continuation.yield(context.sections())
+    }
+
+    func emitQueryPhases(query: String, continuation: PhaseContinuation) async throws {
         let normalizedQuery = query.trimmingDot()
         let accountId = try? normalizedQuery.toAccountId()
 
-        async let localRows = fetchLocalContacts(matching: normalizedQuery, accountId: accountId)
-        async let globalRows = fetchGlobalContacts(query: normalizedQuery, accountId: accountId)
+        async let blockedIds = fetchBlockedAccountIds()
+        let contacts = try await fetchLocalContacts(matching: normalizedQuery, accountId: accountId)
+        let excluded = try await blockedIds.union([ownAccountId])
 
-        let contacts = try await localRows
-        let global = try await globalRows
+        let context = SectionsContext(
+            query: query,
+            recent: currentRecentRows(),
+            contacts: contacts,
+            excluded: excluded
+        )
 
-        return (contacts: contacts, global: global)
+        // An account id lookup is an exact fetch rather than a prefix search, so cached prefix
+        // rows say nothing about it.
+        let preservedGlobal = accountId == nil ? cachedGlobalRows(for: normalizedQuery) : []
+
+        continuation.yield(context.sections(global: .pending(preservedGlobal)))
+
+        let global: [SearchRow<MatchPayload>]?
+        do {
+            global = try await fetchGlobalContacts(query: normalizedQuery, accountId: accountId)
+        } catch {
+            return
+        }
+
+        // asyncExecute() routes cancellation through the operation coordinator, which does not
+        // guarantee a CancellationError, so a superseded search must not surface as a failure.
+        guard !Task.isCancelled else {
+            return
+        }
+
+        if let global {
+            // An exact account id fetch is not a prefix search, so its rows cannot serve any later
+            // prefix query: caching them under an address key is write-only state that can only mislead.
+            if accountId == nil {
+                storeCachedGlobal(rows: global, query: normalizedQuery)
+            }
+
+            continuation.yield(context.sections(global: .loaded(global)))
+        } else {
+            // A failed lookup must not leave stale rows standing as though they were fresh.
+            clearCachedGlobal()
+            continuation.yield(context.sections(global: .failed))
+        }
+    }
+
+    func currentRecentRows() -> [SearchRow<RecentPayload>] {
+        stateLock.withLock { $0.recentRows }
+    }
+
+    /// Global search matches by prefix, so results for one query are a subset of results for any
+    /// shorter prefix of it: rows cached under a related query, refiltered, can only be incomplete,
+    /// never wrong, which beats blanking the section on every keystroke.
+    func cachedGlobalRows(for query: String) -> [SearchRow<MatchPayload>] {
+        let lowercasedQuery = query.lowercased()
+
+        return stateLock.withLock { state in
+            guard let cached = state.cachedGlobal else { return [] }
+
+            let cachedQuery = cached.query.lowercased()
+            guard cachedQuery.hasPrefix(lowercasedQuery) || lowercasedQuery.hasPrefix(cachedQuery) else {
+                return []
+            }
+
+            return cached.rows.filter { row in
+                row.matchTerms.contains { term in
+                    term.lowercased().hasPrefix(lowercasedQuery)
+                }
+            }
+        }
+    }
+
+    func storeCachedGlobal(rows: [SearchRow<MatchPayload>], query: String) {
+        stateLock.withLock { $0.cachedGlobal = CachedGlobal(query: query, rows: rows) }
+    }
+
+    func clearCachedGlobal() {
+        stateLock.withLock { $0.cachedGlobal = nil }
     }
 
     func subscribeToRecent() {
@@ -159,7 +276,8 @@ private extension AccountSearchProvider {
             }
     }
 
-    func fetchGlobalContacts(query: String, accountId: AccountId?) async throws -> [SearchRow<MatchPayload>] {
+    /// Returns nil when the lookup failed, so the caller can report the outcome to the UI.
+    func fetchGlobalContacts(query: String, accountId: AccountId?) async throws -> [SearchRow<MatchPayload>]? {
         do {
             if let accountId {
                 let account = try await remoteContactSearch.fetch(by: accountId)
@@ -176,7 +294,7 @@ private extension AccountSearchProvider {
             throw CancellationError()
         } catch {
             logger.warning("Global contact search failed, continuing without global results: \(error)")
-            return []
+            return nil
         }
     }
 

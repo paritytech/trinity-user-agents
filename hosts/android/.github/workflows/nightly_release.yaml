@@ -99,7 +99,7 @@ jobs:
           keystore_path: develop_key.jks
 
       - name: Build nightly APK
-        # Held: this configuration ships from host-rust-core.
+        # Held: this configuration ships from trinity-user-agents.
         # The condition this replaces:
         #   if: steps.collect_prs.outputs.should_build == 'true'
         if: false
@@ -115,7 +115,7 @@ jobs:
         run: ./gradlew assembleGpNightly --no-daemon --stacktrace
 
       - name: Build vanilla nightly APK
-        # Held: this configuration ships from host-rust-core.
+        # Held: this configuration ships from trinity-user-agents.
         # The condition this replaces:
         #   if: steps.collect_prs.outputs.should_build == 'true'
         if: false
@@ -144,7 +144,7 @@ jobs:
         run: ./gradlew assembleGpSafetynet --no-daemon --stacktrace
 
       - name: Build debug APK
-        # Held: this configuration ships from host-rust-core.
+        # Held: this configuration ships from trinity-user-agents.
         # The condition this replaces:
         #   if: steps.collect_prs.outputs.should_build == 'true'
         if: false
@@ -177,7 +177,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload nightly build to Firebase
-        # Held: this configuration ships from host-rust-core.
+        # Held: this configuration ships from trinity-user-agents.
         # The condition this replaces:
         #   if: steps.collect_prs.outputs.should_build == 'true'
         if: false
@@ -190,7 +190,7 @@ jobs:
           upload-file: app/build/outputs/apk/gp/nightly/app-gp-nightly.apk
 
       - name: Upload vanilla nightly build to Firebase
-        # Held: this configuration ships from host-rust-core.
+        # Held: this configuration ships from trinity-user-agents.
         # The condition this replaces:
         #   if: steps.collect_prs.outputs.should_build == 'true'
         if: false
@@ -213,7 +213,7 @@ jobs:
           upload-file: app/build/outputs/apk/gp/safetynet/app-gp-safetynet.apk
 
       - name: Upload to S3
-        # Held: this configuration ships from host-rust-core.
+        # Held: this configuration ships from trinity-user-agents.
         # The condition this replaces:
         #   if: steps.collect_prs.outputs.should_build == 'true'
         if: false
@@ -227,7 +227,7 @@ jobs:
           destination_path: /android/nightly/polkadot-app-${{ env.APP_VERSION_NAME }}-${{ env.APP_VERSION_CODE }}.apk
 
       - name: Upload to S3 (static path)
-        # Held: this configuration ships from host-rust-core.
+        # Held: this configuration ships from trinity-user-agents.
         # The condition this replaces:
         #   if: steps.collect_prs.outputs.should_build == 'true'
         if: false
@@ -241,7 +241,7 @@ jobs:
           destination_path: /android/nightly/polkadot-app.apk
 
       - name: Upload vanilla to S3
-        # Held: this configuration ships from host-rust-core.
+        # Held: this configuration ships from trinity-user-agents.
         # The condition this replaces:
         #   if: steps.collect_prs.outputs.should_build == 'true'
         if: false
@@ -255,7 +255,7 @@ jobs:
           destination_path: /android/nightly/polkadot-app-vanilla-${{ env.APP_VERSION_NAME }}-${{ env.APP_VERSION_CODE }}.apk
 
       - name: Upload vanilla to S3 (static path)
-        # Held: this configuration ships from host-rust-core.
+        # Held: this configuration ships from trinity-user-agents.
         # The condition this replaces:
         #   if: steps.collect_prs.outputs.should_build == 'true'
         if: false

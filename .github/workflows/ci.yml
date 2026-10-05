@@ -348,7 +348,7 @@ jobs:
           # The vendored Android host, plus the crates its bindings are
           # generated from. Nothing gated on this tree before, so a core change
           # that broke it reached a release with no gate in between.
-          gate host_android '^(hosts/android/|android/truapi-host/|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|scripts/(codegen\.sh|regen-explorer-versions\.mjs)$|Cargo\.toml$|nightly-toolchain$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/actions/setup-android-build/|\.github/workflows/(ci|android-device-preview)\.yml$)'
+          gate host_android '^(hosts/android/|android/truapi-host/|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|scripts/(codegen\.sh|regen-explorer-versions\.mjs)$|Cargo\.toml$|nightly-toolchain$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/actions/setup-android-build/|\.github/workflows/ci\.yml$)'
 
           # The packaging path has its own inputs: the archive layout in the
           # Makefile, the runner bundle, the generated sources cli-dist refuses
@@ -619,45 +619,6 @@ jobs:
           ./gradlew --configure-on-demand
           :feature:products:impl:testReleaseUnitTest
           :bindings:truapi-host:compileDebugAndroidTestKotlin
-
-  # An installable APK on every Android change, so a reviewer has something to
-  # put on a phone without asking for it. iOS attaches a simulator build to
-  # every pull request already; this is the same thing for Android, and the one
-  # artifact serves a phone and an emulator alike because no provisioning
-  # profile names the device.
-  #
-  # The build lives in its own workflow because the label that also starts it
-  # needs the `labeled` event, which has no business rerunning every gate here.
-  #
-  # Pull requests from this repository only. The queue and pushes to main run
-  # every gate, and an APK nobody installs is twenty minutes each time; a fork
-  # receives no secrets, so it could only build an APK that cannot sign in.
-  # It is a convenience rather than a gate, as the iOS simulator build is, so
-  # CI Status does not wait on it and a failed build never blocks a merge.
-  host-android-apk:
-    name: Android host app (installable APK)
-    needs: changes
-    if: >-
-      github.event_name == 'pull_request'
-      && github.event.pull_request.head.repo.full_name == github.repository
-      && needs.changes.outputs.host_android == 'true'
-    # A called workflow gets no more than its caller grants, and this one links
-    # its artifact from the pull request.
-    permissions:
-      contents: read
-      pull-requests: write
-    uses: ./.github/workflows/android-device-preview.yml
-    with:
-      always: true
-    secrets:
-      CI_GITHUB_KEYSTORE_KEY_FILE: ${{ secrets.CI_GITHUB_KEYSTORE_KEY_FILE }}
-      CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
-      CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
-      CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
-      GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
-      FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
-      GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
-      GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
 
   host-android-detekt:
     name: Android host (detekt)

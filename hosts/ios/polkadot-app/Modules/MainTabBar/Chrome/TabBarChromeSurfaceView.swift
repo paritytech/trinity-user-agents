@@ -14,21 +14,21 @@ final class TabBarChromeSurfaceView: UIView {
     private weak var barView: DSTabBarView?
     private var glassContainerHeightConstraint: Constraint?
     private var appliedGlassContainerHeight: CGFloat = 0
-    private var glassContainerBottomConstraint: Constraint?
-    private var barBottomConstraint: Constraint?
+    private var restingBottomConstraints: [Constraint] = []
+    private var sunkenBottomConstraints: [Constraint] = []
     private var isPanelTrackingKeyboard = false
     private var isContentFilling = false
 
-    /// At rest the guide sits on the view's bottom edge, so the chrome only clears the home
-    /// indicator gap. Over the keys the whole chrome rises as one block, sunk by half a capsule
-    /// so the capsule's lower half hides behind them.
+    /// The chrome sits at the bottom, clearing the home indicator gap, and a keyboard covers it
+    /// like any other bottom bar. The one exception is the chrome's own search: focusing it sinks
+    /// the chrome by half a capsule, so the capsule's lower half hides behind the keys.
     private static let restingBottomOffset = -DSTabBarView.bottomGap
-    private static let keyboardBottomOffset = DSTabBarView.capsuleHeight / 2
+    private static let sunkenBottomOffset = DSTabBarView.capsuleHeight / 2
 
     var availablePanelHeight: CGFloat {
         let occupiedHeight: CGFloat =
             if isPanelTrackingKeyboard {
-                bounds.height - keyboardLayoutGuide.layoutFrame.minY - Self.keyboardBottomOffset
+                bounds.height - keyboardLayoutGuide.layoutFrame.minY - Self.sunkenBottomOffset
             } else {
                 DSTabBarView.preferredHeight()
             }
@@ -45,15 +45,15 @@ final class TabBarChromeSurfaceView: UIView {
         return windowInset
     }
 
+    var panelHeight: CGFloat {
+        appliedGlassContainerHeight
+    }
+
     var onChipTapped: ((UUID) -> Void)?
     var onChipCloseRequested: ((UUID) -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-
-        // Without the safe area the guide rests on the view's bottom edge, so one anchor per view
-        // spans both states and only its offset changes when the keys come up.
-        keyboardLayoutGuide.usesBottomSafeArea = false
 
         installGlassContainer()
         installTabsPanel()
@@ -77,14 +77,18 @@ final class TabBarChromeSurfaceView: UIView {
         bar.snp.makeConstraints { make in
             make.leading.trailing.equalTo(glassContainer.contentView)
             make.height.equalTo(DSTabBarView.capsuleHeight)
-            barBottomConstraint = make.bottom.equalTo(keyboardLayoutGuide.snp.top)
-                .offset(Self.restingBottomOffset).constraint
+            pinBottom(make)
         }
     }
 
     func setPanelsOpen(_ kind: TabBarPanelKind?, animator: UIViewPropertyAnimator?) {
         tabsPanelView.setOpen(kind == .spaTabs, animator: animator)
         contentPanelView.setOpen(kind?.contentAction != nil, animator: animator)
+
+        // Only an open panel can hold the focused search the sunken anchor belongs to.
+        if kind == nil {
+            setPanelTracksKeyboard(false)
+        }
     }
 
     @discardableResult
@@ -119,6 +123,18 @@ final class TabBarChromeSurfaceView: UIView {
         return true
     }
 
+    /// Sets the panel height for interactive drag. Keeps `appliedGlassContainerHeight` in step
+    /// so a later `updateHeight` still sees a change.
+    func setPanelHeight(_ height: CGFloat) {
+        appliedGlassContainerHeight = height
+        glassContainerHeightConstraint?.update(offset: height)
+        layoutIfNeeded()
+    }
+
+    func setPanelContentClipped(_ clipped: Bool) {
+        contentPanelView.setContentClipped(clipped)
+    }
+
     func setChips(_ chips: [DSTabBarChip], selected: UUID?, closeActionTitle: String) {
         tabsPanelView.setChips(chips, selected: selected)
         tabsPanelView.closeActionTitle = closeActionTitle
@@ -139,9 +155,14 @@ final class TabBarChromeSurfaceView: UIView {
 
         isPanelTrackingKeyboard = tracking
 
-        let offset = tracking ? Self.keyboardBottomOffset : Self.restingBottomOffset
-        glassContainerBottomConstraint?.update(offset: offset)
-        barBottomConstraint?.update(offset: offset)
+        if tracking {
+            restingBottomConstraints.forEach { $0.deactivate() }
+            sunkenBottomConstraints.forEach { $0.activate() }
+        } else {
+            sunkenBottomConstraints.forEach { $0.deactivate() }
+            restingBottomConstraints.forEach { $0.activate() }
+        }
+
         barView?.setKeyboardShadowVisible(tracking)
     }
 
@@ -154,14 +175,27 @@ final class TabBarChromeSurfaceView: UIView {
 // MARK: - Layout
 
 private extension TabBarChromeSurfaceView {
+    /// Pins a view to the chrome's bottom, and prepares the anchor it swaps to while the chrome's
+    /// own search is focused. Only that explicit focus moves the chrome, so no keyboard raised by
+    /// another screen can reach it.
+    func pinBottom(_ make: ConstraintMaker) {
+        restingBottomConstraints.append(
+            make.bottom.equalToSuperview().offset(Self.restingBottomOffset).constraint
+        )
+
+        let sunken = make.bottom.equalTo(keyboardLayoutGuide.snp.top)
+            .offset(Self.sunkenBottomOffset).constraint
+        sunken.deactivate()
+        sunkenBottomConstraints.append(sunken)
+    }
+
     func installGlassContainer() {
         insertSubview(glassContainer, at: 0)
         glassContainer.snp.makeConstraints { make in
             make.centerX.equalToSuperview()
             make.width.lessThanOrEqualTo(DSTabBarView.maxWidth)
             make.width.equalToSuperview().offset(-DSTabBarView.horizontalMargin * 2).priority(.high)
-            glassContainerBottomConstraint = make.bottom.equalTo(keyboardLayoutGuide.snp.top)
-                .offset(Self.restingBottomOffset).constraint
+            pinBottom(make)
             glassContainerHeightConstraint = make.height.equalTo(DSTabBarView.capsuleHeight).constraint
         }
     }

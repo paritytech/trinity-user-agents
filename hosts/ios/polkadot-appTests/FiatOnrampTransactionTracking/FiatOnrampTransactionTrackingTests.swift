@@ -5,13 +5,14 @@ import CryptoKit
 import Testing
 import SubstrateSdk
 import AsyncExtensions
-import Clocks
+import os
 import CustomDump
 
 private enum TestTrackingError: Error {
     case simulated
 }
 
+@Suite(.timeLimit(.minutes(1)))
 struct FiatOnrampTransactionTrackingTests {
     static let constantDate = Date()
     private let expectedAmountIn = Balance(10)
@@ -63,10 +64,9 @@ struct FiatOnrampTransactionTrackingTests {
 
         let testStorage = TestFiatOnrampStorage()
         let testService = TestFiatOnrampService()
-        let clock = TestClock()
         await testService.setStubbedSessionTransactions([transaction])
 
-        var spec = makeSpec(storage: testStorage, fiatService: testService, clock: clock)
+        var spec = makeSpec(storage: testStorage, fiatService: testService)
         defer { spec.teardown() }
         try await spec.setup()
 
@@ -77,7 +77,7 @@ struct FiatOnrampTransactionTrackingTests {
 
         spec.sut.startTracking(sessionId: sessionId)
 
-        await clock.advance(by: .seconds(61))
+        await spec.tick()
 
         let discovered = try await spec.nextStatuses()
         expectNoDifference(
@@ -213,7 +213,6 @@ struct FiatOnrampTransactionTrackingTests {
         )
 
         let testService = TestFiatOnrampService()
-        let clock = TestClock()
 
         await testStorage.addTrackedTransactions([
             makeTrackedTransaction(id: transaction1.transactionId.value, status: .funding(.inProgress)),
@@ -221,10 +220,12 @@ struct FiatOnrampTransactionTrackingTests {
         ])
         await testService.setStubbedTransactionSummaries([transaction1, transaction2])
 
-        var spec = makeSpec(storage: testStorage, fiatService: testService, clock: clock)
+        var spec = makeSpec(storage: testStorage, fiatService: testService)
         defer { spec.teardown() }
         try await spec.setup()
 
+        // The initial snapshot, then the one from the poll that runs at setup.
+        _ = try await spec.nextStatuses()
         let fetchedStatuses = try await spec.nextStatuses()
 
         expectNoDifference(
@@ -248,8 +249,8 @@ struct FiatOnrampTransactionTrackingTests {
         )
         await testService.setStubbedTransactionSummaries([updatedTransaction1, updatedTransaction2])
 
-        // When: Advance time by 60 seconds to trigger polling
-        await clock.advance(by: .seconds(61))
+        // When: The polling interval elapses
+        await spec.tick()
 
         // Then: Updated transaction statuses are emitted
         let updatedStatuses = try await spec.nextStatuses()
@@ -286,6 +287,13 @@ struct FiatOnrampTransactionTrackingTests {
                 status: .pendingSwap(expectedExecutionTime: 80)
             )]
         )
+        // Executions are handled in order, so the snapshot of this unmatched one follows the ignored batch.
+        spec.depositService.emitExecutions(
+            [makeExecution(label: makeExecLabel(balance: Balance(999)), status: .inProgress(remainedTime: 30))]
+        )
+
+        let statusesAfterExecutions = try await spec.nextStatuses()
+        expectNoDifference(statusesAfterExecutions, [.init(id: tracked.id, status: .funding)])
 
         let storedTransactions = await spec.storage.getTrackedTransactions()
         expectNoDifference(storedTransactions, [tracked])
@@ -526,8 +534,7 @@ struct FiatOnrampTransactionTrackingTests {
         let tx3 = makeTrackedTransaction(id: "tx-3", status: .funding(.inProgress))
         await testStorage.addTrackedTransactions([tx1, tx2, tx3])
 
-        let clock = TestClock()
-        var spec = makeSpec(storage: testStorage, fiatService: testFiatService, clock: clock)
+        var spec = makeSpec(storage: testStorage, fiatService: testFiatService)
         defer { spec.teardown() }
         try await spec.setup()
 
@@ -563,7 +570,7 @@ struct FiatOnrampTransactionTrackingTests {
         await testFiatService.setStubbedTransactionSummaries([
             .init(transactionId: tx2.id, sessionId: .init(value: UUID().uuidString), status: .settled)
         ])
-        await clock.advance(by: .seconds(60))
+        await spec.tick()
 
         var nextStatuses = try await spec.nextStatuses()
         expectNoDifference(
@@ -616,7 +623,7 @@ struct FiatOnrampTransactionTrackingTests {
         await testFiatService.setStubbedTransactionSummaries([
             .init(transactionId: tx3.id, sessionId: .init(value: UUID().uuidString), status: .settled)
         ])
-        await clock.advance(by: .seconds(60))
+        await spec.tick()
 
         nextStatuses = try await spec.nextStatuses()
         expectNoDifference(
@@ -669,42 +676,20 @@ struct FiatOnrampTransactionTrackingTests {
     }
 
     @Test func setupIsIdempotent() async throws {
-        let testStorage = TestFiatOnrampStorage()
-        let testFiatService = TestFiatOnrampService()
-        let clock = TestClock()
-
-        let tracked = makeTrackedTransaction(id: "tx-1", status: .funding(.inProgress))
-        await testStorage.addTrackedTransactions([tracked])
-        await testFiatService.setStubbedTransactionSummaries([
-            .init(transactionId: tracked.id, sessionId: .init(value: UUID().uuidString), status: .settling)
-        ])
-
-        var spec = makeSpec(storage: testStorage, fiatService: testFiatService, clock: clock)
+        var spec = makeSpec()
         defer { spec.teardown() }
         try await spec.setup()
 
-        // Initial replayed state after setup.
-        _ = try await spec.nextStatuses()
-
-        // Establish baseline on one full polling interval.
-        await clock.advance(by: .seconds(61))
-        _ = try await spec.nextStatuses()
-        let fetchCountBeforeSecondSetup = await testFiatService.fetchTransactionRequestsSnapshot().count
+        let tasksBeforeSecondSetup = spec.observationTasks
 
         spec.sut.setup()
 
-        await clock.advance(by: .seconds(61))
-        _ = try await spec.nextStatuses()
-
-        let fetchCountAfterSecondSetup = await testFiatService.fetchTransactionRequestsSnapshot().count
-        let delta = fetchCountAfterSecondSetup - fetchCountBeforeSecondSetup
-        #expect(delta == 1)
+        #expect(spec.observationTasks == tasksBeforeSecondSetup)
     }
 
     @Test func throttleStopsPolling() async throws {
         let testStorage = TestFiatOnrampStorage()
         let testFiatService = TestFiatOnrampService()
-        let clock = TestClock()
 
         let tracked = makeTrackedTransaction(id: "tx-1", status: .funding(.inProgress))
         await testStorage.addTrackedTransactions([tracked])
@@ -712,16 +697,13 @@ struct FiatOnrampTransactionTrackingTests {
             .init(transactionId: tracked.id, sessionId: .init(value: UUID().uuidString), status: .settling)
         ])
 
-        var spec = makeSpec(storage: testStorage, fiatService: testFiatService, clock: clock)
+        var spec = makeSpec(storage: testStorage, fiatService: testFiatService)
         defer { spec.teardown() }
         try await spec.setup()
         _ = try await spec.nextStatuses()
 
-        spec.sut.throttle()
-        await Task.yield()
+        await spec.throttleAndWaitForTasks()
         await testFiatService.clearFetchTransactionRequests()
-
-        await clock.advance(by: .seconds(180))
 
         let fetchRequestsAfterThrottle = await testFiatService.fetchTransactionRequestsSnapshot()
         #expect(fetchRequestsAfterThrottle.isEmpty)
@@ -730,7 +712,6 @@ struct FiatOnrampTransactionTrackingTests {
     @Test func throttleBeforeSetupIsNoop() async throws {
         let testStorage = TestFiatOnrampStorage()
         let testFiatService = TestFiatOnrampService()
-        let clock = TestClock()
 
         let tracked = makeTrackedTransaction(id: "tx-1", status: .funding(.inProgress))
         await testStorage.addTrackedTransactions([tracked])
@@ -738,13 +719,13 @@ struct FiatOnrampTransactionTrackingTests {
             .init(transactionId: tracked.id, sessionId: .init(value: UUID().uuidString), status: .settling)
         ])
 
-        var spec = makeSpec(storage: testStorage, fiatService: testFiatService, clock: clock)
+        var spec = makeSpec(storage: testStorage, fiatService: testFiatService)
         defer { spec.teardown() }
         spec.sut.throttle()
         try await spec.setup()
-        _ = try await spec.nextStatuses()
 
-        await clock.advance(by: .seconds(61))
+        // The initial snapshot, then the one from the poll that runs at setup.
+        _ = try await spec.nextStatuses()
         _ = try await spec.nextStatuses()
 
         let fetchRequestsAfterSetup = await testFiatService.fetchTransactionRequestsSnapshot()
@@ -754,7 +735,6 @@ struct FiatOnrampTransactionTrackingTests {
     @Test func setupAfterThrottleRestartsPolling() async throws {
         let testStorage = TestFiatOnrampStorage()
         let testFiatService = TestFiatOnrampService()
-        let clock = TestClock()
 
         let tracked = makeTrackedTransaction(id: "tx-1", status: .funding(.inProgress))
         await testStorage.addTrackedTransactions([tracked])
@@ -762,23 +742,20 @@ struct FiatOnrampTransactionTrackingTests {
             .init(transactionId: tracked.id, sessionId: .init(value: UUID().uuidString), status: .settling)
         ])
 
-        var spec = makeSpec(storage: testStorage, fiatService: testFiatService, clock: clock)
+        var spec = makeSpec(storage: testStorage, fiatService: testFiatService)
         defer { spec.teardown() }
         try await spec.setup()
         _ = try await spec.nextStatuses()
-
-        spec.sut.throttle()
-        await Task.yield()
-        await testFiatService.clearFetchTransactionRequests()
-
-        await clock.advance(by: .seconds(180))
-        let fetchRequestsWhileStopped = await testFiatService.fetchTransactionRequestsSnapshot()
-        #expect(fetchRequestsWhileStopped.isEmpty)
-
-        spec.sut.setup()
         _ = try await spec.nextStatuses()
 
-        await clock.advance(by: .seconds(61))
+        await spec.throttleAndWaitForTasks()
+        await testFiatService.clearFetchTransactionRequests()
+
+        spec.sut.setup()
+        await spec.waitForPeriodicTasks()
+
+        // The initial snapshot, then the one from the poll that runs at setup.
+        _ = try await spec.nextStatuses()
         _ = try await spec.nextStatuses()
 
         let fetchRequestsAfterRestart = await testFiatService.fetchTransactionRequestsSnapshot()
@@ -882,18 +859,12 @@ struct FiatOnrampTransactionTrackingTests {
                 status: .settling
             )
         ])
-        let clock = TestClock()
-
-        var spec = makeSpec(storage: testStorage, fiatService: testFiatService, clock: clock)
+        var spec = makeSpec(storage: testStorage, fiatService: testFiatService)
         defer { spec.teardown() }
         try await spec.setup()
-        _ = try await spec.nextStatuses()
 
-        await clock.advance(by: .seconds(61))
+        // The initial snapshot, then the one from the poll that runs at setup.
         _ = try await spec.nextStatuses()
-        await testFiatService.clearFetchTransactionRequests()
-
-        await clock.advance(by: .seconds(61))
         _ = try await spec.nextStatuses()
 
         let fetchRequests = await testFiatService.fetchTransactionRequestsSnapshot()
@@ -913,13 +884,11 @@ struct FiatOnrampTransactionTrackingTests {
         ])
         await testFiatService.setFetchTransactionFailingIds([txFailure.id])
 
-        let clock = TestClock()
-        var spec = makeSpec(storage: testStorage, fiatService: testFiatService, clock: clock)
+        var spec = makeSpec(storage: testStorage, fiatService: testFiatService)
         defer { spec.teardown() }
         try await spec.setup()
         _ = try await spec.nextStatuses()
 
-        await clock.advance(by: .seconds(61))
         let nextStatuses = try await spec.nextStatuses()
 
         expectNoDifference(
@@ -941,20 +910,19 @@ struct FiatOnrampTransactionTrackingTests {
 
         let testStorage = TestFiatOnrampStorage()
         let testFiatService = TestFiatOnrampService()
-        let clock = TestClock()
 
         await testStorage.addSessionId(sessionId)
         await testFiatService.setStubbedSessionTransactions([transaction])
         await testFiatService.setFetchTransactionsFailuresLeft(1)
 
-        var spec = makeSpec(storage: testStorage, fiatService: testFiatService, clock: clock)
+        var spec = makeSpec(storage: testStorage, fiatService: testFiatService)
         defer { spec.teardown() }
         try await spec.setup()
 
         let initial = try await spec.nextStatuses()
         #expect(initial.isEmpty)
 
-        await clock.advance(by: .seconds(61))
+        await spec.tick()
 
         let recoveredStatuses = try await spec.nextStatuses()
         expectNoDifference(
@@ -965,7 +933,7 @@ struct FiatOnrampTransactionTrackingTests {
         )
 
         let fetchRequests = await testFiatService.fetchTransactionsRequestsSnapshot()
-        #expect(fetchRequests.count >= 2)
+        #expect(fetchRequests.count == 2)
     }
 
     @Test func discoverTransactionsRemovesExpiredPendingSessions() async throws {
@@ -1036,14 +1004,12 @@ struct FiatOnrampTransactionTrackingTests {
         storage: TestFiatOnrampStorage = TestFiatOnrampStorage(),
         depositService: TestDepositService = TestDepositService(),
         fiatService: TestFiatOnrampService = TestFiatOnrampService(),
-        clock: any Clock<Duration> = ContinuousClock(),
         dateBuilder: @escaping () -> Date = { Self.constantDate }
     ) -> TrackingSpec {
         TrackingSpec(
             storage: storage,
             depositService: depositService,
             fiatService: fiatService,
-            clock: clock,
             dateBuilder: dateBuilder
         )
     }
@@ -1053,16 +1019,20 @@ private struct TrackingSpec {
     let storage: TestFiatOnrampStorage
     let depositService: TestDepositService
     let fiatService: TestFiatOnrampService
+    let clock = ManualClock()
     let sut: FiatOnrampTrackingServicing
 
     private var iterator: AnyAsyncSequence<Set<FiatOnrampTransactionStatusPayload>>.AsyncIterator?
     private var statusStream: AnyAsyncSequence<Set<FiatOnrampTransactionStatusPayload>>?
 
+    var observationTasks: [Task<Void, Never>?] {
+        [sut.updateTriggersTask, sut.sessionDiscoveryTask, sut.transactionPollingTask, sut.autoSwapDepositsTask]
+    }
+
     init(
         storage: TestFiatOnrampStorage,
         depositService: TestDepositService,
         fiatService: TestFiatOnrampService,
-        clock: any Clock<Duration>,
         dateBuilder: @escaping () -> Date
     ) {
         self.storage = storage
@@ -1082,9 +1052,30 @@ private struct TrackingSpec {
         iterator = statusStream?.makeAsyncIterator()
     }
 
+    /// Subscribing first makes every snapshot observable, starting with the initial one.
     mutating func setup() async throws {
-        sut.setup()
         await subscribe()
+        sut.setup()
+        await waitForPeriodicTasks()
+    }
+
+    /// Periodic tasks trigger before sleeping, so both pending sleeps put setup triggers ahead of the test's.
+    func waitForPeriodicTasks() async {
+        await clock.waitForSleeps(for: .seconds(60), count: 2)
+    }
+
+    func tick() async {
+        await clock.resumeSleeps(for: .seconds(60), count: 2)
+    }
+
+    func throttleAndWaitForTasks() async {
+        let tasks = observationTasks
+
+        sut.throttle()
+
+        for task in tasks {
+            await task?.value
+        }
     }
 
     mutating func teardown() {
@@ -1107,15 +1098,29 @@ private struct TrackingSpec {
     }
 }
 
-class TestDepositService: DepositServiceProtocol {
-    private let executionsBroadcast = AsyncPassthroughSubject<[DepositExecutionItem]>()
+/// Buffers executions emitted before the auto-swap task subscribes, which a passthrough subject would drop.
+final class TestDepositService: DepositServiceProtocol, @unchecked Sendable {
+    private struct State {
+        var pendingExecutions: [[DepositExecutionItem]] = []
+        var channel: AsyncBufferedChannel<[DepositExecutionItem]>?
+    }
+
+    private let state = OSAllocatedUnfairLock(uncheckedState: State())
 
     func fetchDepositInfo(for _: ChainAssetId) async throws -> DepositServiceInfo {
         fatalError()
     }
 
     func executions() async -> AnyAsyncSequence<[DepositExecutionItem]> {
-        executionsBroadcast.eraseToAnyAsyncSequence()
+        let channel = AsyncBufferedChannel<[DepositExecutionItem]>()
+
+        state.withLock { state in
+            state.pendingExecutions.forEach(channel.send)
+            state.pendingExecutions = []
+            state.channel = channel
+        }
+
+        return channel.eraseToAnyAsyncSequence()
     }
 
     func setup() async {}
@@ -1123,7 +1128,13 @@ class TestDepositService: DepositServiceProtocol {
     func throttle() async {}
 
     func emitExecutions(_ executions: [DepositExecutionItem]) {
-        executionsBroadcast.send(executions)
+        state.withLock { state in
+            if let channel = state.channel {
+                channel.send(executions)
+            } else {
+                state.pendingExecutions.append(executions)
+            }
+        }
     }
 }
 

@@ -481,7 +481,7 @@ test("issue listing errors do not create a duplicate", (t) => {
 
 
 const packageSwift = (version) =>
-  `let publishedBinaryURL = "https://github.com/paritytech/host-rust-core/releases/download/%40parity%2Fios-host%40${version}/truapi_server.xcframework.zip"\n`;
+  `let publishedBinaryURL = "https://github.com/paritytech/trinity-user-agents/releases/download/%40parity%2Fios-host%40${version}/truapi_server.xcframework.zip"\n`;
 
 // gh is invoked with --jq, so it emits one tag per line rather than JSON.
 const releases = (...tags) =>

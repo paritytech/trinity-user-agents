@@ -1,6 +1,5 @@
 import Foundation
 import AsyncExtensions
-import StructuredConcurrency
 import os
 
 final class SearchContactInteractor {
@@ -41,10 +40,12 @@ extension SearchContactInteractor: SearchContactInteractorInputProtocol {
 
         stateLock.withLock { $0.currentQuery = username }
 
-        let task = Task { [weak self, weak presenter, searchRunner] in
-            let stateStream = searchRunner.run {
-                await self?.makeSearchResult(for: username)
-            }
+        let task = Task { [weak presenter, searchRunner, accountSearching] in
+            let stateStream = searchRunner.run({
+                accountSearching.searchPhases(query: username)
+                    .mapToResult()
+                    .map(\.searchResult)
+            }, hasContent: \.hasContent)
             for await state in stateStream {
                 guard !Task.isCancelled else { return }
                 await presenter?.didReceive(searchState: state, for: username)
@@ -89,6 +90,8 @@ private extension SearchContactInteractor {
                     let query = stateLock.withLock { $0.currentQuery }
                     if let query, !query.isEmpty {
                         search(username: query)
+                    } else {
+                        loadIdleState()
                     }
                 }
             } catch {
@@ -127,9 +130,10 @@ private extension SearchContactInteractor {
         let task = Task { [weak self, weak presenter] in
             guard let self else { return }
             do {
-                let sections = try await accountSearching.search(query: nil)
-                guard !Task.isCancelled else { return }
-                await presenter?.didReceive(searchState: .result(.sections(sections)), for: "")
+                for try await sections in accountSearching.searchPhases(query: nil) {
+                    guard !Task.isCancelled else { return }
+                    await presenter?.didReceive(searchState: .result(.sections(sections)), for: "")
+                }
             } catch {
                 guard !Task.isCancelled else { return }
                 await presenter?.didReceive(error: error)
@@ -138,15 +142,25 @@ private extension SearchContactInteractor {
 
         replaceSearchTask(with: task)
     }
+}
 
-    func makeSearchResult(for query: String) async -> SearchContactSearchResult? {
-        do {
-            let sections = try await accountSearching.search(query: query)
-            try Task.checkCancellation()
-            return .sections(sections)
-        } catch {
-            guard !Task.isCancelled else { return nil }
-            return .error(error)
+private extension Result where
+    Success == AccountSearchSections<ContactSearchPayload, ContactSearchPayload>,
+    Failure == Error {
+    var searchResult: SearchContactSearchResult {
+        switch self {
+        case let .success(sections):
+            .sections(sections)
+        case let .failure(error):
+            .error(error)
         }
+    }
+}
+
+private extension SearchContactSearchResult {
+    var hasContent: Bool {
+        guard case let .sections(sections) = self else { return false }
+
+        return sections.hasContent
     }
 }

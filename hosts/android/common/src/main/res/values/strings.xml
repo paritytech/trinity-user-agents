@@ -746,7 +746,7 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="send_payment_open_chat_message">You need to first establish a chat before sending a payment</string>
 
     <string name="send_enter_amount_placeholder">Enter Amount</string>
-    <string name="send_enter_amount_ready_to_send">Ready to send</string>
+    <string name="send_enter_amount_ready_to_send">Ready</string>
     <string name="send_enter_amount_privacy_cost_hint">Extra %1$s is spendable, but at the risk of reducing your privacy</string>
     <string name="send_enter_amount_not_enough_funds_error">You don’t have enough funds</string>
     <string name="send_enter_amount_cash_title">%1$s</string>
@@ -1057,18 +1057,17 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="chat_search_section_apps">APPS</string>
     <string name="chat_search_section_chats">CHATS AND CONTACTS</string>
     <string name="chat_search_section_messages">MESSAGES</string>
-    <string name="address_section_previous_payments">Previous payments</string>
-    <string name="address_section_my_contacts">My Contacts</string>
-    <string name="send_payment_section_global_search">Global search</string>
     <string name="chat_search_recents_header">RECENT</string>
     <string name="chat_search_recents_clear">CLEAR</string>
     <string name="chat_search_recent_menu_remove">Remove from Recents</string>
     <string name="chat_search_error_message">Search failed. Please try again</string>
 
+    <string name="search_section_recent">RECENT</string>
+    <string name="search_section_contacts">CONTACTS</string>
+    <string name="search_section_all_users">ALL USERS</string>
+
     <string name="add_contact_search_placeholder">Type username</string>
-    <string name="add_contact_recents_header">RECENTS</string>
     <string name="add_contact_no_recent_searches">No recent searches</string>
-    <string name="add_contact_users_header">USERS</string>
     <string name="add_contact_bottom_sheet_message">Add a contact\nand start a chat with\n%1$s</string>
     <string name="add_contact_bottom_sheet_description">After you enter the chat, make sure <b>%1$s</b> starts one with you as well, or your message may not be seen.</string>
     <string name="add_contact_bottom_sheet_button_text">Add to Contacts</string>
@@ -1550,11 +1549,6 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="pocket_debug_breakdown_pending">Pending</string>
     <string name="pocket_debug_breakdown_can_spend_gaining">Can spend gaining privacy</string>
     <string name="pocket_coinage_show_details">Show Details</string>
-    <string name="pocket_coinage_key_title">How to read this</string>
-    <string name="pocket_coinage_key_hops">Coins show one circle per past payment. Dots represent other coins that moved with the payment.</string>
-    <string name="pocket_coinage_key_unknown">A thin red and orange line means we have no record for that part of the coin\'s past.</string>
-    <string name="pocket_coinage_key_block">A single block means no past payments at all. The shorter it is, the more fungible the coin.</string>
-    <string name="pocket_coinage_key_voucher">Coins that gain privacy. The solid block is how fungible they will be at best; the striped part is the current level.</string>
 
     <string name="payment_privacy_mode_title">Payments Privacy Mode</string>
     <string name="payment_privacy_mode_fastest_label">Fastest</string>

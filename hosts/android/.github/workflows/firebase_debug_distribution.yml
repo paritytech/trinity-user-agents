@@ -35,7 +35,7 @@ jobs:
     # unmerged PRs stop here, and so do release-* PRs: those are built and
     # distributed by firebase_release_distribution.yml while the PR is open, so
     # merging one must not also ship a debug build.
-    # Held: this configuration ships from host-rust-core.
+    # Held: this configuration ships from trinity-user-agents.
     # The condition this replaces:
     #   if: (github.event_name == 'pull_request' && github.event.pull_request.merged == true && !startsWith(github.event.pull_request.head.ref, 'release-')) || github.event_name == 'workflow_dispatch'
     if: false

@@ -96,20 +96,33 @@ suite("createMockClient", () => {
       const denied = await client.permissions.requestDevicePermission("Camera");
       expect(denied._unsafeUnwrap().granted).toBe(false);
       expect(host.getPermissionLog()).toEqual([
-        { tag: "Camera", value: "Camera", approved: false, kind: "device" },
+        {
+          tag: "Camera",
+          value: "Camera",
+          approved: false,
+          kind: "device",
+          decision: "Deny",
+          timestamp: expect.any(Number),
+        },
       ]);
 
-      // The core caches a decided authorization, so flipping the host's answer
-      // does NOT change an already-decided permission: the second call never
-      // reaches the host at all. Pinning that here because it is the behaviour
-      // that breaks a test expecting a mid-run grant to take effect.
-      host.grantPermission("Camera");
-      const again = await client.permissions.requestDevicePermission("Camera");
-      expect(again._unsafeUnwrap().granted).toBe(false);
+      // The core caches a decided authorization, so a product asking twice is
+      // answered from that record and the second call never reaches the host.
+      const repeated = await client.permissions.requestDevicePermission("Camera");
+      expect(repeated._unsafeUnwrap().granted).toBe(false);
       expect(
         host.getPermissionLog(),
         "a decided permission must not re-prompt the host",
       ).toHaveLength(1);
+
+      // Setting the answer is the suite talking to the host, not the product
+      // asking again, so it retracts that record and the next request is put to
+      // the host afresh. Without this a suite can only ever observe the answer
+      // its first request happened to settle on.
+      host.grantPermission("Camera");
+      const granted = await client.permissions.requestDevicePermission("Camera");
+      expect(granted._unsafeUnwrap().granted).toBe(true);
+      expect(host.getPermissionLog()).toHaveLength(2);
     } finally {
       dispose();
     }

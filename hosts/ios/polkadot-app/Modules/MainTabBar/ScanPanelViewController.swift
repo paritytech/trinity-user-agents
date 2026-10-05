@@ -11,6 +11,8 @@ final class ScanPanelViewController: UIViewController, ViewHolder {
 
     var onChatFound: ((ChatOpenModel) -> Void)?
     var onContentHeightChanged: (() -> Void)?
+    var onPanelDragChanged: ((CGFloat) -> Void)?
+    var onPanelDragEnded: ((CGFloat) -> Void)?
 
     init(
         scannerController: UIViewController & ScanPanelScannerControlling,
@@ -40,6 +42,13 @@ final class ScanPanelViewController: UIViewController, ViewHolder {
         setupHandlers()
         presenter.setup()
     }
+
+    func cancelSearch() {
+        let searchField = rootView.searchRow.searchField
+        searchField.text = nil
+        presenter.search(username: "")
+        searchField.resignFirstResponder()
+    }
 }
 
 // MARK: - Private
@@ -57,13 +66,14 @@ private extension ScanPanelViewController {
         rootView.resultsView.selectionHandler = { [weak self] identifier in
             self?.presenter.didSelectContact(identifier: identifier)
         }
-    }
 
-    func cancelSearch() {
-        let searchField = rootView.searchRow.searchField
-        searchField.text = nil
-        presenter.search(username: "")
-        searchField.resignFirstResponder()
+        rootView.grabber.onDragChanged = { [weak self] translation in
+            self?.onPanelDragChanged?(translation)
+        }
+
+        rootView.grabber.onDragEnded = { [weak self] translation in
+            self?.onPanelDragEnded?(translation)
+        }
     }
 }
 

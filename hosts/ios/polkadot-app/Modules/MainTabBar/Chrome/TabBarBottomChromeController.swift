@@ -78,10 +78,17 @@ final class TabBarBottomChromeController: UIViewController {
         )
     #endif
 
+    private lazy var panelDragController = TabBarPanelDragController(
+        surface: chromeSurface,
+        panelController: panelController,
+        dismissSearch: { [weak self] in self?.onPanelDragCommitted?() }
+    )
+
     var onSelect: ((_ index: Int, _ isReselection: Bool) -> Void)?
     var onChipTapped: ((UUID) -> Void)?
     var onChipCloseRequested: ((UUID) -> Void)?
     var onPanelChanged: ((TabBarPanelKind?) -> Void)?
+    var onPanelDragCommitted: (() -> Void)?
 
     /// The chain-status strip is installed by `MainTabBarViewController`, not by the chrome,
     /// so its tip anchor is handed down rather than reached for.
@@ -195,6 +202,14 @@ final class TabBarBottomChromeController: UIViewController {
 
     func setPanel(_ kind: TabBarPanelKind?, animated: Bool) {
         panelController.setPanel(kind, animated: animated)
+    }
+
+    func panelDragChanged(translation: CGFloat) {
+        panelDragController.dragChanged(translation: translation)
+    }
+
+    func panelDragEnded(translation: CGFloat) {
+        panelDragController.dragEnded(translation: translation)
     }
 
     /// Re-measures the open content panel after its hosted controller changed its own size.

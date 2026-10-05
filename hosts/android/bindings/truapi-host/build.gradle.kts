@@ -17,7 +17,7 @@ import java.util.Properties
 // build variant, so the core (and JNA) ship in release APKs too, even though
 // the runtime toggle keeps release on the native host. A build without a
 // truapi checkout fails at configuration. CI provides the checkout by cloning
-// paritytech/host-rust-core at the `truapi_ref` pin
+// paritytech/trinity-user-agents at the `truapi_ref` pin
 // (.github/actions/install/action.yaml) before any compile task runs.
 
 plugins {
@@ -139,7 +139,7 @@ val hostCdylib: String = run {
 
 // codegen.sh formats what it emits with the core's own prettier, resolved with
 // `npm exec --no`, so the core's workspace dependencies have to be installed
-// before it runs. host-rust-core's own CI does the same thing ahead of the
+// before it runs. trinity-user-agents's own CI does the same thing ahead of the
 // script; without it the task dies on a missing prettier rather than anything
 // to do with the generated code.
 val installCoreNodeDeps by tasks.registering(Exec::class) {
@@ -150,7 +150,7 @@ val installCoreNodeDeps by tasks.registering(Exec::class) {
     outputs.dir("$truapiDir/node_modules").withPropertyName("coreNodeModules")
 }
 
-// Generate the core's wire dispatcher. host-rust-core stopped tracking
+// Generate the core's wire dispatcher. trinity-user-agents stopped tracking
 // `truapi/src/generated` and generates it on demand, so a checkout of any
 // commit after that does not compile until this runs. Release tags do not carry
 // it either: the iOS tag script commits only the paths `Package.swift` declares.

@@ -52,7 +52,7 @@ use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use truapi::host_logic::dotns_gateway::{
-    MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label,
+    MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
 };
 use truapi::platform::{
     ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind,
@@ -441,12 +441,10 @@ struct SigningHostArgs {
     /// or create a usable account.
     #[arg(long)]
     account: Option<String>,
-    /// Persistent signing-host session to restore or create.
+    /// Select the newest saved session for a username base, or the exact numbered username.
+    /// Interactive startup provisions a new base when needed; exec leaves that to its command.
     #[arg(long)]
     session: Option<String>,
-    /// Prefix for newly-created lite usernames in auto-account mode.
-    #[arg(long = "lite-username-prefix")]
-    lite_username_prefix: Option<String>,
     /// Full-person base name a newly-created auto account reserves on dotNS
     /// alongside its lite username, to claim later as a full person.
     #[arg(long = "reserved-username")]
@@ -1343,9 +1341,6 @@ async fn run_signing_host(
     let base_path = state_base_path(args.base_path.clone());
     let session_catalog = SessionCatalog::new(base_path.clone(), network.id)?;
     let initial_session_name = initial_session_name(&args, &session_catalog)?;
-    if normalized(args.mnemonic.clone()).is_none() {
-        session_catalog.set_current(&initial_session_name)?;
-    }
     let initial_session_names = session_catalog.list()?;
     let (terminal_ui, ui_handle) = if interactive {
         let (ui, handle) = TerminalUi::new(
@@ -1474,6 +1469,19 @@ async fn run_signing_host(
     }
 
     let terminal_ui = terminal_ui.context("interactive terminal was not initialized")?;
+    let initial_command = if let Some(deeplink) = initial_deeplink {
+        Some((
+            format!("/pair {deeplink}"),
+            ShellCommand::Pair(PairCommand::Deeplink(deeplink)),
+        ))
+    } else {
+        normalized(args.session.clone()).map(|name| {
+            (
+                format!("/session {name}"),
+                ShellCommand::Session(SessionCommand::Switch(name)),
+            )
+        })
+    };
     restore_paired_responders(&mut session).await;
     let cleanup_catalog = session.catalog.clone();
     let clear_target = with_frame_server(
@@ -1485,7 +1493,7 @@ async fn run_signing_host(
                 &mut session,
                 frame_url,
                 product,
-                initial_deeplink,
+                initial_command,
                 terminal_ui,
                 log_controller,
             )
@@ -1513,7 +1521,6 @@ struct SigningHostSession {
     network: NetworkConfig,
     mnemonic: Option<String>,
     default_account: Option<String>,
-    lite_username_prefix: Option<String>,
     reserved_username: Option<String>,
     ui: Option<UiHandle>,
     /// Set when this host serves a chat product. Held across runtime rebuilds
@@ -1591,6 +1598,31 @@ fn initial_session_name(args: &SigningHostArgs, catalog: &SessionCatalog) -> Res
     }
 }
 
+fn selected_session_account(
+    catalog: &SessionCatalog,
+    profile: &SessionProfile,
+    default_account: Option<&str>,
+) -> Result<Option<String>> {
+    Ok(catalog.cached_account_name(profile)?.or_else(|| {
+        (profile.name == DEFAULT_SESSION_NAME)
+            .then(|| default_account.map(str::to_string))
+            .flatten()
+    }))
+}
+
+async fn resolve_session_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedSigner> {
+    if config.mnemonic.is_none()
+        && let Some(signer) = accounts::resolve_cached_signer(
+            config.base_path,
+            config.network.id,
+            config.account.as_deref(),
+        )?
+    {
+        return Ok(signer);
+    }
+    accounts::resolve_signer(config).await
+}
+
 async fn start_signing_host(
     args: &SigningHostArgs,
     catalog: SessionCatalog,
@@ -1610,23 +1642,11 @@ async fn start_signing_host(
         .map(|profile| catalog.cached_user_id(profile))
         .transpose()?
         .flatten();
-    if let (Some(current), Some(user_id)) = (&profile, &cached_user_id)
-        && current.name != *user_id
-    {
-        profile = Some(catalog.promote_to_user(current, user_id)?);
-    }
-    let cached_account_name = profile
+    let selected_account = profile
         .as_ref()
-        .map(|profile| catalog.cached_account_name(profile))
+        .map(|profile| selected_session_account(&catalog, profile, default_account.as_deref()))
         .transpose()?
         .flatten();
-    let selected_account = cached_account_name.or_else(|| {
-        profile
-            .as_ref()
-            .is_some_and(|profile| profile.name == DEFAULT_SESSION_NAME)
-            .then(|| default_account.clone())
-            .flatten()
-    });
     let mut signer = profile
         .as_ref()
         .map(|profile| {
@@ -1638,16 +1658,20 @@ async fn start_signing_host(
         })
         .transpose()?
         .flatten();
-    if let (Some(current), Some(user_id)) = (
+    let promotion = if let (Some(current), Some(user_id)) = (
         &profile,
         signer
             .as_ref()
             .and_then(|signer| signer.lite_username.as_ref()),
     ) && current.name != *user_id
     {
-        profile = Some(catalog.promote_to_user(current, user_id)?);
+        let promotion = catalog.prepare_promotion(current, user_id)?;
+        profile = Some(promotion.profile().clone());
         cached_user_id = Some(user_id.clone());
-    }
+        Some(promotion)
+    } else {
+        None
+    };
     let storage_profile = profile.as_ref().cloned().unwrap_or_else(|| {
         catalog
             .profile(DEFAULT_SESSION_NAME)
@@ -1713,16 +1737,21 @@ async fn start_signing_host(
         }
         terminal_ui::output_event(SystemEvent::SigningHostReady);
     }
-    if let Some(profile) = &profile
-        && profile.name != session_name
-    {
-        catalog.set_current(&profile.name)?;
-        if let Some(ui) = &ui {
+    if let Some(profile) = &profile {
+        if profile.name != session_name
+            && let Some(ui) = &ui
+        {
             ui.session(profile.name.clone(), catalog.list()?);
+        }
+        if signer.is_some() || normalized(args.session.clone()).is_none() || args.action.is_some() {
+            catalog.set_current(&profile.name)?;
         }
     }
     if profile.is_some() && signer.is_none() {
         terminal_ui::output_event(SystemEvent::SigningHostNeedsSession);
+    }
+    if let Some(promotion) = promotion {
+        promotion.commit();
     }
 
     Ok(SigningHostSession {
@@ -1739,7 +1768,6 @@ async fn start_signing_host(
         network,
         mnemonic,
         default_account,
-        lite_username_prefix: normalized(args.lite_username_prefix.clone()),
         reserved_username: normalized(args.reserved_username.clone()),
         ui,
         chat,
@@ -1803,7 +1831,6 @@ fn validate_signing_args(args: &SigningHostArgs) -> Result<()> {
     let mnemonic = normalized(args.mnemonic.clone());
     let account = normalized(args.account.clone());
     let session = normalized(args.session.clone());
-    let prefix = normalized(args.lite_username_prefix.clone());
     if args.script.is_some() && args.action.is_some() {
         bail!("--script cannot be combined with the exec subcommand");
     }
@@ -1832,14 +1859,6 @@ fn validate_signing_args(args: &SigningHostArgs) -> Result<()> {
     }
     if let Some(session) = session {
         sessions::validate_selectable_name(&session).map_err(anyhow::Error::msg)?;
-    }
-    if mnemonic.is_some() && prefix.is_some() {
-        bail!(
-            "--lite-username-prefix cannot be used when --mnemonic or HOST_CLI_SIGNER_MNEMONIC is set"
-        );
-    }
-    if account.is_some() && prefix.is_some() {
-        bail!("--lite-username-prefix only applies when --account is omitted");
     }
     let reserved = normalized(args.reserved_username.clone());
     if mnemonic.is_some() && reserved.is_some() {
@@ -1992,6 +2011,9 @@ fn start_paired_host_responder(session: &mut SigningHostSession, host: PairedHos
 }
 
 async fn restore_paired_responders(session: &mut SigningHostSession) {
+    if session.signer.is_none() {
+        return;
+    }
     let Some(profile) = session.profile.clone() else {
         return;
     };
@@ -2003,10 +2025,6 @@ async fn restore_paired_responders(session: &mut SigningHostSession) {
         }
     };
     if paired_hosts.is_empty() {
-        return;
-    }
-    if let Err(error) = ensure_signer(session).await {
-        tracing::warn!(%error, "failed to activate the signer for saved paired devices");
         return;
     }
     let mut renewal_targets = vec![StatementRenewalTarget::WalletSso];
@@ -2248,73 +2266,26 @@ async fn ensure_signer(session: &mut SigningHostSession) -> Result<()> {
     if session.signer.is_some() {
         return Ok(());
     }
-    let profile = session
-        .profile
-        .clone()
-        .unwrap_or(session.catalog.profile(DEFAULT_SESSION_NAME)?);
-    let account = (profile.name == DEFAULT_SESSION_NAME)
-        .then(|| session.default_account.clone())
-        .flatten();
-    let lite_username_prefix =
-        sessions::lite_username_prefix(&profile.name, session.lite_username_prefix.as_deref());
-    if !profile.is_provisioned() {
-        terminal_ui::output_event(SystemEvent::SigningHostProvisioning);
+    if let Some(profile) = &session.profile {
+        activate_session(session, profile.name.clone()).await?;
+        terminal_ui::output_event(SystemEvent::SigningHostReady);
+        return Ok(());
     }
+    let profile = session.catalog.profile(DEFAULT_SESSION_NAME)?;
     session.signer = Some(
-        accounts::resolve_signer(ResolveSignerConfig {
+        resolve_session_signer(ResolveSignerConfig {
             base_path: &profile.account_base_path,
             network: session.network,
             mnemonic: session.mnemonic.clone(),
-            account,
-            lite_username_prefix,
-            reserved_username: session.reserved_username.clone(),
+            account: None,
+            lite_username_prefix: None,
+            reserved_username: None,
         })
         .await?,
     );
-    if let Err(error) = promote_current_profile(session) {
-        session.signer = None;
-        return Err(error);
-    }
     if let Err(error) = activate_current_signer(session).await {
         session.signer = None;
         return Err(error);
-    }
-    Ok(())
-}
-
-fn promote_current_profile(session: &mut SigningHostSession) -> Result<()> {
-    let Some(user_id) = session
-        .signer
-        .as_ref()
-        .and_then(|signer| signer.lite_username.clone())
-    else {
-        return Ok(());
-    };
-    let Some(current) = session.profile.as_ref() else {
-        return Ok(());
-    };
-    if current.name == user_id {
-        return Ok(());
-    }
-    let promoted = session.catalog.promote_to_user(current, &user_id)?;
-    let last_script = session.catalog.last_script(&promoted)?;
-    let (runtime, platform) = build_signing_runtime(
-        session.network,
-        promoted.path.clone(),
-        promoted.product_storage_dir.clone(),
-        session.platform.approval_policy(),
-        session.ui.clone(),
-        session.chat.clone(),
-        session.pocket.clone(),
-    )?;
-    session.runtime_factory.replace(runtime.clone());
-    session.runtime = runtime;
-    session.platform = platform;
-    session.last_script = last_script;
-    session.profile = Some(promoted);
-    session.catalog.set_current(&user_id)?;
-    if let Some(ui) = &session.ui {
-        ui.session(user_id, session.catalog.list()?);
     }
     Ok(())
 }
@@ -2501,10 +2472,7 @@ async fn prepare_pairing_response(
                     .profile
                     .as_ref()
                     .map_or(DEFAULT_SESSION_NAME, |profile| profile.name.as_str());
-                let lite_username_prefix = sessions::lite_username_prefix(
-                    session_name,
-                    session.lite_username_prefix.as_deref(),
-                );
+                let lite_username_prefix = sessions::lite_username_prefix(session_name);
                 session.signer = Some(
                     accounts::resolve_signer(ResolveSignerConfig {
                         base_path: &account_base_path,
@@ -3124,11 +3092,40 @@ async fn switch_session(session: &mut SigningHostSession, name: String) -> Resul
         .profile
         .as_ref()
         .is_some_and(|profile| profile.name == name)
+        && session.signer.is_some()
     {
         terminal_ui::output_event(session_status_event(session));
         return Ok(());
     }
+    activate_session(session, name).await?;
+    restore_paired_responders(session).await;
+    Ok(())
+}
 
+async fn activate_session(session: &mut SigningHostSession, name: String) -> Result<()> {
+    let provisional_profile = session.catalog.profile(&name)?;
+    let account = selected_session_account(
+        &session.catalog,
+        &provisional_profile,
+        session.default_account.as_deref(),
+    )?;
+    if is_lite_label(&name)
+        && accounts::AccountStore::load(&provisional_profile.account_base_path)?
+            .created_at(session.network.id, account.as_deref())?
+            .is_none()
+    {
+        bail!("session {name:?} has no saved account; choose a username base to create one");
+    }
+    let lite_username_prefix = sessions::lite_username_prefix(&name);
+    if !provisional_profile.is_provisioned()
+        && lite_username_prefix
+            .as_ref()
+            .is_some_and(|prefix| prefix.len() < MIN_PERSON_LABEL_LEN)
+    {
+        bail!(
+            "session name {name:?} must contain at least {MIN_PERSON_LABEL_LEN} lowercase ASCII letters to create an account; digits and separators do not count"
+        );
+    }
     let existed = session.catalog.exists(&name);
     let old_name = session
         .profile
@@ -3147,27 +3144,25 @@ async fn switch_session(session: &mut SigningHostSession, name: String) -> Resul
     // Resolve and provision the target completely while the old runtime keeps
     // serving. Only the final runtime replacement invalidates product sockets.
     let provisional_profile = session.catalog.ensure_profile(&name)?;
-    let lite_username_prefix =
-        sessions::lite_username_prefix(&name, session.lite_username_prefix.as_deref());
-    let signer = accounts::resolve_signer(ResolveSignerConfig {
+    if !provisional_profile.is_provisioned() {
+        terminal_ui::output_event(SystemEvent::SigningHostProvisioning);
+    }
+    let signer = resolve_session_signer(ResolveSignerConfig {
         base_path: &provisional_profile.account_base_path,
         network: session.network,
         mnemonic: None,
-        account: if name == DEFAULT_SESSION_NAME {
-            session.default_account.clone()
-        } else {
-            None
-        },
+        account,
         lite_username_prefix,
         reserved_username: session.reserved_username.clone(),
     })
     .await?;
-    let profile = if let Some(user_id) = &signer.lite_username {
-        session
+    let (profile, promotion) = if let Some(user_id) = &signer.lite_username {
+        let promotion = session
             .catalog
-            .promote_to_user(&provisional_profile, user_id)?
+            .prepare_promotion(&provisional_profile, user_id)?;
+        (promotion.profile().clone(), Some(promotion))
     } else {
-        provisional_profile
+        (provisional_profile, None)
     };
     let last_script = session.catalog.last_script(&profile)?;
     let (runtime, platform) = build_signing_runtime(
@@ -3193,6 +3188,9 @@ async fn switch_session(session: &mut SigningHostSession, name: String) -> Resul
             .store_signer_binding(&profile, user_id, account_name)?;
     }
     session.catalog.set_current(&profile.name)?;
+    if let Some(promotion) = promotion {
+        promotion.commit();
+    }
 
     session.responders.stop_all();
     session.runtime_factory.replace(runtime.clone());
@@ -3214,7 +3212,6 @@ async fn switch_session(session: &mut SigningHostSession, name: String) -> Resul
         }
     }
     terminal_ui::output_event(session_status_event(session));
-    restore_paired_responders(session).await;
     Ok(())
 }
 
@@ -3525,23 +3522,15 @@ async fn signing_interactive_loop(
     session: &mut SigningHostSession,
     frame_url: String,
     product: Arc<frame_server::ProductSelection>,
-    initial_deeplink: Option<String>,
+    initial_command: Option<(String, ShellCommand)>,
     mut ui: ActiveTerminalUi,
     log_controller: LogController,
 ) -> Result<Option<SessionClearTarget>> {
-    if let Some(deeplink) = initial_deeplink {
-        let input = format!("/pair {deeplink}");
+    if let Some((input, command)) = initial_command {
         ui.command(input.clone());
         let product_id = product.current();
-        run_interactive_operation(
-            session,
-            &frame_url,
-            &product_id,
-            ShellCommand::Pair(PairCommand::Deeplink(deeplink)),
-            input,
-            &mut ui,
-        )
-        .await?;
+        run_interactive_operation(session, &frame_url, &product_id, command, input, &mut ui)
+            .await?;
     }
 
     loop {
@@ -4164,7 +4153,288 @@ fn default_base_path() -> PathBuf {
 #[cfg(test)]
 mod cli_tests {
     use super::*;
+    use crate::frame_server::ProductRuntimeFactory;
     use parity_scale_codec::Encode;
+
+    const SESSION_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
+    async fn unfinished_session(base_path: &Path, name: &str) -> Result<SigningHostSession> {
+        let network = Network::default().config();
+        let catalog = SessionCatalog::new(base_path.to_path_buf(), network.id)?;
+        catalog.set_current(name)?;
+        start_signing_host(
+            &SigningHostArgs::default(),
+            catalog,
+            name.to_string(),
+            network,
+            None,
+        )
+        .await
+    }
+
+    fn finish_session_account(session: &SigningHostSession) -> Result<Vec<u8>> {
+        let profile = session.profile.as_ref().unwrap();
+        let accounts = serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "accounts": [{
+                "name": "auto-1",
+                "network": session.network.id,
+                "mnemonic": SESSION_MNEMONIC,
+                "lite_username": "pending.01",
+                "public_key_hex": "0x00",
+                "address": "test",
+                "created_at_unix": 1,
+                "attested": true
+            }]
+        }))?;
+        std::fs::write(profile.account_base_path.join("accounts.json"), &accounts)?;
+        Ok(accounts)
+    }
+
+    #[tokio::test]
+    async fn session_selection_retries_the_active_unfinished_profile() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let mut session = unfinished_session(temporary.path(), "pending").await?;
+        session.network.identity_backend_base = "invalid-backend-url";
+        let runtime = session.runtime.clone();
+
+        let error = switch_session(&mut session, "pending".to_string())
+            .await
+            .expect_err("an unfinished active session must attempt provisioning");
+
+        assert_eq!(
+            (
+                error.to_string(),
+                Arc::ptr_eq(&runtime, &session.runtime),
+                session.catalog.current_session()?,
+                session.runtime.has_active_session(),
+            ),
+            (
+                "check lite username \"pending\" availability".to_string(),
+                true,
+                CurrentSession::Pointed("pending".to_string()),
+                false,
+            )
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_selection_activates_a_finished_account_without_reprovisioning() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let mut session = unfinished_session(temporary.path(), "pending").await?;
+        let accounts = finish_session_account(&session)?;
+        session.network.identity_backend_base = "invalid-backend-url";
+        let mut resets = session.runtime_factory.connection_reset().unwrap();
+        let expected_key =
+            truapi::host_logic::product_account::derive_root_keypair_from_entropy(&[0; 16])
+                .unwrap()
+                .public
+                .to_bytes();
+
+        switch_session(&mut session, "pending".to_string()).await?;
+
+        assert_eq!(
+            (
+                session.runtime.has_active_session(),
+                session.runtime.statement_renewal_owner_key().ok(),
+                session.signer.as_ref().map(|signer| signer.entropy.clone()),
+                session
+                    .profile
+                    .as_ref()
+                    .map(|profile| profile.name.as_str()),
+                session.catalog.current_session()?,
+                *resets.borrow_and_update(),
+                std::fs::read(
+                    session
+                        .profile
+                        .as_ref()
+                        .unwrap()
+                        .account_base_path
+                        .join("accounts.json")
+                )?,
+            ),
+            (
+                true,
+                Some(expected_key),
+                Some(vec![0; 16]),
+                Some("pending.01"),
+                CurrentSession::Pointed("pending.01".to_string()),
+                1,
+                accounts,
+            )
+        );
+        let runtime = session.runtime.clone();
+        switch_session(&mut session, "pending".to_string()).await?;
+        assert_eq!(
+            (
+                Arc::ptr_eq(&runtime, &session.runtime),
+                resets.has_changed()?
+            ),
+            (true, false)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_selection_preserves_the_active_profile_when_promotion_cannot_commit()
+    -> Result<()> {
+        for (name, slash_command) in [
+            (DEFAULT_SESSION_NAME, false),
+            ("pending", true),
+            ("pending", false),
+        ] {
+            let temporary = tempfile::tempdir()?;
+            let mut session = unfinished_session(temporary.path(), name).await?;
+            let profile = session.profile.clone().unwrap();
+            let accounts = finish_session_account(&session)?;
+            let contents = [
+                (
+                    profile.path.join("session.json"),
+                    br#"{"version":1,"last_script":"saved.ts"}"#.to_vec(),
+                ),
+                (
+                    profile.path.join("core-storage.json"),
+                    br#"{"values":{}}"#.to_vec(),
+                ),
+                (
+                    profile.path.join("scripts/saved.ts"),
+                    b"console.log('saved');".to_vec(),
+                ),
+                (
+                    profile.product_storage_dir.join("saved"),
+                    b"product data".to_vec(),
+                ),
+            ];
+            for (path, bytes) in &contents {
+                std::fs::create_dir_all(path.parent().unwrap())?;
+                std::fs::write(path, bytes)?;
+            }
+            let role = session.catalog.profile(DEFAULT_SESSION_NAME)?;
+            let blocked_pointer = role
+                .path
+                .join(format!(".current-session.{}.tmp", std::process::id()));
+            std::fs::create_dir(&blocked_pointer)?;
+            let runtime = session.runtime.clone();
+            let resets = session.runtime_factory.connection_reset().unwrap();
+
+            let result = if slash_command {
+                switch_session(&mut session, "pending".to_string()).await
+            } else {
+                ensure_signer(&mut session).await
+            };
+            let error =
+                result.expect_err("failed persistence must leave the active profile usable");
+
+            assert!(
+                error.to_string().contains("write current session"),
+                "{error:#}"
+            );
+            assert_eq!(
+                (
+                    Arc::ptr_eq(&runtime, &session.runtime),
+                    session.profile.as_ref(),
+                    session.catalog.current_session()?,
+                    resets.has_changed()?,
+                    std::fs::read(profile.account_base_path.join("accounts.json"))?,
+                ),
+                (
+                    true,
+                    Some(&profile),
+                    CurrentSession::Pointed(name.to_string()),
+                    false,
+                    accounts.clone(),
+                )
+            );
+            for (path, bytes) in &contents {
+                assert_eq!(
+                    std::fs::read(path)
+                        .with_context(|| format!("read restored {}", path.display()))?,
+                    *bytes,
+                    "{}",
+                    path.display()
+                );
+            }
+
+            std::fs::remove_dir(blocked_pointer)?;
+            if slash_command {
+                switch_session(&mut session, "pending".to_string()).await?;
+            } else {
+                ensure_signer(&mut session).await?;
+            }
+            assert_eq!(
+                (
+                    session.runtime.has_active_session(),
+                    session.signer.as_ref().map(|signer| signer.entropy.clone()),
+                    std::fs::read(
+                        session
+                            .profile
+                            .as_ref()
+                            .unwrap()
+                            .account_base_path
+                            .join("accounts.json")
+                    )?,
+                ),
+                (true, Some(vec![0; 16]), accounts)
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_selection_failure_keeps_the_working_identity_and_responders() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let mut session = unfinished_session(temporary.path(), "pending").await?;
+        finish_session_account(&session)?;
+        switch_session(&mut session, "pending".to_string()).await?;
+        let runtime = session.runtime.clone();
+        let owner = runtime.statement_renewal_owner_key().unwrap();
+        let resets = session.runtime_factory.connection_reset().unwrap();
+        let responder = tokio::spawn(std::future::pending::<()>());
+        let responder_abort = responder.abort_handle();
+        session.responders.insert([7; 32], responder);
+        session.network.identity_backend_base = "invalid-backend-url";
+
+        session.catalog.ensure_profile("workbench.99")?;
+        for name in ["foo", "carol", "workbench.99", "another"] {
+            let expected_error = match name {
+                "foo" | "carol" => format!(
+                    "session name {name:?} must contain at least 6 lowercase ASCII letters to create an account; digits and separators do not count"
+                ),
+                "workbench.99" => format!(
+                    "session {name:?} has no saved account; choose a username base to create one"
+                ),
+                _ => format!("check lite username {name:?} availability"),
+            };
+            let error = switch_session(&mut session, name.to_string())
+                .await
+                .expect_err("failed selection must preserve the active signer");
+
+            assert_eq!(
+                (
+                    error.to_string(),
+                    Arc::ptr_eq(&runtime, &session.runtime),
+                    session.runtime.statement_renewal_owner_key().ok(),
+                    session.catalog.current_session()?,
+                    resets.has_changed()?,
+                    session.responders.tasks.keys().copied().collect::<Vec<_>>(),
+                    responder_abort.is_finished(),
+                    session.catalog.exists(name),
+                ),
+                (
+                    expected_error,
+                    true,
+                    Some(owner),
+                    CurrentSession::Pointed("pending.01".to_string()),
+                    false,
+                    vec![[7; 32]],
+                    false,
+                    matches!(name, "workbench.99" | "another"),
+                )
+            );
+        }
+        Ok(())
+    }
 
     #[tokio::test]
     async fn the_signing_runtime_keeps_its_core_database_in_the_profile_directory() {

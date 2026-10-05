@@ -136,7 +136,7 @@ uniffi = { workspace = true, optional = true }
 subxt = { workspace = true, features = ["native"], optional = true }
 subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native"], optional = true }
 base64 = { workspace = true, optional = true }
-rusqlite = { workspace = true, features = ["bundled"], optional = true }
+rusqlite = { workspace = true, features = ["bundled", "hooks"], optional = true }
 async-sqlite = { workspace = true, features = ["bundled"], optional = true }
 rusqlite_migration = { workspace = true, optional = true }
 

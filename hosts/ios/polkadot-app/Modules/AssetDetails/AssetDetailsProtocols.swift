@@ -73,7 +73,6 @@ protocol AssetDetailsInteractorOutputProtocol: AnyObject {
     /// figures and the holdings separately would render the new totals beside the previous
     /// holdings, which is the mismatch `CoinageSummary` exists to prevent.
     func didReceive(coinageAmounts: CoinageAmounts, holdings: CoinageHoldings)
-    func didReceive(denominationContext: DenominationBreakdownContext)
     #if TESTNET_FEATURE
         func didCompleteTopUp(_ result: Result<Void, Error>)
     #endif
