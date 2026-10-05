@@ -1,4 +1,4 @@
-use alloc::string::String;
+use alloc::{string::String, vec::Vec};
 use parity_scale_codec::{Decode, Encode};
 
 /// Push notification payload.
