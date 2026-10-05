@@ -91,7 +91,6 @@ private extension PaymentAssetBrandingTests {
         RemoteAppConfig(
             identityBackendUrl: nil,
             ipfsGatewayUrl: nil,
-            gameDashboardUrl: nil,
             dotNsResolver: nil,
             dotNsNameRegistry: nil,
             coinageInstanceId: nil,

@@ -8,7 +8,6 @@ import Foundation
 struct RemoteAppConfig {
     let identityBackendUrl: URL?
     let ipfsGatewayUrl: URL?
-    let gameDashboardUrl: URL?
     let dotNsResolver: String?
     /// Absent in payloads published before manifest support, which disables manifest
     /// resolution and leaves legacy resolution working.
@@ -35,10 +34,6 @@ extension RemoteAppConfig {
             && ipfsGatewayUrl != nil
             && dotNsResolver != nil
             && coinageInstanceId != nil
-
-        #if TESTNET_FEATURE
-            result = result && gameDashboardUrl != nil
-        #endif
 
         return result
     }
