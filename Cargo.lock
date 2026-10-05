@@ -5625,6 +5625,7 @@ dependencies = [
  "rqrr",
  "rustix",
  "rustls",
+ "schnorrkel",
  "serde",
  "serde_json",
  "sha2 0.10.9",
