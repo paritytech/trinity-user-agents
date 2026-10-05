@@ -211,6 +211,9 @@ separate consent; unsupported hosts report that explicitly. Logout revokes local
 without waiting for a relay. See the [host receiving contract](js/packages/truapi-host/README.md)
 and [product notification helpers](js/packages/truapi/README.md). These hooks do not
 establish OS/provider delivery guarantees or replace the separate PolkaVM runtime.
+Relay revocation and synchronization acknowledgements use the full receiving
+authority, so retained records from a previous account or verified artifact cannot
+revoke the current enrollment.
 
 The shared Rust core asks blessed products (`peopl`, `dim2` and `stash`,
 on every supported network) only for device permissions and legacy-account signing.

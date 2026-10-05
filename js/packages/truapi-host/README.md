@@ -132,6 +132,11 @@ core access with Web Locks across worker replacement, and uses the generic relay
 v2 WebPush endpoints. Products never receive its authority registry, transport
 credentials, or raw host hooks.
 
+Transport synchronization matches the complete product, account, environment,
+artifact, genesis and generation scope. Disabled records from an older scope do
+not revoke or block acknowledgement of a current enrollment. Explicit product
+revocation and host logout still revoke every applicable enrollment.
+
 ```ts
 import init, { WasmNotificationReceiver } from "@parity/truapi-host/wasm/web";
 import { installBrowserReceivingWorker } from "@parity/truapi-host/browser-receiving-worker";

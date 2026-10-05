@@ -176,9 +176,10 @@ export function installBrowserReceivingWorker(options: BrowserReceivingWorkerOpt
     await periodic.periodicSync?.register("truapi:receiving", { minInterval: 12 * 60 * 60 * 1000 }).catch(() => {});
   }
 
-  async function revokeEnrollments(product: string): Promise<void> {
+  async function revokeEnrollments(product: string, authority?: ReceivingAuthority): Promise<void> {
     for (const [key, enrollment] of await database.entries<BrowserReceiverEnrollment>("enrollment:")) {
       if (enrollment.authority.productId !== product || enrollment.revoked) continue;
+      if (authority && !sameScope(enrollment.authority, authority)) continue;
       await database.put(key, { ...enrollment, revoked: true, acknowledged: false, relayRevision: enrollment.relayRevision + 1 });
     }
   }
@@ -212,8 +213,8 @@ export function installBrowserReceivingWorker(options: BrowserReceivingWorkerOpt
       for (const registration of registrations) {
         const product = registration.authority.productId;
         if (!registration.enabled) {
-          await revokeEnrollments(product);
-          const existing = (await database.entries<BrowserReceiverEnrollment>("enrollment:")).some(([, item]) => item.authority.productId === product);
+          await revokeEnrollments(product, registration.authority);
+          const existing = (await database.entries<BrowserReceiverEnrollment>("enrollment:")).some(([, item]) => sameScope(item.authority, registration.authority));
           if (!existing && registration.syncPending) await receiver.receivingSynchronized(product, registration.revision);
           continue;
         }
@@ -266,9 +267,9 @@ export function installBrowserReceivingWorker(options: BrowserReceivingWorkerOpt
             if (!current || current.relayRevision !== enrollment.relayRevision || current.revoked !== enrollment.revoked) return;
             await database.put(`enrollment:${enrollment.deviceId}`, enrollment.revoked ? undefined : { ...current, acknowledged: true });
             const pending = receivingRegistrationsCodec.dec(await receiver.receivingPending())
-              .find(value => value.authority.productId === enrollment.authority.productId);
+              .find(value => sameScope(value.authority, enrollment.authority));
             const deletionPending = (await database.entries<BrowserReceiverEnrollment>("enrollment:"))
-              .some(([, value]) => value.authority.productId === enrollment.authority.productId && value.revoked && !value.acknowledged);
+              .some(([, value]) => sameScope(value.authority, enrollment.authority) && value.revoked && !value.acknowledged);
             if (pending && pending.enabled === !enrollment.revoked &&
                 (enrollment.revoked ? !deletionPending : pending.revision === enrollment.coreRevision && sameScope(pending.authority, enrollment.authority))) {
               await receiver.receivingSynchronized(pending.authority.productId, pending.revision);
