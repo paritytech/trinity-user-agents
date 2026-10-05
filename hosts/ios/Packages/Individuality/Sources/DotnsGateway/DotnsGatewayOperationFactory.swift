@@ -3,21 +3,19 @@ import SubstrateSdk
 import SubstrateStorageQuery
 import Operation_iOS
 import ChainStore
-import os
 
 public protocol DotnsGatewayOperationMaking {
     /// Reads the `AccountNames` entry for each account id in one batched storage query.
-    func makeAccountNamesWrapper(
-        _ accountIdClosure: @escaping () throws -> [AccountId],
+    func accountNames(
+        for accountIds: [AccountId],
         blockHash: BlockHashData?
-    ) -> CompoundOperationWrapper<[DotnsGatewayPallet.AccountNameWithAccountId]>
+    ) async throws -> [DotnsGatewayPallet.AccountNameWithAccountId]
 }
 
 public final class DotnsGatewayOperationFactory {
     let chainId: ChainId
     let chainRegistry: ChainResourceProtocol
     let storageRequestFactory: StorageRequestFactoryProtocol
-    let operationQueue: OperationQueue
 
     public init(
         chainId: ChainId,
@@ -26,7 +24,6 @@ public final class DotnsGatewayOperationFactory {
     ) {
         self.chainId = chainId
         self.chainRegistry = chainRegistry
-        self.operationQueue = operationQueue
 
         storageRequestFactory = StorageRequestFactory(
             remoteFactory: StorageKeyFactory(),
@@ -35,77 +32,32 @@ public final class DotnsGatewayOperationFactory {
     }
 }
 
-private extension DotnsGatewayOperationFactory {
-    func createAccountNamesWrapper(
-        accountIdClosure: @escaping () throws -> [AccountId],
-        connection: JSONRPCEngine,
-        codingFactoryOperation: BaseOperation<RuntimeCoderFactoryProtocol>,
-        blockHash: BlockHashData?
-    ) -> CompoundOperationWrapper<[DotnsGatewayPallet.AccountNameWithAccountId]> {
-        let snapshotAccountIdsLock = OSAllocatedUnfairLock(initialState: [AccountId]())
-
-        let fetchWrapper: CompoundOperationWrapper<[StorageResponse<DotnsGatewayPallet.AccountNameRecord>]>
-
-        fetchWrapper = storageRequestFactory.queryItems(
-            engine: connection,
-            keyParams: {
-                let accountIds = try accountIdClosure()
-                snapshotAccountIdsLock.withLock {
-                    $0 = accountIds
-                }
-                return accountIds.map { BytesCodable(wrappedValue: $0) }
-            },
-            factory: { try codingFactoryOperation.extractNoCancellableResultData() },
-            storagePath: DotnsGatewayPallet.Storage.accountNames(Data())(),
-            at: blockHash
-        )
-
-        let mappingOperation = ClosureOperation<[DotnsGatewayPallet.AccountNameWithAccountId]> {
-            let responses = try fetchWrapper.targetOperation.extractNoCancellableResultData()
-
-            let accountIds = snapshotAccountIdsLock.withLock { $0 }
-
-            return zip(accountIds, responses).compactMap { accountIdAndResponse in
-                guard let record = accountIdAndResponse.1.value else {
-                    return nil
-                }
-
-                return DotnsGatewayPallet.AccountNameWithAccountId(
-                    accountId: accountIdAndResponse.0,
-                    record: record
-                )
-            }
-        }
-
-        mappingOperation.addDependency(fetchWrapper.targetOperation)
-
-        return fetchWrapper.insertingTail(operation: mappingOperation)
-    }
-}
-
 extension DotnsGatewayOperationFactory: DotnsGatewayOperationMaking {
-    public func makeAccountNamesWrapper(
-        _ accountIdClosure: @escaping () throws -> [AccountId],
+    public func accountNames(
+        for accountIds: [AccountId],
         blockHash: BlockHashData?
-    ) -> CompoundOperationWrapper<[DotnsGatewayPallet.AccountNameWithAccountId]> {
-        do {
-            let connection = try chainRegistry.getRpcConnectionOrError(for: chainId)
-            let runtimeService = try chainRegistry.getRuntimeCodingServiceOrError(for: chainId)
+    ) async throws -> [DotnsGatewayPallet.AccountNameWithAccountId] {
+        let connection = try chainRegistry.getRpcConnectionOrError(for: chainId)
+        let runtimeService = try chainRegistry.getRuntimeCodingServiceOrError(for: chainId)
 
-            let codingFactoryOperation = runtimeService.fetchCoderFactoryOperation()
+        let codingFactory = try await runtimeService.fetchCoderFactoryOperation().asyncExecute()
 
-            let accountNamesWrapper = createAccountNamesWrapper(
-                accountIdClosure: accountIdClosure,
-                connection: connection,
-                codingFactoryOperation: codingFactoryOperation,
-                blockHash: blockHash
+        let responses: [StorageResponse<DotnsGatewayPallet.AccountNameRecord>] = try await storageRequestFactory
+            .queryItems(
+                engine: connection,
+                keyParams: { accountIds.map { BytesCodable(wrappedValue: $0) } },
+                factory: { codingFactory },
+                storagePath: DotnsGatewayPallet.Storage.accountNames(Data())(),
+                at: blockHash
             )
+            .asyncExecute()
 
-            accountNamesWrapper.addDependency(operations: [codingFactoryOperation])
+        return zip(accountIds, responses).compactMap { accountId, response in
+            guard let record = response.value else {
+                return nil
+            }
 
-            return accountNamesWrapper.insertingHead(operations: [codingFactoryOperation])
-        } catch {
-            return .createWithError(error)
+            return DotnsGatewayPallet.AccountNameWithAccountId(accountId: accountId, record: record)
         }
     }
 }
