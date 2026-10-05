@@ -23,7 +23,7 @@ import uniffi.truapi.PocketCard as NativePocketCard
 class ProductPocketHostBridgeTest {
     private val humanity = pinnedCard(personhoodProduct, "humanity")
     private val loyalty = addedCard(gameProduct, "loyalty")
-    private val store = RealPocketCollection(FakePinnedPocketCards(listOf(humanity)), InMemoryPocketCardRepository())
+    private val store = RealPocketCollection(FakePinnedPocketCards(listOf(humanity)), InMemoryPocketCardRepository(), io.mockk.mockk { io.mockk.every { isTrUAPIRuntimeEnabled() } returns false }, dagger.Lazy { io.mockk.mockk() })
 
     // The execution scope the bridge hands its work to; a separate scope, as in production, so the
     // test's own scope does not wait on the never-ending collector.

@@ -304,7 +304,7 @@ fn sign_raw_denies_when_chain_submit_denied() {
 fn sign_raw_rejects_when_user_declines_confirmation() {
     let host =
         ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
-    install_pairing_session(&host, session_info());
+    install_pairing_session(&host, sso_session_info());
     let cx = CallContext::default();
     let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
         account: account_id("myapp.dot", 0),
@@ -567,7 +567,7 @@ fn sign_payload_maps_confirmation_failure_to_host_failure() {
         runtime_config("myapp.dot"),
         test_spawner(),
     );
-    install_pairing_session(&host, session_info());
+    install_pairing_session(&host, sso_session_info());
     let cx = CallContext::default();
     let request = HostSignPayloadRequest::V1(v01::HostSignPayloadRequest {
         account: account_id("myapp.dot", 0),

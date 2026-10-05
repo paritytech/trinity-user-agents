@@ -44,14 +44,12 @@ extension ServiceCoordinator {
 
         let botFactory = ProductBotFactory(
             productFileProvider: productFileProvider,
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            hostProvider: spaFlowState.hostProvider,
             runtimeProvider: truapiRuntimeProvider,
             workerManager: workerFacade.manager
         )
 
         let productBotProvider = ProductBotProvider(
-            productProvider: productRepositoryFactory.createProvider(),
+            productProvider: SettingsManager.shared.isTrUAPIRuntimeEnabled ? nil : productRepositoryFactory.createProvider(),
             botFactory: botFactory,
             dotNsResolver: spaFlowState.dotNsResolver,
             productResolver: spaFlowState.productResolver

@@ -33,7 +33,7 @@ actor ChatRustRuntime: ChatRuntimeProtocol {
     private var executionModel: RustRuntimeEnvironment.ExecutionModel?
     /// Bound for as long as the chat surface is alive, like the shared worker's
     /// native api.
-    private let chatSurface = ProductChatSurface()
+    private let chatSurface: ProductChatSurface
     // Set once in init and only read from the MainActor-isolated `attach`;
     // all facade mutation happens behind its own @MainActor method.
     private nonisolated(unsafe) let routers: ProductRoutersFacadeProtocol
@@ -55,8 +55,10 @@ actor ChatRustRuntime: ChatRuntimeProtocol {
         routers: ProductRoutersFacadeProtocol,
         engineFactory: @Sendable @escaping () -> JSEngineProtocol,
         renderStartupWindow: Duration = .seconds(5),
+        chatSurface: ProductChatSurface = ProductChatSurface(),
         logger: LoggerProtocol = Logger.shared
     ) {
+        self.chatSurface = chatSurface
         self.productUrl = productUrl
         self.makeExecutionModel = makeExecutionModel
         self.routers = routers

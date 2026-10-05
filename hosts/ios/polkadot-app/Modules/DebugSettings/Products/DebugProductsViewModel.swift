@@ -39,6 +39,10 @@ final class DebugProductsViewModel {
     }
 
     func saveProduct(name: String, scriptURL: String) {
+        guard !SettingsManager.shared.isTrUAPIRuntimeEnabled else {
+            downloadError = "Arbitrary HTTP development worker bundles are unsupported in this experiment. Install a published dotNS product."
+            return
+        }
         let product = Product(id: UUID().uuidString, name: name)
 
         Task { @MainActor in
@@ -62,7 +66,9 @@ final class DebugProductsViewModel {
         )
 
         Task { @MainActor [notificationScheduler] in
-            try? await notificationScheduler.cancelAll(forProductId: product.identifier)
+            if !SettingsManager.shared.isTrUAPIRuntimeEnabled {
+                try? await notificationScheduler.cancelAll(forProductId: product.identifier)
+            }
             try? await productRepository.saveOperation({ [] }, { [product.identifier] }).asyncExecute()
             try? await productChatRepository.deleteAllOperation().asyncExecute()
             try? scriptStorage.deleteScript(productId: product.identifier)

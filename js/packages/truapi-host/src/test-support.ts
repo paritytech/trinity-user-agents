@@ -44,6 +44,11 @@ export function makeHostCallbacks(
       writeCoreStorage: async () => {},
       clearCoreStorage: async () => {},
     },
+    secretCoreStorage: {
+      readSecretCoreStorage: async () => undefined,
+      writeSecretCoreStorage: async () => {},
+      clearSecretCoreStorage: async () => {},
+    },
     auth: { authStateChanged: () => {} },
     userConfirmation: {
       confirmUserAction: async () => false,
@@ -85,6 +90,10 @@ export function makeHostCallbacks(
     coreStorage: {
       ...defaults.coreStorage,
       ...overrides.coreStorage,
+    },
+    secretCoreStorage: {
+      ...defaults.secretCoreStorage,
+      ...overrides.secretCoreStorage,
     },
     auth: { ...defaults.auth, ...overrides.auth },
     userConfirmation: {

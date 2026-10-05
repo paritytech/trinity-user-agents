@@ -10,6 +10,7 @@ fun HandshakeOffer.toPayload(): PairRequestPayload {
     return PairRequestPayload(
         statementAccountId = device.statementAccountId.value,
         encryptionPublicKey = device.encryptionPublicKey.bytes.value,
+        deeplink = deeplink,
         metadata = metadata.entries.mapKeys { (key, _) -> key.toPayload() },
     )
 }
@@ -20,6 +21,7 @@ fun PairRequestPayload.toDomain(): HandshakeOffer {
             statementAccountId = statementAccountId.intoAccountId(),
             encryptionPublicKey = encryptionPublicKey.requireX25519PublicKey(),
         ),
+        deeplink = deeplink,
         metadata = HandshakeMetadata(
             entries = metadata.mapKeys { (key, _) -> key.toDomain() },
         ),

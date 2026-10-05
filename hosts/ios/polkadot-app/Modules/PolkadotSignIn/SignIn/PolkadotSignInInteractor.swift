@@ -40,10 +40,12 @@ extension PolkadotSignInInteractor: PolkadotSignInInteractorInputProtocol {
                     .sendHandshake(with: input)
                 logger.debug("Handshake sent for \(input.metadata.name)")
 
-                try await deviceMessageBroadcaster.broadcastDeviceAdded(
-                    statementAccountId: device.statementAccountId,
-                    encryptionPublicKey: device.encryptionPublicKey
-                )
+                if !SettingsManager.shared.isTrUAPIRuntimeEnabled {
+                    try await deviceMessageBroadcaster.broadcastDeviceAdded(
+                        statementAccountId: device.statementAccountId,
+                        encryptionPublicKey: device.encryptionPublicKey
+                    )
+                }
 
                 await reportSendHandshakeFinish(device: device)
             } catch {

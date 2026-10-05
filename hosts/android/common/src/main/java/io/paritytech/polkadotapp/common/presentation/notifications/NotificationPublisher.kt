@@ -25,13 +25,14 @@ abstract class NotificationPublisher(
     protected fun publish(
         notificationId: Int,
         channel: PolkadotNotificationChannel,
-        notification: Notification
+        notification: Notification,
+        tag: String? = null,
     ) {
         if (notificationManager.areNotificationsEnabled().not()) return
 
         createChannel(channel)
 
-        notificationManager.notify(notificationId, notification)
+        notificationManager.notify(tag, notificationId, notification)
     }
 
     private fun createChannel(channel: PolkadotNotificationChannel) {

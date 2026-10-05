@@ -30,8 +30,8 @@ class ProductWorkerRefCounterTest {
     private val hostApiInteractor: HostApiInteractor = mock()
 
     private class FakeWorker : ProductWorker {
-        override suspend fun onUserMessage(text: String): Result<Unit> = Result.success(Unit)
-        override fun renderMessage(messageId: ChatMessageId, messageType: String, messageData: DataByteArray): Flow<Result<JsWidget>> = emptyFlow()
+        override suspend fun onUserMessage(roomId: String, text: String): Result<Unit> = Result.success(Unit)
+        override fun renderMessage(roomId: String, messageId: ChatMessageId, messageType: String, messageData: DataByteArray): Flow<Result<JsWidget>> = emptyFlow()
         override fun dispatchEvent(event: JsUiEvent) = Unit
     }
 
@@ -58,7 +58,7 @@ class ProductWorkerRefCounterTest {
             override val io: CoroutineDispatcher = dispatcher
             override val computation: CoroutineDispatcher = dispatcher
         }
-        return RealProductWorkerRefCounter(hostApiInteractor, Lazy { factory }, dispatchers)
+        return RealProductWorkerRefCounter(hostApiInteractor, Lazy { factory }, io.mockk.mockk { io.mockk.every { isTrUAPIRuntimeEnabled() } returns false }, Lazy { io.mockk.mockk() }, Lazy { io.mockk.mockk() }, dispatchers)
     }
 
     @Test

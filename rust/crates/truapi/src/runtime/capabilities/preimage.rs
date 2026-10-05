@@ -25,7 +25,7 @@ use crate::runtime::{
 };
 
 #[truapi::async_trait]
-impl Preimage for ProductRuntimeHost {
+impl<H: crate::runtime::AccountHolder + 'static> Preimage for ProductRuntimeHost<H> {
     #[instrument(skip_all, fields(runtime.method = "preimage.lookup_subscribe"))]
     async fn lookup_subscribe(
         &self,

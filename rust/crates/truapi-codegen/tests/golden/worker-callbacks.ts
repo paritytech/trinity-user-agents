@@ -34,6 +34,9 @@ export const CALLBACK_NAMES = [
   "read",
   "write",
   "clear",
+  "readSecretCoreStorage",
+  "writeSecretCoreStorage",
+  "clearSecretCoreStorage",
   "confirmPermission",
   "confirmUserAction",
 ] as const;
@@ -84,6 +87,9 @@ function rawCallbacks(
     | "read"
     | "write"
     | "clear"
+    | "readSecretCoreStorage"
+    | "writeSecretCoreStorage"
+    | "clearSecretCoreStorage"
     | "confirmPermission"
     | "confirmUserAction"
   >
@@ -152,6 +158,19 @@ function rawCallbacks(
     clear: (key) =>
       bridge.callbackRequest("clear", [key]) as ReturnType<
         Required<RawCallbacks>["clear"]
+      >,
+    readSecretCoreStorage: (key) =>
+      bridge.callbackRequest("readSecretCoreStorage", [key]) as ReturnType<
+        Required<RawCallbacks>["readSecretCoreStorage"]
+      >,
+    writeSecretCoreStorage: (key, value) =>
+      bridge.callbackRequest("writeSecretCoreStorage", [
+        key,
+        value,
+      ]) as ReturnType<Required<RawCallbacks>["writeSecretCoreStorage"]>,
+    clearSecretCoreStorage: (key) =>
+      bridge.callbackRequest("clearSecretCoreStorage", [key]) as ReturnType<
+        Required<RawCallbacks>["clearSecretCoreStorage"]
       >,
     confirmPermission: (review) =>
       bridge.callbackRequest("confirmPermission", [review]) as ReturnType<

@@ -3,15 +3,12 @@ import Testing
 import ChainRegistry
 import SubstrateSdk
 import TrUAPIHost
+import Products
 @testable import polkadot_app
 
 // MARK: - Helpers
 
 private let testProduct = ProductExecutionConfig(productId: "host.product", executionKind: .app)
-
-private func makeHostDefaults() -> UserDefaults {
-    UserDefaults(suiteName: "io.polkadotapp.tests.truapi-host-bridge") ?? .standard
-}
 
 private func makeHostBridge(
     chainRegistry: ChainRegistryProtocol = MockChainRegistry(),
@@ -27,7 +24,10 @@ private func makeHostBridge(
     )
     return RustHostRuntimeBridge(
         chainRegistry: chainRegistry,
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
+        secretStorage: TestHostSecrets(),
+        walletId: "test",
+        permissionRequester: MockPermissionGuard(),
+        osPermissionAsker: MockOSPermissionAsker(),
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
         logger: Logger.shared
@@ -87,14 +87,15 @@ struct RustHostRuntimeBridgeTests {
         #expect(presenter.receivedRequesterName == "host")
     }
 
-    @Test func permissionsDenyAtHostLevel() async throws {
+    @Test func workerPermissionsUseIndependentPromptAndOSGate() async throws {
         let bridge = makeHostBridge()
 
-        let device = try await bridge.devicePermission(product: testProduct, request: .camera)
+        await #expect(throws: HostRejection.self) {
+            try await bridge.devicePermission(product: testProduct, request: .camera)
+        }
         let remote = try await bridge.remotePermission(product: testProduct, request: .webRtc)
 
-        #expect(device == .deny)
-        #expect(remote == .deny)
+        #expect(remote == .allowAlways)
     }
 
     @Test(arguments: [TrUAPIPermissionDecision.allowOnce, .allowAlways, .deny])
@@ -113,23 +114,7 @@ struct RustHostRuntimeBridgeTests {
         #expect(presenter.receivedRequesterName == "host")
     }
 
-    /// Core storage is the real host-global backend: writes round-trip.
-    @Test func coreStorageRoundTrips() throws {
-        let bridge = makeHostBridge()
-        let key = Data([0x0A, 0x0B])
-        let value = Data([0x10, 0x20, 0x30])
 
-        try bridge.coreStorage.write(key: key, value: value)
-        #expect(try bridge.coreStorage.read(key: key) == value)
-    }
-
-    /// Product KV has no host-level scope: reads miss and writes are dropped.
-    @Test func productStorageIsEmptyAtHostLevel() throws {
-        let bridge = makeHostBridge()
-
-        try bridge.storage.write(key: "k", value: Data([0x01]))
-        #expect(try bridge.storage.read(key: "k") == nil)
-    }
 }
 
 // MARK: - Runtime config
@@ -141,11 +126,16 @@ struct TrUAPIHostRuntimeProviderConfigTests {
         #expect(throws: (any Error).self) {
             _ = try TrUAPIHostRuntimeProvider.makeRuntimeConfig(
                 chainRegistry: MockChainRegistry(),
-                secret: Data([0x01]),
-                liteUsername: nil,
                 networkSuffix: "paseo",
                 databaseDirectory: NSTemporaryDirectory()
             )
         }
     }
+}
+
+private actor TestHostSecrets: HostSecretStorageBackend {
+    private var values: [String: Data] = [:]
+    func read(key: SecretCoreStorageKey) async throws -> Data? { values[secretCoreStorageKeyIdentifier(key: key)] }
+    func write(key: SecretCoreStorageKey, value: Data) async throws { values[secretCoreStorageKeyIdentifier(key: key)] = value }
+    func clear(key: SecretCoreStorageKey) async throws { values[secretCoreStorageKeyIdentifier(key: key)] = nil }
 }

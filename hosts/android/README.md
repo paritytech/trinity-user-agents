@@ -192,3 +192,7 @@ Report vulnerabilities responsibly following [Parity's security policy](https://
 ## License
 
 Licensed under the **GNU General Public License v3.0** — see [LICENSE](./LICENSE).
+
+The experimental TrUAPI runtime feature routes product, Chat worker, incoming SSO, renewal, permissions, catalog and notification lifecycle through the Rust account services. Native code supplies approval UI, protected wallet/host secret providers and OS engines. Runtime selection is fixed until app restart; enabled startup failures are reported without falling back to the legacy runtime. See [the host/account-holder design](../../docs/design/host-account-holder.md) and its [implementation findings](../../docs/design/host-account-holder-findings.md).
+
+The experimental worker path pins published dotNS bundle files and manifests by content hash. Arbitrary HTTP development worker URLs remain stored in the catalog but execution reports an explicit unsupported error; it does not execute a partially downloaded bundle.

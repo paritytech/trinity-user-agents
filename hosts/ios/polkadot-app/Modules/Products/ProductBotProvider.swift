@@ -11,7 +11,7 @@ protocol ProductBotProviding {
 }
 
 final class ProductBotProvider: ProductBotProviding {
-    private let productProvider: StreamableProvider<Product>
+    private let productProvider: StreamableProvider<Product>?
     private let botFactory: ProductBotFactory
     private let dotNsResolver: DotNsResolverProtocol
     private let productResolver: ProductResolving
@@ -23,7 +23,7 @@ final class ProductBotProvider: ProductBotProviding {
     private static let tldAttempts = 20
 
     init(
-        productProvider: StreamableProvider<Product>,
+        productProvider: StreamableProvider<Product>?,
         botFactory: ProductBotFactory,
         dotNsResolver: DotNsResolverProtocol,
         productResolver: ProductResolving,
@@ -41,7 +41,32 @@ final class ProductBotProvider: ProductBotProviding {
     }
 
     func observeBots() -> AnyAsyncSequence<[ProductBot]> {
-        productProvider.asyncStream()
+        if settingsManager.isTrUAPIRuntimeEnabled {
+            return truapiRecordChanges(.truapiProductsChanged).map { [self] _ in
+                do {
+                    guard let provider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() else {
+                        throw ProductBotFactoryError.dependenciesUnavailable
+                    }
+                    guard let runtime = try await provider.activeRuntimeForRecords() else { return [] }
+                    let catalog = try await runtime.products()
+                    var bots: [ProductBot] = []
+                    for worker in try await runtime.workerProducts() {
+                        let reasons = try await runtime.workerReasons(productId: worker.productId)
+                        guard reasons.contains(where: { if case .chat = $0 { return true }; return false }) else { continue }
+                        let name = catalog.first { $0.productId == worker.productId }?.name ?? worker.productId
+                        bots.append(try await botFactory.createRustBot(product: Product(id: worker.productId, name: name)))
+                    }
+                    return bots
+                } catch {
+                    logger.error("Rust product catalog failed: \(error)")
+                    return []
+                }
+            }.eraseToAnyAsyncSequence()
+        }
+        guard let productProvider else {
+            return AsyncStream<[ProductBot]> { $0.finish() }.eraseToAnyAsyncSequence()
+        }
+        return productProvider.asyncStream()
             .scan([String: Product]()) { dict, changes in
                 changes.mergeToDict(dict)
             }
@@ -144,6 +169,10 @@ private extension ProductBotProvider {
             logger.error("Skipping the chat bot for \(product.identifier): its manifest is malformed")
             return nil
         } catch {
+            if settingsManager.isTrUAPIRuntimeEnabled {
+                logger.error("Rust worker resolution failed for \(product.identifier): \(error)")
+                return nil
+            }
             logger.error("Falling back to the legacy chat worker for \(product.identifier): \(error)")
             return .legacy(id: product.identifier, displayName: product.name)
         }

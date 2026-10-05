@@ -17,6 +17,8 @@ import javax.inject.Singleton
 class RealPocketCollection @Inject constructor(
     private val pinnedPocketCards: PinnedPocketCards,
     private val repository: PocketCardRepository,
+    private val runtimeSettings: io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings,
+    private val runtimeProvider: dagger.Lazy<io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider>,
 ) : PocketCardStore {
     /**
      * The settled collection, pinned cards first. Nothing is emitted until the pinned cards are
@@ -36,11 +38,19 @@ class RealPocketCollection @Inject constructor(
     override suspend fun removeCard(key: PocketCardKey): Result<PocketRemoval> {
         if (pinnedPocketCards.pinned(key) != null) return Result.failure(PocketRemoveError.Privileged)
 
-        return runCatching { if (repository.delete(key)) PocketRemoval.REMOVED else PocketRemoval.ABSENT }
+        return runCatching {
+            if (runtimeSettings.isTrUAPIRuntimeEnabled()) {
+                runtimeProvider.get().runtime().getOrThrow().notifyWorkerIntent(key.productId.value, uniffi.truapi.WorkerIntentAction.REMOVE, uniffi.truapi.WorkerModality.Card(key.cardId.value))
+            }
+            if (repository.delete(key)) PocketRemoval.REMOVED else PocketRemoval.ABSENT
+        }
     }
 
     override suspend fun addCard(card: CachedPocketCard) {
         require(!card.card.privileged) { "only the host places privileged cards" }
+        if (runtimeSettings.isTrUAPIRuntimeEnabled()) {
+            runtimeProvider.get().runtime().getOrThrow().notifyWorkerIntent(card.card.key.productId.value, uniffi.truapi.WorkerIntentAction.ADD, uniffi.truapi.WorkerModality.Card(card.card.key.cardId.value))
+        }
         repository.insert(card)
     }
 

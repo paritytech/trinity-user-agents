@@ -190,6 +190,9 @@ pub mod latest {
     /// Push notification scheduling result.
     pub type HostPushNotificationResponse =
         LatestOf<versioned::notifications::HostPushNotificationResponse>;
+    /// Push notification scheduling failure.
+    pub type HostPushNotificationError =
+        LatestOf<versioned::notifications::HostPushNotificationError>;
     /// Login request error.
     pub type HostRequestLoginError = LatestOf<versioned::account::HostRequestLoginError>;
     /// Login request result.
@@ -605,6 +608,7 @@ runtime_items! {
     pub use runtime::product_manifest::{encode_cached_root_manifest, manifest_cache_key};
     pub use runtime::statement_allowance;
     pub use runtime::{
+        AccountHolder, HostAccounts, WalletAccountHolder, SsoAccountHolderClient,
         AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
         PairingProposal, PairingProposalMetadata, ResponderExit,
     };

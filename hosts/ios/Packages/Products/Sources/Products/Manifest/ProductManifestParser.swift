@@ -19,7 +19,7 @@ protocol ProductManifestParsing {
 }
 
 /// Every rejection collapses to nil, so a malformed executable is skipped while its siblings load.
-struct ProductManifestParser: ProductManifestParsing {
+public struct ProductManifestParser: ProductManifestParsing {
     private enum Constants {
         static let schemaVersion = 1
         static let defaultWidgetWidth = 1
@@ -27,7 +27,7 @@ struct ProductManifestParser: ProductManifestParsing {
 
     private let logger: SDKLoggerProtocol
 
-    init(logger: SDKLoggerProtocol) {
+    public init(logger: SDKLoggerProtocol) {
         self.logger = logger
     }
 
@@ -75,7 +75,7 @@ struct ProductManifestParser: ProductManifestParsing {
     }
 
     /// `identifier` is the subname the record was read from, and the name its archive resolves under.
-    func parseExecutable(
+    public func parseExecutable(
         _ rawText: String?,
         kind: ExecutableKind,
         identifier: ProductId

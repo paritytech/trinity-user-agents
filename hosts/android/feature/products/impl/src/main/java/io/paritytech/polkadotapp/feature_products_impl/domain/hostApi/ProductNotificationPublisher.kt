@@ -13,7 +13,7 @@ class ProductNotificationPublisher @Inject constructor(
     @ApplicationContext context: Context,
     intentProvider: ActivityIntentProvider,
 ) : NotificationPublisher(context, intentProvider) {
-    fun publishNotification(notificationId: Int, text: String, deeplink: String?) {
+    fun publishNotification(notificationId: Int, text: String, deeplink: String?, tag: String? = null) {
         val channel = PolkadotNotificationChannel.PRODUCTS
 
         val notification = NotificationCompat.Builder(appContext, channel.id)
@@ -22,6 +22,6 @@ class ProductNotificationPublisher @Inject constructor(
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .build()
 
-        publish(notificationId, channel, notification)
+        publish(notificationId, channel, notification, tag)
     }
 }

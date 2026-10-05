@@ -1,70 +1,21 @@
 import Foundation
-import Foundation_iOS
 import CommonService
-import Individuality
-import MessageExchangeKit
-import StatementStore
-import Operation_iOS
-import ChainRegistry
 import UIKitExt
 import TrUAPIHost
-import StructuredConcurrency
 
-// MARK: - Coordinator
-
-final class SSOTruAPICoordinator {
-    private let ownKeyId: Chat.Contact.Own
-    private let serviceFactory: MessageExchageServiceMaking
-    private let chainId: ChainModel.Id
-    private let chainRegistry: ChainRegistryProtocol
-    private let hostsDataProviderFactory: PolkadotSignInHostDataProviderMaking
-    private let hostRepository: AnyDataProviderRepository<PolkadotSignInHost>
+final class SSOTruAPICoordinator: @unchecked Sendable {
     private let runtimeProvider: TrUAPIHostRuntimeProviding
-    private let rawSender: PolkadotHostMessageSender<SSORawHostMessage>
-    private let messageHandler: any PolkadotHostMessageHandling<SSORawHostMessage>
     private let logger: LoggerProtocol
+    private let sessions = Sessions()
+    private var observer: NSObjectProtocol?
 
-    private let state = State()
-
-    init(
-        ownKeyId: Chat.Contact.Own,
-        serviceFactory: MessageExchageServiceMaking,
-        runtimeProvider: TrUAPIHostRuntimeProviding,
-        chainId: ChainModel.Id = AppConfig.Chains.chatChain,
-        chainRegistry: ChainRegistryProtocol = ChainRegistryFacade.sharedRegistry,
-        hostsDataProviderFactory: PolkadotSignInHostDataProviderMaking = PolkadotSignInHostDataProviderFactory(),
-        hostRepositoryFactory: PolkadotSignInHostRepositoryMaking = PolkadotSignInHostRepositoryFactory(),
-        disconnectApplier: SSORemoteDisconnectApplying = SSORemoteDisconnectApplier(),
-        logger: LoggerProtocol = Logger.shared
-    ) {
-        self.ownKeyId = ownKeyId
-        self.serviceFactory = serviceFactory
+    init(runtimeProvider: TrUAPIHostRuntimeProviding, logger: LoggerProtocol = Logger.shared) {
         self.runtimeProvider = runtimeProvider
-        self.chainId = chainId
-        self.chainRegistry = chainRegistry
-        self.hostsDataProviderFactory = hostsDataProviderFactory
-        hostRepository = hostRepositoryFactory.createRepository(forFilter: nil)
         self.logger = logger
+    }
 
-        let sender = PolkadotHostMessageSender<SSORawHostMessage>(logger: logger)
-        rawSender = sender
-
-        let requestHandler = SSOTrUAPIRequestHandler(
-            runtimeProvider: runtimeProvider,
-            sender: sender,
-            disconnectApplier: disconnectApplier,
-            logger: logger
-        )
-
-        let processingContext = SSORequestProcessingContext<SSORawHostMessage>(
-            handlers: [requestHandler],
-            logger: logger
-        )
-
-        messageHandler = SSOTrUAPIMessageHandler(
-            processingContext: processingContext,
-            logger: logger
-        )
+    deinit {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
     }
 }
 
@@ -75,155 +26,94 @@ extension SSOTruAPICoordinator: MessageExchangeSignInHostCoordinating {
     }
 
     func setup() async {
-        do {
-            let connection = try chainRegistry.getConnectionOrError(for: chainId)
-
-            let service = try serviceFactory.makeService(
-                statementStoreConnection: StatementStoreConnection(
-                    connection: connection,
-                    retryMatcher: StatementSubmitErrorMatcher.retryWhenTimeoutOrNoAllowance(),
-                    logger: logger
-                ),
-                delegate: AnyPeerSessionDelegate(self)
-            )
-            await state.setExchangeService(service)
-            await rawSender.setExchangeService(service)
-
-            await subscribeToHosts()
-        } catch {
-            logger.error("SSOTruAPICoordinator setup error: \(error)")
+        observer = NotificationCenter.default.addObserver(forName: .truapiPairedHostsChanged, object: nil, queue: nil) { [weak self] _ in
+            Task { await self?.resumeHosts() }
         }
+        await resumeHosts()
     }
 
     func throttle() async {
-        await state.reset()
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
+        await sessions.stop()
     }
 
     func disconnectHost(byAccountId accountId: Data) async throws {
-        guard let host = await state.host(forAccountId: accountId) else {
-            logger.warning("No host found for accountId \(accountId.toHex())")
-            return
+        let runtime = try await runtimeProvider.sharedRuntime()
+        guard let host = try await runtime.pairedHosts().first(where: { $0.peerStatement == accountId }) else { return }
+        await sessions.stop(peer: host.peerEncryption)
+        try await runtime.removePairedHost(peerStatement: host.peerStatement, peerEncryption: host.peerEncryption)
+        NotificationCenter.default.post(name: .truapiPairedHostsChanged, object: nil)
+    }
+
+    private func resumeHosts() async {
+        do {
+            guard let runtime = try await runtimeProvider.activeRuntimeForRecords() else {
+                await sessions.stop()
+                return
+            }
+            let hosts = try await runtime.pairedHosts()
+            await sessions.reconcile(hosts: hosts, runtime: runtime, logger: logger)
+        } catch {
+            logger.error("Rust SSO startup failed: \(error)")
         }
-
-        let runtime = try runtimeProvider.sharedRuntime()
-        let disconnectBytes = runtime.prepareDisconnectRequest()
-
-        logger.debug("Posting disconnect request to host \(host.name)")
-        try await rawSender.postMessage(SSORawHostMessage(rawBytes: disconnectBytes), to: host)
-
-        logger.debug("Removing host \(host.name)")
-        let operation = hostRepository.saveOperation({ [] }, { [host.identifier] })
-        try await operation.asyncExecute()
-
-        logger.debug("Disconnected host \(host.name)")
-    }
-}
-
-extension SSOTruAPICoordinator {
-    func handleIncomingMessages(
-        _ messages: [OpaqueSSORawHostMessage],
-        from peer: MessageExchange.Peer,
-        completion: @escaping (MessageExchange.ResponseCode) -> Void
-    ) async {
-        completion(.success)
-
-        guard let host = await state.host(forAccountId: peer.accountId) else {
-            logger.warning("Missing active host for peer \(peer.accountId.toHex())")
-            return
-        }
-
-        logger.info("Will handle \(messages.count) raw message(s) for host \(host.name)")
-
-        await messageHandler.handleMessages(messages.map(\.message), from: host)
-    }
-
-    func handleDidPostMessages(
-        _ messages: [OpaqueSSORawHostMessage],
-        withError error: Error?
-    ) async {
-        await rawSender.handleDidPostMessages(messages.map(\.message), withError: error)
-    }
-
-    func handleSessionReinitialized(retainedMessageIds: Set<String>) async {
-        await rawSender.cancelPendingMessages(excluding: retainedMessageIds)
     }
 }
 
 private extension SSOTruAPICoordinator {
-    func subscribeToHosts() async {
-        let task = Task { [weak self] in
-            guard let self else { return }
+    actor Sessions {
+        private struct SessionTask { let id: UUID; let task: Task<Void, Never> }
+        private var tasks = [Data: SessionTask]()
+        private var activeRuntime: TrUAPIHostRuntime?
 
-            do {
-                let sequence = hostsDataProviderFactory.subscribeHosts()
-
-                for try await hosts in sequence {
-                    await handleNewHosts(hosts)
-                }
-            } catch {
-                logger.error("Host subscription error: \(error)")
+        func reconcile(hosts: [PairedHostRecord], runtime: TrUAPIHostRuntime, logger: LoggerProtocol) {
+            if activeRuntime !== runtime {
+                stop()
+                activeRuntime = runtime
             }
-        }
-        await state.setHostSubscriptionTask(task)
-    }
-
-    func handleNewHosts(_ hosts: [PolkadotSignInHost]) async {
-        var requests = Set<MessageExchange.SessionRequest>()
-        var hostsByAccountId = [Data: PolkadotSignInHost]()
-
-        for host in hosts {
-            let request = MessageExchange.SessionRequest(
-                own: ownKeyId.toMessageExchangeOwn(),
-                peer: .init(
-                    accountId: host.accountId,
-                    publicKey: host.publicKey,
-                    pin: nil,
-                    devices: []
-                )
-            )
-            requests.insert(request)
-            hostsByAccountId[host.accountId] = host
+            let peers = Set(hosts.map(\.peerEncryption))
+            for peer in tasks.keys where !peers.contains(peer) { stop(peer: peer) }
+            for host in hosts { resume(host: host, runtime: runtime, logger: logger) }
         }
 
-        logger.debug("Setting \(requests.count) host(s) to TrUAPI exchange service")
-        await state.setHostsByAccountId(hostsByAccountId)
-        await state.updateSessionRequests(requests)
+        func resume(host: PairedHostRecord, runtime: TrUAPIHostRuntime, logger: LoggerProtocol) {
+            guard tasks[host.peerEncryption] == nil else { return }
+            let identifier = UUID()
+            let task = Task {
+                defer { if tasks[host.peerEncryption]?.id == identifier { tasks[host.peerEncryption] = nil } }
+                let peer = PairedSsoPeer(statementAccountId: host.peerStatement, encryptionPublicKey: host.peerEncryption)
+                while !Task.isCancelled {
+                    do {
+                        let result = try await runtime.resumePairing(peer: peer)
+                        if result == .peerDisconnected {
+                            try await runtime.removePairedHost(peerStatement: host.peerStatement, peerEncryption: host.peerEncryption)
+                            NotificationCenter.default.post(name: .truapiPairedHostsChanged, object: nil)
+                            break
+                        }
+                        try await Task.sleep(for: .seconds(1))
+                    } catch is CancellationError {
+                        break
+                    } catch {
+                        logger.error("Rust SSO session failed: \(error)")
+                        do { try await Task.sleep(for: .seconds(1)) } catch { break }
+                    }
+                }
+            }
+            tasks[host.peerEncryption] = SessionTask(id: identifier, task: task)
+        }
+
+        func stop(peer: Data) {
+            tasks.removeValue(forKey: peer)?.task.cancel()
+        }
+
+        func stop() {
+            activeRuntime = nil
+            tasks.values.forEach { $0.task.cancel() }
+            tasks.removeAll()
+        }
     }
 }
 
-// MARK: - State
-
-extension SSOTruAPICoordinator {
-    actor State {
-        private var exchangeService: AnyMessageExchangeService<OpaqueSSORawHostMessage>?
-        private var hostsByAccountId = [Data: PolkadotSignInHost]()
-        private var hostSubscriptionTask: Task<Void, Never>?
-
-        func host(forAccountId accountId: Data) -> PolkadotSignInHost? {
-            hostsByAccountId[accountId]
-        }
-
-        func setExchangeService(_ value: AnyMessageExchangeService<OpaqueSSORawHostMessage>?) {
-            exchangeService = value
-        }
-
-        func setHostsByAccountId(_ value: [Data: PolkadotSignInHost]) {
-            hostsByAccountId = value
-        }
-
-        func setHostSubscriptionTask(_ value: Task<Void, Never>?) {
-            hostSubscriptionTask = value
-        }
-
-        func updateSessionRequests(_ requests: Set<MessageExchange.SessionRequest>) {
-            exchangeService?.updateSessions(requests)
-        }
-
-        func reset() {
-            exchangeService?.updateSessions([])
-            hostsByAccountId = [:]
-            hostSubscriptionTask?.cancel()
-            hostSubscriptionTask = nil
-        }
-    }
+extension Notification.Name {
+    static let truapiPairedHostsChanged = Notification.Name("truapiPairedHostsChanged")
 }

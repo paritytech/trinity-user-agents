@@ -85,6 +85,12 @@ export interface WorkerPairingHostRuntime extends PermissionAuthorizationRuntime
  * built without it on purpose, so this is optional on the module surface.
  */
 export interface WorkerSigningHostRuntime extends WorkerPairingHostRuntime {
+  /** Resolve a selected wallet through its protected provider. */
+  activateWallet(
+    walletId: string,
+    readRootEntropy: (walletId: string) => Promise<Uint8Array>,
+    liteUsername?: string | null,
+  ): Promise<void>;
   activateLocalSession(secret: Uint8Array): Promise<void>;
   /**
    * Activate and give the session a display name, which is what

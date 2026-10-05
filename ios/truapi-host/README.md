@@ -70,7 +70,7 @@ Run `rebuild.sh` after changing anything host-visible — the `NativeTrUApiHostR
 
 For local iteration without publishing, set `TRUAPI_USE_LOCAL_BINARY=1` so the root `Package.swift` builds against `Binaries/` directly.
 
-The embedding app implements `HostBridge` (defined in `TrUAPIHost.swift`): navigation, push, permissions, auth state, scoped + core storage, chain JSON-RPC, confirmations, preimage, theme, feature support, and the served chain set. UI-decision callbacks are `async` and awaited by the Rust core. `HostCallbackAdapter` translates it to the UniFFI-generated `HostCallbacks` protocol; `TrUAPIHostRuntime` and each product execution retain their own adapter. Conform to `HostBridge` rather than to the generated protocol: its extension defaults the optional callbacks, so a newly added one does not break the build. Storage arrives as the `storage` and `coreStorage` sub-objects, which the adapter flattens.
+The embedding app implements `HostBridge` (defined in `TrUAPIHost.swift`): navigation, OS notifications, permissions, auth state, protected host secrets, chain JSON-RPC, confirmations, preimage, theme, feature support, and the served chain set. UI-decision callbacks are `async` and awaited by the Rust core. `HostCallbackAdapter` translates it to the UniFFI-generated `HostCallbacks` protocol; `TrUAPIHostRuntime` and each product execution retain their own adapter. Conform to `HostBridge` rather than to the generated protocol: its extension defaults the optional callbacks, so a newly added one does not break the build. The `secretStorage` provider protects bytes; Rust owns all ordinary runtime records in SQLite.
 
 ## Integrating in an iOS app
 
@@ -113,178 +113,15 @@ Run the package tests in their UIKit host on an iOS simulator (the xcframework h
 ./ios/truapi-host/scripts/test.sh
 ```
 
-## Chat
+## Chat and Pocket workers
 
-A host serving the Chat modality implements `ChatHostBridge` and opens the
-execution with `ProductExecutionKind.chat`. Hosts without it pass nothing and
-Chat calls answer unsupported.
+Implement `WorkerEngineHost` and install it with `setWorkerEngineHost` before activating the wallet. Rust owns the worker roster, references, durable operations, bundle updates and restart policy. The engine adapter fetches complete immutable bundles, starts the supplied execution and awaits native teardown in `stopWorker`. Native apps open visible App or Widget executions directly; Worker executions come only from the core supervisor.
 
-```swift
-// Called from a shared dispatch pool, so the backing store must be
-// thread-safe, and a slow call here stalls other product executions.
-final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
-    private let store: ChatStore
+`chatBridge(productId)` supplies the native Chat room/message adapter, and `pocketBridge(productId)` supplies the native card collection adapter. Both belong to the engine factory. Store actual chat/card content in their existing native owners; Rust persists worker reasons and operations. Report installed Chat/Card changes through `notifyWorkerIntent`. The imported iOS app currently has a Chat surface and no Pocket UI.
 
-    init(store: ChatStore) { self.store = store }
+Use the supplied execution to publish Chat actions, subscribe to rendered nodes, dispatch renderer actions and notify room/card changes. An open render stream holds a transient core worker reference. Validate user actions against the current rendered tree. `sessionChatIdentityKey` is sensitive session material and must not be logged or separately persisted.
 
-    func createRoom(roomId: String, name: String, icon: String) throws
-        -> ChatRoomRegistrationStatus
-    {
-        store.putRoom(roomId, name: name, icon: icon) ? .new : .exists
-    }
-
-    func registerBot(botId: String, name: String, icon: String) throws
-        -> ChatBotRegistrationStatus
-    {
-        store.putBot(botId, name: name, icon: icon) ? .new : .exists
-    }
-
-    func postMessage(roomId: String, content: ChatMessageContent) throws -> String {
-        if case .file = content {
-            // Declining a variant is how a host opts out of rendering one.
-            // Throw `HostRejection.Rejected` (or a `LocalizedError`) so the
-            // product receives your reason rather than a bare type name.
-            throw HostRejection.Rejected(reason: "this host cannot render file cards")
-        }
-        return store.append(roomId, content: content)
-    }
-
-    func listRooms() throws -> [ChatRoom] { store.rooms() }
-}
-
-let runtime = try TrUAPIHostRuntime(
-    bridge: bridge,
-    runtimeConfig: HostRuntimeConfig(
-        hostName: "My Chat Host",
-        peopleChainGenesisHash: peopleChainGenesisHash,   // exactly 32 bytes
-        bulletinChainGenesisHash: bulletinChainGenesisHash,
-        assetHubChainGenesisHash: assetHubChainGenesisHash,
-        networkSuffix: "dot"
-    )
-)
-// Chat needs an active session; without one every Chat call answers denied.
-try runtime.activateLocalSession(secret: secret)
-
-let execution = try runtime.openProductExecution(
-    bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "chat.dot", executionKind: .chat),
-    chat: MyChatBridge(store: store)
-)
-let endpoint = try execution.startWsBridge()
-```
-
-The core bounds and screens the product-supplied fields it forwards — ids,
-names, icons, message bodies, URLs, and the action and media counts. Ids and
-names are also normalized; a message body is bounded and screened but passed
-through byte-for-byte, and `ChatFile.sizeBytes` is product-asserted and
-unverified. Contextual output escaping is the host's job.
-
-The id `postMessage` returns is the correlation key `ActionTrigger.messageId`
-carries back, so it must name that message for as long as the host stores it.
-Ids arriving _in_ a `Reaction` or `ReactionRemoved` are product-chosen and
-untrusted: they may name a message in another room, or one that never existed.
-
-## Pocket
-
-A host with a Pocket surface owns the card collection and implements
-`PocketHostBridge`, passed as `pocket:` to `openProductExecution`. Pocket is
-reachable only from a Worker execution with an active session, so a product
-on a signed-out host is denied before the bridge is consulted. Hosts without
-the bridge pass nothing and Pocket calls answer unsupported.
-
-```swift
-final class MyPocketBridge: PocketHostBridge, @unchecked Sendable {
-    private let store: PocketStore
-
-    init(store: PocketStore) { self.store = store }
-
-    // `privileged` marks a card this host pinned, which the product sees and
-    // cannot remove.
-    func listCards() throws -> [PocketCard] { store.cards() }
-
-    // Decide and remove together so a card cannot be pinned in between.
-    func removeCard(cardId: String) throws -> NativePocketRemoval {
-        store.removeIfRemovable(cardId)
-    }
-}
-
-let execution = try runtime.openProductExecution(
-    bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "game.dot", executionKind: .worker),
-    pocket: MyPocketBridge(store: pocketStore)
-)
-
-// Pocket needs an active session too: without `activateLocalSession` every
-// Pocket call answers denied, whatever this bridge holds.
-
-// Republish after the host's own collection changes.
-execution.notifyPocketCardsChanged(cards: pocketStore.cards())
-```
-
-A card's face does not cross this bridge. The host keeps each card's newest
-face itself: that is what the card shows while the worker is down, and at cold
-start before the worker answers.
-
-On the execution: `publishChatAction` delivers a user's action back to the
-product, buffering up to 64 before it subscribes; `notifyChatRoomsChanged`
-republishes the room list; `render` returns a stream of `RendererNode` trees
-for one render context; `publishRendererAction` delivers a renderer action
-back to the product; and `sessionChatIdentityKey` reads the session's X25519
-chat identity private key, which must not be logged or persisted. An open
-render stream is one worker reference the core holds on the product's behalf;
-the transition it causes arrives on the runtime bridge's
-`workerDemandChanged`, never on the execution's. Two rules the core
-cannot check are the host's to keep: send a render context only for a surface
-the product's manifest `includes`, and publish a renderer action only from the
-current tree of an open render stream.
-
-The runtime answers other devices pairing with it:
-`notifyPairingAllowanceAllocation(deeplink:)` and
-`notifyPairingFailed(announced:reason:)` are the two notices a peer gets before
-the answer, `establishPairing(deeplink:)` is the answer,
-`resumePairing(peer:)` serves the session for its whole life and belongs in its
-own task, and `disconnectPairedHost(peer:)` ends it. Only
-`.peerDisconnected` from `resumePairing` authorises dropping the stored
-pairing. The host persists the peer between answering and serving, which is why
-those are separate calls.
-
-Two steps around them are the host's. `establishPairing` signs its answer with
-this host's own SSO statement identity, so `.walletSso` has to be allocated
-before it runs, and the peer's device statement account has to be tracked
-alongside it for the peer to author into the session:
-`parsePairingDeeplink(deeplink:)` reads that account out of the deeplink before
-any notice goes out, and a pairing that then fails untracks it again unless the
-device was already paired. `disconnectPairedHost` submits the notice and nothing more, so ending
-a pairing also means cancelling that peer's `resumePairing` task and untracking
-its renewal account; dropping the stored pairing alone leaves both running.
-
-Which undo a failure owes is the thrown case, not the message: `.rejected`
-means the peer may already have been reached and its target tracked, while
-`.undecodableDeeplink` is refused before either happens and leaves nothing to
-undo.
-
-The core prompts for nothing along the way, so asking the user is the host's
-too. `parsePairingDeeplink` returns the peer's `metadata` alongside it for that
-prompt: the host name, version, icon and platform the peer put in its QR,
-trimmed and stripped of the control characters and bidirectional overrides that
-would otherwise rewrite the prompt's own text around them, capped at 512
-characters, and `nil` where nothing renderable was sent. Safe to render is not
-verified: nothing signs that metadata, so a prompt built from it says what the
-peer calls itself, never who it is.
-
-The handle `notifyPairingAllowanceAllocation` returns holds the responder
-statement secret its notice was signed with, and nothing consumes it, so drop
-the last reference once the pairing settles rather than holding it for the life
-of the session.
-
-`devicePaired` on the runtime bridge reports a device that finished pairing
-with this signing host, carrying the `PairedSsoPeer` the pairing produced. The
-core has no chat of its own, so announcing the new device to the user's
-existing contacts is the host's to do. It fires at least once per pairing, so
-a device that pairs again reports again; a resumed pairing reports nothing, so
-the host keeps its own record of which devices it has already seen. It arrives
-on the thread answering the handshake, so hand the device off rather than
-announcing it inline. Defaults to a no-op for a host that answers no pairing.
+After native UI approval, `establishPairing` provisions wallet and peer statement allowances, verifies renewal, sends notices and persists the core paired-host roster. Observe `devicePaired` or `runtimeRecordsChanged`, query `pairedHosts`, and run one `resumePairing` task for each peer. Transient subscription errors retain the pairing. Cancel the task and call `removePairedHost` for peer disconnection or user revocation; Rust removes its records and renewal target. Native applications do not keep a parallel pairing or replay journal.
 
 ## Architecture
 
@@ -304,7 +141,7 @@ announcing it inline. Defaults to a no-op for a host that answers no pairing.
                    Product execution
 ```
 
-The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
+The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, OS notification registration/cancellation, `devicePermission`, `remotePermission`, `authStateChanged`, protected host secrets, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`) reach the embedder through `HostCallbacks`.
 
 ## Permissions split
 
@@ -325,282 +162,50 @@ The container enforces product consent, while native media delegates resolve OS 
 
 ## SSO session handling
 
-`TrUAPIHostRuntime` exposes two methods for wallet-owned SSO sessions. Meaningful request answering requires `activateLocalSession` to have been called first; `prepareDisconnectRequest` needs no session.
-
-```swift
-func handleSsoRequest(message: Data) async throws -> SsoRequestOutcome
-func prepareDisconnectRequest() -> Data
-```
-
-`handleSsoRequest(message:)` takes one SCALE-encoded `RemoteMessage` exactly as decrypted from the statement-store session and routes it through the Rust core. The returned `SsoRequestOutcome` is the generated UniFFI enum (no Swift mirror):
-
-- `.response(message:)` — SCALE-encoded reply; post it back over the same session.
-- `.disconnected` — the peer ended the session; tear down the transport and records on the wallet side.
-- `.ignored` — the message was not a request; nothing to post.
-
-Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`, so `handleSsoRequest` can take arbitrarily long. Always call it from a `Task`, never the main thread.
-
-`prepareDisconnectRequest()` returns the SCALE-encoded `Disconnected` message to post when the wallet is ending the session. Posting and record cleanup (host entry, device record, device-removed broadcast) stay with the wallet.
+After wallet activation, call `establishPairing` with the original deeplink. Query `pairedHosts` and run one `resumePairing` task for each peer. Cancel its task and call `removePairedHost` when the user revokes a device. Rust owns SSO correlation, replay and wallet authorization; native applications do not maintain a parallel SSO journal or route remote requests through native product grants.
 
 ## Statement-store allowance renewal
 
-Statement-store allowances are granted per period, so a host has to re-register the accounts it wants to keep writing. They are not revoked the moment the period ends: `Resources.StmtStoreGraceWindow` keeps an ended period's allowances active until cleanup catches up, 48 hours on `paseo-next-v2`. The runtime owns the ledger and the registration; the app owns only the schedule.
+Rust tracks and persists allowance renewal targets when pairing or allocating product resources. `establishPairing` verifies both wallet and peer allocation before completing; native apps do not allocate these accounts through a parallel wallet implementation.
 
-Record the accounts to keep allowed. This needs an active session, so call it after `activateLocalSession` or after pairing, not at construction:
+After wallet activation, `startStatementAllowanceRenewal` runs the core renewal loop. It pauses without an active wallet. Hosts using an OS background job can instead call `renewStatementAllowances` off the main thread after restoring an unlocked wallet. A locked wallet is not ready for renewal and must not trigger legacy fallback.
 
-```swift
-try runtime.trackStatementRenewalTargets([
-    .walletSso,
-    .account(accountId: deviceStatementKey, label: "device"),
-])
-```
-
-The ledger persists across launches, and an entry is dropped when the identity that promised it changes. `.walletSso` and `.productStatementAllowance` are derivation recipes, so they survive that; `.account` carries a fixed account id and does not. A dropped target is listed in `report.pruned`, which is how a host learns to re-track one and keep renewal covering it. Re-tracking is idempotent, so the safe habit is to re-track the full set after every identity change rather than trying to reason about what survived.
-
-`statementRenewalTargets()` lists what the ledger holds, in the order it was tracked. It needs no active session, so a `BGTaskScheduler` wake can read it on a cold start before deciding whether the pass is worth running. Each entry carries an `owner`: a recipe has none and resolves under whichever identity is active, while a fixed account records the root key that promised it. `statementRenewalOwnerKey()` returns that key for the active identity, and needs a session. An entry whose owner is that key, or which has no owner, is one the next pass will renew; any other is one it will prune.
-
-`untrackStatementRenewalAccount(accountId:)` drops one fixed account and reports whether the ledger held it. It is scoped to the active identity and so needs a session, and it never removes an entry another identity promised. A stale entry does not deny you a slot forever, since registration replaces the oldest slot past its cooldown once a period is full, but it does cost an allocation attempt every period and keeps churning the slot table, which is what untracking it saves.
-
-Only `.account` can be untracked. `.walletSso` and `.productStatementAllowance` are recipes with no removal path, so a product you no longer run keeps being resolved and renewed until the promising identity changes.
-
-Then run a pass from a background task, off the main thread. It needs an active session too, which is the whole difficulty here: a `BGTaskScheduler` wake on a cold start has none until you restore one, and the pass then fails with the bare reason `Disconnected`. Restore the session first, and read that reason as "not ready" rather than as a renewal failure. `startStatementAllowanceRenewal()` does not need this care, since its loop skips a tick with no session and retries.
-
-```swift
-let report = try runtime.renewStatementAllowances()
-for outcome in report.outcomes {
-    log("\(outcome.label): \(outcome.status)")
-}
-for label in report.pruned {
-    // Promised by a previous identity and discarded; re-track to keep it renewed.
-    log("dropped: \(label)")
-}
-if report.slotsExhausted {
-    // Every slot for this period is taken and none was replaceable.
-}
-```
-
-One scheduled pass per period is enough, with room to spare: an allowance stays usable for `Resources.StmtStoreGraceWindow` past its boundary, which is 48 hours on `paseo-next-v2`, so a missed wake-up is recoverable rather than fatal. `nextStatementRenewalDelay()` reports the in-process loop's retry cadence, capped at an hour; a `BGTaskScheduler` host should read a value under an hour as the boundary approaching rather than requesting a wake-up every hour for a pass that will almost always report `alreadyAllocated`.
-
-### Answering the scheduler
-
-A pass reports per target and only throws when it could not run at all, so decide from the report rather than from the absence of an error:
-
-- every status `Registered` or `AlreadyAllocated`: completed successfully.
-- any status `Failed`: complete unsuccessfully and submit a fresh request, since iOS does not reschedule one for you. The grace window means that request can wait for the next opportunistic wake rather than a tight loop.
-- any status `SkippedExhausted`, or `report.slotsExhausted`: completed successfully. Retrying cannot free a slot, only time or a replacement can, so a retry here only burns background budget. It does mean an allowance went unrenewed, so tell the person rather than only logging it.
-- a throw carrying `Disconnected` before a session is restored: not ready rather than failed. Restore a session and let the next wake run the pass.
-
-Scheduling is one of three layers, and only the first needs the OS:
-
-1. a `BGTaskScheduler` wake, which is the only one that covers an app nobody opens.
-2. a pass on session activation, which covers an app somebody does.
-3. on-demand allocation, which registers a product's own account for the current period when that product asks for a statement-store allowance and none is held. That covers the asking product, not the rest of the ledger, so it narrows the window rather than closing it.
-
-`lastStatementRenewalReport()` returns the most recent pass the in-process loop ran, or `nil` if none has, which is "not yet" rather than healthy. The loop returns nothing to its caller, so this is where a host driving it reads what it achieved; checking on resume is enough to catch an exhausted period. A direct `renewStatementAllowances()` hands back its own report and does not write here.
-
-`startStatementAllowanceRenewal()` runs the same pass on an in-process loop instead. It suits a host that stays resident; on iOS a suspended app stops ticking, so prefer `BGTaskScheduler` driving the one-shot call. A pass has no cancellation, so several targets can outlast a short background budget; targets registered before the process is killed are not lost, and read back as already allocated next time.
-
-An account id must be exactly 32 bytes. Anything else is rejected where the bindings convert it, before any chain work happens.
+A renewal report contains one status per target. `Registered` and `AlreadyAllocated` confirm allocation; `Failed` requires retry, and `SkippedExhausted` requires reporting insufficient capacity rather than repeatedly retrying in the same period. Use `statementRenewalTargets`, `allowanceRecords` and `statementSlots` to inspect the active owner's durable records. Rust keeps detailed slot priority and period authoritative.
 
 ## Example
 
-> **Threading:** the Rust core invokes every `HostCallbacks` method on a
-> background thread it owns, never the main thread. Hop to the main thread
-> (`MainActor` / `DispatchQueue.main`) before touching UIKit, WebKit, or the
-> `WKWebView`. The `async` callbacks (`navigateTo`, `pushNotification`,
-> `devicePermission`, `remotePermission`, `featureSupported`,
-> `confirmUserAction`, `confirmPermission`, `lookupPreimage`) are awaited by the core, so an
-> implementation may suspend for as long as the user takes to decide (e.g.
-> `await MainActor.run { ... }` or an `withCheckedContinuation` around a
-> prompt); other TrUAPI traffic keeps flowing while you wait. The remaining
-> sync callbacks (auth state, storage, core storage, chain, theme,
-> `cancelNotification`) run inline on the dispatcher thread and must return
-> promptly without blocking.
+The embedding app supplies protected host storage and a separate wallet-only root provider. `HostBridge.secretStorage` receives typed Rust keys; use `secretCoreStorageKeyIdentifier` for opaque key names and route `DeviceEncryptionKey` to the existing shared chat identity. Only a missing record returns `nil` or `null`. Reads, committed writes and removals must report errors without plaintext fallback.
+
+Use the app's existing Keychain policy on iOS or committed Keystore-protected preferences on Android. Product/core payloads and runtime journals use Rust-owned SQLite in the active wallet's directory. The installation encryption key stays in protected storage across ordinary logout.
 
 ```swift
-import Foundation
-import WebKit
-import TrUAPIHost
-
-final class MyStorage: HostStorageBackend, @unchecked Sendable {
-    private var values: [String: Data] = [:]
-
-    func read(key: String) throws -> Data? { values[key] }
-    func write(key: String, value: Data) throws { values[key] = value }
-    func clear(key: String) throws { values.removeValue(forKey: key) }
-}
-
-final class MyCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
-    private var values: [Data: Data] = [:]
-
-    func read(key: Data) throws -> Data? { values[key] }
-    func write(key: Data, value: Data) throws { values[key] = value }
-    func clear(key: Data) throws { values.removeValue(forKey: key) }
-}
-
-final class MyBridge: HostBridge, @unchecked Sendable {
-    let storage: HostStorageBackend = MyStorage()
-    let coreStorage: HostCoreStorageBackend = MyCoreStorage()
-
-    func onCoreLog(marker: String, detail: String) { /* log */ }
-
-    func navigateTo(url: String) async throws {
-        await MainActor.run { /* UIApplication.shared.open(...) */ }
-    }
-
-    func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32 {
-        let id: UInt32 = 1
-        await MainActor.run { /* schedule request.text / request.deeplink / request.scheduledAt */ }
-        return id
-    }
-
-    func cancelNotification(id: UInt32) throws {
-        DispatchQueue.main.async { /* cancel notification */ }
-    }
-
-    func devicePermission(
-        product: ProductExecutionConfig,
-        request: HostDevicePermissionRequest
-    ) async throws -> PermissionDecision {
-        // Awaited by the core: present the prompt and suspend until the user
-        // decides. Other TrUAPI traffic keeps flowing while suspended.
-        await MainActor.run { /* show prompt for request (.camera, .microphone, ...); */ PermissionDecision.deny }
-    }
-
-    func remotePermission(
-        product: ProductExecutionConfig,
-        request: RemotePermission
-    ) async throws -> PermissionDecision {
-        await MainActor.run { /* show prompt for request (.chainSubmit, .remote(domains:), ...); */ PermissionDecision.deny }
-    }
-
-    // Core-owned auth state stream: render `.connected`/`.disconnected` as the
-    // account badge and `.loginFailed` as a retryable error, unless its `kind`
-    // is `.noFreeAllowanceSlots`, which is unlikely to succeed before the
-    // period rolls over, so retry should not be the primary action. This native
-    // runtime is a signing host, so `.pairing` and `.authenticating` are not
-    // emitted. Activate the session with `runtime.activateLocalSession(...)`.
-    func authStateChanged(state: AuthState) {
-        DispatchQueue.main.async { /* render the state */ }
-    }
-
-    func chainConnect(genesisHash: Data) throws -> UInt32? {
-        let id: UInt32 = 1
-        DispatchQueue.main.async { /* open JSON-RPC connection, forward responses via runtime.notifyChainResponse */ }
-        return id
-    }
-
-    func chainSend(connectionId: UInt32, request: String) throws {
-        /* send JSON-RPC request on the host connection */
-    }
-
-    func chainClose(connectionId: UInt32) throws {
-        /* close host connection */
-    }
-
-    func confirmUserAction(review: UserConfirmationReview) async throws -> Bool {
-        // Switch on the review variant (.signPayload, .createTransaction, ...)
-        // to render the confirmation prompt with its typed fields.
-        await MainActor.run { /* render review; */ false }
-    }
-
-    func confirmPermission(review: UserConfirmationReview) async throws -> PermissionDecision {
-        await MainActor.run { /* render permission review; */ PermissionDecision.deny }
-    }
-
-    func lookupPreimage(key: Data) async throws -> Data? { nil }
-
-    func currentTheme() throws -> HostThemeSubscribeItem {
-        HostThemeSubscribeItem(name: .default, variant: .dark)
-    }
-
-    func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool { false }
-
-}
-
-let bridge = MyBridge()
-let runtimeConfig = HostRuntimeConfig(
-    hostName: "My Host",
-    hostIcon: "https://host.example/icon.png",
-    peopleChainGenesisHash: Data(repeating: 0, count: 32),
-    bulletinChainGenesisHash: Data(repeating: 0, count: 32),
-    // Stand-in for a real Asset Hub genesis hash. Non-zero on purpose:
-    // all-zero is the "no Asset Hub" sentinel and refuses every cross-product
-    // `trustedProducts` grant.
-    assetHubChainGenesisHash: Data(repeating: 1, count: 32),
-    networkSuffix: "dot"
-)
-let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
-try runtime.activateLocalSession(secret: entropyBytes, liteUsername: nil)
-let execution = try runtime.openProductExecution(
+let runtime = try TrUAPIHostRuntime(
     bridge: bridge,
-    configuration: ProductExecutionConfig(
-        productId: "my-product.dot",
-        executionKind: .app
+    walletSecrets: walletSecretProvider,
+    runtimeConfig: HostRuntimeConfig(
+        hostName: "My Host",
+        peopleChainGenesisHash: peopleGenesis,
+        bulletinChainGenesisHash: bulletinGenesis,
+        assetHubChainGenesisHash: assetHubGenesis,
+        networkSuffix: "dot",
+        databaseDirectory: databaseBaseDirectory
     )
 )
-// The endpoint stays valid across backgrounding: iOS reclaims a suspended
-// app's listening socket, and the runtime rebinds it on the same port when
-// the app returns to the foreground.
+precondition(runtime.setWorkerEngineHost(host: workerEngines))
+try await runtime.activateWallet(walletId: selectedWalletId, liteUsername: nil)
+let execution = try runtime.openProductExecution(
+    bridge: productBridge,
+    configuration: ProductExecutionConfig(productId: "my-product.dot", executionKind: .app)
+)
 let endpoint = try execution.startWsBridge()
-
-// Call these from host/platform observers so native subscriptions see updates
-// after their immediate current item.
-execution.notifyThemeChanged(
-    theme: HostThemeSubscribeItem(name: .default, variant: .dark)
-)
-execution.notifyPreimageChanged(key: preimageKey, value: preimageBytesOrNil)
-runtime.notifyChainResponse(connectionId: chainConnectionId, json: jsonRpcResponse)
-runtime.notifyChainClosed(connectionId: chainConnectionId)
-
-// Install before loading. The product URL comes from trusted host resolution.
-let configuration = WKWebViewConfiguration()
-let webView = WKWebView(frame: .zero, configuration: configuration)
-let productURL = URL(string: "https://your-product.example/")!
-try TrUAPIHost.installProductScripts(
-    into: webView,
-    endpoint: endpoint
-)
-webView.load(URLRequest(url: productURL))
-
-// Settings changes apply to subsequent permission-checked operations.
-try execution.setPermissionAuthorizationStatus(
-    request: .remote(RemotePermissionRequest(permission: .remote(domains: ["api.example.com"]))),
-    status: .denied
-)
-
-// On view teardown:
-webView.stopLoading()
-execution.close()
-
-// On logout:
-runtime.disconnect()
+let bootstrap = LocalhostBridgeBootstrap.script(port: endpoint.port, token: endpoint.token)
 ```
 
-The updated `@parity/truapi` SDK keeps the same client across connection loss. The SDK replaces the socket; interrupted operations fail with `ConnectionResetError` and are never replayed. Recreate read/watch subscriptions in the provider that owns them. SDKs 0.16.0 and 0.18.0 can still start through the minimal `__HOST_API_PORT__` adapter, but require a page reload after a disconnect. Remove that adapter once deployed products adopt the injected client.
+Install the bootstrap and shared container at document start before loading the product. Wallet activation and teardown are asynchronous because they await protected storage, OS notification work and engine disposal. On wallet switch, await `shutdown`, drop the old runtime, construct another with the same base directory and activate the new identifier. `lockWallet` clears wallet memory while retaining eligible delegated grants; reactivate the matching owner before using them.
 
-The shared container uses the same WebSocket as SDK calls and asks Rust to authorize each fetch or XHR before sending it, and each remote WebSocket before connecting. It parses the URL with captured browser primitives and sends its hostname to `authorize_remote_permission`; Rust normalizes and checks the domain. Swift supplies the endpoint and handles native permission prompts; it does not relay individual network permission messages. An upfront permission request and a network operation are separate, so an Allow once decision is consumed by the next permitted operation rather than persisted.
+`WorkerEngineHost` fetches immutable bundle files and creates or stops native engines for executions supplied by Rust. Install it before activation so saved workers can resume. Send Chat/Card installation changes through `notifyWorkerIntent`; Rust persists their reasons, operations, update state and restart policy. Await engine teardown in `stopWorker`, and report asynchronous startup failures through `notifyWorkerFailed` with the exact execution.
 
-XHR keeps native request headers, response types and browser CORS behavior. `open()` configures the request synchronously; `send()` waits for permission before sending. Aborting or reopening during that wait cancels the pending send. Synchronous XHR is unsupported because it cannot wait for an asynchronous permission decision.
-
-A remote `WebSocket` starts in `CONNECTING` while Rust checks the same domain permission. Allow once permits that connection and all its messages; a new connection checks again. Closing while permission is pending prevents the connection from opening. Text, binary messages and subprotocols use the native socket after approval. The private host connection uses the browser constructor captured before these gates are installed. Product-created sockets receive no endpoint exemption.
-
-Forwarded WebSocket events and XHR failures before sending are synthetic, with `isTrusted` set to `false`.
-
-WebRTC uses the same private transport. Each peer connection asks Rust for permission at its first network method, such as `createOffer`, and shares that decision across later methods on the connection. Allow once permits one connection. New connections check the current permission without requiring a page reload.
-
-To disable WebRTC, call `execution.setPermissionAuthorizationStatus` with a remote `.webRtc` request and `.denied` before loading each product. This overrides saved grants and trusted-product auto-grants, which otherwise skip `remotePermission` callbacks.
-
-The installer adds the bootstrap and container scripts before loading. It preserves the host's website data store and navigation delegate. Hosts that assemble their own script lists can keep using `LocalhostBridgeBootstrap.script` followed by `ContainerScriptBundle.load()`, with the container injected into every frame.
-
-`Worker`, `WebTransport` and `getDisplayMedia` screen capture are unavailable. Workers would provide a separate realm with unguarded network APIs; WebTransport has no permission wrapper, and screen capture has no product permission.
-
-Redirects and stylesheet/font loads retain native WebKit behavior. Redirect destinations are not separately authorized by the fetch/XHR wrappers; direct DOM resource loads remain outside those wrappers. There is no content-rule registration, global settings refresh or installation disposal requirement. Close the execution when its product stops, and maintain the host's existing web-view navigation and teardown behavior.
-
-Build the generated JavaScript SDK before the container: from the repository root, run `npm ci --ignore-scripts`, `npm run build --prefix js/packages/truapi`, then `npm run build --prefix js/container`. A protocol change also requires regenerating the SDK through the repository's normal build pipeline.
-
-`ProductNetworkAccessTests` exercises grant/deny/revocation, one-use fetch, WebRTC and media authorization, native redirects, stylesheet/font requests, and preserving a persistent store and existing navigation delegate. Media coverage uses a capture stub with the actual private Rust permission transport; it does not require simulator camera hardware. The tests require the built container, current Rust bindings and a real WKWebView in the UIKit test host. These Apple-only tests cannot run on Linux.
-
+Notifications receive Rust-assigned IDs through `scheduleNotification`, `cancelScheduledNotification` and `isScheduledNotificationPending`. Namespace OS identifiers with the runtime's captured wallet identifier and product ID. The core retains failed OS work for reconciliation. `runtimeRecordsChanged` invalidates settings/catalog snapshots; re-query the runtime instead of keeping a second permission or allowance journal.
 
 ## Build outputs in detail
 

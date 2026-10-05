@@ -294,6 +294,14 @@ class HostApiInteractor @Inject constructor(
         permissionGuard.requestPermissionsBatched(callingProductId, permissions)
     }
 
+    fun devicePermissionStatus(capability: DeviceCapabilityType): uniffi.truapi.DevicePermissionStatus =
+        when (deviceCapabilityPermissionHandler.osPermissionState(capability)) {
+            io.paritytech.polkadotapp.common.utils.permissions.PermissionResult.GRANTED -> uniffi.truapi.DevicePermissionStatus.GRANTED
+            io.paritytech.polkadotapp.common.utils.permissions.PermissionResult.DENIED -> uniffi.truapi.DevicePermissionStatus.NOT_DETERMINED
+            io.paritytech.polkadotapp.common.utils.permissions.PermissionResult.DENIED_FOREVER -> uniffi.truapi.DevicePermissionStatus.DENIED
+            null -> uniffi.truapi.DevicePermissionStatus.NOT_APPLICABLE
+        }
+
     suspend fun requestDevicePermissionDecision(
         callingProductId: ProductId,
         capability: DeviceCapabilityType,

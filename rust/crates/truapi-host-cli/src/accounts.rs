@@ -48,6 +48,52 @@ pub struct ResolvedSigner {
     pub auto_managed: bool,
 }
 
+impl ResolvedSigner {
+    /// Activate the selected signer through its wallet-only provider.
+    pub async fn activate(&self, runtime: &truapi::SigningHostRuntime) -> Result<()> {
+        let wallet_id = wallet_identifier(&self.entropy)?;
+        let prepared = runtime
+            .prepare_wallet(self, &wallet_id, self.lite_username.clone())
+            .await
+            .map_err(|error| anyhow::anyhow!(error.reason))?;
+        runtime
+            .activate_wallet(prepared)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.reason))
+    }
+}
+
+#[truapi::platform::async_trait]
+impl truapi::platform::WalletSecretProvider for ResolvedSigner {
+    async fn read_wallet_root_entropy(
+        &self,
+        wallet_id: &str,
+    ) -> Result<Vec<u8>, truapi::latest::GenericError> {
+        selected_entropy(&self.entropy, wallet_id)
+    }
+}
+
+fn wallet_identifier(entropy: &[u8]) -> Result<String> {
+    let root = truapi::host_logic::product_account::derive_root_keypair_from_entropy(entropy)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    Ok(hex::encode(root.public.to_bytes()))
+}
+
+fn selected_entropy(
+    entropy: &[u8],
+    wallet_id: &str,
+) -> Result<Vec<u8>, truapi::latest::GenericError> {
+    let expected = wallet_identifier(entropy).map_err(|error| truapi::latest::GenericError {
+        reason: error.to_string(),
+    })?;
+    if expected != wallet_id {
+        return Err(truapi::latest::GenericError {
+            reason: "selected wallet identifier changed".into(),
+        });
+    }
+    Ok(entropy.to_vec())
+}
+
 /// A mnemonic whose existing on-chain identity and personhood membership have
 /// been verified, but which has not yet been persisted into a session.
 #[derive(derive_more::Debug, ZeroizeOnDrop)]
@@ -79,9 +125,27 @@ impl ImportedSigner {
         &self.session_name
     }
 
-    /// Borrow the already-derived entropy for off-side runtime activation.
-    pub fn entropy(&self) -> &[u8] {
-        &self.entropy
+    /// Activate the verified import through its wallet-only secret provider.
+    pub async fn activate(&self, runtime: &truapi::SigningHostRuntime) -> Result<()> {
+        let wallet_id = wallet_identifier(&self.entropy)?;
+        let prepared = runtime
+            .prepare_wallet(self, &wallet_id, self.username.clone())
+            .await
+            .map_err(|error| anyhow::anyhow!(error.reason))?;
+        runtime
+            .activate_wallet(prepared)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.reason))
+    }
+}
+
+#[truapi::platform::async_trait]
+impl truapi::platform::WalletSecretProvider for ImportedSigner {
+    async fn read_wallet_root_entropy(
+        &self,
+        wallet_id: &str,
+    ) -> Result<Vec<u8>, truapi::latest::GenericError> {
+        selected_entropy(&self.entropy, wallet_id)
     }
 }
 

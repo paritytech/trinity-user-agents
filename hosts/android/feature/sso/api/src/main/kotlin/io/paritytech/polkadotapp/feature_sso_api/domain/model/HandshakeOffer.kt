@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.common.domain.model.X25519PublicKey
 class HandshakeOffer(
     val device: HandshakeDevice,
     val metadata: HandshakeMetadata,
+    val deeplink: String? = null,
 )
 
 class HandshakeDevice(

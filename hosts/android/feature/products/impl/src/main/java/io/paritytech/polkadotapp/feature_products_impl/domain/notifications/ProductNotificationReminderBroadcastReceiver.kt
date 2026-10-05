@@ -17,6 +17,8 @@ class ProductNotificationReminderBroadcastReceiver : BroadcastReceiver() {
             "io.paritytech.polkadotapp.feature_products.domain.notifications.POST_PRODUCT_NOTIFICATION"
         const val EXTRA_PRODUCT_ID = "product_id"
         const val EXTRA_NOTIFICATION_ID = "notification_id"
+        const val EXTRA_TRUAPI_TEXT = "truapi_text"
+        const val EXTRA_TRUAPI_DEEPLINK = "truapi_deeplink"
     }
 
     @Inject
@@ -25,12 +27,27 @@ class ProductNotificationReminderBroadcastReceiver : BroadcastReceiver() {
     @Inject
     lateinit var repository: ScheduledProductNotificationRepository
 
+    @Inject
+    lateinit var accountRepository: io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
+
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_POST_PRODUCT_NOTIFICATION) return
 
         val productIdValue = intent.getStringExtra(EXTRA_PRODUCT_ID) ?: return
         if (!intent.hasExtra(EXTRA_NOTIFICATION_ID)) return
         val notificationIdValue = intent.getIntExtra(EXTRA_NOTIFICATION_ID, 0)
+
+        intent.getStringExtra(EXTRA_TRUAPI_TEXT)?.let { text ->
+            launchAsyncJob {
+                val walletId = intent.data?.host
+                if (walletId == accountRepository.getWalletAccount().id.toString()) {
+                    notificationPublisher.publishNotification(notificationIdValue, text, intent.getStringExtra(EXTRA_TRUAPI_DEEPLINK), intent.dataString)
+                }
+                android.app.PendingIntent.getBroadcast(context, notificationIdValue, intent,
+                    android.app.PendingIntent.FLAG_NO_CREATE or android.app.PendingIntent.FLAG_IMMUTABLE)?.cancel()
+            }
+            return
+        }
 
         val productId = ProductId.fromStoredValue(productIdValue)
         val notificationId = NotificationId(notificationIdValue)

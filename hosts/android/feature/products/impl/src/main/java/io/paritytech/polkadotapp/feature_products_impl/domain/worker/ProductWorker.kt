@@ -12,9 +12,10 @@ import kotlinx.coroutines.flow.Flow
  * reference to keep it alive.
  */
 interface ProductWorker : JsEventDispatcher {
-    suspend fun onUserMessage(text: String): Result<Unit>
+    suspend fun onUserMessage(roomId: String, text: String): Result<Unit>
 
     fun renderMessage(
+        roomId: String,
         messageId: ChatMessageId,
         messageType: String,
         messageData: DataByteArray,

@@ -122,14 +122,15 @@ class HostApiProductsScriptExecutor @AssistedInject constructor(
         }
     }
 
-    override suspend fun onUserMessage(text: String): Result<Unit> = runCatching {
+    override suspend fun onUserMessage(roomId: String, text: String): Result<Unit> = runCatching {
         awaitInitialized()
         val textLiteral = text.toJsStringLiteral()
-        session!!.evaluateScript("dispatchUserMessage('', $textLiteral)")
+        session!!.evaluateScript("dispatchUserMessage(${roomId.toJsStringLiteral()}, $textLiteral)")
             .onFailure { Timber.e(it, "Failed to call onUserMessage for product: $productId") }
     }
 
     override fun renderMessage(
+        roomId: String,
         messageId: ChatMessageId,
         messageType: String,
         messageData: DataByteArray,

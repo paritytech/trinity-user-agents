@@ -24,16 +24,17 @@ class DeferredProductWorker : ProductWorker {
         delegate.value = worker
     }
 
-    override suspend fun onUserMessage(text: String): Result<Unit> {
-        return delegate.filterNotNull().first().onUserMessage(text)
+    override suspend fun onUserMessage(roomId: String, text: String): Result<Unit> {
+        return delegate.filterNotNull().first().onUserMessage(roomId, text)
     }
 
     override fun renderMessage(
+        roomId: String,
         messageId: ChatMessageId,
         messageType: String,
         messageData: DataByteArray,
     ): Flow<Result<JsWidget>> = flow {
-        emitAll(delegate.filterNotNull().first().renderMessage(messageId, messageType, messageData))
+        emitAll(delegate.filterNotNull().first().renderMessage(roomId, messageId, messageType, messageData))
     }
 
     // UI events only originate from already-rendered widgets, so the worker is attached by then.

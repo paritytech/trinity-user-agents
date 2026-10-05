@@ -85,11 +85,28 @@ class ChatWebViewProvider @AssistedInject constructor(
 
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest?): WebResourceResponse? {
                     return permissionClient.shouldInterceptRequest(view, request)
-                        ?: request?.let { dotNsContentClient.shouldInterceptRequest(view, it) }
+                        ?: request?.let { pinnedBundleResponse(it) }
+                        ?: request?.takeIf { config.bundleDirectory == null }?.let { dotNsContentClient.shouldInterceptRequest(view, it) }
                 }
             }
             webChromeClient = chromeClient
         }
+    }
+
+    private fun pinnedBundleResponse(request: WebResourceRequest): WebResourceResponse? {
+        val directory = config.bundleDirectory ?: return null
+        if (request.url.host != android.net.Uri.parse(workerScript.baseUrl).host) return null
+        val file = directory.resolve(request.url.path.orEmpty().removePrefix("/")).canonicalFile
+        if (!file.path.startsWith(directory.canonicalPath + java.io.File.separator) || !file.isFile) {
+            return WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", emptyMap(), java.io.ByteArrayInputStream(ByteArray(0)))
+        }
+        val mime = when (file.extension) {
+            "js", "mjs" -> "text/javascript"
+            "json" -> "application/json"
+            "wasm" -> "application/wasm"
+            else -> java.net.URLConnection.guessContentTypeFromName(file.name) ?: "application/octet-stream"
+        }
+        return WebResourceResponse(mime, "UTF-8", file.inputStream())
     }
 
     fun useTrUAPIPermissions(execution: TrUAPIProductExecution) {
@@ -120,4 +137,5 @@ class ChatWebViewProvider @AssistedInject constructor(
 data class ChatWebViewConfig(
     val productId: ProductId,
     val workerScript: WorkerScript,
+    val bundleDirectory: java.io.File? = null,
 )

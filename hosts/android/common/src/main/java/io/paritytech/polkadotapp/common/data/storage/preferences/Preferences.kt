@@ -119,4 +119,6 @@ interface Editor {
     fun remove(field: String)
 
     fun apply()
+
+    fun commit(): Boolean
 }

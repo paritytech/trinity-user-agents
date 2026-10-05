@@ -250,6 +250,40 @@ enum Phase {
 }
 
 impl Db {
+    /// Emit once on subscription and after committed changes to any table read by `sql`.
+    pub fn observe_changes(&self, sql: &'static str) -> BoxStream<'static, Result<(), DbError>> {
+        let db = self.clone();
+        stream::unfold(Phase::Start, move |phase| {
+            let db = db.clone();
+            async move {
+                let registration = match phase {
+                    Phase::Done => return None,
+                    Phase::Start => match db.subscribe(sql).await {
+                        Ok(registration) => registration,
+                        Err(error) => return Some((Err(error), Phase::Done)),
+                    },
+                    Phase::Running {
+                        mut registration, ..
+                    } => {
+                        registration.wake.next().await?;
+                        registration
+                    }
+                };
+                match db.read(|_| Ok(())).await {
+                    Ok(()) => Some((
+                        Ok(()),
+                        Phase::Running {
+                            registration,
+                            last: None,
+                        },
+                    )),
+                    Err(error) => Some((Err(error), Phase::Done)),
+                }
+            }
+        })
+        .boxed()
+    }
+
     /// Streams the result of `query` over `sql`: once when first polled, then
     /// again after every commit that changes a table `sql` reads, unless the
     /// rows read are identical to the last emission. Bursts of commits are

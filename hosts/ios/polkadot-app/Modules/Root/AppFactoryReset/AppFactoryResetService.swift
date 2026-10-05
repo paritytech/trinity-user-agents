@@ -23,7 +23,13 @@
             self.logger = logger
         }
 
-        func resetAllData() {
+        func resetAllData() async throws {
+            if SettingsManager.shared.isTrUAPIRuntimeEnabled,
+               let provider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() {
+                let runtime = try await provider.sharedRuntime()
+                try await runtime.resetAccount()
+                try await runtime.shutdown()
+            }
             if #available(iOS 26.0, *) {
                 clearAlarmKitAlarms()
             }

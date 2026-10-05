@@ -3,12 +3,16 @@ import CoreData
 import AsyncExtensions
 import StructuredConcurrency
 import Products
+import TrUAPIHost
 
 extension ProductPermissionDataProviderMaking {
     func subscribeGrants(
         productId: ProductId,
         grantedOnly: Bool = true
     ) -> AnyAsyncSequence<[ProductPermissionGrant]> {
+        if SettingsManager.shared.isTrUAPIRuntimeEnabled {
+            return subscribeRustGrants().map { grants in grants.filter { $0.productId == productId && (!grantedOnly || $0.granted) } }.eraseToAnyAsyncSequence()
+        }
         var predicates: [NSPredicate] = [.permissionGrant(productId: productId)]
 
         if grantedOnly {
@@ -23,6 +27,9 @@ extension ProductPermissionDataProviderMaking {
     func subscribeAllGrants(
         grantedOnly: Bool
     ) -> AnyAsyncSequence<[ProductPermissionGrant]> {
+        if SettingsManager.shared.isTrUAPIRuntimeEnabled {
+            return subscribeRustGrants().map { grants in grants.filter { !grantedOnly || $0.granted } }.eraseToAnyAsyncSequence()
+        }
         let predicate: NSPredicate? = grantedOnly ? .permissionGrantGrantedOnly() : nil
         return subscribeGrantsWithPredicate(predicate)
     }
@@ -54,4 +61,12 @@ extension ProductPermissionDataProviderMaking {
         }
         .eraseToAnyAsyncSequence()
     }
+}
+
+private func subscribeRustGrants() -> AnyAsyncSequence<[ProductPermissionGrant]> {
+    truapiRecordChanges(.truapiPermissionsChanged).map { _ in
+        try await readActiveRuntimeRecords(empty: []) { runtime in
+            try await runtime.permissions().flatMap(\.productGrants)
+        }
+    }.eraseToAnyAsyncSequence()
 }

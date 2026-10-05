@@ -25,6 +25,32 @@ final class LocalDeviceDataProviderFactory {
 
 extension LocalDeviceDataProviderFactory: LocalDeviceDataProviderMaking {
     func subscribeDevices() -> AsyncStream<[Chat.LocalDevice]> {
+        if SettingsManager.shared.isTrUAPIRuntimeEnabled {
+            return AsyncStream { continuation in
+                let task = Task { [logger] in
+                    for await _ in truapiRecordChanges(.truapiPairedHostsChanged) {
+                        do {
+                            guard let provider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() else {
+                                throw ProductBotFactoryError.dependenciesUnavailable
+                            }
+                            let peers = try await provider.activeRuntimeForRecords()?.pairedHosts() ?? []
+                            continuation.yield(peers.map { peer in
+                                Chat.LocalDevice(
+                                    statementAccountId: peer.peerStatement,
+                                    encryptionPublicKey: peer.peerEncryption,
+                                    hostName: peer.metadata["hostName"] ?? "",
+                                    createdAt: Date(timeIntervalSince1970: Double(peer.addedAt) / 1000),
+                                    hostVersion: peer.metadata["hostVersion"],
+                                    osType: peer.metadata["platformType"],
+                                    osVersion: peer.metadata["platformVersion"]
+                                )
+                            })
+                        } catch { logger.error("Rust paired devices query failed: \(error)") }
+                    }
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
         let syncQueue = DispatchQueue(label: "io.local.device.provider.async.updates")
 
         return AsyncStream { [weak self] continuation in

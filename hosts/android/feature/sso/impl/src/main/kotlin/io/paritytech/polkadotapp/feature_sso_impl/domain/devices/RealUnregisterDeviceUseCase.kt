@@ -7,15 +7,22 @@ import io.paritytech.polkadotapp.feature_sso_api.domain.devices.UnregisterDevice
 import io.paritytech.polkadotapp.feature_sso_impl.data.repository.SsoSessionRepository
 import io.paritytech.polkadotapp.feature_sso_impl.domain.SsoService
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotAllocator
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import javax.inject.Inject
 
 class RealUnregisterDeviceUseCase @Inject constructor(
+    private val runtimeSettings: ProductRuntimeSettings,
+    private val runtimeProvider: TrUAPIHostRuntimeProvider,
     private val slotAllocator: StatementStoreSlotAllocator,
     private val ssoService: SsoService,
     private val ssoSessionRepository: SsoSessionRepository,
     private val broadcastDeviceLifecycleUseCase: BroadcastDeviceLifecycleUseCase,
 ) : UnregisterDeviceUseCase {
     override suspend fun invoke(statementAccountId: AccountId): Result<Unit> {
+        if (runtimeSettings.isTrUAPIRuntimeEnabled()) return runCatching {
+            runtimeProvider.removePairedHost(statementAccountId.value)
+        }
         return deallocateSlot(statementAccountId)
             .flatMap { disconnectSession(statementAccountId) }
             .flatMap { broadcastDeviceRemoved(statementAccountId) }

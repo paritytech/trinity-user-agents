@@ -1,7 +1,7 @@
 //! Durable, wallet-scoped RFC-0024 ring-VRF registry snapshots.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::collections::HashSet;
+use std::sync::Arc;
 
 use crate::platform::{CoreStorageKey, Platform, normalize_product_identifier};
 use parity_scale_codec::{Decode, Encode};
@@ -24,18 +24,28 @@ struct RegistrySnapshot {
     selected_providers: Vec<SelectedProvider>,
 }
 
-/// Shared durable repository used by both account-authority roles.
+/// Durable public registrations, separated between wallet authority and host snapshots.
 pub struct RingVrfRegistryStore {
     platform: Arc<dyn Platform>,
-    cache: Mutex<HashMap<[u8; 32], RegistrySnapshot>>,
+    host_snapshot: bool,
     storage_guard: futures::lock::Mutex<()>,
 }
 
 impl RingVrfRegistryStore {
+    /// The wallet owns authoritative registrations and provider selection.
     pub fn new(platform: Arc<dyn Platform>) -> Arc<Self> {
+        Self::with_scope(platform, false)
+    }
+
+    /// Hosts retain independent public snapshots for delegated execution.
+    pub fn host(platform: Arc<dyn Platform>) -> Arc<Self> {
+        Self::with_scope(platform, true)
+    }
+
+    fn with_scope(platform: Arc<dyn Platform>, host_snapshot: bool) -> Arc<Self> {
         Arc::new(Self {
             platform,
-            cache: Mutex::new(HashMap::new()),
+            host_snapshot,
             storage_guard: futures::lock::Mutex::new(()),
         })
     }
@@ -250,16 +260,15 @@ impl RingVrfRegistryStore {
         self.persist_under_guard(root_public_key, snapshot).await
     }
 
-    async fn snapshot(&self, root_public_key: [u8; 32]) -> Result<RegistrySnapshot, RingVrfError> {
-        if let Some(snapshot) = self
-            .cache
-            .lock()
-            .expect("ring-VRF registry cache mutex poisoned")
-            .get(&root_public_key)
-            .cloned()
-        {
-            return Ok(snapshot);
+    fn storage_key(&self, root_public_key: [u8; 32]) -> CoreStorageKey {
+        if self.host_snapshot {
+            CoreStorageKey::HostRingVrfRegistry { root_public_key }
+        } else {
+            CoreStorageKey::RingVrfRegistry { root_public_key }
         }
+    }
+
+    async fn snapshot(&self, root_public_key: [u8; 32]) -> Result<RegistrySnapshot, RingVrfError> {
         let _guard = self.storage_guard.lock().await;
         self.load_under_guard(root_public_key).await
     }
@@ -268,36 +277,10 @@ impl RingVrfRegistryStore {
         &self,
         root_public_key: [u8; 32],
     ) -> Result<RegistrySnapshot, RingVrfError> {
-        if let Some(snapshot) = self
-            .cache
-            .lock()
-            .expect("ring-VRF registry cache mutex poisoned")
-            .get(&root_public_key)
-            .cloned()
-        {
-            return Ok(snapshot);
+        match self.platform.read_core_storage(self.storage_key(root_public_key)).await.map_err(storage_error)? {
+            Some(blob) => decode_snapshot(&blob),
+            None => Ok(RegistrySnapshot::default()),
         }
-        let key = CoreStorageKey::RingVrfRegistry { root_public_key };
-        let snapshot = match self
-            .platform
-            .read_core_storage(key.clone())
-            .await
-            .map_err(storage_error)?
-        {
-            Some(blob) => match decode_snapshot(&blob) {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
-                    let _ = self.platform.clear_core_storage(key).await;
-                    return Err(error);
-                }
-            },
-            None => RegistrySnapshot::default(),
-        };
-        self.cache
-            .lock()
-            .expect("ring-VRF registry cache mutex poisoned")
-            .insert(root_public_key, snapshot.clone());
-        Ok(snapshot)
     }
 
     async fn persist_under_guard(
@@ -308,15 +291,11 @@ impl RingVrfRegistryStore {
         validate_snapshot(&snapshot)?;
         self.platform
             .write_core_storage(
-                CoreStorageKey::RingVrfRegistry { root_public_key },
+                self.storage_key(root_public_key),
                 snapshot.encode(),
             )
             .await
             .map_err(storage_error)?;
-        self.cache
-            .lock()
-            .expect("ring-VRF registry cache mutex poisoned")
-            .insert(root_public_key, snapshot);
         Ok(())
     }
 }
@@ -467,6 +446,26 @@ mod tests {
             chain_id: [byte; 32],
             junctions: vec![truapi::v01::RingLocationJunction::PalletInstance(byte)],
         }
+    }
+
+    #[test]
+    fn host_snapshots_cannot_replace_wallet_registrations() {
+        let platform = Arc::new(StubPlatform::default());
+        let wallet = RingVrfRegistryStore::new(platform.clone());
+        let host = RingVrfRegistryStore::host(platform);
+        let root = [1; 32];
+        let first = handle("owner.dot", 0);
+        let remote = handle("owner.dot", 1);
+        let local = handle("owner.dot", 2);
+        futures::executor::block_on(async {
+            wallet.register(root, first.clone(), ring(1), [1; 32]).await.unwrap();
+            let initial = wallet.owner_entries(root, "owner.dot").await.unwrap();
+            host.reconcile_owner(root, "owner.dot", initial).await.unwrap();
+            wallet.register(root, remote.clone(), ring(1), [2; 32]).await.unwrap();
+            host.register(root, local.clone(), ring(1), [3; 32]).await.unwrap();
+            assert_eq!(wallet.providers(root, &ring(1)).await.unwrap(), vec![first.clone(), remote]);
+            assert_eq!(host.providers(root, &ring(1)).await.unwrap(), vec![first, local]);
+        });
     }
 
     #[test]

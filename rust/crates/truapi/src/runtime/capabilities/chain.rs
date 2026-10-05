@@ -34,7 +34,7 @@ use crate::runtime::{
     runtime_failure_to_call_error,
 };
 
-impl ProductRuntimeHost {
+impl<H: crate::runtime::AccountHolder + 'static> ProductRuntimeHost<H> {
     /// Stop a broadcast whose call was withdrawn, bounded so a stalled stop
     /// cannot hold back the withdrawn call's answer.
     async fn stop_withdrawn_broadcast(&self, genesis_hash: Vec<u8>, operation_id: String) {
@@ -60,7 +60,7 @@ impl ProductRuntimeHost {
 }
 
 #[truapi::async_trait]
-impl Chain for ProductRuntimeHost {
+impl<H: crate::runtime::AccountHolder + 'static> Chain for ProductRuntimeHost<H> {
     #[instrument(skip_all, fields(runtime.method = "chain.follow_head_subscribe"))]
     async fn follow_head_subscribe(
         &self,

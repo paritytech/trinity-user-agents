@@ -3,18 +3,14 @@ import FoundationExt
 import Products
 import TrUAPIHost
 
-/// Per-execution bridge for the native Chat modality: a
-/// ``RustProductExecutionBridge`` that also answers the rust core's
-/// `ChatHostBridge` callbacks against the product's chat binding.
-final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge, @unchecked Sendable {
+/// Chat callbacks use the product's native messaging binding.
+final class RustChatExecutionBridge: ChatHostBridge, @unchecked Sendable {
     private let chatMessaging: any ProductChatMessaging
-    // The base class keeps `dependencies` private; hold on to the logger here.
     private let logger: LoggerProtocol
 
-    init(dependencies: Dependencies, chatMessaging: any ProductChatMessaging) {
+    init(chatMessaging: any ProductChatMessaging, logger: LoggerProtocol = Logger.shared) {
         self.chatMessaging = chatMessaging
-        logger = dependencies.logger
-        super.init(dependencies: dependencies)
+        self.logger = logger
     }
 
     func createRoom(roomId: String, name: String, icon: String) async throws -> ChatRoomRegistrationStatus {

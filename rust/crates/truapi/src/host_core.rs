@@ -9,6 +9,8 @@
 //! Target-specific shells such as wasm-bindgen, iOS FFI, or desktop IPC should
 //! keep their conversion code outside this module.
 
+#[cfg(any(test, feature = "test-host"))]
+use crate::runtime::LocalActivation;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -28,20 +30,20 @@ use tracing::{instrument, warn};
 use truapi::v01;
 use truapi::{CallContext, CancellationReason};
 
-use crate::truapi_core::TrUApiCore;
 use crate::frame::ProtocolMessage;
 use crate::host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome};
 use crate::host_logic::worker::WorkerLedger;
 use crate::runtime::sso_service::Dispatch;
 use crate::runtime::{
-    ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
-    LocalActivation, PairedSsoPeer, PairingHostRole, ProductAuthority, ProductRuntimeHost,
-    ResponderExit, RuntimeServices, SigningHostRole, SigningHostSsoService, disconnect_paired_host,
-    establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
-    respond_to_pairing, resume_pairing,
+    AccountHolder, ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
+    HostAccounts, PairedSsoPeer, PreparedWalletActivation, ProductRuntimeHost, ResponderExit,
+    RuntimeServices, SsoAccountHolderClient, SsoAccountHolderService, WalletAccountHolder,
+    cleanup_pending_pairings, disconnect_paired_host, establish_pairing, establish_pairing_with_allowances, notify_pairing_allowance_allocation,
+    notify_pairing_failed, respond_to_pairing, resume_pairing,
 };
 use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
 use crate::transport::Transport;
+use crate::truapi_core::TrUApiCore;
 
 /// Outgoing frame sink owned by a host adapter.
 ///
@@ -180,7 +182,8 @@ fn product_context(product_id: &str) -> Result<ProductContext, v01::GenericError
 /// is a signing-host operation and is not present here.
 pub struct PairingHostRuntime {
     services: Arc<RuntimeServices>,
-    pairing_host: Arc<PairingHostRole>,
+    pairing_host: Arc<SsoAccountHolderClient>,
+    accounts: Arc<HostAccounts<SsoAccountHolderClient>>,
 }
 
 impl PairingHostRuntime {
@@ -236,9 +239,11 @@ impl PairingHostRuntime {
         if let Some(contacts_platform) = contacts_platform {
             services.install_contacts_platform(contacts_platform);
         }
-        let pairing_host = PairingHostRole::new(services.clone(), config);
+        let pairing_host = SsoAccountHolderClient::new(services.clone(), config);
+        let accounts = HostAccounts::paired(pairing_host.clone(), services.clone());
         pairing_host.clone().start_session_store_sync(spawner);
         Self {
+            accounts,
             services,
             pairing_host,
         }
@@ -293,7 +298,7 @@ impl PairingHostRuntime {
     ) -> ProductRuntime {
         ProductRuntime::new(
             self.services.clone(),
-            self.pairing_host.clone(),
+            self.accounts.clone(),
             product,
             ConnectionAdapters::from_services(&self.services),
             sink,
@@ -305,7 +310,7 @@ impl PairingHostRuntime {
     pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
         HostAdmin::new(
             self.services.clone(),
-            self.pairing_host.clone(),
+            self.accounts.clone(),
             product,
             ConnectionAdapters::from_services(&self.services),
         )
@@ -313,8 +318,13 @@ impl PairingHostRuntime {
 
     /// Disconnect the active account-authority session.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.disconnect_session"))]
-    pub async fn disconnect_session(&self) {
-        self.pairing_host.disconnect().await;
+    pub async fn disconnect_session(&self) -> Result<(), v01::GenericError> {
+        self.accounts
+            .disconnect()
+            .await
+            .map_err(|error| v01::GenericError {
+                reason: error.to_string(),
+            })
     }
 
     /// Log out and discard the old pairing keypair.
@@ -323,8 +333,9 @@ impl PairingHostRuntime {
     /// presents a new deeplink suitable for another signing host.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
     pub async fn logout(&self) -> Result<(), v01::GenericError> {
+        self.disconnect_session().await?;
         self.pairing_host
-            .logout_and_reset_pairing()
+            .reset_pairing_identity()
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -333,10 +344,12 @@ impl PairingHostRuntime {
     /// session and unrelated products.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
     pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
-        self.pairing_host
+        self.accounts
             .clear_product_state(product_id)
             .await
-            .map_err(|reason| v01::GenericError { reason })
+            .map_err(|reason| v01::GenericError {
+                reason: reason.to_string(),
+            })
     }
 
     /// Registered providers available for an internal well-known-ring feature.
@@ -344,7 +357,7 @@ impl PairingHostRuntime {
         &self,
         ring: &v01::RingLocation,
     ) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
-        self.pairing_host
+        self.accounts
             .ring_vrf_providers(ring)
             .await
             .map_err(ring_vrf_admin_error)
@@ -355,7 +368,7 @@ impl PairingHostRuntime {
         &self,
         ring: &v01::RingLocation,
     ) -> Result<Option<v01::ProductAccountId>, v01::GenericError> {
-        self.pairing_host
+        self.accounts
             .selected_ring_vrf_provider(ring)
             .await
             .map_err(ring_vrf_admin_error)
@@ -367,7 +380,7 @@ impl PairingHostRuntime {
         ring: v01::RingLocation,
         handle: v01::ProductAccountId,
     ) -> Result<(), v01::GenericError> {
-        self.pairing_host
+        self.accounts
             .select_ring_vrf_provider(ring, handle)
             .await
             .map_err(ring_vrf_admin_error)
@@ -414,14 +427,25 @@ impl PairingHostRuntime {
         product_id: &str,
         timeout_ms: Option<u32>,
     ) -> Result<Option<[u8; 32]>, v01::GenericError> {
-        product_subtree_public_key(self.pairing_host.as_ref(), product_id, timeout_ms).await
+        product_subtree_public_key(self.accounts.as_ref(), product_id, timeout_ms).await
     }
 
     /// Clear the canonical paired session and all capability caches/storage
     /// without sending a peer-disconnect notice.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.reset_session_state"))]
-    pub async fn reset_session_state(&self) {
-        self.pairing_host.reset_session_state().await;
+    pub async fn reset_session_state(&self) -> Result<(), v01::GenericError> {
+        self.accounts
+            .reset_grants()
+            .await
+            .map_err(|error| v01::GenericError {
+                reason: error.to_string(),
+            })?;
+        self.pairing_host
+            .reset_session_state()
+            .await
+            .map_err(|error| v01::GenericError {
+                reason: error.to_string(),
+            })
     }
 
     /// Start or join the pairing-host login flow for one product.
@@ -560,10 +584,18 @@ impl PairingHostAdmin for PairingHostRuntime {
 /// ring-VRF aliases and on-chain resource allocation.
 pub struct SigningHostRuntime {
     services: Arc<RuntimeServices>,
-    signing_host: Arc<SigningHostRole>,
+    signing_host: Arc<WalletAccountHolder>,
+    accounts: Arc<HostAccounts<WalletAccountHolder>>,
+    pairing: futures::lock::Mutex<()>,
 }
 
 impl SigningHostRuntime {
+    /// Install the owner-scoped runtime repositories before wallet activation.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_runtime_store(&self, store: Arc<crate::store::RuntimeStore>) {
+        self.services.set_runtime_store(store);
+    }
+
     /// Answer resource allocation as granted without performing it.
     ///
     /// For test hosts only, with the `test-host` feature enabled.
@@ -659,8 +691,10 @@ impl SigningHostRuntime {
                  every cross-product grant not already cached is refused"
             );
         }
-        let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
+        let signing_host = WalletAccountHolder::new(services.clone(), config.network_suffix);
         Self {
+            accounts: HostAccounts::native(signing_host.clone(), services.clone()),
+            pairing: futures::lock::Mutex::new(()),
             services,
             signing_host,
         }
@@ -741,10 +775,10 @@ impl SigningHostRuntime {
         &self,
         product: ProductContext,
         sink: Arc<dyn FrameSink>,
-    ) -> ProductRuntime {
+    ) -> ProductRuntime<WalletAccountHolder> {
         ProductRuntime::new(
             self.services.clone(),
-            self.signing_host.clone(),
+            self.accounts.clone(),
             product,
             ConnectionAdapters::from_services(&self.services),
             sink,
@@ -759,10 +793,10 @@ impl SigningHostRuntime {
         product: ProductContext,
         adapters: ConnectionAdapters,
         sink: Arc<dyn FrameSink>,
-    ) -> ProductRuntime {
+    ) -> ProductRuntime<WalletAccountHolder> {
         ProductRuntime::new(
             self.services.clone(),
-            self.signing_host.clone(),
+            self.accounts.clone(),
             product,
             adapters,
             sink,
@@ -771,10 +805,10 @@ impl SigningHostRuntime {
 
     /// Build a product-scoped administration handle from this signing host.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_admin"))]
-    pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
+    pub fn product_admin(&self, product: ProductContext) -> HostAdmin<WalletAccountHolder> {
         HostAdmin::new(
             self.services.clone(),
-            self.signing_host.clone(),
+            self.accounts.clone(),
             product,
             ConnectionAdapters::from_services(&self.services),
         )
@@ -787,10 +821,10 @@ impl SigningHostRuntime {
         &self,
         product: ProductContext,
         adapters: ConnectionAdapters,
-    ) -> HostAdmin {
+    ) -> HostAdmin<WalletAccountHolder> {
         HostAdmin::new(
             self.services.clone(),
-            self.signing_host.clone(),
+            self.accounts.clone(),
             product,
             adapters,
         )
@@ -809,16 +843,22 @@ impl SigningHostRuntime {
 
     /// Disconnect the active account-authority session.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.disconnect_session"))]
-    pub async fn disconnect_session(&self) {
-        self.signing_host.disconnect().await;
+    pub async fn disconnect_session(&self) -> Result<(), v01::GenericError> {
+        let owner = self.signing_host.current_session().map(|session| session.public_key);
+        let disconnected = self.accounts.disconnect().await.map_err(|error| v01::GenericError { reason: error.to_string() });
+        if let Some(owner) = owner {
+            cleanup_pending_pairings(&self.signing_host, &self.services, owner, None).await.map_err(|reason| v01::GenericError { reason })?;
+        }
+        disconnected
     }
 
     /// Revoke one product's grants from the current local activation while
     /// preserving unrelated products.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
     pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
-        self.signing_host
+        self.accounts
             .clear_product_state(product_id)
+            .await
             .map_err(|error| v01::GenericError {
                 reason: error.to_string(),
             })
@@ -861,6 +901,7 @@ impl SigningHostRuntime {
     /// Activate a wallet-local session from host-held secret material (raw
     /// BIP-39 entropy).
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session"))]
+    #[cfg(any(test, feature = "test-host"))]
     pub async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), v01::GenericError> {
         self.signing_host
             .activate_local_session(secret)
@@ -873,6 +914,7 @@ impl SigningHostRuntime {
     /// Activate a wallet-local session from host-held secret material and
     /// attach known identity metadata.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session_with_identity"))]
+    #[cfg(any(test, feature = "test-host"))]
     pub async fn activate_local_session_with_identity(
         &self,
         secret: Vec<u8>,
@@ -883,6 +925,36 @@ impl SigningHostRuntime {
             .await
             .map_err(|err| v01::GenericError {
                 reason: err.to_string(),
+            })
+    }
+
+    /// Load protected wallet secrets before selecting the owner's repositories.
+    pub async fn prepare_wallet(
+        &self,
+        provider: &dyn crate::platform::WalletSecretProvider,
+        wallet_id: &str,
+        lite_username: Option<String>,
+    ) -> Result<PreparedWalletActivation, v01::GenericError> {
+        self.disconnect_session().await?;
+        self.signing_host
+            .prepare_wallet(provider, wallet_id, lite_username)
+            .await
+            .map_err(|error| v01::GenericError {
+                reason: error.to_string(),
+            })
+    }
+
+    /// Activate a prepared wallet after its owner database is installed.
+    pub async fn activate_wallet(
+        &self,
+        prepared: PreparedWalletActivation,
+    ) -> Result<(), v01::GenericError> {
+        cleanup_pending_pairings(&self.signing_host, &self.services, prepared.owner_public_key(), None).await.map_err(|reason| v01::GenericError { reason })?;
+        self.signing_host
+            .activate_wallet(prepared)
+            .await
+            .map_err(|error| v01::GenericError {
+                reason: error.to_string(),
             })
     }
 
@@ -944,6 +1016,13 @@ impl SigningHostRuntime {
             .map_err(|reason| v01::GenericError { reason })
     }
 
+    /// Allocate wallet and peer allowances, announce progress, and answer one pairing.
+    pub async fn establish_pairing_with_allowances(&self, deeplink: &str) -> Result<(), v01::GenericError> {
+        let activation = self.signing_host.current_session().ok_or_else(|| v01::GenericError { reason: "wallet is locked".to_string() })?;
+        let _pairing = self.pairing.lock().await;
+        establish_pairing_with_allowances(&self.signing_host, &self.services, &activation, deeplink).await.map_err(|reason| v01::GenericError { reason })
+    }
+
     /// Resume a previously paired host from its persisted public peer keys.
     ///
     /// Only [`ResponderExit::PeerDisconnected`] authorizes removing the durable
@@ -976,11 +1055,8 @@ impl SigningHostRuntime {
     /// even while that request is still being answered by another call, and a
     /// withdrawn request is answered `Ignored`.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
-    pub async fn answer_sso_request(
-        &self,
-        message: RemoteMessage,
-    ) -> SsoRequestOutcome {
-        let service = SigningHostSsoService::new(self.signing_host.clone());
+    pub async fn answer_sso_request(&self, message: RemoteMessage) -> SsoRequestOutcome {
+        let service = SsoAccountHolderService::new(self.signing_host.clone());
         match service.answer(message).await {
             Dispatch::Response(answer) => SsoRequestOutcome::Response {
                 message: answer.message.encode(),
@@ -995,6 +1071,29 @@ impl SigningHostRuntime {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl SigningHostRuntime {
+    /// Fence active work and remove all protected grants for this native account.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn reset_account_state(&self) -> Result<(), v01::GenericError> {
+        let owner = self
+            .services
+            .runtime_store()
+            .map(|store| store.owner())
+            .or_else(|| {
+                self.signing_host
+                    .current_session()
+                    .map(|session| session.public_key)
+            })
+            .ok_or_else(|| v01::GenericError {
+                reason: "no account selected for reset".to_string(),
+            })?;
+        self.accounts
+            .reset_native_owner(owner)
+            .await
+            .map_err(|error| v01::GenericError {
+                reason: error.to_string(),
+            })
+    }
+
     /// Record statement-store accounts the host must keep renewed across
     /// allowance periods.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.track_statement_renewal_targets"))]
@@ -1142,15 +1241,15 @@ fn ring_vrf_admin_error(
 ///
 /// Host UI should use this when it needs to inspect or update core-owned state
 /// without owning a product frame endpoint.
-pub struct HostAdmin {
-    authority: Arc<dyn ProductAuthority>,
-    product_runtime: Arc<ProductRuntimeHost>,
+pub struct HostAdmin<H: AccountHolder + 'static = SsoAccountHolderClient> {
+    authority: Arc<HostAccounts<H>>,
+    product_runtime: Arc<ProductRuntimeHost<H>>,
 }
 
-impl HostAdmin {
+impl<H: AccountHolder + 'static> HostAdmin<H> {
     /// Access the execution's product-facing capabilities and permission grants.
     #[cfg(any(test, not(target_arch = "wasm32")))]
-    pub fn product_runtime(&self) -> &Arc<ProductRuntimeHost> {
+    pub fn product_runtime(&self) -> &Arc<ProductRuntimeHost<H>> {
         &self.product_runtime
     }
 
@@ -1159,7 +1258,7 @@ impl HostAdmin {
     #[instrument(skip_all, fields(runtime.method = "host_admin.new"))]
     pub fn new(
         services: Arc<RuntimeServices>,
-        authority: Arc<dyn ProductAuthority>,
+        authority: Arc<HostAccounts<H>>,
         product: ProductContext,
         adapters: ConnectionAdapters,
     ) -> Self {
@@ -1177,8 +1276,13 @@ impl HostAdmin {
 
     /// Core-owned logout/disconnect.
     #[instrument(skip_all, fields(runtime.method = "host_admin.disconnect_session"))]
-    pub async fn disconnect_session(&self) {
-        self.authority.disconnect().await;
+    pub async fn disconnect_session(&self) -> Result<(), v01::GenericError> {
+        self.authority
+            .disconnect()
+            .await
+            .map_err(|error| v01::GenericError {
+                reason: error.to_string(),
+            })
     }
 
     /// Read a stored permission authorization status without prompting.
@@ -1225,10 +1329,9 @@ impl HostAdmin {
 }
 
 #[crate::platform::async_trait]
-impl CoreAdmin for HostAdmin {
+impl<H: AccountHolder + 'static> CoreAdmin for HostAdmin<H> {
     async fn disconnect_session(&self) -> Result<(), v01::GenericError> {
-        HostAdmin::disconnect_session(self).await;
-        Ok(())
+        HostAdmin::disconnect_session(self).await
     }
 
     async fn get_permission_authorization_status(
@@ -1299,8 +1402,8 @@ impl CoreAdmin for HostAdmin {
 /// cancelling. Only the SSO response wait observes the cancellation token; the
 /// statement-store setup before it does not, so a call parked there ignores a
 /// cancel and would outlive any deadline that waited for it to finish.
-async fn product_subtree_public_key(
-    authority: &(impl ProductAuthority + ?Sized),
+async fn product_subtree_public_key<H: AccountHolder + 'static>(
+    authority: &HostAccounts<H>,
     product_id: &str,
     timeout_ms: Option<u32>,
 ) -> Result<Option<[u8; 32]>, v01::GenericError> {
@@ -1340,12 +1443,12 @@ async fn product_subtree_public_key(
 
 /// Target-neutral host runtime wrapper.
 ///
-/// `ProductRuntime` is product-scoped. It owns the dispatcher core for one product
+/// `ProductRuntime<H>` is product-scoped. It owns the dispatcher core for one product
 /// connection and handles byte-frame ingress, response/subscription egress, and
 /// in-flight dispatch cancellation on dispose.
-pub struct ProductRuntime {
+pub struct ProductRuntime<H: AccountHolder + 'static = SsoAccountHolderClient> {
     core: TrUApiCore,
-    admin: HostAdmin,
+    admin: HostAdmin<H>,
     transport: Arc<SinkTransport>,
     host_subscriptions: Arc<HostInitiatedSubscriptionManager>,
     disposed: Arc<AtomicBool>,
@@ -1355,16 +1458,26 @@ pub struct ProductRuntime {
 
 /// Host-facing control handle for pushing native events into one concrete
 /// product connection.
-#[derive(Clone)]
-pub struct ProductRuntimeControl {
-    runtime: Arc<ProductRuntimeHost>,
+pub struct ProductRuntimeControl<H: AccountHolder + 'static = SsoAccountHolderClient> {
+    runtime: Arc<ProductRuntimeHost<H>>,
     transport: Arc<SinkTransport>,
     host_subscriptions: Arc<HostInitiatedSubscriptionManager>,
     disposed: Arc<AtomicBool>,
 }
 
-impl ProductRuntimeControl {
-    fn runtime(&self) -> Result<&ProductRuntimeHost, ProductRuntimeError> {
+impl<H: AccountHolder + 'static> Clone for ProductRuntimeControl<H> {
+    fn clone(&self) -> Self {
+        Self {
+            runtime: self.runtime.clone(),
+            transport: self.transport.clone(),
+            host_subscriptions: self.host_subscriptions.clone(),
+            disposed: self.disposed.clone(),
+        }
+    }
+}
+
+impl<H: AccountHolder + 'static> ProductRuntimeControl<H> {
+    fn runtime(&self) -> Result<&ProductRuntimeHost<H>, ProductRuntimeError> {
         if self.disposed.load(Ordering::Acquire) {
             return Err(ProductRuntimeError::Closed);
         }
@@ -1440,25 +1553,25 @@ impl ProductRuntimeControl {
 }
 
 /// One reference the core holds on a product's worker, released on drop.
-struct WorkerReference {
-    runtime: Arc<ProductRuntimeHost>,
+struct WorkerReference<H: AccountHolder + 'static = SsoAccountHolderClient> {
+    runtime: Arc<ProductRuntimeHost<H>>,
 }
 
-impl WorkerReference {
+impl<H: AccountHolder + 'static> WorkerReference<H> {
     /// Take a reference on the worker of the product `runtime` serves.
-    fn acquire(runtime: Arc<ProductRuntimeHost>) -> Self {
+    fn acquire(runtime: Arc<ProductRuntimeHost<H>>) -> Self {
         runtime.acquire_worker_reference();
         Self { runtime }
     }
 }
 
-impl Drop for WorkerReference {
+impl<H: AccountHolder + 'static> Drop for WorkerReference<H> {
     fn drop(&mut self) {
         self.runtime.release_worker_reference();
     }
 }
 
-impl ProductRuntime {
+impl<H: AccountHolder + 'static> ProductRuntime<H> {
     /// Tell the core the host's contacts changed, so no handle resolves from
     /// what it cached before. For an embedder that holds only this runtime;
     /// one holding the host runtime calls it there.
@@ -1470,83 +1583,11 @@ impl ProductRuntime {
             .clear();
     }
 
-    /// Build a product-facing host core around a platform implementation and
-    /// outgoing frame sink.
-    #[instrument(skip_all, fields(runtime.method = "product_runtime.from_platform_with_config"))]
-    pub fn from_platform_with_config<P>(
-        platform: Arc<P>,
-        host_config: PairingHostConfig,
-        product: ProductContext,
-        spawner: Spawner,
-        sink: Arc<dyn FrameSink>,
-    ) -> Self
-    where
-        P: Platform + 'static,
-    {
-        Self::from_platform_with_platforms(
-            platform,
-            host_config,
-            product,
-            spawner,
-            sink,
-            None,
-            None,
-        )
-    }
-
-    /// Same as [`Self::from_platform_with_config`], with the host's chat adapter
-    /// installed.
-    pub fn from_platform_with_chat_platform<P>(
-        platform: Arc<P>,
-        host_config: PairingHostConfig,
-        product: ProductContext,
-        spawner: Spawner,
-        sink: Arc<dyn FrameSink>,
-        chat_platform: Option<Arc<dyn ChatPlatform>>,
-    ) -> Self
-    where
-        P: Platform + 'static,
-    {
-        Self::from_platform_with_platforms(
-            platform,
-            host_config,
-            product,
-            spawner,
-            sink,
-            chat_platform,
-            None,
-        )
-    }
-
-    /// Same as [`Self::from_platform_with_config`], with both optional adapters
-    /// installed.
-    pub fn from_platform_with_platforms<P>(
-        platform: Arc<P>,
-        host_config: PairingHostConfig,
-        product: ProductContext,
-        spawner: Spawner,
-        sink: Arc<dyn FrameSink>,
-        chat_platform: Option<Arc<dyn ChatPlatform>>,
-        contacts_platform: Option<Arc<dyn ContactsPlatform>>,
-    ) -> Self
-    where
-        P: Platform + 'static,
-    {
-        let pairing = PairingHostRuntime::with_platforms(
-            platform,
-            host_config,
-            spawner,
-            chat_platform,
-            contacts_platform,
-        );
-        pairing.product_runtime(product, sink)
-    }
-
     /// Build a product-facing runtime from shared services and an authority.
     #[instrument(skip_all, fields(runtime.method = "product_runtime.new"))]
     pub fn new(
         services: Arc<RuntimeServices>,
-        authority: Arc<dyn ProductAuthority>,
+        authority: Arc<HostAccounts<H>>,
         product: ProductContext,
         adapters: ConnectionAdapters,
         sink: Arc<dyn FrameSink>,
@@ -1643,7 +1684,7 @@ impl ProductRuntime {
     }
 
     /// Return a cloneable native control handle bound to this connection.
-    pub fn control(&self) -> ProductRuntimeControl {
+    pub fn control(&self) -> ProductRuntimeControl<H> {
         ProductRuntimeControl {
             runtime: self.admin.product_runtime.clone(),
             transport: self.transport.clone(),
@@ -1656,8 +1697,8 @@ impl ProductRuntime {
     /// the session has channel material, then clears in-memory and persisted
     /// session state.
     #[instrument(skip_all, fields(runtime.method = "product_runtime.disconnect_session"))]
-    pub async fn disconnect_session(&self) {
-        self.admin.disconnect_session().await;
+    pub async fn disconnect_session(&self) -> Result<(), v01::GenericError> {
+        self.admin.disconnect_session().await
     }
 
     /// Read a stored permission authorization status without prompting.
@@ -1848,6 +1889,80 @@ impl Transport for SinkTransport {
     }
 }
 
+impl ProductRuntime<SsoAccountHolderClient> {
+    /// Build a product-facing host core around a platform implementation and
+    /// outgoing frame sink.
+    #[instrument(skip_all, fields(runtime.method = "product_runtime.from_platform_with_config"))]
+    pub fn from_platform_with_config<P>(
+        platform: Arc<P>,
+        host_config: PairingHostConfig,
+        product: ProductContext,
+        spawner: Spawner,
+        sink: Arc<dyn FrameSink>,
+    ) -> Self
+    where
+        P: Platform + 'static,
+    {
+        Self::from_platform_with_platforms(
+            platform,
+            host_config,
+            product,
+            spawner,
+            sink,
+            None,
+            None,
+        )
+    }
+
+    /// Same as [`Self::from_platform_with_config`], with the host's chat adapter
+    /// installed.
+    pub fn from_platform_with_chat_platform<P>(
+        platform: Arc<P>,
+        host_config: PairingHostConfig,
+        product: ProductContext,
+        spawner: Spawner,
+        sink: Arc<dyn FrameSink>,
+        chat_platform: Option<Arc<dyn ChatPlatform>>,
+    ) -> Self
+    where
+        P: Platform + 'static,
+    {
+        Self::from_platform_with_platforms(
+            platform,
+            host_config,
+            product,
+            spawner,
+            sink,
+            chat_platform,
+            None,
+        )
+    }
+
+    /// Same as [`Self::from_platform_with_config`], with both optional adapters
+    /// installed.
+    pub fn from_platform_with_platforms<P>(
+        platform: Arc<P>,
+        host_config: PairingHostConfig,
+        product: ProductContext,
+        spawner: Spawner,
+        sink: Arc<dyn FrameSink>,
+        chat_platform: Option<Arc<dyn ChatPlatform>>,
+        contacts_platform: Option<Arc<dyn ContactsPlatform>>,
+    ) -> Self
+    where
+        P: Platform + 'static,
+    {
+        let pairing = PairingHostRuntime::with_platforms(
+            platform,
+            host_config,
+            spawner,
+            chat_platform,
+            contacts_platform,
+        );
+        pairing.product_runtime(product, sink)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1880,6 +1995,25 @@ mod tests {
                 .expect("recording sink mutex poisoned")
                 .push(frame);
         }
+    }
+
+    #[test]
+    fn queued_pairing_cannot_use_a_reactivated_wallet() {
+        let platform = Arc::new(StubPlatform::default());
+        let runtime = activated_signing_runtime(platform.clone());
+        futures::executor::block_on(async {
+            let queued = runtime.pairing.lock().await;
+            let pairing = runtime.establish_pairing_with_allowances("polkadotapp://pair?handshake=unused");
+            futures::pin_mut!(pairing);
+            assert!(pairing.as_mut().now_or_never().is_none());
+            runtime.disconnect_session().await.unwrap();
+            runtime.activate_local_session(vec![0xab; 32]).await.unwrap();
+            drop(queued);
+            let failure = pairing.await.unwrap_err();
+            assert_eq!(failure.reason, "Disconnected");
+            assert!(runtime.statement_renewal_targets().await.unwrap().is_empty());
+            assert!(platform.sent_rpc.lock().unwrap().is_empty());
+        });
     }
 
     fn activated_signing_runtime(platform: Arc<StubPlatform>) -> SigningHostRuntime {
@@ -2201,7 +2335,7 @@ mod tests {
         let session = crate::test_support::sso_session_info();
         install_session_after_boot(&runtime, &platform, session.clone());
         runtime
-            .pairing_host
+            .accounts
             .cache_product_subtree_for_test(&session, "myapp.dot", [9; 32]);
 
         let key =
@@ -3500,9 +3634,9 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn the_core_database_is_installed_once_and_reports_when_missing() {
+        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
         use crate::store::{Db, DbConfig, DbError, DbLocation};
         use futures::executor::block_on;
-        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
         let config = SigningHostConfig::new(
             HostInfo {
@@ -3535,7 +3669,10 @@ mod tests {
         assert!(runtime.set_core_db(installed));
         assert!(!runtime.set_core_db(other));
 
-        let db = runtime.services.core_db().expect("installed database is served");
+        let db = runtime
+            .services
+            .core_db()
+            .expect("installed database is served");
         let answer: i64 =
             block_on(db.write(|tx| Ok(tx.query_row("SELECT 42", [], |row| row.get(0))?)))
                 .expect("installed database serves writes");
@@ -3864,7 +4001,7 @@ mod tests {
         let host = ProductRuntimeHost::from_services(
             runtime.services.clone(),
             ConnectionAdapters::from_services(&runtime.services),
-            runtime.signing_host.clone(),
+            runtime.accounts.clone(),
             ProductContext::new("unknown.dot".to_string()).expect("valid product id"),
         );
         // Nothing is cached for `wallet.dot`, so resolution reaches dotNS,

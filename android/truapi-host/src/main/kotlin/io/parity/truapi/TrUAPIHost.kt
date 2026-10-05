@@ -10,8 +10,8 @@
 //   * `HostBridge` - the Kotlin-friendly callback interface the embedding app
 //     implements. It splits device and remote permissions, mirroring the
 //     `Permissions` platform trait in the Rust core.
-//   * `HostStorage` / `HostCoreStorage` - the product-scoped and core-owned
-//     key-value backends the host persists.
+//   * `HostSecretStorage` and `WalletSecretProvider` - protected host bytes
+//     and independent wallet-only root access.
 //   * `TrUAPIHostRuntime` / `TrUAPIProductExecution` - process-owned host state
 //     and independently scoped product connections.
 //   * `LocalhostBridgeBootstrap` - private endpoint configuration consumed by
@@ -27,7 +27,6 @@ package io.parity.truapi
 
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -73,13 +72,11 @@ import uniffi.truapi.ResponderExit
 import uniffi.truapi.ProductRuntimeException
 import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostRejection
-import uniffi.truapi.HostLocalStorageReadException
 import uniffi.truapi.localhostBridgeBootstrapScript
 import uniffi.truapi.NativeRuntimeConfigException
 import uniffi.truapi.StatementRenewalTarget
 import uniffi.truapi.TrackedStatementRenewalTarget
 import uniffi.truapi.StatementRenewalReport
-import uniffi.truapi.WorkerTransition
 import uniffi.truapi.WsBridgeEndpoint
 import uniffi.truapi.WsBridgeStartException
 import uniffi.truapi.HostRuntimeConfig
@@ -94,41 +91,41 @@ object TrUAPIHost {
     const val VERSION = "0.1.0"
 }
 
-/**
- * Product-scoped key-value storage the host provides to the Rust core. Throws
- * [HostLocalStorageReadException] to signal quota exhaustion or unknown failure; the
- * variants are the v0.1 `HostLocalStorageReadError` wire shape.
- */
-interface HostStorage {
-    @Throws(HostLocalStorageReadException::class)
-    suspend fun read(key: String): ByteArray?
-
-    @Throws(HostLocalStorageReadException::class)
-    suspend fun write(key: String, value: ByteArray)
-
-    @Throws(HostLocalStorageReadException::class)
-    suspend fun clear(key: String)
+/** Persistent protected host secrets, with names and scope defined by Rust. */
+interface HostSecretStorage {
+    suspend fun read(key: uniffi.truapi.SecretCoreStorageKey): ByteArray?
+    suspend fun write(key: uniffi.truapi.SecretCoreStorageKey, value: ByteArray)
+    suspend fun clear(key: uniffi.truapi.SecretCoreStorageKey)
 }
 
-/**
- * Core-owned key-value storage the host backs with its own persistence. The
- * core writes auth session, pairing identity, and persisted permission
- * decisions here; [key] is a SCALE-encoded `CoreStorageKey`. Throws
- * [HostRejection] on failure.
- */
-interface HostCoreStorage {
-    @Throws(HostRejection::class)
-    suspend fun read(key: ByteArray): ByteArray?
-
-    @Throws(HostRejection::class)
-    suspend fun write(key: ByteArray, value: ByteArray)
-
-    @Throws(HostRejection::class)
-    suspend fun clear(key: ByteArray)
+/** Access to an already unlocked wallet, separate from host storage. */
+interface WalletSecretProvider {
+    suspend fun readWalletRootEntropy(walletId: String): ByteArray
 }
 
-/** Ids handed out by the default [HostBridge.beginOperation], distinct for the life of the process. */
-private val defaultOperationIds = AtomicInteger(0)
+private class WalletSecretAdapter(private val provider: WalletSecretProvider) : uniffi.truapi.NativeWalletSecretProvider {
+    override suspend fun readWalletRootEntropy(walletId: String): ByteArray =
+        withHostRejection { provider.readWalletRootEntropy(walletId) }
+}
+
+/** OS engines and file transport for core-owned product workers. */
+interface WorkerEngineHost {
+    suspend fun fetchWorkerBundle(productId: String, contentHash: ByteArray?): uniffi.truapi.WorkerBundle
+    fun startWorker(productId: String, execution: TrUAPIProductExecution, bundle: uniffi.truapi.WorkerBundle)
+    suspend fun stopWorker(productId: String)
+    fun chatBridge(productId: String): ChatHostBridge? = null
+    fun pocketBridge(productId: String): PocketHostBridge? = null
+}
+
+private class WorkerEngineAdapter(private val host: WorkerEngineHost) : uniffi.truapi.NativeWorkerEngineHost {
+    override suspend fun fetchWorkerBundle(productId: String, contentHash: ByteArray?): uniffi.truapi.WorkerBundle =
+        withHostRejection { host.fetchWorkerBundle(productId, contentHash) }
+    override fun startWorker(productId: String, execution: NativeProductExecution, bundle: uniffi.truapi.WorkerBundle) =
+        withHostRejection { host.startWorker(productId, TrUAPIProductExecution(execution, null), bundle) }
+    override suspend fun stopWorker(productId: String) = withHostRejection { host.stopWorker(productId) }
+    override fun chatCallbacks(productId: String): NativeChatCallbacks? = host.chatBridge(productId)?.let(::ChatCallbackAdapter)
+    override fun pocketCallbacks(productId: String): NativePocketCallbacks? = host.pocketBridge(productId)?.let(::PocketCallbackAdapter)
+}
 
 /**
  * Host-side callback bundle that the Rust core invokes for capabilities the
@@ -163,11 +160,19 @@ interface HostBridge {
      * id. Run any UI work on the main thread.
      */
     @Throws(HostRejection::class)
-    suspend fun pushNotification(request: HostPushNotificationRequest): UInt = 0u
+    suspend fun scheduleNotification(productId: String, id: UInt, request: HostPushNotificationRequest) {
+        throw HostRejection.Rejected("notification scheduling unavailable")
+    }
 
     /** Cancel a previously scheduled notification id. */
     @Throws(HostRejection::class)
-    fun cancelNotification(id: UInt) {}
+    suspend fun isScheduledNotificationPending(productId: String, id: UInt): Boolean {
+        throw HostRejection.Rejected("notification query unavailable")
+    }
+
+    suspend fun cancelScheduledNotification(productId: String, id: UInt) {
+        throw HostRejection.Rejected("notification cancellation unavailable")
+    }
 
     /**
      * Prompt for a device-level permission [product] requested on the main
@@ -286,63 +291,19 @@ interface HostBridge {
     @Throws(HostRejection::class)
     fun supportedChains(): HostChainSet = HostChainSet(network = "", chains = emptyList())
 
-    /**
-     * Observe demand on a product's worker crossing zero. `Start` means run
-     * the worker now, `Stop` that nothing wants it any more. Every transition
-     * arrives here in ledger order, the ones the app asks for by taking a
-     * reference of its own included.
-     *
-     * Demand is runtime-wide, so the core invokes this only on the bridge
-     * [TrUAPIHostRuntime] was built with, never on the per-execution bridge
-     * passed to [TrUAPIHostRuntime.openProductExecution]. Can arrive on any
-     * thread, including synchronously on the calling thread during
-     * `acquireWorker`/`releaseWorker`, often the main thread and
-     * re-entrantly: marshal the work off rather than blocking on another
-     * thread from inside it.
-     */
-    fun workerDemandChanged(productId: String, transition: WorkerTransition) {}
 
-    /**
-     * Begin a pending operation. [label] is a log/UI hint, empty when the
-     * product gave none. Leave unimplemented to opt out of worker keep-alive;
-     * override to run background work past the product's surface.
-     *
-     * The default id is still distinct per call, because an operation id names
-     * one operation: a host overriding only [endOperation], and the core's own
-     * demand accounting, both end the wrong ones when every operation shares an
-     * id.
-     */
-    @Throws(HostRejection::class)
-    suspend fun beginOperation(productId: String, label: String): UInt =
-        defaultOperationIds.incrementAndGet().toUInt()
-
-    /** End a pending operation. Idempotent, so a retry after an ambiguous failure is safe. */
-    @Throws(HostRejection::class)
-    suspend fun endOperation(productId: String, id: UInt) {}
-
-    /**
-     * A device finished pairing with this signing host.
-     *
-     * The core has no chat of its own, so announcing the new device to the
-     * user's existing contacts is the host's to do. At least once per
-     * pairing, and the host keeps its own record of which devices it has
-     * already seen: a resumed pairing reports nothing and the core has no
-     * list to replay. Arrives on the thread answering the handshake, while
-     * the pairing call is still running: marshal the work off rather than
-     * announcing it inline.
-     */
+    /** A completed pairing is available from the core roster. */
     fun devicePaired(device: PairedSsoPeer) {}
+    fun runtimeRecordsChanged() {}
 
-    /** Product-scoped key-value storage for the Rust core. */
-    val storage: HostStorage
+    /** Protected host secrets, independent of wallet root access. */
+    val secretStorage: HostSecretStorage
 
-    /** Core-owned key-value storage for auth session / pairing identity / permission decisions. */
-    val coreStorage: HostCoreStorage
 }
 
 /**
  * Native Chat storage and UI surface. Implement and pass to
- * [TrUAPIHostRuntime.openProductExecution] when the host supports the Chat
+ * [WorkerEngineHost.chatBridge] when the host supports the Chat
  * modality; hosts without it pass nothing.
  *
  * Threading: these run on the process-wide dispatch pool shared by every
@@ -389,7 +350,7 @@ interface ChatHostBridge {
 
 /**
  * Native Pocket collection surface. Implement and pass to
- * [TrUAPIHostRuntime.openProductExecution] when the host has a Pocket surface;
+ * [WorkerEngineHost.pocketBridge] when the host has a Pocket surface;
  * hosts without one pass nothing.
  *
  * Threading: [listCards] runs inline on the core runtime shared by every
@@ -427,23 +388,25 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     }
 
     // Infallible across the FFI for the same reason `onCoreLog` is.
-    override fun workerDemandChanged(productId: String, transition: WorkerTransition) {
-        runCatching { bridge.workerDemandChanged(productId, transition) }
-    }
 
     // Infallible across the FFI for the same reason `onCoreLog` is.
     override fun devicePaired(device: PairedSsoPeer) {
         runCatching { bridge.devicePaired(device) }
     }
 
+    override fun runtimeRecordsChanged() { runCatching { bridge.runtimeRecordsChanged() } }
+
     override suspend fun navigateTo(url: String) =
         withNavigateRejection { bridge.navigateTo(url) }
 
-    override suspend fun pushNotification(request: HostPushNotificationRequest): UInt =
-        withHostRejection { bridge.pushNotification(request) }
+    override suspend fun scheduleNotification(productId: String, id: UInt, request: HostPushNotificationRequest) =
+        withHostRejection { bridge.scheduleNotification(productId, id, request) }
 
-    override fun cancelNotification(id: UInt) =
-        withHostRejection { bridge.cancelNotification(id) }
+    override suspend fun isScheduledNotificationPending(productId: String, id: UInt): Boolean =
+        withHostRejection { bridge.isScheduledNotificationPending(productId, id) }
+
+    override suspend fun cancelScheduledNotification(productId: String, id: UInt) =
+        withHostRejection { bridge.cancelScheduledNotification(productId, id) }
 
     override suspend fun devicePermission(
         product: ProductExecutionConfig,
@@ -475,14 +438,14 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
         }
     }
 
-    override suspend fun coreStorageRead(key: ByteArray): ByteArray? =
-        withHostRejection { bridge.coreStorage.read(key) }
+    override suspend fun readSecretCoreStorage(key: uniffi.truapi.SecretCoreStorageKey): ByteArray? =
+        withHostRejection { bridge.secretStorage.read(key) }
 
-    override suspend fun coreStorageWrite(key: ByteArray, value: ByteArray) =
-        withHostRejection { bridge.coreStorage.write(key, value) }
+    override suspend fun writeSecretCoreStorage(key: uniffi.truapi.SecretCoreStorageKey, value: ByteArray) =
+        withHostRejection { bridge.secretStorage.write(key, value) }
 
-    override suspend fun coreStorageClear(key: ByteArray) =
-        withHostRejection { bridge.coreStorage.clear(key) }
+    override suspend fun clearSecretCoreStorage(key: uniffi.truapi.SecretCoreStorageKey) =
+        withHostRejection { bridge.secretStorage.clear(key) }
 
     override fun chainConnect(genesisHash: ByteArray): UInt? =
         withHostRejection { bridge.chainConnect(genesisHash) }
@@ -514,20 +477,6 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override fun supportedChains(): HostChainSet =
         withHostRejection { bridge.supportedChains() }
 
-    override suspend fun localStorageRead(key: String): ByteArray? =
-        withStorageException { bridge.storage.read(key) }
-
-    override suspend fun localStorageWrite(key: String, value: ByteArray) =
-        withStorageException { bridge.storage.write(key, value) }
-
-    override suspend fun localStorageClear(key: String) =
-        withStorageException { bridge.storage.clear(key) }
-
-    override suspend fun beginOperation(productId: String, label: String): UInt =
-        withHostRejection { bridge.beginOperation(productId, label) }
-
-    override suspend fun endOperation(productId: String, id: UInt) =
-        withHostRejection { bridge.endOperation(productId, id) }
 }
 
 // A host that throws an exception type its callback does not declare crosses
@@ -562,18 +511,6 @@ private inline fun <T> withNavigateRejection(operation: () -> T): T =
         throw cancellation
     } catch (error: Throwable) {
         throw HostNavigateToException.Unknown(hostRejectionReason(error))
-            .apply { initCause(error) }
-    }
-
-private inline fun <T> withStorageException(operation: () -> T): T =
-    try {
-        operation()
-    } catch (storage: HostLocalStorageReadException) {
-        throw storage
-    } catch (cancellation: CancellationException) {
-        throw cancellation
-    } catch (error: Throwable) {
-        throw HostLocalStorageReadException.Unknown(hostRejectionReason(error))
             .apply { initCause(error) }
     }
 
@@ -673,13 +610,14 @@ object LocalhostBridgeBootstrap {
  */
 class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor(
     bridge: HostBridge,
+    walletSecrets: WalletSecretProvider,
     runtimeConfig: HostRuntimeConfig,
 ) : AutoCloseable {
     // Co-owns the adapter alongside the generated FfiConverter handle map,
     // which is what actually keeps the callback object alive for the runtime.
     private val callbackRetainer: HostCallbacks = HostCallbackAdapter(bridge)
     private val inner: NativeTrUApiHostRuntime =
-        NativeTrUApiHostRuntime.withRuntimeConfig(callbackRetainer, runtimeConfig)
+        NativeTrUApiHostRuntime.withRuntimeConfig(callbackRetainer, WalletSecretAdapter(walletSecrets), runtimeConfig)
 
     // Co-owns the contacts adapter for as long as the runtime holds it.
     private var contactsRetainer: NativeContactsCallbacks? = null
@@ -706,66 +644,25 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         inner.notifyContactsChanged()
     }
 
-    /**
-     * Open one executable connection with a host-assigned immutable context.
-     * Pass [chat] to install the host's Chat adapter; hosts without the Chat
-     * modality omit it. Pass [pocket] to install the card collection, and omit
-     * that where the host has no Pocket surface.
-     */
+    /** Open an App or Widget execution. Workers are supplied to the engine factory. */
     @Throws(NativeRuntimeConfigException::class)
     fun openProductExecution(
         bridge: HostBridge,
         configuration: ProductExecutionConfig,
-        chat: ChatHostBridge? = null,
-        pocket: PocketHostBridge? = null,
     ): TrUAPIProductExecution {
         val adapter = HostCallbackAdapter(bridge)
-        val chatAdapter = chat?.let { ChatCallbackAdapter(it) }
-        val pocketAdapter = pocket?.let { PocketCallbackAdapter(it) }
-        val execution =
-            inner.openProductExecution(
-                adapter,
-                chatAdapter,
-                pocketAdapter,
-                configuration,
-            )
-        return TrUAPIProductExecution(execution, adapter, chatAdapter, pocketAdapter)
+        return TrUAPIProductExecution(inner.openProductExecution(adapter, configuration), adapter)
     }
 
-    /**
-     * Take one reference on the product's worker for a modality holder that is
-     * on screen or in flight. The first one reports a start transition to
-     * [HostBridge.workerDemandChanged], which is where the host starts the
-     * worker. Pair every call with one [releaseWorker].
-     */
-    fun acquireWorker(productId: String) {
-        inner.acquireWorker(productId)
-    }
-
-    /**
-     * Release one reference. The last one reports a stop transition, after
-     * which the host may stop the worker. Releasing with none held is a no-op.
-     */
-    fun releaseWorker(productId: String) {
-        inner.releaseWorker(productId)
-    }
 
     /**
      * Tell the pairing host behind [deeplink] that allowance allocation is
      * under way, so it leaves its QR screen while the allocation runs.
      *
-     * Answering needs this host's own statement-store allowance, so register
-     * the `WalletSso` renewal target first. The peer's own device statement
-     * account is the other target, read with `parsePairingDeeplink` and
-     * tracked before [establishPairing] runs; the allocation this notice
-     * covers is what that call waits on. The returned handle is owed a
-     * [notifyPairingFailed] if pairing then fails: the peer has dropped its QR
-     * and waits without a deadline of its own.
-     *
-     * The handle holds the responder statement secret the notice was signed
-     * with, and nothing consumes it, so `destroy()` it once the pairing
-     * settles — on the succeeding path as well as the failing one. Wrapping
-     * the whole pairing in `use { }` covers both.
+     * Low-level notice for custom pairing flows. The wallet's own statement
+     * allowance must already exist, and the returned handle requires a failure
+     * notice if pairing stops. [establishPairing] owns this sequencing for ordinary
+     * pairing; do not send another notice first. Close the returned handle after use.
      */
     suspend fun notifyPairingAllowanceAllocation(deeplink: String): NativeAnnouncedPairing =
         inner.notifyPairingAllowanceAllocation(deeplink)
@@ -782,20 +679,11 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     }
 
     /**
-     * Answer a pairing host's handshake deeplink, without serving the session
-     * it opens.
-     *
-     * The answer is signed by this host's own SSO statement identity, so the
-     * `WalletSso` renewal target has to be allocated for it to reach the
-     * Statement Store at all. The peer's device statement account is the other
-     * tracked target, since this host allocates the allowance the peer authors
-     * its own session statements under; read it from the deeplink with
-     * `parsePairingDeeplink`. A pairing that fails after that leaves the peer's
-     * target to untrack again, unless the device was already paired and the
-     * target still carries a live pairing.
-     *
-     * A device that pairs here reaches [HostBridge.devicePaired]. Serving the
-     * session is [resumePairing], called with the peer this host persisted.
+     * Provision wallet and peer statement allowances, verify renewal, and answer
+     * the handshake. Rust sends allocation/failure notices and cleans up newly
+     * tracked peer targets if pairing fails. Successful pairing persists the
+     * core roster and reports [HostBridge.devicePaired]. Use [resumePairing]
+     * to serve the session after the handshake completes.
      */
     suspend fun establishPairing(deeplink: String) {
         inner.establishPairing(deeplink)
@@ -825,7 +713,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     }
 
     /** Core-owned logout for the process-wide authentication session. */
-    fun disconnect() {
+    suspend fun disconnect() {
         inner.disconnect()
     }
 
@@ -835,9 +723,15 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
 
     /** Activate or replace the process-wide local signing session. */
     @Throws(HostRejection::class)
-    fun activateLocalSession(secret: ByteArray, liteUsername: String? = null) {
-        inner.activateLocalSession(secret, liteUsername)
+    suspend fun activateWallet(walletId: String, liteUsername: String? = null) {
+        inner.activateWallet(walletId, liteUsername)
     }
+
+    /** Reject wallet work and clear active private material. */
+    suspend fun lockWallet() = inner.lockWallet()
+
+    /** Stop the bound owner before opening a different wallet runtime. */
+    suspend fun shutdown() = inner.shutdown()
 
     /** Push a JSON-RPC response from a native chain connection into the runtime. */
     fun notifyChainResponse(connectionId: UInt, json: String) {
@@ -851,7 +745,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
 
     /**
      * Record the accounts renewal should keep allowed on the Statement Store.
-     * Needs an active session, so call it after [activateLocalSession] or after
+     * Needs an active session, so call it after [activateWallet] or after
      * pairing, not at construction.
      *
      * Recipe-shaped targets survive a change of root entropy; a raw
@@ -913,6 +807,33 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      */
     fun nextStatementRenewalDelay(): java.time.Duration = inner.nextStatementRenewalDelay()
 
+    /** Install engine callbacks before restoring durable worker intents. */
+    fun setWorkerEngineHost(host: WorkerEngineHost): Boolean = inner.setWorkerEngineHost(WorkerEngineAdapter(host))
+    suspend fun notifyWorkerIntent(productId: String, action: uniffi.truapi.WorkerIntentAction, modality: uniffi.truapi.WorkerModality) =
+        inner.notifyWorkerIntent(productId, action, modality)
+    suspend fun updateWorkers() = inner.updateWorkers()
+    suspend fun suspendWorkers() = inner.suspendWorkers()
+    fun notifyWorkerFailed(execution: TrUAPIProductExecution, reason: String) = inner.notifyWorkerFailed(execution.inner, reason)
+
+    /** Rust-owned runtime catalog and lifecycle records. */
+    suspend fun workerReasons(productId: String) = inner.workerReasons(productId)
+    suspend fun workerProducts() = inner.workers()
+    suspend fun permissions() = inner.permissions()
+    suspend fun permissionAuthorizationStatus(productId: String, request: uniffi.truapi.PermissionAuthorizationRequest) = inner.permissionAuthorizationStatus(productId, request)
+    suspend fun setPermissionAuthorizationStatus(productId: String, request: uniffi.truapi.PermissionAuthorizationRequest, status: uniffi.truapi.PermissionAuthorizationStatus) = inner.setPermissionAuthorizationStatus(productId, request, status)
+
+    suspend fun products(): List<uniffi.truapi.ProductRecord> = inner.products()
+    suspend fun saveProduct(product: uniffi.truapi.ProductRecord) = inner.saveProduct(product)
+    suspend fun removeProduct(productId: String) = inner.removeProduct(productId)
+    suspend fun pairedHosts(): List<uniffi.truapi.PairedHostRecord> = inner.pairedHosts()
+    suspend fun removePairedHost(peerStatement: ByteArray, peerEncryption: ByteArray) =
+        inner.removePairedHost(peerStatement, peerEncryption)
+    suspend fun allowanceRecords(): List<uniffi.truapi.AllowanceRecord> = inner.allowanceRecords()
+    suspend fun statementSlots(): List<uniffi.truapi.StatementSlotRecord> = inner.statementSlots()
+    suspend fun scheduledNotifications(): List<uniffi.truapi.ScheduledNotificationRecord> = inner.scheduledNotifications()
+    suspend fun reconcileNotifications() = inner.reconcileNotifications()
+    suspend fun resetAccount() = inner.resetAccount()
+
     override fun close() {
         inner.close()
     }
@@ -925,14 +846,12 @@ class RendererStreamException(
 ) : Exception(reason)
 
 /**
- * One SPA or Chat executable connected to a shared [TrUAPIHostRuntime]. Closing
+ * One App, Widget or Worker execution connected to a shared [TrUAPIHostRuntime]. Closing
  * it shuts the connection down permanently; the runtime stays usable.
  */
 class TrUAPIProductExecution internal constructor(
-    private val inner: NativeProductExecution,
-    private val callbackRetainer: HostCallbacks,
-    private val chatRetainer: NativeChatCallbacks?,
-    private val pocketRetainer: NativePocketCallbacks?,
+    internal val inner: NativeProductExecution,
+    private val callbackRetainer: HostCallbacks?,
 ) : AutoCloseable {
     private val shutDown = AtomicBoolean(false)
 
@@ -1071,9 +990,6 @@ class TrUAPIProductExecution internal constructor(
      * TrUAPI already reaches its subscribers, so reporting one here delivers it
      * twice.
      */
-    fun notifyStorageChanged(key: String, value: ByteArray?) {
-        inner.notifyStorageChanged(key, value)
-    }
 
     /** Push a preimage lookup update to active subscriptions for [key]. */
     fun notifyPreimageChanged(key: ByteArray, value: ByteArray?) {

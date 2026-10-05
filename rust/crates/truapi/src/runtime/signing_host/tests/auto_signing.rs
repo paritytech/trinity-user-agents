@@ -3,13 +3,13 @@
 
 use super::*;
 use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1};
-use crate::runtime::signing_host::SigningHostSsoService;
+use crate::runtime::signing_host::SsoAccountHolderService;
 use crate::runtime::sso_service::Dispatch;
 use truapi::versioned::account::HostAccountSignVrfRequest;
 use truapi::versioned::signing::HostSignRawWithLegacyAccountRequest;
 
 /// Allocate an AutoSigning grant for the runtime's own product.
-fn grant_auto_signing(runtime: &ProductRuntimeHost) {
+fn grant_auto_signing(runtime: &ProductRuntimeHost<WalletAccountHolder>) {
     let allocation = futures::executor::block_on(ResourceAllocation::request(
         runtime,
         &CallContext::default(),
@@ -184,7 +184,7 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
     let own_signed = sign_locally(request.clone());
     let foreign_signed = sign_locally(vrf_request("other.paseo"));
     let Dispatch::Response(answer) = futures::executor::block_on(
-        SigningHostSsoService::new(activation).answer(RemoteMessage::request(
+        SsoAccountHolderService::new(activation).answer(RemoteMessage::request(
             "relayed-vrf".to_string(),
             ProductRequest {
                 calling_product_id: "dim2.paseo".to_string(),
@@ -236,4 +236,52 @@ fn a_blessed_product_still_confirms_legacy_account_signing() {
         (signed, platform.sign_raw_reviews.lock().unwrap().len()),
         (false, 1),
     );
+}
+
+#[test]
+fn native_authorization_does_not_approve_an_incoming_sso_operation() {
+    let platform = granting_platform();
+    let (services, holder) = signing_runtime_with_platform(platform.clone());
+    futures::executor::block_on(holder.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let runtime = product_runtime(services, holder.clone());
+    grant_auto_signing(&runtime);
+    let service = SsoAccountHolderService::new(holder);
+    let Dispatch::Response(answer) = futures::executor::block_on(service.answer(RemoteMessage::request(
+        "remote-after-native-grant".to_string(),
+        ProductRequest { calling_product_id: "myapp.dot".to_string(), payload: vrf_request("myapp.dot") },
+    ))) else { panic!("expected response"); };
+    let RemoteMessageData::V1(v1::RemoteMessage::SignVrfResponse(response)) = answer.message.data else { panic!("expected VRF response"); };
+    let native = futures::executor::block_on(runtime.sign_vrf(&CallContext::default(), HostAccountSignVrfRequest::V1(vrf_request("myapp.dot"))));
+    assert_eq!((response.payload.map(|_| ()), native.is_ok(), platform.sign_vrf_reviews.lock().unwrap().len()), (Err(v01::HostAccountSignVrfError::Rejected), true, 1));
+}
+
+#[test]
+fn an_exported_sso_grant_does_not_populate_native_authorization() {
+    use crate::host_internal::sso_messages::{ResourceAllocationRequest, OnExistingAllowancePolicy, SsoAllocationOutcome, SsoAllocatedResource};
+    let platform = granting_platform();
+    let (services, holder) = signing_runtime_with_platform(platform.clone());
+    futures::executor::block_on(holder.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let runtime = product_runtime(services, holder.clone());
+    let service = SsoAccountHolderService::new(holder);
+    let Dispatch::Response(answer) = futures::executor::block_on(service.answer(RemoteMessage::request(
+        "remote-allocation".to_string(), ResourceAllocationRequest { calling_product_id: "myapp.dot".to_string(), resources: vec![v01::AllocatableResource::AutoSigning], on_existing: OnExistingAllowancePolicy::Increase },
+    ))) else { panic!("expected response"); };
+    let RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(response)) = answer.message.data else { panic!("expected allocation response"); };
+    assert!(matches!(response.payload.unwrap().as_slice(), [SsoAllocationOutcome::Allocated(SsoAllocatedResource::AutoSigning { .. })]));
+    let native = futures::executor::block_on(runtime.sign_raw(&CallContext::default(), raw_request("myapp.dot")));
+    assert_eq!((native.is_ok(), platform.sign_raw_reviews.lock().unwrap().len()), (false, 1));
+}
+
+#[test]
+fn an_sso_service_cannot_follow_a_wallet_reactivation() {
+    use crate::host_internal::sso_messages::ProductSubtreeRequest;
+    let (services, holder) = signing_runtime_with_platform(granting_platform());
+    futures::executor::block_on(holder.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let service = SsoAccountHolderService::new(holder.clone());
+    let runtime = product_runtime(services, holder.clone());
+    futures::executor::block_on(runtime.authority.disconnect()).unwrap();
+    futures::executor::block_on(holder.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let Dispatch::Response(answer) = futures::executor::block_on(service.answer(RemoteMessage::request("old-channel".to_string(), ProductSubtreeRequest { product_id: "myapp.dot".to_string() }))) else { panic!("expected response"); };
+    let RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(response)) = answer.message.data else { panic!("expected subtree response"); };
+    assert!(response.payload.is_err());
 }

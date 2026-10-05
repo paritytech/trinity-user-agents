@@ -34,7 +34,7 @@ class RealPocketFaceSourceTest {
     }
 
     private val loyalty = addedCard(gameProduct, "loyalty")
-    private val store = RealPocketCollection(FakePinnedPocketCards(emptyList()), InMemoryPocketCardRepository())
+    private val store = RealPocketCollection(FakePinnedPocketCards(emptyList()), InMemoryPocketCardRepository(), io.mockk.mockk { io.mockk.every { isTrUAPIRuntimeEnabled() } returns false }, dagger.Lazy { io.mockk.mockk() })
     private val streams = FakeStreams()
     private val source = RealPocketFaceSource(store, streams, NoImages())
 

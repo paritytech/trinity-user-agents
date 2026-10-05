@@ -43,6 +43,8 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
 import timber.log.Timber
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import javax.inject.Inject
 
 @HiltViewModel
@@ -56,6 +58,8 @@ class RootViewModel @Inject constructor(
     private val coinageServiceStarter: CoinageServiceStarter,
     private val externalPaymentWorkerStarter: ExternalPaymentWorkerStarter,
     private val statementStoreSlotAllocator: StatementStoreSlotAllocator,
+    private val runtimeSettings: ProductRuntimeSettings,
+    private val runtimeProvider: TrUAPIHostRuntimeProvider,
     private val ssoService: SsoService,
     private val chatRequestServiceCoordinator: ChatRequestServiceCoordinator,
     private val exploreProductsService: ExploreProductsService,
@@ -112,7 +116,10 @@ class RootViewModel @Inject constructor(
             launch { rootInteractor.syncPrices() }
             launch { depositService.startObserveAndConvert() }
             launch { syncPriceCurrencyChange.startObserving() }
-            launch { statementStoreSlotAllocator.scheduleSlotRenewals() }
+            launch {
+                if (runtimeSettings.isTrUAPIRuntimeEnabled()) runCatching { runtimeProvider.start() }.onFailure { timber.log.Timber.e(it, "TrUAPI startup failed") }
+                else statementStoreSlotAllocator.scheduleSlotRenewals()
+            }
 
             rootInteractor.startUpdateSystems().shareInBackground()
         }

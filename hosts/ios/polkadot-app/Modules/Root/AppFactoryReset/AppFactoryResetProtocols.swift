@@ -17,6 +17,7 @@
     @MainActor
     protocol AppFactoryResetInteractorOutputProtocol: AnyObject {
         func didCompleteReset()
+        func didFailReset(_ error: Error)
     }
 
     @MainActor

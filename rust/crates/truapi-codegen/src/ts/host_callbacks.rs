@@ -1012,6 +1012,10 @@ fn adapter_arg(
         {
             format!("{ty}.dec({name})")
         }
+        TypeRef::Option(inner) if matches!(inner.as_ref(),TypeRef::Primitive(primitive) if primitive == "String" || primitive == "str") =>
+        {
+            format!("{name} ?? undefined")
+        }
         TypeRef::Primitive(p) if matches!(p.as_str(), "u64" | "u128" | "i64" | "i128") => {
             format!("BigInt({name})")
         }
@@ -1334,6 +1338,24 @@ fn local_codec_expr_for_type(type_def: &TypeDef) -> Result<String> {
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
+            }
+            let explicit_indices = variants.iter().enumerate().any(|(position, variant)| {
+                variant
+                    .codec_index
+                    .is_some_and(|index| usize::from(index) != position)
+            });
+            if explicit_indices {
+                let entries = variants
+                    .iter()
+                    .enumerate()
+                    .map(|(position, variant)| {
+                        let index = variant.codec_index.map(usize::from).unwrap_or(position);
+                        let codec = local_variant_codec_expr(&variant.fields)?;
+                        Ok(format!("{}: [{index}, {codec}] as const", variant.name))
+                    })
+                    .collect::<Result<Vec<_>>>()?
+                    .join(", ");
+                return Ok(format!("S.indexedTaggedUnion({{{entries}}})"));
             }
             let entries = variants
                 .iter()

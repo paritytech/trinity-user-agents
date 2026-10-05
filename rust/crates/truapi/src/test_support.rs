@@ -19,7 +19,7 @@ use crate::subscription::thread_per_subscription_spawner;
 
 use crate::platform::{
     AccountAccessReview, AuthPresenter, AuthState, ChainProvider,
-    CoreStorage as PlatformCoreStorage, CoreStorageKey, CreateTransactionReview,
+    CoreStorage as PlatformCoreStorage, CoreStorageKey, SecretCoreStorage, SecretCoreStorageKey, CreateTransactionReview,
     Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
     Navigation as PlatformNavigation, Notifications as PlatformNotifications, PairingHostConfig,
     Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext,
@@ -140,6 +140,8 @@ pub struct StubPlatform {
     /// Every `ResourceAllocation` review passed to `confirm_user_action`, in order.
     pub resource_allocation_reviews: Arc<Mutex<Vec<ResourceAllocationReview>>>,
     pub session_blob: Option<Vec<u8>>,
+    /// Pause selected protected-session reads after their value is captured.
+    pub auth_session_read_pauses: Mutex<std::collections::VecDeque<Option<futures::channel::oneshot::Receiver<()>>>>,
     pub session_error: Option<&'static str>,
     pub session_clears: Arc<Mutex<usize>>,
     pub session_writes: Arc<Mutex<Vec<Vec<u8>>>>,
@@ -217,7 +219,7 @@ pub struct StubPlatform {
     pub storage_subscribers: Arc<Mutex<Vec<(String, StorageChangeSender)>>>,
     /// Every `begin_operation` as `(product_id, label)`, in order. The
     /// returned id is the call's 1-based position.
-    pub begun_operations: Arc<Mutex<Vec<(String, String)>>>,
+    pub begun_operations: Arc<Mutex<Vec<(String, Option<String>)>>>,
     /// Every `end_operation` as `(product_id, id)`, in order.
     pub ended_operations: Arc<Mutex<Vec<(String, u32)>>>,
     /// Held open by a test so `begin_operation` is still in flight while the
@@ -1005,7 +1007,7 @@ impl PlatformProductOperations for StubPlatform {
     async fn begin_operation(
         &self,
         product: &ProductContext,
-        label: String,
+        label: Option<String>,
     ) -> Result<v01::HostWorkerBeginOperationResponse, v01::HostWorkerOperationError> {
         let gate = self
             .begin_operation_gate
@@ -1065,14 +1067,6 @@ impl PlatformCoreStorage for StubPlatform {
         if self.core_storage_pending {
             futures::future::pending::<()>().await;
         }
-        if let CoreStorageKey::AuthSession = key {
-            if let Some(reason) = self.session_error {
-                return Err(v01::GenericError {
-                    reason: reason.to_string(),
-                });
-            }
-            return Ok(self.session_blob.clone());
-        }
         if let Some(reason) = self.local_storage_error {
             return Err(v01::GenericError {
                 reason: reason.to_string(),
@@ -1098,7 +1092,73 @@ impl PlatformCoreStorage for StubPlatform {
         key: CoreStorageKey,
         value: Vec<u8>,
     ) -> Result<(), v01::GenericError> {
-        if let CoreStorageKey::AuthSession = key {
+        if let Some(reason) = self.local_storage_error {
+            return Err(v01::GenericError {
+                reason: reason.to_string(),
+            });
+        }
+        self.local_storage
+            .lock()
+            .expect("local storage mutex poisoned")
+            .insert(core_storage_test_key(key), value);
+        Ok(())
+    }
+
+    async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
+        if let Some(reason) = self.local_storage_error {
+            return Err(v01::GenericError {
+                reason: reason.to_string(),
+            });
+        }
+        self.local_storage
+            .lock()
+            .expect("local storage mutex poisoned")
+            .remove(&core_storage_test_key(key));
+        Ok(())
+    }
+}
+
+#[crate::platform::async_trait]
+impl SecretCoreStorage for StubPlatform {
+    async fn read_secret_core_storage(
+        &self,
+        key: SecretCoreStorageKey,
+    ) -> Result<Option<Vec<u8>>, v01::GenericError> {
+        if self.core_storage_pending {
+            futures::future::pending::<()>().await;
+        }
+        if let SecretCoreStorageKey::AuthSession = key {
+            if let Some(reason) = self.session_error {
+                return Err(v01::GenericError {
+                    reason: reason.to_string(),
+                });
+            }
+            let value = self.session_blob.clone();
+            let pause = self.auth_session_read_pauses.lock().unwrap().pop_front().flatten();
+            if let Some(pause) = pause {
+                let _ = pause.await;
+            }
+            return Ok(value);
+        }
+        if let Some(reason) = self.local_storage_error {
+            return Err(v01::GenericError {
+                reason: reason.to_string(),
+            });
+        }
+        Ok(self
+            .local_storage
+            .lock()
+            .expect("local storage mutex poisoned")
+            .get(&secret_core_storage_test_key(key))
+            .cloned())
+    }
+
+    async fn write_secret_core_storage(
+        &self,
+        key: SecretCoreStorageKey,
+        value: Vec<u8>,
+    ) -> Result<(), v01::GenericError> {
+        if let SecretCoreStorageKey::AuthSession = key {
             self.session_writes
                 .lock()
                 .expect("session write list mutex poisoned")
@@ -1121,12 +1181,12 @@ impl PlatformCoreStorage for StubPlatform {
         self.local_storage
             .lock()
             .expect("local storage mutex poisoned")
-            .insert(core_storage_test_key(key), value);
+            .insert(secret_core_storage_test_key(key), value);
         Ok(())
     }
 
-    async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
-        if let CoreStorageKey::AuthSession = key {
+    async fn clear_secret_core_storage(&self, key: SecretCoreStorageKey) -> Result<(), v01::GenericError> {
+        if let SecretCoreStorageKey::AuthSession = key {
             *self
                 .session_clears
                 .lock()
@@ -1141,9 +1201,14 @@ impl PlatformCoreStorage for StubPlatform {
         self.local_storage
             .lock()
             .expect("local storage mutex poisoned")
-            .remove(&core_storage_test_key(key));
+            .remove(&secret_core_storage_test_key(key));
         Ok(())
     }
+}
+
+/// Stable string key used by the stub protected-storage map.
+pub fn secret_core_storage_test_key(key: SecretCoreStorageKey) -> String {
+    key.storage_key()
 }
 
 /// Stable string key used by the stub core-storage map.
@@ -1167,7 +1232,7 @@ impl PlatformNotifications for StubPlatform {
     async fn push_notification(
         &self,
         notification: v01::HostPushNotificationRequest,
-    ) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
+    ) -> Result<v01::HostPushNotificationResponse, v01::HostPushNotificationError> {
         self.pushed_notifications
             .lock()
             .expect("notification list mutex poisoned")

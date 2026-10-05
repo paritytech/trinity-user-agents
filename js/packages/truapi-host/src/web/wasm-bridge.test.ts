@@ -23,7 +23,9 @@ const glueUrl = new URL(
 );
 // The gate lives in `require-wasm.ts` so rewriting any one suite cannot
 // quietly disable it for the others.
-const suite = wasmIsBuilt("web/truapi_server_bg.wasm") ? describe : describe.skip;
+const suite = wasmIsBuilt("web/truapi_server_bg.wasm")
+  ? describe
+  : describe.skip;
 
 suite("real WASM core ↔ createMockHost bridge", () => {
   it("the core invokes createMockHost callbacks across the JS↔SCALE↔WASM boundary", async () => {
@@ -34,11 +36,12 @@ suite("real WASM core ↔ createMockHost bridge", () => {
 
     const mock = createMockHost();
     const invoked: string[] = [];
-    const coreStorage = mock.callbacks.coreStorage;
-    const readCoreStorage = coreStorage.readCoreStorage.bind(coreStorage);
-    coreStorage.readCoreStorage = async (key) => {
-      invoked.push(`readCoreStorage:${key.tag}`);
-      return readCoreStorage(key);
+    const secretCoreStorage = mock.callbacks.secretCoreStorage;
+    const readSecretCoreStorage =
+      secretCoreStorage.readSecretCoreStorage.bind(secretCoreStorage);
+    secretCoreStorage.readSecretCoreStorage = async (key) => {
+      invoked.push(`readSecretCoreStorage:${key.tag}`);
+      return readSecretCoreStorage(key);
     };
 
     // The pairing-host runtime takes the platform callbacks and host config;
@@ -56,10 +59,12 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     // it per-core outside the generated adapter, so the harness does too.
     runtime.productRuntime({ productId }, { emitFrame: () => {} });
     // The real core reads its auth session on startup, which crosses the bridge
-    // into the mock's readCoreStorage with a SCALE-decoded CoreStorageKey.
+    // into the mock's readSecretCoreStorage with a SCALE-decoded SecretCoreStorageKey.
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    expect(invoked.some((c) => c.startsWith("readCoreStorage:"))).toBe(true);
+    expect(invoked.some((c) => c.startsWith("readSecretCoreStorage:"))).toBe(
+      true,
+    );
 
     // The same traffic must be visible through the control surface, because
     // that count is what a harness waits on to decide the wire is live.
@@ -72,9 +77,8 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     // Test isolation is the property a product suite actually depends on: a
     // recording made while one core ran must not leak into the next case.
     const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
-    const { createWasmRawCallbacks } = await import(
-      "../generated/host-callbacks-adapter.js"
-    );
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
     initSync({ module: readFileSync(wasmUrl) });
 
     const mock = createMockHost();

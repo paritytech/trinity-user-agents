@@ -590,6 +590,13 @@ fn js_arg_expr(name: &str, ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> 
     if is_string(ty) {
         return Ok(format!("JsValue::from_str(&{name})"));
     }
+    if let TypeRef::Option(inner) = ty
+        && is_string(inner)
+    {
+        return Ok(format!(
+            "{name}.as_deref().map(JsValue::from_str).unwrap_or(JsValue::UNDEFINED)"
+        ));
+    }
     if is_bytes(ty) {
         return Ok(format!("Uint8Array::from({name}.as_slice()).into()"));
     }

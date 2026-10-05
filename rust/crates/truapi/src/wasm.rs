@@ -833,8 +833,101 @@ fn generic_error_to_js(err: v01::GenericError) -> JsValue {
     JsValue::from_str(&err.reason)
 }
 
+enum WasmRuntime {
+    Paired(ProductRuntime),
+    #[cfg(feature = "wasm-signing-host")]
+    Native(ProductRuntime<crate::runtime::WalletAccountHolder>),
+}
+
+impl From<ProductRuntime> for WasmRuntime {
+    fn from(runtime: ProductRuntime) -> Self {
+        Self::Paired(runtime)
+    }
+}
+
+#[cfg(feature = "wasm-signing-host")]
+impl From<ProductRuntime<crate::runtime::WalletAccountHolder>> for WasmRuntime {
+    fn from(runtime: ProductRuntime<crate::runtime::WalletAccountHolder>) -> Self {
+        Self::Native(runtime)
+    }
+}
+
+macro_rules! with_wasm_runtime {
+    ($runtime:expr,$core:ident => $body:expr) => {
+        match $runtime {
+            WasmRuntime::Paired($core) => $body,
+            #[cfg(feature = "wasm-signing-host")]
+            WasmRuntime::Native($core) => $body,
+        }
+    };
+}
+
+impl WasmRuntime {
+    fn notify_contacts_changed(&self) {
+        with_wasm_runtime!(self,core => core.notify_contacts_changed())
+    }
+
+    async fn receive_frame(&self, frame: Vec<u8>) -> Result<(), crate::ProductRuntimeError> {
+        with_wasm_runtime!(self,core => core.receive_frame(frame).await)
+    }
+
+    async fn permission_authorization_status(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+        with_wasm_runtime!(self,core => core.permission_authorization_status(request).await)
+    }
+
+    async fn permission_authorization_statuses(
+        &self,
+        requests: Vec<PermissionAuthorizationRequest>,
+    ) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
+        with_wasm_runtime!(self,core => core.permission_authorization_statuses(requests).await)
+    }
+
+    async fn set_permission_authorization_status(
+        &self,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), v01::GenericError> {
+        with_wasm_runtime!(self,core => core.set_permission_authorization_status(request,status).await)
+    }
+
+    async fn disconnect_session(&self) -> Result<(), v01::GenericError> {
+        with_wasm_runtime!(self,core => core.disconnect_session().await)
+    }
+
+    fn dispose(&self) {
+        with_wasm_runtime!(self,core => core.dispose())
+    }
+
+    fn render(
+        &self,
+        request: v01::ProductRendererRenderRequest,
+    ) -> Result<
+        crate::Subscription<v01::RendererNode, crate::CallError<v01::GenericError>>,
+        crate::ProductRuntimeError,
+    > {
+        with_wasm_runtime!(self,core => core.control().render(request))
+    }
+
+    fn publish_chat_action(
+        &self,
+        action: v01::HostChatActionSubscribeItem,
+    ) -> Result<(), crate::ProductRuntimeError> {
+        with_wasm_runtime!(self,core => core.control().publish_chat_action(action))
+    }
+
+    fn publish_renderer_action(
+        &self,
+        action: v01::HostRendererActionSubscribeItem,
+    ) -> Result<(), crate::ProductRuntimeError> {
+        with_wasm_runtime!(self,core => core.control().publish_renderer_action(action))
+    }
+}
+
 struct WasmCoreInner {
-    core: ProductRuntime,
+    core: WasmRuntime,
     dispose_fn: SendWrapper<Function>,
     disposed: Cell<bool>,
     disposing: Cell<bool>,
@@ -980,8 +1073,11 @@ impl WasmPairingHostRuntime {
 
     /// Disconnect the shared account-authority session.
     #[wasm_bindgen(js_name = disconnectSession)]
-    pub async fn disconnect_session(&self) {
-        self.runtime.disconnect_session().await;
+    pub async fn disconnect_session(&self) -> Result<(), JsValue> {
+        self.runtime
+            .disconnect_session()
+            .await
+            .map_err(|error| JsValue::from_str(&error.reason))
     }
 
     /// Cancel an in-flight pairing flow.
@@ -1191,6 +1287,34 @@ pub fn describe_core_storage_key_for_wasm(encoded: Vec<u8>) -> Result<JsValue, J
 }
 
 #[cfg(feature = "wasm-signing-host")]
+struct JsWalletSecrets(SendWrapper<Function>);
+
+#[cfg(feature = "wasm-signing-host")]
+#[crate::platform::async_trait]
+impl crate::platform::WalletSecretProvider for JsWalletSecrets {
+    async fn read_wallet_root_entropy(
+        &self,
+        wallet_id: &str,
+    ) -> Result<Vec<u8>, crate::latest::GenericError> {
+        let reader = self.0.clone();
+        let wallet_id = wallet_id.to_owned();
+        SendWrapper::new(async move {
+            let returned = reader
+                .call1(&JsValue::NULL, &JsValue::from_str(&wallet_id))
+                .map_err(parse_generic_error)?;
+            let bytes = await_optional_promise(returned).await.map_err(generic)?;
+            if !bytes.is_instance_of::<Uint8Array>() {
+                return Err(generic(
+                    "wallet secret provider must return a Uint8Array".into(),
+                ));
+            }
+            Ok(Uint8Array::new(&bytes).to_vec())
+        })
+        .await
+    }
+}
+
+#[cfg(feature = "wasm-signing-host")]
 /// JS-callable handle to a wallet-local signing-host runtime.
 #[wasm_bindgen]
 pub struct WasmSigningHostRuntime {
@@ -1286,11 +1410,35 @@ impl WasmSigningHostRuntime {
 
     /// Disconnect the active wallet-local session.
     #[wasm_bindgen(js_name = disconnectSession)]
-    pub async fn disconnect_session(&self) {
-        self.runtime.disconnect_session().await;
+    pub async fn disconnect_session(&self) -> Result<(), JsValue> {
+        self.runtime
+            .disconnect_session()
+            .await
+            .map_err(|error| JsValue::from_str(&error.reason))
     }
 
-    /// Activate a wallet-local session from raw BIP-39 entropy.
+    /// Select a wallet through the embedding wallet's protected secret provider.
+    #[wasm_bindgen(js_name = activateWallet)]
+    pub async fn activate_wallet(
+        &self,
+        wallet_id: String,
+        read_root_entropy: Function,
+        lite_username: Option<String>,
+    ) -> Result<(), JsValue> {
+        let provider = JsWalletSecrets(SendWrapper::new(read_root_entropy));
+        let prepared = self
+            .runtime
+            .prepare_wallet(&provider, &wallet_id, lite_username)
+            .await
+            .map_err(generic_error_to_js)?;
+        self.runtime
+            .activate_wallet(prepared)
+            .await
+            .map_err(generic_error_to_js)
+    }
+
+    /// Activate an explicit test account from raw BIP-39 entropy.
+    #[cfg(feature = "test-host")]
     #[wasm_bindgen(js_name = activateLocalSession)]
     pub async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), JsValue> {
         self.runtime
@@ -1299,7 +1447,8 @@ impl WasmSigningHostRuntime {
             .map_err(generic_error_to_js)
     }
 
-    /// Activate a wallet-local session and attach known identity metadata.
+    /// Activate an explicit test account with identity metadata.
+    #[cfg(feature = "test-host")]
     #[wasm_bindgen(js_name = activateLocalSessionWithIdentity)]
     pub async fn activate_local_session_with_identity(
         &self,
@@ -1419,10 +1568,10 @@ pub struct WasmProductRuntime {
 }
 
 impl WasmProductRuntime {
-    fn from_parts(core: ProductRuntime, dispose_fn: Function) -> Self {
+    fn from_parts(core: impl Into<WasmRuntime>, dispose_fn: Function) -> Self {
         Self {
             inner: Rc::new(WasmCoreInner {
-                core,
+                core: core.into(),
                 dispose_fn: SendWrapper::new(dispose_fn),
                 disposed: Cell::new(false),
                 disposing: Cell::new(false),
@@ -1589,8 +1738,11 @@ impl WasmProductRuntime {
     /// session state.
     #[wasm_bindgen(js_name = disconnectSession)]
     pub async fn disconnect_session(&self) -> Result<(), JsValue> {
-        self.inner.core.disconnect_session().await;
-        Ok(())
+        self.inner
+            .core
+            .disconnect_session()
+            .await
+            .map_err(|error| JsValue::from_str(&error.reason))
     }
 
     /// Start the host-initiated render subscription for one body. `request` is
@@ -1612,7 +1764,6 @@ impl WasmProductRuntime {
         let mut stream = self
             .inner
             .core
-            .control()
             .render(request)
             .map_err(|err| JsValue::from_str(&err.to_string()))?;
         let on_update = SendWrapper::new(on_update);
@@ -1653,7 +1804,6 @@ impl WasmProductRuntime {
             .map_err(|err| JsValue::from_str(&format!("chat action did not decode: {err}")))?;
         self.inner
             .core
-            .control()
             .publish_chat_action(action)
             .map_err(|err| JsValue::from_str(&err.to_string()))
     }
@@ -1667,7 +1817,6 @@ impl WasmProductRuntime {
             .map_err(|err| JsValue::from_str(&format!("renderer action did not decode: {err}")))?;
         self.inner
             .core
-            .control()
             .publish_renderer_action(item)
             .map_err(|err| JsValue::from_str(&err.to_string()))
     }

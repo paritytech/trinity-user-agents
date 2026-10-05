@@ -70,6 +70,18 @@ impl From<StoredAuthorizationStatus> for PermissionAuthorizationStatus {
     }
 }
 
+/// Decode one persisted permission answer for runtime administration.
+pub fn decode_persisted_authorization(bytes: &[u8]) -> Result<PermissionAuthorizationStatus, GenericError> {
+    let mut input = bytes;
+    let status = StoredAuthorizationStatus::decode(&mut input).map_err(|error| GenericError {
+        reason: format!("invalid stored permission: {error}"),
+    })?;
+    if !input.is_empty() {
+        return Err(GenericError { reason: "stored permission contains trailing bytes".to_string() });
+    }
+    Ok(status.into())
+}
+
 /// Domain patterns a remote request covers, or `None` when the request is not a
 /// domain grant and so occupies a single slot of its own.
 fn requested_domains(request: &RemotePermissionRequest) -> Option<&[String]> {

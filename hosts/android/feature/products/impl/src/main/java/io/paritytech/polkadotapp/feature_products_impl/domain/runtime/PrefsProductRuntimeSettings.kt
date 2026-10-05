@@ -7,8 +7,11 @@ class PrefsProductRuntimeSettings(
     private val prefs: SharedPreferences,
     private val isDebugBuild: Boolean,
 ) : ProductRuntimeSettings {
-    override fun isTrUAPIRuntimeEnabled(): Boolean =
-        isDebugBuild && prefs.getBoolean(KEY_TRUAPI_ENABLED, true)
+    private val runtimeEnabled = isTrUAPIRuntimeEnabledOnNextLaunch()
+
+    override fun isTrUAPIRuntimeEnabled(): Boolean = runtimeEnabled
+
+    override fun isTrUAPIRuntimeEnabledOnNextLaunch(): Boolean = isDebugBuild && prefs.getBoolean(KEY_TRUAPI_ENABLED, true)
 
     override fun setTrUAPIRuntimeEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_TRUAPI_ENABLED, enabled).apply()

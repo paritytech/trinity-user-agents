@@ -8,10 +8,7 @@ import TrUAPIHost
 @Suite
 struct RustChatExecutionBridgeTests {
     private func makeBridge(api: any ProductChatMessaging) async -> RustChatExecutionBridge {
-        await RustChatExecutionBridge(
-            dependencies: MainActor.run { makeChatBridgeDependencies() },
-            chatMessaging: api
-        )
+        RustChatExecutionBridge(chatMessaging: api)
     }
 
     @Test func createRoomMapsRegistrationStatus() async throws {

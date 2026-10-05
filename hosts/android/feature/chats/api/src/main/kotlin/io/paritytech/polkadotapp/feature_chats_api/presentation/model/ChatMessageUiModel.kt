@@ -183,6 +183,7 @@ sealed interface ChatMessageUiModel {
     }
 
     data class Custom<T>(
+        val chatId: io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId,
         override val id: String,
         override val timestamp: Timestamp,
         override val direction: Direction,

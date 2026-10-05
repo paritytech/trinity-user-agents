@@ -32,7 +32,8 @@ use tokio_tungstenite::tungstenite::http::{Response as HttpResponse, StatusCode}
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use super::executor::shared_native_executor;
-use crate::{FrameSink, ProductRuntime};
+use crate::FrameSink;
+use crate::runtime::WalletAccountHolder;
 
 // Allow reconnect overlap without one execution exhausting the shared limit.
 const MAX_WS_CONNECTIONS_PER_EXECUTION: usize = 8;
@@ -104,14 +105,14 @@ pub type BridgeLogger = Arc<dyn Fn(&str, &str) + Send + Sync>;
 /// connection.
 pub trait WsProductRuntimeFactory: Send + Sync {
     /// Create a runtime that emits outgoing frames into `sink`.
-    fn product_runtime(&self, sink: Arc<dyn FrameSink>) -> ProductRuntime;
+    fn product_runtime(&self, sink: Arc<dyn FrameSink>) -> crate::ProductRuntime<WalletAccountHolder>;
 }
 
 impl<F> WsProductRuntimeFactory for F
 where
-    F: Fn(Arc<dyn FrameSink>) -> ProductRuntime + Send + Sync,
+    F: Fn(Arc<dyn FrameSink>) -> crate::ProductRuntime<WalletAccountHolder> + Send + Sync,
 {
-    fn product_runtime(&self, sink: Arc<dyn FrameSink>) -> ProductRuntime {
+    fn product_runtime(&self, sink: Arc<dyn FrameSink>) -> crate::ProductRuntime<WalletAccountHolder> {
         self(sink)
     }
 }
@@ -638,7 +639,7 @@ impl Drop for ConnectionCountGuard {
 }
 
 // Task cancellation skips explicit cleanup after an await, but still drops guards.
-struct DisposeGuard(Arc<ProductRuntime>);
+struct DisposeGuard(Arc<crate::ProductRuntime<WalletAccountHolder>>);
 
 impl Drop for DisposeGuard {
     fn drop(&mut self) {
@@ -1218,11 +1219,11 @@ mod tests {
 
     struct DisposalWatchFactory {
         inner: Arc<dyn WsProductRuntimeFactory>,
-        control: Mutex<Option<crate::ProductRuntimeControl>>,
+        control: Mutex<Option<crate::ProductRuntimeControl<WalletAccountHolder>>>,
     }
 
     impl WsProductRuntimeFactory for DisposalWatchFactory {
-        fn product_runtime(&self, sink: Arc<dyn FrameSink>) -> ProductRuntime {
+        fn product_runtime(&self, sink: Arc<dyn FrameSink>) -> crate::ProductRuntime<WalletAccountHolder> {
             let runtime = self.inner.product_runtime(sink);
             *self.control.lock().expect("disposal watch mutex poisoned") = Some(runtime.control());
             runtime
@@ -1231,7 +1232,7 @@ mod tests {
 
     #[test]
     fn retained_controls_do_not_keep_ended_connections_alive() {
-        fn is_closed(control: &crate::ProductRuntimeControl) -> bool {
+        fn is_closed(control: &crate::ProductRuntimeControl<WalletAccountHolder>) -> bool {
             matches!(
                 control.publish_chat_action(v01::HostChatActionSubscribeItem {
                     room_id: "support".into(),
@@ -1777,7 +1778,7 @@ mod tests {
     #[test]
     fn a_panicking_execution_does_not_affect_a_sibling() {
         let panicking_factory: Arc<dyn WsProductRuntimeFactory> =
-            Arc::new(|_sink: Arc<dyn FrameSink>| -> ProductRuntime {
+            Arc::new(|_sink: Arc<dyn FrameSink>| -> crate::ProductRuntime<WalletAccountHolder> {
                 panic!("intentional test panic: simulating a failing product execution")
             });
 

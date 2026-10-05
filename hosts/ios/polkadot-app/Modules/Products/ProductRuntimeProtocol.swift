@@ -52,5 +52,5 @@ protocol SPAScriptsMaking {
 /// Creation also anchors the context's routers to the presentation view the
 /// factory received, so a created runtime can prompt immediately.
 protocol SPARuntimeFactoryProtocol: AnyObject {
-    @MainActor func createRuntime(for productId: ProductId) throws -> SPARuntimeProtocol
+    @MainActor func createRuntime(for productId: ProductId) async throws -> SPARuntimeProtocol
 }

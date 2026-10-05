@@ -23,6 +23,7 @@ import { createWasmRawCallbacks } from "./generated/host-callbacks-adapter.js";
 import {
   AuthState,
   CoreStorageKey,
+  SecretCoreStorageKey,
   PermissionDecision,
   ProductContext,
   ProductExecutionKind,
@@ -37,6 +38,21 @@ import { makeHostCallbacks, settle } from "./test-support.js";
 
 const GENESIS = `0x${"11".repeat(32)}` as `0x${string}`;
 
+it("preserves sparse Rust core-storage discriminants after separating secrets", () => {
+  const key = {
+    tag: "SsoResponderRequestLedger" as const,
+    value: {
+      rootPublicKey: new Uint8Array(32).fill(0x11),
+      peerStatementAccountId: new Uint8Array(32).fill(0x22),
+      peerEncryptionPublicKey: new Uint8Array(32).fill(0x33),
+    },
+  };
+  expect([...CoreStorageKey.enc(key)]).toEqual([
+    11, ...key.value.rootPublicKey, ...key.value.peerStatementAccountId,
+    ...key.value.peerEncryptionPublicKey,
+  ]);
+});
+
 it("preserves one-use permission decisions across the WASM callback", async () => {
   const review = {
     tag: "IdentityDisclosure" as const,
@@ -44,15 +60,19 @@ it("preserves one-use permission decisions across the WASM callback", async () =
   };
   for (const decision of ["AllowOnce", "AllowAlways", "Deny"] as const) {
     const reviews: UserConfirmationReview[] = [];
-    const raw = createWasmRawCallbacks(makeHostCallbacks({
-      userConfirmation: {
-        confirmPermission: async (request) => {
-          reviews.push(request);
-          return decision;
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        userConfirmation: {
+          confirmPermission: async (request) => {
+            reviews.push(request);
+            return decision;
+          },
         },
-      },
-    }));
-    const encoded = await raw.confirmPermission(UserConfirmationReview.enc(review));
+      }),
+    );
+    const encoded = await raw.confirmPermission(
+      UserConfirmationReview.enc(review),
+    );
     expect({ decision: PermissionDecision.dec(encoded), reviews }).toEqual({
       decision,
       reviews: [review],
@@ -218,14 +238,14 @@ describe("createWasmRawCallbacks", () => {
             calls.push(["authStateChanged", state]);
           },
         },
-        coreStorage: {
-          readCoreStorage: async (key) =>
+        secretCoreStorage: {
+          readSecretCoreStorage: async (key) =>
             key.tag === "AuthSession" ? new Uint8Array([1, 2, 3]) : undefined,
-          writeCoreStorage: async (key, value) => {
-            calls.push(["writeCoreStorage", key, [...value]]);
+          writeSecretCoreStorage: async (key, value) => {
+            calls.push(["writeSecretCoreStorage", key, [...value]]);
           },
-          clearCoreStorage: async (key) => {
-            calls.push(["clearCoreStorage", key]);
+          clearSecretCoreStorage: async (key) => {
+            calls.push(["clearSecretCoreStorage", key]);
           },
         },
         userConfirmation: {
@@ -311,12 +331,15 @@ describe("createWasmRawCallbacks", () => {
         value: { deeplink: "polkadotapp://example" },
       }),
     );
-    const authSessionKey = CoreStorageKey.enc({ tag: "AuthSession" });
-    expect(await raw.readCoreStorage!(authSessionKey)).toEqual(
+    const authSessionKey = SecretCoreStorageKey.enc({ tag: "AuthSession" });
+    expect(await raw.readSecretCoreStorage!(authSessionKey)).toEqual(
       new Uint8Array([1, 2, 3]),
     );
-    await raw.writeCoreStorage!(authSessionKey, new Uint8Array([3, 2, 1]));
-    await raw.clearCoreStorage!(authSessionKey);
+    await raw.writeSecretCoreStorage!(
+      authSessionKey,
+      new Uint8Array([3, 2, 1]),
+    );
+    await raw.clearSecretCoreStorage!(authSessionKey);
     expect(
       await raw.confirmUserAction?.(
         UserConfirmationReview.enc({
@@ -441,8 +464,12 @@ describe("createWasmRawCallbacks", () => {
         "authStateChanged",
         { tag: "Pairing", value: { deeplink: "polkadotapp://example" } },
       ],
-      ["writeCoreStorage", { tag: "AuthSession", value: undefined }, [3, 2, 1]],
-      ["clearCoreStorage", { tag: "AuthSession", value: undefined }],
+      [
+        "writeSecretCoreStorage",
+        { tag: "AuthSession", value: undefined },
+        [3, 2, 1],
+      ],
+      ["clearSecretCoreStorage", { tag: "AuthSession", value: undefined }],
       ["confirmUserAction:PreimageSubmit", 42n],
     ]);
 

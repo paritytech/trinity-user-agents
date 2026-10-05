@@ -30,20 +30,56 @@ public enum LocalhostBridgeBootstrap {
     }
 }
 
-/// Product-scoped key-value storage provided by the embedding host.
-public protocol HostStorageBackend: AnyObject, Sendable {
-    func read(key: String) throws -> Data?
-    func write(key: String, value: Data) throws
-    func clear(key: String) throws
+/// Protected host secrets. Rust supplies typed keys and their persistent names.
+public protocol HostSecretStorageBackend: AnyObject, Sendable {
+    func read(key: SecretCoreStorageKey) async throws -> Data?
+    func write(key: SecretCoreStorageKey, value: Data) async throws
+    func clear(key: SecretCoreStorageKey) async throws
 }
 
-/// Core-owned host-private storage backend. Keys are SCALE-encoded
-/// `truapi::platform::CoreStorageKey` values, so embedders can persist them
-/// opaquely or decode them to choose a secure backing store per slot.
-public protocol HostCoreStorageBackend: AnyObject, Sendable {
-    func read(key: Data) throws -> Data?
-    func write(key: Data, value: Data) throws
-    func clear(key: Data) throws
+/// Wallet-only access to the selected, already unlocked protected root store.
+public protocol WalletSecretProvider: AnyObject, Sendable {
+    func readWalletRootEntropy(walletId: String) async throws -> Data
+}
+
+private final class WalletSecretAdapter: NativeWalletSecretProvider, @unchecked Sendable {
+    let provider: WalletSecretProvider
+
+    init(_ provider: WalletSecretProvider) { self.provider = provider }
+
+    func readWalletRootEntropy(walletId: String) async throws -> Data {
+        do { return try await provider.readWalletRootEntropy(walletId: walletId) }
+        catch { throw HostRejection.Rejected(reason: hostRejectionReason(error)) }
+    }
+}
+
+/// Runs native engines and fetches files under Rust-owned worker lifecycle.
+public protocol WorkerEngineHost: AnyObject, Sendable {
+    func fetchWorkerBundle(productId: String, contentHash: Data?) async throws -> WorkerBundle
+    func startWorker(productId: String, execution: TrUAPIProductExecution, bundle: WorkerBundle) throws
+    func stopWorker(productId: String) async throws
+    func chatBridge(productId: String) -> ChatHostBridge?
+    func pocketBridge(productId: String) -> PocketHostBridge?
+}
+
+private final class WorkerEngineAdapter: NativeWorkerEngineHost, @unchecked Sendable {
+    let host: WorkerEngineHost
+    init(_ host: WorkerEngineHost) { self.host = host }
+    func fetchWorkerBundle(productId: String, contentHash: Data?) async throws -> WorkerBundle {
+        do { return try await host.fetchWorkerBundle(productId: productId, contentHash: contentHash) }
+        catch { throw HostRejection.Rejected(reason: hostRejectionReason(error)) }
+    }
+    func startWorker(productId: String, execution: NativeProductExecution, bundle: WorkerBundle) throws {
+        do {
+            try host.startWorker(productId: productId, execution: TrUAPIProductExecution(inner: execution, callbackRetainer: nil), bundle: bundle)
+        } catch { throw HostRejection.Rejected(reason: hostRejectionReason(error)) }
+    }
+    func stopWorker(productId: String) async throws {
+        do { try await host.stopWorker(productId: productId) }
+        catch { throw HostRejection.Rejected(reason: hostRejectionReason(error)) }
+    }
+    func chatCallbacks(productId: String) -> NativeChatCallbacks? { host.chatBridge(productId: productId).map { ChatCallbackAdapter(bridge: $0) } }
+    func pocketCallbacks(productId: String) -> NativePocketCallbacks? { host.pocketBridge(productId: productId).map { PocketCallbackAdapter(bridge: $0) } }
 }
 
 /// Host-side callback bundle that the Rust core invokes for capabilities the
@@ -66,12 +102,14 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Open a URL in the system browser, suspending for any approval on the main actor.
     func navigateTo(url: String) async throws
 
-    /// Deliver a push notification (`HostPushNotificationRequest`)
-    /// and return the host-assigned notification id. Run any UI work on the main actor.
-    func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32
+    /// Persist OS registration using the core-assigned ID before returning.
+    func scheduleNotification(productId: String, id: UInt32, request: HostPushNotificationRequest) async throws
 
-    /// Cancel a previously scheduled notification id.
-    func cancelNotification(id: UInt32) throws
+    /// Complete OS cancellation before the core removes its retry record.
+    func cancelScheduledNotification(productId: String, id: UInt32) async throws
+
+    /// Whether the OS still retains this runtime notification.
+    func isScheduledNotificationPending(productId: String, id: UInt32) async throws -> Bool
 
     /// Prompt for a device-level permission `product` requested on the main
     /// actor, suspending until the user decides. Preserve the approval lifetime.
@@ -148,54 +186,19 @@ public protocol HostBridge: AnyObject, Sendable {
     /// per chain role. Invoked on the dispatcher thread; must return promptly.
     func supportedChains() throws -> HostChainSet
 
-    /// Observe demand on a product's worker crossing zero. `.start` means run
-    /// the worker now, `.stop` that nothing wants it any more. Every
-    /// transition arrives here in ledger order, the ones the app asks for by
-    /// taking a reference of its own included.
-    ///
-    /// Demand is runtime-wide, so the core invokes this only on the bridge
-    /// ``TrUAPIHostRuntime/init(bridge:runtimeConfig:)`` was given, never on
-    /// the per-execution bridge passed to
-    /// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:)``.
-    /// Can arrive on any thread, including synchronously on the calling
-    /// thread during `acquireWorker`/`releaseWorker`, often the main thread
-    /// and re-entrantly: hand the transition off rather than blocking on
-    /// another thread from inside it. Defaults to a no-op for a host that
-    /// runs no workers.
-    func workerDemandChanged(productId: String, transition: WorkerTransition)
 
-    /// Begin a pending operation, whose id keeps the product's worker alive
-    /// until it ends. `label` is a log/UI hint, empty when the product gave none.
-    func beginOperation(productId: String, label: String) async throws -> UInt32
 
-    /// End a pending operation. Idempotent: an unknown or already-ended id
-    /// succeeds, so a retry after an ambiguous failure is safe.
-    func endOperation(productId: String, id: UInt32) async throws
-
-    /// A device finished pairing with this signing host.
-    ///
-    /// The core has no chat of its own, so announcing the new device to the
-    /// user's existing contacts is the host's to do. At least once per
-    /// pairing, and the host keeps its own record of which devices it has
-    /// already seen: a resumed pairing reports nothing and the core has no
-    /// list to replay. Arrives on the thread answering the handshake, while
-    /// the pairing call is still running: hand the device off rather than
-    /// announcing it inline. Defaults to a no-op for a host that answers no
-    /// pairing.
+    /// A completed pairing is available from the core roster.
     func devicePaired(device: PairedSsoPeer)
+    /// Invalidate native views of core-owned runtime records.
+    func runtimeRecordsChanged()
 
-    /// Scoped key-value storage for the Rust core.
-    var storage: HostStorageBackend { get }
-
-    /// Core-owned host-private storage for auth session, pairing identity,
-    /// and persisted permission decisions.
-    var coreStorage: HostCoreStorageBackend { get }
+    /// Protected host secrets, independent of wallet-root access.
+    var secretStorage: HostSecretStorageBackend { get }
 
 }
 
-/// Native Chat storage and UI surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:)``
-/// when the host supports the Chat modality; hosts without it pass nothing.
+/// Native Chat storage and UI supplied by ``WorkerEngineHost/chatBridge(productId:)``.
 /// Native Chat storage and UI surface, called from the process-wide dispatch
 /// pool shared by every product execution: implementations must be safe to
 /// enter concurrently.
@@ -234,7 +237,7 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 }
 
 /// Native Pocket collection surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:)``
+/// ``WorkerEngineHost/pocketBridge(productId:)``
 /// when the host has a Pocket surface; hosts without one pass nothing. Called
 /// from the process-wide dispatch pool shared by every product execution:
 /// implementations must be safe to enter concurrently, and one that blocks
@@ -280,8 +283,16 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
 public extension HostBridge {
     /// Default no-op logger. Override to plumb into your logging framework.
     func onCoreLog(marker: String, detail: String) {}
-    func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32 { 0 }
-    func cancelNotification(id: UInt32) throws {}
+    func scheduleNotification(productId: String, id: UInt32, request: HostPushNotificationRequest) async throws {
+        throw HostRejection.Rejected(reason: "notification scheduling unavailable")
+    }
+    func isScheduledNotificationPending(productId: String, id: UInt32) async throws -> Bool {
+        throw HostRejection.Rejected(reason: "notification query unavailable")
+    }
+
+    func cancelScheduledNotification(productId: String, id: UInt32) async throws {
+        throw HostRejection.Rejected(reason: "notification cancellation unavailable")
+    }
     func authStateChanged(state: AuthState) {}
     func chainConnect(genesisHash: Data) throws -> UInt32? { nil }
     func chainSend(connectionId: UInt32, request: String) throws {}
@@ -300,40 +311,13 @@ public extension HostBridge {
         )
     }
     func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
-    func workerDemandChanged(productId: String, transition: WorkerTransition) {}
     func devicePaired(device: PairedSsoPeer) {}
+    func runtimeRecordsChanged() {}
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws
         -> DevicePermissionStatus { .notApplicable }
-    /// Defaults opt out of worker keep-alive; override to run background work
-    /// past the product's surface. The id is still distinct per call, because
-    /// an `OperationId` names one operation: a host overriding only
-    /// `endOperation`, and the core's own demand accounting, both end the
-    /// wrong ones when every operation shares an id.
-    func beginOperation(productId: String, label: String) async throws -> UInt32 {
-        defaultOperationIds.take()
-    }
 
-    func endOperation(productId: String, id: UInt32) async throws {}
 }
 
-/// Ids handed out by the default `beginOperation`, distinct for the life of
-/// the process.
-private final class DefaultOperationIds: @unchecked Sendable {
-    private let lock = NSLock()
-    private var nextId: UInt32 = 1
-
-    func take() -> UInt32 {
-        lock.lock()
-        defer { lock.unlock() }
-        let id = nextId
-        // Never zero, and never traps: an id is only ever compared, so wrapping
-        // back to one costs nothing.
-        nextId = nextId == UInt32.max ? 1 : nextId + 1
-        return id
-    }
-}
-
-private let defaultOperationIds = DefaultOperationIds()
 
 /// Adapter that bridges the public `ChatHostBridge` to the generated UniFFI
 /// `NativeChatCallbacks` protocol.
@@ -457,13 +441,11 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         bridge.onCoreLog(marker: marker, detail: detail)
     }
 
-    func workerDemandChanged(productId: String, transition: WorkerTransition) {
-        bridge.workerDemandChanged(productId: productId, transition: transition)
-    }
-
     func devicePaired(device: PairedSsoPeer) {
         bridge.devicePaired(device: device)
     }
+
+    func runtimeRecordsChanged() { bridge.runtimeRecordsChanged() }
 
     func navigateTo(url: String) async throws {
         try await withNavigationRejection {
@@ -471,15 +453,19 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32 {
+    func scheduleNotification(productId: String, id: UInt32, request: HostPushNotificationRequest) async throws {
         try await withHostRejection {
-            try await bridge.pushNotification(request: request)
+            try await bridge.scheduleNotification(productId: productId, id: id, request: request)
         }
     }
 
-    func cancelNotification(id: UInt32) throws {
-        try withHostRejection {
-            try bridge.cancelNotification(id: id)
+    func isScheduledNotificationPending(productId: String, id: UInt32) async throws -> Bool {
+        try await withHostRejection { try await bridge.isScheduledNotificationPending(productId: productId, id: id) }
+    }
+
+    func cancelScheduledNotification(productId: String, id: UInt32) async throws {
+        try await withHostRejection {
+            try await bridge.cancelScheduledNotification(productId: productId, id: id)
         }
     }
 
@@ -519,22 +505,16 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         bridge.authStateChanged(state: state)
     }
 
-    func coreStorageRead(key: Data) throws -> Data? {
-        try withHostRejection {
-            try bridge.coreStorage.read(key: key)
-        }
+    func readSecretCoreStorage(key: SecretCoreStorageKey) async throws -> Data? {
+        try await withHostRejection { try await bridge.secretStorage.read(key: key) }
     }
 
-    func coreStorageWrite(key: Data, value: Data) throws {
-        try withHostRejection {
-            try bridge.coreStorage.write(key: key, value: value)
-        }
+    func writeSecretCoreStorage(key: SecretCoreStorageKey, value: Data) async throws {
+        try await withHostRejection { try await bridge.secretStorage.write(key: key, value: value) }
     }
 
-    func coreStorageClear(key: Data) throws {
-        try withHostRejection {
-            try bridge.coreStorage.clear(key: key)
-        }
+    func clearSecretCoreStorage(key: SecretCoreStorageKey) async throws {
+        try await withHostRejection { try await bridge.secretStorage.clear(key: key) }
     }
 
     func chainConnect(genesisHash: Data) throws -> UInt32? {
@@ -597,35 +577,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    func localStorageRead(key: String) throws -> Data? {
-        try withStorageError {
-            try bridge.storage.read(key: key)
-        }
-    }
-
-    func localStorageWrite(key: String, value: Data) throws {
-        try withStorageError {
-            try bridge.storage.write(key: key, value: value)
-        }
-    }
-
-    func localStorageClear(key: String) throws {
-        try withStorageError {
-            try bridge.storage.clear(key: key)
-        }
-    }
-
-    func beginOperation(productId: String, label: String) async throws -> UInt32 {
-        try await withHostRejection {
-            try await bridge.beginOperation(productId: productId, label: label)
-        }
-    }
-
-    func endOperation(productId: String, id: UInt32) async throws {
-        try await withHostRejection {
-            try await bridge.endOperation(productId: productId, id: id)
-        }
-    }
 
     private func withHostRejection<T>(_ operation: () throws -> T) throws -> T {
         do {
@@ -667,15 +618,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    private func withStorageError<T>(_ operation: () throws -> T) throws -> T {
-        do {
-            return try operation()
-        } catch let error as HostLocalStorageReadError {
-            throw error
-        } catch {
-            throw HostLocalStorageReadError.Unknown(reason: hostRejectionReason(error))
-        }
-    }
 }
 
 /// Process-owned Rust host runtime. Product executables open independent
@@ -687,12 +629,13 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private let foregroundObserver: NSObjectProtocol
     private var contactsRetainer: NativeContactsCallbacks?
 
-    public convenience init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
-        try self.init(bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default)
+    public convenience init(bridge: HostBridge, walletSecrets: WalletSecretProvider, runtimeConfig: HostRuntimeConfig) throws {
+        try self.init(bridge: bridge, walletSecrets: walletSecrets, runtimeConfig: runtimeConfig, notificationCenter: .default)
     }
 
     init(
         bridge: HostBridge,
+        walletSecrets: WalletSecretProvider,
         runtimeConfig: HostRuntimeConfig,
         notificationCenter: NotificationCenter
     ) throws {
@@ -700,6 +643,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         callbackRetainer = adapter
         let inner = try NativeTrUApiHostRuntime.withRuntimeConfig(
             callbacks: adapter,
+            walletSecrets: WalletSecretAdapter(walletSecrets),
             runtimeConfig: runtimeConfig
         )
         self.inner = inner
@@ -716,6 +660,57 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
             }
         }
     }
+
+    /// Install engines before restoring durable worker intents.
+    public func setWorkerEngineHost(host: WorkerEngineHost) -> Bool { inner.setWorkerEngineHost(engine: WorkerEngineAdapter(host)) }
+    /// Persist one native integration intent.
+    public func notifyWorkerIntent(productId: String, action: WorkerIntentAction, modality: WorkerModality) async throws {
+        try await inner.notifyWorkerIntent(productId: productId, action: action, modality: modality)
+    }
+    /// Restore workers and refresh eligible bundles.
+    public func updateWorkers() async throws { try await inner.updateWorkers() }
+    /// Stop engines while preserving durable reasons.
+    public func suspendWorkers() async throws { try await inner.suspendWorkers() }
+    /// Report an asynchronous engine startup failure to the lifecycle owner.
+    public func notifyWorkerFailed(execution: TrUAPIProductExecution, reason: String) { inner.notifyWorkerFailed(execution: execution.inner, reason: reason) }
+
+    /// Query persistent integration reasons.
+    public func workerReasons(productId: String) async throws -> [WorkerReason] { try await inner.workerReasons(productId: productId) }
+    /// Query installed worker bundles.
+    public func workerProducts() async throws -> [ProductWorkerRecord] { try await inner.workers() }
+    /// Query product authorization decisions.
+    public func permissions() async throws -> [PermissionRecord] { try await inner.permissions() }
+    /// Inspect authorization for a settings surface.
+    public func permissionAuthorizationStatus(productId: String, request: PermissionAuthorizationRequest) async throws -> PermissionAuthorizationStatus {
+        try await inner.permissionAuthorizationStatus(productId: productId, request: request)
+    }
+    /// Update authorization without opening a product execution.
+    public func setPermissionAuthorizationStatus(productId: String, request: PermissionAuthorizationRequest, status: PermissionAuthorizationStatus) async throws {
+        try await inner.setPermissionAuthorizationStatus(productId: productId, request: request, status: status)
+    }
+
+    /// Query the Rust-owned product catalog.
+    public func products() async throws -> [ProductRecord] { try await inner.products() }
+    /// Persist display metadata without changing manifest authorization.
+    public func saveProduct(product: ProductRecord) async throws { try await inner.saveProduct(product: product) }
+    /// Cancel product OS work before removing its records.
+    public func removeProduct(productId: String) async throws { try await inner.removeProduct(productId: productId) }
+    /// Query authenticated paired hosts for the active wallet.
+    public func pairedHosts() async throws -> [PairedHostRecord] { try await inner.pairedHosts() }
+    /// Revoke the authenticated peer and its runtime records.
+    public func removePairedHost(peerStatement: Data, peerEncryption: Data) async throws {
+        try await inner.removePairedHost(peerStatement: peerStatement, peerEncryption: peerEncryption)
+    }
+    /// Query public allowance history.
+    public func allowanceRecords() async throws -> [AllowanceRecord] { try await inner.allowanceRecords() }
+    /// Query individual slot assignments and renewal priorities.
+    public func statementSlots() async throws -> [StatementSlotRecord] { try await inner.statementSlots() }
+    /// Query OS reconciliation work.
+    public func scheduledNotifications() async throws -> [ScheduledNotificationRecord] { try await inner.scheduledNotifications() }
+    /// Retry pending OS registration and cancellation.
+    public func reconcileNotifications() async throws { try await inner.reconcileNotifications() }
+    /// Revoke account state and clear its runtime records.
+    public func resetAccount() async throws { try await inner.resetAccount() }
 
     deinit {
         notificationCenter.removeObserver(foregroundObserver)
@@ -741,63 +736,28 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.notifyContactsChanged()
     }
 
-    /// Open one executable connection with a host-assigned immutable context.
-    /// Pass `chat` to install the host's Chat adapter; hosts without the Chat
-    /// modality omit it. Pass `pocket` to install the card collection, and
-    /// omit that where the host has no Pocket surface.
+    /// Open an App or Widget execution. Workers are supplied to the engine factory.
     public func openProductExecution(
         bridge: HostBridge,
-        configuration: ProductExecutionConfig,
-        chat: ChatHostBridge? = nil,
-        pocket: PocketHostBridge? = nil
+        configuration: ProductExecutionConfig
     ) throws -> TrUAPIProductExecution {
         let adapter = HostCallbackAdapter(bridge: bridge)
-        let chatAdapter = chat.map { ChatCallbackAdapter(bridge: $0) }
-        let pocketAdapter = pocket.map { PocketCallbackAdapter(bridge: $0) }
-        let execution = try inner.openProductExecution(
-            callbacks: adapter,
-            chatCallbacks: chatAdapter,
-            pocketCallbacks: pocketAdapter,
-            executionConfig: configuration
-        )
-        return TrUAPIProductExecution(
-            inner: execution,
-            callbackRetainer: adapter,
-            chatRetainer: chatAdapter,
-            pocketRetainer: pocketAdapter
-        )
+        let execution = try inner.openProductExecution(callbacks: adapter, executionConfig: configuration)
+        return TrUAPIProductExecution(inner: execution, callbackRetainer: adapter)
     }
 
-    public func disconnect() {
-        inner.disconnect()
+    public func disconnect() async throws {
+        try await inner.disconnect()
     }
 
-    /// Take one reference on the product's worker for a modality holder that
-    /// is on screen or in flight. The first one reports `.start` to
-    /// ``HostBridge/workerDemandChanged(productId:transition:)``, which is
-    /// where the host starts the worker. Pair every call with one
-    /// ``releaseWorker(productId:)``.
-    public func acquireWorker(productId: String) {
-        inner.acquireWorker(productId: productId)
-    }
-
-    /// Release one reference. The last one reports `.stop`, after which the
-    /// host may stop the worker. Releasing with none held is a no-op.
-    public func releaseWorker(productId: String) {
-        inner.releaseWorker(productId: productId)
-    }
 
     /// Tell the pairing host behind `deeplink` that allowance allocation is
     /// under way, so it leaves its QR screen while the allocation runs.
     ///
-    /// Answering needs this host's own statement-store allowance, so register
-    /// the `WalletSso` renewal target first. The peer's own device statement
-    /// account is the other target, read with ``parsePairingDeeplink(deeplink:)``
-    /// and tracked before ``establishPairing(deeplink:)`` runs; the allocation
-    /// this notice covers is what that call waits on. The returned handle is
-    /// owed a ``notifyPairingFailed(announced:reason:)`` if pairing then
-    /// fails: the peer has dropped its QR and waits without a deadline of its
-    /// own, and the handle holds the responder secret until it is released.
+    /// Low-level notice for custom pairing flows. The wallet's own statement
+    /// allowance must already exist, and the returned handle requires a
+    /// failure notice if pairing stops. ``establishPairing(deeplink:)`` owns
+    /// this sequencing for ordinary pairing; do not send another notice first.
     public func notifyPairingAllowanceAllocation(
         deeplink: String
     ) async throws -> NativeAnnouncedPairing {
@@ -817,21 +777,13 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.notifyPairingFailed(announced: announced, reason: reason)
     }
 
-    /// Answer a pairing host's handshake deeplink, without serving the session
-    /// it opens.
+    /// Provision the wallet and peer statement allowances, verify renewal,
+    /// and answer the handshake. Rust sends allocation/failure notices and
+    /// cleans up newly tracked peer targets if pairing fails.
     ///
-    /// The answer is signed by this host's own SSO statement identity, so the
-    /// `.walletSso` renewal target has to be allocated for it to reach the
-    /// Statement Store at all. The peer's device statement account is the
-    /// other tracked target, since this host allocates the allowance the peer
-    /// authors its own session statements under; read it from the deeplink
-    /// with ``parsePairingDeeplink(deeplink:)``. A pairing that fails after
-    /// that leaves the peer's target to untrack again, unless the device was
-    /// already paired and the target still carries a live pairing.
-    ///
-    /// A device that pairs here reaches ``HostBridge/devicePaired(device:)``.
-    /// Serving the session is ``resumePairing(peer:)``, called with the peer
-    /// this host persisted.
+    /// Successful pairing persists the peer in the core roster and reports
+    /// ``HostBridge/devicePaired(device:)``. Use ``resumePairing(peer:)``
+    /// to serve its session after the handshake completes.
     public func establishPairing(deeplink: String) async throws {
         try await inner.establishPairing(deeplink: deeplink)
     }
@@ -864,8 +816,18 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.coreDatabaseStatus()
     }
 
-    public func activateLocalSession(secret: Data, liteUsername: String? = nil) throws {
-        try inner.activateLocalSession(secret: secret, liteUsername: liteUsername)
+    public func activateWallet(walletId: String, liteUsername: String? = nil) async throws {
+        try await inner.activateWallet(walletId: walletId, liteUsername: liteUsername)
+    }
+
+    /// Clear active wallet material and reject work until activation succeeds.
+    public func lockWallet() async throws {
+        try await inner.lockWallet()
+    }
+
+    /// Stop the bound wallet runtime before replacing it for another owner.
+    public func shutdown() async throws {
+        try await inner.shutdown()
     }
 
     /// Answer one decrypted SSO remote message from the wallet-managed
@@ -897,12 +859,12 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// Record the accounts renewal should keep allowed on the Statement Store.
     ///
     /// Needs an active session, so call it after
-    /// ``activateLocalSession(secret:liteUsername:)`` or after pairing, not at
+    /// ``activateWallet(walletId:liteUsername:)`` or after pairing, not at
     /// construction.
     ///
     /// Recipe-shaped targets survive a change of root entropy; a raw
     /// ``StatementRenewalTarget/account(accountId:label:)`` does not, and is
-    /// dropped by the next pass after ``activateLocalSession(secret:liteUsername:)``
+    /// dropped by the next pass after ``activateWallet(walletId:liteUsername:)``
     /// installs a different identity. Re-track those whenever the identity changes.
     public func trackStatementRenewalTargets(_ targets: [StatementRenewalTarget]) throws {
         try inner.trackStatementRenewalTargets(targets: targets)
@@ -990,7 +952,6 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     ) throws
     func notifyThemeChanged(theme: HostThemeSubscribeItem)
     func notifyLocaleChanged(locale: HostLocaleSubscribeItem)
-    func notifyStorageChanged(key: String, value: Data?)
     func notifyPreimageChanged(key: Data, value: Data?)
     func notifyChainResponse(connectionId: UInt32, json: String)
     func notifyChainClosed(connectionId: UInt32)
@@ -1001,21 +962,15 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
 
 /// One App, Widget, or Worker executable connected to a shared host runtime.
 public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sendable {
-    private let inner: NativeProductExecution
-    private let callbackRetainer: HostCallbacks
-    private let chatRetainer: NativeChatCallbacks?
-    private let pocketRetainer: NativePocketCallbacks?
+    fileprivate let inner: NativeProductExecution
+    private let callbackRetainer: HostCallbacks?
 
     fileprivate init(
         inner: NativeProductExecution,
-        callbackRetainer: HostCallbacks,
-        chatRetainer: NativeChatCallbacks?,
-        pocketRetainer: NativePocketCallbacks?
+        callbackRetainer: HostCallbacks?
     ) {
         self.inner = inner
         self.callbackRetainer = callbackRetainer
-        self.chatRetainer = chatRetainer
-        self.pocketRetainer = pocketRetainer
     }
 
     deinit {
@@ -1082,9 +1037,6 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     /// Only for changes the host makes itself. A write a product made through
     /// TrUAPI already reaches its subscribers, so reporting one here delivers
     /// it twice.
-    public func notifyStorageChanged(key: String, value: Data?) {
-        inner.notifyStorageChanged(key: key, value: value)
-    }
 
     public func notifyPreimageChanged(key: Data, value: Data?) {
         inner.notifyPreimageChanged(key: key, value: value)

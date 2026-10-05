@@ -82,27 +82,18 @@ private func makeBridge(
     chainRegistry: MockChainRegistry = MockChainRegistry(),
     confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter(),
     preimageCache: TrUAPIPreimageCache = TrUAPIPreimageCache { _ in nil },
-    productStorageFails: Bool = false,
     hostProvider: ProductHostProviding = StubHostProvider()
 ) -> RustProductExecutionBridge {
     let router = MockNavigationRouter()
     let pool = makeRegistryPool(chainRegistry: chainRegistry)
-    let productStorage: TrUAPILocalStoring = productStorageFails
-        ? FailingProductStorage()
-        : TrUAPILocalStorage.createProductLocalStorage(
-            productId: productId,
-            defaults: makeTestDefaults()
-        )
     return RustProductExecutionBridge(dependencies: .init(
         productId: productId,
-        permissionGuard: permissionGuard,
+        permissionRequester: permissionGuard,
         osPermissionAsker: osPermissionAsker,
         notificationScheduler: notificationScheduler,
         navigationRouter: router,
         chainRegistry: chainRegistry,
         chainConnections: pool,
-        productStorage: productStorage,
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
         confirmationPresenter: confirmationPresenter,
         preimageCache: preimageCache,
         hostProvider: hostProvider,
@@ -124,7 +115,9 @@ struct RustRuntimeBridgeTests {
     @Test func devicePermissionRoutesToGuard() async throws {
         let guard_ = MockPermissionGuard()
         guard_.verdictToReturn = true
-        let bridge = makeBridge(productId: "cam.product", permissionGuard: guard_)
+        let osAsker = MockOSPermissionAsker()
+        osAsker.requestResult = true
+        let bridge = makeBridge(productId: "cam.product", permissionGuard: guard_, osPermissionAsker: osAsker)
 
         let result = try await bridge.devicePermission(product: testProduct, request: .camera)
 
@@ -142,6 +135,18 @@ struct RustRuntimeBridgeTests {
 
         #expect(result == .deny)
         #expect(guard_.requestedPermission == .deviceCapability(.notifications))
+    }
+
+    @Test func operatingSystemRefusalDoesNotBecomeProductDenial() async {
+        let requester = MockPermissionGuard()
+        requester.verdictToReturn = true
+        let osAsker = MockOSPermissionAsker()
+        osAsker.requestResult = false
+        let bridge = makeBridge(permissionGuard: requester, osPermissionAsker: osAsker)
+
+        await #expect(throws: HostRejection.self) {
+            try await bridge.devicePermission(product: testProduct, request: .camera)
+        }
     }
 
     @Test func devicePermissionStatusReadsOSWithoutPrompting() async throws {
@@ -218,42 +223,7 @@ struct RustRuntimeBridgeTests {
 
     // MARK: pushNotification
 
-    /// `pushNotification` maps text/deeplink/scheduledAt onto the scheduler
-    /// request and returns its UInt32.
-    @Test func pushNotificationSchedules() async throws {
-        let scheduler = MockNotificationScheduler()
-        scheduler.notificationIdToReturn = 99
-        let bridge = makeBridge(productId: "push.product", notificationScheduler: scheduler)
 
-        let notificationId = try await bridge.pushNotification(
-            request: HostPushNotificationRequest(text: "hi", deeplink: "d", scheduledAt: nil)
-        )
-
-        #expect(notificationId == 99)
-        #expect(scheduler.scheduledProductId == "push.product")
-        #expect(scheduler.scheduledRequest?.text == "hi")
-        #expect(scheduler.scheduledRequest?.deeplink == "d")
-        #expect(scheduler.scheduledRequest?.scheduledAtMs == nil)
-    }
-
-    /// cancelNotification is fire-and-forget (invoked inline on the
-    /// dispatcher thread); await the scheduler callback before asserting.
-    @Test func cancelNotificationDelegates() async throws {
-        let scheduler = MockNotificationScheduler()
-        let bridge = makeBridge(notificationScheduler: scheduler)
-
-        await withCheckedContinuation { continuation in
-            scheduler.onCancel = { _ in continuation.resume() }
-            do {
-                try bridge.cancelNotification(id: 77)
-            } catch {
-                continuation.resume()
-                Issue.record("cancelNotification threw: \(error)")
-            }
-        }
-
-        #expect(scheduler.cancelledNotificationId == 77)
-    }
 
     // MARK: featureSupported
 
@@ -515,19 +485,6 @@ struct RustRuntimeBridgeTests {
         bridge.chainDidClose(connectionId: 1)
     }
 
-    /// Plain Swift errors from storage surface as FFI `HostLocalStorageReadError.Unknown`.
-    @Test func storageErrorsAreMappedToFfiTypes() {
-        let bridge = makeBridge(productStorageFails: true)
-
-        #expect {
-            try bridge.storage.read(key: "k")
-        } throws: { error in
-            guard case HostLocalStorageReadError.Unknown = error else {
-                return false
-            }
-            return true
-        }
-    }
 
     /// After `attach`, the bridge sets itself as the chain event handler on
     /// the connection pool. Mocked execution — the Rust cdylib never boots in
@@ -537,17 +494,12 @@ struct RustRuntimeBridgeTests {
         let pool = makeRegistryPool(chainRegistry: chainRegistry)
         let bridge = RustProductExecutionBridge(dependencies: .init(
             productId: "test.dot",
-            permissionGuard: MockPermissionGuard(),
+            permissionRequester: MockPermissionGuard(),
             osPermissionAsker: MockOSPermissionAsker(),
             notificationScheduler: MockNotificationScheduler(),
             navigationRouter: MockNavigationRouter(),
             chainRegistry: chainRegistry,
             chainConnections: pool,
-            productStorage: TrUAPILocalStorage.createProductLocalStorage(
-                productId: "test.dot",
-                defaults: makeTestDefaults()
-            ),
-            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
             confirmationPresenter: MockConfirmationPresenter(),
             preimageCache: TrUAPIPreimageCache { _ in nil },
             hostProvider: StubHostProvider(),
@@ -577,16 +529,4 @@ struct RustRuntimeBridgeTests {
         #expect(execution.chainClosed == [7])
     }
 
-    /// Core storage keys (`Data`) are hex-encoded for the underlying store;
-    /// a write then read round-trips through the hex key.
-    @Test func coreStorageBackendHexEncodesKeys() throws {
-        let bridge = makeBridge()
-        let key = Data([0xDE, 0xAD])
-        let value = Data([0x01, 0x02, 0x03])
-
-        try bridge.coreStorage.write(key: key, value: value)
-        let read = try bridge.coreStorage.read(key: key)
-
-        #expect(read == value)
-    }
 }

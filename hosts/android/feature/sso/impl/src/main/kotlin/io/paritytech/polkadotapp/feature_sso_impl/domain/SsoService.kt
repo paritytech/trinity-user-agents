@@ -26,11 +26,17 @@ import io.paritytech.polkadotapp.feature_sso_impl.domain.signTransaction.SsoSign
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.onEach
 import timber.log.Timber
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.awaitCancellation
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class SsoService @Inject constructor(
+    private val runtimeSettings: ProductRuntimeSettings,
+    private val runtimeProvider: TrUAPIHostRuntimeProvider,
     private val ssoSessionManager: SsoSessionManager,
     private val signingRouter: SigningRouter,
     private val signingContextHolder: SigningContextHolder,
@@ -40,6 +46,11 @@ class SsoService @Inject constructor(
     private val productAccountIdProvider: ProductAccountIdProvider,
 ) {
     fun watchSsoEvents(): Flow<SsoSessionRequest> {
+        if (runtimeSettings.isTrUAPIRuntimeEnabled()) return flow {
+            ssoSessionManager.dispose()
+            runtimeProvider.runtime().getOrThrow()
+            awaitCancellation()
+        }
         return flowOfAll {
             ssoSessionManager.init()
 

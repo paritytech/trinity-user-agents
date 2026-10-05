@@ -13,7 +13,7 @@ class RealPocketCollectionTest {
     private val humanity = pinnedCard(personhoodProduct, "humanity")
     private val loyalty = addedCard(gameProduct, "loyalty")
     private val repository = InMemoryPocketCardRepository()
-    private val collection = RealPocketCollection(FakePinnedPocketCards(listOf(humanity)), repository)
+    private val collection = RealPocketCollection(FakePinnedPocketCards(listOf(humanity)), repository, io.mockk.mockk { io.mockk.every { isTrUAPIRuntimeEnabled() } returns false }, dagger.Lazy { io.mockk.mockk() })
 
     @Test
     fun `pinned cards come first and are present before anything was added`() = runTest {
@@ -83,7 +83,7 @@ class RealPocketCollectionTest {
     fun `a pinned card keeps the newest face its product drew across a restart`() = runTest {
         collection.cacheFace(humanity.card.key, faceOf("live"))
 
-        val afterRestart = RealPocketCollection(FakePinnedPocketCards(listOf(humanity)), repository)
+        val afterRestart = RealPocketCollection(FakePinnedPocketCards(listOf(humanity)), repository, io.mockk.mockk { io.mockk.every { isTrUAPIRuntimeEnabled() } returns false }, dagger.Lazy { io.mockk.mockk() })
 
         assertEquals(faceOf("live"), afterRestart.cachedFace(humanity.card.key))
     }
@@ -117,7 +117,7 @@ class RealPocketCollectionTest {
     // and a face read backs every card on screen.
     @Test
     fun `a removal and a face read do not wait for the pinned cards to be listable`() = runTest {
-        val offline = RealPocketCollection(FakePinnedPocketCards(listOf(humanity), listable = false), repository)
+        val offline = RealPocketCollection(FakePinnedPocketCards(listOf(humanity), listable = false), repository, io.mockk.mockk { io.mockk.every { isTrUAPIRuntimeEnabled() } returns false }, dagger.Lazy { io.mockk.mockk() })
         offline.addCard(loyalty)
 
         assertEquals(PocketRemoval.REMOVED, offline.removeCard(loyalty.card.key).getOrThrow())

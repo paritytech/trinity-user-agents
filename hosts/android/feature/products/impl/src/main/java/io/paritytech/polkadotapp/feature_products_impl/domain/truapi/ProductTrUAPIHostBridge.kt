@@ -5,8 +5,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import io.parity.truapi.HostBridge
-import io.parity.truapi.HostCoreStorage
-import io.parity.truapi.HostStorage
+import io.parity.truapi.HostSecretStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ProductExecutionKind
@@ -14,7 +13,6 @@ import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
-import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
@@ -26,11 +24,9 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInt
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ProductTheme
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ThemeVariant
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
-import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.NotificationId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.RemotePermissionRequest
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.job
@@ -50,7 +46,6 @@ import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostRejection
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.time.Instant
 import uniffi.truapi.ThemeVariant as NativeThemeVariant
 import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
 
@@ -70,11 +65,12 @@ import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
 class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val hostApiInteractor: HostApiInteractor,
     @param:TrUAPIChainHttpClient private val chainHttpClient: OkHttpClient,
-    private val encryptedPreferences: EncryptedPreferences,
+    private val secretStorage: TrUAPISecretStorage,
+    private val notifications: TrUAPINotifications,
+    private val localSessionSource: TrUAPILocalSessionSource,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
     private val dotNsTldProvider: DotNsTldProvider,
-    private val pocketCardStore: PocketCardStore,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -84,6 +80,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
     // The app's own theme is not known until subscribeTheme() emits; until then
     // the core gets the host-default answer the shell documents.
+    private var walletId: String? = null
+
     private val cachedTheme = AtomicReference(
         HostThemeSubscribeItem(ThemeName.Default, NativeThemeVariant.DARK),
     )
@@ -102,7 +100,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     )
 
     private var execution: TrUAPIProductExecution? = null
-    private var pocketBridge: ProductPocketHostBridge? = null
 
     init {
         // Tear the execution down with the owning scope: otherwise a closed
@@ -120,10 +117,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         callingProductId: ProductId,
         navigation: NavigationPolicy,
     ) = object : HostBridge {
-        override val storage: HostStorage =
-            EncryptedHostStorage(encryptedPreferences, callingProductId.value)
-
-        override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
+        override val secretStorage: HostSecretStorage = this@ProductTrUAPIHostBridge.secretStorage
 
         override fun onCoreLog(marker: String, detail: String) {
             Timber.tag("truapi.core").d("%s: %s", marker, detail)
@@ -149,27 +143,14 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             }
         }
 
-        override suspend fun pushNotification(request: HostPushNotificationRequest): UInt =
-            hostApiInteractor
-                .publishNotificationAuthorized(
-                    callingProductId = callingProductId,
-                    text = request.text,
-                    deeplink = request.deeplink,
-                    // Wire carries Unix millis UTC; null fires immediately.
-                    scheduledAt = request.scheduledAt?.let { Instant.fromEpochMilliseconds(it.toLong()) },
-                )
-                .map { it.value.toUInt() }
-                .getOrElse { throw HostRejection.Rejected(it.message.orEmpty()) }
+        override suspend fun scheduleNotification(productId: String, id: UInt, request: HostPushNotificationRequest) =
+            notifications.schedule(checkNotNull(walletId), productId, id, request)
 
-        override fun cancelNotification(id: UInt) {
-            // Runs inline on the dispatcher thread, so it must not block on the
-            // suspending scheduler; hand it to the session scope instead.
-            scope.launch {
-                hostApiInteractor
-                    .cancelNotificationAuthorized(callingProductId, NotificationId(id.toInt()))
-                    .logFailure("truapi.cancel_notification: $id")
-            }
-        }
+        override suspend fun isScheduledNotificationPending(productId: String, id: UInt): Boolean =
+            notifications.isPending(checkNotNull(walletId), productId, id)
+
+        override suspend fun cancelScheduledNotification(productId: String, id: UInt) =
+            notifications.cancel(checkNotNull(walletId), productId, id)
 
         override suspend fun lookupPreimage(key: ByteArray): ByteArray? =
             hostApiInteractor.lookupPreimage(key).getOrNull()
@@ -184,6 +165,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
             confirmationLauncher.decide(review, requesterFallback = callingProductId.value)
+
+        override suspend fun devicePermissionStatus(request: HostDevicePermissionRequest): uniffi.truapi.DevicePermissionStatus =
+            hostApiInteractor.devicePermissionStatus(request.toCapability())
 
         override suspend fun devicePermission(
             product: ProductExecutionConfig,
@@ -250,18 +234,15 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // Opening the execution is inside the Result too: it reaches the core and can be refused,
         // and the callers launch this into scopes that have no handler for a throw.
         return runCatching {
+            walletId = localSessionSource.resolve().getOrThrow().walletId
             cachedChains.set(chains)
-            val pocket = ProductPocketHostBridge(productId, pocketCardStore, scope)
             val opened = runtime.openProductExecution(
                 bridge = buildBridge(productId, navigationPolicy),
                 configuration = ProductExecutionConfig(productId.value, kind),
-                pocket = pocket,
             )
             execution = opened
-            pocketBridge = pocket
             // Anything failing past this point leaves a live execution behind, and
             // `execution != null` would then block every re-attach; tear it down.
-            pocket.start(opened::notifyPocketCardsChanged)
             chainProvider.attach(
                 onResponse = opened::notifyChainResponse,
                 onClosed = opened::notifyChainClosed,
@@ -309,8 +290,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         execution = null
         // Before the execution closes: a card change arriving afterwards would republish through a
         // handle that no longer exists.
-        pocketBridge?.stop()
-        pocketBridge = null
         chainProvider.detach()
         chainProvider.closeAll()
         opened.stopWsBridge()
@@ -351,7 +330,7 @@ private fun ProductTheme.toNativeTheme(): HostThemeSubscribeItem = HostThemeSubs
     },
 )
 
-private fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = when (this) {
+internal fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = when (this) {
     HostDevicePermissionRequest.NOTIFICATIONS -> DeviceCapabilityType.Notifications
     HostDevicePermissionRequest.CAMERA -> DeviceCapabilityType.Camera
     HostDevicePermissionRequest.MICROPHONE -> DeviceCapabilityType.Microphone
@@ -363,7 +342,7 @@ private fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = w
     HostDevicePermissionRequest.BIOMETRICS -> DeviceCapabilityType.Biometrics
 }
 
-private fun RemotePermission.toDomain(): RemotePermissionRequest = when (this) {
+internal fun RemotePermission.toDomain(): RemotePermissionRequest = when (this) {
     is RemotePermission.Remote -> RemotePermissionRequest.Remote(domains)
     RemotePermission.WebRtc -> RemotePermissionRequest.WebRtc
     RemotePermission.ChainSubmit -> RemotePermissionRequest.ChainSubmit
@@ -371,7 +350,7 @@ private fun RemotePermission.toDomain(): RemotePermissionRequest = when (this) {
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
 }
 
-private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this) {
+internal fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this) {
     PermissionDecision.AllowOnce -> TrUAPIPermissionDecision.ALLOW_ONCE
     PermissionDecision.AllowAlways -> TrUAPIPermissionDecision.ALLOW_ALWAYS
     PermissionDecision.Deny -> TrUAPIPermissionDecision.DENY

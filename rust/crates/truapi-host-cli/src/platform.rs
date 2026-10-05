@@ -25,8 +25,9 @@ use truapi::platform::{
     AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
     DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
     PermissionDecision, PermissionStatusHost, Permissions, PreimageHost, ProductContext,
-    ProductOperations, ProductStorage, ProductStorageKey, ProviderError, SessionUiInfo,
-    SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation, UserConfirmationReview,
+    ProductOperations, ProductStorage, ProductStorageKey, ProviderError, SecretCoreStorage,
+    SecretCoreStorageKey, SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost,
+    UserConfirmation, UserConfirmationReview,
 };
 use truapi::v01;
 
@@ -98,7 +99,7 @@ pub struct CliPlatform {
     /// Device-scoped core slots, kept outside the per-user namespaces that
     /// [`Self::switch_pairing_user_storage`] swaps. Peers address this install
     /// by the key held here, so a user switch must not regenerate it.
-    device_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+    device_storage: Mutex<Result<HashMap<Vec<u8>, Vec<u8>>, String>>,
     product_storage_dir: Mutex<Option<PathBuf>>,
     core_storage_path: Mutex<Option<PathBuf>>,
     device_storage_path: Option<PathBuf>,
@@ -172,12 +173,12 @@ impl CliPlatform {
                     "could not create CLI device storage dir"
                 );
             }
-            directory.join("device-storage.json")
+            directory.join("host-secrets.json")
         });
         let device_storage = device_storage_path
             .as_deref()
-            .map(load_hex_key_map)
-            .unwrap_or_default();
+            .map(read_secret_map)
+            .unwrap_or_else(|| Ok(HashMap::new()));
 
         Arc::new(Self {
             chain: WsChainProvider::new(network.people_ws, network.live_chain_endpoints),
@@ -237,22 +238,6 @@ impl CliPlatform {
         save_product_storage(&directory, product_id, values)
     }
 
-    /// Whether a slot belongs to the install rather than the signed-in user.
-    fn is_device_scoped(key: &CoreStorageKey) -> bool {
-        matches!(key, CoreStorageKey::DeviceEncryptionKey)
-    }
-
-    fn persist_device_storage(&self) -> Result<(), String> {
-        let Some(path) = self.device_storage_path.as_deref() else {
-            return Ok(());
-        };
-        let storage = self
-            .device_storage
-            .lock()
-            .expect("device storage mutex poisoned");
-        save_hex_key_map(path, &storage)
-    }
-
     fn persist_core_storage(&self) -> Result<(), String> {
         let Some(path) = self
             .core_storage_path
@@ -304,12 +289,8 @@ impl CliPlatform {
         // A fresh login writes these values before its username is known.
         // Carry only that pairing bootstrap across namespaces; permissions,
         // allowances, and product KV remain isolated to their previous user.
-        let transient_keys = [
-            CoreStorageKey::AuthSession,
-            CoreStorageKey::PairingDeviceIdentity,
-            CoreStorageKey::LastProcessedPairingStatement,
-        ]
-        .map(|key| Self::core_key(&key));
+        let transient_keys =
+            [CoreStorageKey::LastProcessedPairingStatement].map(|key| Self::core_key(&key));
         let carried = {
             // Keep the same path -> storage lock order used by persistence so
             // an auth transition cannot deadlock with a concurrent core write.
@@ -523,7 +504,7 @@ impl ProductOperations for CliPlatform {
     async fn begin_operation(
         &self,
         _product: &ProductContext,
-        _label: String,
+        _label: Option<String>,
     ) -> Result<api::HostWorkerBeginOperationResponse, api::HostWorkerOperationError> {
         // The headless CLI has no worker to keep alive, so the id exists only so
         // a product can pair begin/end.
@@ -547,12 +528,8 @@ impl CoreStorage for CliPlatform {
         &self,
         key: CoreStorageKey,
     ) -> Result<Option<Vec<u8>>, api::GenericError> {
-        let store = if Self::is_device_scoped(&key) {
-            &self.device_storage
-        } else {
-            &self.core_storage
-        };
-        Ok(store
+        Ok(self
+            .core_storage
             .lock()
             .expect("core storage mutex poisoned")
             .get(&Self::core_key(&key))
@@ -564,45 +541,85 @@ impl CoreStorage for CliPlatform {
         key: CoreStorageKey,
         value: Vec<u8>,
     ) -> Result<(), api::GenericError> {
-        let device_scoped = Self::is_device_scoped(&key);
-        {
-            let store = if device_scoped {
-                &self.device_storage
-            } else {
-                &self.core_storage
-            };
-            store
-                .lock()
-                .expect("core storage mutex poisoned")
-                .insert(Self::core_key(&key), value);
-        }
-        if device_scoped {
-            self.persist_device_storage()
-        } else {
-            self.persist_core_storage()
-        }
-        .map_err(|reason| api::GenericError { reason })
+        self.core_storage
+            .lock()
+            .expect("core storage mutex poisoned")
+            .insert(Self::core_key(&key), value);
+        self.persist_core_storage()
+            .map_err(|reason| api::GenericError { reason })
     }
 
     async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), api::GenericError> {
-        let device_scoped = Self::is_device_scoped(&key);
-        {
-            let store = if device_scoped {
-                &self.device_storage
-            } else {
-                &self.core_storage
-            };
-            store
-                .lock()
-                .expect("core storage mutex poisoned")
-                .remove(&Self::core_key(&key));
+        self.core_storage
+            .lock()
+            .expect("core storage mutex poisoned")
+            .remove(&Self::core_key(&key));
+        self.persist_core_storage()
+            .map_err(|reason| api::GenericError { reason })
+    }
+}
+
+#[async_trait]
+impl SecretCoreStorage for CliPlatform {
+    async fn read_secret_core_storage(
+        &self,
+        key: SecretCoreStorageKey,
+    ) -> Result<Option<Vec<u8>>, api::GenericError> {
+        use parity_scale_codec::Encode;
+        let storage = self
+            .device_storage
+            .lock()
+            .expect("secret storage mutex poisoned");
+        let values = storage.as_ref().map_err(|reason| api::GenericError {
+            reason: reason.clone(),
+        })?;
+        Ok(values.get(&key.encode()).cloned())
+    }
+
+    async fn write_secret_core_storage(
+        &self,
+        key: SecretCoreStorageKey,
+        value: Vec<u8>,
+    ) -> Result<(), api::GenericError> {
+        self.update_secret(key, Some(value))
+    }
+
+    async fn clear_secret_core_storage(
+        &self,
+        key: SecretCoreStorageKey,
+    ) -> Result<(), api::GenericError> {
+        self.update_secret(key, None)
+    }
+}
+
+impl CliPlatform {
+    fn update_secret(
+        &self,
+        key: SecretCoreStorageKey,
+        value: Option<Vec<u8>>,
+    ) -> Result<(), api::GenericError> {
+        use parity_scale_codec::Encode;
+        let mut storage = self
+            .device_storage
+            .lock()
+            .expect("secret storage mutex poisoned");
+        let values = storage.as_mut().map_err(|reason| api::GenericError {
+            reason: reason.clone(),
+        })?;
+        let mut updated = values.clone();
+        match value {
+            Some(value) => {
+                updated.insert(key.encode(), value);
+            }
+            None => {
+                updated.remove(&key.encode());
+            }
         }
-        if device_scoped {
-            self.persist_device_storage()
-        } else {
-            self.persist_core_storage()
+        if let Some(path) = self.device_storage_path.as_ref() {
+            save_hex_key_map(path, &updated).map_err(|reason| api::GenericError { reason })?;
         }
-        .map_err(|reason| api::GenericError { reason })
+        *values = updated;
+        Ok(())
     }
 }
 
@@ -629,7 +646,7 @@ impl Notifications for CliPlatform {
     async fn push_notification(
         &self,
         notification: api::HostPushNotificationRequest,
-    ) -> Result<api::HostPushNotificationResponse, api::GenericError> {
+    ) -> Result<api::HostPushNotificationResponse, api::HostPushNotificationError> {
         let id = self.next_notification_id.fetch_add(1, Ordering::Relaxed);
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -642,10 +659,7 @@ impl Notifications for CliPlatform {
                     .lock()
                     .expect("notification mutex poisoned");
                 if pending.len() >= 64 {
-                    return Err(api::GenericError {
-                        reason: "the CLI notification schedule is full (64 pending notifications)"
-                            .to_string(),
-                    });
+                    return Err(api::HostPushNotificationError::ScheduleLimitReached);
                 }
                 pending.insert(id, notification.clone());
             }
@@ -1249,6 +1263,7 @@ fn save_string_map(path: &Path, values: &HashMap<String, Vec<u8>>) -> Result<(),
     atomic_write(path, text.as_bytes())
 }
 
+/// Persist a complete replacement before exposing it to readers.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
@@ -1261,7 +1276,15 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let temporary_id = NEXT_STORAGE_TEMP_ID.fetch_add(1, Ordering::Relaxed);
     let temporary =
         path.with_file_name(format!(".{name}.{}.{temporary_id}.tmp", std::process::id()));
-    let mut file = fs::File::create(&temporary)
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&temporary)
         .map_err(|error| format!("create {}: {error}", temporary.display()))?;
     file.write_all(bytes)
         .map_err(|error| format!("write {}: {error}", temporary.display()))?;
@@ -1278,6 +1301,27 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .and_then(|directory| directory.sync_all())
         .map_err(|error| format!("sync storage dir {}: {error}", parent.display()))?;
     Ok(())
+}
+
+fn read_secret_map(path: &Path) -> Result<HashMap<Vec<u8>, Vec<u8>>, String> {
+    let values = match read_string_map(path) {
+        Ok(values) => values,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(error) => {
+            return Err(format!(
+                "read protected storage {}: {error}",
+                path.display()
+            ));
+        }
+    };
+    values
+        .into_iter()
+        .map(|(key, value)| {
+            hex::decode(key)
+                .map(|key| (key, value))
+                .map_err(|error| error.to_string())
+        })
+        .collect()
 }
 
 fn load_hex_key_map(path: &Path) -> HashMap<Vec<u8>, Vec<u8>> {
@@ -1342,6 +1386,89 @@ fn save_hex_key_map(path: &Path, values: &HashMap<Vec<u8>, Vec<u8>>) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corrupt_secret_storage_is_not_absence_and_cannot_be_overwritten() {
+        let directory = tempdir().unwrap();
+        let paths = CliStoragePaths::new(
+            directory.path().join("state"),
+            directory.path().join("products"),
+        );
+        let platform = CliPlatform::new(
+            test_network(),
+            Some(paths.clone()),
+            ApprovalPolicy::AutoAccept,
+            None,
+        );
+        let path = platform.device_storage_path.as_ref().unwrap();
+        fs::write(path, b"invalid protected store").unwrap();
+        let restarted = CliPlatform::new(
+            test_network(),
+            Some(paths),
+            ApprovalPolicy::AutoAccept,
+            None,
+        );
+        assert!(
+            futures::executor::block_on(
+                restarted.read_secret_core_storage(SecretCoreStorageKey::DeviceEncryptionKey)
+            )
+            .is_err()
+        );
+        assert!(
+            futures::executor::block_on(
+                restarted.write_secret_core_storage(
+                    SecretCoreStorageKey::DeviceEncryptionKey,
+                    vec![1; 32]
+                )
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read(path).unwrap(), b"invalid protected store");
+    }
+
+    #[test]
+    fn failed_secret_persistence_does_not_change_the_readable_value() {
+        let directory = tempdir().unwrap();
+        let platform = CliPlatform::new(
+            test_network(),
+            Some(CliStoragePaths::new(
+                directory.path().join("state"),
+                directory.path().join("products"),
+            )),
+            ApprovalPolicy::AutoAccept,
+            None,
+        );
+        futures::executor::block_on(
+            platform
+                .write_secret_core_storage(SecretCoreStorageKey::DeviceEncryptionKey, vec![1; 32]),
+        )
+        .unwrap();
+        let path = platform.device_storage_path.as_ref().unwrap();
+        fs::remove_file(path).unwrap();
+        fs::create_dir(path).unwrap();
+        assert!(
+            futures::executor::block_on(
+                platform.write_secret_core_storage(
+                    SecretCoreStorageKey::DeviceEncryptionKey,
+                    vec![2; 32]
+                )
+            )
+            .is_err()
+        );
+        assert!(
+            futures::executor::block_on(
+                platform.clear_secret_core_storage(SecretCoreStorageKey::DeviceEncryptionKey)
+            )
+            .is_err()
+        );
+        assert_eq!(
+            futures::executor::block_on(
+                platform.read_secret_core_storage(SecretCoreStorageKey::DeviceEncryptionKey)
+            )
+            .unwrap(),
+            Some(vec![1; 32])
+        );
+    }
 
     /// The preset production builds from, so tests exercise the same config.
     fn test_network() -> crate::network::NetworkConfig {
@@ -1591,13 +1718,7 @@ mod tests {
         );
     }
 
-    /// One undecodable value in `core-storage.json` must not cost the host the
-    /// entries it never touched. Before the file was moved aside, a real
-    /// `CliPlatform` discarded `PairingDeviceIdentity` and then overwrote it on
-    /// the next unrelated write.
-    ///
-    /// Keys on disk are hex of the SCALE-encoded `CoreStorageKey`, so
-    /// `AuthSession` is `00` and `PairingDeviceIdentity` is `01`.
+    /// Corrupt public cache files remain available for inspection after replacement.
     #[tokio::test]
     async fn cli_platform_preserves_unreadable_core_storage() {
         use truapi::platform::CoreStorage;
@@ -1624,15 +1745,15 @@ mod tests {
         // Nothing loaded: the good entries went with the bad one.
         assert_eq!(
             platform
-                .read_core_storage(CoreStorageKey::AuthSession)
+                .read_core_storage(CoreStorageKey::LastProcessedPairingStatement)
                 .await
                 .expect("read"),
             None,
-            "AuthSession should have loaded but the file was discarded"
+            "the corrupt cache must not be partially loaded"
         );
         assert_eq!(
             platform
-                .read_core_storage(CoreStorageKey::PairingDeviceIdentity)
+                .read_core_storage(CoreStorageKey::StatementRenewalTargets)
                 .await
                 .expect("read"),
             None
@@ -1640,14 +1761,14 @@ mod tests {
 
         // The host writes one unrelated key. That persists the whole map.
         platform
-            .write_core_storage(CoreStorageKey::AuthSession, vec![0x42])
+            .write_core_storage(CoreStorageKey::LastProcessedPairingStatement, vec![0x42])
             .await
             .expect("write");
 
         let after = std::fs::read_to_string(&core_path).expect("read back");
         assert!(
             after.contains("42"),
-            "the new AuthSession value should be persisted: {after}"
+            "the new cursor value should be persisted: {after}"
         );
 
         // The unreadable original is preserved beside it, so nothing is lost.
@@ -1787,7 +1908,8 @@ mod tests {
             .switch_pairing_user_storage("alice.dot")
             .expect("select alice");
         futures::executor::block_on(
-            platform.write_core_storage(CoreStorageKey::DeviceEncryptionKey, vec![7; 32]),
+            platform
+                .write_secret_core_storage(SecretCoreStorageKey::DeviceEncryptionKey, vec![7; 32]),
         )
         .expect("write device key");
 
@@ -1798,7 +1920,7 @@ mod tests {
             .expect("select bob");
         assert_eq!(
             futures::executor::block_on(
-                platform.read_core_storage(CoreStorageKey::DeviceEncryptionKey)
+                platform.read_secret_core_storage(SecretCoreStorageKey::DeviceEncryptionKey)
             )
             .expect("read device key as bob"),
             Some(vec![7; 32])
@@ -1806,17 +1928,24 @@ mod tests {
 
         // A user-scoped slot stays isolated, so the routing is not simply
         // making every slot global.
-        futures::executor::block_on(
-            platform.write_core_storage(CoreStorageKey::AutoSigningKeys, vec![1, 2, 3]),
-        )
+        futures::executor::block_on(platform.write_secret_core_storage(
+            SecretCoreStorageKey::HostAccountGrants {
+                root_public_key: [2; 32],
+                session_id: Some("bob".into()),
+            },
+            vec![1, 2, 3],
+        ))
         .expect("write bob auto-signing keys");
         platform
             .switch_pairing_user_storage("alice.dot")
             .expect("restore alice");
         assert_eq!(
-            futures::executor::block_on(
-                platform.read_core_storage(CoreStorageKey::AutoSigningKeys)
-            )
+            futures::executor::block_on(platform.read_secret_core_storage(
+                SecretCoreStorageKey::HostAccountGrants {
+                    root_public_key: [1; 32],
+                    session_id: Some("alice".into())
+                }
+            ))
             .expect("read alice auto-signing keys"),
             None
         );
@@ -1830,7 +1959,7 @@ mod tests {
         );
         assert_eq!(
             futures::executor::block_on(
-                restarted.read_core_storage(CoreStorageKey::DeviceEncryptionKey)
+                restarted.read_secret_core_storage(SecretCoreStorageKey::DeviceEncryptionKey)
             )
             .expect("read device key after restart"),
             Some(vec![7; 32])

@@ -14,6 +14,8 @@ class ProductNotificationBootReceiver : BroadcastReceiver() {
     @InstallIn(SingletonComponent::class)
     interface Dependencies {
         fun scheduler(): ProductNotificationScheduler
+        fun runtimeSettings(): io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
+        fun runtimeProvider(): io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -22,12 +24,18 @@ class ProductNotificationBootReceiver : BroadcastReceiver() {
         // Resolved lazily rather than via @AndroidEntryPoint: the generated injection runs before the
         // action check and blows up when the broadcast reaches a process whose graph is not built yet
         // (HiltTestApplication under instrumentation). Restoring notifications is best-effort — skip instead.
-        val scheduler = runCatching {
-            EntryPointAccessors.fromApplication(context.applicationContext, Dependencies::class.java).scheduler()
+        val dependencies = runCatching {
+            EntryPointAccessors.fromApplication(context.applicationContext, Dependencies::class.java)
         }.getOrNull() ?: return
 
         launchAsyncJob {
-            scheduler.restoreAll()
+            runCatching {
+                if (dependencies.runtimeSettings().isTrUAPIRuntimeEnabled()) {
+                    dependencies.runtimeProvider().runtime().getOrThrow().reconcileNotifications()
+                } else {
+                    dependencies.scheduler().restoreAll().getOrThrow()
+                }
+            }.onFailure { timber.log.Timber.e(it, "Notification reconciliation failed") }
         }
     }
 }
