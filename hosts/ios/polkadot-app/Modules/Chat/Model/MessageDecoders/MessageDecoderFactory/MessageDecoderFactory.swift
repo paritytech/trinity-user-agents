@@ -27,15 +27,6 @@ final class ChatMessageDecoderFactory: ChatMessageDecoderMaking {
 
 private extension ChatMessageDecoderFactory {
     func makeCommonDecoders() -> [ChatMessageCustomDecoding] {
-        [
-            GameResultsMessageDecoder(gameVoteRepositoryFactory: GameVoteRepositoryFactory()),
-            GameRegistrationMessageDecoder(),
-            VideoEvidenceMessageDecoder(),
-            TattooCommitmentMessageDecoder(),
-            PhotoEvidenceMessageDecoder(),
-            FullUsernameClaimedMessageDecoder(),
-            PersonhoodRegisteredMessageDecoder(),
-            MobRuleMessageDecoder()
-        ]
+        []
     }
 }

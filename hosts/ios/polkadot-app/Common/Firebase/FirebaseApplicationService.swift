@@ -86,14 +86,6 @@ final class FirebaseApplicationService: RemoteConfigManaging {
         asyncWaitForRemoteConfigValues(for: .w3sMerchants)
     }
 
-    func asyncWaitCollectiblesFallbackURL() -> CompoundOperationWrapper<URL> {
-        asyncWaitForRemoteConfigValues(for: .collectiblesFallbackURL)
-    }
-
-    func syncedCollectiblesEnabled() -> Bool {
-        remoteConfig[.collectiblesEnabled].boolValue
-    }
-
     func syncedTxExtensionVersions() -> [ChainModel.Id: UInt8] {
         guard let json = remoteConfig[.txExtensionVersions].jsonValue as? [String: Any] else {
             return [:]
@@ -281,8 +273,6 @@ private extension String {
     static let generalXcmConfig = "xcm_general_config"
     static let gameResultsFallbackURL = "game_results_fallback_url"
     static let w3sMerchants = "w3s_merchants"
-    static let collectiblesFallbackURL = "collectibles_fallback_url"
-    static let collectiblesEnabled = "collectibles_enabled"
     static let txExtensionVersions = "transaction_extension_versions"
     static let identityBackendUrl = "identity_backend_url"
     static let ipfsGatewayUrl = "ipfs_gateway_url"

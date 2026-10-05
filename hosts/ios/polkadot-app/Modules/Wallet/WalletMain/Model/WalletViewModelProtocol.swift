@@ -6,7 +6,6 @@ enum WalletExpandedSection: Equatable {
     case none
     case identityDetails
     case assetDetails
-    case collectiblesDetails
 
     var isIdentityShown: Bool {
         showsSection(.identityDetails)
@@ -25,13 +24,10 @@ protocol WalletViewModelProtocol: Observation.Observable {
     var identityDetailsViewModel: IdentityDetailsViewModel { get set }
     var assetDetailsViewModel: AssetDetailsViewModel { get set }
     var expandedSection: WalletExpandedSection { get set }
-    var isCollectiblesAvailable: Bool { get set }
 
     var onUsername: (() -> Void)? { get set }
     var onBalance: (() -> Void)? { get set }
     var onCollapse: (() -> Void)? { get set }
-    var onCollectibles: (() -> Void)? { get set }
-    var onViewCollectibles: (() -> Void)? { get set }
 }
 
 @Observable
@@ -39,11 +35,8 @@ class WalletViewModel: WalletViewModelProtocol {
     var identityDetailsViewModel: IdentityDetailsViewModel = .init()
     var assetDetailsViewModel: AssetDetailsViewModel = .init()
     var expandedSection: WalletExpandedSection = .none
-    var isCollectiblesAvailable: Bool = false
 
     var onUsername: (() -> Void)?
     var onBalance: (() -> Void)?
     var onCollapse: (() -> Void)?
-    var onCollectibles: (() -> Void)?
-    var onViewCollectibles: (() -> Void)?
 }

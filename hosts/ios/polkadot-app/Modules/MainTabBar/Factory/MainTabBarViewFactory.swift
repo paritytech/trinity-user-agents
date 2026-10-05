@@ -137,7 +137,7 @@ enum MainTabBarViewFactory {
         polkadotSignInService: PolkadotSignInService,
         storageFacade: StorageFacadeProtocol,
         serviceCoordinator: ServiceCoordinatorProtocol,
-        flowState: ChatFlowState,
+        flowState _: ChatFlowState,
         moduleNavigator: ModuleNavigating,
         hostProvider: any ProductHostProviding
     ) -> URLHandlingService {
@@ -152,18 +152,7 @@ enum MainTabBarViewFactory {
             let signInHandler: [URLHandlingServiceProtocol] = []
         #endif
 
-        #if FEATURE_DIMS
-            let dimHandlers: [URLHandlingServiceProtocol] = [
-                DIM1OpenService(),
-                DIM2OpenService(
-                    serviceCoordinator: serviceCoordinator,
-                    flowState: flowState.flowState
-                ),
-                GameChatService(flowState: flowState)
-            ]
-        #else
-            let dimHandlers: [URLHandlingServiceProtocol] = []
-        #endif
+        let dimHandlers: [URLHandlingServiceProtocol] = []
 
         let fiatOnrampRedirect = FiatOnrampRedirectService(
             fiatOnrampTransactionTracking: serviceCoordinator.fiatOnrampTrackingService
