@@ -1,28 +1,6 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "discardNotifications.description": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Disabling notifications may result in missing important updates, actions that need to be taken, and could overall prolong the evidence upload and review process."
-          }
-        }
-      }
-    },
-    "discardNotifications.title": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "We kindly recommend enabling notifications to avoid missing important updates about your evidence processing"
-          }
-        }
-      }
-    },
     "enableNotification.enableButton": {
       "extractionState": "manual",
       "localizations": {
