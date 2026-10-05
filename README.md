@@ -95,6 +95,11 @@ The [permission model](docs/rfcs/0002-permission-model.md) separates outbound do
 Android permission prompts belong to one request and close when it finishes or is cancelled,
 including cancellation while the app is backgrounded.
 
+The [background receiving adapter](js/packages/truapi-host/README.md#durable-browser-receiving)
+keeps relay revocation and synchronization acknowledgements scoped to the full
+receiving authority. Retained records from a previous account or verified artifact
+cannot revoke the current enrollment.
+
 The shared Rust core asks blessed products (`peopl`, `dim2` and `stash`,
 on every supported network) only for device permissions and legacy-account signing.
 All other operations it handles bypass permission prompts and recorded decisions.
