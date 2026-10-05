@@ -15,13 +15,5 @@ internal data class MotionShineParameters(
             length = 0.8f,
             center = 0.3f
         )
-
-        fun collectibles(isExpanded: Boolean) = MotionShineParameters(
-            intensity = 0.08f,
-            dimming = 0.17f,
-            width = 0.1f,
-            length = 0.5f,
-            center = if (isExpanded) 0.5f else 0.25f
-        )
     }
 }

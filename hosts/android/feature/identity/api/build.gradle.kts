@@ -10,6 +10,6 @@ android {
 
 dependencies {
     api(project(":common"))
+    api(project(":feature:people:api"))
     api(project(":feature:transactions:api"))
-    api(project(":feature:become-citizen:api"))
 }

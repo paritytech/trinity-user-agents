@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.needsAttention
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageAccountBackupObserver
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageBackupService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TotalBalanceUseCase
+import io.paritytech.polkadotapp.feature_people_api.domain.useCase.PersonStatusUseCase
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
@@ -25,11 +26,9 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_tokens_api.di.DigitalDollarChainAssetProvider
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_usernames_api.domain.usecase.UsernameOfAccountUseCase
-import io.paritytech.polkadotapp.feature_videogame_api.domain.state.VideoGamesProgressUseCase
 import io.paritytech.polkadotapp.feature_wallet_impl.data.config.AppSharingConfigRepository
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.DigitalDollarBalance
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.PocketRank
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.toPocketRank
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
@@ -42,7 +41,7 @@ class PocketInteractor @Inject constructor(
     @param:DigitalDollarChainAssetProvider private val chainAssetProvider: ChainAssetProvider,
     private val totalBalanceUseCase: TotalBalanceUseCase,
     private val usernameOfAccountUseCase: UsernameOfAccountUseCase,
-    private val gamesProgressUseCase: VideoGamesProgressUseCase,
+    private val personStatusUseCase: PersonStatusUseCase,
     private val coinageBackupService: CoinageBackupService,
     private val coinageAccountBackupObserver: CoinageAccountBackupObserver,
     private val accountRepository: AccountRepository,
@@ -104,7 +103,7 @@ class PocketInteractor @Inject constructor(
 
     context(scope: ComputationalScope)
     fun observeRank(): Flow<PocketRank> = if (FeatureOption.PERSONHOOD.isEnabled) {
-        gamesProgressUseCase.videoGamesProgressFlow().map { it.toPocketRank() }
+        personStatusUseCase.personhoodAccountsFullySetFlow().map { isPerson -> if (isPerson) PocketRank.Member else PocketRank.Basic }
     } else {
         flowOf(PocketRank.Basic)
     }

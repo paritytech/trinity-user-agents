@@ -203,5 +203,5 @@ Failing to override `getForegroundInfo` while requesting expedited execution cau
 ## Canonical examples
 
 - Stateful sync: `VouchersSyncWorker` (`feature/vouchers/impl/.../data/...`) — `WorkerStateMachine` with periodic enqueue.
-- File-pipeline worker: `EvidenceUploadWorker` (or HOP-related uploader) — chunked, resumable, with `getForegroundInfo()` notification surface.
+- File-pipeline worker: `FileUploadWorker` (`feature/chats/impl/.../data/hop/upload/`), HOP upload with a `getForegroundInfo()` notification surface.
 - Simple one-shot: any of the notification cancellation enqueuers, plain `CoroutineWorker` with no state machine.

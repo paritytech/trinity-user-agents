@@ -8,8 +8,6 @@ import io.paritytech.polkadotapp.chains.network.binding.BlockHash
 import io.paritytech.polkadotapp.chains.storage.StorageCache
 import io.paritytech.polkadotapp.chains.storage.source.query.LocalStorageQueryContext
 import io.paritytech.polkadotapp.chains.storage.source.query.StorageQueryContext
-import io.paritytech.polkadotapp.chains.storage.source.query.intercept.InterceptingStorageQueryContext
-import io.paritytech.polkadotapp.chains.storage.source.query.intercept.StorageInterceptorRegistry
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 
 internal class LocalStorageSource(
@@ -17,7 +15,6 @@ internal class LocalStorageSource(
     sharedRequestsBuilderFactory: StorageSharedRequestsBuilderFactory,
     coroutineDispatchers: CoroutineDispatchers,
     private val storageCache: StorageCache,
-    private val interceptorRegistry: StorageInterceptorRegistry,
 ) : BaseStorageSource(chainRegistry, sharedRequestsBuilderFactory, coroutineDispatchers) {
     override suspend fun queryChildState(
         storageKey: String,
@@ -33,9 +30,6 @@ internal class LocalStorageSource(
         runtime: RuntimeSnapshot,
         subscriptionBuilder: SubstrateSubscriptionBuilder?,
     ): StorageQueryContext {
-        return InterceptingStorageQueryContext(
-            delegate = LocalStorageQueryContext(storageCache, chainId, at, runtime),
-            registry = interceptorRegistry,
-        )
+        return LocalStorageQueryContext(storageCache, chainId, at, runtime)
     }
 }

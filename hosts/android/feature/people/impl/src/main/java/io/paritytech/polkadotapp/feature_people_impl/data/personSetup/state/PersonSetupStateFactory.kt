@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepo
 import io.paritytech.polkadotapp.feature_people_api.data.AliasContextProvider
 import io.paritytech.polkadotapp.feature_people_api.data.SetAliasContext
 import io.paritytech.polkadotapp.feature_people_api.data.repository.PersonIdRepository
-import io.paritytech.polkadotapp.feature_people_impl.data.notifications.BecomeCitizenNotificationPublisher
 import io.paritytech.polkadotapp.feature_people_impl.data.storage.PersonIdStorage
 import javax.inject.Inject
 
@@ -15,7 +14,6 @@ class PersonSetupStateFactory @Inject constructor(
     private val personIdRepository: PersonIdRepository,
     private val personIdStorage: PersonIdStorage,
     private val accountRepository: AccountRepository,
-    private val becomeCitizenNotificationPublisher: BecomeCitizenNotificationPublisher,
     @SetAliasContext private val assignableContexts: Set<@JvmSuppressWildcards AliasContextProvider>
 ) : WorkerStateFactory<PersonSetupState> {
     override fun createState(
@@ -60,10 +58,7 @@ class PersonSetupStateFactory @Inject constructor(
     }
 
     fun setPersonalIdAccount(): SetPersonalIdAccountState {
-        return SetPersonalIdAccountState(
-            stateFactory = this,
-            becomeCitizenNotificationPublisher = becomeCitizenNotificationPublisher
-        )
+        return SetPersonalIdAccountState(stateFactory = this)
     }
 
     fun allDone(): AllDone {

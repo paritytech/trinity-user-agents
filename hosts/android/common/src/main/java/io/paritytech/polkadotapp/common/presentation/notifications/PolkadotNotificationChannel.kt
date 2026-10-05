@@ -29,35 +29,6 @@ enum class PolkadotNotificationChannel(
         isSilent = true,
     ),
 
-    VIDEO_GAME(
-        id = "video_game_notifications",
-        nameRes = RCommon.string.notification_channel_name_video_game,
-        descriptionRes = RCommon.string.notification_channel_description_video_game,
-        importance = NotificationManagerCompat.IMPORTANCE_DEFAULT
-    ),
-
-    VIDEO_GAME_ALARM(
-        id = "video_game_alarms",
-        nameRes = RCommon.string.notification_channel_name_video_game_alarm,
-        descriptionRes = RCommon.string.notification_channel_description_video_game_alarm,
-        importance = NotificationManagerCompat.IMPORTANCE_MAX,
-        vibrationPattern = longArrayOf(0, 200, 150, 200)
-    ),
-
-    TATTOO_BOT(
-        id = "tattoo_bot_notifications",
-        nameRes = RCommon.string.notification_channel_name_tattoo_bot,
-        descriptionRes = RCommon.string.notification_channel_description_tattoo_bot,
-        importance = NotificationManagerCompat.IMPORTANCE_HIGH
-    ),
-
-    BECOME_CITIZEN(
-        id = "become_citizen_notifications",
-        nameRes = RCommon.string.notification_channel_name_become_citizen,
-        descriptionRes = RCommon.string.notification_channel_description_become_citizen,
-        importance = NotificationManagerCompat.IMPORTANCE_HIGH
-    ),
-
     PRODUCTS(
         id = "product_notifications",
         nameRes = RCommon.string.notification_channel_name_products,

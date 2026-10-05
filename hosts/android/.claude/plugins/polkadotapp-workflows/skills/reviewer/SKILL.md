@@ -25,12 +25,12 @@ You audit a diff for violations of PolkadotApp architecture and code rules. **Do
    The checklist rules are severity-tagged and ready to cite. Quote the rule and the section directly; the architecture/code docs are **rationale**, not primary citation.
 
 4. **Identify subsystems touched** from file paths, and load architecture/code docs only for *additional rationale* when the checklist alone doesn't cover the case:
-   - `feature/chats/` or `feature/videogame/` or `ChatExtension`/`ChatBot` → `architecture/chat-extension.md`.
+   - `feature/chats/` or `ChatExtension`/`ChatBot` → `architecture/chat-extension.md`.
    - `feature/products/` or `HostCallHandlerGroup`/`HostApiSession`/`ProductTrUAPIHostBridge`/`HostApiInteractor`/`SpaHost` → `architecture/host-api-products.md`.
    - `feature/transactions/`, `feature/people/`, `feature/coinage/`, `TransactionOrigin`/`TransactionExtension` → `architecture/transactions.md`.
    - `feature/coinage/`, `ExternalPaymentService`, RFC-0006 → `architecture/coinage.md`.
    - `feature/statement-store/`, `CommunicationSession`, statements → `architecture/statement-store-communication.md`.
-   - `tools/media-connection/`, `feature/calls/`, `VideoGamePeerChannel`, `DataTransport`/`PeerChannelSignaling` → `architecture/data-transport.md`.
+   - `tools/media-connection/`, `feature/calls/`, `DataTransport`/`PeerChannelSignaling` → `architecture/data-transport.md`.
    - `chains/` or `query`/`observe`/`callRuntimeApi`/`Scale.encode` → `architecture/chain-integration.md`.
    - Any ViewModel → `code/state-management.md` + `code/results-and-errors.md`.
    - Any `@Composable` → `code/ui-compose.md`.

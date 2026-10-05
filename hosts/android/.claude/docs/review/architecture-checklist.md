@@ -16,7 +16,7 @@ Walk this checklist for any file path that touches an architectural seam. Cite t
 - **minor** — New module added with only one owner in `CODEOWNERS` (single-owner module). Reviewer surfaces this; doesn't block, since the agent can't pick the right co-owner — that's a human decision.
 - **major** — A logical cycle: `feature/A/api` depends on `feature/B/api` AND `feature/B/impl` depends on `feature/A/api`. Propose extracting the shared concept (see "people → members" precedent).
 - **major** — New module added without a corresponding `CODEOWNERS` update in the same PR.
-- **major** — Feature-specific entity placed in shared `database` without a feature-prefixed name (e.g. `SessionEntity` instead of `VideoGameSessionEntity`).
+- **major** — Feature-specific entity placed in shared `database` without a feature-prefixed name (e.g. `SessionEntity` instead of `CoinageSessionEntity`).
 - **major** — Cross-feature wiring done via a one-off direct injection instead of the established multibinding seam (`@IntoSet ChatExtension`, `@IntoSet AppInitializer`).
 - **minor** — Package leaves lowercase-glued (`pairrequest`) instead of `camelCase` (`pairRequest`).
 

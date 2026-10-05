@@ -86,7 +86,7 @@ Some IDs are claimed by the transport layer or its built-in renegotiation flow. 
 - `"webrtc_renegotiation_internal_use_case"` — internal SDP/ICE renegotiation after the data channel is already open.
 - `"webrtc_media_state_use_case"` — internal media-track state signals (camera/microphone on/off) used by calls.
 
-Anything else is fair game. Convention: feature-prefix the ID (`"video_game_gesture_acceptance"`, `"file_transfer_chunk"`).
+Anything else is fair game. Convention: feature-prefix the ID (`"file_transfer_chunk"`).
 
 ---
 
@@ -99,13 +99,6 @@ Anything else is fair game. Convention: feature-prefix the ID (`"video_game_gest
 - Use case IDs: only the two reserved internal ones — calls don't add their own data-channel payloads (audio/video are media tracks, not data-channel messages).
 - Reconnection: on `DataTransportState.Closed` or a `Failed` peer-connection state, the session ends. The user has to start a new call.
 
-### Video game (`feature/videogame/impl/.../service/VideoGamePeerChannel.kt`)
-
-- One `PeerChannel` per (game session, peer). Multiple peers in one game session share a `GroupPeerConnection` and `MediaTrackProvider`.
-- Signaling: `VideoGamePeerChannelSignaling` over a `CommunicationSession`.
-- Use case ID: `"video_game_gesture_acceptance"`.
-- Reconnection: on a `Reconnected(offerId)` signal from the peer, the existing channel is disposed and a fresh one is created with the new offer id. `ConnectionAttemptTracker` bounds the retries.
-
 ---
 
 ## Recipe — adding a new use case
@@ -114,7 +107,7 @@ For a new feature that wants to share an existing peer channel (the recommended 
 
 1. Pick a unique `UseCaseId`: `const val MY_USE_CASE = "feature_xxx_my_msg"`.
 2. Define a `@Serializable` payload type. SCALE-encode to/from `ByteArray`.
-3. Acquire the existing `PeerChannel` (e.g. from `CallSessionManager`, `VideoGamePeerChannel`, etc.).
+3. Acquire the existing `PeerChannel` (e.g. from `CallSessionManager`).
 4. Subscribe and send:
    ```kotlin
    peerChannel.dataTransport.subscribeMessages(MY_USE_CASE)
@@ -178,9 +171,7 @@ Fire-and-forget `send` has no acknowledgment in the transport layer. If the cons
 ## Canonical examples
 
 - Single 1:1 transport (calls): `RealCallSessionManager.startSession` → `peerChannelFactory.createSingleConnection(...)` → `channel.startConnection()`.
-- Multi-peer transport (games): `RealVideoGameService` → `peerChannelFactory.createGroupConnection(...)` → `groupConnection.createPeer(...)` per peer.
-- Custom signaling: `RealExternalCallSignaling` (chat-based) and `VideoGamePeerChannelSignaling` (statement-store-based).
-- Custom use-case payload: `GestureAcceptanceMessage.Accept/Unaccept(roundIndex, acceptorAccountId)` over `"video_game_gesture_acceptance"`.
+- Custom signaling: `RealExternalCallSignaling` (chat-based) and `SyncPeerChannelSignaling` (statement-store-based).
 
 ---
 

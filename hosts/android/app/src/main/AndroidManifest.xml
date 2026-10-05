@@ -157,10 +157,6 @@
         </provider>
 
         <receiver
-            android:name="io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.VideoGameReminderBroadcastReceiver"
-            android:exported="false" />
-
-        <receiver
             android:name="io.paritytech.polkadotapp.feature_products_impl.domain.notifications.ProductNotificationReminderBroadcastReceiver"
             android:exported="false" />
 
@@ -189,11 +185,6 @@
             android:name="io.paritytech.polkadotapp.feature_calls_impl.service.CallService"
             android:exported="false"
             android:foregroundServiceType="phoneCall|microphone|camera" />
-
-        <service
-            android:name="io.paritytech.polkadotapp.feature_videogame_impl.service.VideoGameService"
-            android:exported="false"
-            android:foregroundServiceType="camera" />
 
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"

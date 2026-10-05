@@ -79,7 +79,7 @@ fun getName(): String
 | Pattern | When |
 |---|---|
 | `Real<InterfaceName>` | Hilt-bound impl of a public interface (e.g. `RealAmountInputMixin`). |
-| `<Feature>...` prefix | Cross-feature shared things in `common`/`database`/`design` need the feature name to disambiguate (e.g. database entities — `VideoGameEntity`, not bare `GameEntity`). |
+| `<Feature>...` prefix | Cross-feature shared things in `common`/`database`/`design` need the feature name to disambiguate (e.g. database entities — `CoinageNoteEntity`, not bare `NoteEntity`). |
 | `<Action>UseCase` | Reusable cross-feature business logic. |
 | `<Screen>Interactor` | Per-screen orchestration. |
 | `<Screen>ViewModel` / `<Screen>Contract` | Presentation. |

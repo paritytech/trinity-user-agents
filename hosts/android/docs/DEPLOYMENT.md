@@ -213,8 +213,6 @@ without it. JSON values are stored as Remote Config strings.
 | `coinage_instance_id` | string (unsigned integer) | Coinage | `feature/coinage` | Instance id of the Coinage deployment. |
 | `account_data_store_config` | JSON object | Coinage | `feature/coinage` | `{ "contractAddress": "0x…" }` — the account data store contract. |
 | `payment_asset_config` | JSON object | payment asset branding (optional) | `feature/tokens` — `RealPaymentAssetBrandProvider` | `{ "symbol": "CASH", "iconSquareUrl": "https://…/square.svg", "iconWideUrl": "https://…/wide.svg" }` — the payment asset's symbol and logos: a square mark for amounts and chat payments, a wide mark-plus-wordmark for the balance card, as absolute `http(s)` URLs (SVG or PNG). Every field is optional; anything missing or failing to load falls back to `CURRENCY_SYMBOL` and the built-in mark. The last activated value applies at start-up and the object is re-read right after the first sync; logos load on display through the app image loader and are cached by URL, so publish a changed logo under a new URL. |
-| `collectibles_enabled` | boolean | collectibles (optional) | `feature/videogame` | Feature gate for the collectibles webview. |
-| `collectibles_fallback_url` | string (URL) | collectibles (optional) | `feature/videogame` | Fallback URL of the collectibles webview when DotNS resolution fails. |
 | `app_sharing_url` | string (URL) | Share ID on the Pocket tab | `feature/wallet` — `RealAppSharingConfigRepository` | Download link placed in the invite text the ID card shares ("Download it at {link} and add me – my username is {username}."). A plain URL, not JSON-quoted. The share waits briefly for Remote Config to sync; when it does not sync in time or the key is empty, the share reports an error instead of sending a message without a link. |
 
 A chain descriptor in `chains` / `chains_v2` is a JSON object deserialised into
@@ -300,8 +298,6 @@ or a `BuildConfig` field. Mandatory ones have no fallback; optional ones list th
 | `FIAT_SYMBOL`               | `common`                      | yes      | —                              | Fiat symbol prefixed to amounts; `$` also puts the dollar icon on the chat pay button, any other value the neutral cash icon |
 | `FIRESTORE_DATABASE_ID`     | `tools/backup/impl`           | yes      | —                              | Firestore database holding the backup encryption-key records (§4); `(default)` for the project's default database |
 | `NIGHTLY_FUNDING_MNEMONIC`  | `feature/transactions/impl`   | yes      | —                              | Mnemonic of the funding account used to top up accounts on nightly/production test contours |
-| `REFERRAL_WEB_HOST`         | `feature/become-citizen/impl` | no       | `referral.example.com`         | Host of the web app that backs referral (`https`) deeplinks                 |
-| `GAME_RESULTS_FALLBACK_URL` | `feature/videogame/impl`      | no       | `https://example.com/`         | Last-resort URL for the game-results webview (after DotNs + Remote Config)   |
 
 > `NIGHTLY_FUNDING_MNEMONIC` controls a funding account — keep it in a secret store
 > or untracked `local.properties`, never commit it. The build refuses to configure
@@ -370,22 +366,17 @@ manifest and the dev signing config.
 
 Build types also pick the on-chain environment and the compile-time feature flags.
 Both are `buildConfigField`s in `common/build.gradle.kts`, consumed through
-`common/src/main/java/io/paritytech/polkadotapp/common/utils/FeatureFlags.kt`; a few
-developer-only options (`DEBUG_MENU`, `SKIP_MOBRULE_CASE`, …) follow `BuildConfig.DEBUG`
+`common/src/main/java/io/paritytech/polkadotapp/common/utils/FeatureFlags.kt`; the
+developer-only `SHORT_WORKER_BACKOFF` follows `BuildConfig.DEBUG`
 instead. Change them there if your fork needs a different cut.
 
 | Field | `debug` | `nightly` | `safetynet` | `release` | Effect |
 |-------|---------|-----------|-------------|-----------|--------|
 | `TESTNET_ENVIRONMENT` | `TESTNET` | `NIGHTLY` | `NIGHTLY` | `PRODUCTION` | Chain environment. Only `PRODUCTION` reads the `chains` Remote Config key; the others read `chains_v2` (§4.1). Also enables the faucet top-up outside `PRODUCTION`. |
-| `SAFETY_MODE` | off | off | on | on | On hides the full feature set: arbitrary `.dot` products, browse tab, full tab bar, all chat extensions, linked devices, product settings, personhood, collectibles, ID-card rank. |
+| `SAFETY_MODE` | off | off | on | on | On hides the full feature set: arbitrary `.dot` products, browse tab, full tab bar, all chat extensions, linked devices, product settings, personhood, ID-card rank. |
 | `TAB_BAR_CONNECTIVITY_INDICATOR` | off | off | on | on | Chain-health indicators in the tab bar. |
 | `COINAGE_DEBUG_FEATURES` | on | on | on | off | "Debug features" card under the balance card (breakdown, faucet top-up, log sharing). |
 | `TESTNET_FUND_ENABLED` | on | on | on | off | Log-sharing action on the Coinage card. |
-| `DIM1_ENABLED` | on | on | on | off | DIM1 game entry points in the Peer bot and the weekly-game footer. |
-| `FAQ_ENABLED` | on | on | on | off | FAQ entries in the Peer and tattoo bots. |
-| `ALLOW_SHORT_EVIDENCE_VIDEO` | on | off | off | off | Accept short evidence videos in Proof-of-Ink. |
-| `PEER_BOT_BY_DEFAULT`, `DIM1_BOT_BY_DEFAULT`, `SAMPLE_BOT` | on | off | off | off | Bot chats pre-created for a new account. |
-| `DIM2_BOT_BY_DEFAULT` | on | on | off | off | Same, for the DIM2 bot. |
 
 ### 6.1 `gp` edition (Google Play)
 
@@ -531,8 +522,6 @@ jobs:
       CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
       CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}
       FIAT_SYMBOL: ${{ vars.FIAT_SYMBOL }}
-      REFERRAL_WEB_HOST: ${{ vars.REFERRAL_WEB_HOST }}
-      GAME_RESULTS_FALLBACK_URL: ${{ vars.GAME_RESULTS_FALLBACK_URL }}
       SENTRY_ORG: ${{ vars.SENTRY_ORG }}
       SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
       SENTRY_DSN: ${{ vars.SENTRY_DSN }}
