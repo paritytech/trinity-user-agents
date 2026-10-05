@@ -19,27 +19,28 @@ enum TrUAPIRuntimeConfigError: Error {
 protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     /// Return the shared runtime, building and activating its local session on
     /// first use. Subsequent calls return the cached instance.
-    func sharedRuntime() throws -> TrUAPIHostRuntime
+    func sharedRuntime() async throws -> TrUAPIHostRuntime
+    func activeRuntimeForRecords() async throws -> TrUAPIHostRuntime?
 
     /// Anchor the host's core confirmations (signing, permission prompts) to
     /// the given view. Until it is attached, host-level prompts deny.
     @MainActor func setPresentationView(_ view: ControllerBackedProtocol)
 }
 
-/// Lazily builds one ``TrUAPIHostRuntime`` from host identity + people/bulletin
-/// genesis hashes + the local session secret, activates the local session
-/// once, and caches it. Lazy so startup is not blocked and the runtime is only
-/// assembled once chains are synced and a session secret exists.
-final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Sendable {
+/// Serializes wallet activation and keeps one runtime for the selected owner.
+actor TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding {
     private let chainRegistry: ChainRegistryProtocol
     private let entropyManager: RootEntropyManaging
     private let settingsManager: SettingsManagerProtocol
-    private let coreStorage: TrUAPILocalStoring
-    private let confirmationRouterFacade: ProductRoutersFacadeProtocol
+    private let walletSecrets: TrUAPIWalletSecrets
+    private var walletId: String?
+    private nonisolated(unsafe) let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
 
-    private let lock = NSLock()
+    private var protectedDataLocked = false
+    private var protectionObserver: TrUAPIWalletProtectionObserver?
+    private var pendingRuntime: Task<TrUAPIHostRuntime, Error>?
     private var cachedRuntime: TrUAPIHostRuntime?
     private var contactsChangeNotifier: ContactsChangeNotifier?
 
@@ -47,7 +48,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         chainRegistry: ChainRegistryProtocol,
         entropyManager: RootEntropyManaging,
         settingsManager: SettingsManagerProtocol,
-        coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         logger: LoggerProtocol
@@ -55,7 +55,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.chainRegistry = chainRegistry
         self.entropyManager = entropyManager
         self.settingsManager = settingsManager
-        self.coreStorage = coreStorage
+        walletSecrets = TrUAPIWalletSecrets(entropyManager: entropyManager)
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
         self.logger = logger
@@ -66,22 +66,72 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         confirmationRouterFacade.setPresentationView(view)
     }
 
-    func sharedRuntime() throws -> TrUAPIHostRuntime {
-        lock.lock()
-        defer { lock.unlock() }
+    func activeRuntimeForRecords() async throws -> TrUAPIHostRuntime? {
+        guard !protectedDataLocked else { return nil }
+        do {
+            let runtime = try await sharedRuntime()
+            return protectedDataLocked ? nil : runtime
+        } catch {
+            guard !protectedDataLocked else { return nil }
+            throw error
+        }
+    }
 
-        if let cachedRuntime {
+    func sharedRuntime() async throws -> TrUAPIHostRuntime {
+        if protectionObserver == nil {
+            protectionObserver = TrUAPIWalletProtectionObserver { [weak self] available in
+                Task { await self?.protectedDataChanged(available: available) }
+            }
+        }
+        guard !protectedDataLocked else { throw HostRejection.Rejected(reason: "Wallet is locked") }
+        guard let selectedWallet = InstallationKeyIdStore().getInstallationKeyId() else {
+            throw RootEntropyManagerError.noEntropyFound
+        }
+        if let cachedRuntime, walletId == selectedWallet {
             return cachedRuntime
         }
+        if let pendingRuntime {
+            _ = try await pendingRuntime.value
+            return try await sharedRuntime()
+        }
+        let task = Task { try await buildRuntime(selectedWallet: selectedWallet) }
+        pendingRuntime = task
+        defer { pendingRuntime = nil }
+        return try await task.value
+    }
 
-        let secret = try entropyManager.fetchRootEntropy()
+    private func protectedDataChanged(available: Bool) async {
+        protectedDataLocked = !available
+        notifyRuntimeRecordsChanged()
+        if !available {
+            if let pendingRuntime { _ = try? await pendingRuntime.value }
+            walletId = nil
+            do {
+                try await cachedRuntime?.lockWallet()
+            } catch {
+                logger.error("Rust wallet lock failed: \(error)")
+            }
+        } else if InstallationKeyIdStore().getInstallationKeyId() != nil {
+            do {
+                _ = try await sharedRuntime()
+            } catch {
+                logger.error("Rust wallet activation failed: \(error)")
+            }
+        }
+    }
+
+    private func buildRuntime(selectedWallet: String) async throws -> TrUAPIHostRuntime {
+        try await cachedRuntime?.shutdown()
+        cachedRuntime = nil
+        contactsChangeNotifier = nil
+        walletId = nil
         let networkSuffix = try tldProvider.currentTldOrError()
+        let platformVersion = await MainActor.run { UIDevice.current.systemVersion }
         let runtimeConfig = try Self.makeRuntimeConfig(
             chainRegistry: chainRegistry,
-            secret: secret,
-            liteUsername: settingsManager.string(for: .username),
             networkSuffix: networkSuffix,
-            databaseDirectory: Self.coreDatabaseDirectory()
+            databaseDirectory: Self.coreDatabaseDirectory(),
+            platformVersion: platformVersion
         )
 
         let chainConnections = TrUAPIChainConnectionPool(
@@ -95,13 +145,16 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
         let bridge = RustHostRuntimeBridge(
             chainRegistry: chainRegistry,
-            coreStorage: coreStorage,
+            secretStorage: TrUAPISecretStorage(),
+            walletId: selectedWallet,
+            permissionRequester: ProductPermissionRequester(router: confirmationRouterFacade.productsRouter),
+            osPermissionAsker: OSPermissionAsker(),
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
             logger: logger
         )
 
-        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
+        let runtime = try TrUAPIHostRuntime(bridge: bridge, walletSecrets: walletSecrets, runtimeConfig: runtimeConfig)
         bridge.attach(runtime)
         // Before any product execution opens, so a product never sees the
         // window where the host lists no contacts.
@@ -121,9 +174,23 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
                 runtime?.notifyContactsChanged()
             }
         )
-        try runtime.activateLocalSession(secret: secret, liteUsername: settingsManager.string(for: .username))
+        try await runtime.activateWallet(walletId: selectedWallet, liteUsername: settingsManager.string(for: .username))
+        guard !protectedDataLocked, InstallationKeyIdStore().getInstallationKeyId() == selectedWallet else {
+            try await runtime.shutdown()
+            throw CancellationError()
+        }
+        walletId = selectedWallet
 
         cachedRuntime = runtime
+        notifyRuntimeRecordsChanged()
+        runtime.startStatementAllowanceRenewal()
+        Task { [logger] in
+            do {
+                try await runtime.reconcileNotifications()
+            } catch {
+                logger.error("Rust notification reconciliation failed: \(error)")
+            }
+        }
         return runtime
     }
 }
@@ -137,10 +204,9 @@ extension TrUAPIHostRuntimeProvider {
     /// seam.
     static func makeRuntimeConfig(
         chainRegistry: ChainRegistryProtocol,
-        secret: Data,
-        liteUsername: String?,
         networkSuffix: String,
-        databaseDirectory: String
+        databaseDirectory: String,
+        platformVersion: String
     ) throws -> HostRuntimeConfig {
         let peopleChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.usernameChain)
         let bulletinChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.bulletInChain)
@@ -166,14 +232,12 @@ extension TrUAPIHostRuntimeProvider {
             hostName: "Polkadot App",
             hostVersion: version,
             platformType: "ios",
-            platformVersion: UIDevice.current.systemVersion,
+            platformVersion: platformVersion,
             peopleChainGenesisHash: Data(hexString: peopleGenesisHex),
             bulletinChainGenesisHash: Data(hexString: bulletinGenesisHex),
             assetHubChainGenesisHash: Data(hexString: assetHubGenesisHex),
             networkSuffix: networkSuffix,
-            databaseDirectory: databaseDirectory,
-            localSessionSecret: secret,
-            localSessionLiteUsername: liteUsername
+            databaseDirectory: databaseDirectory
         )
     }
 
@@ -190,4 +254,21 @@ extension TrUAPIHostRuntimeProvider {
         try directory.setResourceValues(values)
         return directory.path
     }
+}
+
+private final class TrUAPIWalletProtectionObserver {
+    private let observers: [NSObjectProtocol]
+
+    init(changed: @escaping @Sendable (Bool) -> Void) {
+        observers = [
+            NotificationCenter.default.addObserver(
+                forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: nil
+            ) { _ in changed(false) },
+            NotificationCenter.default.addObserver(
+                forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: nil
+            ) { _ in changed(true) }
+        ]
+    }
+
+    deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 }

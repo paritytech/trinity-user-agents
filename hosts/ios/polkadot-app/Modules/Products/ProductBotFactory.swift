@@ -7,8 +7,8 @@ import BulletinChain
 
 /// Creates ``ProductBot`` instances for a given product.
 ///
-/// The native path is a thin adapter over the shared ``ProductWorkerManager`` —
-/// the worker itself is assembled by ``DefaultProductWorkerFactory``. The rust
+/// The native path is a thin adapter over the shared ``ProductWorkerManager``.
+/// The worker itself is assembled by ``DefaultProductWorkerFactory``. The rust
 /// path still builds its own runtime off the shared TrUAPI runtime.
 final class ProductBotFactory {
     private let productFileProvider: ChatProductFileProviding
@@ -37,19 +37,19 @@ final class ProductBotFactory {
         self.logger = logger
     }
 
-    func create(resolved: ResolvedProduct) -> ProductBot? {
+    func create(resolved: ResolvedProduct) async -> ProductBot? {
         guard let source = workerSource(for: resolved) else { return nil }
 
         let product = resolved.product
 
         if settingsManager.isTrUAPIRuntimeEnabled {
             do {
-                let runtime = try createRustRuntime(product: product, source: source)
-                return ProductBot(product: product, runtime: runtime, logger: logger)
+                return try await createRustBot(product: product, source: source)
             } catch {
                 logger.error(
-                    "Rust runtime creation failed for \(product.identifier): \(error); falling back to native"
+                    "Rust runtime creation failed for \(product.identifier): \(error)"
                 )
+                return nil
             }
         }
 
@@ -83,8 +83,8 @@ private extension ProductBotFactory {
     /// Builds one rust chat runtime (product execution + localhost ws-bridge)
     /// off the shared runtime. The local session lives on the shared runtime;
     /// a transient provider failure only fails this create.
-    func createRustRuntime(product: Product, source: ProductWorkerSource) throws -> ChatRuntimeProtocol {
-        let runtime = try runtimeProvider.sharedRuntime()
+    func createRustBot(product: Product, source: ProductWorkerSource) async throws -> ProductBot {
+        let runtime = try await runtimeProvider.sharedRuntime()
 
         let rustEnvironment = RustRuntimeEnvironment(
             runtime: runtime,
@@ -104,7 +104,7 @@ private extension ProductBotFactory {
         let routers = ProductRoutersFacade.worker()
         let productId = product.identifier
 
-        return ChatRustRuntime(
+        let chatRuntime = ChatRustRuntime(
             productUrl: engineContext.productUrl,
             makeExecutionModel: { [rustEnvironment] chatMessaging in
                 try rustEnvironment.makeChatExecution(
@@ -117,5 +117,6 @@ private extension ProductBotFactory {
             engineFactory: engineContext.engineFactory,
             logger: logger
         )
+        return ProductBot(product: product, runtime: chatRuntime, runtimeOwner: ObjectIdentifier(runtime), logger: logger)
     }
 }

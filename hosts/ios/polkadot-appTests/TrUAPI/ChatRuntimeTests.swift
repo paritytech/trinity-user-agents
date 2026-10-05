@@ -1,4 +1,5 @@
 import Foundation
+import AsyncExtensions
 import os
 import Testing
 import Products
@@ -73,9 +74,55 @@ private func makeRustRuntime(
     )
 }
 
+private final class BotUpdateProbe: ProductBotProviding, ChatExtensionDelegate {
+    let bots = AsyncStream<[ProductBot]>.makeStream()
+    let changes = AsyncStream<String>.makeStream()
+
+    func observeBots() -> AnyAsyncSequence<[ProductBot]> {
+        bots.stream.eraseToAnyAsyncSequence()
+    }
+
+    func didEnableExtensions(_: Set<ChatExtension.Id>) { changes.continuation.yield("enabled") }
+    func didDisableExtensions(_: Set<ChatExtension.Id>) { changes.continuation.yield("disabled") }
+}
+
 // MARK: - Tests
 
 struct ChatRuntimeTests {
+    @Test(.timeLimit(.minutes(1)))
+    func reactivatedWalletReplacesBotBeforeRestartingIt() async throws {
+        let owners = [NSObject(), NSObject()]
+        let product = Product(id: "test.dot", name: "Test")
+        let oldManager = FakeWorkerManager(worker: FakeChatWorker())
+        let oldRuntime = ManagedChatRuntime(productId: product.identifier, manager: oldManager)
+        try await oldRuntime.start(messagingSupport: .init(bot: nil, context: nil))
+        let oldBot = ProductBot(product: product, runtime: oldRuntime, runtimeOwner: ObjectIdentifier(owners[0]))
+        let replacement = ProductBot(
+            product: product,
+            runtime: ManagedChatRuntime(productId: product.identifier, manager: FakeWorkerManager(worker: FakeChatWorker())),
+            runtimeOwner: ObjectIdentifier(owners[1])
+        )
+        let probe = BotUpdateProbe()
+        defer {
+            probe.bots.continuation.finish()
+            probe.changes.continuation.finish()
+        }
+        let store = ChatExtensionStore(staticExtensions: [], productBotProvider: probe)
+        store.delegate = probe
+        store.startObserving()
+        var changes = probe.changes.stream.makeAsyncIterator()
+        probe.bots.continuation.yield([oldBot])
+        #expect(await changes.next() == "enabled")
+        #expect(oldManager.activeCount == 1)
+
+        probe.bots.continuation.yield([replacement])
+
+        #expect(await changes.next() == "disabled")
+        #expect(await changes.next() == "enabled")
+        #expect(oldManager.activeCount == 0)
+        #expect(store.getChatExtensionBot(for: product.extensionId) as? ProductBot === replacement)
+    }
+
     @Test func nativeRuntimeStartBindsMessagingAndStartsBot() async throws {
         let worker = FakeChatWorker()
         let manager = FakeWorkerManager(worker: worker)

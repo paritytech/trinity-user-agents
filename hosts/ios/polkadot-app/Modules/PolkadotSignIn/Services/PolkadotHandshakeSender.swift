@@ -7,7 +7,7 @@ import ChainRegistry
 import StructuredConcurrency
 
 protocol PolkadotHandshakeSending {
-    func sendResponse(for input: HandshakeInput) async throws
+    func sendResponse(for input: NativeHandshakeInput) async throws
 }
 
 final class PolkadotHandshakeSender {
@@ -36,7 +36,7 @@ final class PolkadotHandshakeSender {
 }
 
 extension PolkadotHandshakeSender: PolkadotHandshakeSending {
-    func sendResponse(for input: HandshakeInput) async throws {
+    func sendResponse(for input: NativeHandshakeInput) async throws {
         try await markStallActivity("SSO handshake") {
             let deviceData = input.hostData.deviceData
 
@@ -54,7 +54,7 @@ private extension PolkadotHandshakeSender {
     // MARK: - V1 Flow
 
     func sendV1(
-        with input: HandshakeInput,
+        with input: NativeHandshakeInput,
         deviceData: HandshakeDeviceData
     ) async throws {
         logger.debug("Starting V1 flow...")
@@ -82,7 +82,7 @@ private extension PolkadotHandshakeSender {
     // MARK: - V2 Flow
 
     func sendV2(
-        with input: HandshakeInput,
+        with input: NativeHandshakeInput,
         deviceData: HandshakeDeviceData
     ) async throws {
         logger.debug("Starting V2 flow...")
@@ -120,7 +120,7 @@ private extension PolkadotHandshakeSender {
     func sendStatusPayload(
         _ response: EncryptedHandshakeResponseV2,
         deviceData: HandshakeDeviceData,
-        input: HandshakeInput
+        input: NativeHandshakeInput
     ) async {
         do {
             try await submitStatement(
@@ -138,7 +138,7 @@ private extension PolkadotHandshakeSender {
 
     // MARK: - Allowance Allocation
 
-    func allocateAllowance(for input: HandshakeInput) async throws {
+    func allocateAllowance(for input: NativeHandshakeInput) async throws {
         let accountId = input.hostData.statementAccountId
         logger.debug("Allocating SSS allowance...")
         do {
@@ -152,7 +152,7 @@ private extension PolkadotHandshakeSender {
 
     // MARK: - Statement Submission
 
-    func submitStatement(payload: Data, input: HandshakeInput) async throws {
+    func submitStatement(payload: Data, input: NativeHandshakeInput) async throws {
         let builder = StatementSubmitParametersBuilder(
             signer: StatementStoreKeypairSigner(keypair: input.signerKeypair),
             logger: logger

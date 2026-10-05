@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import Operation_iOS
 import SubstrateSdk
 import Individuality
@@ -31,6 +32,11 @@ extension RemoveDeviceInteractor: RemoveDeviceInteractorInputProtocol {
                 guard let self else { return }
 
                 let statementAccountId = try Data(hexString: identifier)
+                if SettingsManager.shared.isTrUAPIRuntimeEnabled {
+                    try await serviceCoordinator.signInHostCoordinator.disconnectHost(byAccountId: statementAccountId)
+                    await reportSuccess()
+                    return
+                }
                 try await deviceMessageBroadcaster.broadcastDeviceRemoved(
                     statementAccountId: statementAccountId
                 )

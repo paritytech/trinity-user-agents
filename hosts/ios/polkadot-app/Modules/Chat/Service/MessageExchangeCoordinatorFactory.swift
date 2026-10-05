@@ -113,11 +113,7 @@ extension MessageExchangeCoordinatorFactory: MessageExchangeCoordinatorMaking {
     func makeTrUAPIHostCoordinator(
         runtimeProvider: TrUAPIHostRuntimeProviding
     ) throws -> MessageExchangeSignInHostCoordinating {
-        try SSOTruAPICoordinator(
-            ownKeyId: Chat.Contact.Own.sso(),
-            serviceFactory: makeSSOServiceFactory(),
-            runtimeProvider: runtimeProvider
-        )
+        SSOTruAPICoordinator(runtimeProvider: runtimeProvider, logger: logger)
     }
 
     func makeNativeHostCoordinator(

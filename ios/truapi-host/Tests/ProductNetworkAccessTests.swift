@@ -269,12 +269,13 @@ private struct NetworkTestProduct {
     ) async throws -> NetworkTestProduct {
         let server = try await NetworkTestServer.start()
         do {
-            let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: HostRuntimeConfig(
+            let runtime = try TrUAPIHostRuntime(bridge: bridge, walletSecrets: StubWalletSecrets(), runtimeConfig: HostRuntimeConfig(
                 hostName: "network-tests", peopleChainGenesisHash: Data(repeating: 0, count: 32),
                 bulletinChainGenesisHash: Data(repeating: 0, count: 32),
                 assetHubChainGenesisHash: Data(repeating: 1, count: 32), networkSuffix: "paseo",
                 databaseDirectory: temporaryDatabaseDirectory()
             ))
+            try await runtime.activateWallet(walletId: "test-wallet", liteUsername: nil)
             let execution = try runtime.openProductExecution(
                 bridge: bridge,
                 configuration: ProductExecutionConfig(productId: "network.paseo", executionKind: .app)

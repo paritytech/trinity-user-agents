@@ -67,3 +67,17 @@ final class MockOSPermissionAsker: OSPermissionAsking, @unchecked Sendable {
         return requestResult
     }
 }
+
+extension MockPermissionGuard: ProductPermissionRequesting {
+    func prompt(productId: String, permission: ProductPermission) async -> PermissionDecision {
+        requestedProductId = productId
+        requestedPermission = permission
+        return decisionToReturn ?? (verdictToReturn ? .allowAlways : .deny)
+    }
+
+    func promptBatched(productId: String, permissions: [ProductPermission]) async -> PermissionDecision {
+        requestedProductId = productId
+        requestedBatchedPermissions = permissions
+        return decisionToReturn ?? (verdictToReturn ? .allowAlways : .deny)
+    }
+}

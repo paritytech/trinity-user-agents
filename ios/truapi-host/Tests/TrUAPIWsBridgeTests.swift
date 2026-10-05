@@ -9,8 +9,10 @@ struct TrUAPIWsBridgeTests {
         let bridge = StubHostBridge()
         let runtime = try TrUAPIHostRuntime(
             bridge: bridge,
+            walletSecrets: StubWalletSecrets(),
             runtimeConfig: Self.makeHostRuntimeConfig()
         )
+        try await runtime.activateWallet(walletId: "test-wallet", liteUsername: nil)
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(
@@ -46,8 +48,10 @@ struct TrUAPIWsBridgeTests {
         let bridge = StubHostBridge()
         let runtime = try TrUAPIHostRuntime(
             bridge: bridge,
+            walletSecrets: StubWalletSecrets(),
             runtimeConfig: Self.makeHostRuntimeConfig()
         )
+        try await runtime.activateWallet(walletId: "test-wallet", liteUsername: nil)
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(
@@ -83,9 +87,11 @@ struct TrUAPIWsBridgeTests {
         let notifications = NotificationCenter()
         let runtime = try TrUAPIHostRuntime(
             bridge: bridge,
+            walletSecrets: StubWalletSecrets(),
             runtimeConfig: Self.makeHostRuntimeConfig(),
             notificationCenter: notifications
         )
+        try await runtime.activateWallet(walletId: "test-wallet", liteUsername: nil)
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(
@@ -177,31 +183,6 @@ private extension TrUAPIWsBridgeTests {
     }
 }
 
-final class StubStorage: HostStorageBackend, @unchecked Sendable {
-    private var store: [String: Data] = [:]
-
-    func read(key: String) throws -> Data? { store[key] }
-    func write(key: String, value: Data) throws { store[key] = value }
-    func clear(key: String) throws { store[key] = nil }
-}
-
-final class StubCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
-    private let lock = NSLock()
-    private var store: [Data: Data] = [:]
-
-    func read(key: Data) throws -> Data? {
-        lock.withLock { store[key] }
-    }
-
-    func write(key: Data, value: Data) throws {
-        lock.withLock { store[key] = value }
-    }
-
-    func clear(key: Data) throws {
-        lock.withLock { store[key] = nil }
-    }
-}
-
 // Conforms to HostBridge rather than the generated HostCallbacks, so the
 // protocol extension supplies every optional callback and a new one cannot
 // leave this file behind. Only the six requirements without a default are
@@ -215,8 +196,7 @@ func temporaryDatabaseDirectory() throws -> String {
 }
 
 final class StubHostBridge: HostBridge, @unchecked Sendable {
-    let storage: HostStorageBackend = StubStorage()
-    let coreStorage: HostCoreStorageBackend = StubCoreStorage()
+    let secretStorage: HostSecretStorageBackend = StubSecretStorage()
     private let logLock = NSLock()
     private var logs: [String] = []
     private let permissionLock = NSLock()
@@ -267,13 +247,6 @@ final class StubHostBridge: HostBridge, @unchecked Sendable {
     ) async throws -> PermissionDecision { nextRemoteDecision() }
     func featureSupported(request _: HostFeatureSupportedRequest) async throws -> Bool { true }
     func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
-    func localStorageRead(key: String) throws -> Data? { try storage.read(key: key) }
-    
-    func localStorageWrite(key: String, value: Data) throws {
-        try storage.write(key: key, value: value)
-    }
-    
-    func localStorageClear(key: String) throws { try storage.clear(key: key) }
 }
 
 // Conforms to `ChatHostBridge` so a new requirement there fails this job.
@@ -304,4 +277,15 @@ final class StubPocketHostBridge: PocketHostBridge {
     func listCards() throws -> [PocketCard] { [] }
 
     func removeCard(cardId _: String) throws -> NativePocketRemoval { .absent }
+}
+
+actor StubSecretStorage: HostSecretStorageBackend {
+    private var values: [String: Data] = [:]
+    func read(key: SecretCoreStorageKey) async throws -> Data? { values[secretCoreStorageKeyIdentifier(key: key)] }
+    func write(key: SecretCoreStorageKey, value: Data) async throws { values[secretCoreStorageKeyIdentifier(key: key)] = value }
+    func clear(key: SecretCoreStorageKey) async throws { values[secretCoreStorageKeyIdentifier(key: key)] = nil }
+}
+
+final class StubWalletSecrets: WalletSecretProvider, @unchecked Sendable {
+    func readWalletRootEntropy(walletId: String) async throws -> Data { Data(repeating: 1, count: 32) }
 }

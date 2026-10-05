@@ -11,7 +11,7 @@ protocol ProductBotProviding {
 }
 
 final class ProductBotProvider: ProductBotProviding {
-    private let productProvider: StreamableProvider<Product>
+    private let productProvider: StreamableProvider<Product>?
     private let botFactory: ProductBotFactory
     private let dotNsResolver: DotNsResolverProtocol
     private let productResolver: ProductResolving
@@ -23,7 +23,7 @@ final class ProductBotProvider: ProductBotProviding {
     private static let tldAttempts = 20
 
     init(
-        productProvider: StreamableProvider<Product>,
+        productProvider: StreamableProvider<Product>?,
         botFactory: ProductBotFactory,
         dotNsResolver: DotNsResolverProtocol,
         productResolver: ProductResolving,
@@ -41,31 +41,27 @@ final class ProductBotProvider: ProductBotProviding {
     }
 
     func observeBots() -> AnyAsyncSequence<[ProductBot]> {
-        productProvider.asyncStream()
+        if settingsManager.isTrUAPIRuntimeEnabled {
+            return truapiRecordChanges(.truapiProductsChanged)
+                .map { [self] _ in
+                    do {
+                        return try await loadRustBots()
+                    } catch {
+                        logger.error("Rust product catalog failed: \(error)")
+                        return []
+                    }
+                }
+                .eraseToAnyAsyncSequence()
+        }
+        guard let productProvider else {
+            return AsyncStream<[ProductBot]> { $0.finish() }.eraseToAnyAsyncSequence()
+        }
+        return productProvider.asyncStream()
             .scan([String: Product]()) { dict, changes in
                 changes.mergeToDict(dict)
             }
             .map { [self] productDict in
-                var products = Array(productDict.values)
-
-                #if targetEnvironment(simulator)
-                    if let injected = Self.simulatorChatProduct(),
-                       !products.contains(where: { $0.identifier == injected.identifier }) {
-                        products.append(injected)
-                    }
-                #endif
-
-                // After the E2E injection, so a launcher naming a host-placed product keeps the
-                // display name it asked for.
-                for hostPlaced in await hostPlacedProducts() {
-                    guard !products.contains(where: { $0.identifier == hostPlaced.identifier }) else {
-                        continue
-                    }
-
-                    products.append(hostPlaced)
-                }
-
-                return await makeBots(for: products)
+                await botsIncludingHostProducts(Array(productDict.values))
             }
             .eraseToAnyAsyncSequence()
     }
@@ -94,6 +90,38 @@ final class ProductBotProvider: ProductBotProviding {
 }
 
 private extension ProductBotProvider {
+    func loadRustBots() async throws -> [ProductBot] {
+        guard let provider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() else {
+            throw ProductBotFactoryError.dependenciesUnavailable
+        }
+        guard let runtime = try await provider.activeRuntimeForRecords() else { return [] }
+        let products = try await runtime.products().map { Product(id: $0.productId, name: $0.name) }
+        return await botsIncludingHostProducts(products)
+    }
+
+    func botsIncludingHostProducts(_ storedProducts: [Product]) async -> [ProductBot] {
+        var products = storedProducts
+
+        #if targetEnvironment(simulator)
+            if let injected = Self.simulatorChatProduct(),
+               !products.contains(where: { $0.identifier == injected.identifier }) {
+                products.append(injected)
+            }
+        #endif
+
+        // After the E2E injection, so a launcher naming a host-placed product keeps the
+        // display name it asked for.
+        for hostPlaced in await hostPlacedProducts() {
+            guard !products.contains(where: { $0.identifier == hostPlaced.identifier }) else {
+                continue
+            }
+
+            products.append(hostPlaced)
+        }
+
+        return await makeBots(for: products)
+    }
+
     /// Unioned into the stream rather than written to the product repository: nothing installs
     /// them, so nothing can uninstall them either. Pocket refuses to remove a privileged card;
     /// this gets the same result without a second copy of the collection to keep in step.
@@ -125,7 +153,13 @@ private extension ProductBotProvider {
             }
         }
 
-        return resolved.compactMap { botFactory.create(resolved: $0) }
+        var bots: [ProductBot] = []
+        for product in resolved {
+            if let bot = await botFactory.create(resolved: product) {
+                bots.append(bot)
+            }
+        }
+        return bots
     }
 
     /// Nil for a product whose published manifest is broken. That is the product's bug, and

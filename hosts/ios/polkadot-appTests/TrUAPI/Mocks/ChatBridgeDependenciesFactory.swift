@@ -9,10 +9,9 @@ import Products
 func makeChatBridgeDependencies(
     productId: String = "test.dot"
 ) -> RustProductExecutionBridge.Dependencies {
-    let defaults = UserDefaults(suiteName: "io.parity.tests.chat-bridge") ?? .standard
     return .init(
         productId: productId,
-        permissionGuard: MockPermissionGuard(),
+        permissionRequester: MockPermissionGuard(),
         osPermissionAsker: MockOSPermissionAsker(),
         notificationScheduler: MockNotificationScheduler(),
         navigationRouter: MockNavigationRouter(),
@@ -21,11 +20,6 @@ func makeChatBridgeDependencies(
             engineResolver: { _ in nil },
             logger: Logger.shared
         ),
-        productStorage: TrUAPILocalStorage.createProductLocalStorage(
-            productId: productId,
-            defaults: defaults
-        ),
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults),
         confirmationPresenter: MockConfirmationPresenter(),
         preimageCache: TrUAPIPreimageCache { _ in nil },
         hostProvider: InertHostProvider(),

@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import Products
 import KeyDerivation
 import SubstrateSdk
@@ -51,7 +52,9 @@ extension ServiceCoordinator {
         )
 
         let productBotProvider = ProductBotProvider(
-            productProvider: productRepositoryFactory.createProvider(),
+            productProvider: SettingsManager.shared.isTrUAPIRuntimeEnabled
+                ? nil
+                : productRepositoryFactory.createProvider(),
             botFactory: botFactory,
             dotNsResolver: spaFlowState.dotNsResolver,
             productResolver: spaFlowState.productResolver

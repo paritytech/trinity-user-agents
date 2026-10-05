@@ -5,7 +5,7 @@ import UIKitExt
 /// Builds one rust SPA runtime (TrUAPI core + localhost ws-bridge) per call.
 final class SPARustRuntimeFactory {
     struct Environment {
-        let rust: RustRuntimeEnvironment
+        let makeRust: @MainActor () async throws -> RustRuntimeEnvironment
         let configuration: SPAConfiguration
         let dotNsResolver: DotNsResolverProtocol
         let productResolver: ProductResolving
@@ -30,12 +30,14 @@ final class SPARustRuntimeFactory {
 
 extension SPARustRuntimeFactory: SPARuntimeFactoryProtocol {
     @MainActor
-    func createRuntime(for productId: ProductId) throws -> SPARuntimeProtocol {
+    func createRuntime(for productId: ProductId) async throws -> SPARuntimeProtocol {
         if let presentationView {
             environment.routers.setPresentationView(presentationView)
         }
 
-        let executionModel = try environment.rust.makeSPAExecution(
+        let rust = try await environment.makeRust()
+        try Task.checkCancellation()
+        let executionModel = try rust.makeSPAExecution(
             productId: productId,
             routers: environment.routers
         )
@@ -46,7 +48,7 @@ extension SPARustRuntimeFactory: SPARuntimeFactoryProtocol {
             dotNsResolver: environment.dotNsResolver,
             productResolver: environment.productResolver,
             schemeHandlerProxy: environment.schemeHandlerProxy,
-            logger: environment.rust.logger
+            logger: rust.logger
         )
     }
 }

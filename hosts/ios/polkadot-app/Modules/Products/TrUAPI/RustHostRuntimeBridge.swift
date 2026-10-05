@@ -1,4 +1,5 @@
 import Foundation
+import Products
 import TrUAPIHost
 import ChainRegistry
 import SubstrateSdk
@@ -13,28 +14,35 @@ import SubstrateSdk
 /// Threading contract matches `HostBridge`: sync members run inline on the
 /// dispatcher thread and return promptly.
 final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
-    let storage: HostStorageBackend
-    let coreStorage: HostCoreStorageBackend
+    let secretStorage: HostSecretStorageBackend
 
     private let chainRegistry: ChainRegistryProtocol
     private let chainConnections: TrUAPIChainConnecting
     private let confirmationPresenter: TrUAPIConfirmationPresenting
+    private let permissionRequester: ProductPermissionRequesting
+    private let osPermissionAsker: OSPermissionAsking
+    private let notifications: TrUAPINotifications
     private let logger: LoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
 
     init(
         chainRegistry: ChainRegistryProtocol,
-        coreStorage: TrUAPILocalStoring,
+        secretStorage: HostSecretStorageBackend,
+        walletId: String,
+        permissionRequester: ProductPermissionRequesting,
+        osPermissionAsker: OSPermissionAsking,
         chainConnections: TrUAPIChainConnecting,
         confirmationPresenter: TrUAPIConfirmationPresenting,
         logger: LoggerProtocol
     ) {
+        self.permissionRequester = permissionRequester
+        self.osPermissionAsker = osPermissionAsker
         self.chainRegistry = chainRegistry
         self.chainConnections = chainConnections
         self.confirmationPresenter = confirmationPresenter
         self.logger = logger
-        self.coreStorage = CoreStorageBackend(storage: coreStorage)
-        storage = EmptyHostStorageBackend()
+        self.secretStorage = secretStorage
+        notifications = TrUAPINotifications(walletId: walletId)
         chainConnections.eventHandler = self
     }
 
@@ -44,26 +52,55 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         self.runtime = runtime
     }
 
+    func runtimeRecordsChanged() { notifyRuntimeRecordsChanged() }
+
     func onCoreLog(marker: String, detail: String) {
         logger.debug("[truapi:host:\(marker)] \(detail)")
+    }
+
+    func scheduleNotification(productId: String, id: UInt32, request: HostPushNotificationRequest) async throws {
+        try await notifications.schedule(productId: productId, id: id, request: request)
+    }
+
+    func isScheduledNotificationPending(productId: String, id: UInt32) async throws -> Bool {
+        try await notifications.isPending(productId: productId, id: id)
+    }
+
+    func cancelScheduledNotification(productId: String, id: UInt32) async throws {
+        try await notifications.cancel(productId: productId, id: id)
     }
 
     func navigateTo(url: String) async throws {
         throw HostNavigateToError.Unknown(reason: "navigation unavailable at host level: \(url)")
     }
 
+    func devicePermissionStatus(request: HostDevicePermissionRequest) async throws -> DevicePermissionStatus {
+        await osPermissionAsker.corePermissionStatus(request)
+    }
+
     func devicePermission(
-        product _: ProductExecutionConfig,
-        request _: HostDevicePermissionRequest
+        product: ProductExecutionConfig,
+        request: HostDevicePermissionRequest
     ) async throws -> TrUAPIPermissionDecision {
-        .deny
+        let decision = await permissionRequester.prompt(
+            productId: product.productId,
+            permission: .deviceCapability(request.deviceCapabilityType)
+        )
+        guard decision != .deny else { return .deny }
+        guard await osPermissionAsker.requestPermission(for: request.deviceCapabilityType) else {
+            throw HostRejection.Rejected(reason: "Operating system permission denied")
+        }
+        return decision.hostDecision
     }
 
     func remotePermission(
-        product _: ProductExecutionConfig,
-        request _: RemotePermission
+        product: ProductExecutionConfig,
+        request: RemotePermission
     ) async throws -> TrUAPIPermissionDecision {
-        .deny
+        await permissionRequester.promptBatched(
+            productId: product.productId,
+            permissions: request.toDomainRequest().toDomainPermissions()
+        ).hostDecision
     }
 
     func chainConnect(genesisHash: Data) throws -> UInt32? {
@@ -101,6 +138,10 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
 
     func supportedChains() throws -> HostChainSet {
         TrUAPISupportedChains.make(chainRegistry: chainRegistry)
+    }
+
+    func devicePaired(device: PairedSsoPeer) {
+        NotificationCenter.default.post(name: .truapiPairedHostsChanged, object: nil)
     }
 
     func authStateChanged(state: AuthState) {

@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import Operation_iOS
 import Products
 
@@ -18,6 +19,9 @@ final class ProductRepositoryFactory {
     }
 
     func createRepository() -> AnyDataProviderRepository<Product> {
+        if SettingsManager.shared.isTrUAPIRuntimeEnabled {
+            return AnyDataProviderRepository(TrUAPIProductRepository())
+        }
         let mapper = ProductMapper()
         let repository = storageFacade.createRepository(
             filter: nil,

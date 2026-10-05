@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import FoundationExt
 import Individuality
 import MessageExchangeKit
@@ -9,13 +10,33 @@ import SubstrateSdk
 import AsyncExtensions
 import KeyDerivation
 import ChainRegistry
+import TrUAPIHost
 
 protocol PolkadotHandshakeServicing: AnyObject {
     func prepareInput(for url: URL) async throws -> HandshakeInput?
     func sendHandshake(with input: HandshakeInput) async throws -> Chat.LocalDevice
 }
 
-struct HandshakeInput {
+enum HandshakeInput {
+    case native(NativeHandshakeInput)
+    case rust(HandshakeProposal, HandshakeMetadata, URL)
+
+    var hostData: HandshakeProposal {
+        switch self {
+        case let .native(input): input.hostData
+        case let .rust(proposal, _, _): proposal
+        }
+    }
+
+    var metadata: HandshakeMetadata {
+        switch self {
+        case let .native(input): input.metadata
+        case let .rust(_, metadata, _): metadata
+        }
+    }
+}
+
+struct NativeHandshakeInput {
     let hostData: HandshakeProposal
     let signerKeypair: SNKeypairProtocol
     let rootAccountId: Data
@@ -82,19 +103,43 @@ extension PolkadotHandshakeService: PolkadotHandshakeServicing {
         guard let hostData = HandshakeProposal(url: url) else {
             return nil
         }
-        return await makeHandshakeInput(hostData: hostData)
+        if SettingsManager.shared.isTrUAPIRuntimeEnabled {
+            let metadata = try await metadataFactory.makeMetadata(from: hostData)
+            return .rust(hostData, metadata, url)
+        }
+        return await makeHandshakeInput(hostData: hostData).map(HandshakeInput.native)
     }
 
     func sendHandshake(with input: HandshakeInput) async throws -> Chat.LocalDevice {
-        try await sender.sendResponse(for: input)
-        return try await persistLocally(input: input)
+        switch input {
+        case let .native(native):
+            try await sender.sendResponse(for: native)
+            return try await persistLocally(input: native)
+        case let .rust(proposal, metadata, url):
+            guard let provider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() else {
+                throw HostRejection.Rejected(reason: "Rust runtime provider unavailable")
+            }
+            let runtime = try await provider.sharedRuntime()
+            try await runtime.establishPairing(deeplink: url.absoluteString)
+            NotificationCenter.default.post(name: .truapiPairedHostsChanged, object: nil)
+            let device = proposal.deviceData
+            return Chat.LocalDevice(
+                statementAccountId: device.statementAccountId,
+                encryptionPublicKey: device.encryptionPublicKey,
+                hostName: metadata.name,
+                createdAt: Date(),
+                hostVersion: device.hostVersion,
+                osType: device.platformType,
+                osVersion: device.platformVersion
+            )
+        }
     }
 }
 
 private extension PolkadotHandshakeService {
     // MARK: - Input Assembly
 
-    func makeHandshakeInput(hostData: HandshakeProposal) async -> HandshakeInput? {
+    func makeHandshakeInput(hostData: HandshakeProposal) async -> NativeHandshakeInput? {
         do {
             let deviceData = hostData.deviceData
             let rootAccountId = try rootWallet.getRawPublicKey()
@@ -106,7 +151,7 @@ private extension PolkadotHandshakeService {
 
             let metadata = try await metadataFactory.makeMetadata(from: hostData)
 
-            return HandshakeInput(
+            return NativeHandshakeInput(
                 hostData: hostData,
                 signerKeypair: signerKeypair,
                 rootAccountId: rootAccountId,
@@ -124,7 +169,7 @@ private extension PolkadotHandshakeService {
     // MARK: - Persistence
 
     func persistLocally(
-        input: HandshakeInput
+        input: NativeHandshakeInput
     ) async throws -> Chat.LocalDevice {
         let deviceData = input.hostData.deviceData
 

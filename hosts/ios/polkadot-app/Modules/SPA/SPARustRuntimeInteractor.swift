@@ -120,31 +120,22 @@ private extension SPARustRuntimeInteractor {
     func startRuntime(engine: JSEngineProtocol) {
         setupTask?.cancel()
 
-        do {
-            let newRuntime = try runtimeFactory.createRuntime(
-                for: configuration.page.host.toDotDomain()
-            )
-            runtime = newRuntime
-
-            setupTask = Task { [weak self, productResolver, configuration] in
-                do {
-                    self?.resolvedProduct = try await Self.resolveProduct(
-                        with: productResolver,
-                        for: configuration
-                    )
-
-                    let url = try await newRuntime.start(with: engine)
-                    self?.presenter?.didRequestNavigation(to: url)
-                } catch is CancellationError {
-                    // Superseded by retry/teardown — the replacement reports.
-                } catch {
-                    self?.logger.error("SPA(rust): Setup failed: \(error)")
-                    self?.presenter?.didFail(error: error)
+        setupTask = Task { [weak self, runtimeFactory, productResolver, configuration] in
+            do {
+                let newRuntime = try await runtimeFactory.createRuntime(for: configuration.page.host.toDotDomain())
+                guard let self, !Task.isCancelled else {
+                    await newRuntime.dispose()
+                    return
                 }
+                runtime = newRuntime
+                resolvedProduct = try await Self.resolveProduct(with: productResolver, for: configuration)
+                let url = try await newRuntime.start(with: engine)
+                presenter?.didRequestNavigation(to: url)
+            } catch is CancellationError {
+            } catch {
+                self?.logger.error("SPA(rust): Setup failed: \(error)")
+                self?.presenter?.didFail(error: error)
             }
-        } catch {
-            logger.error("SPA(rust): Runtime creation failed: \(error)")
-            presenter?.didFail(error: error)
         }
     }
 

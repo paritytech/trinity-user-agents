@@ -142,3 +142,7 @@ Report vulnerabilities responsibly following [Parity's security policy](https://
 ## License
 
 Licensed under the **GNU General Public License v3.0** — see [LICENSE](./LICENSE).
+
+The experimental TrUAPI runtime feature routes product, Chat worker, incoming SSO, renewal, permissions, catalog and notification lifecycle through the Rust account services. Native code supplies approval UI and protected wallet/host secret providers. Swift retains worker engine creation and lifecycle. Runtime selection is fixed until app restart; enabled startup failures are reported without falling back to the legacy runtime. See [the host/account-holder design](../../docs/design/host-account-holder.md) and its [implementation findings](../../docs/design/host-account-holder-findings.md).
+
+Durable worker operations remain a separate integration task. On the enabled Rust path, `beginOperation` returns process-local IDs and `endOperation` is a no-op; these defaults do not persist work or keep an engine alive after its chat surface closes. The legacy operation reconciler runs only with Rust disabled, preventing saved operations from starting a second worker through legacy account handling.

@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import Products
 
 final class AppPermissionsInteractor {
@@ -62,7 +63,7 @@ extension AppPermissionsInteractor: AppPermissionsInteractorInputProtocol {
             do {
                 try await repository.revoke(productId: productId, permissions: permissions)
 
-                if revokesNotifications {
+                if revokesNotifications && !SettingsManager.shared.isTrUAPIRuntimeEnabled {
                     try await notificationScheduler.cancelAll(forProductId: productId)
                 }
             } catch {

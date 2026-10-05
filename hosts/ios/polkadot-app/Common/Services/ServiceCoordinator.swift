@@ -170,7 +170,9 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
         #endif
 
         chatCoordinator.setup()
-        productWorkerFacade.setup()
+        if !SettingsManager.shared.isTrUAPIRuntimeEnabled {
+            productWorkerFacade.setup()
+        }
         chatExtensionsRegistry.discover()
         chatRequestCoordinator.setup()
         fiatOnrampTrackingService.setup()
@@ -178,7 +180,9 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
         attachmentDownloadService.setup()
         notificationBadgeSyncService.setup()
         messageExpansionService.start()
-        allowanceRenewalService.setup()
+        if !SettingsManager.shared.isTrUAPIRuntimeEnabled {
+            allowanceRenewalService.setup()
+        }
 
         Task {
             await chainStatusProvider.start()
@@ -309,7 +313,6 @@ extension ServiceCoordinator {
             chainRegistry: ChainRegistryFacade.sharedRegistry,
             entropyManager: RootEntropyManager.shared,
             settingsManager: SettingsManager.shared,
-            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
             logger: logger
         )

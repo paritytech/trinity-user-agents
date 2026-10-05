@@ -7,7 +7,7 @@ import Testing
 @Suite("ProductPermissionRepository Tests")
 struct ProductPermissionRepositoryTests {
     private func makeSUT() -> ProductPermissionRepository {
-        ProductPermissionRepository(storageFacade: UserDataStorageTestFacade())
+        ProductPermissionRepository(storageFacade: UserDataStorageTestFacade(), runtimeEnabled: false)
     }
 
     // MARK: - grant / getPermissionState

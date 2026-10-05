@@ -28,6 +28,10 @@
     }
 
     extension AppFactoryResetPresenter: AppFactoryResetInteractorOutputProtocol {
+        func didFailReset(_ error: Error) {
+            Logger.shared.error("Reset failed: \(error)")
+        }
+
         func didCompleteReset() {
             wireframe.navigateToFreshStart()
         }

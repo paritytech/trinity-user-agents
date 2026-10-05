@@ -16,30 +16,26 @@ import SubstrateSdk
 class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     struct Dependencies {
         let productId: ProductId
-        let permissionGuard: ProductPermissionGuarding
+        let permissionRequester: ProductPermissionRequesting
         let osPermissionAsker: OSPermissionAsking
         let notificationScheduler: ProductNotificationScheduling
         let navigationRouter: ProductsNavigationRouting
         let chainRegistry: ChainRegistryProtocol
         let chainConnections: TrUAPIChainConnecting
-        let productStorage: TrUAPILocalStoring
-        let coreStorage: TrUAPILocalStoring
         let confirmationPresenter: TrUAPIConfirmationPresenting
         let preimageCache: TrUAPIPreimageLookuping
         let hostProvider: ProductHostProviding
         let logger: LoggerProtocol
     }
 
-    let storage: HostStorageBackend
-    let coreStorage: HostCoreStorageBackend
+    let secretStorage: HostSecretStorageBackend = TrUAPISecretStorage()
 
+    private let notifications = TrUAPINotifications(walletId: InstallationKeyIdStore().getInstallationKeyId())
     private let dependencies: Dependencies
     private weak var execution: TrUAPIProductExecutionProtocol?
 
     init(dependencies: Dependencies) {
         self.dependencies = dependencies
-        storage = ProductStorageBackend(storage: dependencies.productStorage)
-        coreStorage = CoreStorageBackend(storage: dependencies.coreStorage)
     }
 
     /// Attach the opened execution so callbacks can notify it in place.
@@ -66,61 +62,41 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         product _: ProductExecutionConfig,
         request: HostDevicePermissionRequest
     ) async throws -> TrUAPIPermissionDecision {
-        try await dependencies.permissionGuard.requestDevicePermissionDecision(
+        let decision = await dependencies.permissionRequester.prompt(
             productId: dependencies.productId,
-            capability: request.deviceCapabilityType
-        ).hostDecision
+            permission: .deviceCapability(request.deviceCapabilityType)
+        )
+        guard decision != .deny else { return .deny }
+        guard await dependencies.osPermissionAsker.requestPermission(for: request.deviceCapabilityType) else {
+            throw HostRejection.Rejected(reason: "Operating system permission denied")
+        }
+        return decision.hostDecision
     }
 
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws -> DevicePermissionStatus {
-        switch request {
-        case .camera,
-             .microphone,
-             .notifications:
-            switch await dependencies.osPermissionAsker.checkPermission(for: request.deviceCapabilityType) {
-            case .allowed: .granted
-            case .denied: .denied
-            case .notDetermined: .notDetermined
-            }
-        case .location:
-            .notDetermined
-        case .bluetooth,
-             .nfc,
-             .clipboard,
-             .openUrl,
-             .biometrics:
-            .notApplicable
-        }
+        await dependencies.osPermissionAsker.corePermissionStatus(request)
     }
 
     func remotePermission(
         product _: ProductExecutionConfig,
         request: RemotePermission
     ) async throws -> TrUAPIPermissionDecision {
-        try await dependencies.permissionGuard.requestPermissionsDecision(
+        await dependencies.permissionRequester.promptBatched(
             productId: dependencies.productId,
             permissions: request.toDomainRequest().toDomainPermissions()
         ).hostDecision
     }
 
-    func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32 {
-        try await dependencies.notificationScheduler.schedule(
-            productId: dependencies.productId,
-            request: request.toScheduledNotificationRequest()
-        )
+    func scheduleNotification(productId: String, id: UInt32, request: HostPushNotificationRequest) async throws {
+        try await notifications.schedule(productId: productId, id: id, request: request)
     }
 
-    func cancelNotification(id: UInt32) throws {
-        Task { [dependencies] in
-            do {
-                try await dependencies.notificationScheduler.cancel(
-                    productId: dependencies.productId,
-                    notificationId: id
-                )
-            } catch {
-                dependencies.logger.error("[truapi] cancel notification \(id) failed: \(error)")
-            }
-        }
+    func isScheduledNotificationPending(productId: String, id: UInt32) async throws -> Bool {
+        try await notifications.isPending(productId: productId, id: id)
+    }
+
+    func cancelScheduledNotification(productId: String, id: UInt32) async throws {
+        try await notifications.cancel(productId: productId, id: id)
     }
 
     func confirmUserAction(review: UserConfirmationReview) async throws -> Bool {

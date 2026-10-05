@@ -61,7 +61,7 @@ final class ChatExtensionStore: ChatExtensionStoring {
             do {
                 for try await incomingBots in productBotProvider.observeBots() {
                     guard !Task.isCancelled else { return }
-                    self?.diffAndApply(incomingBots)
+                    await self?.diffAndApply(incomingBots)
                 }
             } catch {
                 // Stream completed with error — observation stops
@@ -71,42 +71,38 @@ final class ChatExtensionStore: ChatExtensionStoring {
 
     // MARK: - Private
 
-    private func diffAndApply(_ incomingBots: [ProductBot]) {
+    private func diffAndApply(_ incomingBots: [ProductBot]) async {
         let incomingById = Dictionary(
             incomingBots.map { ($0.identifier, $0) },
             uniquingKeysWith: { _, last in last }
         )
 
-        let added: [ProductBot]
-        let removed: [ProductBot]
+        let (addedIds, removedIds, removed) = lock.withLock {
+            let existingIds = Set(productBots.keys)
+            let incomingIds = Set(incomingById.keys)
+            let replacedIds = existingIds.intersection(incomingIds).filter {
+                productBots[$0]?.runtimeOwner != incomingById[$0]?.runtimeOwner
+            }
+            let addedIds = incomingIds.subtracting(existingIds).union(replacedIds)
+            let removedIds = existingIds.subtracting(incomingIds).union(replacedIds)
+            let removed = removedIds.compactMap { productBots.removeValue(forKey: $0) }
 
-        lock.lock()
-
-        let existingIds = Set(productBots.keys)
-        let incomingIds = Set(incomingById.keys)
-
-        let addedIds = incomingIds.subtracting(existingIds)
-        let removedIds = existingIds.subtracting(incomingIds)
-
-        removed = removedIds.compactMap { productBots.removeValue(forKey: $0) }
-        added = addedIds.compactMap { incomingById[$0] }
-
-        for bot in added {
-            productBots[bot.identifier] = bot
+            for identifier in addedIds {
+                productBots[identifier] = incomingById[identifier]
+            }
+            return (addedIds, removedIds, removed)
         }
-
-        lock.unlock()
 
         for bot in removed {
-            Task { await bot.dispose() }
-        }
-
-        if !addedIds.isEmpty {
-            delegate?.didEnableExtensions(addedIds)
+            await bot.dispose()
         }
 
         if !removedIds.isEmpty {
             delegate?.didDisableExtensions(removedIds)
+        }
+
+        if !addedIds.isEmpty {
+            delegate?.didEnableExtensions(addedIds)
         }
     }
 }

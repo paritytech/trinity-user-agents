@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import Operation_iOS
 import Products
 
@@ -62,7 +63,9 @@ final class DebugProductsViewModel {
         )
 
         Task { @MainActor [notificationScheduler] in
-            try? await notificationScheduler.cancelAll(forProductId: product.identifier)
+            if !SettingsManager.shared.isTrUAPIRuntimeEnabled {
+                try? await notificationScheduler.cancelAll(forProductId: product.identifier)
+            }
             try? await productRepository.saveOperation({ [] }, { [product.identifier] }).asyncExecute()
             try? await productChatRepository.deleteAllOperation().asyncExecute()
             try? scriptStorage.deleteScript(productId: product.identifier)

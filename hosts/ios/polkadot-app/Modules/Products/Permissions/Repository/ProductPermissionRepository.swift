@@ -1,16 +1,30 @@
 import Foundation
+import Keystore_iOS
 import Operation_iOS
 import Products
+import TrUAPIHost
 
 final class ProductPermissionRepository: @unchecked Sendable {
+    private let runtimeEnabled: Bool
     private let storageFacade: StorageFacadeProtocol
     private let mapper: AnyCoreDataMapper<ProductPermissionGrant, CDProductPermissionGrant>
     private let repository: AnyDataProviderRepository<ProductPermissionGrant>
 
+    private func runtime() async throws -> TrUAPIHostRuntime {
+        guard let provider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() else {
+            throw HostRejection.Rejected(reason: "TrUAPI runtime is unavailable")
+        }
+        return try await provider.sharedRuntime()
+    }
+
     private let oneTimeLock = NSLock()
     private var oneTimeGrants: Set<String> = []
 
-    init(storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared) {
+    init(
+        storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
+        runtimeEnabled: Bool = SettingsManager.shared.isTrUAPIRuntimeEnabled
+    ) {
+        self.runtimeEnabled = runtimeEnabled
         self.storageFacade = storageFacade
 
         let mapper = AnyCoreDataMapper(ProductPermissionGrantMapper())
@@ -29,6 +43,15 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         productId: String,
         permission: ProductPermission
     ) async throws -> ProductPermissionState {
+        if runtimeEnabled {
+            switch try await runtime().permissionAuthorizationStatus(
+                productId: productId, request: permission.coreRequest()
+            ) {
+            case .authorized: return .allowedAlways
+            case .denied: return .denied
+            case .notDetermined: return .notDetermined
+            }
+        }
         let identifier = ProductPermissionGrant.makeIdentifier(
             productId: productId,
             permission: permission
@@ -56,6 +79,15 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         typeName: String,
         keys: [String]
     ) async throws -> Bool {
+        if runtimeEnabled {
+            for key in keys {
+                if let permission = ProductPermission.from(typeName: typeName, key: key),
+                   try await getPermissionState(productId: productId, permission: permission) == .allowedAlways {
+                    return true
+                }
+            }
+            return false
+        }
         let identifiers = keys.compactMap { key -> String? in
             guard let permission = ProductPermission.from(typeName: typeName, key: key) else {
                 return nil
@@ -76,6 +108,12 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     }
 
     func grant(productId: String, permission: ProductPermission) async throws {
+        if runtimeEnabled {
+            try await runtime().setPermissionAuthorizationStatus(
+                productId: productId, request: permission.coreRequest(), status: .authorized
+            )
+            return
+        }
         let grant = ProductPermissionGrant(
             productId: productId,
             permission: permission,
@@ -87,6 +125,12 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     }
 
     func deny(productId: String, permission: ProductPermission) async throws {
+        if runtimeEnabled {
+            try await runtime().setPermissionAuthorizationStatus(
+                productId: productId, request: permission.coreRequest(), status: .denied
+            )
+            return
+        }
         let grant = ProductPermissionGrant(
             productId: productId,
             permission: permission,
@@ -100,6 +144,12 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     }
 
     func revoke(productId: String, permission: ProductPermission) async throws {
+        if runtimeEnabled {
+            try await runtime().setPermissionAuthorizationStatus(
+                productId: productId, request: permission.coreRequest(), status: .notDetermined
+            )
+            return
+        }
         let identifier = ProductPermissionGrant.makeIdentifier(
             productId: productId,
             permission: permission
@@ -111,6 +161,10 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     }
 
     func revoke(productId: String, permissions: [ProductPermission]) async throws {
+        if runtimeEnabled {
+            for permission in permissions { try await revoke(productId: productId, permission: permission) }
+            return
+        }
         guard !permissions.isEmpty else { return }
 
         let identifiers = permissions.map {
@@ -125,6 +179,14 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     }
 
     func revokeAllByProduct(productId: String) async throws {
+        if runtimeEnabled {
+            for record in try await runtime().permissions() where record.productId == productId {
+                try await runtime().setPermissionAuthorizationStatus(
+                    productId: productId, request: record.request, status: .notDetermined
+                )
+            }
+            return
+        }
         let allGrants = try await getAllByProduct(productId: productId)
         let identifiers = allGrants.map(\.identifier)
 
@@ -138,7 +200,10 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     }
 
     func getAllByProduct(productId: String) async throws -> [ProductPermissionGrant] {
-        try await productRepository(for: productId)
+        if runtimeEnabled {
+            return try await runtime().permissions().filter { $0.productId == productId }.flatMap(\.productGrants)
+        }
+        return try await productRepository(for: productId)
             .fetchAllOperation(with: .init())
             .asyncExecute()
     }
@@ -146,6 +211,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     // MARK: - One-time grants
 
     func grantOneTime(productId: String, permission: ProductPermission) {
+        precondition(!runtimeEnabled, "Rust owns one-use authorization")
         let key = ProductPermissionGrant.makeIdentifier(
             productId: productId,
             permission: permission
@@ -157,6 +223,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     }
 
     func consumeOneTimeGrant(productId: String, permission: ProductPermission) -> Bool {
+        precondition(!runtimeEnabled, "Rust owns one-use authorization")
         let key = ProductPermissionGrant.makeIdentifier(
             productId: productId,
             permission: permission

@@ -107,18 +107,12 @@ private extension RustRuntimeEnvironment {
     ) -> RustProductExecutionBridge.Dependencies {
         RustProductExecutionBridge.Dependencies(
             productId: productId,
-            permissionGuard: ProductPermissionGuard.create(
-                router: routers.productsRouter,
-                fundingProvider: FundingDomainProvider(hostProvider: hostProvider),
-                osAsker: osPermissionAsker
-            ),
+            permissionRequester: ProductPermissionRequester(router: routers.productsRouter),
             osPermissionAsker: osPermissionAsker,
             notificationScheduler: notificationScheduler,
             navigationRouter: routers.navigationRouter,
             chainRegistry: chainRegistry,
             chainConnections: chainConnections,
-            productStorage: TrUAPILocalStorage.createProductLocalStorage(productId: productId),
-            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: routers),
             preimageCache: TrUAPIPreimageCache { [logger, ipfsFetcher] key in
                 do {

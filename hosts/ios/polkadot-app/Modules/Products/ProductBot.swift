@@ -14,6 +14,7 @@ import UIKitExt
 /// Each instance is created by ``ProductBotFactory`` for a specific ``Product``.
 final class ProductBot: ChatExtensionBot {
     let product: Product
+    let runtimeOwner: ObjectIdentifier?
     private let runtime: ChatRuntimeProtocol
     private let logger: LoggerProtocol
 
@@ -28,10 +29,12 @@ final class ProductBot: ChatExtensionBot {
     init(
         product: Product,
         runtime: ChatRuntimeProtocol,
+        runtimeOwner: ObjectIdentifier? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.product = product
         self.runtime = runtime
+        self.runtimeOwner = runtimeOwner
         self.logger = logger
     }
 
