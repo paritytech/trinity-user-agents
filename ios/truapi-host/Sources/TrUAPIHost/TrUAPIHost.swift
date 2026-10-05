@@ -228,15 +228,11 @@ public protocol HostBridge: NativeChatFilesHost {
     /// Cancel a previously scheduled notification id.
     func cancelNotification(id: UInt32) throws
 
-    /// Resident bridge: current host scope even with products closed.
-    /// Product bridge: immutable verified artifact/account scope captured at execution creation.
-    func receiverAuthority(productId: String) async throws -> ReceivingAuthority?
-    /// Request receiving consent separately from OS notification permission.
-    func receiverConsent(authority: ReceivingAuthority, watches: [ReceivingWatch]) async throws -> Bool
-    /// Wake synchronization without waiting for a provider or network.
-    func receiverChanged() async throws
-    /// Forward to the sole receiving owner, or return nil to use the native engine.
-    func receiverCommand(productId: String, action: UInt8, payload: Data) async throws -> Data?
+    /// Non-consuming ordered batch (at most 32), bound to the verified execution.
+    /// Must not enroll receiving or request notification permission.
+    func activationEvents() async throws -> [NotificationActivation]
+    /// Idempotently acknowledge one sequence, never a notification id or range.
+    func acknowledgeActivation(sequence: UInt64) async throws
 
     /// Prompt for a device-level permission `product` requested on the main
     /// actor, suspending until the user decides. Preserve the approval lifetime.
@@ -587,14 +583,12 @@ public extension HostBridge {
     func onCoreLog(marker: String, detail: String) {}
     func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32 { 0 }
     func cancelNotification(id: UInt32) throws {}
-    func receiverAuthority(productId: String) async throws -> ReceivingAuthority? { nil }
-    func receiverConsent(authority: ReceivingAuthority, watches: [ReceivingWatch]) async throws -> Bool {
-        throw HostRejection.Rejected(reason: "background receiving unsupported")
+    func activationEvents() async throws -> [NotificationActivation] {
+        throw HostRejection.Rejected(reason: "notification activation unsupported")
     }
-    func receiverChanged() async throws {
-        throw HostRejection.Rejected(reason: "background receiving unsupported")
+    func acknowledgeActivation(sequence: UInt64) async throws {
+        throw HostRejection.Rejected(reason: "notification activation unsupported")
     }
-    func receiverCommand(productId: String, action: UInt8, payload: Data) async throws -> Data? { nil }
     func authStateChanged(state: AuthState) {}
     func chainConnect(genesisHash: Data) throws -> UInt32? { nil }
     func allowedHopEndpoints(bulletinGenesisHash: Data) async throws -> [String] { [] }
@@ -964,22 +958,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    func receiverAuthority(productId: String) async throws -> ReceivingAuthority? {
-        try await withHostRejection { try await bridge.receiverAuthority(productId: productId) }
+    func activationEvents() async throws -> [NotificationActivation] {
+        try await withHostRejection { try await bridge.activationEvents() }
     }
 
-    func receiverConsent(authority: ReceivingAuthority, watches: [ReceivingWatch]) async throws -> Bool {
-        try await withHostRejection { try await bridge.receiverConsent(authority: authority, watches: watches) }
-    }
-
-    func receiverChanged() async throws {
-        try await withHostRejection { try await bridge.receiverChanged() }
-    }
-
-    func receiverCommand(productId: String, action: UInt8, payload: Data) async throws -> Data? {
-        try await withHostRejection {
-            try await bridge.receiverCommand(productId: productId, action: action, payload: payload)
-        }
+    func acknowledgeActivation(sequence: UInt64) async throws {
+        try await withHostRejection { try await bridge.acknowledgeActivation(sequence: sequence) }
     }
 
     func devicePermission(
