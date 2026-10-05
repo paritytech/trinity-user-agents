@@ -476,7 +476,7 @@ impl ProductRuntimeHost {
     ) -> Result<crate::platform::ReceivingAuthority, CallError<HostNotificationReceivingError>> {
         let authority = self.platform.receiver_authority(&self.product.product_id).await
             .map_err(|error| CallError::HostFailure { reason: error.reason })?
-            .ok_or_else(|| CallError::Domain(HostNotificationReceivingError::V1(
+            .ok_or(CallError::Domain(HostNotificationReceivingError::V1(
                 crate::latest::HostNotificationReceivingError::Unsupported,
             )))?;
         if authority.product_id != self.product.product_id {
