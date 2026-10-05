@@ -291,6 +291,12 @@ pub(super) struct State {
     pub permission_writes: usize,
     pub binding: Option<Binding>,
     pub signaling: Option<Arc<MediaSignaling>>,
+    /// The background connector owns every signaling start for this runtime.
+    pub signaling_started: bool,
+    /// Present while the connector waits between attempts; firing it retries now.
+    pub signaling_wake: Option<oneshot::Sender<()>>,
+    /// Operations waiting, within their own deadline, for signaling to bind.
+    pub ready_waiters: Vec<oneshot::Sender<()>>,
     pub group: Option<GroupEngine>,
     pub pending_signals: VecDeque<super::backend::PendingSignal>,
     pub pending_signal_bytes: usize,
@@ -308,7 +314,8 @@ impl State {
     pub fn new() -> Self {
         Self { capabilities: None, backend_started: false, fatal: false, closed: false, epoch: 0,
             permission_writes: 0, pending_signals: VecDeque::new(), pending_signal_bytes: 0, signal_workers: 0,
-            binding: None, signaling: None, group: None, sessions: BTreeMap::new(), issued_participants: 0,
+            binding: None, signaling: None, signaling_started: false, signaling_wake: None, ready_waiters: Vec::new(),
+            group: None, sessions: BTreeMap::new(), issued_participants: 0,
             incoming: BTreeMap::new(), operations: BTreeMap::new(), listeners: Vec::new(), sequence: 0, viewport: None, viewport_revision: 0 }
     }
     pub fn ensure_open(&self) -> Result<()> {
