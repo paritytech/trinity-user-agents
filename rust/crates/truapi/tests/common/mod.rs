@@ -10,7 +10,7 @@ use truapi::platform::{
     AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, Features, HostInfo,
     JsonRpcConnection, LocaleHost, Navigation, Notifications, PairingHostConfig, Permissions,
     PlatformInfo, PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError,
-    ThemeHost, UserConfirmation, UserConfirmationReview,
+    SecretCoreStorage, SecretCoreStorageKey, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use truapi::transport::Transport;
 use truapi::v01;
@@ -145,7 +145,7 @@ impl Notifications for WireShapePlatform {
     async fn push_notification(
         &self,
         _notification: v01::HostPushNotificationRequest,
-    ) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
+    ) -> Result<v01::HostPushNotificationResponse, truapi::latest::HostPushNotificationError> {
         Ok(v01::HostPushNotificationResponse { id: 0 })
     }
 
@@ -230,6 +230,29 @@ impl CoreStorage for WireShapePlatform {
         Ok(())
     }
     async fn clear_core_storage(&self, _key: CoreStorageKey) -> Result<(), v01::GenericError> {
+        Ok(())
+    }
+}
+
+#[truapi::platform::async_trait]
+impl SecretCoreStorage for WireShapePlatform {
+    async fn read_secret_core_storage(
+        &self,
+        _key: SecretCoreStorageKey,
+    ) -> Result<Option<Vec<u8>>, truapi::latest::GenericError> {
+        Ok(None)
+    }
+    async fn write_secret_core_storage(
+        &self,
+        _key: SecretCoreStorageKey,
+        _value: Vec<u8>,
+    ) -> Result<(), truapi::latest::GenericError> {
+        Ok(())
+    }
+    async fn clear_secret_core_storage(
+        &self,
+        _key: SecretCoreStorageKey,
+    ) -> Result<(), truapi::latest::GenericError> {
         Ok(())
     }
 }

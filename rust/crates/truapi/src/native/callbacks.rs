@@ -6,12 +6,19 @@ use truapi::v01;
 use crate::PairedSsoPeer;
 use crate::host_logic::worker::WorkerTransition;
 
-use super::config::ProductExecutionConfig;
-use super::errors::HostRejection;
-#[cfg(doc)]
-use crate::platform::CoreStorageKey;
 #[cfg(doc)]
 use super::NativeTrUApiHostRuntime;
+use super::config::ProductExecutionConfig;
+use super::errors::HostRejection;
+use crate::platform::SecretCoreStorageKey;
+
+/// Wallet-only access to the existing protected root store after native unlock.
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeWalletSecretProvider: Send + Sync {
+    /// Read the selected wallet without copying its persisted root store.
+    async fn read_wallet_root_entropy(&self, wallet_id: String) -> Result<Vec<u8>, HostRejection>;
+}
 
 /// Callback surface that iOS and Android implement.
 ///
@@ -35,20 +42,28 @@ use super::NativeTrUApiHostRuntime;
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
 pub trait HostCallbacks: Send + Sync {
+    /// Invalidate native projections after an account record commits.
+    fn runtime_records_changed(&self);
+
     /// Lifecycle logger. Marker is a stable slug, detail is free-form.
     fn on_core_log(&self, marker: String, detail: String);
 
     /// Open a URL in the system browser.
     async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError>;
 
-    /// Deliver a push notification.
-    async fn push_notification(
+    /// Register the Rust-owned notification id with the OS; success confirms registration.
+    async fn schedule_notification(
         &self,
+        product_id: String,
+        id: u32,
         request: v01::HostPushNotificationRequest,
-    ) -> Result<u32, HostRejection>;
+    ) -> Result<(), HostRejection>;
 
-    /// Cancel a notification by id.
-    fn cancel_notification(&self, id: u32) -> Result<(), HostRejection>;
+    /// Inspect OS registration without maintaining a competing native journal.
+    async fn is_scheduled_notification_pending(&self, product_id: String, id: u32) -> Result<bool, HostRejection>;
+
+    /// Confirm OS cancellation before Rust removes the owning record.
+    async fn cancel_scheduled_notification(&self, product_id: String, id: u32) -> Result<(), HostRejection>;
 
     /// Prompt the user for a device-level permission (camera, mic, ...)
     /// `product` requested; the host preserves whether approval applies once
@@ -91,17 +106,14 @@ pub trait HostCallbacks: Send + Sync {
     /// only when the state changes.
     fn auth_state_changed(&self, state: AuthState);
 
-    /// Read a core-owned host-private storage slot. `key` is a SCALE-encoded
-    /// [`CoreStorageKey`].
-    async fn core_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;
+    /// Read protected host bytes; only `None` means that the key is absent.
+    async fn read_secret_core_storage(&self, key: SecretCoreStorageKey) -> Result<Option<Vec<u8>>, HostRejection>;
 
-    /// Persist a core-owned host-private storage slot. `key` is a
-    /// SCALE-encoded [`CoreStorageKey`].
-    async fn core_storage_write(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), HostRejection>;
+    /// Return success only after the protected write is committed.
+    async fn write_secret_core_storage(&self, key: SecretCoreStorageKey, value: Vec<u8>) -> Result<(), HostRejection>;
 
-    /// Clear a core-owned host-private storage slot. `key` is a SCALE-encoded
-    /// [`CoreStorageKey`].
-    async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection>;
+    /// Return success only after persistent removal has completed.
+    async fn clear_secret_core_storage(&self, key: SecretCoreStorageKey) -> Result<(), HostRejection>;
 
     /// Open a JSON-RPC connection for a chain. Return a host-assigned
     /// connection id, or `None` when unsupported.
@@ -178,20 +190,6 @@ pub trait HostCallbacks: Send + Sync {
     /// inline.
     fn device_paired(&self, device: PairedSsoPeer);
 
-    /// Read a value from the host's scoped key-value store.
-    async fn local_storage_read(
-        &self,
-        key: String,
-    ) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError>;
-    /// Write a value to the host's scoped key-value store.
-    async fn local_storage_write(
-        &self,
-        key: String,
-        value: Vec<u8>,
-    ) -> Result<(), v01::HostLocalStorageReadError>;
-    /// Clear a value from the host's scoped key-value store.
-    async fn local_storage_clear(&self, key: String) -> Result<(), v01::HostLocalStorageReadError>;
-
     /// Record a pending operation, whose id keeps the product's worker alive
     /// until it ends.
     async fn begin_operation(
@@ -205,9 +203,8 @@ pub trait HostCallbacks: Send + Sync {
 }
 
 /// Native Chat storage and UI adapter. Hosts that support the Chat modality
-/// pass an implementation to
-/// [`NativeTrUApiHostRuntime::open_product_execution`]; hosts that do not
-/// simply pass `None`. Callbacks run on the process-wide dispatch pool shared by
+/// pass an implementation to [`NativeTrUApiHostRuntime::open_product_execution`];
+/// hosts without Chat pass `None`. Callbacks run on the process-wide dispatch pool shared by
 /// every product execution.
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]

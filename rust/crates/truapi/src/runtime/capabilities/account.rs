@@ -37,7 +37,7 @@ use crate::runtime::{
 };
 
 #[truapi::async_trait]
-impl Account for ProductRuntimeHost {
+impl<H: crate::runtime::AccountHolder + 'static> Account for ProductRuntimeHost<H> {
     #[instrument(skip_all, fields(runtime.method = "account.get_account"))]
     async fn get_account(
         &self,
@@ -463,7 +463,7 @@ impl Account for ProductRuntimeHost {
         } else {
             self.authority
                 .refresh_session_identity()
-                .await
+                .await.map_err(|error| CallError::HostFailure { reason: error.to_string() })?
                 .unwrap_or(session)
         };
         let primary_username = session.primary_username().ok_or_else(|| {

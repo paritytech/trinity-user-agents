@@ -44,15 +44,9 @@ pub struct HostRuntimeConfig {
     /// way the host's own onboarding does; a wrong value derives a different
     /// person from the same seed.
     pub network_suffix: String,
-    /// Existing, writable directory for core-owned databases, kept out of
-    /// device backups. The runtime opens its database there at startup.
+    /// Parent directory for owner-scoped core databases, kept out of device backups.
+    /// Activation opens the directory named by the wallet's public owner key.
     pub database_directory: String,
-    /// Optional local signing-host secret material (raw BIP-39 entropy).
-    #[uniffi(default)]
-    pub local_session_secret: Option<Vec<u8>>,
-    /// Optional lite username attached to the local signing-host session.
-    #[uniffi(default)]
-    pub local_session_lite_username: Option<String>,
 }
 
 /// Trusted identity attached by a native host to one executable connection.
@@ -69,10 +63,6 @@ pub struct ProductExecutionConfig {
 pub struct NativeResolvedHostRuntimeConfig {
     /// Configuration the signing-host runtime runs with.
     pub signing: SigningHostConfig,
-    /// Entropy to activate a local signing session with at construction.
-    pub local_session_secret: Option<Vec<u8>>,
-    /// Lite username attached to that local session.
-    pub local_session_lite_username: Option<String>,
     /// Directory the core database lives in.
     pub database_directory: PathBuf,
 }
@@ -165,8 +155,6 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
         )?;
         Ok(Self {
             signing,
-            local_session_secret: config.local_session_secret,
-            local_session_lite_username: config.local_session_lite_username,
             database_directory: PathBuf::from(config.database_directory),
         })
     }

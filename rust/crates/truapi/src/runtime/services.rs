@@ -53,11 +53,15 @@ pub struct RuntimeServices {
     /// Host observer told when a device finishes pairing with this signing
     /// host. Unset leaves a paired device unannounced.
     device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
+    sso_replay: super::signing_host::SsoReplayLocks,
+    sso_withdrawals: super::sso_service::SsoWithdrawals,
     /// Core-owned database, installed once at startup by a host that
     /// configured one. Unset makes every durable consumer report
     /// [`DbError::NotConfigured`].
     #[cfg(not(target_arch = "wasm32"))]
     core_db: OnceLock<Db>,
+    #[cfg(not(target_arch = "wasm32"))]
+    runtime_store: Mutex<Option<Arc<crate::store::RuntimeStore>>>,
     /// Asset Hub the dotNS contracts are deployed on. All-zero says this host
     /// has none, which leaves every manifest unresolvable.
     asset_hub_chain_genesis_hash: [u8; 32],
@@ -80,14 +84,22 @@ pub struct RuntimeServices {
     statement_cache: Mutex<StatementCache>,
     /// Task spawner for background runtime work.
     pub spawner: Spawner,
-    /// Serializes the read-or-create of the persisted device encryption key.
-    /// Concurrent first-time readers would otherwise each generate a secret and
-    /// persist it, leaving peers addressing an overwritten key.
-    device_encryption_key: futures::lock::Mutex<()>,
     next_core_instance: AtomicU64,
 }
 
 impl RuntimeServices {
+    /// Repositories belonging to this runtime's active wallet.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn runtime_store(&self) -> Option<Arc<crate::store::RuntimeStore>> {
+        self.runtime_store.lock().expect("runtime store mutex poisoned").clone()
+    }
+
+    /// Install the owner's opened repositories before activating wallet work.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_runtime_store(&self, store: Arc<crate::store::RuntimeStore>) {
+        *self.runtime_store.lock().expect("runtime store mutex poisoned") = Some(store);
+    }
+
     /// Build role-neutral runtime services from the platform, the host
     /// identity reported to products, the People-chain genesis hash used by
     /// statement-store backed protocols, the Bulletin-chain genesis hash used
@@ -120,8 +132,12 @@ impl RuntimeServices {
             contacts_platform: OnceLock::new(),
             contact_handles: Default::default(),
             device_pairing_observer: OnceLock::new(),
+            sso_replay: Default::default(),
+            sso_withdrawals: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
             core_db: OnceLock::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            runtime_store: Mutex::new(None),
             asset_hub_chain_genesis_hash,
             worker_ledger: WorkerLedger::default(),
             chain,
@@ -131,9 +147,18 @@ impl RuntimeServices {
             preimage_cache: Mutex::new(PreimageCache::default()),
             statement_cache: Mutex::new(StatementCache::default()),
             spawner,
-            device_encryption_key: futures::lock::Mutex::new(()),
             next_core_instance: AtomicU64::new(1),
         })
+    }
+
+    /// Serialize duplicate inbound SSO requests before wallet dispatch.
+    pub fn sso_replay_locks(&self) -> &super::signing_host::SsoReplayLocks {
+        &self.sso_replay
+    }
+
+    /// Request withdrawal state belongs to the shared SSO transport.
+    pub fn sso_withdrawals(&self) -> &super::sso_service::SsoWithdrawals {
+        &self.sso_withdrawals
     }
 
     /// Same as [`Self::new`], with the host's chat adapter installed.
@@ -257,11 +282,8 @@ impl RuntimeServices {
 
     /// This device's persisted X25519 encryption secret, created on first use.
     ///
-    /// The only supported way to reach the key: it bundles the serialization
-    /// guard with the read, so no caller can race another into generating a
-    /// second secret and overwriting the one peers were told to address.
+    /// Initialization is serialized across runtimes by the protected-store helper.
     pub async fn device_encryption_secret(&self) -> Result<[u8; 32], String> {
-        let _guard = self.device_encryption_key.lock().await;
         crate::host_logic::device_key::read_or_create_device_encryption_secret(
             self.platform.as_ref(),
         )

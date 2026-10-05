@@ -371,7 +371,7 @@ fn exec_device_removal_preserves_pairings_when_the_local_session_is_inactive() {
         .output()
         .expect("remove paired device");
     assert_eq!(removed.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&removed.stderr).contains("no active local session"));
+    assert!(String::from_utf8_lossy(&removed.stderr).contains("wallet is locked"));
 
     assert_eq!(
         std::fs::read(profile.join("paired-hosts.json")).expect("read paired hosts"),
@@ -405,7 +405,7 @@ fn exec_force_device_removal_removes_exactly_one_pairing_when_notification_fails
     );
     let stderr = String::from_utf8_lossy(&removed.stderr);
     assert!(stderr.contains("Paired device removed without notification"));
-    assert!(stderr.contains("no active local session"));
+    assert!(stderr.contains("wallet is locked"));
 
     let stored: serde_json::Value = serde_json::from_slice(
         &std::fs::read(profile.join("paired-hosts.json")).expect("read paired hosts"),

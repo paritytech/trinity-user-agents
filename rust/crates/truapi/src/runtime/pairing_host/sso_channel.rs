@@ -13,7 +13,7 @@ use super::super::sso_remote::{
     statement_subscription_stream, subscribe_statement_topic, wait_for_sso_remote_response,
 };
 use super::super::statement_store_rpc::{self, StatementStoreRpc};
-use super::PairingHost;
+use super::SsoAccountHolderClient;
 use crate::host_internal::sso_messages::{
     CreateTransactionLegacyPayload, CreateTransactionPayload, CreateTransactionRequest,
     CreateTransactionWithLegacyAccountRequest, OnExistingAllowancePolicy, ProductRequest,
@@ -43,7 +43,7 @@ impl Drop for SsoDisconnectMonitor {
     }
 }
 
-impl PairingHost {
+impl SsoAccountHolderClient {
     fn stop_disconnect_monitor(&self) {
         self.disconnect_monitor
             .lock()
@@ -113,10 +113,7 @@ impl PairingHost {
             .newest_request
             .lock()
             .expect("newest request mutex poisoned") = None;
-        self.clear_statement_store_allowance_keys(session);
-        self.clear_bulletin_allowance_keys(session);
         self.stop_disconnect_monitor();
-        self.clear_product_subtrees(session);
     }
 
     /// Best-effort `Disconnected` notification to the SSO peer.
@@ -324,24 +321,10 @@ impl PairingHost {
         session: &SessionInfo,
         product_id: String,
     ) -> Result<[u8; 32], AuthorityError> {
-        let sso = session.sso.as_ref().ok_or(AuthorityError::Disconnected)?;
-        let lifecycle_epoch = self.current_session_lifecycle_epoch();
-        let cache_key = (SsoSessionKey::from_session(sso), product_id.clone());
-        if let Some(public_key) = self.known_product_subtree(session, cache_key.clone()).await {
-            return Ok(public_key);
-        }
-        let public_key = self
-            .call(cx, session, ProductSubtreeRequest { product_id })
+        self.call(cx, session, ProductSubtreeRequest { product_id })
             .await
             .map_err(remote_authority_error)?
-            .map_err(remote_authority_error)?;
-        if !self
-            .persist_product_subtree_if_current(session, lifecycle_epoch, cache_key, public_key)
-            .await
-        {
-            return Err(AuthorityError::Disconnected);
-        }
-        Ok(public_key)
+            .map_err(remote_authority_error)
     }
 
     /// Forward RFC-0023 VRF signing to the paired Account Holder.
@@ -574,237 +557,64 @@ impl PairingHost {
             .map_err(ring_vrf_transport_error)?
     }
 
-    /// Ask the paired signing host to allocate product resources, caching any
-    /// returned allowance keys.
-    pub async fn remote_allocate_resources(
+    /// Request wallet grants over the unchanged SSO resource vector.
+    pub async fn remote_allocate_grants(
         &self,
         cx: &CallContext,
         session: &SessionInfo,
         product_id: String,
         request: latest::HostRequestResourceAllocationRequest,
-    ) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
-        let lifecycle_epoch = self.current_session_lifecycle_epoch();
+        policy: OnExistingAllowancePolicy,
+    ) -> Result<Vec<super::super::authority::AccountAllocationOutcome>, AuthorityError> {
+        use super::super::authority::{AccountAllocationOutcome, AccountGrant, AutoSigningKey};
         let outcomes = self
             .call(
                 cx,
                 session,
                 ResourceAllocationRequest {
-                    calling_product_id: product_id.clone(),
+                    calling_product_id: product_id,
                     resources: request.resources,
-                    on_existing: OnExistingAllowancePolicy::Increase,
+                    on_existing: policy,
                 },
             )
             .await
             .map_err(remote_authority_error)?
             .map_err(remote_authority_error)?;
-        self.cache_allowance_outcomes(cx, session, lifecycle_epoch, &product_id, &outcomes)
-            .await?;
-        Ok(latest::HostRequestResourceAllocationResponse {
-            outcomes: outcomes.into_iter().map(Into::into).collect(),
-        })
-    }
-
-    /// Allocate exactly one allowance for the product and return its material.
-    async fn remote_allowance_slot(
-        &self,
-        cx: &CallContext,
-        session: &SessionInfo,
-        product_id: &str,
-        resource: latest::AllocatableResource,
-        on_existing: OnExistingAllowancePolicy,
-    ) -> Result<SsoAllocatedResource, AuthorityError> {
-        let name = allowance_name(&resource);
-        let outcomes = self
-            .call(
-                cx,
-                session,
-                ResourceAllocationRequest {
-                    calling_product_id: product_id.to_string(),
-                    resources: vec![resource],
-                    on_existing,
-                },
-            )
-            .await
-            .map_err(remote_authority_error)?
-            .map_err(remote_authority_error)?;
-        match outcomes.into_iter().next() {
-            Some(SsoAllocationOutcome::Allocated(resource)) => Ok(resource),
-            Some(SsoAllocationOutcome::Rejected) => Err(AuthorityError::Rejected),
-            Some(SsoAllocationOutcome::NotAvailable) => Err(AuthorityError::Unavailable {
-                reason: format!("{name} is not available"),
-            }),
-            None => Err(AuthorityError::Unknown {
-                reason: format!("Empty {name} response"),
-            }),
-        }
-    }
-
-    /// Statement-store allowance key for the product, served from the cache
-    /// or allocated by the paired signing host.
-    pub async fn remote_statement_store_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &SessionInfo,
-        product_id: String,
-    ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        let lifecycle_epoch = self.current_session_lifecycle_epoch();
-        if let Some(cached) = self
-            .cached_statement_store_allowance_key(session, lifecycle_epoch, &product_id)
-            .await?
-        {
-            return Ok(cached);
-        }
-        match self
-            .remote_allowance_slot(
-                cx,
-                session,
-                &product_id,
-                latest::AllocatableResource::StatementStoreAllowance,
-                OnExistingAllowancePolicy::Ignore,
-            )
-            .await?
-        {
-            SsoAllocatedResource::StatementStoreAllowance { slot_account_key } => {
-                self.cache_statement_store_allowance_key(
-                    session,
-                    lifecycle_epoch,
-                    &product_id,
-                    slot_account_key,
-                )
-                .await
-            }
-            other => Err(unexpected_resource("statement-store allowance", &other)),
-        }
-    }
-
-    /// Bulletin allowance key for the product, served from the cache or
-    /// allocated by the paired signing host.
-    pub async fn remote_bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &SessionInfo,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let lifecycle_epoch = self.current_session_lifecycle_epoch();
-        if let Some(cached) = self
-            .cached_bulletin_allowance_key(session, lifecycle_epoch, &product_id)
-            .await?
-        {
-            return Ok(cached);
-        }
-        self.allocate_bulletin_allowance_key(
-            cx,
-            session,
-            lifecycle_epoch,
-            product_id,
-            OnExistingAllowancePolicy::Ignore,
-        )
-        .await
-    }
-
-    /// Evict the cached Bulletin allowance key and allocate a fresh one with
-    /// an increased allowance, so a stale or exhausted slot is never reused.
-    pub async fn remote_refresh_bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &SessionInfo,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let lifecycle_epoch = self.current_session_lifecycle_epoch();
-        self.evict_bulletin_allowance_key(session, lifecycle_epoch, &product_id)
-            .await?;
-        self.allocate_bulletin_allowance_key(
-            cx,
-            session,
-            lifecycle_epoch,
-            product_id,
-            OnExistingAllowancePolicy::Increase,
-        )
-        .await
-    }
-
-    async fn allocate_bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &SessionInfo,
-        lifecycle_epoch: u64,
-        product_id: String,
-        on_existing: OnExistingAllowancePolicy,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        match self
-            .remote_allowance_slot(
-                cx,
-                session,
-                &product_id,
-                latest::AllocatableResource::BulletinAllowance,
-                on_existing,
-            )
-            .await?
-        {
-            SsoAllocatedResource::BulletinAllowance { slot_account_key } => {
-                self.cache_bulletin_allowance_key(
-                    session,
-                    lifecycle_epoch,
-                    &product_id,
-                    slot_account_key,
-                )
-                .await
-            }
-            other => Err(unexpected_resource("bulletin allowance", &other)),
-        }
-    }
-
-    async fn cache_allowance_outcomes(
-        &self,
-        cx: &CallContext,
-        session: &SessionInfo,
-        lifecycle_epoch: u64,
-        product_id: &str,
-        outcomes: &[SsoAllocationOutcome],
-    ) -> Result<(), AuthorityError> {
-        for outcome in outcomes {
-            if let SsoAllocationOutcome::Allocated(resource) = outcome {
-                match resource {
-                    SsoAllocatedResource::StatementStoreAllowance { slot_account_key } => {
-                        self.cache_statement_store_allowance_key(
-                            session,
-                            lifecycle_epoch,
-                            product_id,
-                            slot_account_key.clone(),
-                        )
-                        .await?;
+        outcomes
+            .into_iter()
+            .map(|outcome| {
+                Ok(match outcome {
+                    SsoAllocationOutcome::Rejected => AccountAllocationOutcome::Rejected,
+                    SsoAllocationOutcome::NotAvailable => AccountAllocationOutcome::NotAvailable { reason: None },
+                    SsoAllocationOutcome::Allocated(resource) => {
+                        AccountAllocationOutcome::Allocated(match resource {
+                            SsoAllocatedResource::StatementStoreAllowance { slot_account_key } => {
+                                AccountGrant::StatementStore(
+                                    StatementStoreAllowanceKey::from_secret_bytes(
+                                        slot_account_key,
+                                    )?,
+                                )
+                            }
+                            SsoAllocatedResource::BulletinAllowance { slot_account_key } => {
+                                AccountGrant::Bulletin(BulletinAllowanceKey::from_secret_bytes(
+                                    slot_account_key,
+                                )?)
+                            }
+                            SsoAllocatedResource::AutoSigning {
+                                product_root_private_key,
+                                ring_vrf_domain_entropy,
+                            } => AccountGrant::DelegatedSigning(AutoSigningKey::from_parts(
+                                product_root_private_key,
+                                ring_vrf_domain_entropy,
+                            )),
+                            SsoAllocatedResource::SmartContractAllowance => {
+                                AccountGrant::SmartContract
+                            }
+                        })
                     }
-                    SsoAllocatedResource::BulletinAllowance { slot_account_key } => {
-                        self.cache_bulletin_allowance_key(
-                            session,
-                            lifecycle_epoch,
-                            product_id,
-                            slot_account_key.clone(),
-                        )
-                        .await?;
-                    }
-                    SsoAllocatedResource::SmartContractAllowance => {}
-                    SsoAllocatedResource::AutoSigning {
-                        product_root_private_key,
-                        ring_vrf_domain_entropy,
-                    } => {
-                        let expected_product_subtree_public_key = self
-                            .remote_product_subtree_public_key(cx, session, product_id.to_string())
-                            .await?;
-                        self.remember_auto_signing_key(
-                            session,
-                            lifecycle_epoch,
-                            product_id,
-                            expected_product_subtree_public_key,
-                            *product_root_private_key,
-                            *ring_vrf_domain_entropy,
-                        )
-                        .await?;
-                    }
-                }
-            }
-        }
-        Ok(())
+                })
+            })
+            .collect()
     }
 }
 
@@ -820,22 +630,6 @@ pub fn session_matches_key(session_state: &SessionState, key: SsoSessionKey) -> 
 
 fn ring_vrf_transport_error(reason: SsoRemoteResponseError) -> RingVrfError {
     remote_authority_error(reason).into()
-}
-
-fn allowance_name(resource: &latest::AllocatableResource) -> &'static str {
-    match resource {
-        latest::AllocatableResource::StatementStoreAllowance => "statement-store allowance",
-        latest::AllocatableResource::BulletinAllowance => "bulletin allowance",
-        _ => "resource",
-    }
-}
-
-/// Reason for an allocation that came back as a different resource kind; names
-/// only the kind so no key material reaches logs.
-fn unexpected_resource(label: &str, resource: &SsoAllocatedResource) -> AuthorityError {
-    AuthorityError::Unknown {
-        reason: format!("Unexpected {label} response resource: {}", resource.kind()),
-    }
 }
 
 fn remote_authority_error(reason: impl Into<SsoRemoteResponseError>) -> AuthorityError {
@@ -899,30 +693,5 @@ impl From<SsoAllocationOutcome> for latest::AllocationOutcome {
             SsoAllocationOutcome::Rejected => Self::Rejected,
             SsoAllocationOutcome::NotAvailable => Self::NotAvailable,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unexpected_resource_reasons_include_only_safe_discriminants() {
-        let resource = SsoAllocatedResource::AutoSigning {
-            product_root_private_key: [0xA5; 64],
-            ring_vrf_domain_entropy: [0x5A; 32],
-        };
-
-        let AuthorityError::Unknown { reason } =
-            unexpected_resource("statement-store allowance", &resource)
-        else {
-            panic!("expected an unknown authority error");
-        };
-
-        assert_eq!(
-            reason,
-            "Unexpected statement-store allowance response resource: auto-signing"
-        );
-        assert!(!reason.contains("165, 165"));
     }
 }

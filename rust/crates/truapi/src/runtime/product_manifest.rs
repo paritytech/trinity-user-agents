@@ -285,6 +285,17 @@ pub async fn scope_grant(
     target: &str,
     scope: Granted,
 ) -> Result<(), RefusedBecause> {
+    scoped_grant(services, platform, caller_id, target, scope, true).await
+}
+
+async fn scoped_grant(
+    services: &RuntimeServices,
+    platform: &dyn Platform,
+    caller_id: &str,
+    target: &str,
+    scope: Granted,
+    read_host_decisions: bool,
+) -> Result<(), RefusedBecause> {
     // Bounded here, not by the caller.
     //
     // The product-facing door runs this inside `remote_authority_call` and so
@@ -327,7 +338,8 @@ pub async fn scope_grant(
     // its storage, and keeping it here means the frontend and the authority
     // inherit one implementation. A later scope that also implies account access
     // has to name itself here; it does not inherit this.
-    if scope == Granted::Context
+    if read_host_decisions
+        && scope == Granted::Context
         && !crate::platform::normalizes_to_trusted_remote_permissions(caller_id)
     {
         match stored_account_decision(platform, caller_id, target).await {
@@ -534,6 +546,26 @@ pub async fn ring_vrf_key_access_granted(
     calling_product_id: &str,
     handle: &v01::ProductAccountId,
 ) -> Result<AuthorizedAccess, RingVrfError> {
+    ring_access(services, platform, calling_product_id, handle, true).await
+}
+
+/// Authorize wallet derivation from the owner's manifest independently of host permissions.
+pub async fn wallet_ring_vrf_key_access_granted(
+    services: &RuntimeServices,
+    platform: &dyn Platform,
+    calling_product_id: &str,
+    handle: &v01::ProductAccountId,
+) -> Result<AuthorizedAccess, RingVrfError> {
+    ring_access(services, platform, calling_product_id, handle, false).await
+}
+
+async fn ring_access(
+    services: &RuntimeServices,
+    platform: &dyn Platform,
+    calling_product_id: &str,
+    handle: &v01::ProductAccountId,
+    read_host_decisions: bool,
+) -> Result<AuthorizedAccess, RingVrfError> {
     // A caller id that does not normalize names no product, so it holds no key
     // and no manifest can grant it. It takes the same refusal as a product that
     // granted nothing rather than an error carrying the string back: on the wire
@@ -557,7 +589,15 @@ pub async fn ring_vrf_key_access_granted(
     if caller == owner {
         return Ok(AuthorizedAccess { caller, owner });
     }
-    let decision = scope_grant(services, platform, &caller, &owner, Granted::Context).await;
+    let decision = scoped_grant(
+        services,
+        platform,
+        &caller,
+        &owner,
+        Granted::Context,
+        read_host_decisions,
+    )
+    .await;
     if decision.is_ok() {
         // Recorded, because nothing else records it. A granted cross-product
         // access raises no prompt and writes no stored decision, so without this

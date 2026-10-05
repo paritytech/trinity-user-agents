@@ -20,17 +20,19 @@ mod callbacks;
 mod config;
 mod errors;
 mod events;
+mod notifications;
 mod executor;
 mod platform;
 mod renderer;
 mod runtime;
+mod storage;
 mod ws_bridge;
 
 pub use crate::host_internal::sso_messages::SsoRequestOutcome;
 pub use crate::host_logic::dotns::{NavigateDecision, PocketDeeplinkAction};
 pub use callbacks::{
     HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativePocketCallbacks,
-    NativePocketRemoval,
+    NativePocketRemoval, NativeWalletSecretProvider,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{HostRejection, NativeCoreDatabaseError};
@@ -121,3 +123,9 @@ pub fn set_log_level(level: String) {
 
 #[cfg(test)]
 mod tests;
+
+/// Stable protected-storage slot name; platform adapters never encode Rust keys.
+#[uniffi::export]
+pub fn secret_core_storage_key_identifier(key: crate::platform::SecretCoreStorageKey) -> String {
+    key.storage_key()
+}

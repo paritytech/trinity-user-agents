@@ -11,6 +11,9 @@
 //! same seam browser hosts use for their confirmation modals; a headless host
 //! implements it with its approval policy.
 
+mod pairing_provision;
+pub use pairing_provision::{cleanup_pending_pairings, establish_pairing_with_allowances};
+
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
@@ -23,8 +26,9 @@ use parity_scale_codec::Encode;
 use tracing::{debug, instrument, warn};
 use truapi::v01;
 
+use super::allowance_renewal::{self, StatementRenewalTarget};
 use super::sso_replay::{ReplayExecution, SsoReplayScope, execute_once};
-use super::{SigningHost, SigningHostSsoService};
+use super::{SsoAccountHolderService, WalletAccountHolder};
 use crate::chain_runtime::RuntimeFailure;
 use crate::host_internal::sso_messages::{
     IncomingSsoRequest, OnExistingAllowancePolicy, RemoteMessage, RemoteMessageData,
@@ -44,7 +48,7 @@ use crate::host_logic::sso::pairing::{
     encrypt_v2_handshake_response, establish_responder_session_info, v2, x25519_public_key,
 };
 use crate::host_logic::statement_store::{build_signed_statement, parse_new_statements_result};
-use crate::runtime::authority::{AuthorityError, AuthoritySession};
+use crate::runtime::authority::{AccountHolder, AuthorityError, AuthoritySession};
 use crate::runtime::services::RuntimeServices;
 use crate::runtime::sso_remote::{fresh_statement_expiry, sso_message_id};
 use crate::runtime::sso_service::{Dispatch, SsoWithdrawals};
@@ -183,6 +187,7 @@ pub trait DevicePairingObserver: Send + Sync {
 }
 
 struct EstablishedPairing {
+    activation: AuthoritySession,
     session: SsoSessionInfo,
     replay_scope: SsoReplayScope,
 }
@@ -306,7 +311,7 @@ impl AllowanceAllocationError {
 #[instrument(skip_all, fields(runtime.method = "sso_responder.respond_to_pairing"))]
 pub async fn respond_to_pairing(
     services: Arc<RuntimeServices>,
-    signing_host: Arc<SigningHost>,
+    signing_host: Arc<WalletAccountHolder>,
     deeplink: &str,
 ) -> Result<ResponderExit, String> {
     let established = establish_pairing_session(&services, &signing_host, deeplink).await?;
@@ -315,6 +320,7 @@ pub async fn respond_to_pairing(
         signing_host,
         established.session,
         established.replay_scope,
+        established.activation,
     )
     .await
 }
@@ -322,7 +328,7 @@ pub async fn respond_to_pairing(
 /// Answer a pairing host's handshake without entering its long-lived serve loop.
 pub async fn establish_pairing(
     services: Arc<RuntimeServices>,
-    signing_host: Arc<SigningHost>,
+    signing_host: Arc<WalletAccountHolder>,
     deeplink: &str,
 ) -> Result<(), String> {
     establish_pairing_session(&services, &signing_host, deeplink).await?;
@@ -331,10 +337,26 @@ pub async fn establish_pairing(
 
 async fn establish_pairing_session(
     services: &RuntimeServices,
-    signing_host: &SigningHost,
+    signing_host: &WalletAccountHolder,
     deeplink: &str,
 ) -> Result<EstablishedPairing, String> {
-    let peer = PairedSsoPeer::from_deeplink(deeplink)?;
+    let activation = signing_host
+        .current_session()
+        .ok_or_else(|| "signing host has no active local session".to_string())?;
+    establish_pairing_for_session(services, signing_host, deeplink, &activation).await
+}
+
+async fn establish_pairing_for_session(
+    services: &RuntimeServices,
+    signing_host: &WalletAccountHolder,
+    deeplink: &str,
+    activation: &AuthoritySession,
+) -> Result<EstablishedPairing, String> {
+    signing_host
+        .require_current_session(activation)
+        .map_err(|error| error.to_string())?;
+    let proposal = PairingProposal::from_deeplink(deeplink)?;
+    let peer = proposal.peer;
     let entropy = signing_host
         .root_entropy()
         .map_err(|err| format!("signing host has no active local session: {err}"))?;
@@ -357,12 +379,36 @@ async fn establish_pairing_session(
         device_enc_pub_key,
         root_entropy_source: root_entropy_source(&entropy),
     }));
+    signing_host
+        .require_current_session(activation)
+        .map_err(|error| error.to_string())?;
+    persist_pairing(
+        services,
+        signing_host,
+        activation,
+        peer,
+        &proposal.metadata,
+        "connecting",
+    )
+    .await?;
     submit_handshake_answer(
         services,
         &session,
         peer,
         &success,
         "sso-responder handshake",
+    )
+    .await?;
+    signing_host
+        .require_current_session(activation)
+        .map_err(|error| error.to_string())?;
+    persist_pairing(
+        services,
+        signing_host,
+        activation,
+        peer,
+        &proposal.metadata,
+        "paired",
     )
     .await?;
     debug!("answered pairing handshake");
@@ -372,6 +418,7 @@ async fn establish_pairing_session(
     }
 
     Ok(EstablishedPairing {
+        activation: activation.clone(),
         session,
         replay_scope: SsoReplayScope {
             root_public_key: root.public.to_bytes(),
@@ -381,18 +428,71 @@ async fn establish_pairing_session(
     })
 }
 
+async fn persist_pairing(
+    services: &RuntimeServices,
+    holder: &WalletAccountHolder,
+    session: &AuthoritySession,
+    peer: PairedSsoPeer,
+    metadata: &PairingProposalMetadata,
+    status: &str,
+) -> Result<(), String> {
+    let _persistence = holder.persistence.lock().await;
+    holder
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(store) = services.runtime_store() {
+        let now = i64::try_from(current_unix_secs().map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?
+            .checked_mul(1000)
+            .ok_or_else(|| "pairing timestamp overflow".to_string())?;
+        let metadata = [
+            ("name", metadata.host_name.clone()),
+            ("version", metadata.host_version.clone()),
+            ("icon", metadata.host_icon.clone()),
+            ("platform", metadata.platform_type.clone()),
+            ("platformVersion", metadata.platform_version.clone()),
+        ]
+        .into_iter()
+        .filter_map(|(name, value)| value.map(|value| (name.to_string(), value)))
+        .collect();
+        store
+            .save_paired_host(crate::store::PairedHostRecord {
+                peer_statement: peer.statement_account_id,
+                peer_encryption: peer.encryption_public_key,
+                status: status.to_string(),
+                added_at: now,
+                updated_at: now,
+                outgoing_update_at: None,
+                last_sync_offer_id: None,
+                metadata,
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = (services, peer, metadata, status);
+    Ok(())
+}
+
 /// Resume a previously paired SSO session from its persisted public peer keys.
 pub async fn resume_pairing(
     services: Arc<RuntimeServices>,
-    signing_host: Arc<SigningHost>,
+    signing_host: Arc<WalletAccountHolder>,
     peer: PairedSsoPeer,
 ) -> Result<ResponderExit, String> {
+    let activation = signing_host
+        .current_session()
+        .ok_or_else(|| "wallet is locked".to_string())?;
     let entropy = signing_host
         .root_entropy()
         .map_err(|err| format!("signing host has no active local session: {err}"))?;
     let root = derive_root_keypair_from_entropy(&entropy)
         .map_err(|err| format!("root account derivation failed: {err}"))?;
     let session = responder_session(&entropy, signing_host.network_suffix(), peer)?;
+    signing_host
+        .require_current_session(&activation)
+        .map_err(|error| error.to_string())?;
     serve_session(
         services,
         signing_host,
@@ -402,6 +502,7 @@ pub async fn resume_pairing(
             peer_statement_account_id: peer.statement_account_id,
             peer_encryption_public_key: peer.encryption_public_key,
         },
+        activation,
     )
     .await
 }
@@ -409,9 +510,12 @@ pub async fn resume_pairing(
 /// Notify a paired host that this signing host is ending their SSO session.
 pub async fn disconnect_paired_host(
     services: Arc<RuntimeServices>,
-    signing_host: Arc<SigningHost>,
+    signing_host: Arc<WalletAccountHolder>,
     peer: PairedSsoPeer,
 ) -> Result<(), String> {
+    let activation = signing_host
+        .current_session()
+        .ok_or_else(|| "wallet is locked".to_string())?;
     let entropy = signing_host
         .root_entropy()
         .map_err(|err| format!("signing host has no active local session: {err}"))?;
@@ -430,7 +534,19 @@ pub async fn disconnect_paired_host(
     services
         .statement_store
         .submit_sso(statement, "sso-responder disconnect")
-        .await
+        .await?;
+    let _persistence = signing_host.persistence.lock().await;
+    signing_host
+        .require_current_session(&activation)
+        .map_err(|error| error.to_string())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(store) = services.runtime_store() {
+        store
+            .remove_paired_host(peer.statement_account_id, peer.encryption_public_key)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 fn responder_session(
@@ -496,9 +612,24 @@ pub struct AnnouncedPairing {
 /// waiting forever unless it is told.
 pub async fn notify_pairing_allowance_allocation(
     services: Arc<RuntimeServices>,
-    signing_host: Arc<SigningHost>,
+    signing_host: Arc<WalletAccountHolder>,
     deeplink: &str,
 ) -> Result<AnnouncedPairing, String> {
+    let activation = signing_host
+        .current_session()
+        .ok_or_else(|| "signing host has no active local session".to_string())?;
+    announce_for_session(&services, &signing_host, deeplink, &activation).await
+}
+
+async fn announce_for_session(
+    services: &RuntimeServices,
+    signing_host: &WalletAccountHolder,
+    deeplink: &str,
+    activation: &AuthoritySession,
+) -> Result<AnnouncedPairing, String> {
+    signing_host
+        .require_current_session(activation)
+        .map_err(|error| error.to_string())?;
     let peer = PairedSsoPeer::from_deeplink(deeplink)?;
     let entropy = signing_host
         .root_entropy()
@@ -507,9 +638,12 @@ pub async fn notify_pairing_allowance_allocation(
         .map_err(|err| format!("responder identity derivation failed: {err}"))?;
     let session = responder_session_from_identity(&identity, peer)?;
 
+    signing_host
+        .require_current_session(activation)
+        .map_err(|error| error.to_string())?;
     let pending = v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation);
     submit_handshake_answer(
-        &services,
+        services,
         &session,
         peer,
         &pending,
@@ -545,49 +679,62 @@ pub async fn notify_pairing_failed(
 #[instrument(skip_all, fields(runtime.method = "sso_responder.serve_session"))]
 async fn serve_session(
     services: Arc<RuntimeServices>,
-    signing_host: Arc<SigningHost>,
+    signing_host: Arc<WalletAccountHolder>,
     session: SsoSessionInfo,
     replay_scope: SsoReplayScope,
+    activation: AuthoritySession,
 ) -> Result<ResponderExit, String> {
-    let service = SigningHostSsoService::new(signing_host.clone());
-    let rpc_client = services
-        .statement_store
-        .client("sso-responder session")
-        .await
-        .map_err(|err| err.to_string())?;
-    let subscription =
-        statement_store_rpc::subscribe_match_all(&rpc_client, &[session.session_id_peer])
+    signing_host
+        .require_current_session(&activation)
+        .map_err(|error| error.to_string())?;
+    let mut changes = signing_host.session_state.subscribe();
+    let ended = async {
+        while changes.next().await.is_some() {
+            if signing_host.require_current_session(&activation).is_err() {
+                return Ok(ResponderExit::SubscriptionEnded);
+            }
+        }
+        Ok(ResponderExit::SubscriptionEnded)
+    }
+    .fuse();
+    let serving = async {
+        let service =
+            SsoAccountHolderService::for_activation(signing_host.clone(), activation.clone());
+        let rpc_client = services
+            .statement_store
+            .client("sso-responder session")
             .await
-            .map_err(|err| format!("sso-responder subscribe failed: {err}"))?;
-    let (services, session) = (&services, &session);
-    let pages = futures::stream::unfold(
-        (subscription, DecodeFailureRequestIds::new()),
-        move |(mut subscription, mut decode_failure_request_ids)| async move {
-            let item = subscription.next().await?;
-            let page = match item {
-                Ok(value) => {
-                    read_statements(services, session, &mut decode_failure_request_ids, &value)
-                        .await
-                }
-                Err(err) => Err(format!("sso-responder subscription failed: {err}")),
-            };
-            Some((page, (subscription, decode_failure_request_ids)))
-        },
-    );
-    // Boxed as a trait object so the hosts that await a session need not
-    // lay out this future or prove it `Send`.
-    serve_pages(pages, signing_host.sso_withdrawals(), |incoming| {
-        serve_statement(
-            services,
-            &signing_host,
-            &service,
-            session,
-            replay_scope,
-            incoming,
-        )
-    })
-    .boxed()
-    .await
+            .map_err(|err| err.to_string())?;
+        let subscription =
+            statement_store_rpc::subscribe_match_all(&rpc_client, &[session.session_id_peer])
+                .await
+                .map_err(|err| format!("sso-responder subscribe failed: {err}"))?;
+        let (services, session) = (&services, &session);
+        let pages = futures::stream::unfold(
+            (subscription, DecodeFailureRequestIds::new()),
+            move |(mut subscription, mut decode_failure_request_ids)| async move {
+                let item = subscription.next().await?;
+                let page = match item {
+                    Ok(value) => {
+                        read_statements(services, session, &mut decode_failure_request_ids, &value)
+                            .await
+                    }
+                    Err(err) => Err(format!("sso-responder subscription failed: {err}")),
+                };
+                Some((page, (subscription, decode_failure_request_ids)))
+            },
+        );
+        // Boxed as a trait object so the hosts that await a session need not
+        // lay out this future or prove it `Send`.
+        serve_pages(pages, services.sso_withdrawals(), |incoming| {
+            serve_statement(services, &service, session, replay_scope, incoming)
+        })
+        .boxed()
+        .await
+    }
+    .fuse();
+    futures::pin_mut!(ended, serving);
+    futures::select! { result = ended => result, result = serving => result }
 }
 
 /// Queued requests at which reading pauses. A page already read is queued
@@ -754,8 +901,7 @@ fn withdrawn_targets(incoming: &IncomingSsoRequest) -> Option<Vec<&str>> {
 /// Serve one inbound request statement exactly once across redeliveries.
 async fn serve_statement(
     services: &RuntimeServices,
-    signing_host: &SigningHost,
-    service: &SigningHostSsoService,
+    service: &SsoAccountHolderService,
     session: &SsoSessionInfo,
     replay_scope: SsoReplayScope,
     incoming: IncomingSsoRequest,
@@ -765,7 +911,7 @@ async fn serve_statement(
     let duplicate_exit = duplicate_request_exit(&incoming);
     let execution = execute_once(
         services.platform.as_ref(),
-        signing_host.sso_replay_locks(),
+        services.sso_replay_locks(),
         replay_scope,
         &request_id,
         expires_at_unix_secs,
@@ -785,7 +931,7 @@ async fn serve_statement(
 /// Ack one inbound request statement and answer its batched messages.
 async fn serve_request(
     services: &RuntimeServices,
-    service: &SigningHostSsoService,
+    service: &SsoAccountHolderService,
     session: &SsoSessionInfo,
     incoming: IncomingSsoRequest,
 ) -> Result<Option<ResponderExit>, String> {
@@ -933,22 +1079,99 @@ fn response_cli_summary(
     summary
 }
 
-/// A product's statement-store allowance key, and the period it holds a slot in.
+enum AllocatedResource {
+    StatementStore {
+        collection: String,
+        period: u32,
+        slot: u32,
+    },
+    Bulletin {
+        period: Option<u32>,
+    },
+    SmartContract {
+        period: Option<u32>,
+    },
+}
+
+/// Persist public resource ownership without placing signing material in SQLite.
+async fn record_allocation(
+    services: &RuntimeServices,
+    holder: &WalletAccountHolder,
+    session: &AuthoritySession,
+    chain: [u8; 32],
+    account: [u8; 32],
+    allocation: AllocatedResource,
+) -> Result<(), AllowanceAllocationError> {
+    let (resource, period, slot) = match allocation {
+        AllocatedResource::StatementStore {
+            collection,
+            period,
+            slot,
+        } => ("statement-store", None, Some((collection, period, slot))),
+        AllocatedResource::Bulletin { period } => ("bulletin", period, None),
+        AllocatedResource::SmartContract { period } => ("smart-contract", period, None),
+    };
+    let _persistence = holder.persistence.lock().await;
+    holder.require_current_session(session)?;
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(store) = services.runtime_store() {
+        let now = i64::try_from(current_unix_secs()?)
+            .map_err(|_| AuthorityError::Unknown {
+                reason: "allocation timestamp overflow".to_string(),
+            })?
+            .checked_mul(1000)
+            .ok_or_else(|| AuthorityError::Unknown {
+                reason: "allocation timestamp overflow".to_string(),
+            })?;
+        let slots = slot
+            .map(
+                |(collection, period, slot)| crate::store::StatementSlotRecord {
+                    chain,
+                    collection,
+                    period: i64::from(period),
+                    slot: i64::from(slot),
+                    account,
+                    priority: 0,
+                    last_allocated_or_renewed_at: now,
+                },
+            )
+            .into_iter()
+            .collect();
+        store
+            .record_allowance(
+                crate::store::AllowanceRecord {
+                    chain,
+                    resource: resource.to_string(),
+                    account,
+                    allocated_at: now,
+                    priority: None,
+                    last_renewed_period: period.map(i64::from),
+                },
+                slots,
+            )
+            .await
+            .map_err(|error| AuthorityError::Unavailable {
+                reason: error.to_string(),
+            })?;
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = (services, chain, resource, account, period, slot);
+    Ok(())
+}
+
+/// The product allowance secret exported to its host.
 pub struct StatementStoreAllocation {
     /// sr25519 secret of the product's allowance account.
     pub secret: Vec<u8>,
-    /// Allowance period the slot was found or claimed in.
-    pub period: u32,
 }
 
 pub async fn allocate_statement_store_allowance(
     services: &RuntimeServices,
-    signing_host: &SigningHost,
+    signing_host: &WalletAccountHolder,
     session: &AuthoritySession,
     product_id: &str,
     policy: OnExistingAllowancePolicy,
 ) -> Result<StatementStoreAllocation, AllowanceAllocationError> {
-    use super::allowance_renewal::{self, StatementRenewalTarget};
     use crate::runtime::statement_allowance::{
         self, PooledRegistrationParams, allocated_in, find_including_rings,
         register_statement_account_pooled, scan_collections,
@@ -966,7 +1189,6 @@ pub async fn allocate_statement_store_allowance(
     if signing_host.grants_allowances_unchecked() {
         return Ok(StatementStoreAllocation {
             secret: allowance.secret.to_bytes().to_vec(),
-            period: statement_allowance::slot::current_period(current_unix_secs()?),
         });
     }
     let target = allowance.public.to_bytes();
@@ -1009,9 +1231,30 @@ pub async fn allocate_statement_store_allowance(
             "statement-store allowance already allocated"
         );
         signing_host.require_current_session(session)?;
+        record_allocation(
+            services,
+            signing_host,
+            session,
+            chain.state.genesis_hash,
+            target,
+            AllocatedResource::StatementStore {
+                collection: collection.to_string(),
+                period,
+                slot: seq,
+            },
+        )
+        .await?;
+        allowance_renewal::track_for_session(
+            signing_host,
+            session,
+            vec![StatementRenewalTarget::ProductStatementAllowance {
+                product_id: product_id.to_string(),
+            }],
+        )
+        .await
+        .map_err(|reason| AuthorityError::Unavailable { reason })?;
         return Ok(StatementStoreAllocation {
             secret: allowance.secret.to_bytes().to_vec(),
-            period,
         });
     }
 
@@ -1050,6 +1293,19 @@ pub async fn allocate_statement_store_allowance(
             ring_index,
             collection,
         } => {
+            record_allocation(
+                services,
+                signing_host,
+                session,
+                chain.state.genesis_hash,
+                target,
+                AllocatedResource::StatementStore {
+                    collection: collection.to_string(),
+                    period,
+                    slot: seq,
+                },
+            )
+            .await?;
             debug!(
                 %product_id,
                 %block_hash,
@@ -1060,6 +1316,19 @@ pub async fn allocate_statement_store_allowance(
             );
         }
         statement_allowance::RegistrationOutcome::AlreadyAllocated { seq, collection } => {
+            record_allocation(
+                services,
+                signing_host,
+                session,
+                chain.state.genesis_hash,
+                target,
+                AllocatedResource::StatementStore {
+                    collection: collection.to_string(),
+                    period,
+                    slot: seq,
+                },
+            )
+            .await?;
             debug!(
                 %product_id,
                 seq,
@@ -1069,26 +1338,24 @@ pub async fn allocate_statement_store_allowance(
         }
     }
     signing_host.require_current_session(session)?;
-    if let Err(reason) = allowance_renewal::track(
+    allowance_renewal::track_for_session(
         signing_host,
+        session,
         vec![StatementRenewalTarget::ProductStatementAllowance {
             product_id: product_id.to_string(),
         }],
     )
     .await
-    {
-        warn!(%product_id, %reason, "failed to record statement-store renewal target");
-    }
+    .map_err(|reason| AuthorityError::Unavailable { reason })?;
     signing_host.require_current_session(session)?;
     Ok(StatementStoreAllocation {
         secret: allowance.secret.to_bytes().to_vec(),
-        period,
     })
 }
 
 pub async fn allocate_bulletin_allowance(
     services: &RuntimeServices,
-    signing_host: &SigningHost,
+    signing_host: &WalletAccountHolder,
     session: &AuthoritySession,
     product_id: &str,
     policy: OnExistingAllowancePolicy,
@@ -1123,6 +1390,15 @@ pub async fn allocate_bulletin_allowance(
         && current_allowance.is_some_and(|allowance| allowance.available())
     {
         signing_host.require_current_session(session)?;
+        record_allocation(
+            services,
+            signing_host,
+            session,
+            services.bulletin.genesis_hash(),
+            target,
+            AllocatedResource::Bulletin { period: None },
+        )
+        .await?;
         return Ok(allowance.secret.to_bytes().to_vec());
     }
 
@@ -1196,6 +1472,17 @@ pub async fn allocate_bulletin_allowance(
         "Bulletin authorization visible"
     );
     signing_host.require_current_session(session)?;
+    record_allocation(
+        services,
+        signing_host,
+        session,
+        services.bulletin.genesis_hash(),
+        target,
+        AllocatedResource::Bulletin {
+            period: Some(period),
+        },
+    )
+    .await?;
     Ok(allowance.secret.to_bytes().to_vec())
 }
 
@@ -1212,7 +1499,7 @@ pub async fn allocate_bulletin_allowance(
 /// whatever chain a stale hash happens to reach.
 pub async fn allocate_smart_contract_allowance(
     services: &RuntimeServices,
-    signing_host: &SigningHost,
+    signing_host: &WalletAccountHolder,
     session: &AuthoritySession,
     product_id: &str,
     derivation_index: v01::DerivationIndex,
@@ -1261,6 +1548,15 @@ pub async fn allocate_smart_contract_allowance(
     {
         debug!(%product_id, "PGAS allowance already funded; leaving it alone");
         signing_host.require_current_session(session)?;
+        record_allocation(
+            services,
+            signing_host,
+            session,
+            asset_hub_genesis,
+            target,
+            AllocatedResource::SmartContract { period: None },
+        )
+        .await?;
         return Ok(());
     }
     let network_suffix =
@@ -1303,6 +1599,17 @@ pub async fn allocate_smart_contract_allowance(
         "claimed PGAS allowance"
     );
     signing_host.require_current_session(session)?;
+    record_allocation(
+        services,
+        signing_host,
+        session,
+        asset_hub_genesis,
+        target,
+        AllocatedResource::SmartContract {
+            period: Some(outcome.day),
+        },
+    )
+    .await?;
     Ok(())
 }
 
@@ -1361,7 +1668,7 @@ mod tests {
     }
     use crate::host_logic::statement_store::decode_verified_statement_data;
     use crate::platform::{HostInfo, Platform, PlatformInfo, SigningHostConfig};
-    use crate::runtime::authority::ProductAuthority;
+    use crate::runtime::authority::AccountHolder;
     use crate::runtime::services::RuntimeServices;
     use crate::test_support::{StubPlatform, test_spawner};
     use std::sync::Arc;
@@ -1372,7 +1679,9 @@ mod tests {
     /// whose runtime carries the `paseo` network suffix.
     const NETWORK_SUFFIX: &str = "paseo";
 
-    fn signing_fixture(platform: Arc<StubPlatform>) -> (Arc<RuntimeServices>, Arc<SigningHost>) {
+    fn signing_fixture(
+        platform: Arc<StubPlatform>,
+    ) -> (Arc<RuntimeServices>, Arc<WalletAccountHolder>) {
         let platform: Arc<dyn Platform> = platform;
         let config = SigningHostConfig::new(
             HostInfo {
@@ -1396,7 +1705,7 @@ mod tests {
             config.asset_hub_chain_genesis_hash,
             test_spawner(),
         );
-        let signing_host = SigningHost::new(services.clone(), config.network_suffix);
+        let signing_host = WalletAccountHolder::new(services.clone(), config.network_suffix);
         futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         (services, signing_host)
@@ -1475,10 +1784,7 @@ mod tests {
                     "state_getStorage",
                     format!(r#""0x{}""#, hex::encode(b"paseo".to_vec().encode())),
                 ),
-                (
-                    "state_queryStorageAt",
-                    people_row,
-                ),
+                ("state_queryStorageAt", people_row),
                 // The LitePeople row, read alongside People's, is empty.
                 (
                     "state_queryStorageAt",
@@ -1674,7 +1980,9 @@ mod tests {
         }
     }
 
-    fn pairing_fixture(submit_status: &'static str) -> (Arc<RuntimeServices>, Arc<SigningHost>) {
+    fn pairing_fixture(
+        submit_status: &'static str,
+    ) -> (Arc<RuntimeServices>, Arc<WalletAccountHolder>) {
         signing_fixture(Arc::new(StubPlatform {
             rpc_method_responses: vec![(
                 "statement_submit",
@@ -1682,6 +1990,25 @@ mod tests {
             )],
             ..Default::default()
         }))
+    }
+
+    #[test]
+    fn locking_wallet_ends_its_incoming_sso_listener() {
+        let (services, holder) = pairing_fixture("new");
+        let peer = PairedSsoPeer {
+            statement_account_id: [0x31; 32],
+            encryption_public_key: x25519_public_key([0x42; 32]),
+        };
+        futures::executor::block_on(async {
+            let listener = resume_pairing(services, holder.clone(), peer);
+            futures::pin_mut!(listener);
+            assert!(listener.as_mut().now_or_never().is_none());
+            holder.lock().await.unwrap();
+            assert_eq!(
+                listener.as_mut().now_or_never(),
+                Some(Ok(ResponderExit::SubscriptionEnded))
+            );
+        });
     }
 
     /// Without this the host never learns a device paired, so no contact is
@@ -1873,11 +2200,11 @@ mod tests {
     }
 
     fn answer(
-        signing_host: &Arc<SigningHost>,
+        signing_host: &Arc<WalletAccountHolder>,
         message_id: &str,
         request: v1::RemoteMessage,
     ) -> v1::RemoteMessage {
-        let service = SigningHostSsoService::new(signing_host.clone());
+        let service = SsoAccountHolderService::new(signing_host.clone());
         let message = RemoteMessage {
             message_id: message_id.to_string(),
             data: RemoteMessageData::V1(request),
@@ -1893,7 +2220,7 @@ mod tests {
     #[test]
     fn dispatch_without_session_distinguishes_requests_responses_and_disconnects() {
         let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-        let service = SigningHostSsoService::new(signing_host);
+        let service = SsoAccountHolderService::new(signing_host);
         let dispatch = |data| {
             futures::executor::block_on(service.dispatch(
                 None,
@@ -1973,7 +2300,7 @@ mod tests {
             chain_connect_error: Some("allocation node unavailable"),
             ..StubPlatform::default()
         }));
-        let service = SigningHostSsoService::new(signing_host);
+        let service = SsoAccountHolderService::new(signing_host);
         let request = RemoteMessage::request(
             "allocation-1".to_string(),
             sso_messages::ResourceAllocationRequest {
@@ -2137,7 +2464,7 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform.clone());
-        let service = SigningHostSsoService::new(signing_host.clone());
+        let service = SsoAccountHolderService::new(signing_host.clone());
         let message = RemoteMessage::request(
             "alloc-stale".to_string(),
             sso_messages::ResourceAllocationRequest {
@@ -2156,7 +2483,7 @@ mod tests {
                 1
             );
 
-            signing_host.disconnect().await;
+            signing_host.lock().await.unwrap();
             if let Some(entropy) = replacement {
                 signing_host.activate_local_session(entropy).await.unwrap();
             }
@@ -2211,7 +2538,7 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform.clone());
-        let service = SigningHostSsoService::new(signing_host);
+        let service = SsoAccountHolderService::new(signing_host);
         let allocation = service.answer(allocation_request("alloc-1"));
         futures::pin_mut!(allocation);
         assert!(allocation.as_mut().now_or_never().is_none());
@@ -2248,7 +2575,7 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform.clone());
-        let service = SigningHostSsoService::new(signing_host);
+        let service = SsoAccountHolderService::new(signing_host);
 
         futures::executor::block_on(service.answer(cancel("cancel-1", "alloc-1")));
         let allocation = futures::executor::block_on(service.answer(allocation_request("alloc-1")));

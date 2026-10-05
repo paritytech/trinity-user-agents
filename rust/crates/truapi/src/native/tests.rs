@@ -177,6 +177,9 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 }
 
 pub struct EventCallbacks {
+    pub pending_notifications: Mutex<HashMap<(String, u32), v01::HostPushNotificationRequest>>,
+    pub notification_registration_error: Mutex<Option<String>>,
+    pub notification_cancellation_error: Mutex<Option<String>>,
     pub logs: Mutex<Vec<String>>,
     pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
     pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
@@ -226,6 +229,9 @@ impl EventCallbacks {
 
     pub fn new() -> Self {
         Self {
+            pending_notifications: Mutex::default(),
+            notification_registration_error: Mutex::new(None),
+            notification_cancellation_error: Mutex::new(None),
             logs: Mutex::new(Vec::new()),
             chat_room_status: Mutex::new(v01::ChatRoomRegistrationStatus::New),
             chat_created_rooms: Mutex::new(Vec::new()),
@@ -265,14 +271,26 @@ impl EventCallbacks {
 
 #[async_trait::async_trait]
 impl HostCallbacks for EventCallbacks {
-    fn on_core_log(&self, marker: String, _detail: String) {
-        self.logs.lock().expect("logs mutex poisoned").push(marker);
-    }
+    fn runtime_records_changed(&self) {}
     fn worker_demand_changed(&self, product_id: String, transition: WorkerTransition) {
         self.worker_demand
             .lock()
             .expect("worker demand mutex poisoned")
             .push((product_id, transition));
+    }
+    async fn begin_operation(
+        &self,
+        _product_id: String,
+        _label: String,
+    ) -> Result<u32, HostRejection> {
+        Ok(1)
+    }
+    async fn end_operation(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
+        Ok(())
+    }
+
+    fn on_core_log(&self, marker: String, _detail: String) {
+        self.logs.lock().expect("logs mutex poisoned").push(marker);
     }
 
     fn device_paired(&self, device: PairedSsoPeer) {
@@ -284,13 +302,28 @@ impl HostCallbacks for EventCallbacks {
     async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
         Ok(())
     }
-    async fn push_notification(
+    async fn schedule_notification(
         &self,
-        _request: v01::HostPushNotificationRequest,
-    ) -> Result<u32, HostRejection> {
-        Ok(0)
+        product_id: String,
+        id: u32,
+        request: v01::HostPushNotificationRequest,
+    ) -> Result<(), HostRejection> {
+        if let Some(reason) = self.notification_registration_error.lock().unwrap().clone() {
+            return Err(HostRejection::Rejected { reason });
+        }
+        self.pending_notifications.lock().unwrap().insert((product_id, id), request);
+        Ok(())
     }
-    fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
+
+    async fn is_scheduled_notification_pending(&self, product_id: String, id: u32) -> Result<bool, HostRejection> {
+        Ok(self.pending_notifications.lock().unwrap().contains_key(&(product_id, id)))
+    }
+
+    async fn cancel_scheduled_notification(&self, product_id: String, id: u32) -> Result<(), HostRejection> {
+        if let Some(reason) = self.notification_cancellation_error.lock().unwrap().clone() {
+            return Err(HostRejection::Rejected { reason });
+        }
+        self.pending_notifications.lock().unwrap().remove(&(product_id, id));
         Ok(())
     }
     async fn device_permission(
@@ -332,19 +365,19 @@ impl HostCallbacks for EventCallbacks {
             .expect("auth state mutex poisoned")
             .push(state);
     }
-    async fn core_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
-        Ok(self.core_storage.lock().unwrap().get(&key).cloned())
+    async fn read_secret_core_storage(&self, key: crate::platform::SecretCoreStorageKey) -> Result<Option<Vec<u8>>, HostRejection> {
+        Ok(self.core_storage.lock().unwrap().get(&key.encode()).cloned())
     }
-    async fn core_storage_write(
+    async fn write_secret_core_storage(
         &self,
-        key: Vec<u8>,
+        key: crate::platform::SecretCoreStorageKey,
         value: Vec<u8>,
     ) -> Result<(), HostRejection> {
-        self.core_storage.lock().unwrap().insert(key, value);
+        self.core_storage.lock().unwrap().insert(key.encode(), value);
         Ok(())
     }
-    async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection> {
-        self.core_storage.lock().unwrap().remove(&key);
+    async fn clear_secret_core_storage(&self, key: crate::platform::SecretCoreStorageKey) -> Result<(), HostRejection> {
+        self.core_storage.lock().unwrap().remove(&key.encode());
         Ok(())
     }
     fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
@@ -410,35 +443,6 @@ impl HostCallbacks for EventCallbacks {
             network: "paseo".to_string(),
             chains: Vec::new(),
         })
-    }
-    async fn local_storage_read(
-        &self,
-        _key: String,
-    ) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
-        Ok(None)
-    }
-    async fn local_storage_write(
-        &self,
-        _key: String,
-        _value: Vec<u8>,
-    ) -> Result<(), v01::HostLocalStorageReadError> {
-        Ok(())
-    }
-    async fn local_storage_clear(
-        &self,
-        _key: String,
-    ) -> Result<(), v01::HostLocalStorageReadError> {
-        Ok(())
-    }
-    async fn begin_operation(
-        &self,
-        _product_id: String,
-        _label: String,
-    ) -> Result<u32, HostRejection> {
-        Ok(1)
-    }
-    async fn end_operation(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
-        Ok(())
     }
 }
 
@@ -559,21 +563,42 @@ impl NativeChatCallbacks for EventCallbacks {
     }
 }
 
+fn callback_platform(
+    callbacks: Arc<dyn HostCallbacks>,
+    events: Arc<NativeEventBus>,
+) -> CallbackPlatform {
+    let storage = Arc::new(super::storage::NativeStorage::default());
+    let directory = tempfile::tempdir().unwrap().keep();
+    let secret_callbacks = callbacks.clone();
+    let store = std::thread::spawn(move || futures::executor::block_on(async move {
+        let database = crate::store::Db::open(crate::store::core_db_config(&directory)).await.unwrap();
+        crate::store::RuntimeStore::open(database, Arc::new(super::storage::NativeSecrets(secret_callbacks)), [7; 32]).await.unwrap()
+    })).join().unwrap();
+    storage.install(Arc::new(store));
+    let notifications = Arc::new(super::notifications::NativeNotifications::new(
+        storage.clone(),
+        callbacks.clone(),
+    ));
+    CallbackPlatform {
+        callbacks,
+        events,
+        storage,
+        notifications,
+        product_id: Some("myapp.dot".to_string()),
+    }
+}
+
 pub fn event_platform() -> (Arc<EventCallbacks>, Arc<NativeEventBus>, CallbackPlatform) {
     let callbacks = Arc::new(EventCallbacks::new());
     let events = Arc::new(NativeEventBus::default());
-    let platform = CallbackPlatform {
-        callbacks: callbacks.clone(),
-        events: events.clone(),
-        storage_events: events.clone(),
-    };
+    let platform = callback_platform(callbacks.clone(), events.clone());
     (callbacks, events, platform)
 }
 
 #[test]
 fn a_product_write_reaches_a_storage_subscription_on_the_same_key() {
     let (_callbacks, _events, platform) = event_platform();
-    let key = "myapp.dot/progress".to_string();
+    let key = crate::platform::ProductStorageKey::new("myapp.dot", "progress").unwrap().encode();
     let mut subscription = platform.subscribe_storage(key.clone());
 
     assert_eq!(
@@ -586,12 +611,29 @@ fn a_product_write_reaches_a_storage_subscription_on_the_same_key() {
         .expect("write");
 
     assert_eq!(
-        futures::FutureExt::now_or_never(futures::StreamExt::next(&mut subscription)),
-        Some(Some(Ok(v01::HostLocalStorageChangeItem {
+        futures::executor::block_on(futures::StreamExt::next(&mut subscription)),
+        Some(Ok(v01::HostLocalStorageChangeItem {
             value: Some(vec![1, 2, 3]),
-        }))),
+        })),
         "a write the product made is a change its own subscribers must see"
     );
+}
+
+pub struct TestWalletSecrets;
+
+#[async_trait::async_trait]
+impl super::NativeWalletSecretProvider for TestWalletSecrets {
+    async fn read_wallet_root_entropy(&self, _wallet_id: String) -> Result<Vec<u8>, HostRejection> {
+        Ok(vec![7; 32])
+    }
+}
+
+pub fn native_runtime(callbacks: Arc<dyn HostCallbacks>, config: HostRuntimeConfig) -> Result<Arc<NativeTrUApiHostRuntime>, super::NativeRuntimeConfigError> {
+    let runtime = NativeTrUApiHostRuntime::with_runtime_config(callbacks, Arc::new(TestWalletSecrets), config)?;
+    let activating = runtime.clone();
+    std::thread::spawn(move || futures::executor::block_on(activating.activate_wallet("fixture-wallet".to_string(), None))).join().unwrap()
+        .map_err(|error| super::NativeRuntimeConfigError::LocalSessionActivation { reason: error.to_string() })?;
+    Ok(runtime)
 }
 
 pub fn native_host_runtime_config() -> HostRuntimeConfig {
@@ -612,8 +654,7 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
             .keep()
             .to_string_lossy()
             .into_owned(),
-        local_session_secret: Some(vec![7; 32]),
-        local_session_lite_username: Some("alice".to_string()),
+
     }
 }
 
@@ -631,10 +672,9 @@ pub fn native_product_execution(
     callbacks: Arc<dyn HostCallbacks>,
     product_id: &str,
 ) -> Arc<NativeProductExecution> {
-    let mut config = native_host_runtime_config();
-    config.local_session_secret = None;
-    config.local_session_lite_username = None;
-    let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
+    let config = native_host_runtime_config();
+
+    let host = native_runtime(callbacks.clone(), config)
         .expect("host runtime config should be valid");
     host.open_product_execution(
         callbacks,
@@ -796,7 +836,7 @@ fn a_decodable_deeplink_that_fails_is_not_reported_as_undecodable() {
         );
         let reason = pairing_rejection(failure);
         assert!(
-            reason.contains("no active local session"),
+            reason.contains("wallet is locked") || reason.contains("no active local session"),
             "the core's session check did not reach the host: {reason}"
         );
     }
@@ -823,7 +863,7 @@ fn the_peer_entry_points_need_the_core_signing_host() {
         ),
     ] {
         assert!(
-            failure.contains("no active local session"),
+            failure.contains("wallet is locked") || failure.contains("no active local session"),
             "the core's session check did not reach the host: {failure}"
         );
     }
@@ -847,33 +887,6 @@ fn a_paired_device_reaches_the_host_callbacks() {
             .lock()
             .expect("paired device mutex poisoned"),
         vec![device]
-    );
-}
-
-#[test]
-fn process_runtime_counts_worker_references_per_product() {
-    let callbacks = Arc::new(EventCallbacks::new());
-    let host = NativeTrUApiHostRuntime::with_runtime_config(
-        callbacks.clone(),
-        native_host_runtime_config(),
-    )
-    .expect("host runtime config should be valid");
-    let product = || "shared.dot".to_string();
-
-    host.acquire_worker(product());
-    host.acquire_worker(product());
-    host.release_worker(product());
-    host.release_worker(product());
-
-    assert_eq!(
-        *callbacks
-            .worker_demand
-            .lock()
-            .expect("worker demand mutex poisoned"),
-        vec![
-            (product(), WorkerTransition::Start),
-            (product(), WorkerTransition::Stop),
-        ]
     );
 }
 
@@ -991,10 +1004,10 @@ fn native_pocket_removal_outcomes_are_decided_by_the_host() {
 
 #[test]
 fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
-    let mut config = native_host_runtime_config();
-    config.local_session_secret = Some(vec![7; 32]);
+    let config = native_host_runtime_config();
+
     let host =
-        NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+        native_runtime(Arc::new(EventCallbacks::new()), config)
             .expect("host runtime config should be valid");
     let execution = host
         .open_product_execution(
@@ -1003,7 +1016,7 @@ fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
             None,
             native_execution_config("chat-product.dot", ProductExecutionKind::Worker),
         )
-        .expect("Chat execution should open");
+        .expect("open worker execution");
 
     let result = execution.publish_chat_action(text_chat_action("hello"));
 
@@ -1914,6 +1927,19 @@ fn start_ws_bridge_twice_returns_already_running() {
     struct Noop;
     #[async_trait::async_trait]
     impl HostCallbacks for Noop {
+        fn runtime_records_changed(&self) {}
+        fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
+        async fn begin_operation(
+            &self,
+            _product_id: String,
+            _label: String,
+        ) -> Result<u32, HostRejection> {
+            Ok(1)
+        }
+        async fn end_operation(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
+            Ok(())
+        }
+
         async fn confirm_permission(
             &self,
             _review: UserConfirmationReview,
@@ -1922,18 +1948,20 @@ fn start_ws_bridge_twice_returns_already_running() {
         }
 
         fn on_core_log(&self, _marker: String, _detail: String) {}
-        fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
+
         fn device_paired(&self, _device: PairedSsoPeer) {}
         async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
             Ok(())
         }
-        async fn push_notification(
+        async fn schedule_notification(
             &self,
-            _request: v01::HostPushNotificationRequest,
-        ) -> Result<u32, HostRejection> {
-            Ok(0)
-        }
-        fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
+        _product_id: String,
+        _id: u32,
+        _request: v01::HostPushNotificationRequest,
+        ) -> Result<(), HostRejection> { Ok(()) }
+        async fn is_scheduled_notification_pending(&self, _product_id: String, _id: u32) -> Result<bool, HostRejection> { Ok(true) }
+
+    async fn cancel_scheduled_notification(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
             Ok(())
         }
         async fn device_permission(
@@ -1957,20 +1985,20 @@ fn start_ws_bridge_twice_returns_already_running() {
             Ok(PermissionDecision::Deny)
         }
         fn auth_state_changed(&self, _state: AuthState) {}
-        async fn core_storage_read(
+        async fn read_secret_core_storage(
             &self,
-            _key: Vec<u8>,
+            _key: crate::platform::SecretCoreStorageKey,
         ) -> Result<Option<Vec<u8>>, HostRejection> {
             Ok(None)
         }
-        async fn core_storage_write(
+        async fn write_secret_core_storage(
             &self,
-            _key: Vec<u8>,
+            _key: crate::platform::SecretCoreStorageKey,
             _value: Vec<u8>,
         ) -> Result<(), HostRejection> {
             Ok(())
         }
-        async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
+        async fn clear_secret_core_storage(&self, _key: crate::platform::SecretCoreStorageKey) -> Result<(), HostRejection> {
             Ok(())
         }
         fn chain_connect(&self, _genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
@@ -2021,39 +2049,6 @@ fn start_ws_bridge_twice_returns_already_running() {
                 chains: Vec::new(),
             })
         }
-        async fn local_storage_read(
-            &self,
-            _key: String,
-        ) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
-            Ok(None)
-        }
-        async fn local_storage_write(
-            &self,
-            _key: String,
-            _value: Vec<u8>,
-        ) -> Result<(), v01::HostLocalStorageReadError> {
-            Ok(())
-        }
-        async fn local_storage_clear(
-            &self,
-            _key: String,
-        ) -> Result<(), v01::HostLocalStorageReadError> {
-            Ok(())
-        }
-        async fn begin_operation(
-            &self,
-            _product_id: String,
-            _label: String,
-        ) -> Result<u32, HostRejection> {
-            Ok(1)
-        }
-        async fn end_operation(
-            &self,
-            _product_id: String,
-            _id: u32,
-        ) -> Result<(), HostRejection> {
-            Ok(())
-        }
     }
 
     let execution = native_product_execution(Arc::new(Noop), "dotli.dot");
@@ -2089,6 +2084,19 @@ fn pending_permission_decision_does_not_stall_bridge() {
 
     #[async_trait::async_trait]
     impl HostCallbacks for GatedPermissionCallbacks {
+        fn runtime_records_changed(&self) {}
+        fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
+        async fn begin_operation(
+            &self,
+            _product_id: String,
+            _label: String,
+        ) -> Result<u32, HostRejection> {
+            Ok(1)
+        }
+        async fn end_operation(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
+            Ok(())
+        }
+
         async fn confirm_permission(
             &self,
             _review: UserConfirmationReview,
@@ -2097,18 +2105,20 @@ fn pending_permission_decision_does_not_stall_bridge() {
         }
 
         fn on_core_log(&self, _marker: String, _detail: String) {}
-        fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
+
         fn device_paired(&self, _device: PairedSsoPeer) {}
         async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
             Ok(())
         }
-        async fn push_notification(
+        async fn schedule_notification(
             &self,
-            _request: v01::HostPushNotificationRequest,
-        ) -> Result<u32, HostRejection> {
-            Ok(0)
-        }
-        fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
+        _product_id: String,
+        _id: u32,
+        _request: v01::HostPushNotificationRequest,
+        ) -> Result<(), HostRejection> { Ok(()) }
+        async fn is_scheduled_notification_pending(&self, _product_id: String, _id: u32) -> Result<bool, HostRejection> { Ok(true) }
+
+    async fn cancel_scheduled_notification(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
             Ok(())
         }
         async fn device_permission(
@@ -2139,20 +2149,20 @@ fn pending_permission_decision_does_not_stall_bridge() {
             Ok(PermissionDecision::Deny)
         }
         fn auth_state_changed(&self, _state: AuthState) {}
-        async fn core_storage_read(
+        async fn read_secret_core_storage(
             &self,
-            _key: Vec<u8>,
+            _key: crate::platform::SecretCoreStorageKey,
         ) -> Result<Option<Vec<u8>>, HostRejection> {
             Ok(None)
         }
-        async fn core_storage_write(
+        async fn write_secret_core_storage(
             &self,
-            _key: Vec<u8>,
+            _key: crate::platform::SecretCoreStorageKey,
             _value: Vec<u8>,
         ) -> Result<(), HostRejection> {
             Ok(())
         }
-        async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
+        async fn clear_secret_core_storage(&self, _key: crate::platform::SecretCoreStorageKey) -> Result<(), HostRejection> {
             Ok(())
         }
         fn chain_connect(&self, _genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
@@ -2202,39 +2212,6 @@ fn pending_permission_decision_does_not_stall_bridge() {
                 network: "paseo".to_string(),
                 chains: Vec::new(),
             })
-        }
-        async fn local_storage_read(
-            &self,
-            _key: String,
-        ) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
-            Ok(None)
-        }
-        async fn local_storage_write(
-            &self,
-            _key: String,
-            _value: Vec<u8>,
-        ) -> Result<(), v01::HostLocalStorageReadError> {
-            Ok(())
-        }
-        async fn local_storage_clear(
-            &self,
-            _key: String,
-        ) -> Result<(), v01::HostLocalStorageReadError> {
-            Ok(())
-        }
-        async fn begin_operation(
-            &self,
-            _product_id: String,
-            _label: String,
-        ) -> Result<u32, HostRejection> {
-            Ok(1)
-        }
-        async fn end_operation(
-            &self,
-            _product_id: String,
-            _id: u32,
-        ) -> Result<(), HostRejection> {
-            Ok(())
         }
     }
 
@@ -2418,7 +2395,7 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
         Arc::new(EventCallbacks::new()),
         Arc::new(EventCallbacks::new()),
     ];
-    let host = NativeTrUApiHostRuntime::with_runtime_config(
+    let host = native_runtime(
         callbacks[0].clone(),
         native_host_runtime_config(),
     )
@@ -2497,7 +2474,7 @@ fn two_executions_share_one_bridge_through_the_native_api() {
 
     use crate::frame::{Payload, ProtocolMessage, request_ids};
 
-    let host = NativeTrUApiHostRuntime::with_runtime_config(
+    let host = native_runtime(
         Arc::new(EventCallbacks::new()),
         native_host_runtime_config(),
     )
@@ -2513,12 +2490,12 @@ fn two_executions_share_one_bridge_through_the_native_api() {
     let chat_host = Arc::new(EventCallbacks::new());
     let chat = host
         .open_product_execution(
-            chat_host.clone(),
+            Arc::new(EventCallbacks::new()),
             Some(chat_host),
             None,
             native_execution_config("shared.dot", ProductExecutionKind::Worker),
         )
-        .expect("Chat execution should open");
+        .expect("open worker execution");
 
     let app_endpoint = app.start_ws_bridge(0).expect("start app bridge");
     let chat_endpoint = chat.start_ws_bridge(0).expect("start chat bridge");
@@ -2622,10 +2599,9 @@ fn two_executions_share_one_bridge_through_the_native_api() {
 }
 
 pub fn native_host_runtime_no_session() -> Arc<NativeTrUApiHostRuntime> {
-    let mut config = native_host_runtime_config();
-    config.local_session_secret = None;
-    config.local_session_lite_username = None;
-    NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+    let config = native_host_runtime_config();
+
+    NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), Arc::new(TestWalletSecrets), config)
         .expect("host runtime config should be valid")
 }
 
@@ -2710,7 +2686,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
             false,
         ),
     ] {
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
+        let host = native_runtime(
             Arc::new(EventCallbacks::new()),
             native_host_runtime_config(),
         )
@@ -2720,12 +2696,10 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
             ..EventCallbacks::new()
         });
         let execution = host
-            .open_product_execution(
-                callbacks.clone(),
+            .open_product_execution(callbacks.clone(),
                 None,
                 None,
-                native_execution_config("fetch.dot", ProductExecutionKind::Worker),
-            )
+                native_execution_config("fetch.dot", ProductExecutionKind::App))
             .unwrap();
         let request = truapi::latest::RemotePermissionRequest {
             permission: truapi::latest::RemotePermission::Remote {
@@ -2742,7 +2716,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
             ),
             (
                 granted,
-                vec![("fetch.dot".to_string(), ProductExecutionKind::Worker)]
+                vec![("fetch.dot".to_string(), ProductExecutionKind::App)]
             ),
         );
     }
@@ -2761,8 +2735,7 @@ fn native_permission_confirmation_preserves_consent_lifetime() {
                     permission_confirmation_result: decision,
                     ..EventCallbacks::new()
                 }),
-                events: Arc::default(),
-                storage_events: Arc::default(),
+                ..callback_platform(Arc::new(EventCallbacks::new()), Arc::default())
             };
             let review = UserConfirmationReview::IdentityDisclosure(
                 crate::platform::IdentityDisclosureReview {
@@ -2790,18 +2763,16 @@ fn native_remote_authorization_reuses_stored_product_decisions() {
             remote_permission_result: Ok(decision),
             ..EventCallbacks::new()
         });
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
+        let host = native_runtime(
             callbacks.clone(),
             native_host_runtime_config(),
         )
         .unwrap();
         let open = |product_id| {
-            host.open_product_execution(
-                callbacks.clone(),
+            host.open_product_execution(callbacks.clone(),
                 None,
                 None,
-                native_execution_config(product_id, ProductExecutionKind::App),
-            )
+                native_execution_config(product_id, ProductExecutionKind::App))
             .unwrap()
         };
         let first_execution = open("fetch.dot");
@@ -2848,18 +2819,16 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
             remote_permission_reply: Mutex::new(Some(response)),
             ..EventCallbacks::new()
         });
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
+        let host = native_runtime(
             callbacks.clone(),
             native_host_runtime_config(),
         )
         .unwrap();
         let execution = host
-            .open_product_execution(
-                callbacks.clone(),
+            .open_product_execution(callbacks.clone(),
                 None,
                 None,
-                native_execution_config("fetch.dot", ProductExecutionKind::App),
-            )
+                native_execution_config("fetch.dot", ProductExecutionKind::App))
             .unwrap();
         futures::executor::block_on(async {
             let request = execution.authorize_remote_permission(
@@ -2896,7 +2865,7 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
 /// would silently answer from the wrong object.
 #[test]
 fn a_native_status_read_follows_the_os_gate() {
-    let host = NativeTrUApiHostRuntime::with_runtime_config(
+    let host = native_runtime(
         Arc::new(EventCallbacks::new()),
         native_host_runtime_config(),
     )
@@ -2929,5 +2898,93 @@ fn a_native_status_read_follows_the_os_gate() {
             PermissionAuthorizationStatus::Denied,
             PermissionAuthorizationStatus::NotDetermined,
         )
+    );
+}
+
+#[test]
+fn native_pairing_reuses_journaled_slots_and_preserves_existing_device_label() {
+    use crate::host_logic::product_account::derive_identity_keypair;
+    use crate::runtime::StatementRenewalTarget;
+    use crate::store::{AllowanceRecord, Db, RuntimeStore, StatementSlotRecord, account_core_db_config};
+
+    let callbacks = Arc::new(EventCallbacks::new());
+    *callbacks.chain_id.lock().unwrap() = Some(42);
+    let config = native_host_runtime_config();
+    let host = native_runtime(callbacks.clone(), config.clone()).unwrap();
+    let owner = host.statement_renewal_owner_key().unwrap();
+    let wallet = derive_identity_keypair(&[7; 32], "paseo").unwrap().public.to_bytes();
+    let peer = PairedSsoPeer {
+        statement_account_id: [0x31; 32],
+        encryption_public_key: x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([0x42; 32])).to_bytes(),
+    };
+    let label = "existing desktop".to_string();
+    host.track_statement_renewal_targets(vec![StatementRenewalTarget::Account { account_id: peer.statement_account_id, label: label.clone() }]).unwrap();
+    futures::executor::block_on(async {
+        let db = Db::open(account_core_db_config(std::path::Path::new(&config.database_directory), &owner)).await.unwrap();
+        let store = RuntimeStore::open(db, Arc::new(super::storage::NativeSecrets(callbacks.clone())), owner).await.unwrap();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let period = crate::statement_allowance::slot::current_period(now);
+        for (slot, account) in [wallet, peer.statement_account_id].into_iter().enumerate() {
+            store.record_allowance(AllowanceRecord {
+                chain: [0xa2; 32], resource: "statement-store".into(), account,
+                allocated_at: now as i64 * 1000, priority: None, last_renewed_period: None,
+            }, vec![StatementSlotRecord {
+                chain: [0xa2; 32], collection: "People".into(), period: i64::from(period), slot: slot as i64,
+                account, priority: 7, last_allocated_or_renewed_at: now as i64 * 1000,
+            }]).await.unwrap();
+        }
+        let deeplink = proposal_deeplink(peer, Vec::new());
+        let pairing = host.establish_pairing(deeplink);
+        let transport = async {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut answered = 0;
+            while answered < 2 {
+                assert!(std::time::Instant::now() < deadline, "pairing did not submit both progress and handshake statements");
+                let sent = core::mem::take(&mut *callbacks.chain_sends.lock().unwrap());
+                for (connection, request) in sent {
+                    let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+                    assert_eq!(request["method"], "statement_submit");
+                    host.notify_chain_response(connection, serde_json::json!({"jsonrpc":"2.0", "id":request["id"], "result":{"status":"new"}}).to_string());
+                    answered += 1;
+                }
+                futures_timer::Delay::new(std::time::Duration::from_millis(1)).await;
+            }
+        };
+        let (result, ()) = futures::join!(pairing, transport);
+        result.unwrap();
+        let records = host.paired_hosts().await.unwrap();
+        assert_eq!(records.iter().map(|record| (record.peer_statement, record.peer_encryption, record.status.as_str())).collect::<Vec<_>>(), vec![(peer.statement_account_id, peer.encryption_public_key, "paired")]);
+        assert_eq!(*callbacks.paired_devices.lock().unwrap(), vec![peer]);
+        assert_eq!(store.statement_slots().await.unwrap().len(), 2);
+    });
+    let targets = host.statement_renewal_targets().unwrap();
+    let devices: Vec<_> = targets.into_iter().filter(|entry| matches!(entry.target, StatementRenewalTarget::Account { .. })).collect();
+    assert_eq!(devices, vec![crate::runtime::TrackedStatementRenewalTarget { target: StatementRenewalTarget::Account { account_id: peer.statement_account_id, label }, owner: Some(owner) }]);
+    futures::executor::block_on(host.lock_wallet()).unwrap();
+    let targets = host.statement_renewal_targets();
+    assert!(targets.is_err(), "locked native repositories reject administrative reads");
+}
+
+#[test]
+fn process_runtime_counts_worker_references_per_product() {
+    let callbacks = Arc::new(EventCallbacks::new());
+    let host = native_runtime(callbacks.clone(), native_host_runtime_config())
+        .expect("host runtime config should be valid");
+    let product = || "shared.dot".to_string();
+
+    host.acquire_worker(product());
+    host.acquire_worker(product());
+    host.release_worker(product());
+    host.release_worker(product());
+
+    assert_eq!(
+        *callbacks
+            .worker_demand
+            .lock()
+            .expect("worker demand mutex poisoned"),
+        vec![
+            (product(), WorkerTransition::Start),
+            (product(), WorkerTransition::Stop),
+        ]
     );
 }

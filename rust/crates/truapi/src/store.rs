@@ -6,6 +6,9 @@
 //! stream that follows every commit.
 
 mod observe;
+mod runtime_store;
+
+pub use runtime_store::*;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -47,7 +50,9 @@ const CORE_DB_READERS: usize = 2;
 
 /// Schema of the core database, one migration per change, in order.
 pub fn core_migrations() -> Migrations<'static> {
-    Migrations::new(Vec::new())
+    Migrations::new(vec![rusqlite_migration::M::up(include_str!(
+        "store/schema.sql"
+    ))])
 }
 
 /// The core database configuration for a host-provided directory.
@@ -57,6 +62,11 @@ pub fn core_db_config(directory: &Path) -> DbConfig {
         migrations: core_migrations,
         readers: CORE_DB_READERS,
     }
+}
+
+/// Account-isolated directory; the caller creates it before opening the database.
+pub fn account_core_db_config(directory: &Path, owner: &[u8; 32]) -> DbConfig {
+    core_db_config(&directory.join(hex::encode(owner)))
 }
 
 /// Why a store operation failed.
@@ -74,6 +84,15 @@ pub enum DbError {
     /// A connection worker failed outside SQLite.
     #[error("database connection failed: {0}")]
     Connection(String),
+    /// The durable scheduled notification queue reached its capacity.
+    #[error("scheduled notification limit reached")]
+    NotificationLimitReached,
+    /// A payload or its owner failed strict validation.
+    #[error("invalid database record: {0}")]
+    InvalidRecord(String),
+    /// Protected storage could not provide or persist the encryption key.
+    #[error("database secret storage failed: {0}")]
+    SecretStorage(String),
     /// The database was closed.
     #[error("database closed")]
     Closed,

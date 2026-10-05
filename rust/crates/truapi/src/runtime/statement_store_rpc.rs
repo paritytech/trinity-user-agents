@@ -66,6 +66,11 @@ impl StatementStoreRpc {
         }
     }
 
+    /// People-chain binding used to scope the allowance journal.
+    pub fn genesis_hash(&self) -> [u8; 32] {
+        self.people_chain_genesis_hash
+    }
+
     /// Open a People-chain RPC client already scoped to its genesis hash, for
     /// the native allowance paths that key the chain-context cache by it.
     pub async fn chain_client(

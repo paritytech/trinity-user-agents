@@ -1156,7 +1156,7 @@ fn tap_for_debugger(
 #[cfg(test)]
 mod debugger_tap_tests {
     use super::*;
-    use truapi::{DebugEvent, FrameSink, ProductContext, ProductRuntime};
+    use truapi::{DebugEvent, FrameSink, ProductContext};
 
     struct SilentSink;
 
@@ -1171,7 +1171,7 @@ mod debugger_tap_tests {
             &self,
             _product: ProductContext,
             _sink: Arc<dyn FrameSink>,
-        ) -> ProductRuntime {
+        ) -> Arc<dyn frame_server::ConnectionRuntime> {
             panic!("this test observes the wrapping decision only")
         }
     }
@@ -1715,15 +1715,10 @@ async fn start_signing_host(
         .transpose()?
         .flatten();
     if let Some(cached_signer) = &signer {
-        runtime
-            .activate_local_session_with_identity(
-                cached_signer.entropy.clone(),
-                cached_signer.lite_username.clone(),
-            )
+        cached_signer
+            .activate(&runtime)
             .await
-            .map_err(|error| {
-                anyhow::anyhow!("failed to activate cached session: {}", error.reason)
-            })?;
+            .map_err(|error| anyhow::anyhow!("failed to activate cached session: {error}"))?;
         if let (Some(profile), Some(user_id)) = (&profile, &cached_signer.lite_username) {
             if let Some(account_name) = &cached_signer.account_name {
                 catalog.store_signer_binding(profile, user_id, account_name)?;
@@ -2308,11 +2303,10 @@ async fn activate_current_signer(session: &mut SigningHostSession) -> Result<()>
         .signer
         .as_ref()
         .context("signer has not been resolved")?;
-    session
-        .runtime
-        .activate_local_session_with_identity(signer.entropy.clone(), signer.lite_username.clone())
+    signer
+        .activate(&session.runtime)
         .await
-        .map_err(|err| anyhow::anyhow!("failed to activate local session: {}", err.reason))?;
+        .context("failed to activate local session")?;
     if let (Some(profile), Some(user_id)) = (&session.profile, &signer.lite_username) {
         if let Some(account_name) = &signer.account_name {
             session
@@ -3176,11 +3170,8 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
     )?;
     let available_sessions = session.catalog.list()?;
 
-    if let Err(error) = runtime
-        .activate_local_session_with_identity(signer.entropy.clone(), signer.lite_username.clone())
-        .await
-    {
-        bail!("failed to activate session {name:?}: {}", error.reason);
+    if let Err(error) = signer.activate(&runtime).await {
+        bail!("failed to activate session {name:?}: {error}");
     }
     if let (Some(user_id), Some(account_name)) = (&signer.lite_username, &signer.account_name) {
         session
@@ -3266,15 +3257,9 @@ async fn import_mnemonic_session(
         session.chat.clone(),
         session.pocket.clone(),
     )?;
-    runtime
-        .activate_local_session_with_identity(imported.entropy().to_vec(), username.clone())
-        .await
-        .map_err(|error| {
-            anyhow::anyhow!(
-                "failed to activate imported session {session_name:?}: {}",
-                error.reason
-            )
-        })?;
+    imported.activate(&runtime).await.map_err(|error| {
+        anyhow::anyhow!("failed to activate imported session {session_name:?}: {error}")
+    })?;
 
     let signer = accounts::persist_imported_signer(
         &profile.account_base_path,
@@ -4744,7 +4729,7 @@ mod cli_tests {
                 &self,
                 _product: truapi::ProductContext,
                 _sink: Arc<dyn truapi::FrameSink>,
-            ) -> truapi::ProductRuntime {
+            ) -> Arc<dyn frame_server::ConnectionRuntime> {
                 panic!("the completed script must not open a product connection")
             }
         }

@@ -55,6 +55,9 @@ pub struct JsBridge {
     pub write: Function,
     pub clear: Function,
     pub subscribe_storage: Function,
+    pub read_secret_core_storage: Function,
+    pub write_secret_core_storage: Function,
+    pub clear_secret_core_storage: Function,
     pub subscribe_theme: Function,
     pub confirm_permission: Function,
     pub confirm_user_action: Function,
@@ -105,6 +108,9 @@ impl JsBridge {
             write: get_function(callbacks, "write")?,
             clear: get_function(callbacks, "clear")?,
             subscribe_storage: get_function(callbacks, "subscribeStorage")?,
+            read_secret_core_storage: get_function(callbacks, "readSecretCoreStorage")?,
+            write_secret_core_storage: get_function(callbacks, "writeSecretCoreStorage")?,
+            clear_secret_core_storage: get_function(callbacks, "clearSecretCoreStorage")?,
             subscribe_theme: get_function(callbacks, "subscribeTheme")?,
             confirm_permission: get_function(callbacks, "confirmPermission")?,
             confirm_user_action: get_function(callbacks, "confirmUserAction")?,
@@ -368,18 +374,18 @@ impl crate::platform::Notifications for WasmPlatform {
     async fn push_notification(
         &self,
         notification: v01::HostPushNotificationRequest,
-    ) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
+    ) -> Result<v01::HostPushNotificationResponse, v01::HostPushNotificationError> {
         let bytes = invoke_bytes_return(
             &self.bridge.push_notification,
             vec![Uint8Array::from(notification.encode().as_slice()).into()],
         )
         .await
-        .map_err(generic)?;
+        .map_err(|reason| v01::HostPushNotificationError::Unknown { reason })?;
         decode_bytes::<v01::HostPushNotificationResponse>(
             bytes,
             "pushNotification response did not decode",
         )
-        .map_err(generic)
+        .map_err(|reason| v01::HostPushNotificationError::Unknown { reason })
     }
 
     async fn cancel_notification(&self, id: u32) -> Result<(), v01::GenericError> {
@@ -583,6 +589,50 @@ impl crate::platform::ProductStorage for WasmPlatform {
             Some(JsValue::from_str(&key)),
             parse_host_local_storage_change_item_item,
         )
+    }
+}
+
+#[crate::platform::async_trait]
+impl crate::platform::SecretCoreStorage for WasmPlatform {
+    async fn read_secret_core_storage(
+        &self,
+        key: crate::platform::SecretCoreStorageKey,
+    ) -> Result<Option<Vec<u8>>, v01::GenericError> {
+        invoke_optional_bytes_return(
+            &self.bridge.read_secret_core_storage,
+            vec![Uint8Array::from(key.encode().as_slice()).into()],
+            "readSecretCoreStorage must resolve to Uint8Array, null or undefined",
+        )
+        .await
+        .map_err(generic)
+    }
+
+    async fn write_secret_core_storage(
+        &self,
+        key: crate::platform::SecretCoreStorageKey,
+        value: Vec<u8>,
+    ) -> Result<(), v01::GenericError> {
+        invoke_unit(
+            &self.bridge.write_secret_core_storage,
+            vec![
+                Uint8Array::from(key.encode().as_slice()).into(),
+                Uint8Array::from(value.as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
+    }
+
+    async fn clear_secret_core_storage(
+        &self,
+        key: crate::platform::SecretCoreStorageKey,
+    ) -> Result<(), v01::GenericError> {
+        invoke_unit(
+            &self.bridge.clear_secret_core_storage,
+            vec![Uint8Array::from(key.encode().as_slice()).into()],
+        )
+        .await
+        .map_err(generic)
     }
 }
 

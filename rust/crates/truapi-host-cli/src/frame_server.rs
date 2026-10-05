@@ -102,7 +102,11 @@ impl ProductSelection {
 }
 
 pub trait ProductRuntimeFactory: Send + Sync + 'static {
-    fn product_runtime(&self, product: ProductContext, sink: Arc<dyn FrameSink>) -> ProductRuntime;
+    fn product_runtime(
+        &self,
+        product: ProductContext,
+        sink: Arc<dyn FrameSink>,
+    ) -> Arc<dyn ConnectionRuntime>;
 
     /// Subscribe to a signal that invalidates existing product connections.
     fn connection_reset(&self) -> Option<watch::Receiver<u64>> {
@@ -110,14 +114,19 @@ pub trait ProductRuntimeFactory: Send + Sync + 'static {
     }
 }
 
+/// Byte-frame execution boundary shared by either concrete host runtime.
 #[async_trait::async_trait]
-trait ConnectionRuntime: Send + Sync + 'static {
+pub trait ConnectionRuntime: Send + Sync + 'static {
+    /// Dispatch one authenticated product frame.
     async fn receive_frame(&self, frame: Vec<u8>) -> Result<(), ProductRuntimeError>;
+    /// Stop this product execution and its pending dispatches.
     fn dispose(&self);
+    /// Install a debug sink at the existing frame transport boundary.
+    fn set_debug_sink(&self, channel_id: ChannelId, sink: Arc<dyn DebugSink>);
 }
 
 #[async_trait::async_trait]
-impl ConnectionRuntime for ProductRuntime {
+impl<H: truapi::AccountHolder + 'static> ConnectionRuntime for ProductRuntime<H> {
     async fn receive_frame(&self, frame: Vec<u8>) -> Result<(), ProductRuntimeError> {
         ProductRuntime::receive_frame(self, frame).await
     }
@@ -125,17 +134,28 @@ impl ConnectionRuntime for ProductRuntime {
     fn dispose(&self) {
         ProductRuntime::dispose(self);
     }
+    fn set_debug_sink(&self, channel_id: ChannelId, sink: Arc<dyn DebugSink>) {
+        ProductRuntime::set_debug_sink(self, channel_id, sink);
+    }
 }
 
 impl ProductRuntimeFactory for PairingHostRuntime {
-    fn product_runtime(&self, product: ProductContext, sink: Arc<dyn FrameSink>) -> ProductRuntime {
-        PairingHostRuntime::product_runtime(self, product, sink)
+    fn product_runtime(
+        &self,
+        product: ProductContext,
+        sink: Arc<dyn FrameSink>,
+    ) -> Arc<dyn ConnectionRuntime> {
+        Arc::new(PairingHostRuntime::product_runtime(self, product, sink))
     }
 }
 
 impl ProductRuntimeFactory for SigningHostRuntime {
-    fn product_runtime(&self, product: ProductContext, sink: Arc<dyn FrameSink>) -> ProductRuntime {
-        SigningHostRuntime::product_runtime(self, product, sink)
+    fn product_runtime(
+        &self,
+        product: ProductContext,
+        sink: Arc<dyn FrameSink>,
+    ) -> Arc<dyn ConnectionRuntime> {
+        Arc::new(SigningHostRuntime::product_runtime(self, product, sink))
     }
 }
 
@@ -163,7 +183,11 @@ impl DebugTappedRuntime {
 }
 
 impl ProductRuntimeFactory for DebugTappedRuntime {
-    fn product_runtime(&self, product: ProductContext, sink: Arc<dyn FrameSink>) -> ProductRuntime {
+    fn product_runtime(
+        &self,
+        product: ProductContext,
+        sink: Arc<dyn FrameSink>,
+    ) -> Arc<dyn ConnectionRuntime> {
         // One runtime is built per accepted socket, and request ids are minted per
         // connection (`p:1`, `p:2`, ...). The product id alone therefore repeats
         // across concurrent peers - a browser page alongside the bundled script
@@ -216,11 +240,17 @@ impl SwitchableSigningRuntime {
 }
 
 impl ProductRuntimeFactory for SwitchableSigningRuntime {
-    fn product_runtime(&self, product: ProductContext, sink: Arc<dyn FrameSink>) -> ProductRuntime {
-        self.current
-            .read()
-            .expect("runtime lock poisoned")
-            .product_runtime(product, sink)
+    fn product_runtime(
+        &self,
+        product: ProductContext,
+        sink: Arc<dyn FrameSink>,
+    ) -> Arc<dyn ConnectionRuntime> {
+        Arc::new(
+            self.current
+                .read()
+                .expect("runtime lock poisoned")
+                .product_runtime(product, sink),
+        )
     }
 
     fn connection_reset(&self) -> Option<watch::Receiver<u64>> {
@@ -664,7 +694,7 @@ where
     let sink = Arc::new(WsFrameSink {
         outbound: outbound_tx.clone(),
     });
-    let product_runtime = Arc::new(runtime.product_runtime(product, sink));
+    let product_runtime = runtime.product_runtime(product, sink);
 
     drive_connection(
         ws,
@@ -757,7 +787,7 @@ mod tests {
             &self,
             _product: ProductContext,
             _sink: Arc<dyn FrameSink>,
-        ) -> ProductRuntime {
+        ) -> Arc<dyn ConnectionRuntime> {
             panic!("HTTP requests and rejected handshakes must not create a product runtime")
         }
     }
@@ -793,6 +823,7 @@ mod tests {
         fn dispose(&self) {
             self.dispose_calls.fetch_add(1, Ordering::SeqCst);
         }
+        fn set_debug_sink(&self, _channel_id: ChannelId, _sink: Arc<dyn DebugSink>) {}
     }
 
     async fn start_tcp_server(
@@ -1447,7 +1478,7 @@ mod tests {
             &self,
             _product: ProductContext,
             _sink: Arc<dyn FrameSink>,
-        ) -> ProductRuntime {
+        ) -> Arc<dyn ConnectionRuntime> {
             panic!("this test observes connection_reset only")
         }
 
@@ -1527,7 +1558,7 @@ mod tests {
     fn tapped_product(
         tapped: &Arc<DebugTappedRuntime>,
         product_id: &str,
-    ) -> Result<ProductRuntime> {
+    ) -> Result<Arc<dyn ConnectionRuntime>> {
         let product =
             ProductContext::new_with_execution(product_id.into(), ProductExecutionKind::App)?;
         Ok(tapped.product_runtime(product, Arc::new(DiscardingFrameSink)))

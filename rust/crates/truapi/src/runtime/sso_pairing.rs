@@ -16,9 +16,9 @@ use web_time::Duration;
 
 use super::auth_state::AuthStateMachine;
 use super::identity::resolve_session_identity_with_chain;
-use super::pairing_host::PairingHost;
+use super::pairing_host::SsoAccountHolderClient;
 use super::statement_store_rpc;
-use crate::host_logic::session::{SessionInfo, encode_persisted_session};
+use crate::host_logic::session::SessionInfo;
 use crate::host_logic::sso::pairing::{
     PairingBootstrap, PairingDeviceIdentity, VersionedHandshakeResponse,
     create_pairing_bootstrap_from_identity, decode_app_handshake_data,
@@ -30,7 +30,7 @@ use crate::host_logic::statement_store::{
 };
 use crate::subscription::Spawner;
 
-use crate::platform::{CoreStorage, CoreStorageKey};
+use crate::platform::{CoreStorage, CoreStorageKey, SecretCoreStorage, SecretCoreStorageKey};
 use futures::channel::{mpsc, oneshot};
 use futures::{FutureExt, StreamExt, pin_mut};
 use parity_scale_codec::{Decode, Encode};
@@ -82,7 +82,7 @@ pub enum SsoPairingOutcome {
     /// The login was cancelled (host `cancel_login`, `disconnect`, or a
     /// cross-tab session win).
     Cancelled,
-    /// Wallet handshake completed; the session is resolved and persisted.
+    /// Wallet handshake completed and its authenticated identity is resolved.
     Success(Box<SessionInfo>),
 }
 
@@ -111,19 +111,19 @@ impl Drop for AbandonedPairingGuard {
 
 /// One pairing (login) attempt driven on behalf of a pairing host.
 pub struct SsoPairingFlow<'a> {
-    host: &'a PairingHost,
+    host: &'a SsoAccountHolderClient,
 }
 
 impl<'a> SsoPairingFlow<'a> {
     /// Bind a pairing attempt to its host.
-    pub fn new(host: &'a PairingHost) -> Self {
+    pub fn new(host: &'a SsoAccountHolderClient) -> Self {
         Self { host }
     }
 
     /// `request_session` pairing flow: emits `AuthState::Pairing` for the host
     /// to present, then races host cancellation against the wallet handshake
-    /// arriving on the statement store; on success it resolves identity,
-    /// persists the new session, and returns it to the pairing host.
+    /// arriving on the statement store; the client commits the authenticated
+    /// session before publishing a successful login.
     pub async fn request_session(
         &self,
     ) -> Result<SsoPairingOutcome, CallError<HostRequestLoginError>> {
@@ -296,42 +296,21 @@ impl<'a> SsoPairingFlow<'a> {
             _ = cancel => return Ok(SsoPairingOutcome::Cancelled),
             session = resolve_session => session,
         };
-        let persist_session = self
-            .host
-            .platform
-            .write_core_storage(
-                CoreStorageKey::AuthSession,
-                encode_persisted_session(&session),
-            )
-            .fuse();
-        pin_mut!(persist_session);
-        futures::select! {
-            _ = cancel => {
-                clear_auth_session(self.host.platform.as_ref()).await;
-                return Ok(SsoPairingOutcome::Cancelled);
-            },
-            persist_result = persist_session => persist_result
-                .map_err(|err| format!("session persist failed: {err:?}"))?,
-        };
-        futures::select! {
-            _ = cancel => {
-                clear_auth_session(self.host.platform.as_ref()).await;
-                return Ok(SsoPairingOutcome::Cancelled);
-            },
-            default => {}
-        };
         Ok(SsoPairingOutcome::Success(Box::new(session)))
     }
 }
 
 #[instrument(skip_all, fields(runtime.method = "sso.pairing_device.create_fresh"))]
 async fn create_fresh_pairing_device_identity(
-    storage: &(impl CoreStorage + ?Sized),
+    storage: &(impl CoreStorage + SecretCoreStorage + ?Sized),
 ) -> Result<PairingDeviceIdentity, String> {
     let identity = generate_pairing_device_identity()
         .map_err(|err| format!("pairing identity failed: {err}"))?;
     storage
-        .write_core_storage(CoreStorageKey::PairingDeviceIdentity, identity.encode())
+        .write_secret_core_storage(
+            SecretCoreStorageKey::PairingDeviceIdentity,
+            identity.encode(),
+        )
         .await
         .map_err(|err| format!("pairing device identity write failed: {err:?}"))?;
     Ok(identity)
@@ -339,10 +318,10 @@ async fn create_fresh_pairing_device_identity(
 
 #[instrument(skip_all, fields(runtime.method = "sso.pairing_device.read_or_create"))]
 async fn read_or_create_pairing_device_identity(
-    storage: &(impl CoreStorage + ?Sized),
+    storage: &(impl CoreStorage + SecretCoreStorage + ?Sized),
 ) -> Result<(PairingDeviceIdentity, bool), String> {
     let stored = storage
-        .read_core_storage(CoreStorageKey::PairingDeviceIdentity)
+        .read_secret_core_storage(SecretCoreStorageKey::PairingDeviceIdentity)
         .await
         .map_err(|err| format!("pairing device identity read failed: {err:?}"))?;
     if let Some(stored) = stored {
@@ -361,7 +340,7 @@ async fn read_or_create_pairing_device_identity(
 
 #[instrument(skip_all, fields(runtime.method = "sso.pairing.last_processed.read"))]
 async fn read_last_processed_pairing_statement(
-    storage: &(impl CoreStorage + ?Sized),
+    storage: &(impl CoreStorage + SecretCoreStorage + ?Sized),
 ) -> Result<Option<Vec<u8>>, String> {
     storage
         .read_core_storage(CoreStorageKey::LastProcessedPairingStatement)
@@ -371,7 +350,7 @@ async fn read_last_processed_pairing_statement(
 
 #[instrument(skip_all, fields(runtime.method = "sso.pairing.last_processed.write"))]
 async fn write_last_processed_pairing_statement(
-    storage: &(impl CoreStorage + ?Sized),
+    storage: &(impl CoreStorage + SecretCoreStorage + ?Sized),
     statement: &[u8],
 ) {
     if let Err(err) = storage
@@ -382,16 +361,6 @@ async fn write_last_processed_pairing_statement(
         .await
     {
         debug!("last processed pairing statement write failed: {err:?}");
-    }
-}
-
-#[instrument(skip_all, fields(runtime.method = "sso.auth_session.clear"))]
-async fn clear_auth_session(storage: &(impl CoreStorage + ?Sized)) {
-    if let Err(err) = storage
-        .clear_core_storage(CoreStorageKey::AuthSession)
-        .await
-    {
-        debug!("auth session clear failed: {err:?}");
     }
 }
 
@@ -586,14 +555,15 @@ fn handle_v2_pairing_result(
 #[cfg(test)]
 mod tests {
     use super::super::connected_session_ui_info;
-    use super::super::{PairingHostRole, ProductRuntimeHost};
+    use super::super::{ProductRuntimeHost, SsoAccountHolderClient};
     use super::*;
     use crate::host_rpc_client::HostRpcClient;
     use crate::platform::{AuthState, ChainProvider, CoreStorageKey};
     use crate::test_support::{
         StubPlatform, core_storage_test_key, pairing_device_from_deeplink, peer_statement_keypair,
-        runtime_config, session_info, signed_test_statement, stub_platform, subscribe_ack_frame,
-        test_spawner, wallet_device_encryption_public_key, wallet_handshake_statement,
+        runtime_config, secret_core_storage_test_key, session_info, signed_test_statement,
+        stub_platform, subscribe_ack_frame, test_spawner, wallet_device_encryption_public_key,
+        wallet_handshake_statement,
     };
     use truapi::CallContext;
     use truapi::api::Account;
@@ -604,7 +574,7 @@ mod tests {
 
     /// Cancel the login as soon as the host observes the `Pairing` state,
     /// mimicking a user dismissing the pairing UI immediately.
-    fn cancel_on_pairing(platform: &StubPlatform, pairing_host: Arc<PairingHostRole>) {
+    fn cancel_on_pairing(platform: &StubPlatform, pairing_host: Arc<SsoAccountHolderClient>) {
         *platform
             .on_auth_state
             .lock()
@@ -789,8 +759,8 @@ mod tests {
                 .local_storage
                 .lock()
                 .expect("local storage mutex poisoned")
-                .contains_key(&core_storage_test_key(
-                    CoreStorageKey::PairingDeviceIdentity
+                .contains_key(&secret_core_storage_test_key(
+                    SecretCoreStorageKey::PairingDeviceIdentity
                 )),
             "cancelled pairing keeps the latest identity; the next unmarked reuse regenerates it"
         );
@@ -805,7 +775,7 @@ mod tests {
             .lock()
             .expect("local storage mutex poisoned")
             .insert(
-                core_storage_test_key(CoreStorageKey::PairingDeviceIdentity),
+                secret_core_storage_test_key(SecretCoreStorageKey::PairingDeviceIdentity),
                 identity.encode(),
             );
         platform
@@ -851,8 +821,8 @@ mod tests {
                 .local_storage
                 .lock()
                 .expect("local storage mutex poisoned")
-                .contains_key(&core_storage_test_key(
-                    CoreStorageKey::PairingDeviceIdentity
+                .contains_key(&secret_core_storage_test_key(
+                    SecretCoreStorageKey::PairingDeviceIdentity
                 )),
             "cancelled pairing keeps the rotated identity; the next login rotates again"
         );
@@ -1104,6 +1074,111 @@ mod tests {
                 .iter()
                 .any(|state| matches!(state, AuthState::LoginFailed { reason, .. } if reason == expected_reason)),
             "wallet failure should be surfaced to the modal: {auth_states:?}"
+        );
+    }
+
+    #[test]
+    fn request_login_accepts_its_own_persistence_notification() {
+        let platform = Arc::new(StubPlatform {
+            pairing_success_response: true,
+            ..Default::default()
+        });
+        let (host, pairing_host) =
+            ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+        let notifying_host = Arc::downgrade(&pairing_host);
+        *platform.on_auth_session_write.lock().unwrap() = Some(Arc::new(move || {
+            notifying_host
+                .upgrade()
+                .unwrap()
+                .notify_session_store_changed();
+        }));
+
+        let response = futures::executor::block_on(host.request_login(
+            &CallContext::default(),
+            HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None }),
+        ))
+        .unwrap();
+        assert_eq!(
+            response,
+            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Success)
+        );
+        let session = host
+            .test_session_state()
+            .current()
+            .expect("committed pairing is active");
+        assert_eq!(
+            (
+                platform.session_writes.lock().unwrap().clone(),
+                *platform.session_clears.lock().unwrap()
+            ),
+            (
+                vec![crate::host_logic::session::encode_persisted_session(
+                    &session
+                )],
+                0
+            ),
+        );
+        let epoch = pairing_host.current_session_lifecycle_epoch();
+        pairing_host.notify_session_store_changed();
+        assert!(
+            host.authority.current_session().is_none(),
+            "unverified dirty storage suspends account access"
+        );
+        futures::executor::block_on(pairing_host.activate_stored_session()).unwrap();
+        assert_eq!(pairing_host.current_session_lifecycle_epoch(), epoch);
+        assert!(host.authority.current_session().is_some());
+    }
+
+    #[test]
+    fn request_login_preserves_an_external_session_replacing_its_commit() {
+        let platform = Arc::new(StubPlatform {
+            pairing_success_response: true,
+            ..Default::default()
+        });
+        let (host, pairing_host) =
+            ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+        let replacement = crate::host_logic::session::encode_persisted_session(
+            &crate::test_support::sso_session_info(),
+        );
+        let weak_platform = Arc::downgrade(&platform);
+        let weak_host = Arc::downgrade(&pairing_host);
+        let replaced = replacement.clone();
+        *platform.on_auth_session_write.lock().unwrap() = Some(Arc::new(move || {
+            weak_platform
+                .upgrade()
+                .unwrap()
+                .local_storage
+                .lock()
+                .unwrap()
+                .insert(
+                    secret_core_storage_test_key(SecretCoreStorageKey::AuthSession),
+                    replaced.clone(),
+                );
+            weak_host.upgrade().unwrap().notify_session_store_changed();
+        }));
+        let response = futures::executor::block_on(host.request_login(
+            &CallContext::default(),
+            HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None }),
+        ))
+        .unwrap();
+        assert_eq!(
+            response,
+            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected)
+        );
+        assert_eq!(
+            (
+                platform
+                    .local_storage
+                    .lock()
+                    .unwrap()
+                    .get(&secret_core_storage_test_key(
+                        SecretCoreStorageKey::AuthSession
+                    ))
+                    .cloned(),
+                *platform.session_clears.lock().unwrap(),
+                host.test_session_state().current()
+            ),
+            (Some(replacement), 0, None),
         );
     }
 

@@ -232,6 +232,9 @@ pub struct BulletinRpc {
 }
 
 impl BulletinRpc {
+    /// Chain whose allowance records this client owns.
+    pub fn genesis_hash(&self) -> [u8; 32] { self.genesis_hash }
+
     /// Build a bulletin submission service over the shared chain runtime.
     pub fn new(chain: ChainRuntime, genesis_hash: [u8; 32]) -> Self {
         Self {

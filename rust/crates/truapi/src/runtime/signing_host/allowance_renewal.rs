@@ -16,13 +16,13 @@ use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode};
 use tracing::{debug, info, warn};
 
-use super::SigningHost;
+use super::WalletAccountHolder;
 use super::sso_responder::current_unix_secs;
 use crate::host_logic::product_account::{
     derive_identity_keypair, derive_root_keypair_from_entropy, derive_sr25519_hard_path,
 };
 use crate::runtime::RuntimeServices;
-use crate::runtime::authority::ProductAuthority;
+use crate::runtime::authority::{AccountHolder, AuthoritySession};
 use crate::runtime::statement_allowance::renewal::{
     RenewalChainContext, ResolvedRenewalTarget, StatementRenewalReport, next_tick_delay,
     renew_targets,
@@ -124,7 +124,7 @@ fn owner_key(entropy: &[u8]) -> Result<[u8; 32], String> {
         .map_err(|err| err.to_string())
 }
 
-/// Renewal coordination state owned by [`SigningHost`].
+/// Renewal coordination state owned by [`WalletAccountHolder`].
 #[derive(Default)]
 pub struct RenewalState {
     /// Serializes slot registrations between the renewal pass and on-demand
@@ -147,7 +147,8 @@ impl RenewalState {
         &self.registration_lock
     }
 
-    fn ledger_lock(&self) -> &Mutex<()> {
+    /// Serialize durable renewal recipe changes.
+    pub fn ledger_lock(&self) -> &Mutex<()> {
         &self.ledger_lock
     }
 
@@ -165,12 +166,7 @@ impl RenewalState {
     }
 }
 
-/// Read the renewal ledger; an absent or undecodable slot is an empty ledger.
-///
-/// A ledger this build cannot decode is treated as empty rather than failing
-/// the pass: the entries are recipes and raw account ids that
-/// [`track_targets`] rebuilds on the next allocation or pairing, so refusing to
-/// renew anything is strictly worse than starting over.
+/// Read the renewal recipes, preserving storage and decoding failures.
 async fn read_entries(
     storage: &(impl CoreStorage + ?Sized),
 ) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
@@ -181,13 +177,7 @@ async fn read_entries(
     else {
         return Ok(Vec::new());
     };
-    match decode_entries(&blob) {
-        Ok(entries) => Ok(entries),
-        Err(reason) => {
-            warn!(%reason, "discarding an undecodable renewal ledger");
-            Ok(Vec::new())
-        }
-    }
+    decode_entries(&blob)
 }
 
 /// Append `new_targets` to the ledger, preserving order and skipping entries
@@ -226,7 +216,8 @@ async fn list_entries(
     read_entries(storage).await
 }
 
-async fn untrack_account(
+/// Remove one owner-bound account recipe while preserving other owners.
+pub async fn untrack_account(
     storage: &(impl CoreStorage + ?Sized),
     ledger_lock: &Mutex<()>,
     owner: [u8; 32],
@@ -320,21 +311,40 @@ fn resolve_target(
 
 /// Record `targets` in the ledger under the active identity.
 pub async fn track(
-    signing_host: &SigningHost,
+    signing_host: &WalletAccountHolder,
+    targets: Vec<StatementRenewalTarget>,
+) -> Result<(), String> {
+    let session = signing_host
+        .current_session()
+        .ok_or_else(|| "no active wallet for renewal tracking".to_string())?;
+    track_for_session(signing_host, &session, targets).await
+}
+
+/// Persist an allocation's renewal recipe only for its original wallet activation.
+pub async fn track_for_session(
+    signing_host: &WalletAccountHolder,
+    session: &AuthoritySession,
     targets: Vec<StatementRenewalTarget>,
 ) -> Result<(), String> {
     let targets = targets
         .into_iter()
         .map(StatementRenewalTarget::normalized)
         .collect::<Result<Vec<_>, _>>()?;
-    let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
+    let _persistence = signing_host.persistence.lock().await;
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
     track_targets(
         signing_host.platform.as_ref(),
         signing_host.renewal.ledger_lock(),
-        owner_key(&entropy)?,
+        session.public_key,
         targets,
     )
-    .await
+    .await?;
+    signing_host
+        .require_current_session(session)
+        .map(drop)
+        .map_err(|error| error.to_string())
 }
 
 /// Every entry the ledger holds, in the order it was tracked.
@@ -343,7 +353,7 @@ pub async fn track(
 /// the list, which is the case a scheduled task runs in: it wakes, asks what
 /// its finite slots are spent on, and decides whether to renew at all.
 pub async fn list(
-    signing_host: &SigningHost,
+    signing_host: &WalletAccountHolder,
 ) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
     list_entries(
         signing_host.platform.as_ref(),
@@ -357,24 +367,43 @@ pub async fn list(
 /// Pairs with [`list`], which reports each entry's owner as stored: comparing
 /// the two is how a host tells the entries it will actually renew from the ones
 /// a pass will prune.
-pub fn active_owner_key(signing_host: &SigningHost) -> Result<[u8; 32], String> {
+pub fn active_owner_key(signing_host: &WalletAccountHolder) -> Result<[u8; 32], String> {
     let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
     owner_key(&entropy)
 }
 
 /// Stop renewing one fixed statement account for the active identity.
 pub async fn untrack_account_for_signing_host(
-    signing_host: &SigningHost,
+    signing_host: &WalletAccountHolder,
     account_id: &[u8; 32],
 ) -> Result<bool, String> {
-    let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
-    untrack_account(
+    let session = signing_host
+        .current_session()
+        .ok_or_else(|| "no active wallet for renewal cleanup".to_string())?;
+    untrack_for_session(signing_host, &session, account_id).await
+}
+
+/// Remove a peer target only while the pairing attempt's wallet remains active.
+pub async fn untrack_for_session(
+    signing_host: &WalletAccountHolder,
+    session: &AuthoritySession,
+    account_id: &[u8; 32],
+) -> Result<bool, String> {
+    let _persistence = signing_host.persistence.lock().await;
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
+    let removed = untrack_account(
         signing_host.platform.as_ref(),
         signing_host.renewal.ledger_lock(),
-        owner_key(&entropy)?,
+        session.public_key,
         account_id,
     )
-    .await
+    .await?;
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
+    Ok(removed)
 }
 
 /// Resolve every ledger target under `entropy`, skipping any that cannot be
@@ -447,20 +476,81 @@ async fn owned_targets(
 /// every target for the current period.
 pub async fn renew_now(
     services: &Arc<RuntimeServices>,
-    signing_host: &SigningHost,
+    signing_host: &WalletAccountHolder,
 ) -> Result<StatementRenewalReport, String> {
+    let session = signing_host
+        .current_session()
+        .ok_or_else(|| "no active wallet for renewal".to_string())?;
+    renew_for_session(services, signing_host, &session).await
+}
+
+/// Keep one renewal pass bound to the wallet that requested it.
+pub async fn renew_for_session(
+    services: &Arc<RuntimeServices>,
+    signing_host: &WalletAccountHolder,
+    session: &AuthoritySession,
+) -> Result<StatementRenewalReport, String> {
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
     let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
     let period = statement_allowance::slot::current_period(
         current_unix_secs().map_err(|err| err.to_string())?,
     );
+    let persistence = signing_host.persistence.lock().await;
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
     let (targets, pruned) = owned_targets(
         signing_host.platform.as_ref(),
         signing_host.renewal.ledger_lock(),
         owner_key(&entropy)?,
     )
     .await?;
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
+    drop(persistence);
     let resolved = resolve_targets(&entropy, signing_host.network_suffix(), &targets);
-    if resolved.is_empty() {
+    #[cfg(not(target_arch = "wasm32"))]
+    let stored_slots = match services.runtime_store() {
+        Some(store) => store
+            .statement_slots()
+            .await
+            .map_err(|error| error.to_string())?,
+        None => Vec::new(),
+    };
+    #[cfg(target_arch = "wasm32")]
+    let no_stored_slots = true;
+    #[cfg(not(target_arch = "wasm32"))]
+    let stored_slots: Vec<_> = stored_slots
+        .into_iter()
+        .filter(|slot| slot.chain == services.statement_store.genesis_hash())
+        .collect();
+    #[cfg(not(target_arch = "wasm32"))]
+    let no_stored_slots = stored_slots.is_empty();
+    #[cfg(not(target_arch = "wasm32"))]
+    if !no_stored_slots
+        && stored_slots
+            .iter()
+            .all(|slot| slot.period == i64::from(period))
+        && resolved.iter().all(|target| {
+            stored_slots
+                .iter()
+                .any(|slot| slot.account == target.account_id)
+        })
+    {
+        signing_host
+            .require_current_session(session)
+            .map_err(|error| error.to_string())?;
+        return Ok(StatementRenewalReport {
+            period,
+            outcomes: current_slot_outcomes(&stored_slots, &resolved, period)?,
+            pruned,
+            slots_exhausted: false,
+        });
+    }
+    if resolved.is_empty() && no_stored_slots {
         return Ok(StatementRenewalReport {
             period,
             outcomes: Vec::new(),
@@ -471,11 +561,8 @@ pub async fn renew_now(
 
     // The same accessor on-demand allocation uses, so a change to the reserved
     // key reaches renewal too — and it revalidates the session first.
-    let session = signing_host
-        .current_session()
-        .ok_or_else(|| "no active session for statement-store renewal".to_string())?;
     let candidates = signing_host
-        .reserved_person_collection_candidates(&session)
+        .reserved_person_collection_candidates(session)
         .map_err(|err| err.to_string())?;
     let rpc = statement_allowance::rpc::RpcClient::new(
         services
@@ -502,6 +589,9 @@ pub async fn renew_now(
                 .to_string(),
         );
     }
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
     let context = RenewalChainContext {
         rpc: &rpc,
         metadata: &metadata,
@@ -510,6 +600,21 @@ pub async fn renew_now(
         candidates: &candidates,
         memberships: &memberships,
     };
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(store) = services.runtime_store() {
+        let mut report = renew_recorded_slots(
+            &context,
+            period,
+            &resolved,
+            stored_slots,
+            &store,
+            signing_host,
+            session,
+        )
+        .await?;
+        report.pruned = pruned;
+        return Ok(report);
+    }
     let mut report = renew_targets(
         &context,
         period,
@@ -517,13 +622,19 @@ pub async fn renew_now(
         signing_host.renewal.registration_lock(),
     )
     .await;
+    signing_host
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
     report.pruned = pruned;
     Ok(report)
 }
 
 /// Spawn the periodic renewal loop; repeated calls are no-ops. The loop holds
 /// only weak references, so it exits when the owning runtime is dropped.
-pub fn start_renewal_loop(services: &Arc<RuntimeServices>, signing_host: &Arc<SigningHost>) {
+pub fn start_renewal_loop(
+    services: &Arc<RuntimeServices>,
+    signing_host: &Arc<WalletAccountHolder>,
+) {
     if signing_host
         .renewal
         .loop_started
@@ -553,7 +664,7 @@ pub fn start_renewal_loop(services: &Arc<RuntimeServices>, signing_host: &Arc<Si
     }));
 }
 
-async fn run_tick(services: &Arc<RuntimeServices>, signing_host: &SigningHost) {
+async fn run_tick(services: &Arc<RuntimeServices>, signing_host: &WalletAccountHolder) {
     if signing_host.root_entropy().is_err() {
         debug!("skipping statement-store renewal tick; no active session");
         return;
@@ -590,6 +701,225 @@ fn absorb_tick(state: &RenewalState, result: Result<StatementRenewalReport, Stri
         // replacing it with nothing: "the last thing we know" beats "no idea".
         Err(reason) => warn!(%reason, "statement-store renewal tick failed"),
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn current_slot_outcomes(
+    slots: &[crate::store::StatementSlotRecord],
+    targets: &[ResolvedRenewalTarget],
+    period: u32,
+) -> Result<Vec<crate::runtime::statement_allowance::renewal::StatementRenewalOutcome>, String> {
+    use crate::runtime::statement_allowance::renewal::{
+        StatementRenewalOutcome, TargetRenewalStatus,
+    };
+    slots
+        .iter()
+        .filter(|slot| slot.period == i64::from(period))
+        .map(|slot| {
+            let label = targets
+                .iter()
+                .find(|target| target.account_id == slot.account)
+                .map(|target| target.label.clone())
+                .unwrap_or_else(|| hex::encode(slot.account));
+            let seq = u32::try_from(slot.slot)
+                .map_err(|_| "invalid persisted statement slot".to_string())?;
+            Ok(StatementRenewalOutcome {
+                label,
+                status: TargetRenewalStatus::AlreadyAllocated { seq },
+            })
+        })
+        .collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn renew_recorded_slots(
+    context: &RenewalChainContext<'_>,
+    period: u32,
+    targets: &[ResolvedRenewalTarget],
+    slots: Vec<crate::store::StatementSlotRecord>,
+    store: &crate::store::RuntimeStore,
+    holder: &WalletAccountHolder,
+    session: &crate::runtime::authority::AuthoritySession,
+) -> Result<StatementRenewalReport, String> {
+    use crate::runtime::statement_allowance::collection::PersonhoodCollection;
+    use crate::runtime::statement_allowance::renewal::{
+        StatementRenewalOutcome, TargetRenewalStatus,
+    };
+    use crate::runtime::statement_allowance::slot::SlotError;
+    use crate::runtime::statement_allowance::{
+        PooledRegistrationParams, RegistrationOutcome, StatementAllowanceError,
+        register_statement_account_pooled, scan_collections,
+    };
+    use crate::store::{AllowanceRecord, StatementSlotRecord};
+    let chain = context.chain_state.genesis_hash;
+    let slots: Vec<_> = slots
+        .into_iter()
+        .filter(|slot| slot.chain == chain)
+        .collect();
+    let mut claimed = Vec::new();
+    let mut pending = Vec::new();
+    for slot in &slots {
+        let collection = PersonhoodCollection::ALL
+            .into_iter()
+            .find(|collection| collection.to_string() == slot.collection)
+            .ok_or_else(|| "unknown persisted statement collection".to_string())?;
+        if slot.period == i64::from(period) {
+            claimed.push((
+                collection,
+                u32::try_from(slot.slot)
+                    .map_err(|_| "invalid persisted statement slot".to_string())?,
+            ));
+        } else {
+            let label = targets
+                .iter()
+                .find(|target| target.account_id == slot.account)
+                .map(|target| target.label.clone())
+                .unwrap_or_else(|| hex::encode(slot.account));
+            pending.push((slot.account, label, Some(slot.clone())));
+        }
+    }
+    for target in targets {
+        if !slots.iter().any(|slot| slot.account == target.account_id) {
+            pending.push((target.account_id, target.label.clone(), None));
+        }
+    }
+    let mut report = StatementRenewalReport {
+        period,
+        outcomes: current_slot_outcomes(&slots, targets, period)?,
+        pruned: Vec::new(),
+        slots_exhausted: false,
+    };
+    for (account, label, previous) in pending {
+        holder
+            .require_current_session(session)
+            .map_err(|error| error.to_string())?;
+        if report.slots_exhausted {
+            report.outcomes.push(StatementRenewalOutcome {
+                label,
+                status: TargetRenewalStatus::SkippedExhausted,
+            });
+            continue;
+        }
+        let _registration = holder.renewal.registration_lock().lock().await;
+        holder
+            .require_current_session(session)
+            .map_err(|error| error.to_string())?;
+        let reuse_existing = previous.is_none();
+        let scans = scan_collections(
+            context.rpc,
+            context.metadata,
+            context.candidates,
+            context.network_suffix,
+            period,
+            &account,
+            reuse_existing,
+        )
+        .await;
+        holder
+            .require_current_session(session)
+            .map_err(|error| error.to_string())?;
+        let result = match scans {
+            Ok(scans) => {
+                register_statement_account_pooled(
+                    context.rpc,
+                    context.metadata,
+                    context.chain_state,
+                    &scans,
+                    context.memberships,
+                    PooledRegistrationParams {
+                        target: &account,
+                        period,
+                        network_suffix: context.network_suffix,
+                        reuse_existing,
+                        allow_eviction: true,
+                        protected: &claimed,
+                    },
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        };
+        holder
+            .require_current_session(session)
+            .map_err(|error| error.to_string())?;
+        let status = match result {
+            Ok(outcome) => {
+                let (collection, seq, status) = match outcome {
+                    RegistrationOutcome::Registered {
+                        collection,
+                        seq,
+                        block_hash,
+                        ..
+                    } => (
+                        collection,
+                        seq,
+                        TargetRenewalStatus::Registered { seq, block_hash },
+                    ),
+                    RegistrationOutcome::AlreadyAllocated { collection, seq } => (
+                        collection,
+                        seq,
+                        TargetRenewalStatus::AlreadyAllocated { seq },
+                    ),
+                };
+                let now = i64::try_from(
+                    current_unix_secs()
+                        .map_err(|error| error.to_string())?
+                        .saturating_mul(1000),
+                )
+                .map_err(|_| "renewal timestamp overflow".to_string())?;
+                let renewed = StatementSlotRecord {
+                    chain,
+                    collection: collection.to_string(),
+                    period: i64::from(period),
+                    slot: i64::from(seq),
+                    account,
+                    priority: previous.as_ref().map_or(0, |slot| slot.priority),
+                    last_allocated_or_renewed_at: now,
+                };
+                let _persistence = holder.persistence.lock().await;
+                holder
+                    .require_current_session(session)
+                    .map_err(|error| error.to_string())?;
+                match previous {
+                    Some(previous) => store.renew_statement_slot(previous, renewed).await,
+                    None => {
+                        store
+                            .record_allowance(
+                                AllowanceRecord {
+                                    chain,
+                                    resource: "statement-store".to_string(),
+                                    account,
+                                    allocated_at: now,
+                                    priority: None,
+                                    last_renewed_period: None,
+                                },
+                                vec![renewed],
+                            )
+                            .await
+                    }
+                }
+                .map_err(|error| error.to_string())?;
+                holder
+                    .require_current_session(session)
+                    .map_err(|error| error.to_string())?;
+                claimed.push((collection, seq));
+                status
+            }
+            Err(error) => {
+                report.slots_exhausted = matches!(
+                    error,
+                    StatementAllowanceError::Slot(SlotError::NoFreeStatementStoreSlot { .. })
+                );
+                TargetRenewalStatus::Failed {
+                    reason: error.to_string(),
+                }
+            }
+        };
+        report
+            .outcomes
+            .push(StatementRenewalOutcome { label, status });
+    }
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -1095,7 +1425,7 @@ mod tests {
     }
 
     #[test]
-    fn an_undecodable_ledger_lists_as_empty() {
+    fn an_undecodable_ledger_listing_returns_an_error() {
         let storage = MemStorage::default();
 
         futures::executor::block_on(async {
@@ -1104,7 +1434,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!(list_entries(&storage, &lock()).await.unwrap(), Vec::new());
+            assert!(list_entries(&storage, &lock()).await.is_err());
         });
     }
 
@@ -1116,7 +1446,7 @@ mod tests {
     }
 
     #[test]
-    fn an_undecodable_ledger_reads_as_empty() {
+    fn an_undecodable_ledger_read_returns_an_error() {
         let storage = MemStorage::default();
 
         futures::executor::block_on(async {
@@ -1128,26 +1458,30 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!(read_targets(&storage, OWNER).await.unwrap(), Vec::new());
+            assert!(read_targets(&storage, OWNER).await.is_err());
         });
     }
 
     #[test]
-    fn tracking_over_an_undecodable_ledger_starts_a_fresh_one() {
+    fn tracking_preserves_an_undecodable_ledger_and_reports_the_error() {
         let storage = MemStorage::default();
-
         futures::executor::block_on(async {
+            let corrupt = vec![0xff; 3];
             storage
-                .write_core_storage(CoreStorageKey::StatementRenewalTargets, vec![0xff; 3])
+                .write_core_storage(CoreStorageKey::StatementRenewalTargets, corrupt.clone())
                 .await
                 .unwrap();
-            track_targets(&storage, &lock(), OWNER, vec![product("a.dot")])
-                .await
-                .unwrap();
-
+            assert!(
+                track_targets(&storage, &lock(), OWNER, vec![product("a.dot")])
+                    .await
+                    .is_err()
+            );
             assert_eq!(
-                read_targets(&storage, OWNER).await.unwrap(),
-                vec![product("a.dot")]
+                storage
+                    .read_core_storage(CoreStorageKey::StatementRenewalTargets)
+                    .await
+                    .unwrap(),
+                Some(corrupt)
             );
         });
     }
