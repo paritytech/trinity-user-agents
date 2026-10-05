@@ -14,7 +14,7 @@ extension ChatExtensionsRegistry {
         personhoodRegistrationService: PersonhoodRegistrationServicing,
         audioSessionManager: AudioSessionManaging
     ) -> [ChatExtending] {
-        #if !FEATURE_DIMS
+        #if !FEATURE_DIMS_FULL
             return []
         #else
             do {
@@ -26,71 +26,36 @@ extension ChatExtensionsRegistry {
                     syncService: syncService,
                     personhoodRegistrationService: personhoodRegistrationService
                 )
-                let settings = SettingsManager.shared
 
-                #if FEATURE_DIMS_FULL
-                    let dim2Actions: [ChatExtensionActions.ActionModel] = [
-                        .init(
-                            title: String(localized: .MobRule.chatName),
-                            subtitle: String(localized: .ChatExtension.actionOpenMobRulesSubtitle),
-                            identifier: MobRulesChatExtension.identifier
-                        )
-                    ]
-                #else
-                    let dim2Actions: [ChatExtensionActions.ActionModel] = []
-                #endif
-
-                guard let dim2 = WeeklyGameFactory.create(
-                    settings: settings,
-                    dependencies: DIM2Dependencies(
-                        dim2SharedState: dimsState.dim2,
-                        dimsSharedState: dimsState.peerState
-                    ),
-                    personActions: dim2Actions
+                guard let mobRules = MobRulesFactory.create(
+                    settings: SettingsManager.shared,
+                    scoreInfoSyncService: dimsState.peerState.scoreInfoSyncService
                 ) else {
-                    logger.error("Can't create dim2")
-
+                    logger.error("Can't create mob rule")
                     return []
                 }
 
-                #if FEATURE_DIMS_FULL
-                    guard let mobRules = MobRulesFactory.create(
-                        settings: settings,
-                        scoreInfoSyncService: dimsState.peerState.scoreInfoSyncService
-                    ) else {
-                        logger.error("Can't create mob rule")
-                        return []
-                    }
+                let dim1 = createDIM1(
+                    flowState: dimsState.dim1,
+                    audioSessionManager: audioSessionManager
+                )
 
-                    let dim1 = createDIM1(
-                        flowState: dimsState.dim1,
-                        audioSessionManager: audioSessionManager
+                let peerActions: [ChatExtensionActions.ActionModel] = [
+                    .init(
+                        title: String(localized: .ChatExtension.polkadotPeerActionDim1Title),
+                        subtitle: String(localized: .ChatExtension.polkadotPeerActionDim1Subtitle),
+                        identifier: dim1.identifier
                     )
+                ]
 
-                    let peerActions: [ChatExtensionActions.ActionModel] = [
-                        .init(
-                            title: String(localized: .ChatExtension.polkadotPeerActionDim1Title),
-                            subtitle: String(localized: .ChatExtension.polkadotPeerActionDim1Subtitle),
-                            identifier: dim1.identifier
-                        ),
-                        .init(
-                            title: String(localized: .ChatExtension.polkadotPeerActionDim2Title),
-                            subtitle: String(localized: .ChatExtension.polkadotPeerActionDim2Subtitle),
-                            identifier: DIM2ChatExtension.identifier
-                        )
-                    ]
+                let peerChat = createPolkadotPeer(
+                    flowState: dimsState.peerState,
+                    actions: peerActions,
+                    logger: logger
+                )
 
-                    let peerChat = createPolkadotPeer(
-                        flowState: dimsState.peerState,
-                        actions: peerActions,
-                        logger: logger
-                    )
-
-                    return [peerChat, dim1, dim2, mobRules]
-                        .compactMap { $0 }
-                #else
-                    return [dim2]
-                #endif
+                return [peerChat, dim1, mobRules]
+                    .compactMap { $0 }
             } catch {
                 Logger.shared.error("Can't create dims state: \(error)")
                 return []
@@ -142,11 +107,6 @@ private extension ChatExtensionsRegistry {
                     title: String(localized: .MobRule.chatName),
                     subtitle: String(localized: .ChatExtension.actionOpenMobRulesSubtitle),
                     identifier: MobRulesChatExtension.identifier
-                ),
-                .init(
-                    title: String(localized: .WeeklyGame.chatName),
-                    subtitle: String(localized: .ChatExtension.actionOpenWeeklyGameSubtitle),
-                    identifier: DIM2ChatExtension.identifier
                 )
             ]
 
@@ -161,7 +121,6 @@ private extension ChatExtensionsRegistry {
     struct DimStates {
         let peerState: DIMSSharedFlowStateProtocol
         let dim1: DIM1SharedFlowStateProtocol
-        let dim2: DIM2SharedFlowStateProtocol
     }
 
     static func createFlowStates(
@@ -177,9 +136,8 @@ private extension ChatExtensionsRegistry {
             personhoodRegistrationService: personhoodRegistrationService
         )
         let dim1FlowState = try createDIM1FlowState(for: peerFlowState)
-        let dim2FlowState = try createDIM2FlowState(for: peerFlowState)
 
-        return DimStates(peerState: peerFlowState, dim1: dim1FlowState, dim2: dim2FlowState)
+        return DimStates(peerState: peerFlowState, dim1: dim1FlowState)
     }
 
     private static func createDIMSFlowState(
@@ -251,46 +209,6 @@ private extension ChatExtensionsRegistry {
 
     enum DIMSFlowStateError: Error {
         case invalidSyncServiceType
-    }
-
-    private static func createDIM2FlowState(for peerState: DIMSSharedFlowState) throws -> DIM2SharedFlowState {
-        let chatEncryptionManager = try ChatEncryptionManager().makeEncryptorFactory(
-            ownEncryptionKeyId: Chat.Contact.Own.gameEncryptionKeyId()
-        )
-
-        let settingsManager = SettingsManager.shared
-        let gameStartReminder: any GameStartReminderServicing =
-            if #available(iOS 26.1, *) {
-                AlarmKitGameReminder(
-                    alarmManger: .shared,
-                    settingsManager: settingsManager
-                )
-            } else {
-                LocalNotificationGameReminder(
-                    localNotificationService: UserNotificationService.shared,
-                    settingsManager: settingsManager
-                )
-            }
-
-        let walletRepo: WalletManagerRepositoryProtocol = .shared
-        let vrfRepo: BandersnatchManagerRepositoryProtocol = .shared
-
-        return try DIM2SharedFlowState(
-            candidateWallet: walletRepo.candidate(),
-            score: walletRepo.scoreAlias(),
-            vrfManager: vrfRepo.fullPerson(),
-            chatEncryptionManager: chatEncryptionManager,
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            chainId: AppConfig.Chains.usernameChain,
-            personDataStore: peerState.personDataStore,
-            commonStateStore: peerState.syncStateStore,
-            gameInfoSyncService: peerState.gameInfoSyncService,
-            scoreInfoSyncService: peerState.scoreInfoSyncService,
-            substrateStorageFacade: SubstrateDataStorageFacade.shared,
-            operationQueue: OperationManagerFacade.sharedDefaultQueue,
-            gameStartReminder: gameStartReminder,
-            logger: Logger.shared
-        )
     }
 
     private static func createDIM1FlowState(for peerState: DIMSSharedFlowState) throws -> DIM1SharedFlowState {
