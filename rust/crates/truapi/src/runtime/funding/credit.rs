@@ -273,6 +273,7 @@ mod tests {
             account: keypair(1).public.to_bytes(),
             expected: 2_000_000,
             route: ConversionRoute::Psm { fee_ppm: 5_000 },
+            target: None,
         }
     }
 

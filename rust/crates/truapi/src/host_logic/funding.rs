@@ -97,6 +97,8 @@ pub struct FundingDeposit {
     pub expected: u128,
     /// How the deposit becomes CASH on People.
     pub route: ConversionRoute,
+    /// CASH the session asks to credit, which a swap must not land below.
+    pub target: Option<u128>,
 }
 
 /// How a deposit becomes CASH on People, fixed when its account is assigned
@@ -815,6 +817,7 @@ mod tests {
                 account: [1; 32],
                 expected: 50,
                 route: ConversionRoute::Teleport,
+                target: None,
             }),
             ..session(FundingDirection::In)
         }

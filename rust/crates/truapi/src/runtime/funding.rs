@@ -251,9 +251,10 @@ impl FundingRegistry {
         plan: DepositPlan,
         derive: impl Fn(u32) -> Result<[u8; 32], GenericError>,
     ) -> Result<[u8; 32], AssignDepositError> {
-        self.get(intent)
+        let target = self
+            .get(intent)
             .ok_or(AssignDepositError::NotFound)
-            .and_then(|session| assignable(&session))?;
+            .and_then(|session| assignable(&session).map(|()| session.amount))?;
         let DepositPlan { request, route } = plan;
         for _ in 0..MAX_USED_ACCOUNTS {
             let number = self
@@ -274,6 +275,7 @@ impl FundingRegistry {
                 account,
                 expected: request.expected,
                 route,
+                target,
             };
             let intent = intent.to_string();
             return self
@@ -1300,6 +1302,7 @@ mod tests {
                     account: account(3),
                     expected: 50,
                     route: ConversionRoute::Teleport,
+                    target: Some(100),
                 })
             )
         );
@@ -1532,6 +1535,7 @@ mod tests {
             account: keypair(1).public.to_bytes(),
             expected: 50,
             route: ConversionRoute::Teleport,
+            target: None,
         }
     }
 

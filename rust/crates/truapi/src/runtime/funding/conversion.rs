@@ -220,25 +220,13 @@ impl Chains {
                 fee_ppm: psm.fee_ppm,
             }));
         }
-        let swaps = self.swap_out(asset, expected).await?.is_some();
-        Ok(swaps.then_some(ConversionRoute::Pool))
-    }
-
-    /// CASH the pools return for `amount` of `asset`, through the native
-    /// token for a stablecoin, or `None` without a pool path.
-    async fn swap_out(&self, asset: DepositAsset, amount: u128) -> Result<Option<u128>, ConversionError> {
-        let through_native = match asset {
-            DepositAsset::Native => Some(amount),
-            DepositAsset::Asset(id) => {
-                self.pool_quote("quote_price_exact_tokens_for_tokens", &self.places.asset_location(id), &native(), amount)
-                    .await?
-            }
-        };
-        let Some(native_amount) = through_native else {
-            return Ok(None);
-        };
-        self.pool_quote("quote_price_exact_tokens_for_tokens", &native(), &self.places.cash(), native_amount)
-            .await
+        // A pool path counts only if it swaps enough to pay for execution on
+        // People and still land something.
+        match self.swap(asset, expected).await {
+            Ok(swap) if swap.min_cash > 2 * REMOTE_FEE_FLOOR => Ok(Some(ConversionRoute::Pool)),
+            Ok(_) | Err(ConversionError::Refused(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// `asset` the pools take to return `cash`, through the native token for
@@ -337,11 +325,7 @@ impl Chains {
         if target == 0 {
             return Err(ConversionError::Refused("the amount to credit is zero".into()));
         }
-        let claimed = target
-            .div_ceil(CLAIM_UNIT)
-            .checked_mul(CLAIM_UNIT)
-            .ok_or_else(too_large)?;
-        let send = teleported_for(claimed).ok_or_else(too_large)?;
+        let send = cash_to_teleport(target).ok_or_else(too_large)?;
         let psm = match asset {
             DepositAsset::Asset(id) if id != self.places.network.cash_asset_id => {
                 self.psm(id).await?.map(|terms| (id, terms))
@@ -644,7 +628,11 @@ impl Chains {
             (ConversionRoute::Psm { .. }, DepositAsset::Native) => {
                 return Err(ConversionError::Refused("the PSM mints only from assets".into()));
             }
-            (ConversionRoute::Pool, _) => Converter::Swap(self.swap(deposit.asset, spendable).await?),
+            (ConversionRoute::Pool, asset) => Converter::Swap(PoolSwap {
+                from: asset,
+                min_native: matches!(asset, DepositAsset::Asset(_)).then_some(1),
+                min_cash: 2 * REMOTE_FEE_FLOOR,
+            }),
         };
 
         let signing = Signing {
@@ -666,26 +654,41 @@ impl Chains {
             _ => 0,
         };
         let mut allowance = fees.allowance;
+        let mut first_refusal = None;
         let (call, forwarded) = loop {
             let given = spendable
                 .checked_sub(fees.dispatch)
                 .and_then(|left| left.checked_sub(allowance))
-                .filter(|left| *left > 0)
-                .ok_or_else(|| ConversionError::Refused("the deposit does not cover the fees".into()))?;
-            // A swap's least outputs are quoted for what it actually gives.
+                .filter(|left| *left > 0);
+            let Some(given) = given else {
+                return Err(ConversionError::Refused(
+                    first_refusal.unwrap_or_else(|| "the deposit does not cover the fees".into()),
+                ));
+            };
+            // A swap's least outputs are quoted for what it actually gives,
+            // and never below what credits the session's target.
             let converter = match converter {
-                Converter::Swap(_) => Converter::Swap(self.swap(deposit.asset, given).await?),
+                Converter::Swap(_) => {
+                    let mut swap = self.swap(deposit.asset, given).await?;
+                    if let Some(floor) = deposit.target.and_then(cash_to_teleport) {
+                        swap.min_cash = swap.min_cash.max(floor);
+                    }
+                    Converter::Swap(swap)
+                }
                 other => other,
             };
             let call = self
                 .measured(self.places.conversion_call(&account, given + allowance, allowance, converter)?)
                 .await?;
-            match self.dry_run(&account, &call).await {
+            match self.dry_run_detailed(&account, &call).await? {
                 Ok(forwarded) => break (call, forwarded),
-                Err(ConversionError::Refused(_)) if allowance < fees.allowance << retries => {
+                Err(refusal) if refusal.fees_short && allowance < fees.allowance << retries => {
+                    first_refusal.get_or_insert(refusal.reason);
                     allowance *= 2;
                 }
-                Err(error) => return Err(error),
+                Err(refusal) => {
+                    return Err(ConversionError::Refused(first_refusal.unwrap_or(refusal.reason)));
+                }
             }
         };
         self.dry_run_on_people(&forwarded).await?;
@@ -721,6 +724,24 @@ impl Chains {
         account: &[u8; 32],
         call: &ConversionCall,
     ) -> Result<Value, ConversionError> {
+        self.dry_run_detailed(account, call)
+            .await?
+            .map_err(|refusal| ConversionError::Refused(refusal.reason))
+    }
+
+    /// [`Self::dry_run`], telling a refusal for want of fees apart, which is
+    /// the one a larger fee allowance can cure.
+    async fn dry_run_detailed(
+        &self,
+        account: &[u8; 32],
+        call: &ConversionCall,
+    ) -> Result<Result<Value, DryRunRefusal>, ConversionError> {
+        let refused = |reason: String| {
+            Ok(Err(DryRunRefusal {
+                reason,
+                fees_short: false,
+            }))
+        };
         let origin = Value::unnamed_variant(
             "system",
             [Value::unnamed_variant("Signed", [Value::from_bytes(account)])],
@@ -734,26 +755,29 @@ impl Chains {
         .await?)?;
         let execution = field(&effects, "execution_result")?;
         if variant_name(execution) != Some("Ok") {
-            return Err(ConversionError::Refused(format!(
-                "dry run failed on Asset Hub: {execution}"
-            )));
+            let names = module_error_names(self.asset_hub.metadata_ref(), execution);
+            return Ok(Err(DryRunRefusal {
+                reason: format!("dry run failed on Asset Hub: {} ({execution})", names.join(" / ")),
+                fees_short: names.iter().any(|name| name == "NotHoldingFees"),
+            }));
         }
         let events = field(&effects, "emitted_events")?;
         if mentions_variant(events, "AssetsTrapped") {
-            return Err(ConversionError::Refused("the conversion would trap assets on Asset Hub".into()));
+            return refused("the conversion would trap assets on Asset Hub".into());
         }
         let forwarded = field(&effects, "forwarded_xcms")?;
-        items(forwarded)
-            .into_iter()
-            .find_map(|entry| {
-                let [destination, messages] = items(entry)[..] else {
-                    return None;
-                };
-                (parachain_of(destination) == Some(self.places.people_para))
-                    .then(|| items(messages).first().map(|message| (*message).clone()))
-                    .flatten()
-            })
-            .ok_or_else(|| ConversionError::Refused("the conversion forwards nothing to People".into()))
+        let to_people = items(forwarded).into_iter().find_map(|entry| {
+            let [destination, messages] = items(entry)[..] else {
+                return None;
+            };
+            (parachain_of(destination) == Some(self.places.people_para))
+                .then(|| items(messages).first().map(|message| (*message).clone()))
+                .flatten()
+        });
+        match to_people {
+            Some(message) => Ok(Ok(message)),
+            None => refused("the conversion forwards nothing to People".into()),
+        }
     }
 
     /// Dry-run the forwarded `message` on People as Asset Hub sends it.
@@ -1310,13 +1334,86 @@ fn native() -> Value {
 
 /// `amount` less the slippage headroom: a swap's least output.
 fn less_slippage(amount: u128) -> u128 {
-    amount / 100 * (100 - SWAP_SLIPPAGE_PERCENT)
+    let kept = 100 - SWAP_SLIPPAGE_PERCENT;
+    amount / 100 * kept + amount % 100 * kept / 100
 }
 
 /// An output to ask the pools for so that, less the slippage headroom, it
 /// still covers `amount`.
 fn with_slippage_room(amount: u128) -> u128 {
     amount.saturating_mul(100).div_ceil(100 - SWAP_SLIPPAGE_PERCENT)
+}
+
+/// CASH to teleport so that a top-up of `target`, rounded up to what one
+/// claims, lands on People, or `None` on overflow.
+fn cash_to_teleport(target: u128) -> Option<u128> {
+    teleported_for(target.div_ceil(CLAIM_UNIT).checked_mul(CLAIM_UNIT)?)
+}
+
+/// Why a dry run refused a conversion, and whether more fees would cure it.
+#[derive(Debug)]
+struct DryRunRefusal {
+    reason: String,
+    fees_short: bool,
+}
+
+/// The error names a failed dispatch's module error decodes to through
+/// `metadata`: the pallet error, then any enum inside it, such
+/// as the XCM error a failed local execution carries.
+fn module_error_names(metadata: &subxt::Metadata, execution: &Value) -> Vec<String> {
+    let Some(module) = find_variant(execution, "Module") else {
+        return Vec::new();
+    };
+    let Some(pallet_index) = field(module, "index").ok().and_then(|index| as_u128(index).ok()) else {
+        return Vec::new();
+    };
+    let bytes: Vec<u8> = field(module, "error")
+        .map(|error| {
+            items(unwrap_newtype(error))
+                .into_iter()
+                .filter_map(|byte| as_u128(byte).ok().and_then(|byte| u8::try_from(byte).ok()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let Some(pallet) = u8::try_from(pallet_index)
+        .ok()
+        .and_then(|index| metadata.pallet_by_error_index(index))
+    else {
+        return Vec::new();
+    };
+    let Some(variant) = bytes.first().and_then(|byte| pallet.error_variant_by_index(*byte)) else {
+        return Vec::new();
+    };
+    let mut names = vec![variant.name.clone()];
+    let mut cursor = 1;
+    for field in &variant.fields {
+        let Some(ty) = metadata.types().resolve(field.ty.id) else {
+            break;
+        };
+        match &ty.type_def {
+            scale_info::TypeDef::Variant(inner) => {
+                if let Some(name) = bytes
+                    .get(cursor)
+                    .and_then(|byte| inner.variants.iter().find(|variant| variant.index == *byte))
+                {
+                    names.push(name.name.clone());
+                }
+                cursor += 1;
+            }
+            _ => cursor += 1,
+        }
+    }
+    names
+}
+
+/// The first variant named `name` anywhere in `value`.
+fn find_variant<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
+    match &value.value {
+        ValueDef::Variant(variant) if variant.name == name => Some(value),
+        ValueDef::Variant(variant) => variant.values.values().find_map(|inner| find_variant(inner, name)),
+        ValueDef::Composite(composite) => composite.values().find_map(|inner| find_variant(inner, name)),
+        _ => None,
+    }
 }
 
 /// CASH set aside for execution on People out of `cash` teleported.
@@ -1696,8 +1793,8 @@ mod tests {
     #[test]
     fn pool_swaps_encode_as_asset_hub_xcm_executes() {
         let metadata = asset_hub_metadata();
-        let encoded = |from, min_native| {
-            PLACES
+        let program = |from, min_native| {
+            let call = PLACES
                 .conversion_call(
                     &[1; 32],
                     10_000_000_000,
@@ -1708,25 +1805,132 @@ mod tests {
                         min_cash: 1_000_000,
                     }),
                 )
-                .expect("sized")
-                .runtime_call()
-                .encode(&metadata)
-                .map(|bytes| bytes[..2].to_vec())
+                .expect("sized");
+            let shape: Vec<_> = call
+                .program
+                .iter()
+                .map(|instruction| {
+                    let name = variant_name(instruction).unwrap_or_default().to_string();
+                    let exchange = (name == "ExchangeAsset").then(|| {
+                        let fields = variant_fields(instruction).expect("fields");
+                        let give = fields.values().next().and_then(variant_name).map(str::to_string);
+                        let maximal = fields.values().nth(2).map(|maximal| maximal.to_string());
+                        (give, maximal)
+                    });
+                    (name, exchange)
+                })
+                .collect();
+            (call.runtime_call().encode(&metadata).map(|bytes| bytes[..2].to_vec()), shape)
         };
         let pallet = metadata.pallet_by_name("PolkadotXcm").expect("pallet");
         let execute = vec![
             pallet.call_index(),
             pallet.call_variant_by_name("execute").expect("call").index,
         ];
+        let step = |name: &str| (name.to_string(), None);
+        let exchange = |give: &str| {
+            (
+                "ExchangeAsset".to_string(),
+                Some((Some(give.to_string()), Some("true".to_string()))),
+            )
+        };
+        let tail = [step("InitiateTransfer"), step("RefundSurplus"), step("DepositAsset")];
 
         assert_eq!(
             [
-                encoded(DepositAsset::Native, None),
-                encoded(DepositAsset::Asset(1984), Some(1_000_000_000)),
+                program(DepositAsset::Native, None),
+                program(DepositAsset::Asset(1984), Some(1_000_000_000)),
             ],
-            [Ok(execute.clone()), Ok(execute)]
+            [
+                (
+                    Ok(execute.clone()),
+                    [vec![step("WithdrawAsset"), step("PayFees"), exchange("Definite")], tail.to_vec()]
+                        .concat(),
+                ),
+                (
+                    Ok(execute),
+                    [
+                        vec![
+                            step("WithdrawAsset"),
+                            step("PayFees"),
+                            exchange("Definite"),
+                            exchange("Wild"),
+                        ],
+                        tail.to_vec(),
+                    ]
+                    .concat(),
+                ),
+            ]
         );
     }
+
+    // A swap's least output is its quote less the headroom, and asking the
+    // pools for `with_slippage_room` gives an output that, less the headroom,
+    // still covers what was wanted. A fee draft keeps a swap able to pay for
+    // People whatever its real outputs.
+    #[test]
+    fn slippage_room_covers_the_least_output_and_drafts_stay_payable() {
+        let drafted = Converter::Swap(PoolSwap {
+            from: DepositAsset::Asset(1984),
+            min_native: Some(77),
+            min_cash: 5,
+        })
+        .drafted();
+        let Converter::Swap(drafted) = drafted else {
+            panic!("a swap drafts as a swap");
+        };
+
+        assert_eq!(
+            (
+                less_slippage(2_000_000),
+                less_slippage(with_slippage_room(2_000_000)) >= 2_000_000,
+                (drafted.min_native, drafted.min_cash),
+            ),
+            (1_900_000, true, (Some(1), 2 * REMOTE_FEE_FLOOR))
+        );
+    }
+
+    // Only a dry run that ran out of fees is worth retrying with more; the
+    // XCM error inside a failed local execution is what says so.
+    #[test]
+    fn a_failed_execution_names_its_xcm_error() {
+        let metadata = asset_hub_metadata();
+        let index = metadata.pallet_by_name("PolkadotXcm").expect("pallet").error_index();
+        let incomplete = metadata
+            .pallet_by_name("PolkadotXcm")
+            .and_then(|pallet| pallet.error_variants())
+            .and_then(|variants| {
+                variants
+                    .iter()
+                    .find(|variant| variant.name == "LocalExecutionIncompleteWithError")
+            })
+            .expect("variant")
+            .index;
+        let execution = Value::unnamed_variant(
+            "Err",
+            [Value::named_composite([(
+                "error",
+                Value::named_variant(
+                    "Module",
+                    [
+                        ("index", Value::u128(index.into())),
+                        (
+                            "error",
+                            Value::unnamed_composite(
+                                [incomplete, 4, 19, 0].map(|byte| Value::u128(byte.into())),
+                            ),
+                        ),
+                    ],
+                ),
+            )])],
+        );
+
+        assert_eq!(
+            module_error_names(&metadata, &execution),
+            ["LocalExecutionIncompleteWithError", "NotHoldingFees"]
+        );
+    }
+
 
     // Sized from the getcash formulas: the PSM keeps its fee, rounded up,
     // and every fee estimate gets a tenth more, rounded up.
@@ -1890,6 +2094,7 @@ mod live {
             account,
             expected: 0,
             route,
+            target: None,
         }
     }
 
@@ -2027,8 +2232,13 @@ mod live {
             .map(|_| ());
 
         assert_eq!(
-            (route, native, stable),
-            (Ok(Some(ConversionRoute::Pool)), Ok(()), Ok(()))
+            (route, quote.map(|quote| quote.map(|quote| (quote.asset, quote.route))), native, stable),
+            (
+                Ok(Some(ConversionRoute::Pool)),
+                Ok(Some((DepositAsset::Native, ConversionRoute::Pool))),
+                Ok(()),
+                Ok(())
+            )
         );
     }
 
