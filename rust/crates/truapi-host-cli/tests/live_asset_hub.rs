@@ -308,41 +308,46 @@ async fn live_asset_hub_resolves_a_settled_store_over_dotns_discovery() {
 	account[..20].copy_from_slice(&owner);
 	assert_eq!(hex::encode(selector("ownerOf(uint256)")), "6352211e");
 
-	let labels = resolve_labels(&mut transport, &controller, &account)
-		.await
-		.expect("resolve labels");
-	println!("live labels of 0x{}: {labels:?}", hex::encode(owner));
-	assert!(
-		labels.iter().any(|label| *label == minted_label()),
-		"the settled store label loses its network TLD: {labels:?}"
-	);
-	assert!(
-		labels
-			.iter()
-			.all(|label| !label.contains('.') || is_dotted_lite_username(label)),
-		"no TLD or subname survives (dotted lite names may): {labels:?}"
-	);
-	// A dotted survivor must also carry gateway provenance, so a subname under
-	// a digit-only parent cannot pass as a lite name.
-	for label in labels.iter().filter(|label| label.contains('.')) {
-		assert!(
-			is_pop_issued(&mut transport, &controller, label).await.expect("isPopIssued"),
-			"dotted label {label:?} is not pop-issued"
-		);
-	}
-	// The default owner's store holds far more than one `getLabels` page, so
-	// this also proves the store is paged rather than read once.
-	if std::env::var("LIVE_MINTED_LABEL").is_err() {
-		assert!(
-			labels.len() > 16,
-			"expected the e2e pool store to span several pages, got {}",
-			labels.len()
-		);
-	}
-	let identity = classify_labels(&mut transport, &controller, &labels)
-		.await
-		.expect("classify labels");
-	assert!(identity.is_some(), "labels classify into a username");
+    let labels = resolve_labels(&mut transport, &controller, &account)
+        .await
+        .expect("resolve labels");
+    println!("live labels of 0x{}: {labels:?}", hex::encode(owner));
+    assert!(
+        labels.iter().any(|label| *label == minted_label()),
+        "the settled store label loses its network TLD: {labels:?}"
+    );
+    assert!(
+        labels
+            .iter()
+            .all(|label| !label.contains('.') || is_dotted_lite_username(label)),
+        "no TLD or subname survives (dotted lite names may): {labels:?}"
+    );
+    // A dotted survivor must also carry gateway provenance, so a subname under
+    // a digit-only parent cannot pass as a lite name.
+    for label in labels.iter().filter(|label| label.contains('.')) {
+        assert!(
+            is_pop_issued(&mut transport, &controller, label)
+                .await
+                .expect("isPopIssued"),
+            "dotted label {label:?} is not pop-issued"
+        );
+    }
+    // The default owner's store holds far more than one `getLabels` page, so
+    // this also proves the store is paged rather than read once.
+    if std::env::var("LIVE_MINTED_LABEL").is_err() {
+        assert!(
+            labels.len() > 16,
+            "expected the e2e pool store to span several pages, got {}",
+            labels.len()
+        );
+    }
+    let identity = classify_labels(&mut transport, &controller, &account, &labels)
+        .await
+        .expect("classify labels");
+    assert!(
+        identity.lite_username.is_some() || identity.full_username.is_some(),
+        "labels classify into a username"
+    );
 }
 
 /// A reservation or registration for a name the registrar already minted can

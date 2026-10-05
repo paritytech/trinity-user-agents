@@ -19,9 +19,8 @@ use sp_crypto_hashing::{blake2_128, blake2_256, keccak_256, twox_128};
 use thiserror::Error;
 use tracing::warn;
 
-use crate::{
-	dotns_views::{call_string, network_tld, tld_node},
-	platform::{MAX_DNS_LABEL_LEN, is_dns_label},
+use crate::dotns_views::{
+    call_string, label_owner, network_tld, protocol_component, tld_node,
 };
 
 /// Ring-VRF context for `register_name` proofs.
@@ -445,12 +444,12 @@ impl DotnsIdentity {
 	}
 }
 
-/// Classifies bare contract labels into lite and full usernames.
+/// Classifies currently owned bare contract labels into lite and full usernames.
 ///
 /// Only labels the PoP controller actually issued become usernames:
-/// `DotnsPopController.isPopIssued(label)` is the provenance authority, so a
-/// public registration, an incoming transfer, or a subname under a digit-only
-/// parent never fills a username slot no matter its shape. A label matching
+/// `DotnsPopController.isPopIssued(label)` is the provenance authority and the
+/// forward registry must still name `account` as owner. Append-only store rows
+/// and pending claims are discovery hints, not ownership. A label matching
 /// [`is_dotted_lite_username`] (`alice.42`, stored dotted) is the lite
 /// username verbatim; any other issued canonical DNS label is the full
 /// username. Anything that is not one of those shapes — oversized, non-ASCII,
@@ -459,33 +458,58 @@ impl DotnsIdentity {
 /// First hit per slot wins. Labels are expected bare: [`resolve_labels`]
 /// strips the network TLD. Returns `None` when no label becomes a username.
 pub async fn classify_labels<T, I>(
-	transport: &mut T,
-	controller: &[u8; 20],
-	labels: I,
-) -> Result<Option<DotnsIdentity>, String>
+    transport: &mut T,
+    controller: &[u8; 20],
+    account: &[u8; 32],
+    labels: I,
+) -> Result<DotnsIdentity, String>
 where
 	T: DotnsTransport + ?Sized,
 	I: IntoIterator,
 	I::Item: AsRef<str>,
 {
-	let (mut lite_username, mut full_username) = (None, None);
-	for label in labels {
-		let label = label.as_ref();
-		let shape_ok = is_dotted_lite_username(label) || is_dns_label(label);
-		if !shape_ok {
-			continue;
-		}
-		if !is_pop_issued(transport, controller, label).await? {
-			continue;
-		}
-		if is_dotted_lite_username(label) {
-			lite_username.get_or_insert_with(|| label.to_string());
-		} else {
-			full_username.get_or_insert_with(|| label.to_string());
-		}
-	}
-	let has_username = lite_username.is_some() || full_username.is_some();
-	Ok(has_username.then_some(DotnsIdentity { lite_username, full_username }))
+    let mut identity = DotnsIdentity::default();
+    let expected_owner = account_to_h160(account);
+    let mut owner_context = None;
+    for label in labels {
+        let label = label.as_ref();
+        let shape_ok = is_dotted_lite_username(label) || is_dns_label(label);
+        if !shape_ok {
+            continue;
+        }
+        if !is_pop_issued(transport, controller, label).await? {
+            continue;
+        }
+        let (registry, tld) = match owner_context {
+            Some(context) => context,
+            None => {
+                let output = transport
+                    .view(controller, call_no_args("protocolRegistry()"))
+                    .await?;
+                let protocol = decode_address(&output).map_err(|err| err.to_string())?;
+                let registry = protocol_component(transport, &protocol, "registry").await?;
+                if registry == [0; 20] {
+                    return Err("dotNS name registry is unconfigured".into());
+                }
+                let tld = tld_node(&network_tld(transport, &protocol).await?);
+                owner_context = Some((registry, tld));
+                (registry, tld)
+            }
+        };
+        if label_owner(transport, &registry, &tld, label).await? != Some(expected_owner) {
+            continue;
+        }
+        if is_dotted_lite_username(label) {
+            identity
+                .lite_username
+                .get_or_insert_with(|| label.to_string());
+        } else {
+            identity
+                .full_username
+                .get_or_insert_with(|| label.to_string());
+        }
+    }
+    Ok(identity)
 }
 
 /// Whether the PoP controller issued `label`, per
@@ -668,12 +692,12 @@ pub async fn discover_pop_controller<T: DotnsTransport + ?Sized>(
 /// Resolves the bare contract labels `account` holds.
 ///
 /// Two sources are merged. The controller's pending claims hold gateway-minted
-/// names the user has not settled into a `LabelStore` yet (`claimLabelStore`);
-/// those come first. A pending claim never lapses: the controller settles a
-/// claim of any age, so its `mintedAt` is not consulted. The user's
-/// `LabelStore`, when deployed, holds every name written for them: gateway names once settled, plus
-/// public registrations and incoming transfers. Store labels carry the network TLD
-/// (`alice01.paseo`), which is stripped here; subnames (`app.alice`) are dropped.
+/// names the user has not settled into a `LabelStore` yet (`claimLabelStore`).
+/// They are already minted names, not reservations: settlement does not expire
+/// with `reservationDuration`. The user's `LabelStore`, when deployed, holds every name
+/// written for them: gateway names once settled, plus public registrations and
+/// incoming transfers. Store labels carry the network TLD (`alice01.paseo`),
+/// which is stripped here; subnames (`app.alice`) are dropped.
 ///
 /// A store alone is not proof that pending claims are settled: a public
 /// registration or an incoming transfer deploys the store while gateway names
@@ -804,57 +828,57 @@ pub async fn label_available<T: DotnsTransport + ?Sized>(
 }
 
 /// Gateway-minted labels of `user` still waiting for `claimLabelStore`, paged
-/// out of `DotnsPopController.pendingClaims(address,uint256,uint256)`. Every
-/// entry counts, whatever its `mintedAt`: the controller no longer expires
-/// pending claims and settles one of any age.
+/// out of `DotnsPopController.pendingClaims(address,uint256,uint256)`.
+/// `mintedAt` is not a name-expiry deadline. Current ownership and provenance
+/// are checked by [`classify_labels`] before any candidate becomes a username.
 async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
 	transport: &mut T,
 	controller: &[u8; 20],
 	user: &[u8; 20],
 ) -> Result<Vec<String>, String> {
-	let mut claims = Vec::new();
-	for page in 0..CLAIM_PAGE_MAX {
-		let output = match transport
-			.view(
-				controller,
-				call_address_u256_pair(
-					"pendingClaims(address,uint256,uint256)",
-					user,
-					page * CLAIM_PAGE_LIMIT,
-					CLAIM_PAGE_LIMIT,
-				),
-			)
-			.await
-		{
-			Ok(output) => output,
-			Err(DotnsViewError::Reverted(reason)) => {
-				warn!(
-					%reason,
-					retained = claims.len(),
-					"DotnsPopController.pendingClaims page reverted; retaining earlier pages"
-				);
-				break;
-			},
-			Err(DotnsViewError::Failed(reason)) => {
-				return Err(format!("DotnsPopController.pendingClaims: {reason}"));
-			},
-		};
-		let page_claims = decode_pending_claims_array(&output)
-			.map_err(|err| format!("DotnsPopController.pendingClaims: {err}"))?;
-		let short_page = (page_claims.len() as u64) < CLAIM_PAGE_LIMIT;
-		claims.extend(page_claims);
-		if short_page {
-			break;
-		}
-		if page + 1 == CLAIM_PAGE_MAX {
-			warn!(
-				user = %hex::encode(user),
-				read = CLAIM_PAGE_MAX * CLAIM_PAGE_LIMIT,
-				"pending-claim page cap reached; later entries, if any, are not resolved"
-			);
-		}
-	}
-	Ok(claims.into_iter().map(|(label, _)| label).collect())
+    let mut claims = Vec::new();
+    for page in 0..CLAIM_PAGE_MAX {
+        let output = match transport
+            .view(
+                controller,
+                call_address_u256_pair(
+                    "pendingClaims(address,uint256,uint256)",
+                    user,
+                    page * CLAIM_PAGE_LIMIT,
+                    CLAIM_PAGE_LIMIT,
+                ),
+            )
+            .await
+        {
+            Ok(output) => output,
+            Err(DotnsViewError::Reverted(reason)) => {
+                warn!(
+                    %reason,
+                    retained = claims.len(),
+                    "DotnsPopController.pendingClaims page reverted; retaining earlier pages"
+                );
+                break;
+            }
+            Err(DotnsViewError::Failed(reason)) => {
+                return Err(format!("DotnsPopController.pendingClaims: {reason}"));
+            }
+        };
+        let page_claims = decode_pending_claims_array(&output)
+            .map_err(|err| format!("DotnsPopController.pendingClaims: {err}"))?;
+        let short_page = (page_claims.len() as u64) < CLAIM_PAGE_LIMIT;
+        claims.extend(page_claims);
+        if short_page {
+            break;
+        }
+        if page + 1 == CLAIM_PAGE_MAX {
+            warn!(
+                user = %hex::encode(user),
+                read = CLAIM_PAGE_MAX * CLAIM_PAGE_LIMIT,
+                "pending-claim page cap reached; later entries, if any, are not resolved"
+            );
+        }
+    }
+    Ok(claims.into_iter().map(|(label, _)| label).collect())
 }
 
 /// `DotnsGateway.DispatcherAddress` storage key.
@@ -896,818 +920,1012 @@ fn plain_key(pallet: &[u8], entry: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-	use super::*;
-	use crate::dotns_views::{TLD_WITHOUT_VIEW, network_tld};
-
-	// Golden vectors from the validated reference implementation in
-	// pop-dotns-testing: reservation.ts, proof.ts, verify.ts, abi.ts.
-	const RESERVATION_WITH_RESERVED: &str = "64706f703a646f746e732d676174657761793a72657365727665111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222221c616c696365626305013333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333013072657365727665646e616d65035e486800000000";
-	const RESERVATION_NO_RESERVED: &str = "64706f703a646f746e732d676174657761793a72657365727665111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222221c616c69636562630501333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333300035e486800000000";
-
-	#[test]
-	fn reservation_message_matches_reference_vectors() {
-		let with_reserved = build_reservation_message(
-			&[0x11; 32],
-			&[0x22; 32],
-			b"alicebc",
-			&[0x33; 65],
-			Some(b"reservedname"),
-			1749573123,
-		);
-		assert_eq!(hex::encode(&with_reserved), RESERVATION_WITH_RESERVED);
-
-		let without = build_reservation_message(
-			&[0x11; 32],
-			&[0x22; 32],
-			b"alicebc",
-			&[0x33; 65],
-			None,
-			1749573123,
-		);
-		assert_eq!(hex::encode(&without), RESERVATION_NO_RESERVED);
-	}
-
-	#[test]
-	fn link_and_proof_message_match_reference_vectors() {
-		let lite = Link::LiteUsername(b"alice.01".to_vec());
-		assert_eq!(hex::encode(lite.encode()), "0020616c6963652e3031");
-		assert_eq!(
-			hex::encode(build_register_proof_message(&[0x44; 32], b"alicebc", &lite)),
-			"506fe3afcb13b2e4fd182d49ff165bc9c834f9dd21d0d545eccb925993b68675"
-		);
-
-		let standalone = Link::None([0x55; 65]);
-		assert_eq!(hex::encode(standalone.encode()), format!("01{}", hex::encode([0x55; 65])));
-		assert_eq!(
-			hex::encode(build_register_proof_message(&[0x44; 32], b"alicebc", &standalone)),
-			"255da65ea6687123d5ac035a438a5c6fa18f7d04f23433611095a0fe58c479ab"
-		);
-	}
-
-	#[test]
-	fn register_name_call_and_extension_extra_have_the_reference_layout() {
-		let link = Link::LiteUsername(b"alice.01".to_vec());
-		let call = encode_register_name_call([0x6a, 0x01], &[0x44; 32], b"alicebc", &link);
-		assert_eq!(&call[..2], &[0x6a, 0x01]);
-		assert_eq!(&call[2..34], &[0x44; 32]);
-		assert_eq!(&call[34..], &[b"alicebc".to_vec().encode(), link.encode()].concat()[..]);
-
-		// Layout: 0x01 (Some) ‖ variant ‖ compact-len proof ‖ ring_index LE ‖
-		// revision LE ‖ 0x01 (Sr25519) ‖ signature, the AsDotnsGatewayInfo::
-		// RegisterFullName field order.
-		let extra = encode_register_full_name_extra(0, &[0xEE; 785], 3, 5, &[0xAB; 64]);
-		assert_eq!(
-			extra,
-			[
-				vec![0x01, 0x00],
-				vec![0xEEu8; 785].encode(),
-				3u32.to_le_bytes().to_vec(),
-				5u32.to_le_bytes().to_vec(),
-				vec![0x01],
-				vec![0xAB; 64],
-			]
-			.concat()
-		);
-	}
-
-	#[test]
-	fn selectors_match_reference_vectors() {
-		assert_eq!(hex::encode(selector("getLabelStore(address)")), "4fc5dce9");
-		assert_eq!(hex::encode(selector("getLabels(uint256,uint256)")), "2d7b5794");
-		assert_eq!(hex::encode(selector("protocolRegistry()")), "7656419f");
-		assert_eq!(hex::encode(selector("get(bytes32)")), "8eaa6ac0");
-		assert_eq!(hex::encode(selector("TARGET()")), "cc1f2afa");
-		assert_eq!(hex::encode(selector("pendingClaims(address,uint256,uint256)")), "76025b85");
-		assert_eq!(hex::encode(selector("tld()")), "2d551432");
-		assert_eq!(hex::encode(selector("recordExists(bytes32)")), "f79fe538");
-		assert_eq!(hex::encode(selector("ownerOf(uint256)")), "6352211e");
-		assert_eq!(hex::encode(selector("exists(uint256)")), "4f558e79");
-	}
-
-	#[test]
-	fn namehash_matches_the_reference_derivation() {
-		// `cast namehash paseo` and `cast namehash alicebc.paseo`.
-		let tld_node = namehash_under(&[0u8; 32], "paseo");
-		assert_eq!(
-			hex::encode(tld_node),
-			"096b436ee9a398429fe33ad4b359bad4398dd74b412ec1dd043c93dfbf581874"
-		);
-		assert_eq!(
-			hex::encode(namehash_under(&tld_node, "alicebc")),
-			"d3b106171373cd9fea783acd85f69def1bb2085f81cf5f2a65088b0ce4edd82e"
-		);
-		assert_eq!(crate::dotns_views::tld_node(".paseo"), tld_node);
-		assert_eq!(crate::dotns_views::tld_node("paseo"), tld_node);
-	}
-
-	#[test]
-	fn calldata_encoders_place_arguments_in_padded_words() {
-		let address_call = call_address("getLabelStore(address)", &[0xAA; 20]);
-		assert_eq!(address_call.len(), 4 + 32);
-		assert_eq!(&address_call[..4], &selector("getLabelStore(address)"));
-		assert!(address_call[4..16].iter().all(|b| *b == 0));
-		assert_eq!(&address_call[16..], &[0xAA; 20]);
-
-		let pair_call = call_u256_pair("getLabels(uint256,uint256)", 0, 16);
-		assert_eq!(pair_call.len(), 4 + 64);
-		assert_eq!(pair_call[35], 0);
-		assert_eq!(pair_call[67], 16);
-
-		let paged_call =
-			call_address_u256_pair("pendingClaims(address,uint256,uint256)", &[0xBB; 20], 32, 16);
-		assert_eq!(paged_call.len(), 4 + 96);
-		assert_eq!(&paged_call[..4], &selector("pendingClaims(address,uint256,uint256)"));
-		let mut expected_args = vec![0u8; 96];
-		expected_args[12..32].fill(0xBB);
-		expected_args[63] = 32;
-		expected_args[95] = 16;
-		assert_eq!(&paged_call[4..], expected_args.as_slice());
-
-		let key_call = call_bytes32("get(bytes32)", &registry_key("storeFactory"));
-		assert_eq!(&key_call[4..16], b"storeFactory");
-		assert!(key_call[16..36].iter().all(|b| *b == 0));
-	}
-
-	#[test]
-	fn account_to_h160_follows_the_revive_mapper() {
-		let mut eth_derived = [0x0Fu8; 32];
-		eth_derived[20..].fill(0xEE);
-		assert_eq!(account_to_h160(&eth_derived), [0x0F; 20]);
-
-		let hashed = account_to_h160(&[0x11; 32]);
-		assert_eq!(hashed, keccak_256(&[0x11; 32])[12..]);
-	}
-
-	/// Encodes a `ContractResult` prefix followed by `result`.
-	fn contract_result(result: &[u8]) -> Vec<u8> {
-		let mut out = Vec::new();
-		for _ in 0..4 {
-			Compact(7u64).encode_to(&mut out);
-		}
-		for _ in 0..2 {
-			(1u8, 0u128).encode_to(&mut out);
-		}
-		0u128.encode_to(&mut out);
-		out.extend_from_slice(result);
-		out
-	}
-
-	#[test]
-	fn revive_call_output_surfaces_data_reverts_and_dispatch_errors() {
-		let mut ok = vec![0u8];
-		0u32.encode_to(&mut ok);
-		vec![0xABu8, 0xCD].encode_to(&mut ok);
-		assert_eq!(decode_revive_call_output(&contract_result(&ok)).unwrap(), vec![0xAB, 0xCD]);
-
-		// Error("nope") revert payload under ReturnFlags::REVERT.
-		let mut revert_data = vec![0x08, 0xc3, 0x79, 0xa0];
-		revert_data.extend_from_slice(&{
-			let mut word = [0u8; 32];
-			word[31] = 0x20;
-			word
-		});
-		revert_data.extend_from_slice(&{
-			let mut word = [0u8; 32];
-			word[31] = 4;
-			word
-		});
-		revert_data.extend_from_slice(b"nope");
-		revert_data.extend_from_slice(&[0u8; 28]);
-		let mut reverted = vec![0u8];
-		1u32.encode_to(&mut reverted);
-		revert_data.encode_to(&mut reverted);
-		let err = decode_revive_call_output(&contract_result(&reverted)).unwrap_err();
-		assert!(
-			matches!(&err, DotnsContractError::Reverted { detail } if detail == "Error(\"nope\")"),
-			"unexpected error: {err}"
-		);
-
-		let dispatch = contract_result(&[0x01, 0x02, 0x03]);
-		assert!(matches!(
-			decode_revive_call_output(&dispatch).unwrap_err(),
-			DotnsContractError::Dispatch { .. }
-		));
-	}
-
-	/// ABI word with `value` right-aligned.
-	fn abi_word(value: u64) -> [u8; 32] {
-		let mut word = [0u8; 32];
-		word[24..].copy_from_slice(&value.to_be_bytes());
-		word
-	}
-
-	/// ABI string tail: a length word plus padded bytes.
-	fn abi_string(value: &str) -> Vec<u8> {
-		let mut out = abi_word(value.len() as u64).to_vec();
-		out.extend_from_slice(value.as_bytes());
-		out.resize(out.len().div_ceil(32) * 32, 0);
-		out
-	}
-
-	fn abi_pending_claims(values: &[(String, u64)]) -> Vec<u8> {
-		let encoded = values
-			.iter()
-			.map(|(label, minted_at)| {
-				[abi_word(0x40).to_vec(), abi_word(*minted_at).to_vec(), abi_string(label)].concat()
-			})
-			.collect::<Vec<_>>();
-		let mut output = abi_word(0x20).to_vec();
-		output.extend_from_slice(&abi_word(encoded.len() as u64));
-		let mut offset = (encoded.len() * 32) as u64;
-		for value in &encoded {
-			output.extend_from_slice(&abi_word(offset));
-			offset += value.len() as u64;
-		}
-		for value in encoded {
-			output.extend_from_slice(&value);
-		}
-		output
-	}
-
-	#[test]
-	fn abi_decoders_handle_addresses_string_arrays_and_pending_claims() {
-		let mut address = [0u8; 32];
-		address[12..].fill(0xBC);
-		assert_eq!(decode_address(&address).unwrap(), [0xBC; 20]);
-		assert!(decode_address(&[0xFF; 32]).is_err());
-
-		// string[] = ["alice01", "bob"].
-		let mut array = abi_word(0x20).to_vec();
-		array.extend_from_slice(&abi_word(2));
-		array.extend_from_slice(&abi_word(0x40));
-		array.extend_from_slice(&abi_word(0x40 + 0x40));
-		array.extend_from_slice(&abi_string("alice01"));
-		array.extend_from_slice(&abi_string("bob"));
-		assert_eq!(
-			decode_string_array(&array).unwrap(),
-			vec!["alice01".to_string(), "bob".to_string()]
-		);
-		assert_eq!(
-			decode_string_array(&[abi_word(0x20), abi_word(0)].concat()).unwrap(),
-			Vec::<String>::new()
-		);
-
-		// pendingClaims = [("alice01", 42), ("bob", 7)].
-		let struct_a =
-			[abi_word(0x40).to_vec(), abi_word(42).to_vec(), abi_string("alice01")].concat();
-		let struct_b = [abi_word(0x40).to_vec(), abi_word(7).to_vec(), abi_string("bob")].concat();
-		let mut claims = abi_word(0x20).to_vec();
-		claims.extend_from_slice(&abi_word(2));
-		claims.extend_from_slice(&abi_word(0x40));
-		claims.extend_from_slice(&abi_word(0x40 + struct_a.len() as u64));
-		claims.extend_from_slice(&struct_a);
-		claims.extend_from_slice(&struct_b);
-		assert_eq!(
-			decode_pending_claims_array(&claims).unwrap(),
-			vec![("alice01".to_string(), 42), ("bob".to_string(), 7)]
-		);
-		assert_eq!(
-			decode_pending_claims_array(&[abi_word(0x20), abi_word(0)].concat()).unwrap(),
-			Vec::<(String, u64)>::new()
-		);
-		assert_eq!(decode_u64(&abi_word(604_800)).unwrap(), 604_800);
-		assert!(decode_u64(&[0xff; 32]).is_err());
-	}
-
-	#[test]
-	fn bool_words_decode_strictly() {
-		assert!(decode_bool(&abi_word(1)).unwrap());
-		assert!(!decode_bool(&abi_word(0)).unwrap());
-		assert!(decode_bool(&abi_word(2)).is_err());
-		let mut high = abi_word(1);
-		high[5] = 1;
-		assert!(decode_bool(&high).is_err());
-	}
-
-	struct RevertingSecondClaimPage {
-		first_page: Vec<(String, u64)>,
-		pending_calls: usize,
-	}
-
-	#[crate::platform::async_trait]
-	impl DotnsTransport for RevertingSecondClaimPage {
-		async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-			panic!("unscripted storage read {}", hex::encode(key));
-		}
-
-		async fn view(
-			&mut self,
-			_dest: &[u8; 20],
-			input: Vec<u8>,
-		) -> Result<Vec<u8>, DotnsViewError> {
-			let function: [u8; 4] = input[..4].try_into().expect("selector prefix");
-			if function == selector("pendingClaims(address,uint256,uint256)") {
-				self.pending_calls += 1;
-				let offset = decode_u64(&input[36..68]).expect("offset word");
-				let limit = decode_u64(&input[68..100]).expect("limit word");
-				assert_eq!(limit, CLAIM_PAGE_LIMIT);
-				if offset == 0 {
-					return Ok(abi_pending_claims(&self.first_page));
-				}
-				assert_eq!(offset, CLAIM_PAGE_LIMIT);
-				return Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
-					detail: "offset past end".to_string(),
-				}));
-			}
-			panic!("unscripted view {}", hex::encode(function));
-		}
-	}
-
-	#[test]
-	fn a_later_pending_claim_page_revert_keeps_complete_earlier_pages() {
-		let expected = (0..CLAIM_PAGE_LIMIT)
-			.map(|index| format!("claim{index:02}"))
-			.collect::<Vec<_>>();
-		let mut transport = RevertingSecondClaimPage {
-			first_page: expected.iter().cloned().map(|label| (label, 50)).collect(),
-			pending_calls: 0,
-		};
-
-		let labels = futures::executor::block_on(pending_claim_labels(
-			&mut transport,
-			&[0xc0; 20],
-			&[0xaa; 20],
-		))
-		.unwrap();
-
-		assert_eq!(labels, expected);
-		assert_eq!(transport.pending_calls, 2);
-	}
-
-	#[test]
-	fn labels_classify_into_lite_and_full_usernames() {
-		futures::executor::block_on(async {
-			// Every label the transport is asked about counts as pop-issued
-			// unless listed; assertions below separate shape from provenance.
-			struct IssuedAll {
-				denied: Vec<&'static str>,
-			}
-			#[crate::platform::async_trait]
-			impl DotnsTransport for IssuedAll {
-				async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-					unreachable!("classify_labels reads no storage")
-				}
-				async fn view(
-					&mut self,
-					_dest: &[u8; 20],
-					input: Vec<u8>,
-				) -> Result<Vec<u8>, DotnsViewError> {
-					assert_eq!(&input[..4], &selector("isPopIssued(string)"));
-					let issued = !self
-						.denied
-						.iter()
-						.any(|denied| input.windows(denied.len()).any(|w| w == denied.as_bytes()));
-					let mut word = [0u8; 32];
-					word[31] = u8::from(issued);
-					Ok(word.to_vec())
-				}
-			}
-			let identity = |lite: Option<&str>, full: Option<&str>| {
-				Some(DotnsIdentity {
-					lite_username: lite.map(str::to_owned),
-					full_username: full.map(str::to_owned),
-				})
-			};
-			let controller = [0xAA; 20];
-			let mut all = IssuedAll { denied: vec![] };
-
-			assert_eq!(
-				classify_labels(&mut all, &controller, ["alice.01", "myproject"]).await.unwrap(),
-				identity(Some("alice.01"), Some("myproject"))
-			);
-
-			// The lite stem is letters only (`isLitePersonLabel`): a digit or
-			// hyphen in the stem is not a lite label. The flat spelling is an
-			// ordinary label, and dotted non-lite labels are subnames.
-			assert_eq!(
-				classify_labels(
-					&mut all,
-					&controller,
-					["app.web3app", "sub.alice.01", "aé.01", "a2b.34", "-x.01", "alice01"],
-				)
-				.await
-				.unwrap(),
-				identity(None, Some("alice01"))
-			);
-
-			assert_eq!(
-				classify_labels(&mut all, &controller, Vec::<String>::new()).await.unwrap(),
-				None
-			);
-
-			// Provenance gates every slot: a perfectly shaped label the
-			// controller did not issue is skipped.
-			let mut denying = IssuedAll { denied: vec!["app.42", "squatter"] };
-			assert_eq!(
-				classify_labels(
-					&mut denying,
-					&controller,
-					["app.42", "squatter", "alice.01", "myproject"],
-				)
-				.await
-				.unwrap(),
-				identity(Some("alice.01"), Some("myproject"))
-			);
-			// An account whose labels are all unissued has no identity.
-			assert_eq!(
-				classify_labels(&mut denying, &controller, ["app.42", "squatter"])
-					.await
-					.unwrap(),
-				None
-			);
-
-			// Hostile store data is dropped before the provenance read: the
-			// transport panics on storage and asserts the selector, so reaching
-			// it with garbage would fail loudly.
-			assert_eq!(
-				classify_labels(
-					&mut all,
-					&controller,
-					[
-						"a".repeat(5000),
-						"admin\r\nx".to_string(),
-						"a\0b".to_string(),
-						"\x1b[31mred\x1b[0m".to_string(),
-						"<img src=x onerror=alert(1)>".to_string(),
-						"Upper".to_string(),
-					],
-				)
-				.await
-				.unwrap(),
-				None
-			);
-
-			// The 63-octet DNS bound is the cut-off for full labels; the lite
-			// dotted form is capped by the 32-byte gateway bound.
-			let longest = "a".repeat(63);
-			assert_eq!(
-				classify_labels(&mut all, &controller, [longest.as_str()]).await.unwrap(),
-				identity(None, Some(&longest))
-			);
-			assert_eq!(
-				classify_labels(&mut all, &controller, ["a".repeat(64)]).await.unwrap(),
-				None
-			);
-			let oversized = format!("{}.01", "a".repeat(30));
-			assert_eq!(classify_labels(&mut all, &controller, [oversized]).await.unwrap(), None);
-
-			// One digit after the dot is not lite format; three digits neither.
-			for wrong in ["alice.1", "alice.012"] {
-				assert_eq!(classify_labels(&mut all, &controller, [wrong]).await.unwrap(), None);
-			}
-		});
-	}
-
-	#[test]
-	fn label_validators_follow_the_contract_rules() {
-		assert!(is_full_person_label("alicebc"));
-		assert!(is_full_person_label(&"a".repeat(32)));
-		assert!(!is_full_person_label("web3-app"), "no digits or hyphens");
-		assert!(!is_full_person_label("alice01"));
-		assert!(!is_full_person_label("Alice"));
-		assert!(!is_full_person_label(""));
-
-		// PopRules: five letters or fewer are governance-reserved; longer
-		// bases can be registered and reserved alike.
-		assert!(is_registrable_full_label("george"));
-		assert!(is_registrable_full_label("georgeabc"));
-		assert!(is_registrable_full_label(&"a".repeat(32)));
-		assert!(!is_registrable_full_label("alice"));
-		assert!(!is_full_person_label("alice.bc"));
-		assert!(!is_full_person_label("-alice"));
-		assert!(!is_full_person_label(&"a".repeat(33)));
-
-		assert!(is_dotted_lite_username("alice.01"));
-		// The stem is letters only (`isLitePersonLabel`): digits and hyphens
-		// in the stem are not lite labels.
-		assert!(!is_dotted_lite_username("a2b.34"));
-		assert!(!is_dotted_lite_username("a-b.34"));
-		assert!(!is_dotted_lite_username("alice01"));
-		assert!(!is_dotted_lite_username("alice.1"));
-		assert!(!is_dotted_lite_username("alice.012"));
-		assert!(!is_dotted_lite_username("a.lice.01"));
-		assert!(!is_dotted_lite_username(".01"));
-		// The 32-byte gateway bound applies to the dotted form: a 29-char stem
-		// (32 bytes dotted) fits, a 30-char stem (33 bytes) does not.
-		assert!(is_dotted_lite_username(&format!("{}.01", "a".repeat(29))));
-		assert!(!is_dotted_lite_username(&format!("{}.01", "a".repeat(30))));
-	}
-
-	/// A transport for controller discovery: `DispatcherAddress` holds `stored`,
-	/// and `TARGET()` / `protocolRegistry()` answer with scripted results.
-	struct ScriptedDiscovery {
-		stored: [u8; 20],
-		target: fn() -> Result<Vec<u8>, DotnsViewError>,
-		protocol_registry: fn() -> Result<Vec<u8>, DotnsViewError>,
-	}
-
-	#[crate::platform::async_trait]
-	impl DotnsTransport for ScriptedDiscovery {
-		async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-			Ok(Some(self.stored.to_vec()))
-		}
-
-		async fn view(
-			&mut self,
-			_dest: &[u8; 20],
-			input: Vec<u8>,
-		) -> Result<Vec<u8>, DotnsViewError> {
-			let sel: [u8; 4] = input[..4].try_into().expect("selector prefix; qed");
-			if sel == selector("TARGET()") {
-				(self.target)()
-			} else if sel == selector("protocolRegistry()") {
-				(self.protocol_registry)()
-			} else {
-				panic!("unscripted view {}", hex::encode(sel));
-			}
-		}
-	}
-
-	fn address_word(byte: u8) -> Vec<u8> {
-		let mut word = [0u8; 32];
-		word[12..].copy_from_slice(&[byte; 20]);
-		word.to_vec()
-	}
-
-	fn view_reverted() -> Result<Vec<u8>, DotnsViewError> {
-		Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
-			detail: "(empty)".to_string(),
-		}))
-	}
-
-	#[test]
-	fn discovery_follows_target_when_the_stored_address_is_a_dispatcher() {
-		let mut transport = ScriptedDiscovery {
-			stored: [0xdd; 20],
-			target: || Ok(address_word(0xcc)),
-			protocol_registry: view_reverted,
-		};
-		let found = futures::executor::block_on(discover_pop_controller(&mut transport))
-			.expect("discovery");
-		assert_eq!(found, Some([0xcc; 20]), "TARGET() names the controller");
-	}
-
-	#[test]
-	fn discovery_uses_the_stored_address_once_the_pallet_points_at_the_controller() {
-		let mut transport = ScriptedDiscovery {
-			stored: [0xcc; 20],
-			target: || panic!("must not probe the dispatcher view"),
-			protocol_registry: || Ok(address_word(0x9e)),
-		};
-		let found = futures::executor::block_on(discover_pop_controller(&mut transport))
-			.expect("discovery");
-		assert_eq!(
-			found,
-			Some([0xcc; 20]),
-			"protocolRegistry() answers, so the stored address is the controller"
-		);
-	}
-
-	#[test]
-	fn discovery_reports_an_address_that_is_neither() {
-		let mut transport = ScriptedDiscovery {
-			stored: [0xab; 20],
-			target: view_reverted,
-			protocol_registry: view_reverted,
-		};
-		let err = futures::executor::block_on(discover_pop_controller(&mut transport))
-			.expect_err("neither");
-		assert!(err.contains("neither protocolRegistry() nor"), "{err}");
-	}
-
-	#[test]
-	fn discovery_separates_a_failed_confirmation_from_a_wrong_contract() {
-		let mut transport = ScriptedDiscovery {
-			stored: [0xdd; 20],
-			target: || Err(DotnsViewError::Failed("node unreachable".into())),
-			protocol_registry: view_reverted,
-		};
-		let err = futures::executor::block_on(discover_pop_controller(&mut transport))
-			.expect_err("failure");
-		assert!(err.contains("TARGET(): node unreachable"), "{err}");
-		assert!(!err.contains("neither"), "a node failure is not a wrong contract: {err}");
-	}
-
-	#[test]
-	fn discovery_propagates_a_transport_failure_instead_of_guessing() {
-		let mut transport = ScriptedDiscovery {
-			stored: [0xcc; 20],
-			target: || panic!("must not fall back on a transport failure"),
-			protocol_registry: || Err(DotnsViewError::Failed("node unreachable".into())),
-		};
-		let err = futures::executor::block_on(discover_pop_controller(&mut transport))
-			.expect_err("failure");
-		assert!(err.contains("node unreachable"), "{err}");
-	}
-
-	/// A transport answering views by selector: `tld()` with a scripted
-	/// result, `get(bytes32)` with a registry address, `recordExists(bytes32)`
-	/// with a scripted bool.
-	struct ScriptedTld {
-		tld: fn() -> Result<Vec<u8>, DotnsViewError>,
-		dot_record_exists: bool,
-	}
-
-	#[crate::platform::async_trait]
-	impl DotnsTransport for ScriptedTld {
-		async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-			Ok(None)
-		}
-
-		async fn view(
-			&mut self,
-			_dest: &[u8; 20],
-			input: Vec<u8>,
-		) -> Result<Vec<u8>, DotnsViewError> {
-			let sel: [u8; 4] = input[..4].try_into().expect("selector prefix; qed");
-			if sel == selector("tld()") {
-				(self.tld)()
-			} else if sel == selector("get(bytes32)") {
-				let mut word = [0u8; 32];
-				word[12..].copy_from_slice(&[0xd0; 20]);
-				Ok(word.to_vec())
-			} else if sel == selector("recordExists(bytes32)") {
-				assert_eq!(&input[4..36], &tld_node(TLD_WITHOUT_VIEW));
-				Ok(abi_word(self.dot_record_exists as u64).to_vec())
-			} else {
-				panic!("unscripted view {}", hex::encode(sel));
-			}
-		}
-	}
-
-	#[test]
-	fn the_tld_falls_back_only_when_the_view_reverts_and_the_record_exists() {
-		let registry = [0x9e; 20];
-		fn reverted() -> Result<Vec<u8>, DotnsViewError> {
-			Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
-				detail: "(empty)".to_string(),
-			}))
-		}
-
-		let served = futures::executor::block_on(network_tld(
-			&mut ScriptedTld {
-				tld: || Ok([abi_word(32).to_vec(), abi_string(".paseo")].concat()),
-				dot_record_exists: false,
-			},
-			&registry,
-		));
-		assert_eq!(served.as_deref(), Ok(".paseo"));
-
-		// The fallback is verified: the registry must hold the ".dot" record.
-		let verified = futures::executor::block_on(network_tld(
-			&mut ScriptedTld { tld: reverted, dot_record_exists: true },
-			&registry,
-		));
-		assert_eq!(verified.as_deref(), Ok(TLD_WITHOUT_VIEW));
-
-		let unverified = futures::executor::block_on(network_tld(
-			&mut ScriptedTld { tld: reverted, dot_record_exists: false },
-			&registry,
-		));
-		assert!(unverified.is_err(), "{unverified:?}");
-
-		// A transport failure is not an answer: no guessing.
-		let failed = futures::executor::block_on(network_tld(
-			&mut ScriptedTld {
-				tld: || Err(DotnsViewError::Failed("timed out".to_string())),
-				dot_record_exists: true,
-			},
-			&registry,
-		));
-		assert!(failed.is_err(), "{failed:?}");
-	}
-
-	/// The full availability walk, scripted: tld → get(registrar) → exists.
-	struct ScriptedAvailability {
-		exists: fn() -> Result<Vec<u8>, DotnsViewError>,
-	}
-
-	#[crate::platform::async_trait]
-	impl DotnsTransport for ScriptedAvailability {
-		async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-			Ok(None)
-		}
-
-		async fn view(
-			&mut self,
-			_dest: &[u8; 20],
-			input: Vec<u8>,
-		) -> Result<Vec<u8>, DotnsViewError> {
-			let sel: [u8; 4] = input[..4].try_into().expect("selector prefix; qed");
-			if sel == selector("protocolRegistry()") {
-				let mut word = [0u8; 32];
-				word[12..].copy_from_slice(&[0x9e; 20]);
-				Ok(word.to_vec())
-			} else if sel == selector("tld()") {
-				Ok([abi_word(32).to_vec(), abi_string(".paseo")].concat())
-			} else if sel == selector("get(bytes32)") {
-				let mut word = [0u8; 32];
-				word[12..].copy_from_slice(&[0xd1; 20]);
-				Ok(word.to_vec())
-			} else if sel == selector("exists(uint256)") {
-				assert_eq!(&input[4..36], &namehash_under(&tld_node(".paseo"), "george"));
-				(self.exists)()
-			} else {
-				panic!("unscripted view {}", hex::encode(sel));
-			}
-		}
-	}
-
-	/// `available` must fail closed: a registrar that reverts (a wrong or
-	/// undeployed entry) is an error, never "available", or the already-minted
-	/// guard would pass for every name.
-	#[test]
-	fn availability_fails_closed_when_the_registrar_does_not_answer() {
-		let controller = [0xc0; 20];
-		let run = |exists: fn() -> Result<Vec<u8>, DotnsViewError>| {
-			futures::executor::block_on(label_available(
-				&mut ScriptedAvailability { exists },
-				&controller,
-				"george",
-			))
-		};
-
-		assert_eq!(run(|| Ok(abi_word(0).to_vec())), Ok(true));
-		assert_eq!(run(|| Ok(abi_word(1).to_vec())), Ok(false));
-		let reverted = run(|| {
-			Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
-				detail: "(empty)".to_string(),
-			}))
-		});
-		assert!(reverted.is_err(), "{reverted:?}");
-		let failed = run(|| Err(DotnsViewError::Failed("timed out".to_string())));
-		assert!(failed.is_err(), "{failed:?}");
-	}
-
-	#[test]
-	fn view_output_separates_reverts_from_failures() {
-		let reverted = contract_result(&{
-			let mut out = vec![0x00];
-			1u32.encode_to(&mut out); // ReturnFlags::REVERT
-			Vec::<u8>::new().encode_to(&mut out);
-			out
-		});
-		assert!(matches!(
-			view_output(&reverted),
-			Err(DotnsViewError::Reverted(DotnsContractError::Reverted { .. }))
-		));
-		assert!(matches!(view_output(&[0x01]), Err(DotnsViewError::Failed(_))));
-		let returned = contract_result(&{
-			let mut out = vec![0x00];
-			0u32.encode_to(&mut out);
-			vec![1u8, 2, 3, 4].encode_to(&mut out);
-			out
-		});
-		assert_eq!(view_output(&returned).unwrap(), vec![1, 2, 3, 4]);
-	}
-
-	#[test]
-	fn store_labels_lose_the_network_tld_and_subnames_are_dropped() {
-		assert_eq!(bare_store_label("alice01.paseo", ".paseo"), Some("alice01"));
-		assert_eq!(bare_store_label("alice01.dot", ".dot"), Some("alice01"));
-		// Wrong TLD, subname, or nothing left after the TLD.
-		assert_eq!(bare_store_label("alice01.dot", ".paseo"), None);
-		assert_eq!(bare_store_label("app.alice.paseo", ".paseo"), None);
-		assert_eq!(bare_store_label(".paseo", ".paseo"), None);
-		// A dotted lite label survives the strip; other dotted remainders
-		// stay subnames.
-		assert_eq!(bare_store_label("alice.01.paseo", ".paseo"), Some("alice.01"));
-		assert_eq!(bare_store_label("sub.alice.01.paseo", ".paseo"), None);
-		// An empty TLD leaves bare labels as they are.
-		assert_eq!(bare_store_label("alice01", ""), Some("alice01"));
-	}
-
-	#[test]
-	fn storage_keys_have_the_expected_layout() {
-		// Blake2_128Concat over the SCALE-encoded BaseLabel (compact length ‖ bytes).
-		let owner_key = lite_label_owner_key(b"alice.01");
-		let encoded = [&[0x20u8][..], b"alice.01"].concat();
-		assert_eq!(
-			&owner_key[..32],
-			[twox_128(b"DotnsGateway").as_slice(), twox_128(b"LiteLabelOwner").as_slice(),]
-				.concat()
-		);
-		assert_eq!(&owner_key[32..48], &blake2_128(&encoded));
-		assert_eq!(&owner_key[48..], &encoded);
-
-		let alias_key = account_alias_key(&[0x11; 32]);
-		let prefix =
-			[twox_128(b"DotnsGateway").as_slice(), twox_128(b"AccountAlias").as_slice()].concat();
-		assert_eq!(&alias_key[..32], prefix.as_slice());
-		// Blake2_128Concat over the raw account bytes.
-		assert_eq!(&alias_key[48..], &[0x11; 32]);
-
-		assert_eq!(dispatcher_address_key().len(), 32);
-		assert_eq!(timestamp_now_key().len(), 32);
-	}
-
-	#[test]
-	fn revive_call_args_encode_origin_dest_and_input() {
-		let args = encode_revive_call(&[0x11; 32], &[0x22; 20], &[0xAB, 0xCD]);
-		assert_eq!(&args[..32], &[0x11; 32]);
-		assert_eq!(&args[32..52], &[0x22; 20]);
-		assert_eq!(&args[52..68], &[0u8; 16], "value is zero");
-		assert_eq!(&args[68..70], &[0x00, 0x00], "no gas or deposit limit");
-		assert_eq!(&args[70..], vec![0xABu8, 0xCD].encode().as_slice());
-	}
+    use super::*;
+    use crate::dotns_views::{TLD_WITHOUT_VIEW, network_tld};
+
+    // Golden vectors from the validated reference implementation in
+    // pop-dotns-testing: reservation.ts, proof.ts, verify.ts, abi.ts.
+    const RESERVATION_WITH_RESERVED: &str = "64706f703a646f746e732d676174657761793a72657365727665111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222221c616c696365626305013333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333013072657365727665646e616d65035e486800000000";
+    const RESERVATION_NO_RESERVED: &str = "64706f703a646f746e732d676174657761793a72657365727665111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222221c616c69636562630501333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333300035e486800000000";
+
+    #[test]
+    fn reservation_message_matches_reference_vectors() {
+        let with_reserved = build_reservation_message(
+            &[0x11; 32],
+            &[0x22; 32],
+            b"alicebc",
+            &[0x33; 65],
+            Some(b"reservedname"),
+            1749573123,
+        );
+        assert_eq!(hex::encode(&with_reserved), RESERVATION_WITH_RESERVED);
+
+        let without = build_reservation_message(
+            &[0x11; 32],
+            &[0x22; 32],
+            b"alicebc",
+            &[0x33; 65],
+            None,
+            1749573123,
+        );
+        assert_eq!(hex::encode(&without), RESERVATION_NO_RESERVED);
+    }
+
+    #[test]
+    fn link_and_proof_message_match_reference_vectors() {
+        let lite = Link::LiteUsername(b"alice.01".to_vec());
+        assert_eq!(hex::encode(lite.encode()), "0020616c6963652e3031");
+        assert_eq!(
+            hex::encode(build_register_proof_message(&[0x44; 32], b"alicebc", &lite)),
+            "506fe3afcb13b2e4fd182d49ff165bc9c834f9dd21d0d545eccb925993b68675"
+        );
+
+        let standalone = Link::None([0x55; 65]);
+        assert_eq!(
+            hex::encode(standalone.encode()),
+            format!("01{}", hex::encode([0x55; 65]))
+        );
+        assert_eq!(
+            hex::encode(build_register_proof_message(
+                &[0x44; 32],
+                b"alicebc",
+                &standalone
+            )),
+            "255da65ea6687123d5ac035a438a5c6fa18f7d04f23433611095a0fe58c479ab"
+        );
+    }
+
+    #[test]
+    fn register_name_call_and_extension_extra_have_the_reference_layout() {
+        let link = Link::LiteUsername(b"alice.01".to_vec());
+        let call = encode_register_name_call([0x6a, 0x01], &[0x44; 32], b"alicebc", &link);
+        assert_eq!(&call[..2], &[0x6a, 0x01]);
+        assert_eq!(&call[2..34], &[0x44; 32]);
+        assert_eq!(
+            &call[34..],
+            &[b"alicebc".to_vec().encode(), link.encode()].concat()[..]
+        );
+
+        // Layout: 0x01 (Some) ‖ variant ‖ compact-len proof ‖ ring_index LE ‖
+        // revision LE ‖ 0x01 (Sr25519) ‖ signature, the AsDotnsGatewayInfo::
+        // RegisterFullName field order.
+        let extra = encode_register_full_name_extra(0, &[0xEE; 785], 3, 5, &[0xAB; 64]);
+        assert_eq!(
+            extra,
+            [
+                vec![0x01, 0x00],
+                vec![0xEEu8; 785].encode(),
+                3u32.to_le_bytes().to_vec(),
+                5u32.to_le_bytes().to_vec(),
+                vec![0x01],
+                vec![0xAB; 64],
+            ]
+            .concat()
+        );
+    }
+
+    #[test]
+    fn selectors_match_reference_vectors() {
+        assert_eq!(hex::encode(selector("getLabelStore(address)")), "4fc5dce9");
+        assert_eq!(
+            hex::encode(selector("getLabels(uint256,uint256)")),
+            "2d7b5794"
+        );
+        assert_eq!(hex::encode(selector("protocolRegistry()")), "7656419f");
+        assert_eq!(hex::encode(selector("get(bytes32)")), "8eaa6ac0");
+        assert_eq!(hex::encode(selector("TARGET()")), "cc1f2afa");
+        assert_eq!(
+            hex::encode(selector("pendingClaims(address,uint256,uint256)")),
+            "76025b85"
+        );
+        assert_eq!(hex::encode(selector("tld()")), "2d551432");
+        assert_eq!(hex::encode(selector("recordExists(bytes32)")), "f79fe538");
+        assert_eq!(hex::encode(selector("ownerOf(uint256)")), "6352211e");
+        assert_eq!(hex::encode(selector("exists(uint256)")), "4f558e79");
+    }
+
+    #[test]
+    fn namehash_matches_the_reference_derivation() {
+        // `cast namehash paseo` and `cast namehash alicebc.paseo`.
+        let tld_node = namehash_under(&[0u8; 32], "paseo");
+        assert_eq!(
+            hex::encode(tld_node),
+            "096b436ee9a398429fe33ad4b359bad4398dd74b412ec1dd043c93dfbf581874"
+        );
+        assert_eq!(
+            hex::encode(namehash_under(&tld_node, "alicebc")),
+            "d3b106171373cd9fea783acd85f69def1bb2085f81cf5f2a65088b0ce4edd82e"
+        );
+        assert_eq!(crate::dotns_views::tld_node(".paseo"), tld_node);
+        assert_eq!(crate::dotns_views::tld_node("paseo"), tld_node);
+    }
+
+    #[test]
+    fn calldata_encoders_place_arguments_in_padded_words() {
+        let address_call = call_address("getLabelStore(address)", &[0xAA; 20]);
+        assert_eq!(address_call.len(), 4 + 32);
+        assert_eq!(&address_call[..4], &selector("getLabelStore(address)"));
+        assert!(address_call[4..16].iter().all(|b| *b == 0));
+        assert_eq!(&address_call[16..], &[0xAA; 20]);
+
+        let pair_call = call_u256_pair("getLabels(uint256,uint256)", 0, 16);
+        assert_eq!(pair_call.len(), 4 + 64);
+        assert_eq!(pair_call[35], 0);
+        assert_eq!(pair_call[67], 16);
+
+        let paged_call = call_address_u256_pair(
+            "pendingClaims(address,uint256,uint256)",
+            &[0xBB; 20],
+            32,
+            16,
+        );
+        assert_eq!(paged_call.len(), 4 + 96);
+        assert_eq!(
+            &paged_call[..4],
+            &selector("pendingClaims(address,uint256,uint256)")
+        );
+        let mut expected_args = vec![0u8; 96];
+        expected_args[12..32].fill(0xBB);
+        expected_args[63] = 32;
+        expected_args[95] = 16;
+        assert_eq!(&paged_call[4..], expected_args.as_slice());
+
+        let key_call = call_bytes32("get(bytes32)", &registry_key("storeFactory"));
+        assert_eq!(&key_call[4..16], b"storeFactory");
+        assert!(key_call[16..36].iter().all(|b| *b == 0));
+    }
+
+    #[test]
+    fn account_to_h160_follows_the_revive_mapper() {
+        let mut eth_derived = [0x0Fu8; 32];
+        eth_derived[20..].fill(0xEE);
+        assert_eq!(account_to_h160(&eth_derived), [0x0F; 20]);
+
+        let hashed = account_to_h160(&[0x11; 32]);
+        assert_eq!(hashed, keccak_256(&[0x11; 32])[12..]);
+    }
+
+    /// Encodes a `ContractResult` prefix followed by `result`.
+    fn contract_result(result: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for _ in 0..4 {
+            Compact(7u64).encode_to(&mut out);
+        }
+        for _ in 0..2 {
+            (1u8, 0u128).encode_to(&mut out);
+        }
+        0u128.encode_to(&mut out);
+        out.extend_from_slice(result);
+        out
+    }
+
+    #[test]
+    fn revive_call_output_surfaces_data_reverts_and_dispatch_errors() {
+        let mut ok = vec![0u8];
+        0u32.encode_to(&mut ok);
+        vec![0xABu8, 0xCD].encode_to(&mut ok);
+        assert_eq!(
+            decode_revive_call_output(&contract_result(&ok)).unwrap(),
+            vec![0xAB, 0xCD]
+        );
+
+        // Error("nope") revert payload under ReturnFlags::REVERT.
+        let mut revert_data = vec![0x08, 0xc3, 0x79, 0xa0];
+        revert_data.extend_from_slice(&{
+            let mut word = [0u8; 32];
+            word[31] = 0x20;
+            word
+        });
+        revert_data.extend_from_slice(&{
+            let mut word = [0u8; 32];
+            word[31] = 4;
+            word
+        });
+        revert_data.extend_from_slice(b"nope");
+        revert_data.extend_from_slice(&[0u8; 28]);
+        let mut reverted = vec![0u8];
+        1u32.encode_to(&mut reverted);
+        revert_data.encode_to(&mut reverted);
+        let err = decode_revive_call_output(&contract_result(&reverted)).unwrap_err();
+        assert!(
+            matches!(&err, DotnsContractError::Reverted { detail } if detail == "Error(\"nope\")"),
+            "unexpected error: {err}"
+        );
+
+        let dispatch = contract_result(&[0x01, 0x02, 0x03]);
+        assert!(matches!(
+            decode_revive_call_output(&dispatch).unwrap_err(),
+            DotnsContractError::Dispatch { .. }
+        ));
+    }
+
+    /// ABI word with `value` right-aligned.
+    fn abi_word(value: u64) -> [u8; 32] {
+        let mut word = [0u8; 32];
+        word[24..].copy_from_slice(&value.to_be_bytes());
+        word
+    }
+
+    /// ABI string tail: a length word plus padded bytes.
+    fn abi_string(value: &str) -> Vec<u8> {
+        let mut out = abi_word(value.len() as u64).to_vec();
+        out.extend_from_slice(value.as_bytes());
+        out.resize(out.len().div_ceil(32) * 32, 0);
+        out
+    }
+
+    fn abi_pending_claims(values: &[(String, u64)]) -> Vec<u8> {
+        let encoded = values
+            .iter()
+            .map(|(label, minted_at)| {
+                [
+                    abi_word(0x40).to_vec(),
+                    abi_word(*minted_at).to_vec(),
+                    abi_string(label),
+                ]
+                .concat()
+            })
+            .collect::<Vec<_>>();
+        let mut output = abi_word(0x20).to_vec();
+        output.extend_from_slice(&abi_word(encoded.len() as u64));
+        let mut offset = (encoded.len() * 32) as u64;
+        for value in &encoded {
+            output.extend_from_slice(&abi_word(offset));
+            offset += value.len() as u64;
+        }
+        for value in encoded {
+            output.extend_from_slice(&value);
+        }
+        output
+    }
+
+    #[test]
+    fn abi_decoders_handle_addresses_string_arrays_and_pending_claims() {
+        let mut address = [0u8; 32];
+        address[12..].fill(0xBC);
+        assert_eq!(decode_address(&address).unwrap(), [0xBC; 20]);
+        assert!(decode_address(&[0xFF; 32]).is_err());
+
+        // string[] = ["alice01", "bob"].
+        let mut array = abi_word(0x20).to_vec();
+        array.extend_from_slice(&abi_word(2));
+        array.extend_from_slice(&abi_word(0x40));
+        array.extend_from_slice(&abi_word(0x40 + 0x40));
+        array.extend_from_slice(&abi_string("alice01"));
+        array.extend_from_slice(&abi_string("bob"));
+        assert_eq!(
+            decode_string_array(&array).unwrap(),
+            vec!["alice01".to_string(), "bob".to_string()]
+        );
+        assert_eq!(
+            decode_string_array(&[abi_word(0x20), abi_word(0)].concat()).unwrap(),
+            Vec::<String>::new()
+        );
+
+        // pendingClaims = [("alice01", 42), ("bob", 7)].
+        let struct_a = [
+            abi_word(0x40).to_vec(),
+            abi_word(42).to_vec(),
+            abi_string("alice01"),
+        ]
+        .concat();
+        let struct_b = [
+            abi_word(0x40).to_vec(),
+            abi_word(7).to_vec(),
+            abi_string("bob"),
+        ]
+        .concat();
+        let mut claims = abi_word(0x20).to_vec();
+        claims.extend_from_slice(&abi_word(2));
+        claims.extend_from_slice(&abi_word(0x40));
+        claims.extend_from_slice(&abi_word(0x40 + struct_a.len() as u64));
+        claims.extend_from_slice(&struct_a);
+        claims.extend_from_slice(&struct_b);
+        assert_eq!(
+            decode_pending_claims_array(&claims).unwrap(),
+            vec![("alice01".to_string(), 42), ("bob".to_string(), 7)]
+        );
+        assert_eq!(
+            decode_pending_claims_array(&[abi_word(0x20), abi_word(0)].concat()).unwrap(),
+            Vec::<(String, u64)>::new()
+        );
+        assert_eq!(decode_u64(&abi_word(604_800)).unwrap(), 604_800);
+        assert!(decode_u64(&[0xff; 32]).is_err());
+    }
+
+    #[test]
+    fn bool_words_decode_strictly() {
+        assert!(decode_bool(&abi_word(1)).unwrap());
+        assert!(!decode_bool(&abi_word(0)).unwrap());
+        assert!(decode_bool(&abi_word(2)).is_err());
+        let mut high = abi_word(1);
+        high[5] = 1;
+        assert!(decode_bool(&high).is_err());
+    }
+
+    struct RevertingSecondClaimPage {
+        first_page: Vec<(String, u64)>,
+        pending_calls: usize,
+    }
+
+    #[crate::platform::async_trait]
+    impl DotnsTransport for RevertingSecondClaimPage {
+        async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+            unreachable!("pending claims do not depend on the chain clock")
+        }
+
+        async fn view(
+            &mut self,
+            _dest: &[u8; 20],
+            input: Vec<u8>,
+        ) -> Result<Vec<u8>, DotnsViewError> {
+            let function: [u8; 4] = input[..4].try_into().expect("selector prefix");
+            if function == selector("pendingClaims(address,uint256,uint256)") {
+                self.pending_calls += 1;
+                let offset = decode_u64(&input[36..68]).expect("offset word");
+                let limit = decode_u64(&input[68..100]).expect("limit word");
+                assert_eq!(limit, CLAIM_PAGE_LIMIT);
+                if offset == 0 {
+                    return Ok(abi_pending_claims(&self.first_page));
+                }
+                assert_eq!(offset, CLAIM_PAGE_LIMIT);
+                return Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
+                    detail: "offset past end".to_string(),
+                }));
+            }
+            panic!("unscripted view {}", hex::encode(function));
+        }
+    }
+
+    #[test]
+    fn a_later_pending_claim_page_revert_keeps_complete_earlier_pages() {
+        let expected = (0..CLAIM_PAGE_LIMIT)
+            .map(|index| format!("claim{index:02}"))
+            .collect::<Vec<_>>();
+        let mut transport = RevertingSecondClaimPage {
+            first_page: expected.iter().cloned().map(|label| (label, 50)).collect(),
+            pending_calls: 0,
+        };
+
+        let labels = futures::executor::block_on(pending_claim_labels(
+            &mut transport,
+            &[0xc0; 20],
+            &[0xaa; 20],
+        ))
+        .unwrap();
+
+        assert_eq!(labels, expected);
+        assert_eq!(transport.pending_calls, 2);
+    }
+
+    #[test]
+    fn labels_classify_into_lite_and_full_usernames() {
+        futures::executor::block_on(async {
+            // Every label the transport is asked about counts as pop-issued
+            // unless listed; assertions below separate shape from provenance.
+            struct IssuedAll {
+                denied: Vec<&'static str>,
+            }
+            #[crate::platform::async_trait]
+            impl DotnsTransport for IssuedAll {
+                async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+                    unreachable!("classify_labels reads no storage")
+                }
+                async fn view(
+                    &mut self,
+                    _dest: &[u8; 20],
+                    input: Vec<u8>,
+                ) -> Result<Vec<u8>, DotnsViewError> {
+                    let function = &input[..4];
+                    let mut word = [0u8; 32];
+                    if function == selector("isPopIssued(string)") {
+                        let issued = !self.denied.iter().any(|denied| {
+                            input.windows(denied.len()).any(|w| w == denied.as_bytes())
+                        });
+                        word[31] = u8::from(issued);
+                    } else if function == selector("protocolRegistry()")
+                        || function == selector("get(bytes32)")
+                    {
+                        word[12..].fill(0xaa);
+                    } else if function == selector("tld()") {
+                        return Ok([abi_word(32).to_vec(), abi_string(".paseo")].concat());
+                    } else if function == selector("recordExists(bytes32)") {
+                        word[31] = 1;
+                    } else {
+                        assert_eq!(function, selector("owner(bytes32)"));
+                        word[12..].copy_from_slice(&account_to_h160(&[0xa1; 32]));
+                    }
+                    Ok(word.to_vec())
+                }
+            }
+            let controller = [0xAA; 20];
+            let account = [0xa1; 32];
+            let mut all = IssuedAll { denied: vec![] };
+
+            let identity = classify_labels(
+                &mut all, &controller, &account, ["alice.01", "myproject"],
+            )
+            .await
+            .unwrap();
+            assert_eq!(identity.lite_username.as_deref(), Some("alice.01"));
+            assert_eq!(identity.full_username.as_deref(), Some("myproject"));
+
+            // The lite stem is letters only (`isLitePersonLabel`): a digit or
+            // hyphen in the stem is not a lite label. The flat spelling is an
+            // ordinary label, and dotted non-lite labels are subnames.
+            let identity = classify_labels(
+                &mut all,
+                &controller,
+                &account,
+                [
+                    "app.web3app",
+                    "sub.alice.01",
+                    "aé.01",
+                    "a2b.34",
+                    "-x.01",
+                    "alice01",
+                ],
+            )
+            .await
+            .unwrap();
+            assert_eq!(identity.lite_username, None);
+            assert_eq!(identity.full_username.as_deref(), Some("alice01"));
+
+            assert_eq!(
+                classify_labels(&mut all, &controller, &account, Vec::<String>::new())
+                    .await
+                    .unwrap(),
+                DotnsIdentity::default()
+            );
+
+            // Provenance gates every slot: a perfectly shaped label the
+            // controller did not issue is skipped.
+            let mut denying = IssuedAll {
+                denied: vec!["app.42", "squatter"],
+            };
+            let identity = classify_labels(
+                &mut denying,
+                &controller,
+                &account,
+                ["app.42", "squatter", "alice.01", "myproject"],
+            )
+            .await
+            .unwrap();
+            assert_eq!(identity.lite_username.as_deref(), Some("alice.01"));
+            assert_eq!(identity.full_username.as_deref(), Some("myproject"));
+
+            // Hostile store data is dropped before any contract read.
+            let identity = classify_labels(
+                &mut all,
+                &controller,
+                &account,
+                [
+                    "a".repeat(5000),
+                    "admin\r\nx".to_string(),
+                    "a\0b".to_string(),
+                    "\x1b[31mred\x1b[0m".to_string(),
+                    "<img src=x onerror=alert(1)>".to_string(),
+                    "Upper".to_string(),
+                ],
+            )
+            .await
+            .unwrap();
+            assert_eq!(identity, DotnsIdentity::default());
+
+            // The 63-octet DNS bound is the cut-off for full labels; the lite
+            // dotted form is capped by the 32-byte gateway bound.
+            assert!(
+                classify_labels(&mut all, &controller, &account, ["a".repeat(63)])
+                    .await
+                    .unwrap()
+                    .full_username
+                    .is_some()
+            );
+            assert!(
+                classify_labels(&mut all, &controller, &account, ["a".repeat(64)])
+                    .await
+                    .unwrap()
+                    .full_username
+                    .is_none()
+            );
+            let oversized = format!("{}.01", "a".repeat(30));
+            assert_eq!(
+                classify_labels(&mut all, &controller, &account, [oversized])
+                    .await
+                    .unwrap(),
+                DotnsIdentity::default()
+            );
+
+            // One digit after the dot is not lite format; three digits neither.
+            for wrong in ["alice.1", "alice.012"] {
+                assert_eq!(
+                    classify_labels(&mut all, &controller, &account, [wrong])
+                        .await
+                        .unwrap(),
+                    DotnsIdentity::default()
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn old_pending_names_require_current_unambiguous_ownership_and_provenance() {
+        struct Directory {
+            owners: std::collections::HashMap<[u8; 32], [u8; 20]>,
+            issued: bool,
+        }
+
+        #[crate::platform::async_trait]
+        impl DotnsTransport for Directory {
+            async fn storage(&mut self, _: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+                unreachable!("pending name ownership does not read a reservation clock")
+            }
+
+            async fn view(
+                &mut self,
+                _: &[u8; 20],
+                input: Vec<u8>,
+            ) -> Result<Vec<u8>, DotnsViewError> {
+                let function = &input[..4];
+                let mut word = [0u8; 32];
+                if function == selector("pendingClaims(address,uint256,uint256)") {
+                    return Ok(abi_pending_claims(&[("alice.01".to_string(), 1)]));
+                } else if function == selector("isPopIssued(string)") {
+                    word[31] = u8::from(self.issued);
+                } else if function == selector("protocolRegistry()")
+                    || function == selector("get(bytes32)")
+                {
+                    word[12..].fill(0xaa);
+                } else if function == selector("tld()") {
+                    return Ok([abi_word(32).to_vec(), abi_string(".paseo")].concat());
+                } else {
+                    let node: [u8; 32] = input[4..].try_into().unwrap();
+                    if function == selector("recordExists(bytes32)") {
+                        word[31] = u8::from(self.owners.contains_key(&node));
+                    } else {
+                        assert_eq!(function, selector("owner(bytes32)"));
+                        word[12..].copy_from_slice(&self.owners[&node]);
+                    }
+                }
+                Ok(word.to_vec())
+            }
+        }
+
+        futures::executor::block_on(async {
+            let account = [0xa1; 32];
+            let owner = account_to_h160(&account);
+            let controller = [0xc0; 20];
+            let tld = tld_node(".paseo");
+            let atomic = namehash_under(&tld, "alice.01");
+            let nested = namehash_under(&namehash_under(&tld, "01"), "alice");
+            let mut directory = Directory {
+                owners: std::collections::HashMap::from([(atomic, owner)]),
+                issued: true,
+            };
+            let labels = pending_claim_labels(&mut directory, &controller, &owner)
+                .await
+                .unwrap();
+            assert_eq!(labels, ["alice.01"]);
+            for node in [atomic, nested] {
+                directory.owners = std::collections::HashMap::from([(node, owner)]);
+                assert_eq!(
+                    classify_labels(&mut directory, &controller, &account, &labels)
+                        .await
+                        .unwrap()
+                        .lite_username
+                        .as_deref(),
+                    Some("alice.01")
+                );
+            }
+            directory.owners.insert(atomic, [0xbb; 20]);
+            assert!(
+                classify_labels(&mut directory, &controller, &account, &labels)
+                    .await
+                    .is_err()
+            );
+            directory.owners.remove(&nested);
+            assert_eq!(
+                classify_labels(&mut directory, &controller, &account, &labels)
+                    .await
+                    .unwrap(),
+                DotnsIdentity::default(),
+                "an append-only candidate cannot restore a transferred username"
+            );
+            directory.owners.clear();
+            assert_eq!(
+                classify_labels(&mut directory, &controller, &account, &labels)
+                    .await
+                    .unwrap(),
+                DotnsIdentity::default()
+            );
+            directory.owners.insert(atomic, owner);
+            directory.issued = false;
+            assert_eq!(
+                classify_labels(&mut directory, &controller, &account, &labels)
+                    .await
+                    .unwrap(),
+                DotnsIdentity::default(),
+                "current ownership alone does not establish gateway provenance"
+            );
+        });
+    }
+
+    #[test]
+    fn label_validators_follow_the_contract_rules() {
+        assert!(is_full_person_label("alicebc"));
+        assert!(is_full_person_label(&"a".repeat(32)));
+        assert!(!is_full_person_label("web3-app"), "no digits or hyphens");
+        assert!(!is_full_person_label("alice01"));
+        assert!(!is_full_person_label("Alice"));
+        assert!(!is_full_person_label(""));
+
+        // PopRules: five letters or fewer are governance-reserved; longer
+        // bases can be registered and reserved alike.
+        assert!(is_registrable_full_label("george"));
+        assert!(is_registrable_full_label("georgeabc"));
+        assert!(is_registrable_full_label(&"a".repeat(32)));
+        assert!(!is_registrable_full_label("alice"));
+        assert!(!is_full_person_label("alice.bc"));
+        assert!(!is_full_person_label("-alice"));
+        assert!(!is_full_person_label(&"a".repeat(33)));
+
+        assert!(is_dotted_lite_username("alice.01"));
+        // The stem is letters only (`isLitePersonLabel`): digits and hyphens
+        // in the stem are not lite labels.
+        assert!(!is_dotted_lite_username("a2b.34"));
+        assert!(!is_dotted_lite_username("a-b.34"));
+        assert!(!is_dotted_lite_username("alice01"));
+        assert!(!is_dotted_lite_username("alice.1"));
+        assert!(!is_dotted_lite_username("alice.012"));
+        assert!(!is_dotted_lite_username("a.lice.01"));
+        assert!(!is_dotted_lite_username(".01"));
+        // The 32-byte gateway bound applies to the dotted form: a 29-char stem
+        // (32 bytes dotted) fits, a 30-char stem (33 bytes) does not.
+        assert!(is_dotted_lite_username(&format!("{}.01", "a".repeat(29))));
+        assert!(!is_dotted_lite_username(&format!("{}.01", "a".repeat(30))));
+    }
+
+    /// A transport for controller discovery: `DispatcherAddress` holds `stored`,
+    /// and `TARGET()` / `protocolRegistry()` answer with scripted results.
+    struct ScriptedDiscovery {
+        stored: [u8; 20],
+        target: fn() -> Result<Vec<u8>, DotnsViewError>,
+        protocol_registry: fn() -> Result<Vec<u8>, DotnsViewError>,
+    }
+
+    #[crate::platform::async_trait]
+    impl DotnsTransport for ScriptedDiscovery {
+        async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+            Ok(Some(self.stored.to_vec()))
+        }
+
+        async fn view(
+            &mut self,
+            _dest: &[u8; 20],
+            input: Vec<u8>,
+        ) -> Result<Vec<u8>, DotnsViewError> {
+            let sel: [u8; 4] = input[..4].try_into().expect("selector prefix; qed");
+            if sel == selector("TARGET()") {
+                (self.target)()
+            } else if sel == selector("protocolRegistry()") {
+                (self.protocol_registry)()
+            } else {
+                panic!("unscripted view {}", hex::encode(sel));
+            }
+        }
+    }
+
+    fn address_word(byte: u8) -> Vec<u8> {
+        let mut word = [0u8; 32];
+        word[12..].copy_from_slice(&[byte; 20]);
+        word.to_vec()
+    }
+
+    fn view_reverted() -> Result<Vec<u8>, DotnsViewError> {
+        Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
+            detail: "(empty)".to_string(),
+        }))
+    }
+
+    #[test]
+    fn discovery_follows_target_when_the_stored_address_is_a_dispatcher() {
+        let mut transport = ScriptedDiscovery {
+            stored: [0xdd; 20],
+            target: || Ok(address_word(0xcc)),
+            protocol_registry: view_reverted,
+        };
+        let found = futures::executor::block_on(discover_pop_controller(&mut transport))
+            .expect("discovery");
+        assert_eq!(found, Some([0xcc; 20]), "TARGET() names the controller");
+    }
+
+    #[test]
+    fn discovery_uses_the_stored_address_once_the_pallet_points_at_the_controller() {
+        let mut transport = ScriptedDiscovery {
+            stored: [0xcc; 20],
+            target: || panic!("must not probe the dispatcher view"),
+            protocol_registry: || Ok(address_word(0x9e)),
+        };
+        let found = futures::executor::block_on(discover_pop_controller(&mut transport))
+            .expect("discovery");
+        assert_eq!(
+            found,
+            Some([0xcc; 20]),
+            "protocolRegistry() answers, so the stored address is the controller"
+        );
+    }
+
+    #[test]
+    fn discovery_reports_an_address_that_is_neither() {
+        let mut transport = ScriptedDiscovery {
+            stored: [0xab; 20],
+            target: view_reverted,
+            protocol_registry: view_reverted,
+        };
+        let err = futures::executor::block_on(discover_pop_controller(&mut transport))
+            .expect_err("neither");
+        assert!(err.contains("neither protocolRegistry() nor"), "{err}");
+    }
+
+    #[test]
+    fn discovery_separates_a_failed_confirmation_from_a_wrong_contract() {
+        let mut transport = ScriptedDiscovery {
+            stored: [0xdd; 20],
+            target: || Err(DotnsViewError::Failed("node unreachable".into())),
+            protocol_registry: view_reverted,
+        };
+        let err = futures::executor::block_on(discover_pop_controller(&mut transport))
+            .expect_err("failure");
+        assert!(err.contains("TARGET(): node unreachable"), "{err}");
+        assert!(
+            !err.contains("neither"),
+            "a node failure is not a wrong contract: {err}"
+        );
+    }
+
+    #[test]
+    fn discovery_propagates_a_transport_failure_instead_of_guessing() {
+        let mut transport = ScriptedDiscovery {
+            stored: [0xcc; 20],
+            target: || panic!("must not fall back on a transport failure"),
+            protocol_registry: || Err(DotnsViewError::Failed("node unreachable".into())),
+        };
+        let err = futures::executor::block_on(discover_pop_controller(&mut transport))
+            .expect_err("failure");
+        assert!(err.contains("node unreachable"), "{err}");
+    }
+
+    /// A transport answering views by selector: `tld()` with a scripted
+    /// result, `get(bytes32)` with a registry address, `recordExists(bytes32)`
+    /// with a scripted bool.
+    struct ScriptedTld {
+        tld: fn() -> Result<Vec<u8>, DotnsViewError>,
+        dot_record_exists: bool,
+    }
+
+    #[crate::platform::async_trait]
+    impl DotnsTransport for ScriptedTld {
+        async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+            Ok(None)
+        }
+
+        async fn view(
+            &mut self,
+            _dest: &[u8; 20],
+            input: Vec<u8>,
+        ) -> Result<Vec<u8>, DotnsViewError> {
+            let sel: [u8; 4] = input[..4].try_into().expect("selector prefix; qed");
+            if sel == selector("tld()") {
+                (self.tld)()
+            } else if sel == selector("get(bytes32)") {
+                let mut word = [0u8; 32];
+                word[12..].copy_from_slice(&[0xd0; 20]);
+                Ok(word.to_vec())
+            } else if sel == selector("recordExists(bytes32)") {
+                assert_eq!(&input[4..36], &tld_node(TLD_WITHOUT_VIEW));
+                Ok(abi_word(self.dot_record_exists as u64).to_vec())
+            } else {
+                panic!("unscripted view {}", hex::encode(sel));
+            }
+        }
+    }
+
+    #[test]
+    fn the_tld_falls_back_only_when_the_view_reverts_and_the_record_exists() {
+        let registry = [0x9e; 20];
+        fn reverted() -> Result<Vec<u8>, DotnsViewError> {
+            Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
+                detail: "(empty)".to_string(),
+            }))
+        }
+
+        let served = futures::executor::block_on(network_tld(
+            &mut ScriptedTld {
+                tld: || Ok([abi_word(32).to_vec(), abi_string(".paseo")].concat()),
+                dot_record_exists: false,
+            },
+            &registry,
+        ));
+        assert_eq!(served.as_deref(), Ok(".paseo"));
+
+        // The fallback is verified: the registry must hold the ".dot" record.
+        let verified = futures::executor::block_on(network_tld(
+            &mut ScriptedTld {
+                tld: reverted,
+                dot_record_exists: true,
+            },
+            &registry,
+        ));
+        assert_eq!(verified.as_deref(), Ok(TLD_WITHOUT_VIEW));
+
+        let unverified = futures::executor::block_on(network_tld(
+            &mut ScriptedTld {
+                tld: reverted,
+                dot_record_exists: false,
+            },
+            &registry,
+        ));
+        assert!(unverified.is_err(), "{unverified:?}");
+
+        // A transport failure is not an answer: no guessing.
+        let failed = futures::executor::block_on(network_tld(
+            &mut ScriptedTld {
+                tld: || Err(DotnsViewError::Failed("timed out".to_string())),
+                dot_record_exists: true,
+            },
+            &registry,
+        ));
+        assert!(failed.is_err(), "{failed:?}");
+    }
+
+    /// The full availability walk, scripted: tld → get(registrar) → exists.
+    struct ScriptedAvailability {
+        exists: fn() -> Result<Vec<u8>, DotnsViewError>,
+    }
+
+    #[crate::platform::async_trait]
+    impl DotnsTransport for ScriptedAvailability {
+        async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+            Ok(None)
+        }
+
+        async fn view(
+            &mut self,
+            _dest: &[u8; 20],
+            input: Vec<u8>,
+        ) -> Result<Vec<u8>, DotnsViewError> {
+            let sel: [u8; 4] = input[..4].try_into().expect("selector prefix; qed");
+            if sel == selector("protocolRegistry()") {
+                let mut word = [0u8; 32];
+                word[12..].copy_from_slice(&[0x9e; 20]);
+                Ok(word.to_vec())
+            } else if sel == selector("tld()") {
+                Ok([abi_word(32).to_vec(), abi_string(".paseo")].concat())
+            } else if sel == selector("get(bytes32)") {
+                let mut word = [0u8; 32];
+                word[12..].copy_from_slice(&[0xd1; 20]);
+                Ok(word.to_vec())
+            } else if sel == selector("exists(uint256)") {
+                assert_eq!(
+                    &input[4..36],
+                    &namehash_under(&tld_node(".paseo"), "george")
+                );
+                (self.exists)()
+            } else {
+                panic!("unscripted view {}", hex::encode(sel));
+            }
+        }
+    }
+
+    /// `available` must fail closed: a registrar that reverts (a wrong or
+    /// undeployed entry) is an error, never "available", or the already-minted
+    /// guard would pass for every name.
+    #[test]
+    fn availability_fails_closed_when_the_registrar_does_not_answer() {
+        let controller = [0xc0; 20];
+        let run = |exists: fn() -> Result<Vec<u8>, DotnsViewError>| {
+            futures::executor::block_on(label_available(
+                &mut ScriptedAvailability { exists },
+                &controller,
+                "george",
+            ))
+        };
+
+        assert_eq!(run(|| Ok(abi_word(0).to_vec())), Ok(true));
+        assert_eq!(run(|| Ok(abi_word(1).to_vec())), Ok(false));
+        let reverted = run(|| {
+            Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
+                detail: "(empty)".to_string(),
+            }))
+        });
+        assert!(reverted.is_err(), "{reverted:?}");
+        let failed = run(|| Err(DotnsViewError::Failed("timed out".to_string())));
+        assert!(failed.is_err(), "{failed:?}");
+    }
+
+    #[test]
+    fn view_output_separates_reverts_from_failures() {
+        let reverted = contract_result(&{
+            let mut out = vec![0x00];
+            1u32.encode_to(&mut out); // ReturnFlags::REVERT
+            Vec::<u8>::new().encode_to(&mut out);
+            out
+        });
+        assert!(matches!(
+            view_output(&reverted),
+            Err(DotnsViewError::Reverted(
+                DotnsContractError::Reverted { .. }
+            ))
+        ));
+        assert!(matches!(
+            view_output(&[0x01]),
+            Err(DotnsViewError::Failed(_))
+        ));
+        let returned = contract_result(&{
+            let mut out = vec![0x00];
+            0u32.encode_to(&mut out);
+            vec![1u8, 2, 3, 4].encode_to(&mut out);
+            out
+        });
+        assert_eq!(view_output(&returned).unwrap(), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn store_labels_lose_the_network_tld_and_subnames_are_dropped() {
+        assert_eq!(bare_store_label("alice01.paseo", ".paseo"), Some("alice01"));
+        assert_eq!(bare_store_label("alice01.dot", ".dot"), Some("alice01"));
+        // Wrong TLD, subname, or nothing left after the TLD.
+        assert_eq!(bare_store_label("alice01.dot", ".paseo"), None);
+        assert_eq!(bare_store_label("app.alice.paseo", ".paseo"), None);
+        assert_eq!(bare_store_label(".paseo", ".paseo"), None);
+        // A dotted lite label survives the strip; other dotted remainders
+        // stay subnames.
+        assert_eq!(
+            bare_store_label("alice.01.paseo", ".paseo"),
+            Some("alice.01")
+        );
+        assert_eq!(bare_store_label("sub.alice.01.paseo", ".paseo"), None);
+        // An empty TLD leaves bare labels as they are.
+        assert_eq!(bare_store_label("alice01", ""), Some("alice01"));
+    }
+
+    #[test]
+    fn storage_keys_have_the_expected_layout() {
+        // Blake2_128Concat over the SCALE-encoded BaseLabel (compact length ‖ bytes).
+        let owner_key = lite_label_owner_key(b"alice.01");
+        let encoded = [&[0x20u8][..], b"alice.01"].concat();
+        assert_eq!(
+            &owner_key[..32],
+            [
+                twox_128(b"DotnsGateway").as_slice(),
+                twox_128(b"LiteLabelOwner").as_slice(),
+            ]
+            .concat()
+        );
+        assert_eq!(&owner_key[32..48], &blake2_128(&encoded));
+        assert_eq!(&owner_key[48..], &encoded);
+
+        let alias_key = account_alias_key(&[0x11; 32]);
+        let prefix = [
+            twox_128(b"DotnsGateway").as_slice(),
+            twox_128(b"AccountAlias").as_slice(),
+        ]
+        .concat();
+        assert_eq!(&alias_key[..32], prefix.as_slice());
+        // Blake2_128Concat over the raw account bytes.
+        assert_eq!(&alias_key[48..], &[0x11; 32]);
+
+        assert_eq!(dispatcher_address_key().len(), 32);
+        assert_eq!(timestamp_now_key().len(), 32);
+    }
+
+    #[test]
+    fn revive_call_args_encode_origin_dest_and_input() {
+        let args = encode_revive_call(&[0x11; 32], &[0x22; 20], &[0xAB, 0xCD]);
+        assert_eq!(&args[..32], &[0x11; 32]);
+        assert_eq!(&args[32..52], &[0x22; 20]);
+        assert_eq!(&args[52..68], &[0u8; 16], "value is zero");
+        assert_eq!(&args[68..70], &[0x00, 0x00], "no gas or deposit limit");
+        assert_eq!(&args[70..], vec![0xABu8, 0xCD].encode().as_slice());
+    }
 }
