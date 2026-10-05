@@ -45,7 +45,10 @@ class CoreDurableRecoveryWorker @AssistedInject constructor(
 
         private val NOTIFICATION_ID = WORK_ID.hashCode()
 
-        /** Idempotent: `KEEP` leaves a running or queued recovery alone. */
+        /**
+         * `APPEND_OR_REPLACE` queues a new run behind one that is finishing, so
+         * a request made while a run settles is not dropped.
+         */
         fun enqueue(context: Context) {
             val request = OneTimeWorkRequestBuilder<CoreDurableRecoveryWorker>()
                 .setConstraints(
@@ -61,7 +64,7 @@ class CoreDurableRecoveryWorker @AssistedInject constructor(
                 .build()
 
             WorkManager.getInstance(context)
-                .enqueueUniqueWork(WORK_ID, ExistingWorkPolicy.KEEP, request)
+                .enqueueUniqueWork(WORK_ID, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
         }
     }
 

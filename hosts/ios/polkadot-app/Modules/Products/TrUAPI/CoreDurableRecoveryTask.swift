@@ -17,18 +17,14 @@ final class CoreDurableRecoveryTask: @unchecked Sendable {
 
     private let lock = NSLock()
     private var runtimeProvider: TrUAPIHostRuntimeProviding?
-    private var pendingTask: BGProcessingTask?
+    private var pendingTask: CoreDurableRecoveryRun?
 
     private init() {}
 
     /// Registers the launch handler. Call before the app finishes launching.
     func register() {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.identifier, using: nil) { [weak self] task in
-            guard let task = task as? BGProcessingTask else {
-                task.setTaskCompleted(success: false)
-                return
-            }
-            self?.handle(task)
+            self?.handle(CoreDurableRecoveryRun(task: task, reschedule: { self?.schedule() }))
         }
     }
 
@@ -41,9 +37,7 @@ final class CoreDurableRecoveryTask: @unchecked Sendable {
         pendingTask = nil
         lock.unlock()
 
-        if let pending {
-            run(pending, on: runtimeProvider)
-        }
+        pending?.start(on: runtimeProvider)
     }
 
     /// Asks the system for a run with network access.
@@ -56,29 +50,80 @@ final class CoreDurableRecoveryTask: @unchecked Sendable {
 }
 
 private extension CoreDurableRecoveryTask {
-    func handle(_ task: BGProcessingTask) {
+    func handle(_ run: CoreDurableRecoveryRun) {
         lock.lock()
         let provider = runtimeProvider
+        let replaced = provider == nil ? pendingTask : nil
         if provider == nil {
-            pendingTask = task
+            pendingTask = run
         }
         lock.unlock()
 
+        replaced?.finish(success: false)
         if let provider {
-            run(task, on: provider)
+            run.start(on: provider)
+        }
+    }
+}
+
+/// One delivered background task, completed exactly once: by the recovery
+/// run, or by expiry. Cancelling the Swift task does not stop the run in the
+/// core, so expiry completes the system task itself instead of waiting for
+/// the run to notice.
+private final class CoreDurableRecoveryRun: @unchecked Sendable {
+    private let task: BGTask
+    private let reschedule: () -> Void
+    private let lock = NSLock()
+    private var finished = false
+    private var work: Task<Void, Never>?
+
+    init(task: BGTask, reschedule: @escaping () -> Void) {
+        self.task = task
+        self.reschedule = reschedule
+        task.expirationHandler = { [weak self] in
+            self?.expire()
         }
     }
 
-    func run(_ task: BGProcessingTask, on runtimeProvider: TrUAPIHostRuntimeProviding) {
-        let work = Task { [weak self] in
+    func start(on runtimeProvider: TrUAPIHostRuntimeProviding) {
+        // Holds the run strongly: nothing else does once the task has started.
+        let run = Task { [self] in
             do {
                 try await runtimeProvider.sharedRuntime().runDurableRecovery()
-                task.setTaskCompleted(success: true)
+                finish(success: true)
             } catch {
-                self?.schedule()
-                task.setTaskCompleted(success: false)
+                finish(success: false)
             }
         }
-        task.expirationHandler = { work.cancel() }
+        lock.lock()
+        work = run
+        lock.unlock()
+    }
+
+    /// Completes the system task once; a failed run asks for the next one.
+    func finish(success: Bool) {
+        lock.lock()
+        let first = !finished
+        finished = true
+        lock.unlock()
+
+        guard first else {
+            return
+        }
+        if !success {
+            reschedule()
+        }
+        task.setTaskCompleted(success: success)
+    }
+}
+
+private extension CoreDurableRecoveryRun {
+    func expire() {
+        lock.lock()
+        let run = work
+        lock.unlock()
+
+        run?.cancel()
+        finish(success: false)
     }
 }
