@@ -26,11 +26,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
-/**
- * Faces over the core: one worker reference is taken for the collection, the product's worker is
- * awaited, and `render` is opened on the card's context. A render stream that ends or fails leaves
- * the last face on screen and is opened again; a worker that restarts gets a fresh stream.
- */
+/** A restarted worker gets a fresh render stream while the last face stays visible. */
 class TrUAPIPocketFaceStreams @Inject constructor(
     private val runtimeProvider: TrUAPIHostRuntimeProvider,
     private val workers: TrUAPIWorkerSupervisor,
@@ -38,24 +34,18 @@ class TrUAPIPocketFaceStreams @Inject constructor(
 ) : PocketFaceStreams {
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun renderFaces(key: PocketCardKey): Flow<JsWidget> = flow {
-        // A card whose product publishes no Pocket worker has nothing to stream, and the reference
-        // below is what starts one: the pinned card is on the default tab, so taking it would boot a
-        // worker for the personhood product every time the tab is opened.
         if (!publishedCards.isStreamable(key)) return@flow
 
-        val runtime = runtimeProvider.runtime()
+        runtimeProvider.runtime()
             .logFailure("TrUAPI runtime unavailable; Pocket face ${key.cardId.value} stays static")
             .getOrElse { return@flow }
 
-        try {
-            emitAll(
-                workers.execution(key.productId)
-                    .filterNotNull()
-                    .flatMapLatest { execution -> execution.faces(key) }
-                    .retryAfterStreamEnd(key),
-            )
-        } finally {
-        }
+        emitAll(
+            workers.execution(key.productId)
+                .filterNotNull()
+                .flatMapLatest { execution -> execution.faces(key) }
+                .retryAfterStreamEnd(key),
+        )
     }
 
     private suspend fun PublishedPocketCards.isStreamable(key: PocketCardKey): Boolean =

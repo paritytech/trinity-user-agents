@@ -1,19 +1,19 @@
 package io.paritytech.polkadotapp.feature_sso_impl.domain
 
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
+import io.paritytech.polkadotapp.common.domain.model.requireX25519PublicKey
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_sso_api.domain.GetActiveSsoSessionsUseCase
 import io.paritytech.polkadotapp.feature_sso_api.domain.model.ActiveSsoSession
+import io.paritytech.polkadotapp.feature_sso_api.domain.model.DeviceStatus
 import io.paritytech.polkadotapp.feature_sso_impl.data.repository.SsoSessionRepository
 import io.paritytech.polkadotapp.feature_sso_impl.domain.model.SsoSessionData
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
-import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
-import io.paritytech.polkadotapp.common.domain.model.requireX25519PublicKey
-import io.paritytech.polkadotapp.feature_sso_api.domain.model.DeviceStatus
-import uniffi.truapi.PairedHostRecord
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import uniffi.truapi.PairedHostRecord
 import javax.inject.Inject
 
 class RealGetActiveSsoSessionsUseCase @Inject constructor(

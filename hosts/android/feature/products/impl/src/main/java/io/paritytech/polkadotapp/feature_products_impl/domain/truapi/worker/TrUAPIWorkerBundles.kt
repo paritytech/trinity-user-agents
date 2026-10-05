@@ -6,16 +6,16 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_dotns_api.domain.resolveToLocalFile
+import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
+import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductManifest
-import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import uniffi.truapi.WorkerBundle
@@ -86,7 +86,9 @@ class TrUAPIWorkerBundles @Inject internal constructor(
                     archive.copyRecursively(staging, overwrite = false)
                     staging.resolve(METADATA).writeBytes(metadata)
                     check(staging.renameTo(target)) { "Worker bundle installation failed" }
-                } finally { staging.deleteRecursively() }
+                } finally {
+                    staging.deleteRecursively()
+                }
             }
             WorkerBundle(hash, metadata, target.absolutePath)
         }

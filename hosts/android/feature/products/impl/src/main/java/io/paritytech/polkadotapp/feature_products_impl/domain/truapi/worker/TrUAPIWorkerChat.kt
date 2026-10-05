@@ -7,9 +7,9 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMess
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatIdParameter
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom

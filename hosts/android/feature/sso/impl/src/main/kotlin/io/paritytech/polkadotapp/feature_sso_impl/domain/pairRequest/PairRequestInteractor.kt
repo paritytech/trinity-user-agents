@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_sso_impl.domain.pairRequest
 
 import io.paritytech.polkadotapp.common.utils.progressStallReport.StalenessReportCollector
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_sso_api.domain.devices.RegisterDeviceProgress
 import io.paritytech.polkadotapp.feature_sso_api.domain.devices.RegisterDeviceUseCase
 import io.paritytech.polkadotapp.feature_sso_api.domain.devices.SyncDeviceProgress
@@ -13,8 +15,6 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.transformWhile
-import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import javax.inject.Inject
 
 class PairRequestInteractor @Inject constructor(

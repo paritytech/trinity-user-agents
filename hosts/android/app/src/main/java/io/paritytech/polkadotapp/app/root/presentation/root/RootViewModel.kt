@@ -25,8 +25,10 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.Exte
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageServiceStarter
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthMixin
 import io.paritytech.polkadotapp.feature_fund_api.domain.AutoConvertDepositService
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProductsWarmUp
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_settings_impl.domain.interactors.SyncPriceCurrencyChange
 import io.paritytech.polkadotapp.feature_splash_api.presentation.SplashPassedObserver
 import io.paritytech.polkadotapp.feature_sso_impl.domain.SsoService
@@ -43,8 +45,6 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
 import timber.log.Timber
-import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import javax.inject.Inject
 
 @HiltViewModel

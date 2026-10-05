@@ -14,8 +14,8 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
-import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.extractProductChatIdParameter
+import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

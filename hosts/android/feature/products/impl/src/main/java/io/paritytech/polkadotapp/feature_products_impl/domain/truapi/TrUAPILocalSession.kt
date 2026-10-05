@@ -1,9 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
-import io.parity.truapi.WalletSecretProvider
-import android.content.Context
 import android.app.KeyguardManager
+import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.parity.truapi.WalletSecretProvider
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.storage.accountSecrets.AccountSecretsStorage
 import io.paritytech.polkadotapp.feature_account_api.data.storage.accountSecrets.requireMetaAccountPassphrase

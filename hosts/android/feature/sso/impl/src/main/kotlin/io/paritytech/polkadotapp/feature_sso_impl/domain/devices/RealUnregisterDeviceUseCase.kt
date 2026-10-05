@@ -3,12 +3,12 @@ package io.paritytech.polkadotapp.feature_sso_impl.domain.devices
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.feature_chats_api.domain.devices.BroadcastDeviceLifecycleUseCase
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_sso_api.domain.devices.UnregisterDeviceUseCase
 import io.paritytech.polkadotapp.feature_sso_impl.data.repository.SsoSessionRepository
 import io.paritytech.polkadotapp.feature_sso_impl.domain.SsoService
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotAllocator
-import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import javax.inject.Inject
 
 class RealUnregisterDeviceUseCase @Inject constructor(

@@ -1,8 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
-import uniffi.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
-import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -17,6 +15,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.stubbing.Answer
+import uniffi.truapi.ProductExecutionKind
 
 class ProductTrUAPIHostBridgeTest {
     // The core refuses the open: an unavailable loopback port, or an execution config it rejects.

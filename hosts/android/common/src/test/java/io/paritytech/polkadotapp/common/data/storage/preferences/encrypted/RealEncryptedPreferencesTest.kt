@@ -3,8 +3,8 @@ package io.paritytech.polkadotapp.common.data.storage.preferences.encrypted
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
-import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
 import io.paritytech.polkadotapp.common.data.storage.preferences.Editor
+import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Test

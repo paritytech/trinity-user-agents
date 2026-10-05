@@ -1,14 +1,14 @@
 package io.paritytech.polkadotapp.feature_products_impl.data.repository
 
+import dagger.Lazy
 import io.paritytech.polkadotapp.database.dao.ProductDao
 import io.paritytech.polkadotapp.database.model.ProductLocal
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import dagger.Lazy
-import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import uniffi.truapi.ProductRecord
 import javax.inject.Inject
 import javax.inject.Singleton
