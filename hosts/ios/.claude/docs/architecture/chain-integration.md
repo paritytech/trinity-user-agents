@@ -94,7 +94,7 @@ For reactive subscriptions, prefer `CallbackBatchStorageSubscription.asyncStream
 1. **Subscription > polling** — prefer storage subscriptions over periodic polling
 2. **Use SDK's built-in decoders** — `resultDecoder` parameter handles standard SCALE types. When the type conforms to `ScaleDecodable` (like `Bool`), use `resultDecoder` instead of manual decoding with `queryType: "bool"`
 3. **Use `AsyncPassthroughSubject` or `AsyncStream.makeStream`** — for custom async streams. Specifically, don't use `var continuation: AsyncStream.Continuation!` with a separate init — use `AsyncStream.makeStream()` which returns both together
-4. **Derive on-chain values, don't hardcode** — prices, scores, game parameters should come from chain state
+4. **Derive on-chain values, don't hardcode** — prices and limits should come from chain state
 5. **Use `StorageRequestFactory.asyncInit()`** — for proper async initialization, not the sync initializer
 6. **Use `requestFactory.queryByPrefix`** — instead of `keysFactory.createKeysFetchWrapper` when querying by prefix
 7. **Use `getChainAsset`** — from chain registry instead of manually constructing chain + asset combinations
