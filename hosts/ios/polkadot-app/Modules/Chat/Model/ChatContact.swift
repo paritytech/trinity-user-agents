@@ -55,7 +55,6 @@ extension Chat {
 extension Chat.Contact {
     enum Source: Hashable {
         case chat
-        case game(UInt32, Date?)
     }
 }
 

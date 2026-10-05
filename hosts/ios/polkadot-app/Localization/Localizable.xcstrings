@@ -1343,28 +1343,6 @@
         }
       }
     },
-    "contact.source.description.game" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "You both played %1$(ordinalDay)@ %2$(month)@ Game"
-          }
-        }
-      }
-    },
-    "contact.source.description.game.generic" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "You both played the same game"
-          }
-        }
-      }
-    },
     "contactSearch.alert.cantAddSelf.message" : {
       "extractionState" : "manual",
       "localizations" : {

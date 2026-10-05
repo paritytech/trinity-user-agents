@@ -23,14 +23,11 @@ public struct ChatRequestedBannerView: View {
 public extension ChatRequestedBannerView {
     struct ViewModel {
         let username: String
-        let isFromGame: Bool
 
         public init(
-            username: String,
-            isFromGame: Bool
+            username: String
         ) {
             self.username = username
-            self.isFromGame = isFromGame
         }
     }
 }
@@ -41,14 +38,6 @@ private extension ChatRequestedBannerView {
             for: .center,
             textColor: UIColor.fgTertiary
         )
-
-        guard !viewModel.isFromGame else {
-            return NSAttributedString(
-                string: String(localized: .chatRequestedBannerGameMessage),
-                attributes: defaultAttributes
-            )
-            .toAttributedStringOrEmpty()
-        }
 
         let highlightingAttributes = LabelStyle.body14SemiBold().attributes(
             for: .center,
@@ -70,7 +59,7 @@ private extension ChatRequestedBannerView {
 #Preview(traits: .sizeThatFitsLayout) {
     UIHostingConfiguration {
         ChatRequestedBannerView(
-            viewModel: .init(username: "Maxwell.42", isFromGame: false)
+            viewModel: .init(username: "Maxwell.42")
         )
         .background(Color.bgSurfaceContainer)
     }
