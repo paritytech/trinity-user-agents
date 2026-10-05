@@ -56,10 +56,10 @@ use crate::host_internal::sso_messages::{OnExistingAllowancePolicy, ProductReque
 use crate::host_internal::transaction::sign_extrinsic_payload;
 use crate::host_logic::entropy::derive_product_entropy;
 use crate::host_logic::features::genesis_for;
-use crate::host_logic::funding::{FundingAccountKind, funding_account_index};
+use crate::host_logic::funding::{FundingAccountKind, funding_keypair};
 use crate::host_logic::product_account::{
     ProductAccountError, SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_identity_keypair,
-    derive_product_keypair, derive_product_public_key, derive_product_subtree_keypair,
+    derive_product_keypair, derive_product_subtree_keypair,
     derive_ring_vrf_entropy, derive_root_keypair_from_entropy, funding_product_id,
     personhood_product_id,
 };
@@ -511,55 +511,45 @@ impl SigningHost {
     /// `source_id`, under the reserved funding product. `None` while no
     /// signing session is active.
     ///
-    /// The core credits what lands on it by handing the account's key to the
-    /// host's top-up as a `PrivateKey` source; the key is the product account
-    /// at [`funding_account_index`] for the same arguments.
+    /// The account is the one getcash derives for the same label: the
+    /// funding product's entropy for it, taken as a mini secret. The core
+    /// credits what lands on it by handing its key to the host's top-up as a
+    /// `PrivateKey` source.
     pub fn derive_funding_account(
         &self,
         kind: FundingAccountKind,
         source_id: &str,
         number: u32,
     ) -> Result<Option<[u8; 32]>, AuthorityError> {
-        let index = funding_account_index(kind, source_id, number).map_err(|err| {
-            AuthorityError::Unavailable {
-                reason: err.to_string(),
-            }
-        })?;
-        let Some(subtree) = self.derive_subtree_public_key(&funding_product_id(&self.network_suffix))?
-        else {
-            return Ok(None);
-        };
-        derive_product_public_key(subtree, index)
-            .map(Some)
-            .map_err(product_authority_error)
+        self.funding_keypair(kind, source_id, number)
+            .map(|keypair| keypair.map(|keypair| keypair.public.to_bytes()))
     }
 
-    /// Keypair of a funding deposit account, for the core's own conversion.
-    /// Products never reach it: their requests derive through
-    /// `product_keypair_with_owner`, which refuses the funding product.
-    fn funding_deposit_keypair(
+    /// Keypair of a funding account, for the core's own conversion and
+    /// crediting. Products never reach it: `derive_entropy` refuses the
+    /// funding product.
+    fn funding_keypair(
         &self,
+        kind: FundingAccountKind,
         source_id: &str,
         number: u32,
     ) -> Result<Option<schnorrkel::Keypair>, AuthorityError> {
-        let index = funding_account_index(FundingAccountKind::Deposit, source_id, number).map_err(
-            |err| AuthorityError::Unavailable {
-                reason: err.to_string(),
-            },
-        )?;
         let entropy = match self.root_entropy() {
             Ok(entropy) => entropy,
             Err(AuthorityError::Disconnected) => return Ok(None),
             Err(err) => return Err(err),
         };
-        let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
-        derive_product_keypair(
-            &root,
+        funding_keypair(
+            &entropy,
             &funding_product_id(&self.network_suffix),
-            derivation_index_bytes(&v01::DerivationIndex::Raw(index)),
+            kind,
+            source_id,
+            number,
         )
         .map(Some)
-        .map_err(product_authority_error)
+        .map_err(|err| AuthorityError::Unavailable {
+            reason: err.to_string(),
+        })
     }
 
     /// Derive the product-account keypair for `account` from the root entropy.
@@ -1685,6 +1675,15 @@ impl ProductAuthority for SigningHost {
         context: &[u8],
     ) -> Result<[u8; 32], AuthorityError> {
         self.require_current_session(session)?;
+        // The funding accounts are the funding product's entropy for their
+        // labels, so it is never derived on a request's behalf.
+        let funding = normalize_product_identifier(product_id)
+            .map_or(super::is_funding_product(product_id), |id| {
+                super::is_funding_product(&id)
+            });
+        if funding {
+            return Err(AuthorityError::Rejected);
+        }
         let entropy = self.root_entropy()?;
         derive_product_entropy(&entropy, product_id, context).map_err(|err| {
             AuthorityError::Unknown {
@@ -1724,7 +1723,7 @@ impl super::FundingSigner for SigningHost {
         source_id: &str,
         number: u32,
     ) -> Result<Option<schnorrkel::Keypair>, GenericError> {
-        self.funding_deposit_keypair(source_id, number)
+        self.funding_keypair(FundingAccountKind::Deposit, source_id, number)
             .map_err(|err| GenericError {
                 reason: err.to_string(),
             })
@@ -1761,7 +1760,7 @@ mod tests {
         extrinsic_payload_extensions, extrinsic_payload_preimage,
     };
     use crate::host_logic::product_account::{
-        derivation_index_bytes, derive_identity_keypair, derive_product_keypair, derive_ring_vrf_entropy,
+        derive_identity_keypair, derive_product_keypair, derive_ring_vrf_entropy,
         derive_root_keypair_from_entropy, index_bytes,
     };
     use crate::platform::{HostInfo, Platform, PlatformInfo, ProductContext, SigningHostConfig};
@@ -3305,31 +3304,32 @@ mod tests {
         );
     }
 
-    // The address shown to a provider must be the account the host later
-    // claims with the matching product-account key, under the `fund.` product
-    // the mobile hosts already reserve.
+    // A funding account is what getcash's derivation gives for its label:
+    // the funding product's `deriveEntropy`, taken as a mini secret. Since
+    // that entropy is the key, no request may derive it.
     #[test]
-    fn a_funding_account_is_the_fund_products_account_at_its_label() {
+    fn a_funding_account_is_the_funding_products_entropy_for_its_label() {
         let (_services, authority) = signing_runtime();
         let before = authority.derive_funding_account(FundingAccountKind::Deposit, "usdt-assethub", 1);
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+        let funding_product = format!("fund.{TEST_NETWORK_SUFFIX}");
 
-        let mut label = [0u8; 32];
-        label[..26].copy_from_slice(b"onramp:eph:usdt-assethub:1");
-        let root = derive_root_keypair_from_entropy(&ENTROPY).expect("root derives");
-        let claimable = derive_product_keypair(
-            &root,
-            &format!("fund.{TEST_NETWORK_SUFFIX}"),
-            derivation_index_bytes(&v01::DerivationIndex::Raw(label)),
+        let entropy = crate::host_logic::entropy::derive_product_entropy(
+            &ENTROPY,
+            &funding_product,
+            b"onramp:eph:usdt-assethub:1",
         )
-        .expect("deposit key derives");
+            .expect("entropy");
+        let expected = derive_root_keypair_from_entropy(&entropy).expect("key").public.to_bytes();
         assert_eq!(
             (
                 before,
-                authority.derive_funding_account(FundingAccountKind::Deposit, "usdt-assethub", 1)
+                authority.derive_funding_account(FundingAccountKind::Deposit, "usdt-assethub", 1),
+                authority.derive_entropy(&session, &funding_product, b"onramp:eph:usdt-assethub:1"),
             ),
-            (Ok(None), Ok(Some(claimable.public.to_bytes())))
+            (Ok(None), Ok(Some(expected)), Err(AuthorityError::Rejected))
         );
     }
 

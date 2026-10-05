@@ -4376,6 +4376,25 @@ fn derive_entropy_matches_dotli_vector() {
     );
 }
 
+// Funding accounts are the funding product's entropy for their getcash
+// labels, so a product under that name deriving entropy would hold their
+// keys; a paired host refuses it as the signing host does.
+#[test]
+fn no_product_derives_entropy_as_the_funding_product() {
+    let host = ProductRuntimeHost::new(stub_platform(), runtime_config("fund.dot"), test_spawner());
+    let mut session = sso_session_info();
+    session.root_entropy_source = session_info().root_entropy_source;
+    install_pairing_session(&host, session);
+    let request = HostDeriveEntropyRequest::V1(v01::HostDeriveEntropyRequest {
+        context: b"onramp:eph:usdt-assethub:1".to_vec(),
+    });
+
+    assert_eq!(
+        futures::executor::block_on(host.derive(&CallContext::default(), request)),
+        Err(CallError::Denied)
+    );
+}
+
 #[test]
 fn derive_entropy_requires_session() {
     let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());

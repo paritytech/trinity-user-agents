@@ -13,6 +13,8 @@ use parity_scale_codec::{Decode, Encode};
 use tracing::warn;
 use truapi::latest::{FundingDirection, FundingFailure, HostFundingStatusSubscribeItem};
 
+use crate::host_logic::entropy::derive_product_entropy;
+use crate::host_logic::product_account::derive_root_keypair_from_entropy;
 use crate::platform::{CoreStorage, CoreStorageKey};
 
 /// How long a session may stay open before it expires.
@@ -469,34 +471,52 @@ pub enum FundingAccountKind {
     Withdrawal,
 }
 
-/// Why a funding account label could not be built.
+/// Why a funding account could not be derived.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
-#[display("funding account label is longer than 32 bytes")]
-pub struct FundingAccountLabelTooLong;
+pub enum FundingAccountError {
+    /// The label is longer than the 32 bytes entropy derivation takes.
+    #[display("funding account label is longer than 32 bytes")]
+    LabelTooLong,
+    /// The key could not be derived.
+    #[display("{_0}")]
+    Derivation(#[error(not(source))] String),
+}
 
-/// Derivation index of the `number`th account of `kind` for `source_id`: the
-/// label `onramp:eph:<source>:<n>`, `onramp:rf:<source>:<n>` or
-/// `wd:eph:<source>:<n>`, zero-padded to 32 bytes.
-///
-/// The labels are the ones getcash uses, and `number` counts up from 1 per
-/// source, so every account can be found again from the seed alone.
-pub fn funding_account_index(
+/// The label of the `number`th account of `kind` for `source_id`:
+/// `onramp:eph:<source>:<n>`, `onramp:rf:<source>:<n>` or
+/// `wd:eph:<source>:<n>`, the labels getcash uses. `number` counts up from 1
+/// per source, so every account can be found again from the seed alone.
+pub fn funding_account_label(
     kind: FundingAccountKind,
     source_id: &str,
     number: u32,
-) -> Result<[u8; 32], FundingAccountLabelTooLong> {
+) -> Result<String, FundingAccountError> {
     let prefix = match kind {
         FundingAccountKind::Deposit => "onramp:eph",
         FundingAccountKind::Refund => "onramp:rf",
         FundingAccountKind::Withdrawal => "wd:eph",
     };
     let label = format!("{prefix}:{source_id}:{number}");
-    let mut index = [0u8; 32];
-    index
-        .get_mut(..label.len())
-        .ok_or(FundingAccountLabelTooLong)?
-        .copy_from_slice(label.as_bytes());
-    Ok(index)
+    (label.len() <= 32)
+        .then_some(label)
+        .ok_or(FundingAccountError::LabelTooLong)
+}
+
+/// The keypair of the `number`th account of `kind` for `source_id`, derived
+/// as getcash derives its burners: the funding product's `deriveEntropy` for
+/// the account's label, taken as a mini secret.
+pub fn funding_keypair(
+    root_entropy: &[u8],
+    funding_product_id: &str,
+    kind: FundingAccountKind,
+    source_id: &str,
+    number: u32,
+) -> Result<schnorrkel::Keypair, FundingAccountError> {
+    let label = funding_account_label(kind, source_id, number)?;
+    let derivation = |err: &dyn core::fmt::Display| FundingAccountError::Derivation(err.to_string());
+    let entropy = derive_product_entropy(root_entropy, funding_product_id, label.as_bytes())
+        .map_err(|err| derivation(&err))?;
+    derive_root_keypair_from_entropy(&entropy).map_err(|err| derivation(&err))
 }
 
 /// Why a session operation failed.
@@ -850,29 +870,53 @@ mod tests {
         );
     }
 
-    // Funds sit in these accounts, so an index that drifts between releases
-    // strands them. The bytes are pinned to the labels getcash uses.
+    // Funds sit in these accounts, so a label that drifts between releases
+    // strands them. The labels are getcash's, byte for byte, unpadded.
     #[test]
-    fn funding_account_indices_are_the_padded_getcash_labels() {
-        let padded = |label: &str| {
-            let mut index = [0u8; 32];
-            index[..label.len()].copy_from_slice(label.as_bytes());
-            index
-        };
-
+    fn funding_account_labels_are_getcash_labels() {
         assert_eq!(
             [
-                funding_account_index(FundingAccountKind::Deposit, "usdt-assethub", 1),
-                funding_account_index(FundingAccountKind::Refund, "btc", 2),
-                funding_account_index(FundingAccountKind::Withdrawal, "dot-assethub", 3),
-                funding_account_index(FundingAccountKind::Deposit, "x".repeat(40).as_str(), 1),
+                funding_account_label(FundingAccountKind::Deposit, "usdt-assethub", 1),
+                funding_account_label(FundingAccountKind::Refund, "btc", 2),
+                funding_account_label(FundingAccountKind::Withdrawal, "dot-assethub", 3),
+                funding_account_label(FundingAccountKind::Deposit, "x".repeat(40).as_str(), 1),
             ],
             [
-                Ok(padded("onramp:eph:usdt-assethub:1")),
-                Ok(padded("onramp:rf:btc:2")),
-                Ok(padded("wd:eph:dot-assethub:3")),
-                Err(FundingAccountLabelTooLong),
+                Ok("onramp:eph:usdt-assethub:1".to_string()),
+                Ok("onramp:rf:btc:2".to_string()),
+                Ok("wd:eph:dot-assethub:3".to_string()),
+                Err(FundingAccountError::LabelTooLong),
             ]
+        );
+    }
+
+    // getcash turns 32 bytes of entropy into its burner with
+    // `entropyToMiniSecret` and `sr25519CreateDerive(mini)("")`. The vector is
+    // from those libraries for entropy `[7; 32]`, so the same seed reaches the
+    // same account through either implementation.
+    #[test]
+    fn a_funding_key_is_the_one_getcash_derives_from_the_same_entropy() {
+        let root = [9u8; 32];
+        let entropy = derive_product_entropy(&root, "fund.dot", b"onramp:eph:usdt-assethub:1")
+            .expect("entropy");
+
+        assert_eq!(
+            (
+                hex::encode(
+                    derive_root_keypair_from_entropy(&[7; 32])
+                        .expect("key")
+                        .public
+                        .to_bytes()
+                ),
+                funding_keypair(&root, "fund.dot", FundingAccountKind::Deposit, "usdt-assethub", 1)
+                    .map(|keypair| keypair.public),
+            ),
+            (
+                "ae78b88f68f8a3391cd7d1a8908766e1d068b2c1db6244a373e8b643e49d085f".to_string(),
+                derive_root_keypair_from_entropy(&entropy).map(|keypair| keypair.public).map_err(|err| {
+                    FundingAccountError::Derivation(err.to_string())
+                }),
+            )
         );
     }
 

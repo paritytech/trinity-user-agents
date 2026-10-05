@@ -29,9 +29,9 @@ pub const IDENTITY_LABEL: &str = "uid";
 /// domain holds the full and light person keys; the product id is
 /// `peopl.<network suffix>`, see [`personhood_product_id`].
 pub const PERSONHOOD_LABEL: &str = "peopl";
-/// Reserved dotNS label of the funding modality, under whose subtree every
-/// funding session's deposit account lives; the product id is
-/// `fund.<network suffix>`, see [`funding_product_id`].
+/// Reserved dotNS label of the funding modality, whose entropy every funding
+/// account is derived from; the product id is `fund.<network suffix>`, see
+/// [`funding_product_id`].
 pub const FUNDING_LABEL: &str = "fund";
 const RING_VRF_ROOT_KEY: &[u8] = b"ring-vrf";
 

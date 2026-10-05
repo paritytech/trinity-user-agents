@@ -34,10 +34,8 @@ use conversion::Prepared;
 pub use conversion::{FundingNetwork, FundingSigner};
 
 use super::services::RuntimeServices;
-use parity_scale_codec::Decode;
-use sp_crypto_hashing::twox_128;
 
-use super::statement_allowance::blake2_128_concat;
+use super::statement_allowance::ChainClient;
 use super::statement_allowance::rpc::RpcClient;
 use crate::host_logic::features;
 use crate::host_logic::funding::{
@@ -517,7 +515,11 @@ async fn plan_conversion(
             return Ok(Some(PlannedStep::Record(ConversionStep::Landed { landed })));
         }
         let step = if chains.nonce(account).await? > submission.nonce {
-            if chains.deposit_balance(deposit.asset, account).await? >= submission.spent {
+            let held = chains
+                .balance(deposit.asset, account)
+                .await
+                .map_err(|error| ConversionError::Chain(error.reason))?;
+            if held >= submission.spent {
                 Some(ConversionStep::Dropped)
             } else if now_ms.saturating_sub(submission.submitted_at_ms) > STALL_AFTER_MS {
                 Some(ConversionStep::Stalled)
@@ -563,60 +565,6 @@ pub trait DepositBalances: Send + Sync {
     ) -> BoxFuture<'a, Result<u128, GenericError>>;
 }
 
-/// Asset Hub balances read at one finalized block, so a deposit counts only
-/// once it cannot be reverted.
-struct FinalizedAssetHubBalances {
-    rpc: RpcClient,
-    finalized: String,
-}
-
-impl FinalizedAssetHubBalances {
-    async fn connect(services: &RuntimeServices) -> Result<Self, GenericError> {
-        within_chain_timeout(Self::connect_unbounded(services)).await?
-    }
-
-    async fn connect_unbounded(services: &RuntimeServices) -> Result<Self, GenericError> {
-        let failed = |reason: String| GenericError { reason };
-        let chains = features::supported_chains(services.platform.as_ref()).await?;
-        let genesis = features::genesis_for(&chains, ChainIdentifier::AssetHub)
-            .ok_or_else(|| failed("the host serves no Asset Hub".into()))?;
-        let rpc = RpcClient::new(subxt_rpcs::RpcClient::new(
-            services
-                .chain
-                .rpc_client("funding deposit watch", &genesis)
-                .await
-                .map_err(|err| failed(err.to_string()))?,
-        ));
-        let finalized = rpc
-            .finalized_head()
-            .await
-            .map_err(|err| failed(err.to_string()))?;
-        Ok(Self { rpc, finalized })
-    }
-}
-
-impl DepositBalances for FinalizedAssetHubBalances {
-    fn balance<'a>(
-        &'a self,
-        asset: DepositAsset,
-        account: &'a [u8; 32],
-    ) -> BoxFuture<'a, Result<u128, GenericError>> {
-        Box::pin(async move {
-            let value = within_chain_timeout(
-                self.rpc
-                    .get_storage_at(&balance_key(asset, account), &self.finalized),
-            )
-            .await?
-            .map_err(|err| GenericError {
-                reason: err.to_string(),
-            })?;
-            decode_balance(asset, value.as_deref()).ok_or_else(|| GenericError {
-                reason: "undecodable deposit balance".into(),
-            })
-        })
-    }
-}
-
 /// Run a chain read, giving up after [`CHAIN_TIMEOUT`] so a stalled
 /// connection cannot park the deposit watch.
 async fn within_chain_timeout<T>(read: impl Future<Output = T>) -> Result<T, GenericError> {
@@ -634,39 +582,6 @@ async fn within_timeout<T>(limit: Duration, work: impl Future<Output = T>) -> Re
             reason: format!("timed out after {}s", limit.as_secs()),
         }),
     }
-}
-
-/// Asset Hub storage key holding `account`'s balance of `asset`:
-/// `System.Account` for the native token, `Assets.Account` otherwise.
-fn balance_key(asset: DepositAsset, account: &[u8; 32]) -> Vec<u8> {
-    match asset {
-        DepositAsset::Native => [
-            twox_128(b"System").as_slice(),
-            &twox_128(b"Account"),
-            &blake2_128_concat(account),
-        ]
-        .concat(),
-        DepositAsset::Asset(id) => [
-            twox_128(b"Assets").as_slice(),
-            &twox_128(b"Account"),
-            &blake2_128_concat(&id.to_le_bytes()),
-            &blake2_128_concat(account),
-        ]
-        .concat(),
-    }
-}
-
-/// The balance in a value read from [`balance_key`]. An absent value is a
-/// zero balance. The native balance is the free balance after
-/// `AccountInfo`'s four `u32` counters; an asset account leads with it.
-fn decode_balance(asset: DepositAsset, value: Option<&[u8]>) -> Option<u128> {
-    let Some(mut value) = value else {
-        return Some(0);
-    };
-    if asset == DepositAsset::Native {
-        value = value.get(16..)?;
-    }
-    u128::decode(&mut value).ok()
 }
 
 /// Why a deposit account could not be assigned.
@@ -791,14 +706,11 @@ impl RuntimeServices {
             .await
             .map_err(|error| AssignDepositError::Chain(GenericError { reason: error.to_string() }))?
             .ok_or(AssignDepositError::NoRoute)?;
-        let balances = FinalizedAssetHubBalances::connect(self)
-            .await
-            .map_err(AssignDepositError::Chain)?;
         let account = self
             .funding()
             .assign_empty_deposit(
                 self.platform.as_ref(),
-                &balances,
+                &chains,
                 current_unix_millis(),
                 intent,
                 DepositPlan { request, route },
@@ -824,23 +736,8 @@ impl RuntimeServices {
                 let Some(services) = services.upgrade() else {
                     return;
                 };
-                let observed = match FinalizedAssetHubBalances::connect(&services).await {
-                    Ok(balances) => services
-                        .funding()
-                        .observe_deposits(
-                            services.platform.as_ref(),
-                            current_unix_millis(),
-                            &balances,
-                        )
-                        .await
-                        .map_err(|error| error.to_string()),
-                    Err(error) => Err(error.reason),
-                };
-                if let Err(reason) = observed {
+                if let Err(reason) = services.advance_chain_sessions().await {
                     tracing::warn!(%reason, "funding deposit watch failed");
-                }
-                if let Err(reason) = services.advance_conversions().await {
-                    tracing::warn!(%reason, "funding conversion pass failed");
                 }
                 if let Err(reason) = services.advance_credits().await {
                     tracing::warn!(%reason, "funding credit pass failed");
@@ -855,20 +752,29 @@ impl RuntimeServices {
             let chains = features::supported_chains(self.platform.as_ref())
                 .await
                 .map_err(|error| ConversionError::Chain(error.reason))?;
-            let client = |chain: ChainIdentifier| {
-                let genesis = features::genesis_for(&chains, chain);
-                async move {
-                    let genesis = genesis
-                        .ok_or_else(|| ConversionError::Chain(format!("the host serves no {chain:?}")))?;
-                    self.chain
-                        .online_client(&genesis)
-                        .await
-                        .map_err(|error| ConversionError::Chain(error.to_string()))
-                }
+            let failed = |error: &dyn core::fmt::Display| ConversionError::Chain(error.to_string());
+            let genesis = |chain: ChainIdentifier| {
+                features::genesis_for(&chains, chain)
+                    .ok_or_else(|| ConversionError::Chain(format!("the host serves no {chain:?}")))
             };
-            let asset_hub = client(ChainIdentifier::AssetHub).await?;
-            let people = client(ChainIdentifier::People).await?;
-            Chains::at_finalized(&asset_hub, &people, network).await
+            let (asset_hub_genesis, people_genesis) =
+                (genesis(ChainIdentifier::AssetHub)?, genesis(ChainIdentifier::People)?);
+            let asset_hub = self.chain.online_client(&asset_hub_genesis).await.map_err(|e| failed(&e))?;
+            let people = self.chain.online_client(&people_genesis).await.map_err(|e| failed(&e))?;
+            // The signed-extension metadata comes from the per-chain cache the
+            // allowance path keeps, so signing never downloads it again.
+            let rpc = RpcClient::new(subxt_rpcs::RpcClient::new(
+                self.chain
+                    .rpc_client("funding conversion", &asset_hub_genesis)
+                    .await
+                    .map_err(|e| failed(&e))?,
+            ));
+            let context = self
+                .chain_context
+                .get(&ChainClient::new(rpc, asset_hub_genesis))
+                .await
+                .map_err(|e| failed(&e))?;
+            Chains::at_finalized(&asset_hub, &people, network, context.metadata).await
         })
         .await
         .map_err(|error| ConversionError::Chain(error.reason))?
@@ -917,23 +823,45 @@ impl RuntimeServices {
         Ok(())
     }
 
-    /// One pass over the sessions being converted: record what landed,
-    /// what was dropped or stalled, and submit what is ready.
-    async fn advance_conversions(self: &Arc<Self>) -> Result<(), String> {
+    /// One pass over the sessions that need the chains: read the awaited
+    /// deposits, then advance the conversions, against one pair of finalized
+    /// blocks.
+    async fn advance_chain_sessions(self: &Arc<Self>) -> Result<(), String> {
         let registry = self.funding();
-        let converting = registry.converting_sessions();
-        let Some(conversion) = registry.conversion.get().filter(|_| !converting.is_empty()) else {
+        let Some(conversion) = registry.conversion.get() else {
             return Ok(());
         };
+        let pending = registry.lock_sessions().values().any(|session| {
+            session.awaited_deposit().is_some() || session.converting().is_some()
+        });
+        if !pending {
+            return Ok(());
+        }
         let chains = self
             .funding_chains(conversion.network)
             .await
             .map_err(|error| error.to_string())?;
+        registry
+            .observe_deposits(self.platform.as_ref(), current_unix_millis(), &chains)
+            .await
+            .map_err(|error| error.to_string())?;
+        self.advance_conversions(&chains, conversion).await
+    }
+
+    /// One pass over the sessions being converted: record what landed,
+    /// what was dropped or stalled, and submit what is ready.
+    async fn advance_conversions(
+        self: &Arc<Self>,
+        chains: &Chains,
+        conversion: &Conversion,
+    ) -> Result<(), String> {
+        let registry = self.funding();
+        let converting = registry.converting_sessions();
         let storage = self.platform.as_ref();
         for (intent, deposit, submission) in converting {
             let now_ms = current_unix_millis();
             let planned = within_chain_timeout(plan_conversion(
-                &chains,
+                chains,
                 conversion.signer.as_ref(),
                 &deposit,
                 submission,
@@ -1065,7 +993,6 @@ mod tests {
     use super::*;
 
     use futures::executor::block_on;
-    use parity_scale_codec::Encode;
     use truapi::latest::FundingFailure;
 
     use crate::host_logic::funding::FundingStage;
@@ -1402,51 +1329,6 @@ mod tests {
         );
     }
 
-    // A wrong key reads an empty account forever and no deposit is ever
-    // seen, so the keys are pinned to the pallets' well-known prefixes.
-    #[test]
-    fn balance_keys_address_system_and_assets_accounts() {
-        let account = [7u8; 32];
-        let hashed_account = [sp_crypto_hashing::blake2_128(&account).as_slice(), &account].concat();
-        let hashed_id = [sp_crypto_hashing::blake2_128(&1984u32.to_le_bytes()).as_slice(), &1984u32.to_le_bytes()].concat();
-
-        assert_eq!(
-            (
-                hex::encode(balance_key(DepositAsset::Native, &account)),
-                hex::encode(balance_key(USDT, &account)),
-            ),
-            (
-                format!(
-                    "26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9{}",
-                    hex::encode(&hashed_account)
-                ),
-                format!(
-                    "682a59d51ab9e48a8c8cc418ff9708d2b99d880ec681799c0cf30e8886371da9{}{}",
-                    hex::encode(hashed_id),
-                    hex::encode(&hashed_account)
-                ),
-            )
-        );
-    }
-
-    // The native balance sits behind `AccountInfo`'s counters, while an asset
-    // account leads with it; reading the wrong offset would see a counter.
-    #[test]
-    fn balances_decode_from_each_account_layout() {
-        let account_info = (1u32, 2u32, 3u32, 4u32, 500u128, 9u128).encode();
-        let asset_account = (70u128, 0u8).encode();
-
-        assert_eq!(
-            [
-                decode_balance(DepositAsset::Native, Some(&account_info)),
-                decode_balance(USDT, Some(&asset_account)),
-                decode_balance(USDT, None),
-                decode_balance(DepositAsset::Native, Some(&account_info[..12])),
-            ],
-            [Some(500), Some(70), Some(0), None]
-        );
-    }
-
     /// Chains answering fixed reads, and preparing a fixed conversion.
     struct Scripted {
         landed: u128,
@@ -1462,6 +1344,16 @@ mod tests {
         spent: 50,
     };
 
+    impl DepositBalances for Scripted {
+        fn balance<'a>(
+            &'a self,
+            _: DepositAsset,
+            _: &'a [u8; 32],
+        ) -> BoxFuture<'a, Result<u128, GenericError>> {
+            Box::pin(async move { Ok(self.balance) })
+        }
+    }
+
     impl ConversionChains for Scripted {
         fn landed<'a>(&'a self, _: &'a [u8; 32]) -> BoxFuture<'a, Result<u128, ConversionError>> {
             Box::pin(async move { Ok(self.landed) })
@@ -1469,14 +1361,6 @@ mod tests {
 
         fn nonce<'a>(&'a self, _: &'a [u8; 32]) -> BoxFuture<'a, Result<u32, ConversionError>> {
             Box::pin(async move { Ok(self.nonce) })
-        }
-
-        fn deposit_balance<'a>(
-            &'a self,
-            _: DepositAsset,
-            _: &'a [u8; 32],
-        ) -> BoxFuture<'a, Result<u128, ConversionError>> {
-            Box::pin(async move { Ok(self.balance) })
         }
 
         fn finalized_block(&self) -> u64 {

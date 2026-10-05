@@ -18,6 +18,9 @@ use futures::future::BoxFuture;
 use truapi::latest::{GenericError, TxPayloadExtension};
 
 use crate::host_internal::extrinsic::{Sr25519Signer, build_signed_extrinsic_v4};
+use std::sync::Arc;
+
+use super::DepositBalances;
 use crate::host_logic::funding::{ConversionRoute, DepositAsset, FundingDeposit};
 use crate::runtime::statement_allowance::extension::{ChainState, Metadata as ExtensionMetadata};
 
@@ -67,6 +70,7 @@ pub struct Chains {
     asset_hub: OnlineClientAtBlock<SubstrateConfig>,
     people: OnlineClientAtBlock<SubstrateConfig>,
     places: Places,
+    extensions: Arc<ExtensionMetadata>,
 }
 
 /// A signed conversion, with what tells later whether it worked.
@@ -83,17 +87,11 @@ pub struct Prepared {
 }
 
 /// What a conversion pass reads and does on the chains.
-pub trait ConversionChains: Send + Sync {
+pub trait ConversionChains: DepositBalances {
     /// CASH `account` holds on People.
     fn landed<'a>(&'a self, account: &'a [u8; 32]) -> BoxFuture<'a, Result<u128, ConversionError>>;
     /// `account`'s next nonce on Asset Hub.
     fn nonce<'a>(&'a self, account: &'a [u8; 32]) -> BoxFuture<'a, Result<u32, ConversionError>>;
-    /// `account`'s balance of `asset` on Asset Hub.
-    fn deposit_balance<'a>(
-        &'a self,
-        asset: DepositAsset,
-        account: &'a [u8; 32],
-    ) -> BoxFuture<'a, Result<u128, ConversionError>>;
     /// The finalized Asset Hub block these reads are pinned to.
     fn finalized_block(&self) -> u64;
     /// Size, dry-run and sign the conversion of `deposit` at `nonce`.
@@ -137,6 +135,7 @@ impl Chains {
         asset_hub: &subxt::OnlineClient<SubstrateConfig>,
         people: &subxt::OnlineClient<SubstrateConfig>,
         network: FundingNetwork,
+        extensions: Arc<ExtensionMetadata>,
     ) -> Result<Self, ConversionError> {
         let asset_hub = asset_hub.at_current_block().await.map_err(chain)?;
         let people = people.at_current_block().await.map_err(chain)?;
@@ -156,22 +155,8 @@ impl Chains {
                 people_para,
                 assets_pallet,
             },
+            extensions,
         })
-    }
-
-    /// Asset Hub's transaction extensions, as the extension encoder reads
-    /// them. Loaded only to sign, since it downloads the whole metadata.
-    async fn extensions(&self) -> Result<ExtensionMetadata, ConversionError> {
-        let opaque = self
-            .asset_hub
-            .runtime_apis()
-            .call_raw("Metadata_metadata_at_version", Some(&15u32.encode()))
-            .await
-            .map_err(chain)?;
-        let raw = Option::<Vec<u8>>::decode(&mut &opaque[..])
-            .map_err(chain)?
-            .ok_or_else(|| chain("Asset Hub serves no V15 metadata"))?;
-        ExtensionMetadata::decode(&raw).map_err(chain)
     }
 
     /// The route for `expected` of `asset`: a teleport for CASH, a PSM mint
@@ -385,7 +370,6 @@ impl Chains {
                 return Err(ConversionError::Refused("the PSM mints only from assets".into()));
             }
         };
-        let extensions = self.extensions().await?;
 
         // A first draft with a generous fee allowance measures the fees,
         // which barely depend on the amounts; the final call is then sized
@@ -396,7 +380,7 @@ impl Chains {
         let forwarded = self.dry_run(&account, &draft).await?;
         let local_fee = self.local_fee(&draft.program, &fee_asset).await?;
         let delivery_fee = self.delivery_fee(&forwarded, &fee_asset).await?;
-        let draft_extrinsic = self.sign(&extensions, &signer, &draft, &fee_asset, nonce)?;
+        let draft_extrinsic = self.sign(&self.extensions, &signer, &draft, &fee_asset, nonce)?;
         let dispatch_fee = self.dispatch_fee(&draft_extrinsic, &fee_asset).await?;
 
         let allowance = with_margin(local_fee.saturating_add(delivery_fee));
@@ -411,7 +395,7 @@ impl Chains {
         let forwarded = self.dry_run(&account, &call).await?;
         self.dry_run_on_people(&forwarded).await?;
         Ok(Prepared {
-            extrinsic: self.sign(&extensions, &signer, &call, &fee_asset, nonce)?,
+            extrinsic: self.sign(&self.extensions, &signer, &call, &fee_asset, nonce)?,
             valid_until_block: self.asset_hub.block_number() + MORTAL_PERIOD_BLOCKS,
             landing: call.landing,
             spent: call.spent,
@@ -804,6 +788,22 @@ struct PsmMint {
     max_fee_ppm: u32,
 }
 
+impl DepositBalances for Chains {
+    fn balance<'a>(
+        &'a self,
+        asset: DepositAsset,
+        account: &'a [u8; 32],
+    ) -> BoxFuture<'a, Result<u128, GenericError>> {
+        Box::pin(async move {
+            self.asset_hub_balance(asset, account)
+                .await
+                .map_err(|error| GenericError {
+                    reason: error.to_string(),
+                })
+        })
+    }
+}
+
 impl ConversionChains for Chains {
     fn landed<'a>(&'a self, account: &'a [u8; 32]) -> BoxFuture<'a, Result<u128, ConversionError>> {
         Box::pin(self.people_cash(account))
@@ -811,14 +811,6 @@ impl ConversionChains for Chains {
 
     fn nonce<'a>(&'a self, account: &'a [u8; 32]) -> BoxFuture<'a, Result<u32, ConversionError>> {
         Box::pin(self.account_nonce(account))
-    }
-
-    fn deposit_balance<'a>(
-        &'a self,
-        asset: DepositAsset,
-        account: &'a [u8; 32],
-    ) -> BoxFuture<'a, Result<u128, ConversionError>> {
-        Box::pin(self.asset_hub_balance(asset, account))
     }
 
     fn finalized_block(&self) -> u64 {
@@ -1262,9 +1254,20 @@ mod live {
     }
 
     async fn chains() -> Chains {
-        Chains::at_finalized(&client(ASSET_HUB).await, &client(PEOPLE).await, NETWORK)
+        let rpc = crate::runtime::statement_allowance::rpc::RpcClient::connect(ASSET_HUB)
             .await
-            .expect("chains pinned")
+            .expect("node reachable");
+        let extensions = crate::runtime::statement_allowance::fetch_metadata(&rpc)
+            .await
+            .expect("metadata");
+        Chains::at_finalized(
+            &client(ASSET_HUB).await,
+            &client(PEOPLE).await,
+            NETWORK,
+            Arc::new(extensions),
+        )
+        .await
+        .expect("chains pinned")
     }
 
     /// An account holding at least `least` of asset `id` on Asset Hub.
