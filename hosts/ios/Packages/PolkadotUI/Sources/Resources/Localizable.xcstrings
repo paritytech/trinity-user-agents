@@ -843,28 +843,6 @@
         }
       }
     },
-    "deposit.required.description" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Deposited funds will be held from you dollar account and sent back after tattoo evidence has been confirmed."
-          }
-        }
-      }
-    },
-    "deposit.required.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Deposit %@ to Select\nand Reserve a Tattoo"
-          }
-        }
-      }
-    },
     "id.card.action.share" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1059,17 +1037,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Link a new device?"
-          }
-        }
-      }
-    },
-    "message.commit.preview" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tattoo committed"
           }
         }
       }
@@ -1302,72 +1269,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Start upgrading"
-          }
-        }
-      }
-    },
-    "username.upgrade.description" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "As a Member, you are eligible for a clean username without a suffix. How cool!"
-          }
-        }
-      }
-    },
-    "username.upgrade.subtitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "or any other available name"
-          }
-        }
-      }
-    },
-    "username.upgrade.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Get your new username!"
-          }
-        }
-      }
-    },
-    "username.upgraded" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keep playing to retain your Membership, win prizes, and get other perks!"
-          }
-        }
-      }
-    },
-    "username.upgraded.subtitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Congrats on securing this name!"
-          }
-        }
-      }
-    },
-    "username.upgraded.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "✅ Your new username is"
           }
         }
       }
