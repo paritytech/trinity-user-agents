@@ -865,17 +865,6 @@
         }
       }
     },
-    "dim.footer.switch.action.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Edit"
-          }
-        }
-      }
-    },
     "id.card.action.share" : {
       "extractionState" : "manual",
       "localizations" : {
