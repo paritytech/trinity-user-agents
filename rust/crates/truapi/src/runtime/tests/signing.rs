@@ -1,6 +1,62 @@
 use super::*;
 
 #[test]
+fn signing_cancelled_during_permission_review_cannot_persist_a_late_grant() {
+    let (release, gate) = futures::channel::oneshot::channel();
+    let platform = Arc::new(StubPlatform {
+        remote_permission_gate: Mutex::new(Some(gate)),
+        ..Default::default()
+    });
+    let host = ProductRuntimeHost::new(
+        platform.clone(),
+        runtime_config("myapp.dot"),
+        test_spawner(),
+    );
+    install_pairing_session(&host, sso_session_info());
+    let cx = CallContext::with_parts(
+        "cancel-permission-review".to_string(),
+        truapi::CancellationToken::default(),
+    );
+    let mut call = Box::pin(host.sign_raw(
+        &cx,
+        HostSignRawRequest::V1(v01::HostSignRawRequest {
+            account: account_id("myapp.dot", 0),
+            payload: v01::RawPayload::Bytes {
+                bytes: b"cancel before signing consent".to_vec(),
+            },
+        }),
+    ));
+    assert!(call.as_mut().now_or_never().is_none());
+    cx.cancel().cancel();
+    assert!(matches!(
+        call.as_mut()
+            .now_or_never()
+            .expect("cancellation must stop waiting for permission"),
+        Err(CallError::Domain(HostSignRawError::V1(
+            v01::HostSignPayloadError::Unknown { .. }
+        )))
+    ));
+    assert!(
+        release.send(()).is_err(),
+        "the permission review must be withdrawn"
+    );
+    assert_eq!(
+        futures::executor::block_on(host.permission_authorization_status(
+            PermissionAuthorizationRequest::Remote(v01::RemotePermissionRequest {
+                permission: v01::RemotePermission::ChainSubmit,
+            }),
+        ))
+        .unwrap(),
+        PermissionAuthorizationStatus::NotDetermined,
+    );
+    assert!(platform.sign_raw_reviews.lock().unwrap().is_empty());
+    assert_eq!(
+        recorded_rpc_method_count(&platform.sent_rpc, "statement_submit"),
+        0,
+    );
+}
+
+#[test]
 #[allow(deprecated)] // Exercise the temporary API's paired-host wire routing.
 fn unwatermarked_signing_routes_product_and_legacy_accounts_without_downgrading() {
     use crate::host_internal::sso_messages::SignRequest;

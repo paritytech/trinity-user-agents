@@ -25,15 +25,18 @@ impl ProductRuntimeHost {
         session: &crate::runtime::authority::AuthoritySession,
         derivation_index: Option<v01::DerivationIndex>,
     ) -> Result<(), String> {
+        let product_id = self.product_id();
         let require_session = || {
-            if self.authority.current_session().as_ref() == Some(session) {
+            if self
+                .authority
+                .session_is_current(session, Some(&product_id))
+            {
                 Ok(())
             } else {
                 Err("Statement allowance session changed".to_string())
             }
         };
         require_session()?;
-        let product_id = self.product_id();
         let service = self.permissions_service();
         let request = PermissionAuthorizationRequest::StatementStoreAllowance {
             derivation_index: derivation_index.clone(),
@@ -120,7 +123,10 @@ impl ProductRuntimeHost {
                     err.reason
                 )
             })?;
-        if self.authority.current_session().as_ref() != Some(session) {
+        if !self
+            .authority
+            .session_is_current(session, Some(&self.product_id()))
+        {
             return Err("Statement allowance session changed".to_string());
         }
         if status != PermissionAuthorizationStatus::Authorized {
@@ -148,8 +154,12 @@ impl ResourceAllocation for ProductRuntimeHost {
             )));
         };
 
+        let product_id = self.product_id();
         let require_session = || {
-            if self.authority.current_session().as_ref() == Some(&session) {
+            if self
+                .authority
+                .session_is_current(&session, Some(&product_id))
+            {
                 Ok(())
             } else {
                 Err(CallError::HostFailure {
@@ -189,12 +199,13 @@ impl ResourceAllocation for ProductRuntimeHost {
         // A withdrawn call stops waiting on the review and authorizes nothing.
         let confirmed = until_cancelled(
             cx,
-            self.platform.confirm_user_action(UserConfirmationReview::ResourceAllocation(
-                ResourceAllocationReview {
-                    calling_product_id: self.product_id(),
-                    resources: inner.resources.clone(),
-                },
-            )),
+            self.platform
+                .confirm_user_action(UserConfirmationReview::ResourceAllocation(
+                    ResourceAllocationReview {
+                        calling_product_id: product_id.clone(),
+                        resources: inner.resources.clone(),
+                    },
+                )),
         )
         .await
         .map_err(|err| {
@@ -259,7 +270,7 @@ impl ResourceAllocation for ProductRuntimeHost {
         remote_authority_call(
             &cx,
             self.authority
-                .allocate_resources(&cx, &session, self.product_id(), inner),
+                .allocate_resources(&cx, &session, product_id, inner),
         )
         .await
         .map(HostRequestResourceAllocationResponse::V1)
