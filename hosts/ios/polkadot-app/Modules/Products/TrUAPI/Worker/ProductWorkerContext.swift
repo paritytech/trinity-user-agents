@@ -8,7 +8,7 @@ import Products
 /// binds the surface whether or not a worker is up, and every execution the
 /// product opens carries this same pair, so the product keeps one chat context
 /// and one set of routers across restarts.
-final class TrUAPIWorkerSeams: @unchecked Sendable {
+final class ProductWorkerContext: @unchecked Sendable {
     let chat = ProductChatSurface()
     let routers: ProductRoutersFacadeProtocol = ProductRoutersFacade.worker()
 }

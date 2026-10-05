@@ -59,16 +59,12 @@ private final class FakeWorkerManager: ProductWorkerManaging, @unchecked Sendabl
 private let chatProduct: ProductId = "test.dot"
 
 private func makeRustRuntime(
-    workers: StubWorkerSupervisor,
-    references: StubWorkerReferences = StubWorkerReferences(),
-    workerStartupWindow: Duration = .seconds(1),
+    workers: StubWorkerManager,
     renderStartupWindow: Duration = .seconds(5)
-) -> ChatRustRuntime {
-    ChatRustRuntime(
+) -> TrUAPIChatHandler {
+    TrUAPIChatHandler(
         productId: chatProduct,
         workers: workers,
-        references: { references },
-        workerStartupWindow: workerStartupWindow,
         renderStartupWindow: renderStartupWindow
     )
 }
@@ -82,10 +78,10 @@ private actor StartCompletion {
     }
 }
 
-/// A supervisor whose worker is already up, which is what chat finds whenever
+/// A manager whose worker is already up, which is what chat finds whenever
 /// something else, a card on screen, got there first.
-private func workersRunning(_ execution: MockProductExecution) -> StubWorkerSupervisor {
-    let workers = StubWorkerSupervisor()
+private func workersRunning(_ execution: MockProductExecution) -> StubWorkerManager {
+    let workers = StubWorkerManager()
     workers.publish([chatProduct: execution])
     return workers
 }
@@ -136,16 +132,16 @@ struct ChatRuntimeTests {
     /// here would take the card's face down with it.
     @Test func rustRuntimeReleasesTheWorkerInsteadOfClosingIt() async throws {
         let execution = MockProductExecution()
-        let references = StubWorkerReferences()
-        let runtime = makeRustRuntime(workers: workersRunning(execution), references: references)
+        let workers = workersRunning(execution)
+        let runtime = makeRustRuntime(workers: workers)
 
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
-        #expect(references.acquired == [chatProduct])
+        #expect(workers.references.acquired == [chatProduct])
 
         await runtime.dispose()
         await runtime.dispose()
 
-        #expect(references.released == [chatProduct])
+        #expect(workers.references.released == [chatProduct])
         #expect(execution.closeCallCount == 0)
         #expect(execution.stopWsBridgeCallCount == 0)
     }
@@ -154,14 +150,14 @@ struct ChatRuntimeTests {
     /// back: an unpaired release drops the count of a worker somebody else is
     /// holding, and the core stops it under them.
     @Test func rustRuntimeDisposeBeforeStartTakesAndGivesBackNothing() async {
-        let references = StubWorkerReferences()
-        let runtime = makeRustRuntime(workers: StubWorkerSupervisor(), references: references)
+        let workers = StubWorkerManager()
+        let runtime = makeRustRuntime(workers: workers)
 
         await runtime.dispose()
         await runtime.dispose()
 
-        #expect(references.acquired.isEmpty)
-        #expect(references.released.isEmpty)
+        #expect(workers.references.acquired.isEmpty)
+        #expect(workers.references.released.isEmpty)
     }
 
     /// Every product repository emission builds fresh bots, and the store keeps
@@ -177,7 +173,7 @@ struct ChatRuntimeTests {
         try await live.start(messagingSupport: .init(bot: nil, context: nil))
         await duplicate.dispose()
 
-        #expect(workers.seams(of: chatProduct).chat.currentMessaging != nil)
+        #expect(workers.context(of: chatProduct).chat.currentMessaging != nil)
 
         await live.dispose()
     }
@@ -186,7 +182,7 @@ struct ChatRuntimeTests {
     /// has to wait for the worker rather than return onto an execution that is
     /// not there yet.
     @Test func rustRuntimeStartWaitsForTheWorkerToComeUp() async throws {
-        let workers = StubWorkerSupervisor()
+        let workers = StubWorkerManager()
         let execution = MockProductExecution()
         let runtime = makeRustRuntime(workers: workers)
 
@@ -215,28 +211,24 @@ struct ChatRuntimeTests {
     /// reference: the core would keep counting it and never stop the worker it
     /// eventually builds.
     @Test func rustRuntimeGivesTheReferenceBackWhenNoWorkerComes() async throws {
-        let references = StubWorkerReferences()
-        let runtime = makeRustRuntime(
-            workers: StubWorkerSupervisor(),
-            references: references,
-            workerStartupWindow: .milliseconds(50)
-        )
+        let workers = StubWorkerManager(startupWindow: .milliseconds(50))
+        let runtime = makeRustRuntime(workers: workers)
 
         await #expect(throws: (any Error).self) {
             try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
         }
 
-        #expect(references.acquired == [chatProduct])
-        #expect(references.released == [chatProduct])
+        #expect(workers.references.acquired == [chatProduct])
+        #expect(workers.references.released == [chatProduct])
     }
 
     /// `ProductBot` downgrades this one to a debug log, so it has to stay distinct
     /// from a real failure.
     @Test func rustRuntimeChatSeamsFailBeforeTheWorkerIsUp() async {
         let execution = MockProductExecution()
-        let runtime = makeRustRuntime(workers: StubWorkerSupervisor())
+        let runtime = makeRustRuntime(workers: StubWorkerManager())
 
-        await #expect(throws: ChatRustRuntime.ChatSeamError.notStarted) {
+        await #expect(throws: TrUAPIChatHandler.ChatSeamError.notStarted) {
             try await runtime.onUserMessage(text: "hi", roomId: "room")
         }
         #expect(execution.publishedChatActions.isEmpty)
@@ -296,7 +288,7 @@ struct ChatRuntimeTests {
 
     /// A worker that never comes up must not leave the cell waiting forever.
     @Test func rustRuntimeFailsPendingRendersOnDispose() async throws {
-        let runtime = makeRustRuntime(workers: StubWorkerSupervisor())
+        let runtime = makeRustRuntime(workers: StubWorkerManager())
 
         let render = Task {
             await runtime.renderMessage(
@@ -346,7 +338,7 @@ struct ChatRuntimeTests {
     /// in the transient set the render fails once and the cell is dead for the
     /// session, because `ProductMessageDecoder` never evicts.
     @Test func rustRuntimeRetriesRenderIssuedBeforeTheWorkerIsUp() async throws {
-        let workers = StubWorkerSupervisor()
+        let workers = StubWorkerManager()
         let execution = MockProductExecution()
         execution.renderNodes = [.string(text: "late")]
         let runtime = makeRustRuntime(workers: workers)
@@ -387,7 +379,7 @@ struct ChatRuntimeTests {
         let runtime = makeRustRuntime(workers: workersRunning(execution))
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
-        await #expect(throws: ChatRustRuntime.ChatSeamError.roomlessChat) {
+        await #expect(throws: TrUAPIChatHandler.ChatSeamError.roomlessChat) {
             try await runtime.onUserMessage(text: "hi", roomId: nil)
         }
         #expect(execution.publishedChatActions.isEmpty)
@@ -397,7 +389,7 @@ struct ChatRuntimeTests {
         let render = await runtime.renderMessage(
             roomId: nil, messageId: "m1", messageType: "t", messageData: Data()
         )
-        await #expect(throws: ChatRustRuntime.ChatSeamError.roomlessChat) {
+        await #expect(throws: TrUAPIChatHandler.ChatSeamError.roomlessChat) {
             for try await _ in render {}
         }
         #expect(execution.renderRequests.isEmpty)

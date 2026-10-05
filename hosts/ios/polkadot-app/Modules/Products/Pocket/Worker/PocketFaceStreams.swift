@@ -34,18 +34,15 @@ struct TrUAPIPocketFaceStreams: PocketFaceStreaming {
         static let maxBackoffDoublings = 5
     }
 
-    private let runtime: @Sendable () throws -> any TrUAPIWorkerReferencing
-    private let workers: any TrUAPIWorkerSupervising
+    private let workers: any TrUAPIWorkerManaging
     private let publishedCards: any PublishedPocketCardsResolving
     private let logger: LoggerProtocol
 
     init(
-        runtime: @escaping @Sendable () throws -> any TrUAPIWorkerReferencing,
-        workers: any TrUAPIWorkerSupervising,
+        workers: any TrUAPIWorkerManaging,
         publishedCards: any PublishedPocketCardsResolving,
         logger: LoggerProtocol = Logger.shared
     ) {
-        self.runtime = runtime
         self.workers = workers
         self.publishedCards = publishedCards
         self.logger = logger
@@ -78,28 +75,31 @@ struct TrUAPIPocketFaceStreams: PocketFaceStreaming {
 private extension TrUAPIPocketFaceStreams {
     func stream(_ key: PocketCardKey, into continuation: AsyncThrowingStream<RendererNode, Error>.Continuation) async {
         // A card whose product publishes no Pocket worker has nothing to
-        // stream, and the reference below is what starts one: taking it
-        // regardless would boot a worker for the personhood product every time
-        // the default tab is opened.
+        // stream, and the request below is what starts one: asking regardless
+        // would boot a worker for the personhood product every time the default
+        // tab is opened.
         guard await awaitPublished(key) else {
             continuation.finish()
             return
         }
 
-        guard let runtime = try? runtime() else {
-            logger.error("[pocket] no runtime; \(key.cardId.value) keeps the face it has")
+        // The request is ours from the moment we ask, so it is given back
+        // whether or not a worker came up.
+        defer { workers.releaseWorker(for: key.productId) }
+
+        do {
+            _ = try await workers.ensureWorker(for: key.productId)
+        } catch {
+            logger.error("[pocket] no worker for \(key.cardId.value); it keeps the face it has: \(error)")
             continuation.finish()
             return
         }
-
-        runtime.acquireWorker(productId: key.productId)
-        defer { runtime.releaseWorker(productId: key.productId) }
 
         await followExecutions(of: key, into: continuation)
         continuation.finish()
     }
 
-    /// One render per execution the supervisor publishes: a worker that
+    /// One render per execution the manager publishes: a worker that
     /// restarts is picked up as a new execution, and its stream replaces the
     /// one before it.
     func followExecutions(
@@ -112,7 +112,7 @@ private extension TrUAPIPocketFaceStreams {
 
         do {
             for try await execution in workers.executions(of: key.productId) {
-                // The supervisor publishes every product's execution together,
+                // The manager publishes every product's execution together,
                 // so this re-sends whenever any other worker starts or stops.
                 // Reopening on those would tear down a live render stream, and
                 // pay the connect retries again, for a worker that never moved.

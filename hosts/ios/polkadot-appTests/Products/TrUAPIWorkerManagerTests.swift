@@ -1,23 +1,24 @@
 import Foundation
+import os
 import Products
 import Testing
 import TrUAPIHost
 @testable import polkadot_app
 
 /// The core counts worker references and reports only the transitions across
-/// zero, so the supervisor must be exact: a worker left running burns a web
+/// zero, so the manager must be exact: a worker left running burns a web
 /// view, and one left half-booted swallows every later start.
-struct TrUAPIWorkerSupervisorTests {
+struct TrUAPIWorkerManagerTests {
     @Test
     func startsTheWorkerOnTheFirstDemand() async throws {
         let builder = StubBuilder()
-        let supervisor = TrUAPIWorkerSupervisor(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await settle()
 
         #expect(builder.built == ["game.paseo"])
-        #expect(supervisor.currentExecution(of: "game.paseo") != nil)
+        #expect(manager.currentExecution(of: "game.paseo") != nil)
     }
 
     /// The core reports only transitions across zero, but a stop and a start can
@@ -26,11 +27,11 @@ struct TrUAPIWorkerSupervisorTests {
     @Test
     func doesNotStartASecondWorkerForTheSameProduct() async throws {
         let builder = StubBuilder()
-        let supervisor = TrUAPIWorkerSupervisor(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await settle()
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await settle()
 
         #expect(builder.built == ["game.paseo"])
@@ -39,14 +40,14 @@ struct TrUAPIWorkerSupervisorTests {
     @Test
     func stopsTheWorkerAndForgetsItsExecution() async throws {
         let builder = StubBuilder()
-        let supervisor = TrUAPIWorkerSupervisor(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await settle()
-        supervisor.demandChanged(productId: "game.paseo", transition: .stop)
+        manager.demandChanged(productId: "game.paseo", transition: .stop)
         try await settle()
 
-        #expect(supervisor.currentExecution(of: "game.paseo") == nil)
+        #expect(manager.currentExecution(of: "game.paseo") == nil)
     }
 
     /// A worker whose engine fails once it is already in the running map must
@@ -56,18 +57,18 @@ struct TrUAPIWorkerSupervisorTests {
     @Test
     func leavesNothingBehindWhenTheEngineFailsToBoot() async throws {
         let builder = StubBuilder(engineFails: true)
-        let supervisor = TrUAPIWorkerSupervisor(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await settle()
 
-        #expect(supervisor.currentExecution(of: "game.paseo") == nil)
+        #expect(manager.currentExecution(of: "game.paseo") == nil)
 
         builder.engineFails = false
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await settle()
 
-        #expect(supervisor.currentExecution(of: "game.paseo") != nil)
+        #expect(manager.currentExecution(of: "game.paseo") != nil)
     }
 
     /// A product with no worker cannot be built at all, which must be as clean
@@ -75,18 +76,18 @@ struct TrUAPIWorkerSupervisorTests {
     @Test
     func leavesNothingBehindWhenTheWorkerCannotBeBuilt() async throws {
         let builder = StubBuilder(cannotBuild: true)
-        let supervisor = TrUAPIWorkerSupervisor(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await settle()
 
-        #expect(supervisor.currentExecution(of: "game.paseo") == nil)
+        #expect(manager.currentExecution(of: "game.paseo") == nil)
 
         builder.cannotBuild = false
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await settle()
 
-        #expect(supervisor.currentExecution(of: "game.paseo") != nil)
+        #expect(manager.currentExecution(of: "game.paseo") != nil)
     }
 
     /// A stop for a product that never started is what the core sends when a
@@ -94,14 +95,14 @@ struct TrUAPIWorkerSupervisorTests {
     @Test
     func ignoresAStopForAWorkerThatNeverStarted() async throws {
         let builder = StubBuilder()
-        let supervisor = TrUAPIWorkerSupervisor(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await settle()
-        supervisor.demandChanged(productId: "other.paseo", transition: .stop)
+        manager.demandChanged(productId: "other.paseo", transition: .stop)
         try await settle()
 
-        #expect(supervisor.currentExecution(of: "game.paseo") != nil)
+        #expect(manager.currentExecution(of: "game.paseo") != nil)
     }
 
     /// The worker's card list is served from the bridge's snapshot, and the
@@ -111,9 +112,9 @@ struct TrUAPIWorkerSupervisorTests {
     @Test
     func fillsTheCardListBeforeTheWorkersScriptComesUp() async throws {
         let builder = StubBuilder()
-        let supervisor = TrUAPIWorkerSupervisor(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await settle()
 
         #expect(builder.cardsWhenTheEngineBooted.map(\.cardId) == ["loyalty"])
@@ -125,9 +126,9 @@ struct TrUAPIWorkerSupervisorTests {
     @Test
     func tellsTheCoreWhatTheWorkerHoldsOnceItsExecutionIsPublished() async throws {
         let builder = StubBuilder()
-        let supervisor = TrUAPIWorkerSupervisor(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await settle()
 
         #expect(builder.execution?.pocketCardNotifications.last?.map(\.cardId) == ["loyalty"])
@@ -141,10 +142,10 @@ struct TrUAPIWorkerSupervisorTests {
     @Test
     func doesNotStartASecondWorkerWhenTwoDemandsOverlap() async throws {
         let builder = StubBuilder(buildDelay: .milliseconds(30))
-        let supervisor = TrUAPIWorkerSupervisor(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await settle()
         try await Task.sleep(for: .milliseconds(200))
 
@@ -157,35 +158,35 @@ struct TrUAPIWorkerSupervisorTests {
     @Test
     func disposesAWorkerThatWasStoppedWhileItWasStillBooting() async throws {
         let builder = StubBuilder(buildDelay: .milliseconds(80))
-        let supervisor = TrUAPIWorkerSupervisor(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await Task.sleep(for: .milliseconds(20))
-        supervisor.demandChanged(productId: "game.paseo", transition: .stop)
+        manager.demandChanged(productId: "game.paseo", transition: .stop)
         try await settle()
         try await Task.sleep(for: .milliseconds(300))
 
-        #expect(supervisor.currentExecution(of: "game.paseo") == nil)
+        #expect(manager.currentExecution(of: "game.paseo") == nil)
         #expect(builder.execution?.closeCallCount == 1)
     }
 
-    /// The ledger delivers its transitions in order, so the supervisor has to
+    /// The ledger delivers its transitions in order, so the manager has to
     /// apply them in order. A start, a stop and a start leave the worker
     /// running; applied out of order the pair of starts collapses into one and
     /// the stop lands last, leaving the card with no worker at all.
     @Test
     func appliesABurstOfTransitionsInTheOrderTheyArrive() async throws {
         let builder = StubBuilder(buildDelay: .milliseconds(40))
-        let supervisor = TrUAPIWorkerSupervisor(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
-        supervisor.demandChanged(productId: "game.paseo", transition: .stop)
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .stop)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
 
         try await settle()
         try await Task.sleep(for: .milliseconds(300))
 
-        #expect(supervisor.currentExecution(of: "game.paseo") != nil)
+        #expect(manager.currentExecution(of: "game.paseo") != nil)
     }
 
     /// A boot that fails after a stop has already cleared it must not take the
@@ -195,19 +196,19 @@ struct TrUAPIWorkerSupervisorTests {
     @Test
     func aFailedBootDoesNotClearTheBootThatReplacedIt() async throws {
         let builder = StubBuilder(firstStartFailsAfter: .milliseconds(300))
-        let supervisor = TrUAPIWorkerSupervisor(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await Task.sleep(for: .milliseconds(50))
 
-        supervisor.demandChanged(productId: "game.paseo", transition: .stop)
+        manager.demandChanged(productId: "game.paseo", transition: .stop)
         try await Task.sleep(for: .milliseconds(20))
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
 
         try await settle()
         try await Task.sleep(for: .milliseconds(400))
 
-        #expect(supervisor.currentExecution(of: "game.paseo") != nil)
+        #expect(manager.currentExecution(of: "game.paseo") != nil)
     }
 
     /// Every product's transitions arrive down one queue, and building a worker
@@ -217,14 +218,14 @@ struct TrUAPIWorkerSupervisorTests {
     @Test
     func aStalledBootDoesNotHoldUpAnotherProduct() async throws {
         let builder = StubBuilder(stalledProduct: "stalled.paseo")
-        let supervisor = TrUAPIWorkerSupervisor(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        supervisor.demandChanged(productId: "stalled.paseo", transition: .start)
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "stalled.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await settle()
 
-        #expect(supervisor.currentExecution(of: "game.paseo") != nil)
-        #expect(supervisor.currentExecution(of: "stalled.paseo") == nil)
+        #expect(manager.currentExecution(of: "game.paseo") != nil)
+        #expect(manager.currentExecution(of: "stalled.paseo") == nil)
 
         builder.releaseTheStalledBoot()
     }
@@ -236,9 +237,9 @@ struct TrUAPIWorkerSupervisorTests {
     func tellsARunningWorkerAboutACardAddedLater() async throws {
         let builder = StubBuilder()
         let collection = InMemoryPocketCardStore([loyalty])
-        let supervisor = TrUAPIWorkerSupervisor(builder: builder, collection: collection)
+        let manager = makeManager(builder: builder, collection: collection)
 
-        supervisor.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         try await settle()
         #expect(try builder.bridge?.listCards().map(\.cardId) == ["loyalty"])
 
@@ -263,7 +264,7 @@ private let streak = PocketCardEntry(
     privileged: false
 )
 
-/// The supervisor hands its work to a task, so the assertions wait for it
+/// The manager hands its work to a task, so the assertions wait for it
 /// rather than for a fixed time.
 private func settle() async throws {
     for _ in 0 ..< 20 {
@@ -274,6 +275,20 @@ private func settle() async throws {
 
 private func collectionHolding(_ cards: [PocketCardEntry]) -> any PocketCardStore {
     InMemoryPocketCardStore(cards)
+}
+
+private func makeManager(
+    builder: any TrUAPIWorkerBuilding,
+    collection: any PocketCardStore,
+    references: StubWorkerReferences = StubWorkerReferences(),
+    startupWindow: Duration = .seconds(30)
+) -> TrUAPIWorkerManager {
+    TrUAPIWorkerManager(
+        builder: builder,
+        collection: collection,
+        references: { references },
+        startupWindow: startupWindow
+    )
 }
 
 private final class StubBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
@@ -321,7 +336,7 @@ private final class StubBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
 
     func makeRuntime(
         productId: ProductId,
-        seams _: TrUAPIWorkerSeams,
+        context _: ProductWorkerContext,
         pocket: ProductPocketHostBridge
     ) async throws -> TrUAPIWorkerRuntime {
         if cannotBuild { throw TrUAPIWorkerError.noWorker(productId) }

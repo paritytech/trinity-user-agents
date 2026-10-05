@@ -27,7 +27,7 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
 
     /// Attach what runs product workers when the core's reference ledger asks
     /// for them. Called once at startup, before the runtime is first built.
-    func attach(workerSupervisor: any TrUAPIWorkerSupervising)
+    func attach(workerManager: any TrUAPIWorkerManaging)
 }
 
 /// Lazily builds one ``TrUAPIHostRuntime`` from host identity + people/bulletin
@@ -48,8 +48,8 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private var contactsChangeNotifier: ContactsChangeNotifier?
 
     /// Set once at startup, before any product opens. The runtime is built on
-    /// first use, which is long after, so the supervisor is in place by then.
-    private var workerSupervisor: (any TrUAPIWorkerSupervising)?
+    /// first use, which is long after, so the manager is in place by then.
+    private var workerManager: (any TrUAPIWorkerManaging)?
 
     init(
         chainRegistry: ChainRegistryProtocol,
@@ -74,11 +74,11 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         confirmationRouterFacade.setPresentationView(view)
     }
 
-    func attach(workerSupervisor: any TrUAPIWorkerSupervising) {
+    func attach(workerManager: any TrUAPIWorkerManaging) {
         lock.lock()
         defer { lock.unlock() }
 
-        self.workerSupervisor = workerSupervisor
+        self.workerManager = workerManager
     }
 
     func sharedRuntime() throws -> TrUAPIHostRuntime {
@@ -112,7 +112,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             coreStorage: coreStorage,
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
-            workerSupervisor: workerSupervisor,
+            workerManager: workerManager,
             logger: logger
         )
 

@@ -10,13 +10,13 @@ import TrUAPIHost
 /// on screen: a stream nothing reopens, and a stream torn down for a worker
 /// that never moved.
 struct PocketFaceStreamsTests {
-    /// The supervisor publishes every product's execution in one value, so it
+    /// The manager publishes every product's execution in one value, so it
     /// re-sends whenever any worker starts or stops. Reopening on those would
     /// drop a live render and pay the connect retries again, for a worker this
     /// card's product never moved.
     @Test
     func doesNotReopenTheRenderWhenAnotherProductsWorkerMoves() async throws {
-        let workers = StubWorkerSupervisor()
+        let workers = StubWorkerManager()
         let execution = MockProductExecution()
         execution.keepsRenderStreamOpen = true
         let streams = makeStreams(workers: workers)
@@ -43,7 +43,7 @@ struct PocketFaceStreamsTests {
     func asksAgainWhenTheCardLookupDidNotLand() async throws {
         let published = StubPublishedCards()
         published.failures = [URLError(.notConnectedToInternet)]
-        let workers = StubWorkerSupervisor()
+        let workers = StubWorkerManager()
         let execution = MockProductExecution()
         workers.publish(["game.paseo": execution])
 
@@ -65,15 +65,14 @@ struct PocketFaceStreamsTests {
     func stopsAskingWhenTheProductPublishesNoSuchCard() async throws {
         let published = StubPublishedCards()
         published.failures = [PocketPublishError.noPocket]
-        let workers = StubWorkerSupervisor()
+        let workers = StubWorkerManager()
         workers.publish(["game.paseo": MockProductExecution()])
-        let references = StubWorkerReferences()
 
-        let streams = makeStreams(workers: workers, published: published, references: references)
+        let streams = makeStreams(workers: workers, published: published)
         for try await _ in streams.renderFaces(for: loyalty) {}
 
         #expect(published.lookups == 1)
-        #expect(references.acquired.isEmpty)
+        #expect(workers.references.acquired.isEmpty)
     }
 }
 
@@ -101,15 +100,10 @@ private func waitUntil(_ condition: () -> Bool) async throws {
 }
 
 private func makeStreams(
-    workers: StubWorkerSupervisor,
-    published: StubPublishedCards = StubPublishedCards(),
-    references: StubWorkerReferences = StubWorkerReferences()
+    workers: StubWorkerManager,
+    published: StubPublishedCards = StubPublishedCards()
 ) -> TrUAPIPocketFaceStreams {
-    TrUAPIPocketFaceStreams(
-        runtime: { references },
-        workers: workers,
-        publishedCards: published
-    )
+    TrUAPIPocketFaceStreams(workers: workers, publishedCards: published)
 }
 
 private final class StubPublishedCards: PublishedPocketCardsResolving, @unchecked Sendable {

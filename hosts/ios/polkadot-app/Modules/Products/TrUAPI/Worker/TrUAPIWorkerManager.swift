@@ -2,29 +2,43 @@ import Foundation
 import os
 import AsyncExtensions
 import Products
+import StructuredConcurrency
 import TrUAPIHost
 
 /// Runs product workers for as long as the core's reference ledger wants them.
 ///
-/// The core counts the references its modality holders take, a card on screen
-/// takes one and so does a chat session, and reports only the transitions across
-/// zero. A `.start` boots the product's worker behind its one Worker execution;
-/// a `.stop` tears it down.
-protocol TrUAPIWorkerSupervising: AnyObject, Sendable {
-    /// May arrive on any thread, including re-entrantly from inside
-    /// `acquireWorker`, so the work is handed off rather than done here.
+/// A handler asks for the worker it needs with ``ensureWorker(for:)``, which
+/// registers the request with the core and returns once the worker it decided
+/// to run is up. The core counts those requests and reports only the
+/// transitions across zero: a `.start` boots the product's worker behind its
+/// one Worker execution, a `.stop` tears it down.
+protocol TrUAPIWorkerManaging: AnyObject, Sendable {
+    /// May arrive on any thread, including re-entrantly from inside a request,
+    /// so the work is handed off rather than done here.
     func demandChanged(productId: ProductId, transition: WorkerTransition)
 
-    /// What `productId`'s worker is served through, for the life of the
-    /// session rather than of any one worker.
-    func seams(of productId: ProductId) -> TrUAPIWorkerSeams
+    /// Registers a request for `productId`'s worker and returns its execution
+    /// once the core has let the worker start.
+    ///
+    /// The request is the caller's from the moment it asks, including when this
+    /// throws, so it is given back with ``releaseWorker(for:)`` either way.
+    /// A handler can be disposed while it is still waiting here, and a release
+    /// that crossed the answer must not be the one that is lost.
+    func ensureWorker(for productId: ProductId) async throws -> TrUAPIProductExecutionProtocol
+
+    func releaseWorker(for productId: ProductId)
+
+    /// What `productId`'s worker is built against, for the life of the session
+    /// rather than of any one worker.
+    func context(of productId: ProductId) -> ProductWorkerContext
 
     /// The product's worker execution while it runs, and nil while it does not.
+    /// Followed by a handler that must survive the worker restarting under it.
     func executions(of productId: ProductId) -> AnyAsyncSequence<TrUAPIProductExecutionProtocol?>
 
     func currentExecution(of productId: ProductId) -> TrUAPIProductExecutionProtocol?
 
-    /// Stops every worker this supervisor is running. Called when the session
+    /// Stops every worker this manager is running. Called when the session
     /// it was built for ends.
     func shutdown() async
 }
@@ -34,19 +48,19 @@ protocol TrUAPIWorkerSupervising: AnyObject, Sendable {
 protocol TrUAPIWorkerBuilding: Sendable {
     func makeRuntime(
         productId: ProductId,
-        seams: TrUAPIWorkerSeams,
+        context: ProductWorkerContext,
         pocket: ProductPocketHostBridge
     ) async throws -> TrUAPIWorkerRuntime
 }
 
-actor TrUAPIWorkerSupervisor: TrUAPIWorkerSupervising {
+actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     private struct Running {
         let boot: Boot
         let runtime: TrUAPIWorkerRuntime
         let pocket: ProductPocketHostBridge
     }
 
-    /// What the supervisor holds for one product. A boot claims the product
+    /// What the manager holds for one product. A boot claims the product
     /// before its first await: actors are reentrant, so two starts that overlap
     /// would otherwise both pass the guard and build a worker, and a stop that
     /// landed mid-boot would find nothing to remove and leave the worker
@@ -72,15 +86,21 @@ actor TrUAPIWorkerSupervisor: TrUAPIWorkerSupervising {
 
     private let builder: any TrUAPIWorkerBuilding
     private let collection: any PocketCardStore
+    /// The core's reference ledger, which is what decides whether a worker runs.
+    private let references: @Sendable () throws -> any TrUAPIWorkerReferencing
+    /// How long a request waits for the worker it asked for. A boot that fails
+    /// publishes no execution, so without this a handler would wait for one
+    /// forever.
+    private let startupWindow: Duration
     private let logger: LoggerProtocol
 
     private var held: [ProductId: Held] = [:]
     private var draining: Task<Void, Never>?
     private var isShutDown = false
 
-    /// Read from `seams(of:)`, which a chat session calls before any worker
+    /// Read from `context(of:)`, which a chat session calls before any worker
     /// exists, so it is held beside the actor's own state rather than in it.
-    private let openSeams = OSAllocatedUnfairLock<[ProductId: TrUAPIWorkerSeams]>(initialState: [:])
+    private let openContexts = OSAllocatedUnfairLock<[ProductId: ProductWorkerContext]>(initialState: [:])
 
     /// Transitions are booked one at a time, in the order the ledger sent them.
     /// Handing each to its own task leaves the order to the scheduler, where a
@@ -91,17 +111,41 @@ actor TrUAPIWorkerSupervisor: TrUAPIWorkerSupervising {
     init(
         builder: any TrUAPIWorkerBuilding,
         collection: any PocketCardStore,
+        references: @escaping @Sendable () throws -> any TrUAPIWorkerReferencing,
+        startupWindow: Duration = .seconds(30),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.builder = builder
         self.collection = collection
+        self.references = references
+        self.startupWindow = startupWindow
         self.logger = logger
 
         Task { await self.beginFollowing() }
     }
 
+    nonisolated func ensureWorker(for productId: ProductId) async throws -> TrUAPIProductExecutionProtocol {
+        try references().acquireWorker(productId: productId)
+
+        return try await withTimeout(startupWindow) { [self] in
+            for try await execution in executions(of: productId) {
+                if let execution { return execution }
+            }
+
+            throw TrUAPIWorkerError.noWorker(productId)
+        }
+    }
+
+    nonisolated func releaseWorker(for productId: ProductId) {
+        do {
+            try references().releaseWorker(productId: productId)
+        } catch {
+            logger.error("[truapi] \(productId)'s worker request could not be given back: \(error)")
+        }
+    }
+
     /// Started from a task rather than in `init`, because the drain task
-    /// captures the supervisor and an actor's initializer cannot reach its own
+    /// captures the manager and an actor's initializer cannot reach its own
     /// storage once it has escaped. A shutdown can therefore land first, and
     /// must not be followed by a drain loop nothing holds a way back to.
     private func beginFollowing() {
@@ -117,7 +161,7 @@ actor TrUAPIWorkerSupervisor: TrUAPIWorkerSupervising {
     }
 
     /// The workers outlive every screen, so nothing else ever tears them down:
-    /// a supervisor dropped without this leaves a headless web view and its
+    /// a manager dropped without this leaves a headless web view and its
     /// chain connections running for the rest of the process.
     func shutdown() async {
         isShutDown = true
@@ -136,13 +180,13 @@ actor TrUAPIWorkerSupervisor: TrUAPIWorkerSupervising {
         transitions.continuation.yield((productId, transition))
     }
 
-    nonisolated func seams(of productId: ProductId) -> TrUAPIWorkerSeams {
-        openSeams.withLock { open in
-            if let seams = open[productId] { return seams }
+    nonisolated func context(of productId: ProductId) -> ProductWorkerContext {
+        openContexts.withLock { open in
+            if let context = open[productId] { return context }
 
-            let seams = TrUAPIWorkerSeams()
-            open[productId] = seams
-            return seams
+            let context = ProductWorkerContext()
+            open[productId] = context
+            return context
         }
     }
 
@@ -181,7 +225,7 @@ actor TrUAPIWorkerSupervisor: TrUAPIWorkerSupervising {
         do {
             let runtime = try await builder.makeRuntime(
                 productId: productId,
-                seams: seams(of: productId),
+                context: context(of: productId),
                 pocket: bridge
             )
             guard held[productId]?.belongsTo(boot) == true else {

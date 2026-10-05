@@ -19,7 +19,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let chainRegistry: ChainRegistryProtocol
     private let chainConnections: TrUAPIChainConnecting
     private let confirmationPresenter: TrUAPIConfirmationPresenting
-    private let workerSupervisor: (any TrUAPIWorkerSupervising)?
+    private let workerManager: (any TrUAPIWorkerManaging)?
     private let logger: LoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
 
@@ -28,13 +28,13 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         coreStorage: TrUAPILocalStoring,
         chainConnections: TrUAPIChainConnecting,
         confirmationPresenter: TrUAPIConfirmationPresenting,
-        workerSupervisor: (any TrUAPIWorkerSupervising)? = nil,
+        workerManager: (any TrUAPIWorkerManaging)? = nil,
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
         self.chainConnections = chainConnections
         self.confirmationPresenter = confirmationPresenter
-        self.workerSupervisor = workerSupervisor
+        self.workerManager = workerManager
         self.logger = logger
         self.coreStorage = CoreStorageBackend(storage: coreStorage)
         storage = EmptyHostStorageBackend()
@@ -53,9 +53,9 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
 
     /// Demand is runtime-wide, so it arrives here rather than on a product's
     /// own bridge, and can arrive re-entrantly from inside `acquireWorker`,
-    /// the supervisor hands the transition off rather than acting on it here.
+    /// the manager hands the transition off rather than acting on it here.
     func workerDemandChanged(productId: String, transition: WorkerTransition) {
-        workerSupervisor?.demandChanged(productId: productId, transition: transition)
+        workerManager?.demandChanged(productId: productId, transition: transition)
     }
 
     func navigateTo(url: String) async throws {

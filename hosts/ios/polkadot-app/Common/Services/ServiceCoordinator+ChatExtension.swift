@@ -41,7 +41,7 @@ extension ServiceCoordinator {
         let botFactory = ProductBotFactory(
             productFileProvider: productFileProvider,
             runtimeProvider: truapiRuntimeProvider,
-            workers: { pocket?.supervisor },
+            workers: { pocket?.manager },
             workerManager: workerFacade.manager
         )
 

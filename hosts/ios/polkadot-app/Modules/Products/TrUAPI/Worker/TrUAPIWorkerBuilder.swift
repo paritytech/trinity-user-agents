@@ -37,27 +37,27 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
 
     func makeRuntime(
         productId: ProductId,
-        seams: TrUAPIWorkerSeams,
+        context: ProductWorkerContext,
         pocket: ProductPocketHostBridge
     ) async throws -> TrUAPIWorkerRuntime {
         let resolved = try? await products.resolve(productId)
         let source = try await workerSource(for: resolved, productId: productId)
 
-        let context = try ChatProductEngineFactory.makeContext(
+        let engine = try ChatProductEngineFactory.makeContext(
             source: source,
             productFileProvider: productFileProvider,
             logger: logger
         )
 
         return try TrUAPIWorkerRuntime(
-            productUrl: context.productUrl,
+            productUrl: engine.productUrl,
             executionModel: environment().makeWorkerExecution(
                 productId: productId,
-                routers: seams.routers,
-                chatMessaging: seams.chat,
+                routers: context.routers,
+                chatMessaging: context.chat,
                 pocket: pocket
             ),
-            engineFactory: context.engineFactory,
+            engineFactory: engine.engineFactory,
             logger: logger
         )
     }

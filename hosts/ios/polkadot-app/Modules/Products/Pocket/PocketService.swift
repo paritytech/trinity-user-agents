@@ -26,7 +26,7 @@ final class PocketService {
     /// Read without isolation, because bot discovery asks for it from whatever
     /// executor it resumed on. Hopping to the main actor to answer would mean
     /// asserting an isolation that discovery does not have.
-    private let supervisorHeld = OSAllocatedUnfairLock<(any TrUAPIWorkerSupervising)?>(initialState: nil)
+    private let managerHeld = OSAllocatedUnfairLock<(any TrUAPIWorkerManaging)?>(initialState: nil)
 
     /// What the cards are drawn through, once a session has started the Pocket.
     private struct Drawing {
@@ -67,7 +67,7 @@ final class PocketService {
 
     /// What runs every product's worker. Nil until the session has started the
     /// Pocket, which is when a chat bot falls back to the native runtime.
-    nonisolated var supervisor: (any TrUAPIWorkerSupervising)? { supervisorHeld.withLock { $0 } }
+    nonisolated var manager: (any TrUAPIWorkerManaging)? { managerHeld.withLock { $0 } }
 
     /// How many times this process has started a Pocket. A sign-out and back in
     /// starts another, and everything read from the one before it is finished:
@@ -93,14 +93,14 @@ final class PocketService {
     }
 
     /// Starts the workers and the face source the cards read, and wires the
-    /// supervisor into the runtime the core runs on.
+    /// manager into the runtime the core runs on.
     func start(
         runtimeProvider: any TrUAPIHostRuntimeProviding,
         flowState: SPAFlowState,
         productFileProvider: any ChatProductFileProviding,
         chainRegistry: ChainRegistryProtocol
     ) {
-        let supervisor = TrUAPIWorkerSupervisor(
+        let manager = TrUAPIWorkerManager(
             builder: TrUAPIWorkerBuilder(
                 environment: { [weak runtimeProvider, logger] in
                     guard let runtimeProvider else { throw PocketServiceError.gone }
@@ -120,23 +120,23 @@ final class PocketService {
                 logger: logger
             ),
             collection: collection,
+            references: { [weak runtimeProvider] in
+                guard let runtimeProvider else { throw PocketServiceError.gone }
+
+                return try runtimeProvider.sharedRuntime()
+            },
             logger: logger
         )
 
-        runtimeProvider.attach(workerSupervisor: supervisor)
-        replace(with: supervisor)
+        runtimeProvider.attach(workerManager: manager)
+        replace(with: manager)
 
         let converter = HexToCIDConverter(ipfsBaseURL: AppConfig.KnownIPFS.main)
         drawing = Drawing(
             faces: RealPocketFaceSource(
                 store: { [collection] in collection },
                 streams: TrUAPIPocketFaceStreams(
-                    runtime: { [weak runtimeProvider] in
-                        guard let runtimeProvider else { throw PocketServiceError.gone }
-
-                        return try runtimeProvider.sharedRuntime()
-                    },
-                    workers: supervisor,
+                    workers: manager,
                     publishedCards: PublishedPocketCards.makeDefault(products: flowState.productResolver),
                     logger: logger
                 ),
@@ -157,12 +157,12 @@ final class PocketService {
         cardHosts.release()
     }
 
-    /// Nothing else holds a way back to the workers a replaced supervisor is
+    /// Nothing else holds a way back to the workers a replaced manager is
     /// still running, so it is shut down here.
-    private func replace(with supervisor: (any TrUAPIWorkerSupervising)?) {
-        let previous = supervisorHeld.withLock { held -> (any TrUAPIWorkerSupervising)? in
+    private func replace(with manager: (any TrUAPIWorkerManaging)?) {
+        let previous = managerHeld.withLock { held -> (any TrUAPIWorkerManaging)? in
             let previous = held
-            held = supervisor
+            held = manager
             return previous
         }
 

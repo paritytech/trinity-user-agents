@@ -4,15 +4,15 @@ import StructuredConcurrency
 import TrUAPIHost
 import UIKitExt
 
-/// Rust chat runtime: the chat half of a product's worker.
+/// The chat half of a product's worker.
 ///
-/// The worker itself belongs to ``TrUAPIWorkerSupervisor``. The core keeps one
-/// Worker execution per product and the reference ledger decides when it runs,
-/// so a chat session takes one reference for as long as it is open rather than
+/// Started while a chat session with the product is open, which is what asks
+/// ``TrUAPIWorkerManager`` for its worker. The core keeps one Worker execution
+/// per product and decides when it runs, so this asks for one rather than
 /// opening an execution of its own. The same worker also draws the product's
 /// Pocket cards.
 ///
-/// Chat-environment seams route through that execution: user messages and
+/// Chat-environment context route through that execution: user messages and
 /// events publish chat actions, widget rendering streams typed renderer nodes,
 /// and the product's chat surface serves the core's chat callbacks.
 ///
@@ -20,7 +20,7 @@ import UIKitExt
 /// reentrant, so `dispose()` can interleave while `start` is suspended:
 /// `dispose` flips `disposed` before its first await and `start` re-checks it
 /// after every await, releasing anything it took in the gap.
-actor ChatRustRuntime: ChatRuntimeProtocol {
+actor TrUAPIChatHandler: ChatRuntimeProtocol {
     enum ChatSeamError: Error, Equatable {
         case notStarted
         /// The core normalizes room ids on the way back and rejects an empty one, so a
@@ -32,11 +32,9 @@ actor ChatRustRuntime: ChatRuntimeProtocol {
     }
 
     private let productId: ProductId
-    private let workers: any TrUAPIWorkerSupervising
-    private let references: @Sendable () throws -> any TrUAPIWorkerReferencing
+    private let workers: any TrUAPIWorkerManaging
     /// The product's own chat surface and routers, which outlive any one worker.
-    private let seams: TrUAPIWorkerSeams
-    private let workerStartupWindow: Duration
+    private let context: ProductWorkerContext
     private let renderStartupWindow: Duration
     private let logger: LoggerProtocol
 
@@ -45,28 +43,24 @@ actor ChatRustRuntime: ChatRuntimeProtocol {
     /// one covers the window before there is a worker to ask at all.
     private static let renderRetryInterval = Duration.milliseconds(25)
 
-    /// Held while this session's reference is out, so dispose gives back
+    /// Whether this session's worker request is out, so dispose gives back
     /// exactly what start took and never more.
-    private var reference: (any TrUAPIWorkerReferencing)?
+    private var holdsWorker = false
     private var roomsForwardingTask: Task<Void, Never>?
     private var started = false
     private var disposed = false
 
     init(
         productId: ProductId,
-        workers: any TrUAPIWorkerSupervising,
-        references: @Sendable @escaping () throws -> any TrUAPIWorkerReferencing,
-        workerStartupWindow: Duration = .seconds(30),
+        workers: any TrUAPIWorkerManaging,
         renderStartupWindow: Duration = .seconds(5),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.productId = productId
         self.workers = workers
-        self.references = references
-        self.workerStartupWindow = workerStartupWindow
         self.renderStartupWindow = renderStartupWindow
         self.logger = logger
-        seams = workers.seams(of: productId)
+        context = workers.context(of: productId)
     }
 
     deinit {
@@ -75,7 +69,7 @@ actor ChatRustRuntime: ChatRuntimeProtocol {
         // in the deinit body itself.
         let started = started
         let disposed = disposed
-        assert(!started || disposed, "ChatRustRuntime dropped without dispose()")
+        assert(!started || disposed, "TrUAPIChatHandler dropped without dispose()")
     }
 
     func start(messagingSupport: ProductsNativeApi.MessagingSupport) async throws {
@@ -170,7 +164,7 @@ actor ChatRustRuntime: ChatRuntimeProtocol {
 
     @MainActor
     func attach(presentationView view: ControllerBackedProtocol) {
-        seams.routers.setPresentationView(view)
+        context.routers.setPresentationView(view)
     }
 
     func dispose() async {
@@ -185,46 +179,40 @@ actor ChatRustRuntime: ChatRuntimeProtocol {
         // The core keeps the bridge, and the bridge keeps the surface: unbinding
         // is what releases the chat context. Only this runtime's own binding,
         // because the surface is the product's and another runtime may hold it.
-        seams.chat.unbind(owner: self)
+        context.chat.unbind(owner: self)
 
-        // A release, not a close. The product's cards may still hold the same
-        // worker, and the core stops it once the last reference goes.
-        reference?.releaseWorker(productId: productId)
-        reference = nil
+        // A release, not a close. The product's cards may still be asking for
+        // the same worker, and the core stops it once the last request goes.
+        if holdsWorker {
+            workers.releaseWorker(for: productId)
+            holdsWorker = false
+        }
 
         logger.debug("Rust chat runtime disposed for: \(productId)")
     }
 }
 
-private extension ChatRustRuntime {
+private extension TrUAPIChatHandler {
     func startRuntime(
         messagingSupport: ProductsNativeApi.MessagingSupport
     ) async throws {
-        // Bound before the reference is taken, so the core can never reach a
+        // Bound before the worker is asked for, so the core can never reach a
         // surface with no binding.
-        seams.chat.bind(messagingSupport, owner: self)
+        context.chat.bind(messagingSupport, owner: self)
 
-        let reference = try references()
-        reference.acquireWorker(productId: productId)
-        self.reference = reference
+        // Marked before the ask, because the request is ours from that moment:
+        // a dispose landing while the worker comes up has to be the one that
+        // gives it back.
+        holdsWorker = true
 
-        try await awaitWorker()
+        // Returns once the worker is up, because everything the bot does next,
+        // its welcome message first of all, is published through the execution.
+        _ = try await workers.ensureWorker(for: productId)
+
         try checkNotDisposed()
         startRoomsForwarding()
 
         logger.debug("Rust chat runtime started for: \(productId)")
-    }
-
-    /// `start` returns once the worker is up, because everything the bot does
-    /// next, its welcome message first of all, is published through the
-    /// execution.
-    func awaitWorker() async throws {
-        try await withTimeout(workerStartupWindow) { [workers, productId] in
-            for try await execution in workers.executions(of: productId) where execution != nil {
-                return
-            }
-            throw ChatSeamError.notStarted
-        }
     }
 
     func checkNotDisposed() throws {
@@ -279,7 +267,7 @@ private extension ChatRustRuntime {
     /// read each time rather than captured, so a worker that restarts under this
     /// session keeps being told.
     func startRoomsForwarding() {
-        roomsForwardingTask = Task { [logger, workers, productId, chat = seams.chat] in
+        roomsForwardingTask = Task { [logger, workers, productId, chat = context.chat] in
             do {
                 for try await rooms in try await chat.subscribeRooms() {
                     guard !Task.isCancelled else { return }

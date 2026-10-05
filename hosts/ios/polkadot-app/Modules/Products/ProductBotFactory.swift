@@ -8,19 +8,19 @@ import Products
 /// The native path is a thin adapter over the shared ``ProductWorkerManager`` —
 /// the worker itself is assembled by ``DefaultProductWorkerFactory``. The rust
 /// path is a chat seam onto the product's one worker, which
-/// ``TrUAPIWorkerSupervisor`` runs.
+/// ``TrUAPIWorkerManager`` runs.
 final class ProductBotFactory {
     private let productFileProvider: ChatProductFileProviding
     private let settingsManager: SettingsManagerProtocol
     private let runtimeProvider: TrUAPIHostRuntimeProviding
-    private let workers: @Sendable () -> (any TrUAPIWorkerSupervising)?
+    private let workers: @Sendable () -> (any TrUAPIWorkerManaging)?
     private let workerManager: ProductWorkerManaging
     private let logger: LoggerProtocol
 
     init(
         productFileProvider: ChatProductFileProviding,
         runtimeProvider: TrUAPIHostRuntimeProviding,
-        workers: @Sendable @escaping () -> (any TrUAPIWorkerSupervising)?,
+        workers: @Sendable @escaping () -> (any TrUAPIWorkerManaging)?,
         workerManager: ProductWorkerManaging,
         settingsManager: SettingsManagerProtocol = SettingsManager.shared,
         logger: LoggerProtocol = Logger.shared
@@ -39,10 +39,9 @@ final class ProductBotFactory {
         let product = resolved.product
 
         if settingsManager.isTrUAPIRuntimeEnabled, let workers = workers() {
-            let runtime = ChatRustRuntime(
+            let runtime = TrUAPIChatHandler(
                 productId: product.identifier,
                 workers: workers,
-                references: { [runtimeProvider] in try runtimeProvider.sharedRuntime() },
                 logger: logger
             )
             return ProductBot(product: product, runtime: runtime, logger: logger)
