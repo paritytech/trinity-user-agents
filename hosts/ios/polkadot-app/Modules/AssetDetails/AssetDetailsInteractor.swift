@@ -243,12 +243,3 @@ private extension AssetDetailsInteractor {
         }
     }
 }
-
-extension FundingDomainError: ErrorContentConvertible {
-    func toErrorContent() -> ErrorContent {
-        ErrorContent(
-            title: String(localized: .Common.error),
-            message: String(localized: .Products.topUpErrorMessage)
-        )
-    }
-}

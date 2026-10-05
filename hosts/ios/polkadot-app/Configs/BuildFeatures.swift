@@ -26,7 +26,8 @@
 // replaces the DIM2 bot identity rather than sitting alongside it, so a build cannot coherently
 // carry both. FEATURE_PRODUCTS is independent of both and may be combined with either.
 //
-// The environment axis (UNSTABLE / NIGHTLY) is independent and unconstrained by these checks.
+// The environment axis (UNSTABLE / NIGHTLY / SAFETYNET) is independent of the feature flags and
+// unconstrained by the checks above. Exactly one environment flag may be set.
 
 #if FEATURE_PRIZES && FEATURE_DIMS_FULL
     #error("FEATURE_PRIZES and FEATURE_DIMS_FULL are mutually exclusive — see Configs/base.*.xcconfig")
@@ -38,4 +39,8 @@
 
 #if FEATURE_PRIZES && !FEATURE_DIMS
     #error("FEATURE_PRIZES requires FEATURE_DIMS — see Configs/base.*.xcconfig")
+#endif
+
+#if (UNSTABLE && NIGHTLY) || (UNSTABLE && SAFETYNET) || (NIGHTLY && SAFETYNET)
+    #error("UNSTABLE, NIGHTLY and SAFETYNET are mutually exclusive — see Configs/base.*.xcconfig")
 #endif

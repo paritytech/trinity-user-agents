@@ -33,6 +33,7 @@ final class FirebaseFacade {
     private var lastRemoteFetchAt: Date?
     private var foregroundTask: Task<Void, Never>?
     private var fetchTask: Task<Void, Never>?
+    private var requiresFreshFetch = false
 
     private init(
         logger: LoggerProtocol? = Logger.shared,
@@ -58,7 +59,11 @@ final class FirebaseFacade {
 
 extension FirebaseFacade: RemoteConfigManaging, ChainRegistryConfiguring {
     func fetchRemoteConfigValues() {
-        applyCachedConfigIfValid()
+        if requiresFreshFetch {
+            clearPreviousFailure()
+        } else {
+            applyCachedConfigIfValid()
+        }
         scheduleRemoteFetch()
     }
 
@@ -113,6 +118,13 @@ extension FirebaseFacade: RemoteConfigObserving {
     }
 }
 
+extension FirebaseFacade: AppliedConfigDiscarding {
+    func discardAppliedConfig() {
+        requiresFreshFetch = true
+        remoteConfigSubject.send(nil)
+    }
+}
+
 extension FirebaseFacade: RemoteConfigDelegate {
     func remoteConfig(appVersionDidChange _: Result<String, Error>) {}
 }
@@ -121,13 +133,17 @@ private extension FirebaseFacade {
     func applyCachedConfigIfValid() {
         let cached = firebaseService.syncedAppConfig()
         guard cached.isValid else {
-            // A retry must wait for the new fetch instead of replaying the previous failure.
-            if case .invalid = remoteConfigSubject.value {
-                remoteConfigSubject.send(nil)
-            }
+            clearPreviousFailure()
             return
         }
         applyConfig(cached)
+    }
+
+    /// A retry must wait for the new fetch instead of replaying the previous failure.
+    func clearPreviousFailure() {
+        if case .invalid = remoteConfigSubject.value {
+            remoteConfigSubject.send(nil)
+        }
     }
 
     /// A failed fetch keeps an already applied config; without one, waiters would hang until their deadline.
@@ -195,6 +211,8 @@ private extension FirebaseFacade {
     }
 
     func handleFetchSuccess() {
+        requiresFreshFetch = false
+
         let config = firebaseService.syncedAppConfig()
         if config.isValid {
             applyConfig(config)
