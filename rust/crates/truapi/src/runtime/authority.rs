@@ -569,8 +569,27 @@ pub trait ProductAuthority: Send + Sync {
         false
     }
 
-    /// Execute an authorized operation on the Host-owned native Chat device.
-    async fn product_device_chat(
+    /// Request account connection for the calling product.
+    async fn request_login(
+        &self,
+        product: &ProductContext,
+    ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>>;
+
+    /// Disconnect the current account-authority session.
+    async fn disconnect(&self);
+
+    /// Refresh identity fields for the current session if the authority can do
+    /// so without user interaction. Lookup failures must not be presented as
+    /// an authoritative absence of a username.
+    async fn refresh_session_identity(&self) -> Result<Option<AuthoritySession>, String> {
+        Ok(self.current_session())
+    }
+
+    /// Return the public key of `//product//{product_id}`.
+    ///
+    /// Pairing hosts obtain this consent-free value from the Account Holder;
+    /// signing hosts derive it locally from root entropy.
+    async fn product_subtree_public_key(
         &self,
         cx: &CallContext,
         session: &AuthoritySession,

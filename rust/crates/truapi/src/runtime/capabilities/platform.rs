@@ -49,13 +49,9 @@ use truapi::versioned::notifications::{
     HostPushNotificationCancelError, HostPushNotificationCancelRequest,
     HostPushNotificationCancelResponse, HostPushNotificationError, HostPushNotificationRequest,
     HostPushNotificationResponse,
-    HostNotificationReceiverStatusRequest, HostNotificationReceiverStatusResponse,
-    HostNotificationReplaceReceiverRequest, HostNotificationReplaceReceiverResponse,
-    HostNotificationDisableReceiverRequest, HostNotificationDisableReceiverResponse,
-    HostNotificationRecordReceiptRequest, HostNotificationRecordReceiptResponse,
-    HostNotificationReceiverEventsRequest, HostNotificationReceiverEventsResponse,
-    HostNotificationAcknowledgeReceiverEventRequest, HostNotificationAcknowledgeReceiverEventResponse,
-    HostNotificationReceivingError,
+    NotificationActivationAcknowledgeError, NotificationActivationAcknowledgeRequest,
+    NotificationActivationAcknowledgeResponse, NotificationActivationEventsError,
+    NotificationActivationEventsRequest, NotificationActivationEventsResponse,
 };
 use truapi::versioned::permissions::{
     HostDevicePermissionError, HostDevicePermissionRequest, HostDevicePermissionResponse,
@@ -601,125 +597,37 @@ impl Notifications for ProductRuntimeHost {
             })
     }
 
-    async fn receiver_status(
+    #[instrument(skip_all, fields(runtime.method = "notifications.activation_events"))]
+    async fn activation_events(
         &self,
         _cx: &CallContext,
-        _request: HostNotificationReceiverStatusRequest,
-    ) -> Result<HostNotificationReceiverStatusResponse, CallError<HostNotificationReceivingError>> {
-        if let Some(status) = self.forwarded_receiving(2, Vec::new()).await? {
-            return Ok(HostNotificationReceiverStatusResponse::V1(status));
+        request: NotificationActivationEventsRequest,
+    ) -> Result<NotificationActivationEventsResponse, CallError<NotificationActivationEventsError>> {
+        let NotificationActivationEventsRequest::V1 = request;
+        let events = self.platform.activation_events().await.map_err(|err| {
+            CallError::Domain(NotificationActivationEventsError::V1(err))
+        })?;
+        if events.events.len() > 32 {
+            return Err(CallError::HostFailure {
+                reason: "notification activation batch exceeds 32 events".to_string(),
+            });
         }
-        let authority = match self.receiving_execution_authority().await {
-            Ok(authority) => authority,
-            Err(CallError::Domain(HostNotificationReceivingError::V1(
-                crate::latest::HostNotificationReceivingError::Unsupported,
-            ))) => return Ok(HostNotificationReceiverStatusResponse::V1(
-                crate::latest::HostNotificationReceiverStatus {
-                    supported: false, os_permission: false, consent: false, enabled: false,
-                    revision: 0, sync_pending: false, transport_ready: false,
-                },
-            )),
-            Err(error) => return Err(error),
-        };
-        self.services.receiving.for_execution(authority).status().await
-            .map(HostNotificationReceiverStatusResponse::V1)
-            .map_err(|error| CallError::Domain(HostNotificationReceivingError::V1(error)))
+        Ok(NotificationActivationEventsResponse::V1(events))
     }
 
-    async fn replace_receiver(
-        &self,
-        cx: &CallContext,
-        request: HostNotificationReplaceReceiverRequest,
-    ) -> Result<HostNotificationReplaceReceiverResponse, CallError<HostNotificationReceivingError>> {
-        let HostNotificationReplaceReceiverRequest::V1(request) = request;
-        let status = self.permissions_service()
-            .authorize_device(v01::HostDevicePermissionRequest::Notifications).await
-            .map_err(|error| CallError::Domain(HostNotificationReceivingError::V1(
-                crate::latest::HostNotificationReceivingError::Storage {
-                    reason: format!("permission storage failed: {error:?}"),
-                },
-            )))?;
-        if status != PermissionAuthorizationStatus::Authorized {
-            return Err(CallError::Domain(HostNotificationReceivingError::V1(
-                crate::latest::HostNotificationReceivingError::PermissionDenied,
-            )));
-        }
-        if let Some(reason) = cx.cancel().reason() {
-            return Err(CallError::Domain(HostNotificationReceivingError::V1(
-                crate::latest::HostNotificationReceivingError::InvalidRequest {
-                    reason: format!("receiving enrollment {reason}"),
-                },
-            )));
-        }
-        if let Some(status) = self.forwarded_receiving(3, request.encode()).await? {
-            return Ok(HostNotificationReplaceReceiverResponse::V1(status));
-        }
-        let authority = self.receiving_execution_authority().await?;
-        self.services.receiving.for_execution(authority)
-            .replace(request.expected_revision, request.watches).await
-            .map(HostNotificationReplaceReceiverResponse::V1)
-            .map_err(|error| CallError::Domain(HostNotificationReceivingError::V1(error)))
-    }
-
-    async fn disable_receiver(
+    #[instrument(skip_all, fields(runtime.method = "notifications.acknowledge_activation"))]
+    async fn acknowledge_activation(
         &self,
         _cx: &CallContext,
-        request: HostNotificationDisableReceiverRequest,
-    ) -> Result<HostNotificationDisableReceiverResponse, CallError<HostNotificationReceivingError>> {
-        let HostNotificationDisableReceiverRequest::V1(request) = request;
-        if let Some(status) = self.forwarded_receiving(4, request.encode()).await? {
-            return Ok(HostNotificationDisableReceiverResponse::V1(status));
-        }
-        let authority = self.receiving_execution_authority().await?;
-        self.services.receiving.for_execution(authority).disable(request.expected_revision).await
-            .map(HostNotificationDisableReceiverResponse::V1)
-            .map_err(|error| CallError::Domain(HostNotificationReceivingError::V1(error)))
-    }
-
-    async fn record_receipt(
-        &self,
-        _cx: &CallContext,
-        request: HostNotificationRecordReceiptRequest,
-    ) -> Result<HostNotificationRecordReceiptResponse, CallError<HostNotificationReceivingError>> {
-        let HostNotificationRecordReceiptRequest::V1(request) = request;
-        if let Some(outcome) = self.forwarded_receiving(5, request.encode()).await? {
-            return Ok(HostNotificationRecordReceiptResponse::V1(outcome));
-        }
-        let authority = self.receiving_execution_authority().await?;
-        self.services.receiving.for_execution(authority).receipt(
-            request.revision, request.watch_id, request.event_id, request.kind,
-        ).await
-            .map(HostNotificationRecordReceiptResponse::V1)
-            .map_err(|error| CallError::Domain(HostNotificationReceivingError::V1(error)))
-    }
-
-    async fn receiver_events(
-        &self,
-        _cx: &CallContext,
-        request: HostNotificationReceiverEventsRequest,
-    ) -> Result<HostNotificationReceiverEventsResponse, CallError<HostNotificationReceivingError>> {
-        let HostNotificationReceiverEventsRequest::V1(request) = request;
-        if let Some(events) = self.forwarded_receiving(6, request.encode()).await? {
-            return Ok(HostNotificationReceiverEventsResponse::V1(events));
-        }
-        let authority = self.receiving_execution_authority().await?;
-        self.services.receiving.for_execution(authority).events(request.after_sequence).await
-            .map(HostNotificationReceiverEventsResponse::V1)
-            .map_err(|error| CallError::Domain(HostNotificationReceivingError::V1(error)))
-    }
-
-    async fn acknowledge_receiver_event(
-        &self,
-        _cx: &CallContext,
-        request: HostNotificationAcknowledgeReceiverEventRequest,
-    ) -> Result<HostNotificationAcknowledgeReceiverEventResponse, CallError<HostNotificationReceivingError>> {
-        let HostNotificationAcknowledgeReceiverEventRequest::V1(request) = request;
-        if let Some(()) = self.forwarded_receiving(7, request.encode()).await? {
-            return Ok(HostNotificationAcknowledgeReceiverEventResponse::V1);
-        }
-        let authority = self.receiving_execution_authority().await?;
-        self.services.receiving.for_execution(authority).acknowledge(request.sequence).await
-            .map(|()| HostNotificationAcknowledgeReceiverEventResponse::V1)
-            .map_err(|error| CallError::Domain(HostNotificationReceivingError::V1(error)))
+        request: NotificationActivationAcknowledgeRequest,
+    ) -> Result<NotificationActivationAcknowledgeResponse, CallError<NotificationActivationAcknowledgeError>> {
+        let NotificationActivationAcknowledgeRequest::V1(
+            v01::NotificationActivationAcknowledgeRequest { sequence },
+        ) = request;
+        self.platform
+            .acknowledge_activation(v01::NotificationActivationAcknowledgeRequest { sequence })
+            .await
+            .map(|()| NotificationActivationAcknowledgeResponse::V1)
+            .map_err(|err| CallError::Domain(NotificationActivationAcknowledgeError::V1(err)))
     }
 }

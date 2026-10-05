@@ -958,48 +958,31 @@ pub trait Notifications: Send + Sync {
         Ok(())
     }
 
-    /// Resolve trusted authority without prompting or consulting transport.
-    /// The resident platform returns current host scope, even with product UI closed.
-    /// A product execution's platform returns the immutable scope captured when
-    /// that verified execution opened, never a replacement artifact/account's scope.
-    /// Returning `None` explicitly advertises unsupported receiving.
-    async fn receiver_authority(
+    /// Return at most 32 pending activations, ordered by sequence, without
+    /// consuming them. The embedding host binds this platform to the verified
+    /// product, authenticated account and environment; none is caller input.
+    /// Admit only routes starting with exactly one slash, with no backslashes
+    /// or control characters. Polling must not request permissions or enroll
+    /// a background receiver. A missing implementation is an error.
+    async fn activation_events(
         &self,
-        product_id: &str,
-    ) -> Result<Option<ReceivingAuthority>, GenericError> {
-        let _ = product_id;
-        Ok(None)
+    ) -> Result<truapi::v01::NotificationActivations, GenericError> {
+        Err(GenericError {
+            reason: "notification activation is unsupported".to_string(),
+        })
     }
 
-    /// Request distinct consent for this authority and full watch scope.
-    async fn receiver_consent(
+    /// Remove exactly this sequence from the bound activation queue after
+    /// successful product routing. Unknown sequences are idempotent; never
+    /// acknowledge another product/account/environment or a sequence range.
+    async fn acknowledge_activation(
         &self,
-        authority: ReceivingAuthority,
-        watches: Vec<crate::latest::ReceivingWatch>,
-    ) -> Result<bool, GenericError> {
-        let _ = (authority, watches);
-        Err(GenericError { reason: "background receiving unsupported".into() })
-    }
-
-    /// Wake the host's asynchronous synchronization loop, never await network I/O.
-    async fn receiver_changed(&self) -> Result<(), GenericError> {
-        Err(GenericError { reason: "background receiving unsupported".into() })
-    }
-
-    /// Forward receiving actions to the single host-owned receiver, if external.
-    /// The host must bind `product_id` to the trusted execution, not page input.
-    /// Payloads are latest SCALE requests for actions 2..7; the response encodes
-    /// `Result<latest response, HostNotificationReceivingError>` without a version tag.
-    /// `None` selects this runtime's resident engine. An unavailable external
-    /// owner must return an error, never `None`, to avoid a second persistent writer.
-    async fn receiver_command(
-        &self,
-        product_id: String,
-        action: u8,
-        payload: Vec<u8>,
-    ) -> Result<Option<Vec<u8>>, GenericError> {
-        let _ = (product_id, action, payload);
-        Ok(None)
+        request: truapi::v01::NotificationActivationAcknowledgeRequest,
+    ) -> Result<(), GenericError> {
+        let _ = request;
+        Err(GenericError {
+            reason: "notification activation is unsupported".to_string(),
+        })
     }
 }
 
