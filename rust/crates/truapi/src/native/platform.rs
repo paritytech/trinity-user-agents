@@ -271,6 +271,20 @@ impl Notifications for CallbackPlatform {
             .cancel_notification(id)
             .map_err(v01::GenericError::from)
     }
+
+    async fn activation_events(&self) -> Result<v01::NotificationActivations, v01::GenericError> {
+        self.callbacks.activation_events().await
+            .map(|events| v01::NotificationActivations { events })
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn acknowledge_activation(
+        &self,
+        request: v01::NotificationActivationAcknowledgeRequest,
+    ) -> Result<(), v01::GenericError> {
+        self.callbacks.acknowledge_activation(request.sequence).await
+            .map_err(v01::GenericError::from)
+    }
 }
 
 #[async_trait]

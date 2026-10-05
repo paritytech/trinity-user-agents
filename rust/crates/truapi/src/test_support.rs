@@ -148,6 +148,8 @@ pub struct StubPlatform {
     /// URLs handed to `navigate_to`. Empty means the gate blocked before the
     /// platform was ever reached.
     pub navigations: Arc<Mutex<Vec<String>>>,
+    /// Optional activation batch used to exercise the runtime's batch bound.
+    pub notification_activations: Option<v01::NotificationActivations>,
     pub account_alias_confirmed: bool,
     pub account_alias_error: Option<&'static str>,
     pub create_proof_confirmed: bool,
@@ -175,6 +177,9 @@ pub struct StubPlatform {
     pub main_purse_chat_payment_confirmed: bool,
     pub main_purse_chat_payment_error: Option<&'static str>,
     pub main_purse_chat_payment_reviews: Arc<Mutex<Vec<MainPurseChatPaymentReview>>>,
+    /// Pause disclosure consent to exercise session changes while the UI awaits.
+    pub identity_disclosure_confirmation_gate:
+        parking_lot::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     pub sign_payload_confirmed: bool,
     /// Every `SignPayload` review passed to `confirm_user_action`, in order.
     /// Empty proves an AutoSigning grant suppressed the prompt.
@@ -1275,6 +1280,12 @@ impl PlatformNotifications for StubPlatform {
             .push(id);
         Ok(())
     }
+
+    async fn activation_events(&self) -> Result<v01::NotificationActivations, v01::GenericError> {
+        self.notification_activations.clone().ok_or_else(|| v01::GenericError {
+            reason: "notification activation is unsupported".to_string(),
+        })
+    }
 }
 
 #[crate::platform::async_trait]
@@ -2124,6 +2135,10 @@ impl UserConfirmation for StubPlatform {
             UserConfirmationReview::IdentityDisclosure(_) => {
                 self.identity_disclosure_calls
                     .fetch_add(1, Ordering::SeqCst);
+                let gate = self.identity_disclosure_confirmation_gate.lock().take();
+                if let Some(gate) = gate {
+                    gate.await.expect("identity disclosure gate was released");
+                }
                 (
                     self.identity_disclosure_error,
                     self.identity_disclosure_confirmed,
