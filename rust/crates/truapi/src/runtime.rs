@@ -1861,13 +1861,12 @@ impl Contacts for ProductRuntimeHost {
                 },
             )
             .await;
-        if !session.as_ref().is_some_and(|session| {
+        let request_closed = !session.as_ref().is_some_and(|session| {
             self.authority
                 .session_is_current(session, Some(&self.product.product_id))
         }) || cx.cancel().is_cancelled()
-            || placement.is_closed()
-            || self.services.contact_handles.generation() != generation
-        {
+            || placement.is_closed();
+        if request_closed || self.services.contact_handles.generation() != generation {
             let _ = platform
                 .place_contact_labels(
                     &self.product,
@@ -1878,7 +1877,13 @@ impl Contacts for ProductRuntimeHost {
                     },
                 )
                 .await;
-            return Err(error(Error::NotConnected));
+            return Err(error(if request_closed {
+                Error::NotConnected
+            } else {
+                Error::Unknown {
+                    reason: "contact labels interrupted".into(),
+                }
+            }));
         }
         if matches!(result, Ok(false) | Err(Error::Unsupported)) {
             return Err(CallError::Unsupported);

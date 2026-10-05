@@ -1027,12 +1027,21 @@ fn local_contact_labels_withdraw_on_product_or_directory_revocation() {
         revoke_contact_authority(&authority, revoked_product);
         release.send(()).unwrap();
         let result = futures::executor::block_on(call);
-        assert_eq!(
-            result,
-            Err(CallError::Domain(HostContactsPlaceLabelsError::V1(
-                truapi::latest::HostContactsPlaceLabelsError::NotConnected,
-            )))
-        );
+        if revoked_product == Some("other.dot") {
+            assert!(matches!(
+                result,
+                Err(CallError::Domain(HostContactsPlaceLabelsError::V1(
+                    truapi::latest::HostContactsPlaceLabelsError::Unknown { .. }
+                )))
+            ));
+        } else {
+            assert_eq!(
+                result,
+                Err(CallError::Domain(HostContactsPlaceLabelsError::V1(
+                    truapi::latest::HostContactsPlaceLabelsError::NotConnected,
+                )))
+            );
+        }
         assert!(contacts.labels.lock().last().unwrap().labels.is_empty());
     }
 }

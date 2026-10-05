@@ -1376,7 +1376,7 @@ impl ProductAuthority for SigningHost {
                 product_account,
                 request,
             } => {
-                let keypair = self.product_keypair(&product_account)?;
+                let keypair = self.product_keypair(product_account)?;
                 // Defense-in-depth: the slot-zero key must match the legacy
                 // signer the caller asked for (also validated upstream). Never
                 // sign with a diverging key.

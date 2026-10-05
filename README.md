@@ -83,7 +83,8 @@ Contact resolution, picking and labels use the same product-scoped authority
 check. Independent directory-mutation fences still apply: product clearing
 invalidates the shared contact directory, so an interrupted selection must be
 retried without treating an unrelated product clear as account disconnection.
-Labels invalidated while drawing are withdrawn before the call returns.
+Labels invalidated while drawing are withdrawn before the call returns;
+directory-only invalidation reports an interruption, not `NotConnected`.
 
 Preimage lookups that miss the core's cache read the selected network's Bulletin
 node through `bitswap_v1_get`. The CLI verifies the returned bytes against the
