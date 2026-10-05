@@ -267,6 +267,7 @@ class ChatMessageUiMapper @Inject constructor(
 
                 if (renderer != null) {
                     ChatMessageUiModel.Custom(
+                        chatId = chatId,
                         id = id,
                         timestamp = timestamp,
                         direction = direction,

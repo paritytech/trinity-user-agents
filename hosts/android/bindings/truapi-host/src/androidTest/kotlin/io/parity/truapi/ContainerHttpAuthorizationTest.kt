@@ -68,110 +68,112 @@ class ContainerHttpAuthorizationTest {
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
 
-        TrUAPIHostRuntime(bridge, config).use { runtime ->
-            runtime.openProductExecution(bridge, ProductExecutionConfig("http-policy.paseo", kind)).use { execution ->
-                val endpoint = execution.startWsBridge()
-                BridgeProxy(endpoint.port.toInt()).use { proxy ->
-                    MockWebServer().use { server ->
-                        server.dispatcher = object : Dispatcher() {
-                            override fun dispatch(request: RecordedRequest): MockResponse {
-                                hits.add(request.url.encodedPath)
-                                val image = request.url.encodedPath.startsWith("/image")
-                                val body = if (image) Buffer().write(PNG.decodeBase64()!!) else Buffer().writeUtf8("void 0;")
-                                return MockResponse.Builder()
-                                    .addHeader("Content-Type", if (image) "image/png" else "text/javascript")
-                                    .addHeader("Access-Control-Allow-Origin", "*")
-                                    .addHeader("Cache-Control", "no-store")
-                                    .body(body)
-                                    .build()
-                            }
-                        }
-                        server.start()
-                        lateinit var webView: WebView
-                        instrumentation.runOnMainSync {
-                            webView = WebView(context)
-                            webView.settings.javaScriptEnabled = true
-                            webView.addJavascriptInterface(reports, "httpReport")
-                            webView.webViewClient = object : WebViewClient() {
-                                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-                                    if (request.isForMainFrame) return WebResourceResponse("text/html", "UTF-8", PAGE.byteInputStream())
-                                    if (request.url.host == "product.test") return null
-                                    authorizedLoads.incrementAndGet()
-                                    val allowed = runBlocking {
-                                        execution.authorizeRemotePermission(
-                                            RemotePermissionRequest(RemotePermission.Remote(listOf(request.url.host!!))),
-                                        )
-                                    }
-                                    return if (allowed) null else WebResourceResponse(
-                                        "text/plain", "UTF-8", 403, "Forbidden",
-                                        mapOf("Access-Control-Allow-Origin" to "*"), "denied".byteInputStream(),
-                                    )
+        TrUAPIHostRuntime(bridge, TestWallet, config).use { runtime ->
+            runBlocking { runtime.activateWallet("test-wallet", null) }
+            try {
+                val product = runtime.openProductExecution(bridge, ProductExecutionConfig("http-policy.paseo", kind))
+                product.use { execution ->
+                    val endpoint = execution.startWsBridge()
+                    BridgeProxy(endpoint.port.toInt()).use { proxy ->
+                        MockWebServer().use { server ->
+                            server.dispatcher = object : Dispatcher() {
+                                override fun dispatch(request: RecordedRequest): MockResponse {
+                                    hits.add(request.url.encodedPath)
+                                    val image = request.url.encodedPath.startsWith("/image")
+                                    val body = if (image) Buffer().write(PNG.decodeBase64()!!) else Buffer().writeUtf8("void 0;")
+                                    return MockResponse.Builder()
+                                        .addHeader("Content-Type", if (image) "image/png" else "text/javascript")
+                                        .addHeader("Access-Control-Allow-Origin", "*")
+                                        .addHeader("Cache-Control", "no-store")
+                                        .body(body)
+                                        .build()
                                 }
                             }
-                            val bootstrap = LocalhostBridgeBootstrap.script(proxy.port.toUShort(), endpoint.token)
-                            WebViewCompat.addDocumentStartJavaScript(
-                                webView,
-                                "$bootstrap\nwindow.__truapi_localhost.nativeHttp = true;\n$container",
-                                setOf("http://product.test"),
-                            )
-                            webView.loadUrl("http://product.test/")
-                        }
-
-                        fun call(script: String, expected: String) {
+                            server.start()
+                            lateinit var webView: WebView
                             instrumentation.runOnMainSync {
-                                webView.evaluateJavascript(
-                                    "Promise.resolve().then(() => $script).then(value => httpReport.result(String(value)))" +
-                                        ".catch(error => httpReport.result(String(error)));",
-                                    null,
+                                webView = WebView(context)
+                                webView.settings.javaScriptEnabled = true
+                                webView.addJavascriptInterface(reports, "httpReport")
+                                webView.webViewClient = object : WebViewClient() {
+                                    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                                        if (request.isForMainFrame) return WebResourceResponse("text/html", "UTF-8", PAGE.byteInputStream())
+                                        if (request.url.host == "product.test") return null
+                                        authorizedLoads.incrementAndGet()
+                                        val allowed = runBlocking {
+                                            execution.authorizeRemotePermission(
+                                                RemotePermissionRequest(RemotePermission.Remote(listOf(request.url.host!!))),
+                                            )
+                                        }
+                                        return if (allowed) null else WebResourceResponse(
+                                            "text/plain", "UTF-8", 403, "Forbidden",
+                                            mapOf("Access-Control-Allow-Origin" to "*"), "denied".byteInputStream(),
+                                        )
+                                    }
+                                }
+                                val bootstrap = LocalhostBridgeBootstrap.script(proxy.port.toUShort(), endpoint.token)
+                                WebViewCompat.addDocumentStartJavaScript(
+                                    webView,
+                                    "$bootstrap\nwindow.__truapi_localhost.nativeHttp = true;\n$container",
+                                    setOf("http://product.test"),
                                 )
+                                webView.loadUrl("http://product.test/")
                             }
-                            val result = reports.results.poll(15, TimeUnit.SECONDS)
-                            assertEquals("$script (connections=${proxy.connections.get()}, prompts=${bridge.requests.size})", expected, result)
-                        }
 
-                        try {
-                            assertTrue("product script did not load", reports.ready.await(15, TimeUnit.SECONDS))
-                            val operations = listOf("script", "image", "fetch", "xhr")
-                            for (operation in operations) {
+                            fun call(script: String, expected: String) {
+                                instrumentation.runOnMainSync {
+                                    webView.evaluateJavascript(
+                                        "Promise.resolve().then(() => $script).then(value => httpReport.result(String(value)))" +
+                                            ".catch(error => httpReport.result(String(error)));",
+                                        null,
+                                    )
+                                }
+                                val result = reports.results.poll(15, TimeUnit.SECONDS)
+                                assertEquals("$script (connections=${proxy.connections.get()}, prompts=${bridge.requests.size})", expected, result)
+                            }
+
+                            try {
+                                assertTrue("product script did not load", reports.ready.await(15, TimeUnit.SECONDS))
+                                val operations = listOf("script", "image", "fetch", "xhr")
+                                for (operation in operations) {
+                                    execution.setPermissionAuthorizationStatus(
+                                        PermissionAuthorizationRequest.Remote(permission), PermissionAuthorizationStatus.NOT_DETERMINED,
+                                    )
+                                    bridge.decisions.add(PermissionDecision.ALLOW_ONCE)
+                                    call("requestPermission()", "true")
+                                    call("loadResource('$operation', '${server.url("/$operation-allowed")}')", "true")
+                                    bridge.decisions.add(PermissionDecision.DENY)
+                                    call("loadResource('$operation', '${server.url("/$operation-denied")}')", "false")
+                                }
+                                assertEquals(operations.map { "/$it-allowed" }, hits.toList())
+                                assertEquals(List(8) { permission.permission }, bridge.requests.toList())
+                                assertEquals(listOf(8, 1), listOf(authorizedLoads.get(), proxy.connections.get()))
+
+                                proxy.disconnect()
+                                assertTrue("socket loss did not notify the page", reports.reset.await(15, TimeUnit.SECONDS))
                                 execution.setPermissionAuthorizationStatus(
                                     PermissionAuthorizationRequest.Remote(permission), PermissionAuthorizationStatus.NOT_DETERMINED,
                                 )
                                 bridge.decisions.add(PermissionDecision.ALLOW_ONCE)
                                 call("requestPermission()", "true")
-                                call("loadResource('$operation', '${server.url("/$operation-allowed")}')", "true")
-                                bridge.decisions.add(PermissionDecision.DENY)
-                                call("loadResource('$operation', '${server.url("/$operation-denied")}')", "false")
+                                call("loadResource('fetch', '${server.url("/reconnected")}')", "true")
+                                assertEquals(operations.map { "/$it-allowed" } + "/reconnected", hits.toList())
+                                assertEquals(List(9) { permission.permission }, bridge.requests.toList())
+                                assertEquals(listOf(9, 2), listOf(authorizedLoads.get(), proxy.connections.get()))
+                            } finally {
+                                instrumentation.runOnMainSync { webView.destroy() }
                             }
-                            assertEquals(operations.map { "/$it-allowed" }, hits.toList())
-                            assertEquals(List(8) { permission.permission }, bridge.requests.toList())
-                            assertEquals(listOf(8, 1), listOf(authorizedLoads.get(), proxy.connections.get()))
-
-                            proxy.disconnect()
-                            assertTrue("socket loss did not notify the page", reports.reset.await(15, TimeUnit.SECONDS))
-                            execution.setPermissionAuthorizationStatus(
-                                PermissionAuthorizationRequest.Remote(permission), PermissionAuthorizationStatus.NOT_DETERMINED,
-                            )
-                            bridge.decisions.add(PermissionDecision.ALLOW_ONCE)
-                            call("requestPermission()", "true")
-                            call("loadResource('fetch', '${server.url("/reconnected")}')", "true")
-                            assertEquals(operations.map { "/$it-allowed" } + "/reconnected", hits.toList())
-                            assertEquals(List(9) { permission.permission }, bridge.requests.toList())
-                            assertEquals(listOf(9, 2), listOf(authorizedLoads.get(), proxy.connections.get()))
-                        } finally {
-                            instrumentation.runOnMainSync { webView.destroy() }
                         }
                     }
                 }
-            }
+            } finally { runBlocking { runtime.shutdown() } }
         }
     }
 
     private class PermissionBridge : HostBridge {
         val decisions = LinkedBlockingQueue<PermissionDecision>()
         val requests = LinkedBlockingQueue<RemotePermission>()
-        private val memory = MemoryStorage()
-        override val storage: HostStorage = memory
-        override val coreStorage: HostCoreStorage = memory
+        override val secretStorage = TestSecrets()
         override suspend fun navigateTo(url: String) = Unit
         override suspend fun featureSupported(request: HostFeatureSupportedRequest) = false
         override suspend fun devicePermission(product: ProductExecutionConfig, request: HostDevicePermissionRequest) =
@@ -180,16 +182,6 @@ class ContainerHttpAuthorizationTest {
             requests.add(request)
             return decisions.poll() ?: PermissionDecision.DENY
         }
-    }
-
-    private class MemoryStorage : HostStorage, HostCoreStorage {
-        private val values = ConcurrentHashMap<Any, ByteArray>()
-        override suspend fun read(key: String): ByteArray? = values[key]
-        override suspend fun write(key: String, value: ByteArray) { values[key] = value }
-        override suspend fun clear(key: String) { values.remove(key) }
-        override suspend fun read(key: ByteArray): ByteArray? = values[key.toList()]
-        override suspend fun write(key: ByteArray, value: ByteArray) { values[key.toList()] = value }
-        override suspend fun clear(key: ByteArray) { values.remove(key.toList()) }
     }
 
     private class Reports {

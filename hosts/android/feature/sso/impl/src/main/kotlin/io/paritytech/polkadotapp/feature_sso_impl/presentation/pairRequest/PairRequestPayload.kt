@@ -8,6 +8,7 @@ class PairRequestPayload(
     val statementAccountId: ByteArray,
     val encryptionPublicKey: ByteArray,
     val metadata: Map<MetadataKey, String>,
+    val deeplink: String? = null,
 ) : Parcelable
 
 sealed interface MetadataKey : Parcelable {

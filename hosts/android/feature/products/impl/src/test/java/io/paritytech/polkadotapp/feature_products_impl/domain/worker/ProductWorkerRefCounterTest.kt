@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductsBotApi
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
+import io.paritytech.polkadotapp.test_shared.testDispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -30,8 +31,8 @@ class ProductWorkerRefCounterTest {
     private val hostApiInteractor: HostApiInteractor = mock()
 
     private class FakeWorker : ProductWorker {
-        override suspend fun onUserMessage(text: String): Result<Unit> = Result.success(Unit)
-        override fun renderMessage(messageId: ChatMessageId, messageType: String, messageData: DataByteArray): Flow<Result<JsWidget>> = emptyFlow()
+        override suspend fun onUserMessage(roomId: String, text: String): Result<Unit> = Result.success(Unit)
+        override fun renderMessage(roomId: String, messageId: ChatMessageId, messageType: String, messageData: DataByteArray): Flow<Result<JsWidget>> = emptyFlow()
         override fun dispatchEvent(event: JsUiEvent) = Unit
     }
 
@@ -58,7 +59,35 @@ class ProductWorkerRefCounterTest {
             override val io: CoroutineDispatcher = dispatcher
             override val computation: CoroutineDispatcher = dispatcher
         }
-        return RealProductWorkerRefCounter(hostApiInteractor, Lazy { factory }, dispatchers)
+        return RealProductWorkerRefCounter(hostApiInteractor, Lazy { factory }, io.mockk.mockk { io.mockk.every { isTrUAPIRuntimeEnabled() } returns false }, Lazy { io.mockk.mockk() }, Lazy { io.mockk.mockk() }, dispatchers)
+    }
+
+    @Test
+    fun `Rust references release each native claim exactly once`() = runTest {
+        val claims = mutableListOf<String>()
+        val runtime = io.mockk.mockk<io.parity.truapi.TrUAPIHostRuntime> {
+            io.mockk.every { acquireWorker(productId.value) } answers { claims += "acquire" }
+            io.mockk.every { releaseWorker(productId.value) } answers { claims += "release" }
+        }
+        val provider = io.mockk.mockk<io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider> {
+            io.mockk.coEvery { runtime() } returns Result.success(runtime)
+        }
+        val counter = RealProductWorkerRefCounter(
+            hostApiInteractor,
+            Lazy { io.mockk.mockk() },
+            io.mockk.mockk { io.mockk.every { isTrUAPIRuntimeEnabled() } returns true },
+            Lazy { provider },
+            Lazy { io.mockk.mockk() },
+            testDispatchers(),
+        )
+
+        val first = counter.acquire(productId, "chat")
+        val second = counter.acquire(productId, "operation")
+        first.release()
+        first.release()
+        second.release()
+
+        assertEquals(listOf("acquire", "acquire", "release", "release"), claims)
     }
 
     @Test

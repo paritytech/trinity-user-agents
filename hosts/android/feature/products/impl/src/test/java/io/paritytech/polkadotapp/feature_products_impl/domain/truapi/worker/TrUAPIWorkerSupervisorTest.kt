@@ -64,6 +64,43 @@ class TrUAPIWorkerSupervisorTest {
         assertEquals(listOf(null, executions[0], null, executions[1]), seen)
     }
 
+    @Test
+    fun `unlock reopens only the worker claims retained while locked`() = runTest {
+        val supervisor = supervisor()
+        val seen = mutableListOf<TrUAPIProductExecution?>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { supervisor.execution(PRODUCT).toList(seen) }
+
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        advanceUntilIdle()
+        supervisor.pause()
+        supervisor.resume()
+        advanceUntilIdle()
+        supervisor.pause()
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.STOP)
+        advanceUntilIdle()
+        supervisor.resume()
+        advanceUntilIdle()
+
+        assertEquals(listOf(null, executions[0], null, executions[1], null), seen)
+    }
+
+    @Test
+    fun `an old runtime stop cannot dispose the new wallet worker`() = runTest {
+        val supervisor = supervisor()
+        var generation = 1
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START) { generation == 1 }
+        advanceUntilIdle()
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.STOP) { generation == 1 }
+        generation = 2
+        supervisor.stopAll()
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START) { generation == 2 }
+        advanceUntilIdle()
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.STOP) { generation == 1 }
+        advanceUntilIdle()
+
+        assertEquals(executions.last(), supervisor.currentExecution(PRODUCT))
+    }
+
     private fun TestScope.supervisor() = TrUAPIWorkerSupervisor(
         runtimeProvider = {
             mockk<TrUAPIHostRuntimeProvider> { coEvery { runtime() } returns Result.success(mockk()) }
@@ -85,7 +122,7 @@ class TrUAPIWorkerSupervisorTest {
 
     private fun bridge(): ProductTrUAPIHostBridge = mockk {
         val execution = mockk<TrUAPIProductExecution>().also { executions += it }
-        coEvery { attach(any(), any(), any(), any(), any(), any()) } returns Result.success(execution)
+        coEvery { attach(any(), any(), any(), any(), any(), any(), any()) } returns Result.success(execution)
     }
 
     // Stands in for the hidden WebView: its page reports finished once loaded, and a renderer

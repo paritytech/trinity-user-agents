@@ -62,12 +62,54 @@ class RealProductWorkerRefCounter @Inject constructor(
     // Lazy breaks the Dagger cycle: the boot factory builds a worker whose host calls reach back into
     // this ref counter (via the operation service), so it must not be constructed eagerly here.
     private val bootFactory: Lazy<WorkerBootFactory>,
+    private val runtimeSettings: io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings,
+    private val runtimeProvider: Lazy<io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider>,
+    private val rustWorkers: Lazy<io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
 ) : ProductWorkerRefCounter, CoroutineScope by CoroutineScope(SupervisorJob() + dispatchers.computation) {
     private val handles = ConcurrentHashMap<ProductId, ProductWorkerHandle>()
 
     override suspend fun acquire(productId: ProductId, label: String): ProductWorkerReference {
+        if (runtimeSettings.isTrUAPIRuntimeEnabled()) return acquireRustWorker(productId)
         return handles.computeIfAbsent(productId) { ProductWorkerHandle(it) }.acquire(label)
+    }
+
+    private suspend fun acquireRustWorker(productId: ProductId): ProductWorkerReference {
+        val runtime = runtimeProvider.get().runtime().getOrThrow()
+        runtime.acquireWorker(productId.value)
+        val workers = rustWorkers.get()
+        return object : ProductWorkerReference {
+            private val released = AtomicBoolean(false)
+            private var roomsJob: kotlinx.coroutines.Job? = null
+            private val productWorker = io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIProductWorker(productId, workers)
+
+            override suspend fun worker(): ProductWorker {
+                check(!released.get()) { "Worker reference is released" }
+                return productWorker
+            }
+
+            override suspend fun enableModalityApi(api: WorkerModalityApi) {
+                check(!released.get()) { "Worker reference is released" }
+                when (api) {
+                    is WorkerModalityApi.Chat -> {
+                        val chat = workers.chat(productId)
+                        chat.messaging = api.messaging
+                        roomsJob?.cancel()
+                        roomsJob = launch {
+                            api.messaging.subscribeChatRooms().collect {
+                                workers.currentExecution(productId)?.notifyChatRoomsChanged(chat.listRooms())
+                            }
+                        }
+                    }
+                }
+            }
+
+            override fun release() {
+                if (!released.compareAndSet(false, true)) return
+                roomsJob?.cancel()
+                runtime.releaseWorker(productId.value)
+            }
+        }
     }
 
     private sealed interface WorkerState {

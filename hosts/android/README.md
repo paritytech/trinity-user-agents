@@ -192,3 +192,7 @@ Report vulnerabilities responsibly following [Parity's security policy](https://
 ## License
 
 Licensed under the **GNU General Public License v3.0** — see [LICENSE](./LICENSE).
+
+The experimental TrUAPI runtime feature routes product, Chat worker, incoming SSO, renewal, permissions, catalog and notification lifecycle through the Rust account services. Native code supplies approval UI, protected wallet/host secret providers and OS engines. Worker reference ownership, script resolution, Chat/Card installation records and operation persistence stay in their existing Android components. Runtime selection is fixed until app restart; enabled startup failures are reported without falling back to the legacy runtime. See [the host/account-holder design](../../docs/design/host-account-holder.md) and its [implementation findings](../../docs/design/host-account-holder-findings.md).
+
+Rust is the catalog authority when enabled. Android also retains the existing native product rows required by the unchanged `product_integrations` foreign key. Product mutations write Rust first and then the native row; deletion removes Rust records before the native row cascades integration removal. These writes are not a cross-database transaction: a native failure is reported after the Rust write, and repeating the mutation retries the native step. This relationship mirror does not move worker state into Rust.

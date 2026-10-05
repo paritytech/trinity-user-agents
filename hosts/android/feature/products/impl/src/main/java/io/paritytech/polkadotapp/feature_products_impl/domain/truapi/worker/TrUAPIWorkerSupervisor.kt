@@ -30,7 +30,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration.Companion.seconds
@@ -40,7 +42,6 @@ enum class WorkerDemand { START, STOP }
 /**
  * Runs product workers on the core for as long as the core's reference ledger wants them: a `Start`
  * boots the worker script in a hidden WebView behind a `WORKER` execution, a `Stop` tears it down.
- * Chat is not served on this path; chat products keep their native worker.
  */
 @Singleton
 class TrUAPIWorkerSupervisor @Inject constructor(
@@ -51,7 +52,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val scriptResolver: ProductScriptResolver,
     private val webViewProviderFactory: ChatWebViewProvider.Factory,
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
-    dispatchers: CoroutineDispatchers,
+    private val dispatchers: CoroutineDispatchers,
 ) {
     private class RunningWorker(val scope: CoroutineScope) {
         var webViewRuntime: WebViewRuntime? = null
@@ -61,15 +62,50 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.main)
     private val transitions = Mutex()
     private val workers = mutableMapOf<ProductId, RunningWorker>()
+    private val demanded = mutableSetOf<ProductId>()
+    private var suspended = false
     private val executions = MutableStateFlow<Map<ProductId, TrUAPIProductExecution>>(emptyMap())
+    private val chats = ConcurrentHashMap<ProductId, TrUAPIWorkerChat>()
+
+    fun chat(productId: ProductId): TrUAPIWorkerChat = chats.computeIfAbsent(productId) { TrUAPIWorkerChat() }
+
+    suspend fun pause() = withContext(dispatchers.main) {
+        transitions.withLock {
+            suspended = true
+            workers.keys.toList().forEach(::stop)
+        }
+    }
+
+    suspend fun resume() = withContext(dispatchers.main) {
+        transitions.withLock {
+            suspended = false
+            demanded.forEach(::start)
+        }
+    }
+
+    suspend fun stopAll() = withContext(dispatchers.main) {
+        transitions.withLock {
+            workers.keys.toList().forEach(::stop)
+            demanded.clear()
+            chats.clear()
+            suspended = false
+        }
+    }
 
     /** Demand crossing zero, as the core reports it. May arrive on any thread, so the work is handed to [scope]. */
-    fun onDemandChanged(productId: ProductId, demand: WorkerDemand) {
+    fun onDemandChanged(productId: ProductId, demand: WorkerDemand, isCurrentRuntime: () -> Boolean = { true }) {
         scope.launch {
             transitions.withLock {
+                if (!isCurrentRuntime()) return@withLock
                 when (demand) {
-                    WorkerDemand.START -> start(productId)
-                    WorkerDemand.STOP -> stop(productId)
+                    WorkerDemand.START -> {
+                        demanded += productId
+                        if (!suspended) start(productId)
+                    }
+                    WorkerDemand.STOP -> {
+                        demanded -= productId
+                        stop(productId)
+                    }
                 }
             }
         }
@@ -117,6 +153,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 chainDirectory.resolve(),
                 ignoredNavigation(),
                 ProductExecutionKind.WORKER,
+                chat = chat(productId),
             ) { bootstrap -> provider.addWebViewSetup(installBootstrap(bootstrap)) }
             .flatMap { execution ->
                 runCatching {

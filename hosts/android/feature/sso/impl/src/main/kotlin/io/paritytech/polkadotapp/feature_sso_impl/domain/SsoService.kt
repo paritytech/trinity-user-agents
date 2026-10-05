@@ -11,10 +11,12 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Li
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RegisterRingVrfKeyError
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingVrfSignError
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.SignVrfError
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccount
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningContextHolder
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRouter
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_sso_impl.data.repository.SsoHandledRequestRepository
 import io.paritytech.polkadotapp.feature_sso_impl.domain.model.SsoSessionData
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.SsoSessionManager
@@ -23,7 +25,9 @@ import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessio
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionResponse
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionResponse.Companion.responseWith
 import io.paritytech.polkadotapp.feature_sso_impl.domain.signTransaction.SsoSigningContext
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onEach
 import timber.log.Timber
 import javax.inject.Inject
@@ -31,6 +35,8 @@ import javax.inject.Singleton
 
 @Singleton
 class SsoService @Inject constructor(
+    private val runtimeSettings: ProductRuntimeSettings,
+    private val runtimeProvider: TrUAPIHostRuntimeProvider,
     private val ssoSessionManager: SsoSessionManager,
     private val signingRouter: SigningRouter,
     private val signingContextHolder: SigningContextHolder,
@@ -40,6 +46,11 @@ class SsoService @Inject constructor(
     private val productAccountIdProvider: ProductAccountIdProvider,
 ) {
     fun watchSsoEvents(): Flow<SsoSessionRequest> {
+        if (runtimeSettings.isTrUAPIRuntimeEnabled()) return flow {
+            ssoSessionManager.dispose()
+            runtimeProvider.runtime().getOrThrow()
+            awaitCancellation()
+        }
         return flowOfAll {
             ssoSessionManager.init()
 

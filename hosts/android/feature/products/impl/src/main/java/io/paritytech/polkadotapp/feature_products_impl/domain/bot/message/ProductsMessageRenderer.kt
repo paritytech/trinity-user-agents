@@ -60,6 +60,7 @@ class ProductsMessageRenderer(
                     onSuccess = { content ->
                         ProductsMessageContent(
                             messageId = message.id,
+                            chatId = message.chatId,
                             content = content,
                         )
                     },
@@ -78,12 +79,13 @@ class ProductsMessageRenderer(
     @Composable
     private fun ProductsMessageContent(
         messageId: String,
+        chatId: io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId,
         content: ProductsMessageContent,
     ) {
         val viewModel: ProductsMessageViewModel = hiltViewModel(
             key = messageId,
             creationCallback = { factory: ProductsMessageViewModel.Factory ->
-                factory.create(content, messageId, product, worker)
+                factory.create(content, messageId, chatId.value.value, product, worker)
             }
         )
 

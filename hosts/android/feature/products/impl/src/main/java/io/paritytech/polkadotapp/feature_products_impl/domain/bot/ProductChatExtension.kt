@@ -124,7 +124,7 @@ class ProductChatExtension(
 
     private suspend fun routeMessage(message: ChatMessage) {
         when (val content = message.content) {
-            is ChatMessage.Content.Text -> runningWorker.onUserMessage(content.text)
+            is ChatMessage.Content.Text -> runningWorker.onUserMessage(message.chatId.extractProductChatIdParameter(id).getOrThrow().value, content.text)
             else -> {}
         }
     }

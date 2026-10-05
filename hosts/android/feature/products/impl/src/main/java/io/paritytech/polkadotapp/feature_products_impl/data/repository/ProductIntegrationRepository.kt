@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductIntegration
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -30,6 +31,8 @@ interface ProductIntegrationRepository {
 @Singleton
 class RealProductIntegrationRepository @Inject constructor(
     private val dao: ProductIntegrationDao,
+    private val runtimeSettings: io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings,
+    private val products: ProductRepository,
 ) : ProductIntegrationRepository {
     override fun observeByProduct(productId: ProductId): Flow<List<ProductIntegration>> {
         return dao.observeByProduct(productId.value).map { list -> list.map { it.toDomain() } }
@@ -40,6 +43,12 @@ class RealProductIntegrationRepository @Inject constructor(
     }
 
     override fun observeProductsByType(type: IntegrationType): Flow<List<Product>> {
+        if (runtimeSettings.isTrUAPIRuntimeEnabled()) {
+            return combine(observeByType(type), products.observeProducts()) { integrations, catalog ->
+                val installed = integrations.map { it.productId }.toSet()
+                catalog.filter { it.id in installed }
+            }
+        }
         return dao.observeProductsByIntegrationType(type.toLocal())
             .map { list -> list.map { it.toProduct() } }
     }

@@ -1,5 +1,7 @@
 package io.parity.truapi
 
+import kotlinx.coroutines.runBlocking
+
 import android.net.Uri
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -75,12 +77,7 @@ class TrUAPIDiagnosticsTest {
         // Grants every prompt without UI — acceptable ONLY here, in a
         // non-interactive diagnostics run; confirmUserAction gates signing.
         val bridge = object : HostBridge {
-            override val storage = PrefsHostStorage(
-                context.getSharedPreferences("truapi_product_storage", android.content.Context.MODE_PRIVATE),
-            )
-            override val coreStorage = PrefsHostCoreStorage(
-                context.getSharedPreferences("truapi_core_storage", android.content.Context.MODE_PRIVATE),
-            )
+            override val secretStorage = TestSecrets()
             override fun onCoreLog(marker: String, detail: String) {
                 synchronized(logs) { logs.add("$marker: $detail") }
             }
@@ -111,13 +108,9 @@ class TrUAPIDiagnosticsTest {
             assetHubChainGenesisHash = ByteArray(32),
             networkSuffix = "paseo",
             databaseDirectory = createTempDirectory("truapi").toString(),
-            // 32 bytes of BIP-39 entropy → a deterministic local signing session
-            // (no SSO pairing, fully offline).
-            localSessionSecret = ByteArray(32) { (it + 1).toByte() },
-            localSessionLiteUsername = "android-diag",
         )
 
-        val runtime = TrUAPIHostRuntime(bridge, config)
+        val runtime = TrUAPIHostRuntime(bridge, TestWallet, config).also { runBlocking { it.activateWallet("test-wallet", null) } }
         val execution = runtime.openProductExecution(
             bridge = bridge,
             configuration = ProductExecutionConfig("dotli.dot", ProductExecutionKind.APP),

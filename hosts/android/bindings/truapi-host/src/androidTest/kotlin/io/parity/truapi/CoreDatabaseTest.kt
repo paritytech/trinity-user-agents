@@ -37,12 +37,13 @@ class CoreDatabaseTest {
     @Test
     fun theCoreDatabaseOpensInTheConfiguredDirectory() {
         directory.mkdirs()
-        val runtime = TrUAPIHostRuntime(InertBridge(), config(directory.absolutePath))
+        val runtime = TrUAPIHostRuntime(InertBridge(), TestWallet, config(directory.absolutePath)).also { runBlocking { it.activateWallet("test-wallet", null) } }
 
         val status = runtime.use { runBlocking { it.coreDatabaseStatus() } }
 
-        val file = File(directory, "core.sqlite3")
-        assertEquals(file.canonicalPath to 0u, status.path to status.schemaVersion)
+        val file = File(status.path)
+        assertTrue(file.canonicalPath.startsWith(directory.canonicalPath + File.separator))
+        assertTrue("Runtime tables must be installed", status.schemaVersion > 0u)
         assertTrue("SQLite ${status.sqliteVersion} is not 3.x", status.sqliteVersion.startsWith("3."))
         assertTrue("database file was not created", file.exists())
     }
@@ -50,7 +51,7 @@ class CoreDatabaseTest {
     @Test
     fun aMissingDirectoryStopsTheRuntimeFromStarting() {
         assertThrows(NativeRuntimeConfigException.DatabaseUnavailable::class.java) {
-            TrUAPIHostRuntime(InertBridge(), config(directory.absolutePath))
+            TrUAPIHostRuntime(InertBridge(), TestWallet, config(directory.absolutePath)).also { runBlocking { it.activateWallet("test-wallet", null) } }
         }
     }
 
@@ -64,12 +65,7 @@ class CoreDatabaseTest {
     )
 
     private inner class InertBridge : HostBridge {
-        override val storage = PrefsHostStorage(
-            context.getSharedPreferences("truapi_core_db_test_product", android.content.Context.MODE_PRIVATE),
-        )
-        override val coreStorage = PrefsHostCoreStorage(
-            context.getSharedPreferences("truapi_core_db_test_core", android.content.Context.MODE_PRIVATE),
-        )
+        override val secretStorage = TestSecrets()
 
         override suspend fun navigateTo(url: String) = Unit
 

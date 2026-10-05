@@ -169,6 +169,6 @@ class DebugMenuViewModel @Inject constructor(
     }
 
     private fun refreshTruapiRuntimeState() {
-        state.update { it.copy(truapiRuntimeEnabled = productRuntimeSettings.isTrUAPIRuntimeEnabled()) }
+        state.update { it.copy(truapiRuntimeEnabled = productRuntimeSettings.isTrUAPIRuntimeEnabledOnNextLaunch()) }
     }
 }

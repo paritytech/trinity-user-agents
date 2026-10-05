@@ -16,12 +16,13 @@ class PrefsProductRuntimeSettingsTest {
     }
 
     @Test
-    fun `persists an opt-out to the native host`() {
+    fun `persists an opt-out for next launch without switching live services`() {
         val settings = PrefsProductRuntimeSettings(prefs, isDebugBuild = true)
 
         settings.setTrUAPIRuntimeEnabled(false)
 
-        assertFalse(settings.isTrUAPIRuntimeEnabled())
+        assertTrue(settings.isTrUAPIRuntimeEnabled())
+        assertFalse(settings.isTrUAPIRuntimeEnabledOnNextLaunch())
         assertFalse(PrefsProductRuntimeSettings(prefs, isDebugBuild = true).isTrUAPIRuntimeEnabled())
     }
 

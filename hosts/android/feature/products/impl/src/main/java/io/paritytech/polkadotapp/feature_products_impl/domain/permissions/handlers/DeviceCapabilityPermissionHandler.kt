@@ -44,6 +44,9 @@ class DeviceCapabilityPermissionHandler @Inject constructor(
         repository.revoke(productId, permission)
     }
 
+    fun osPermissionState(capability: DeviceCapabilityType): PermissionResult? =
+        capability.toManifestPermission()?.let(permissionAsker::getPermissionState)
+
     suspend fun requestOsPermissionIfNeeded(capability: DeviceCapabilityType): Boolean {
         val manifestPermission = capability.toManifestPermission() ?: return true
         val result = permissionAsker.askPermission(manifestPermission)

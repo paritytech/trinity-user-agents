@@ -29,7 +29,7 @@ internal class PairDeepLinkHandler @Inject constructor(
         return ssoHandshakeProtocol.parsePairDeeplink(data)
             .map { offer ->
                 DeeplinkProcessingOutcome.Navigate {
-                    ssoRouter.openPairRequest(offer.toPayload())
+                    ssoRouter.openPairRequest(io.paritytech.polkadotapp.feature_sso_api.domain.model.HandshakeOffer(offer.device, offer.metadata, data.toString()).toPayload())
                 }
             }
     }
