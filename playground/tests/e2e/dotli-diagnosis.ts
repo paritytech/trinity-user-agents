@@ -235,7 +235,7 @@ async function startLocalStack(): Promise<void> {
 }
 
 async function signOutIfNeeded(page: Page): Promise<void> {
-  const badge = page.locator("#auth-button .user-badge");
+  const badge = page.locator("#auth-button").getByTestId("user-badge");
   if (!(await badge.isVisible({ timeout: 2_000 }).catch(() => false))) {
     return;
   }
@@ -325,7 +325,8 @@ async function waitForSignedIn(
     }
     const outcome = await Promise.race([
       page
-        .locator("#auth-button .user-badge")
+        .locator("#auth-button")
+        .getByTestId("user-badge")
         .waitFor({ state: "visible", timeout: loginUserBadgeTimeoutMs })
         .then(() => ({ tag: "signed-in" as const })),
       page.evaluate(
@@ -358,9 +359,11 @@ async function waitForSignedIn(
     if (outcome.tag === "signing-host-exit") {
       throw new Error(formatSigningHostExit(outcome.result, signingHost.output()));
     }
+    await page.locator("#auth-button").click();
     const username = (
       await page.locator("#user-popover-username").innerText()
     ).trim();
+    await page.keyboard.press("Escape");
     if (username.length === 0) {
       throw new Error("signed-in host did not expose the account username");
     }
@@ -472,7 +475,7 @@ async function drainHostModals(page: Page, timeoutMs: number): Promise<void> {
   while (Date.now() < deadline) {
     if (
       !(await page
-        .locator(".signing-modal-backdrop")
+        .getByTestId("signing-modal-backdrop")
         .isVisible()
         .catch(() => false))
     ) {
@@ -489,7 +492,7 @@ async function drainHostModals(page: Page, timeoutMs: number): Promise<void> {
 }
 
 async function dismissStuckHostModal(page: Page): Promise<void> {
-  const buttons = page.locator(".signing-modal-backdrop button");
+  const buttons = page.getByTestId("signing-modal").locator("button");
   const count = await buttons.count().catch(() => 0);
   for (let index = 0; index < count; index++) {
     const button = buttons.nth(index);
@@ -499,7 +502,7 @@ async function dismissStuckHostModal(page: Page): Promise<void> {
       continue;
     }
     const label = (await button.innerText().catch(() => "")).trim();
-    if (label !== "Cancel" && label !== "Reject") {
+    if (label !== "Cancel" && label !== "Reject" && label !== "Deny") {
       continue;
     }
     console.warn(`[e2e-dotli] dismissing stuck host modal via: ${label}`);
@@ -509,8 +512,8 @@ async function dismissStuckHostModal(page: Page): Promise<void> {
 }
 
 async function acceptVisibleHostModal(page: Page): Promise<boolean> {
-  const allowedLabels = new Set(["Allow", "Create", "Sign"]);
-  const buttons = page.locator(".signing-modal-backdrop button");
+  const allowedLabels = new Set(["Allow", "Allow once", "Create", "Sign"]);
+  const buttons = page.getByTestId("signing-modal").locator("button");
   const count = await buttons.count().catch(() => 0);
   for (let index = 0; index < count; index++) {
     const button = buttons.nth(index);
@@ -573,7 +576,8 @@ async function assertHostSignOutAndReconnect(
   console.log("[e2e-dotli] validating host sign-out");
   await signOutIfNeeded(page);
   await page
-    .locator("#auth-button .user-badge")
+    .locator("#auth-button")
+    .getByTestId("user-badge")
     .waitFor({ state: "hidden", timeout: 20_000 });
   await stopSigningHost(previous.process);
   signingHostLogs.push(previous.process.output());
