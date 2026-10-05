@@ -26,6 +26,10 @@ pub struct HostPaymentBalanceSubscribeItem {
 ///
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum PaymentTopUpSource {
     /// Fund from one of the calling product's scoped accounts.
     ProductAccount {
@@ -51,6 +55,10 @@ pub enum PaymentTopUpSource {
 
 /// Request to top up the product payment balance.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct HostPaymentTopUpRequest {
     /// Optional purse selector. `None` means MAIN_PURSE.
     pub into: Option<u32>,
@@ -127,15 +135,23 @@ pub enum HostPaymentBalanceSubscribeError {
 /// See [RFC 0006].
 ///
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::Display)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Error)
+)]
 pub enum HostPaymentTopUpError {
     /// The source key is malformed, or the source was not found.
+    #[display("invalid top-up source")]
     InvalidSource,
     /// A top-up with this id already exists.
+    #[display("a top-up with this id already exists")]
     AlreadyExists,
     /// Another top-up from the same source is still running.
+    #[display("another top-up from this source is running")]
     SourceBusy,
     /// Catch-all.
+    #[display("{reason}")]
     Unknown {
         /// Human-readable failure reason.
         reason: String,
@@ -193,6 +209,10 @@ pub struct HostPaymentTopUpStatusSubscribeRequest {
 /// Progress of a top-up. `Claimed { finalized: true }`, `ClaimedPartially` and
 /// `NotClaimed` are terminal, and stay readable after the top-up ends.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum HostPaymentTopUpStatusSubscribeItem {
     /// Waiting for the source's funds to be seen.
     Detecting,

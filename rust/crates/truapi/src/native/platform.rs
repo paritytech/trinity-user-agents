@@ -16,8 +16,8 @@ use crate::host_logic::worker::WorkerTransition;
 use crate::{DevicePairingObserver, PairedSsoPeer};
 
 use super::callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativePocketCallbacks,
-    NativePocketRemoval,
+    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeFundingCallbacks,
+    NativePocketCallbacks, NativePocketRemoval, NativeTopUpCallbacks,
 };
 use super::errors::HostRejection;
 use super::events::NativeEventBus;
@@ -630,5 +630,343 @@ impl crate::platform::PocketPlatform for PocketCallbackPlatform {
                 Ok(())
             }
         }
+    }
+}
+
+/// [`crate::platform::FundingPlatform`] served by host-provided
+/// [`NativeFundingCallbacks`].
+pub struct FundingCallbackPlatform {
+    /// Host funding overlay.
+    pub funding: Arc<dyn NativeFundingCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::FundingPlatform for FundingCallbackPlatform {
+    async fn present_funding(
+        &self,
+        product: Option<&ProductContext>,
+        session: crate::platform::FundingPresentation,
+    ) -> Result<crate::platform::FundingPresentOutcome, v01::GenericError> {
+        self.funding
+            .present_funding(
+                product.map(|product| product.product_id.clone()),
+                session.intent,
+                session.direction,
+                session.amount,
+            )
+            .await
+            .map_err(v01::GenericError::from)
+    }
+
+    fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem) {
+        self.funding.funding_session_changed(intent, status);
+    }
+}
+
+type TopUpStatus =
+    Result<v01::HostPaymentTopUpStatusSubscribeItem, v01::HostPaymentTopUpStatusSubscribeError>;
+
+/// One subscription to a top-up's status.
+struct TopUpFollower {
+    /// Tells this subscription apart from others on the same top-up.
+    subscription: u64,
+    sender: mpsc::UnboundedSender<TopUpStatus>,
+}
+
+/// Who follows which top-up, per product and id.
+#[derive(Default)]
+struct TopUpFollowers {
+    next: u64,
+    by_top_up: std::collections::HashMap<(String, crate::Bytes32), Vec<TopUpFollower>>,
+}
+
+impl TopUpFollowers {
+    /// Forget followers whose streams were dropped.
+    fn prune(&mut self) {
+        self.by_top_up.retain(|_, senders| {
+            senders.retain(|follower| !follower.sender.is_closed());
+            !senders.is_empty()
+        });
+    }
+}
+
+/// [`crate::platform::TopUpPlatform`] served by host-provided
+/// [`NativeTopUpCallbacks`]: the host answers a top-up's current status, and
+/// pushes each later one through [`Self::notify_status`].
+pub struct TopUpCallbackPlatform {
+    top_up: Arc<dyn NativeTopUpCallbacks>,
+    followers: Mutex<TopUpFollowers>,
+}
+
+impl TopUpCallbackPlatform {
+    /// Serve top-ups from `top_up`.
+    pub fn new(top_up: Arc<dyn NativeTopUpCallbacks>) -> Self {
+        Self {
+            top_up,
+            followers: Mutex::new(TopUpFollowers::default()),
+        }
+    }
+
+    /// Deliver a later status of `product_id`'s top-up `id` to everyone
+    /// following it; a terminal one ends their streams.
+    pub fn notify_status(
+        &self,
+        product_id: String,
+        id: crate::Bytes32,
+        status: v01::HostPaymentTopUpStatusSubscribeItem,
+    ) {
+        let terminal = top_up_rank(&status) == TERMINAL_RANK;
+        let mut followers = self.lock_followers();
+        let key = (product_id, id);
+        if let Some(senders) = followers.by_top_up.get_mut(&key) {
+            for follower in senders.iter() {
+                let _ = follower.sender.unbounded_send(Ok(status.clone()));
+            }
+        }
+        if terminal {
+            followers.by_top_up.remove(&key);
+        }
+        followers.prune();
+    }
+
+    fn lock_followers(&self) -> std::sync::MutexGuard<'_, TopUpFollowers> {
+        self.followers
+            .lock()
+            .expect("top-up followers mutex poisoned")
+    }
+}
+
+/// Rank of a terminal top-up status: claimed and final, partly claimed, or
+/// not claimed.
+const TERMINAL_RANK: u8 = 3;
+
+/// How far along a top-up `status` is, so a stream never steps back.
+fn top_up_rank(status: &v01::HostPaymentTopUpStatusSubscribeItem) -> u8 {
+    match status {
+        v01::HostPaymentTopUpStatusSubscribeItem::Detecting => 0,
+        v01::HostPaymentTopUpStatusSubscribeItem::Claiming => 1,
+        v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false } => 2,
+        v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }
+        | v01::HostPaymentTopUpStatusSubscribeItem::ClaimedPartially { .. }
+        | v01::HostPaymentTopUpStatusSubscribeItem::NotClaimed => TERMINAL_RANK,
+    }
+}
+
+#[async_trait]
+impl crate::platform::TopUpPlatform for TopUpCallbackPlatform {
+    async fn top_up(
+        &self,
+        product: &ProductContext,
+        request: v01::HostPaymentTopUpRequest,
+    ) -> Result<(), v01::HostPaymentTopUpError> {
+        self.top_up.top_up(product.product_id.clone(), request).await
+    }
+
+    fn subscribe_top_up_status(
+        &self,
+        product: &ProductContext,
+        id: crate::Bytes32,
+    ) -> BoxStream<'static, TopUpStatus> {
+        let key = (product.product_id.clone(), id);
+        // Registered before the snapshot is read, so a status the host
+        // pushes in between is not lost; the stream below drops it if it
+        // repeats or precedes the snapshot.
+        let (sender, changes) = mpsc::unbounded();
+        let follower = {
+            let mut followers = self.lock_followers();
+            followers.prune();
+            followers.next += 1;
+            let follower = followers.next;
+            followers
+                .by_top_up
+                .entry(key.clone())
+                .or_default()
+                .push(TopUpFollower {
+                    subscription: follower,
+                    sender,
+                });
+            follower
+        };
+        let first = match self.top_up.top_up_status(key.0.clone(), id) {
+            Ok(Some(status)) => Ok(status),
+            Ok(None) => Err(v01::HostPaymentTopUpStatusSubscribeError::NotFound),
+            Err(error) => Err(v01::HostPaymentTopUpStatusSubscribeError::Unknown {
+                reason: error.to_string(),
+            }),
+        };
+        let last_rank = match &first {
+            Ok(status) => top_up_rank(status),
+            Err(_) => TERMINAL_RANK,
+        };
+        if last_rank == TERMINAL_RANK {
+            let mut followers = self.lock_followers();
+            if let Some(senders) = followers.by_top_up.get_mut(&key) {
+                senders.retain(|registered| registered.subscription != follower);
+            }
+            followers.prune();
+            return stream::iter([first]).boxed();
+        }
+        let later = changes.scan(last_rank, |shown, status| {
+            let rank = status.as_ref().map_or(TERMINAL_RANK, top_up_rank);
+            let fresh = rank > *shown || (rank == *shown && rank == TERMINAL_RANK);
+            if fresh {
+                *shown = rank;
+            }
+            futures::future::ready(Some(fresh.then_some(status)))
+        });
+        stream::iter([first])
+            .chain(later.filter_map(futures::future::ready))
+            .boxed()
+    }
+}
+
+#[cfg(test)]
+mod top_up_tests {
+    use super::*;
+
+    use futures::executor::block_on;
+
+    use crate::platform::TopUpPlatform;
+
+    /// A top-up engine holding one status per id, and nothing else.
+    struct Engine(Mutex<std::collections::HashMap<crate::Bytes32, v01::HostPaymentTopUpStatusSubscribeItem>>);
+
+    #[async_trait::async_trait]
+    impl NativeTopUpCallbacks for Engine {
+        async fn top_up(
+            &self,
+            _product_id: String,
+            _request: v01::HostPaymentTopUpRequest,
+        ) -> Result<(), v01::HostPaymentTopUpError> {
+            Ok(())
+        }
+
+        fn top_up_status(
+            &self,
+            _product_id: String,
+            id: crate::Bytes32,
+        ) -> Result<Option<v01::HostPaymentTopUpStatusSubscribeItem>, HostRejection> {
+            Ok(self.0.lock().expect("statuses").get(&id).cloned())
+        }
+    }
+
+    fn product() -> ProductContext {
+        ProductContext {
+            product_id: "fund.dot".into(),
+            execution_kind: Default::default(),
+        }
+    }
+
+    // A follower sees the status the host holds now, then every status the
+    // host pushes, and its stream ends with the claim's verdict, so core's
+    // credit step and a product's subscription both learn how it ended.
+    #[test]
+    fn a_top_up_is_followed_from_its_current_status_to_its_verdict() {
+        let engine = Arc::new(Engine(Mutex::new(std::collections::HashMap::from([(
+            [1; 32],
+            v01::HostPaymentTopUpStatusSubscribeItem::Detecting,
+        )]))));
+        let platform = TopUpCallbackPlatform::new(engine);
+        let followed = platform.subscribe_top_up_status(&product(), [1; 32]);
+        let missing = platform.subscribe_top_up_status(&product(), [2; 32]);
+
+        platform.notify_status(
+            "fund.dot".into(),
+            [1; 32],
+            v01::HostPaymentTopUpStatusSubscribeItem::Claiming,
+        );
+        platform.notify_status(
+            "fund.dot".into(),
+            [1; 32],
+            v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true },
+        );
+
+        assert_eq!(
+            (
+                block_on(followed.collect::<Vec<_>>()),
+                block_on(missing.collect::<Vec<_>>()),
+                platform.followers.lock().expect("followers").by_top_up.len(),
+            ),
+            (
+                vec![
+                    Ok(v01::HostPaymentTopUpStatusSubscribeItem::Detecting),
+                    Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claiming),
+                    Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }),
+                ],
+                vec![Err(v01::HostPaymentTopUpStatusSubscribeError::NotFound)],
+                0,
+            )
+        );
+    }
+
+    // Core's credit step subscribes afresh on every pass. Its subscription
+    // seeing a verdict in the host's store must not end a product's stream
+    // that still waits for the host to push that verdict.
+    #[test]
+    fn a_subscriber_that_sees_the_verdict_leaves_other_followers_waiting() {
+        let engine = Arc::new(Engine(Mutex::new(std::collections::HashMap::from([(
+            [1; 32],
+            v01::HostPaymentTopUpStatusSubscribeItem::Claiming,
+        )]))));
+        let platform = TopUpCallbackPlatform::new(engine.clone());
+        let product_stream = platform.subscribe_top_up_status(&product(), [1; 32]);
+        engine.0.lock().expect("statuses").insert(
+            [1; 32],
+            v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true },
+        );
+        let core_pass = platform.subscribe_top_up_status(&product(), [1; 32]);
+        let verdict = v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true };
+        platform.notify_status("fund.dot".into(), [1; 32], verdict.clone());
+
+        assert_eq!(
+            (
+                block_on(core_pass.collect::<Vec<_>>()),
+                block_on(product_stream.collect::<Vec<_>>()),
+            ),
+            (
+                vec![Ok(verdict.clone())],
+                vec![
+                    Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claiming),
+                    Ok(verdict)
+                ],
+            )
+        );
+    }
+
+    // A status pushed while the snapshot is read reaches the follower too;
+    // a stream shows each status once and never steps back, and a follower
+    // that stops listening is forgotten.
+    #[test]
+    fn a_stream_never_repeats_or_steps_back_and_dropped_followers_are_forgotten() {
+        let engine = Arc::new(Engine(Mutex::new(std::collections::HashMap::from([(
+            [1; 32],
+            v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false },
+        )]))));
+        let platform = TopUpCallbackPlatform::new(engine);
+        let followed = platform.subscribe_top_up_status(&product(), [1; 32]);
+        let dropped = platform.subscribe_top_up_status(&product(), [1; 32]);
+        drop(dropped);
+        for status in [
+            v01::HostPaymentTopUpStatusSubscribeItem::Claiming,
+            v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false },
+            v01::HostPaymentTopUpStatusSubscribeItem::NotClaimed,
+        ] {
+            platform.notify_status("fund.dot".into(), [1; 32], status);
+        }
+        let _ = platform.subscribe_top_up_status(&product(), [2; 32]);
+
+        assert_eq!(
+            (
+                block_on(followed.collect::<Vec<_>>()),
+                platform.followers.lock().expect("followers").by_top_up.len(),
+            ),
+            (
+                vec![
+                    Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false }),
+                    Ok(v01::HostPaymentTopUpStatusSubscribeItem::NotClaimed),
+                ],
+                0,
+            )
+        );
     }
 }

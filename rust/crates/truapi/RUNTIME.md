@@ -416,6 +416,11 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   Hub and the message it forwards on People. Once the CASH lands on People,
   the core credits it through `TopUpPlatform` with the deposit account's key
   as a `PrivateKey` source, and the session ends `Delivered`.
+  Native hosts reach all of this through `NativeTrUApiHostRuntime`:
+  `set_funding_callbacks` (the overlay), `set_top_up_callbacks` with
+  `notify_top_up_status` (the top-up engine), `enable_funding_conversion`,
+  `open_funding`, `quote_funding_deposit`, `assign_funding_deposit` and
+  `funding_session`. Amounts cross the FFI as decimal strings.
 - `TopUpPlatform`: claim a top-up source's funds into the user's balance and
   stream each top-up's status. Installed with `set_top_up_platform`. The core
   requires a session and checks the source keys; the host owns claiming,

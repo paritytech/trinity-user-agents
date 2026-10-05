@@ -3,6 +3,10 @@ use parity_scale_codec::{Decode, Encode};
 /// Which way value crosses the boundary between the user's Polkadot balance
 /// and everything outside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum FundingDirection {
     /// Value moves in. The host confirms arrival by observing the chain.
     In,
@@ -16,6 +20,10 @@ pub enum FundingDirection {
 /// Carries an outcome, never a rule, so a client renders these without holding
 /// any part of the operator's compliance logic.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum FundingFailure {
     /// Not offered in the user's market.
     RegionUnavailable,
@@ -92,6 +100,10 @@ pub struct HostFundingStatusSubscribeRequest {
 /// the host saw them leave under the user's authorization, and says nothing
 /// about the off-chain leg: no host can verify that cash reached a bank.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum HostFundingStatusSubscribeItem {
     /// Inbound: awaiting the user's deposit.
     AwaitingDeposit {

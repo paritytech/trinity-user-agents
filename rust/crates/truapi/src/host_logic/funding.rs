@@ -24,6 +24,10 @@ const SETTLED_HISTORY_LIMIT: usize = 50;
 
 /// What the core knows about one session, independent of any host surface.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct FundingSession {
     /// Identifier handed back to the caller and used to re-attach.
     pub intent: String,
@@ -52,6 +56,10 @@ pub struct FundingSession {
 /// The route for a deposit and what it must deliver to credit a session's
 /// amount.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct DepositQuote {
     /// Asset the deposit is quoted in.
     pub asset: DepositAsset,
@@ -63,6 +71,10 @@ pub struct DepositQuote {
 
 /// Asset Hub asset a deposit arrives in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum DepositAsset {
     /// The relay chain's native token.
     Native,
@@ -72,6 +84,10 @@ pub enum DepositAsset {
 
 /// What an inbound session's provider delivers, once it is chosen.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct DepositRequest {
     /// Deposit source, as in the account label, such as `usdt-assethub`.
     pub source_id: String,
@@ -83,6 +99,10 @@ pub struct DepositRequest {
 
 /// The account an inbound session watches and what it waits for.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct FundingDeposit {
     /// Deposit source, as in the account label.
     pub source_id: String,
@@ -104,6 +124,10 @@ pub struct FundingDeposit {
 /// How a deposit becomes CASH on People, fixed when its account is assigned
 /// so a later change on chain cannot switch it mid-session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum ConversionRoute {
     /// The deposit is CASH already: teleport it.
     Teleport,
@@ -122,6 +146,10 @@ pub enum ConversionRoute {
 /// A conversion transaction handed to Asset Hub, with what tells whether it
 /// worked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct ConversionSubmission {
     /// The deposit account's nonce the transaction was signed at.
     pub nonce: u32,
@@ -142,6 +170,10 @@ const MAX_CONVERSION_REFUSALS: u8 = 3;
 
 /// Stage of a session, as the core persists it.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum FundingStage {
     /// In flight.
     Open,

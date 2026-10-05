@@ -3302,6 +3302,7 @@ pub struct FundingPresentation {
 
 /// How the user left the funding overlay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingPresentOutcome {
     /// The user went ahead; the session runs on without the overlay.
     Started,
