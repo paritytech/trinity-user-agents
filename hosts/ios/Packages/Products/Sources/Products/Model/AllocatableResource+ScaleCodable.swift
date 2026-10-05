@@ -137,13 +137,15 @@ extension AllocatedResource: ScaleCodable {
 
 extension AutoSigningSecrets: ScaleCodable {
     public init(scaleDecoder: any ScaleDecoding) throws {
-        // `Sr25519SecretKey` is `[u8; 64]` on the wire — raw bytes, no length prefix.
+        // `[u8; 64]` and `[u8; 32]` on the wire — raw bytes, no length prefix.
         let key = try scaleDecoder.readAndConfirm(count: Self.privateKeyLength)
-        try self.init(productRootPrivateKey: key)
+        let entropy = try scaleDecoder.readAndConfirm(count: Self.ringVrfDomainEntropyLength)
+        try self.init(productRootPrivateKey: key, ringVrfDomainEntropy: entropy)
     }
 
     public func encode(scaleEncoder: any ScaleEncoding) throws {
-        // Length invariant enforced by the memberwise init.
+        // Length invariants enforced by the memberwise init.
         scaleEncoder.appendRaw(data: productRootPrivateKey)
+        scaleEncoder.appendRaw(data: ringVrfDomainEntropy)
     }
 }
