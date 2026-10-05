@@ -1158,6 +1158,33 @@ pub trait Notifications: Send + Sync {
         let _ = id;
         Ok(())
     }
+
+    /// Return at most 32 pending activations, ordered by sequence, without
+    /// consuming them. The embedding host binds this platform to the verified
+    /// product, authenticated account and environment; none is caller input.
+    /// Admit only routes starting with exactly one slash, with no backslashes
+    /// or control characters. Polling must not request permissions or enroll
+    /// a background receiver. A missing implementation is an error.
+    async fn activation_events(
+        &self,
+    ) -> Result<truapi::v01::NotificationActivations, GenericError> {
+        Err(GenericError {
+            reason: "notification activation is unsupported".to_string(),
+        })
+    }
+
+    /// Remove exactly this sequence from the bound activation queue after
+    /// successful product routing. Unknown sequences are idempotent; never
+    /// acknowledge another product/account/environment or a sequence range.
+    async fn acknowledge_activation(
+        &self,
+        request: truapi::v01::NotificationActivationAcknowledgeRequest,
+    ) -> Result<(), GenericError> {
+        let _ = request;
+        Err(GenericError {
+            reason: "notification activation is unsupported".to_string(),
+        })
+    }
 }
 
 /// User decision including how long an authorization should last.

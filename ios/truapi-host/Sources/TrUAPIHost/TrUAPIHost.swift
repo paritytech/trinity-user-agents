@@ -119,6 +119,12 @@ public protocol HostBridge: NativeChatFilesHost {
     /// Cancel a previously scheduled notification id.
     func cancelNotification(id: UInt32) throws
 
+    /// Non-consuming ordered batch (at most 32), bound to the verified execution.
+    /// Must not enroll receiving or request notification permission.
+    func activationEvents() async throws -> [NotificationActivation]
+    /// Idempotently acknowledge one sequence, never a notification id or range.
+    func acknowledgeActivation(sequence: UInt64) async throws
+
     /// Prompt for a device-level permission `product` requested on the main
     /// actor, suspending until the user decides. Preserve the approval lifetime.
     func devicePermission(
@@ -345,6 +351,12 @@ public extension HostBridge {
     func onCoreLog(marker: String, detail: String) {}
     func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32 { 0 }
     func cancelNotification(id: UInt32) throws {}
+    func activationEvents() async throws -> [NotificationActivation] {
+        throw HostRejection.Rejected(reason: "notification activation unsupported")
+    }
+    func acknowledgeActivation(sequence: UInt64) async throws {
+        throw HostRejection.Rejected(reason: "notification activation unsupported")
+    }
     func authStateChanged(state: AuthState) {}
     func chainConnect(genesisHash: Data) throws -> UInt32? { nil }
     func allowedHopEndpoints(bulletinGenesisHash: Data) async throws -> [String] { [] }
@@ -611,6 +623,14 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         try withHostRejection {
             try bridge.cancelNotification(id: id)
         }
+    }
+
+    func activationEvents() async throws -> [NotificationActivation] {
+        try await withHostRejection { try await bridge.activationEvents() }
+    }
+
+    func acknowledgeActivation(sequence: UInt64) async throws {
+        try await withHostRejection { try await bridge.acknowledgeActivation(sequence: sequence) }
     }
 
     func devicePermission(

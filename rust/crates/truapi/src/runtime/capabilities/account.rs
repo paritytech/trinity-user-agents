@@ -550,14 +550,25 @@ impl Account for ProductRuntimeHost {
             Err(reason) => return Err(CallError::HostFailure { reason }),
         }
 
-        let session = if session.primary_username().is_some() {
-            session
-        } else {
+        if session.primary_username().is_none() {
             self.authority
                 .refresh_session_identity()
                 .await
-                .unwrap_or(session)
-        };
+                .map_err(|reason| CallError::HostFailure { reason })?;
+        }
+        // Consent and chain resolution both await. Never disclose a cached
+        // name for an account that was disconnected or replaced meanwhile.
+        let session = self
+            .authority
+            .current_session()
+            .filter(|current| {
+                current.validation_id == session.validation_id
+                    && current.public_key == session.public_key
+                    && current.identity_account_id == session.identity_account_id
+            })
+            .ok_or(CallError::Domain(HostGetUserIdError::V1(
+                v01::HostGetUserIdError::NotConnected,
+            )))?;
         let primary_username = session.primary_username().ok_or_else(|| {
             CallError::Domain(HostGetUserIdError::V1(v01::HostGetUserIdError::Unknown {
                 reason: "No primary username for this session".to_string(),

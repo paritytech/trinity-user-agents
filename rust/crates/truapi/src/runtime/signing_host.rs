@@ -1067,15 +1067,20 @@ impl ProductAuthority for SigningHost {
         self.current_local_session()
     }
 
-    async fn refresh_session_identity(&self) -> Option<AuthoritySession> {
-        let context = self.local_identity_context().ok()?;
-        if let Err(error) = self.refresh_local_identity(&context.activation_id).await {
-            tracing::warn!(reason = %error.reason, "local dotNS identity refresh failed");
+    async fn refresh_session_identity(&self) -> Result<Option<AuthoritySession>, String> {
+        let Ok(context) = self.local_identity_context() else {
+            return Ok(None);
+        };
+        self.refresh_local_identity(&context.activation_id)
+            .await
+            .map_err(|error| error.reason)?;
+        if !self
+            .local_identity_context()
+            .is_ok_and(|current| current.activation_id == context.activation_id)
+        {
+            return Ok(None);
         }
-        if self.local_identity_context().ok()?.activation_id != context.activation_id {
-            return None;
-        }
-        self.current_local_session()
+        Ok(self.current_local_session())
     }
 
     fn session_state(&self) -> Arc<SessionState> {
