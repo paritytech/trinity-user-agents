@@ -129,6 +129,12 @@ public protocol HostBridge: NativeChatFilesHost {
     /// Forward to the sole receiving owner, or return nil to use the native engine.
     func receiverCommand(productId: String, action: UInt8, payload: Data) async throws -> Data?
 
+    /// Non-consuming ordered batch (at most 32), bound to the verified execution.
+    /// Must not enroll receiving or request notification permission.
+    func activationEvents() async throws -> [NotificationActivation]
+    /// Idempotently acknowledge one sequence, never a notification id or range.
+    func acknowledgeActivation(sequence: UInt64) async throws
+
     /// Prompt for a device-level permission `product` requested on the main
     /// actor, suspending until the user decides. Preserve the approval lifetime.
     func devicePermission(
@@ -379,6 +385,12 @@ public extension HostBridge {
         throw HostRejection.Rejected(reason: "background receiving unsupported")
     }
     func receiverCommand(productId: String, action: UInt8, payload: Data) async throws -> Data? { nil }
+    func activationEvents() async throws -> [NotificationActivation] {
+        throw HostRejection.Rejected(reason: "notification activation unsupported")
+    }
+    func acknowledgeActivation(sequence: UInt64) async throws {
+        throw HostRejection.Rejected(reason: "notification activation unsupported")
+    }
     func authStateChanged(state: AuthState) {}
     func chainConnect(genesisHash: Data) throws -> UInt32? { nil }
     func allowedHopEndpoints(bulletinGenesisHash: Data) async throws -> [String] { [] }
@@ -683,6 +695,14 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         try await withHostRejection {
             try await bridge.receiverCommand(productId: productId, action: action, payload: payload)
         }
+    }
+
+    func activationEvents() async throws -> [NotificationActivation] {
+        try await withHostRejection { try await bridge.activationEvents() }
+    }
+
+    func acknowledgeActivation(sequence: UInt64) async throws {
+        try await withHostRejection { try await bridge.acknowledgeActivation(sequence: sequence) }
     }
 
     func devicePermission(

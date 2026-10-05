@@ -23,4 +23,10 @@ truapi_macros::versioned_type! {
     pub enum HostNotificationAcknowledgeReceiverEventRequest { V1 => v01::HostNotificationAcknowledgeReceiverEventRequest }
     pub enum HostNotificationAcknowledgeReceiverEventResponse { V1 }
     pub enum HostNotificationReceivingError { V1 => v01::HostNotificationReceivingError }
+    pub enum NotificationActivationEventsRequest { V1 }
+    pub enum NotificationActivationEventsResponse { V1 => v01::NotificationActivations }
+    pub enum NotificationActivationEventsError { V1 => v01::GenericError }
+    pub enum NotificationActivationAcknowledgeRequest { V1 => v01::NotificationActivationAcknowledgeRequest }
+    pub enum NotificationActivationAcknowledgeResponse { V1 }
+    pub enum NotificationActivationAcknowledgeError { V1 => v01::GenericError }
 }

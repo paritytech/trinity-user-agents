@@ -5468,6 +5468,81 @@ fn cancel_notification_delegates_host_id() {
 }
 
 #[test]
+fn notification_activation_unsupported_does_not_request_permission() {
+    use truapi::versioned::notifications::{
+        NotificationActivationAcknowledgeError, NotificationActivationAcknowledgeRequest,
+        NotificationActivationEventsError, NotificationActivationEventsRequest,
+    };
+
+    let platform = Arc::new(StubPlatform {
+        device_permission_decisions: Mutex::new([crate::platform::PermissionDecision::Deny].into()),
+        ..Default::default()
+    });
+    let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+    let cx = CallContext::default();
+    let unsupported = v01::GenericError {
+        reason: "notification activation is unsupported".to_string(),
+    };
+
+    assert_eq!(
+        futures::executor::block_on(
+            host.activation_events(&cx, NotificationActivationEventsRequest::V1)
+        ),
+        Err(CallError::Domain(NotificationActivationEventsError::V1(
+            unsupported.clone()
+        )))
+    );
+    for sequence in [0, 1, u64::MAX] {
+        assert_eq!(
+            futures::executor::block_on(host.acknowledge_activation(
+                &cx,
+                NotificationActivationAcknowledgeRequest::V1(
+                    v01::NotificationActivationAcknowledgeRequest { sequence }
+                ),
+            )),
+            Err(CallError::Domain(NotificationActivationAcknowledgeError::V1(
+                unsupported.clone()
+            )))
+        );
+    }
+    assert!(platform.device_permission_requests.lock().is_ok_and(|calls| calls.is_empty()));
+    assert!(platform.remote_permission_requests.lock().is_ok_and(|calls| calls.is_empty()));
+    assert!(platform.pushed_notifications.lock().is_ok_and(|calls| calls.is_empty()));
+    assert!(platform.cancelled_notifications.lock().is_ok_and(|calls| calls.is_empty()));
+}
+
+#[test]
+fn notification_activation_rejects_oversized_platform_batch() {
+    use truapi::versioned::notifications::NotificationActivationEventsRequest;
+
+    for count in [0, 32, 33] {
+        let platform = Arc::new(StubPlatform {
+            notification_activations: Some(v01::NotificationActivations {
+                events: (0..count)
+                    .map(|sequence| v01::NotificationActivation {
+                        sequence,
+                        notification_id: 42,
+                        route: "/inbox".to_string(),
+                    })
+                    .collect(),
+            }),
+            ..Default::default()
+        });
+        let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        let response = futures::executor::block_on(
+            host.activation_events(&CallContext::default(), NotificationActivationEventsRequest::V1),
+        );
+        if count > 32 {
+            assert!(matches!(response, Err(CallError::HostFailure { .. })));
+        } else {
+            assert!(response.is_ok());
+        }
+        assert!(platform.device_permission_requests.lock().is_ok_and(|calls| calls.is_empty()));
+        assert!(platform.remote_permission_requests.lock().is_ok_and(|calls| calls.is_empty()));
+    }
+}
+
+#[test]
 fn get_account_requires_session() {
     let host =
         ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
@@ -6252,7 +6327,7 @@ fn get_user_id_checks_identity_disclosure_before_username() {
 }
 
 #[test]
-fn get_user_id_reports_missing_username_after_identity_disclosure() {
+fn get_user_id_reports_lookup_unavailability_after_identity_disclosure() {
     let platform = Arc::new(StubPlatform {
         identity_disclosure_confirmed: true,
         ..Default::default()
@@ -6269,11 +6344,105 @@ fn get_user_id_reports_missing_username_after_identity_disclosure() {
 
     assert!(matches!(
         err,
-        CallError::Domain(HostGetUserIdError::V1(
-            v01::HostGetUserIdError::Unknown { ref reason }
-        )) if reason == "No primary username for this session"
+        CallError::HostFailure { ref reason }
+            if reason.contains("username lookup unavailable")
     ));
     assert_eq!(platform.identity_disclosure_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn get_user_id_rejects_a_cached_name_after_owner_changes_during_consent() {
+    futures::executor::block_on(async {
+        let (release, gate) = futures::channel::oneshot::channel();
+        let platform = Arc::new(StubPlatform {
+            identity_disclosure_confirmed: true,
+            identity_disclosure_confirmation_gate: parking_lot::Mutex::new(Some(gate)),
+            ..Default::default()
+        });
+        let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        let original = session_info();
+        install_pairing_session(&host, original.clone());
+        let cx = CallContext::default();
+        let disclosure = host.get_user_id(&cx, HostGetUserIdRequest::V1);
+        futures::pin_mut!(disclosure);
+        assert!(futures::poll!(&mut disclosure).is_pending());
+        assert_eq!(platform.identity_disclosure_calls.load(Ordering::SeqCst), 1);
+        let mut replacement = original;
+        // Keep the root/session token, but change the trusted username owner.
+        replacement.identity_account_id = Some([0x99; 32]);
+        replacement.full_username = Some("Other Owner".to_string());
+        install_pairing_session(&host, replacement);
+        release.send(()).unwrap();
+        assert!(matches!(
+            disclosure.await,
+            Err(CallError::Domain(HostGetUserIdError::V1(
+                v01::HostGetUserIdError::NotConnected
+            )))
+        ));
+    });
+}
+
+#[test]
+fn get_user_id_accepts_refreshed_names_for_the_same_pairing_identity() {
+    futures::executor::block_on(async {
+        let (release, gate) = futures::channel::oneshot::channel();
+        let platform = Arc::new(StubPlatform {
+            identity_disclosure_confirmed: true,
+            identity_disclosure_confirmation_gate: parking_lot::Mutex::new(Some(gate)),
+            ..Default::default()
+        });
+        let host = ProductRuntimeHost::new_compat(platform, test_spawner());
+        let mut session = session_info();
+        session.full_username = None;
+        session.lite_username = None;
+        install_pairing_session(&host, session.clone());
+        let cx = CallContext::default();
+        let disclosure = host.get_user_id(&cx, HostGetUserIdRequest::V1);
+        futures::pin_mut!(disclosure);
+        assert!(futures::poll!(&mut disclosure).is_pending());
+        session.full_username = Some("refreshed.dot".into());
+        install_pairing_session(&host, session);
+        release.send(()).unwrap();
+        let HostGetUserIdResponse::V1(response) = disclosure.await.unwrap();
+        assert_eq!(response.primary_username, "refreshed.dot");
+    });
+}
+
+#[test]
+fn get_user_id_local_consent_respects_product_and_account_revocation() {
+    for revoked_product in [Some("other.dot"), Some("seity.dot"), None] {
+        let (release, gate) = futures::channel::oneshot::channel();
+        let platform = Arc::new(StubPlatform {
+            identity_disclosure_confirmed: true,
+            identity_disclosure_confirmation_gate: parking_lot::Mutex::new(Some(gate)),
+            ..Default::default()
+        });
+        let mut host = contacts_host("seity.dot", platform, None, false);
+        let authority = SigningHostRole::new(host.services.clone(), "dot".into(), None);
+        futures::executor::block_on(authority.activate_local_session(vec![0xAB; 16])).unwrap();
+        let state = authority.session_state();
+        let mut session = state.current().unwrap();
+        session.full_username = Some("alice.dot".into());
+        state.set_session(session);
+        host.authority = authority.clone();
+        let cx = CallContext::default();
+        let mut disclosure = Box::pin(host.get_user_id(&cx, HostGetUserIdRequest::V1));
+        assert!(disclosure.as_mut().now_or_never().is_none());
+        revoke_contact_authority(&authority, revoked_product);
+        release.send(()).unwrap();
+        let result = futures::executor::block_on(disclosure);
+        if revoked_product == Some("other.dot") {
+            let HostGetUserIdResponse::V1(response) = result.unwrap();
+            assert_eq!(response.primary_username, "alice.dot");
+        } else {
+            assert!(matches!(
+                result,
+                Err(CallError::Domain(HostGetUserIdError::V1(
+                    v01::HostGetUserIdError::NotConnected
+                )))
+            ));
+        }
+    }
 }
 
 #[test]

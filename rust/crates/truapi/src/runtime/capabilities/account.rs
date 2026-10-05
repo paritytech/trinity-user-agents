@@ -531,7 +531,7 @@ impl Account for ProductRuntimeHost {
         _cx: &CallContext,
         _request: HostGetUserIdRequest,
     ) -> Result<HostGetUserIdResponse, CallError<HostGetUserIdError>> {
-        let Some(session) = self.authority.current_session() else {
+        let Some(mut session) = self.authority.current_session() else {
             return Err(CallError::Domain(HostGetUserIdError::V1(
                 v01::HostGetUserIdError::NotConnected,
             )));
@@ -550,14 +550,34 @@ impl Account for ProductRuntimeHost {
             Err(reason) => return Err(CallError::HostFailure { reason }),
         }
 
-        let session = if session.primary_username().is_some() {
-            session
-        } else {
+        if session.primary_username().is_none() {
             self.authority
                 .refresh_session_identity()
                 .await
-                .unwrap_or(session)
-        };
+                .map_err(|reason| CallError::HostFailure { reason })?;
+        }
+        // Consent and chain resolution both await. Revalidate this product's
+        // authority and identity owner without revoking unrelated products.
+        let session = self
+            .authority
+            .current_session()
+            .and_then(|current| {
+                if current.public_key != session.public_key
+                    || current.identity_account_id != session.identity_account_id
+                {
+                    return None;
+                }
+                // Refresh display metadata without adopting a newer authority
+                // token that could hide revocation while consent was pending.
+                session.lite_username = current.lite_username;
+                session.full_username = current.full_username;
+                self.authority
+                    .session_is_current(&session, Some(&self.product.product_id))
+                    .then_some(session)
+            })
+            .ok_or(CallError::Domain(HostGetUserIdError::V1(
+                v01::HostGetUserIdError::NotConnected,
+            )))?;
         let primary_username = session.primary_username().ok_or_else(|| {
             CallError::Domain(HostGetUserIdError::V1(v01::HostGetUserIdError::Unknown {
                 reason: "No primary username for this session".to_string(),
