@@ -78,7 +78,44 @@ pub struct FundingDeposit {
     pub account: [u8; 32],
     /// Balance at which the deposit counts as delivered, in `asset` units.
     pub expected: u128,
+    /// How the deposit becomes CASH on People.
+    pub route: ConversionRoute,
 }
+
+/// How a deposit becomes CASH on People, fixed when its account is assigned
+/// so a later change on chain cannot switch it mid-session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub enum ConversionRoute {
+    /// The deposit is CASH already: teleport it.
+    Teleport,
+    /// The deposit is a stablecoin the PSM mints CASH against: mint, then
+    /// teleport.
+    Psm {
+        /// Minting fee the route was chosen at, in parts per million.
+        fee_ppm: u32,
+    },
+}
+
+/// A conversion transaction handed to Asset Hub, with what tells whether it
+/// worked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct ConversionSubmission {
+    /// The deposit account's nonce the transaction was signed at.
+    pub nonce: u32,
+    /// When it was submitted, in Unix milliseconds.
+    pub submitted_at_ms: u64,
+    /// Last Asset Hub block its mortal era admits it in.
+    pub valid_until_block: u64,
+    /// CASH the account held on People before it was submitted.
+    pub people_before: u128,
+    /// Least CASH the conversion lands on People.
+    pub landing: u128,
+    /// Deposit the transaction takes from the account on Asset Hub.
+    pub spent: u128,
+}
+
+/// Dry runs refused before a conversion gives up.
+const MAX_CONVERSION_REFUSALS: u8 = 3;
 
 /// Stage of a session, as the core persists it.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -90,6 +127,16 @@ pub enum FundingStage {
         /// Balance of the deposit account when it was seen, in its asset's
         /// units.
         deposited: u128,
+        /// Dry runs the chain has refused so far.
+        refusals: u8,
+        /// The conversion transaction, once one is on its way.
+        submission: Option<ConversionSubmission>,
+    },
+    /// Inbound: CASH landed on the deposit account on People and awaits
+    /// crediting.
+    Converted {
+        /// CASH on People, in payment balance units.
+        landed: u128,
     },
     /// Ended without success.
     Failed {
@@ -129,7 +176,9 @@ impl FundingSession {
     /// When the session ended, if it has.
     pub fn settled_at_ms(&self) -> Option<u64> {
         match self.stage {
-            FundingStage::Open | FundingStage::Converting { .. } => None,
+            FundingStage::Open | FundingStage::Converting { .. } | FundingStage::Converted { .. } => {
+                None
+            }
             FundingStage::Failed { settled_at_ms, .. } => Some(settled_at_ms),
         }
     }
@@ -145,7 +194,9 @@ impl FundingSession {
             (FundingStage::Open, FundingDirection::Out) => {
                 HostFundingStatusSubscribeItem::AwaitingRelease
             }
-            (FundingStage::Converting { .. }, _) => HostFundingStatusSubscribeItem::Converting,
+            (FundingStage::Converting { .. } | FundingStage::Converted { .. }, _) => {
+                HostFundingStatusSubscribeItem::Converting
+            }
             (FundingStage::Failed { reason, .. }, _) => HostFundingStatusSubscribeItem::Failed {
                 reason: reason.clone(),
                 moved: 0,
@@ -196,11 +247,92 @@ impl FundingSession {
             return false;
         };
         if balance >= deposit.expected {
-            self.stage = FundingStage::Converting { deposited: balance };
+            self.stage = FundingStage::Converting {
+                deposited: balance,
+                refusals: 0,
+                submission: None,
+            };
             return true;
         }
         now_ms >= self.deadline_ms && self.fail(FundingFailure::Expired, now_ms)
     }
+
+    /// The deposit of a session being converted, with its submission so far.
+    pub fn converting(&self) -> Option<(&FundingDeposit, Option<ConversionSubmission>)> {
+        match (&self.stage, &self.deposit) {
+            (FundingStage::Converting { submission, .. }, Some(deposit)) => {
+                Some((deposit, *submission))
+            }
+            _ => None,
+        }
+    }
+
+    /// Advance a converting session by one step of its conversion. Returns
+    /// whether the session changed.
+    pub fn advance_conversion(&mut self, step: ConversionStep, now_ms: u64) -> bool {
+        let FundingStage::Converting {
+            refusals,
+            submission,
+            ..
+        } = &mut self.stage
+        else {
+            return false;
+        };
+        match step {
+            ConversionStep::Submitted(submitted) => *submission = Some(submitted),
+            ConversionStep::Dropped => *submission = None,
+            ConversionStep::Refused { reason } => {
+                *submission = None;
+                *refusals = refusals.saturating_add(1);
+                if *refusals >= MAX_CONVERSION_REFUSALS {
+                    return self.fail(
+                        FundingFailure::Other {
+                            code: "conversion_refused".into(),
+                            message: reason,
+                        },
+                        now_ms,
+                    );
+                }
+            }
+            ConversionStep::Landed { landed } => {
+                self.stage = FundingStage::Converted { landed };
+            }
+            ConversionStep::Stalled => {
+                return self.fail(
+                    FundingFailure::Other {
+                        code: "conversion_stalled".into(),
+                        message: "the conversion left Asset Hub but never reached People".into(),
+                    },
+                    now_ms,
+                );
+            }
+        }
+        true
+    }
+}
+
+/// What one pass of a conversion found or did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConversionStep {
+    /// The conversion transaction is about to be submitted.
+    Submitted(ConversionSubmission),
+    /// The submitted transaction can no longer convert anything: its era
+    /// ended unincluded, or it was included and failed. The next pass
+    /// submits again.
+    Dropped,
+    /// A dry run refused the conversion.
+    Refused {
+        /// Why, as the chain reported it.
+        reason: String,
+    },
+    /// CASH arrived on People.
+    Landed {
+        /// CASH on People, in payment balance units.
+        landed: u128,
+    },
+    /// The transaction took the deposit on Asset Hub but its CASH never
+    /// reached People.
+    Stalled,
 }
 
 /// Which of a session's accounts under the reserved funding product.
@@ -475,6 +607,96 @@ mod tests {
         assert_eq!(
             (issued, next("usdt").is_err()),
             ([Ok(1), Ok(2), Ok(1), Ok(3)], true)
+        );
+    }
+
+    const SUBMISSION: ConversionSubmission = ConversionSubmission {
+        nonce: 4,
+        submitted_at_ms: NOW,
+        valid_until_block: 164,
+        people_before: 0,
+        landing: 40,
+        spent: 50,
+    };
+
+    fn converting() -> FundingSession {
+        FundingSession {
+            stage: FundingStage::Converting {
+                deposited: 50,
+                refusals: 0,
+                submission: None,
+            },
+            deposit: Some(FundingDeposit {
+                source_id: "usdt-assethub".to_string(),
+                number: 1,
+                asset: DepositAsset::Asset(1984),
+                account: [1; 32],
+                expected: 50,
+                route: ConversionRoute::Teleport,
+            }),
+            ..session(FundingDirection::In)
+        }
+    }
+
+    // A dry run that keeps refusing will not start passing, so the third
+    // refusal ends the session rather than retrying forever, and a refusal
+    // clears any submission so the next attempt starts clean.
+    #[test]
+    fn a_conversion_ends_on_its_third_refusal() {
+        let mut session = converting();
+        session.advance_conversion(ConversionStep::Submitted(SUBMISSION), NOW);
+        let refused = |session: &mut FundingSession| {
+            session.advance_conversion(
+                ConversionStep::Refused {
+                    reason: "no pool".into(),
+                },
+                NOW,
+            );
+            session.stage.clone()
+        };
+
+        assert_eq!(
+            [refused(&mut session), refused(&mut session), refused(&mut session)],
+            [
+                FundingStage::Converting {
+                    deposited: 50,
+                    refusals: 1,
+                    submission: None,
+                },
+                FundingStage::Converting {
+                    deposited: 50,
+                    refusals: 2,
+                    submission: None,
+                },
+                FundingStage::Failed {
+                    reason: FundingFailure::Other {
+                        code: "conversion_refused".into(),
+                        message: "no pool".into(),
+                    },
+                    settled_at_ms: NOW,
+                },
+            ]
+        );
+    }
+
+    // CASH on People is what the user is owed, so landing ends conversion
+    // whatever the submission state, and the subscriber keeps seeing
+    // converting until it is credited.
+    #[test]
+    fn landing_on_people_ends_the_conversion() {
+        let mut session = converting();
+        session.advance_conversion(ConversionStep::Submitted(SUBMISSION), NOW);
+        let submitted = session.converting().and_then(|(_, submission)| submission);
+        session.advance_conversion(ConversionStep::Landed { landed: 49 }, NOW);
+
+        assert_eq!(
+            (submitted, session.stage.clone(), session.wire_item(), session.is_terminal()),
+            (
+                Some(SUBMISSION),
+                FundingStage::Converted { landed: 49 },
+                HostFundingStatusSubscribeItem::Converting,
+                false,
+            )
         );
     }
 

@@ -25,7 +25,7 @@ mod sso_service;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use truapi::latest::{
-    ChainIdentifier, DerivationIndex, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+    ChainIdentifier, DerivationIndex, GenericError, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
     HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
     HostAccountRingVrfSignRequest, ProductAccountId, RingLocation, RingLocationJunction,
 };
@@ -532,6 +532,34 @@ impl SigningHost {
         derive_product_public_key(subtree, index)
             .map(Some)
             .map_err(product_authority_error)
+    }
+
+    /// Keypair of a funding deposit account, for the core's own conversion.
+    /// Products never reach it: their requests derive through
+    /// `product_keypair_with_owner`, which refuses the funding product.
+    fn funding_deposit_keypair(
+        &self,
+        source_id: &str,
+        number: u32,
+    ) -> Result<Option<schnorrkel::Keypair>, AuthorityError> {
+        let index = funding_account_index(FundingAccountKind::Deposit, source_id, number).map_err(
+            |err| AuthorityError::Unavailable {
+                reason: err.to_string(),
+            },
+        )?;
+        let entropy = match self.root_entropy() {
+            Ok(entropy) => entropy,
+            Err(AuthorityError::Disconnected) => return Ok(None),
+            Err(err) => return Err(err),
+        };
+        let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+        derive_product_keypair(
+            &root,
+            &funding_product_id(&self.network_suffix),
+            derivation_index_bytes(&v01::DerivationIndex::Raw(index)),
+        )
+        .map(Some)
+        .map_err(product_authority_error)
     }
 
     /// Derive the product-account keypair for `account` from the root entropy.
@@ -1687,6 +1715,19 @@ fn local_session_validation_id(session: &SessionInfo, activation_generation: u64
 fn product_authority_error(err: ProductAccountError) -> AuthorityError {
     AuthorityError::Unavailable {
         reason: err.to_string(),
+    }
+}
+
+impl super::FundingSigner for SigningHost {
+    fn deposit_keypair(
+        &self,
+        source_id: &str,
+        number: u32,
+    ) -> Result<Option<schnorrkel::Keypair>, GenericError> {
+        self.funding_deposit_keypair(source_id, number)
+            .map_err(|err| GenericError {
+                reason: err.to_string(),
+            })
     }
 }
 

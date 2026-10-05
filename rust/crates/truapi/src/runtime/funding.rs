@@ -25,6 +25,13 @@ use truapi::latest::{
     ChainIdentifier, FundingDirection, GenericError, HostFundingStatusSubscribeItem,
 };
 
+mod conversion;
+
+use conversion::{Chains, ConversionChains, ConversionError};
+#[cfg(test)]
+use conversion::Prepared;
+pub use conversion::{FundingNetwork, FundingSigner};
+
 use super::services::RuntimeServices;
 use parity_scale_codec::Decode;
 use sp_crypto_hashing::twox_128;
@@ -33,7 +40,8 @@ use super::statement_allowance::blake2_128_concat;
 use super::statement_allowance::rpc::RpcClient;
 use crate::host_logic::features;
 use crate::host_logic::funding::{
-    DepositAsset, DepositRequest, FundingDeposit, FundingSession, FundingSessionError, FundingStage,
+    ConversionRoute, ConversionStep, ConversionSubmission, DepositAsset, DepositRequest,
+    FundingDeposit, FundingSession, FundingSessionError, FundingStage,
     load_sessions, next_account_number, retained, store_sessions,
 };
 use crate::platform::{
@@ -48,6 +56,9 @@ const SWEEP_RETRY: Duration = Duration::from_secs(30);
 const DEPOSIT_POLL: Duration = Duration::from_secs(12);
 /// Longest a chain read may take before the pass gives up on it.
 const CHAIN_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a conversion that took the deposit on Asset Hub may take to
+/// reach People before it counts as stalled.
+const STALL_AFTER_MS: u64 = 30 * 60 * 1_000;
 /// Numbered accounts skipped for already holding funds before assignment
 /// gives up.
 const MAX_USED_ACCOUNTS: usize = 16;
@@ -66,6 +77,8 @@ pub struct FundingRegistry {
     sweeping: AtomicBool,
     /// Whether a task is polling the awaited deposits.
     watching: AtomicBool,
+    /// What converts deposits, once a signing host provides it.
+    conversion: OnceLock<Conversion>,
     platform: OnceLock<Arc<dyn FundingPlatform>>,
 }
 
@@ -79,6 +92,12 @@ impl FundingRegistry {
     /// The host's funding surface, when one is installed.
     pub fn platform(&self) -> Option<Arc<dyn FundingPlatform>> {
         self.platform.get().cloned()
+    }
+
+    /// Let deposits be converted on `network`, signed by `signer`. Set-once;
+    /// returns whether this call installed it.
+    pub fn install_conversion(&self, network: FundingNetwork, signer: Arc<dyn FundingSigner>) -> bool {
+        self.conversion.set(Conversion { network, signer }).is_ok()
     }
 
     /// Snapshot one session.
@@ -229,12 +248,13 @@ impl FundingRegistry {
         balances: &dyn DepositBalances,
         now_ms: u64,
         intent: &str,
-        request: DepositRequest,
+        plan: DepositPlan,
         derive: impl Fn(u32) -> Result<[u8; 32], GenericError>,
     ) -> Result<[u8; 32], AssignDepositError> {
         self.get(intent)
             .ok_or(AssignDepositError::NotFound)
             .and_then(|session| assignable(&session))?;
+        let DepositPlan { request, route } = plan;
         for _ in 0..MAX_USED_ACCOUNTS {
             let number = self
                 .next_account_number(storage, &request.source_id)
@@ -253,6 +273,7 @@ impl FundingRegistry {
                 asset: request.asset,
                 account,
                 expected: request.expected,
+                route,
             };
             let intent = intent.to_string();
             return self
@@ -334,7 +355,36 @@ impl FundingRegistry {
     fn awaits_deposit(&self) -> bool {
         self.lock_sessions()
             .values()
-            .any(|session| session.awaited_deposit().is_some())
+            .any(|session| session.awaited_deposit().is_some() || session.converting().is_some())
+    }
+
+    /// Every session being converted, with its deposit and submission.
+    fn converting_sessions(&self) -> Vec<(String, FundingDeposit, Option<ConversionSubmission>)> {
+        self.lock_sessions()
+            .values()
+            .filter_map(|session| {
+                let (deposit, submission) = session.converting()?;
+                Some((session.intent.clone(), deposit.clone(), submission))
+            })
+            .collect()
+    }
+
+    /// Apply one conversion `step` to session `intent`.
+    async fn record_conversion(
+        &self,
+        storage: &(impl CoreStorage + ?Sized),
+        now_ms: u64,
+        intent: &str,
+        step: ConversionStep,
+    ) -> Result<(), FundingSessionError> {
+        let intent = intent.to_string();
+        self.commit(storage, now_ms, move |sessions| {
+            let changed = sessions
+                .get_mut(&intent)
+                .is_some_and(|session| session.advance_conversion(step, now_ms));
+            ((), if changed { vec![intent] } else { Vec::new() })
+        })
+        .await
     }
 
     /// Tell subscribers and the host about a session's current stage. A
@@ -366,6 +416,93 @@ impl FundingRegistry {
             .lock()
             .expect("funding subscribers mutex poisoned")
     }
+}
+
+/// A deposit request with the route core chose for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DepositPlan {
+    /// What the provider delivers.
+    pub request: DepositRequest,
+    /// How the deposit becomes CASH on People.
+    pub route: ConversionRoute,
+}
+
+/// What converts deposits: the network's constants and the deposit keys.
+struct Conversion {
+    network: FundingNetwork,
+    signer: Arc<dyn FundingSigner>,
+}
+
+/// What a conversion pass decided for one session.
+#[derive(Debug, PartialEq, Eq)]
+enum PlannedStep {
+    /// Record a step.
+    Record(ConversionStep),
+    /// Record the submission, then submit `extrinsic`.
+    Submit {
+        submission: ConversionSubmission,
+        extrinsic: Vec<u8>,
+    },
+}
+
+/// Decide the next step for `deposit`, given its `submission` so far.
+///
+/// A submitted conversion is judged only by what it did: landed once People
+/// shows its CASH on top of what was there before; dropped once its era has
+/// passed unincluded, or once it was included and the deposit is still on
+/// Asset Hub; stalled once it took the deposit and nothing arrived in time.
+/// A fresh conversion is signed only by the account the deposit sits on.
+async fn plan_conversion(
+    chains: &dyn ConversionChains,
+    signer: &dyn FundingSigner,
+    deposit: &FundingDeposit,
+    submission: Option<ConversionSubmission>,
+    now_ms: u64,
+) -> Result<Option<PlannedStep>, ConversionError> {
+    let account = &deposit.account;
+    if let Some(submission) = submission {
+        let landed = chains
+            .landed(account)
+            .await?
+            .saturating_sub(submission.people_before);
+        if landed >= submission.landing {
+            return Ok(Some(PlannedStep::Record(ConversionStep::Landed { landed })));
+        }
+        let step = if chains.nonce(account).await? > submission.nonce {
+            if chains.deposit_balance(deposit.asset, account).await? >= submission.spent {
+                Some(ConversionStep::Dropped)
+            } else if now_ms.saturating_sub(submission.submitted_at_ms) > STALL_AFTER_MS {
+                Some(ConversionStep::Stalled)
+            } else {
+                None
+            }
+        } else if chains.finalized_block() > submission.valid_until_block {
+            Some(ConversionStep::Dropped)
+        } else {
+            None
+        };
+        return Ok(step.map(PlannedStep::Record));
+    }
+    let keypair = signer
+        .deposit_keypair(&deposit.source_id, deposit.number)
+        .map_err(|error| ConversionError::Chain(error.reason))?;
+    let Some(keypair) = keypair.filter(|keypair| keypair.public.to_bytes() == *account) else {
+        return Ok(None);
+    };
+    let people_before = chains.landed(account).await?;
+    let nonce = chains.nonce(account).await?;
+    let prepared = chains.prepare(deposit, &keypair, nonce).await?;
+    Ok(Some(PlannedStep::Submit {
+        submission: ConversionSubmission {
+            nonce,
+            submitted_at_ms: now_ms,
+            valid_until_block: prepared.valid_until_block,
+            people_before,
+            landing: prepared.landing,
+            spent: prepared.spent,
+        },
+        extrinsic: prepared.extrinsic,
+    }))
 }
 
 /// Reads deposit-account balances on Asset Hub.
@@ -488,6 +625,12 @@ pub enum AssignDepositError {
     /// The session is not an open inbound one without a deposit.
     #[display("funding session is not awaiting a deposit account")]
     NotAwaitingDeposit,
+    /// No signing host converts deposits on this runtime.
+    #[display("this host does not convert funding deposits")]
+    ConversionUnavailable,
+    /// No route turns this asset into CASH.
+    #[display("no route converts this deposit into CASH")]
+    NoRoute,
     /// Every account tried already holds funds.
     #[display("every funding account tried already holds funds")]
     AccountsInUse,
@@ -567,8 +710,9 @@ impl RuntimeServices {
     }
 
     /// Give an open inbound session its deposit account for the request's
-    /// source and watch it until the expected balance arrives. Returns the
-    /// account the provider pays into.
+    /// source, fix the route that will convert it, and watch the account until
+    /// the expected balance arrives. Returns the account the provider pays
+    /// into.
     pub async fn assign_funding_deposit(
         self: &Arc<Self>,
         intent: &str,
@@ -579,6 +723,21 @@ impl RuntimeServices {
             .get(intent)
             .ok_or(AssignDepositError::NotFound)
             .and_then(|session| assignable(&session))?;
+        let network = self
+            .funding()
+            .conversion
+            .get()
+            .ok_or(AssignDepositError::ConversionUnavailable)?
+            .network;
+        let chains = self
+            .funding_chains(network)
+            .await
+            .map_err(|error| AssignDepositError::Chain(GenericError { reason: error.to_string() }))?;
+        let route = chains
+            .choose_route(request.asset, request.expected)
+            .await
+            .map_err(|error| AssignDepositError::Chain(GenericError { reason: error.to_string() }))?
+            .ok_or(AssignDepositError::NoRoute)?;
         let balances = FinalizedAssetHubBalances::connect(self)
             .await
             .map_err(AssignDepositError::Chain)?;
@@ -589,7 +748,7 @@ impl RuntimeServices {
                 &balances,
                 current_unix_millis(),
                 intent,
-                request,
+                DepositPlan { request, route },
                 derive,
             )
             .await?;
@@ -627,8 +786,105 @@ impl RuntimeServices {
                 if let Err(reason) = observed {
                     tracing::warn!(%reason, "funding deposit watch failed");
                 }
+                if let Err(reason) = services.advance_conversions().await {
+                    tracing::warn!(%reason, "funding conversion pass failed");
+                }
             }
         }));
+    }
+
+    /// Asset Hub and People, pinned at their latest finalized blocks.
+    async fn funding_chains(&self, network: FundingNetwork) -> Result<Chains, ConversionError> {
+        within_chain_timeout(async {
+            let chains = features::supported_chains(self.platform.as_ref())
+                .await
+                .map_err(|error| ConversionError::Chain(error.reason))?;
+            let client = |chain: ChainIdentifier| {
+                let genesis = features::genesis_for(&chains, chain);
+                async move {
+                    let genesis = genesis
+                        .ok_or_else(|| ConversionError::Chain(format!("the host serves no {chain:?}")))?;
+                    self.chain
+                        .online_client(&genesis)
+                        .await
+                        .map_err(|error| ConversionError::Chain(error.to_string()))
+                }
+            };
+            let asset_hub = client(ChainIdentifier::AssetHub).await?;
+            let people = client(ChainIdentifier::People).await?;
+            Chains::at_finalized(&asset_hub, &people, network).await
+        })
+        .await
+        .map_err(|error| ConversionError::Chain(error.reason))?
+    }
+
+    /// One pass over the sessions being converted: record what landed,
+    /// what was dropped or stalled, and submit what is ready.
+    async fn advance_conversions(self: &Arc<Self>) -> Result<(), String> {
+        let registry = self.funding();
+        let converting = registry.converting_sessions();
+        let Some(conversion) = registry.conversion.get().filter(|_| !converting.is_empty()) else {
+            return Ok(());
+        };
+        let chains = self
+            .funding_chains(conversion.network)
+            .await
+            .map_err(|error| error.to_string())?;
+        let storage = self.platform.as_ref();
+        for (intent, deposit, submission) in converting {
+            let now_ms = current_unix_millis();
+            let planned = within_chain_timeout(plan_conversion(
+                &chains,
+                conversion.signer.as_ref(),
+                &deposit,
+                submission,
+                now_ms,
+            ))
+            .await;
+            let planned = match planned {
+                Ok(Ok(planned)) => planned,
+                Ok(Err(ConversionError::Refused(reason))) => {
+                    Some(PlannedStep::Record(ConversionStep::Refused { reason }))
+                }
+                Ok(Err(ConversionError::Chain(reason))) | Err(GenericError { reason }) => {
+                    tracing::warn!(%intent, %reason, "funding conversion pass failed");
+                    continue;
+                }
+            };
+            let recorded = match planned {
+                None => Ok(()),
+                Some(PlannedStep::Record(step)) => {
+                    registry.record_conversion(storage, now_ms, &intent, step).await
+                }
+                Some(PlannedStep::Submit {
+                    submission,
+                    extrinsic,
+                }) => {
+                    let submitted = ConversionStep::Submitted(submission);
+                    registry
+                        .record_conversion(storage, now_ms, &intent, submitted)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    match chains.submit(extrinsic).await {
+                        Ok(()) => Ok(()),
+                        Err(ConversionError::Refused(reason)) => {
+                            let refused = ConversionStep::Refused { reason };
+                            registry
+                                .record_conversion(storage, current_unix_millis(), &intent, refused)
+                                .await
+                        }
+                        // It may have reached the chain anyway; the
+                        // submission stays, and its era or the nonce decides.
+                        Err(ConversionError::Chain(reason)) => {
+                            tracing::warn!(%intent, %reason, "submitting a funding conversion failed");
+                            Ok(())
+                        }
+                    }
+                }
+            };
+            recorded.map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     /// Open a session and show the host's funding overlay for it: the one
@@ -836,6 +1092,13 @@ mod tests {
         }
     }
 
+    fn plan(expected: u128) -> DepositPlan {
+        DepositPlan {
+            request: request(expected),
+            route: ConversionRoute::Teleport,
+        }
+    }
+
     fn request(expected: u128) -> DepositRequest {
         DepositRequest {
             source_id: "usdt-assethub".to_string(),
@@ -854,7 +1117,7 @@ mod tests {
         balances: &Balances,
         intent: &str,
     ) -> Result<[u8; 32], String> {
-        block_on(registry.assign_empty_deposit(storage, balances, NOW, intent, request(50), |n| {
+        block_on(registry.assign_empty_deposit(storage, balances, NOW, intent, plan(50), |n| {
             Ok(account(n))
         }))
         .map_err(|error| error.to_string())
@@ -885,6 +1148,7 @@ mod tests {
                     asset: USDT,
                     account: account(3),
                     expected: 50,
+                    route: ConversionRoute::Teleport,
                 })
             )
         );
@@ -960,7 +1224,11 @@ mod tests {
                     },
                     HostFundingStatusSubscribeItem::Converting,
                 ],
-                Some(FundingStage::Converting { deposited: 50 }),
+                Some(FundingStage::Converting {
+                    deposited: 50,
+                    refusals: 0,
+                    submission: None,
+                }),
             )
         );
     }
@@ -997,7 +1265,11 @@ mod tests {
             (
                 [Some(FundingStage::Open), Some(FundingStage::Open)],
                 [
-                    Some(FundingStage::Converting { deposited: 50 }),
+                    Some(FundingStage::Converting {
+                    deposited: 50,
+                    refusals: 0,
+                    submission: None,
+                }),
                     Some(FundingStage::Failed {
                         reason: FundingFailure::Expired,
                         settled_at_ms: past_deadline,
@@ -1014,7 +1286,11 @@ mod tests {
         let storage = stub_platform();
         let registry = FundingRegistry::default();
         let converting = FundingSession {
-            stage: FundingStage::Converting { deposited: 50 },
+            stage: FundingStage::Converting {
+                    deposited: 50,
+                    refusals: 0,
+                    submission: None,
+                },
             ..session("fs_1", NOW - DAY_MS)
         };
         insert(&registry, storage.as_ref(), converting.clone());
@@ -1069,6 +1345,188 @@ mod tests {
                 decode_balance(DepositAsset::Native, Some(&account_info[..12])),
             ],
             [Some(500), Some(70), Some(0), None]
+        );
+    }
+
+    /// Chains answering fixed reads, and preparing a fixed conversion.
+    struct Scripted {
+        landed: u128,
+        nonce: u32,
+        balance: u128,
+        block: u64,
+    }
+
+    const PREPARED: Prepared = Prepared {
+        extrinsic: Vec::new(),
+        valid_until_block: 164,
+        landing: 40,
+        spent: 50,
+    };
+
+    impl ConversionChains for Scripted {
+        fn landed<'a>(&'a self, _: &'a [u8; 32]) -> BoxFuture<'a, Result<u128, ConversionError>> {
+            Box::pin(async move { Ok(self.landed) })
+        }
+
+        fn nonce<'a>(&'a self, _: &'a [u8; 32]) -> BoxFuture<'a, Result<u32, ConversionError>> {
+            Box::pin(async move { Ok(self.nonce) })
+        }
+
+        fn deposit_balance<'a>(
+            &'a self,
+            _: DepositAsset,
+            _: &'a [u8; 32],
+        ) -> BoxFuture<'a, Result<u128, ConversionError>> {
+            Box::pin(async move { Ok(self.balance) })
+        }
+
+        fn finalized_block(&self) -> u64 {
+            self.block
+        }
+
+        fn prepare<'a>(
+            &'a self,
+            _: &'a FundingDeposit,
+            _: &'a schnorrkel::Keypair,
+            _: u32,
+        ) -> BoxFuture<'a, Result<Prepared, ConversionError>> {
+            Box::pin(async { Ok(PREPARED) })
+        }
+    }
+
+    struct Keys(Option<schnorrkel::Keypair>);
+
+    impl FundingSigner for Keys {
+        fn deposit_keypair(
+            &self,
+            _: &str,
+            _: u32,
+        ) -> Result<Option<schnorrkel::Keypair>, GenericError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn keypair(seed: u8) -> schnorrkel::Keypair {
+        schnorrkel::MiniSecretKey::from_bytes(&[seed; 32])
+            .expect("seed")
+            .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519)
+    }
+
+    fn converting_deposit() -> FundingDeposit {
+        FundingDeposit {
+            source_id: "usdt-assethub".to_string(),
+            number: 1,
+            asset: USDT,
+            account: keypair(1).public.to_bytes(),
+            expected: 50,
+            route: ConversionRoute::Teleport,
+        }
+    }
+
+    const SUBMITTED: ConversionSubmission = ConversionSubmission {
+        nonce: 4,
+        submitted_at_ms: NOW,
+        valid_until_block: 164,
+        people_before: 10,
+        landing: 40,
+        spent: 50,
+    };
+
+    fn next_step(chains: Scripted, submission: Option<ConversionSubmission>, now_ms: u64) -> Option<PlannedStep> {
+        block_on(plan_conversion(
+            &chains,
+            &Keys(Some(keypair(1))),
+            &converting_deposit(),
+            submission,
+            now_ms,
+        ))
+        .expect("planned")
+    }
+
+    // Anyone can send CASH to the account on People, so only CASH on top of
+    // what was there before, and at least what the conversion lands, ends it.
+    #[test]
+    fn only_the_conversions_own_cash_counts_as_landed() {
+        let reading = |landed| Scripted {
+            landed,
+            nonce: 4,
+            balance: 50,
+            block: 100,
+        };
+
+        assert_eq!(
+            [
+                next_step(reading(11), Some(SUBMITTED), NOW),
+                next_step(reading(55), Some(SUBMITTED), NOW),
+            ],
+            [
+                None,
+                Some(PlannedStep::Record(ConversionStep::Landed { landed: 45 })),
+            ]
+        );
+    }
+
+    // Resubmitting while the first transaction can still land would convert
+    // twice, so a submission is dropped only once it provably cannot: its era
+    // passed unincluded, or it was included and left the deposit in place.
+    #[test]
+    fn a_submission_is_dropped_only_once_it_cannot_convert() {
+        let chains = |nonce, balance, block| Scripted {
+            landed: 10,
+            nonce,
+            balance,
+            block,
+        };
+        let late = NOW + STALL_AFTER_MS + 1;
+
+        assert_eq!(
+            [
+                next_step(chains(4, 50, 164), Some(SUBMITTED), late),
+                next_step(chains(4, 50, 165), Some(SUBMITTED), NOW),
+                next_step(chains(5, 50, 100), Some(SUBMITTED), NOW),
+                next_step(chains(5, 1, 100), Some(SUBMITTED), NOW),
+                next_step(chains(5, 1, 100), Some(SUBMITTED), late),
+            ],
+            [
+                None,
+                Some(PlannedStep::Record(ConversionStep::Dropped)),
+                Some(PlannedStep::Record(ConversionStep::Dropped)),
+                None,
+                Some(PlannedStep::Record(ConversionStep::Stalled)),
+            ]
+        );
+    }
+
+    // A session outlives a sign-out, so after switching identity the key on
+    // hand is not the deposit account's; signing with it would dry-run one
+    // account and pay from another.
+    #[test]
+    fn a_conversion_is_signed_only_by_the_deposit_account() {
+        let chains = || Scripted {
+            landed: 10,
+            nonce: 7,
+            balance: 50,
+            block: 100,
+        };
+        let planned = |keys: Keys| {
+            block_on(plan_conversion(&chains(), &keys, &converting_deposit(), None, NOW))
+                .expect("planned")
+        };
+
+        assert_eq!(
+            [planned(Keys(None)), planned(Keys(Some(keypair(2)))), planned(Keys(Some(keypair(1))))],
+            [
+                None,
+                None,
+                Some(PlannedStep::Submit {
+                    submission: ConversionSubmission {
+                        nonce: 7,
+                        people_before: 10,
+                        ..SUBMITTED
+                    },
+                    extrinsic: Vec::new(),
+                }),
+            ]
         );
     }
 }

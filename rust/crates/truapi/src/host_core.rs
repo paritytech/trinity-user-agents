@@ -795,6 +795,21 @@ impl SigningHostRuntime {
         installed
     }
 
+    /// Convert funding deposits into CASH on People on `network`, signing
+    /// with the deposit accounts this host derives. Without it, assigning a
+    /// deposit account fails. Set-once; returns whether this call enabled it.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.enable_funding_conversion"))]
+    pub fn enable_funding_conversion(&self, network: crate::runtime::FundingNetwork) -> bool {
+        let enabled = self
+            .services
+            .funding()
+            .install_conversion(network, self.signing_host.clone());
+        if enabled {
+            self.services.watch_funding_deposits();
+        }
+        enabled
+    }
+
     /// Open a funding session on the host's own behalf, as the Balance card's
     /// Add and Withdraw do, and show the overlay. Returns the session id, or
     /// `None` when the user dismissed the overlay without starting.

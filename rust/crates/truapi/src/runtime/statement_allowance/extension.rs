@@ -733,7 +733,6 @@ impl Metadata {
     }
 
     /// The signed-extension identifiers, in metadata order.
-    #[cfg(test)]
     pub fn extension_ids(&self) -> Vec<&str> {
         self.extensions
             .iter()
