@@ -41,6 +41,11 @@ const MORTAL_PERIOD_BLOCKS: u64 = 64;
 const PSM_CAPACITY_MARGIN_PERCENT: u128 = 10;
 /// Least PSM capacity a mint must leave spare, in CASH units.
 const PSM_CAPACITY_MARGIN_FLOOR: u128 = 1_000_000;
+/// Times a stablecoin swap's dry run is retried with its fee allowance
+/// doubled.
+const SWAP_ALLOWANCE_RETRIES: u32 = 2;
+/// Headroom a pool swap's least output leaves below its quote, in percent.
+const SWAP_SLIPPAGE_PERCENT: u128 = 5;
 /// Parts per million in a `Permill`.
 const PARTS_PER_MILLION: u128 = 1_000_000;
 
@@ -204,18 +209,113 @@ impl Chains {
         asset: DepositAsset,
         expected: u128,
     ) -> Result<Option<ConversionRoute>, ConversionError> {
-        let DepositAsset::Asset(id) = asset else {
-            return Ok(None);
-        };
-        if id == self.places.network.cash_asset_id {
+        if asset == DepositAsset::Asset(self.places.network.cash_asset_id) {
             return Ok(Some(ConversionRoute::Teleport));
         }
-        let Some(psm) = self.psm(id).await? else {
+        if let DepositAsset::Asset(id) = asset
+            && let Some(psm) = self.psm(id).await?
+            && psm.serves(psm.to_internal(expected))
+        {
+            return Ok(Some(ConversionRoute::Psm {
+                fee_ppm: psm.fee_ppm,
+            }));
+        }
+        let swaps = self.swap_out(asset, expected).await?.is_some();
+        Ok(swaps.then_some(ConversionRoute::Pool))
+    }
+
+    /// CASH the pools return for `amount` of `asset`, through the native
+    /// token for a stablecoin, or `None` without a pool path.
+    async fn swap_out(&self, asset: DepositAsset, amount: u128) -> Result<Option<u128>, ConversionError> {
+        let through_native = match asset {
+            DepositAsset::Native => Some(amount),
+            DepositAsset::Asset(id) => {
+                self.pool_quote("quote_price_exact_tokens_for_tokens", &self.places.asset_location(id), &native(), amount)
+                    .await?
+            }
+        };
+        let Some(native_amount) = through_native else {
             return Ok(None);
         };
-        Ok(psm.serves(psm.to_internal(expected)).then_some(ConversionRoute::Psm {
-            fee_ppm: psm.fee_ppm,
-        }))
+        self.pool_quote("quote_price_exact_tokens_for_tokens", &native(), &self.places.cash(), native_amount)
+            .await
+    }
+
+    /// `asset` the pools take to return `cash`, through the native token for
+    /// a stablecoin, with the slippage headroom on each hop, or `None`
+    /// without a pool path.
+    async fn swap_in(&self, asset: DepositAsset, cash: u128) -> Result<Option<u128>, ConversionError> {
+        let Some(native_in) = self
+            .pool_quote("quote_price_tokens_for_exact_tokens", &native(), &self.places.cash(), with_slippage_room(cash))
+            .await?
+        else {
+            return Ok(None);
+        };
+        match asset {
+            DepositAsset::Native => Ok(Some(native_in)),
+            DepositAsset::Asset(id) => {
+                self.pool_quote(
+                    "quote_price_tokens_for_exact_tokens",
+                    &self.places.asset_location(id),
+                    &native(),
+                    with_slippage_room(native_in),
+                )
+                .await
+            }
+        }
+    }
+
+    /// One `AssetConversionApi` price between `give` and `want`.
+    async fn pool_quote(
+        &self,
+        method: &str,
+        give: &Value,
+        want: &Value,
+        amount: u128,
+    ) -> Result<Option<u128>, ConversionError> {
+        let quoted = call_api(
+            &self.asset_hub,
+            "AssetConversionApi",
+            method,
+            vec![give.clone(), want.clone(), Value::u128(amount), Value::bool(true)],
+        )
+        .await?;
+        match variant_name(&quoted) {
+            Some("Some") => variant_fields(&quoted)
+                .and_then(|fields| fields.values().next())
+                .map(as_u128)
+                .transpose(),
+            _ => Ok(None),
+        }
+    }
+
+    /// The pool swap for `give` of `asset`, its least outputs the quotes less
+    /// the slippage headroom.
+    async fn swap(&self, asset: DepositAsset, give: u128) -> Result<PoolSwap, ConversionError> {
+        let no_pool = || ConversionError::Refused("no pool swaps the deposit into CASH".into());
+        let min_native = match asset {
+            DepositAsset::Native => None,
+            DepositAsset::Asset(id) => Some(less_slippage(
+                self.pool_quote("quote_price_exact_tokens_for_tokens", &self.places.asset_location(id), &native(), give)
+                    .await?
+                    .ok_or_else(no_pool)?,
+            )),
+        };
+        let min_cash = less_slippage(
+            self.pool_quote(
+                "quote_price_exact_tokens_for_tokens",
+                &native(),
+                &self.places.cash(),
+                min_native.unwrap_or(give),
+            )
+            .await?
+            .ok_or_else(no_pool)?,
+        );
+        Ok(PoolSwap {
+            from: asset,
+            min_native,
+            min_cash,
+        })
     }
 
     /// The route for a deposit of `asset` that credits at least `target`
@@ -233,9 +333,6 @@ impl Chains {
         asset: DepositAsset,
         target: u128,
     ) -> Result<Option<DepositQuote>, ConversionError> {
-        let DepositAsset::Asset(id) = asset else {
-            return Ok(None);
-        };
         let too_large = || ConversionError::Refused("the amount is too large to quote".into());
         if target == 0 {
             return Err(ConversionError::Refused("the amount to credit is zero".into()));
@@ -245,25 +342,41 @@ impl Chains {
             .checked_mul(CLAIM_UNIT)
             .ok_or_else(too_large)?;
         let send = teleported_for(claimed).ok_or_else(too_large)?;
-        let (route, mint, converted) = if id == self.places.network.cash_asset_id {
-            (ConversionRoute::Teleport, None, send)
-        } else {
-            let Some(terms) = self.psm(id).await? else {
-                return Ok(None);
-            };
-            let internal = psm_mint_in(send, terms.fee_ppm).ok_or_else(too_large)?;
-            if !terms.serves(internal) {
-                return Ok(None);
+        let psm = match asset {
+            DepositAsset::Asset(id) if id != self.places.network.cash_asset_id => {
+                self.psm(id).await?.map(|terms| (id, terms))
             }
-            let route = ConversionRoute::Psm {
-                fee_ppm: terms.fee_ppm,
-            };
+            _ => None,
+        };
+        let minted = psm.and_then(|(id, terms)| {
+            let internal = psm_mint_in(send, terms.fee_ppm)?;
+            terms.serves(internal).then_some((id, terms, internal))
+        });
+        let (route, converter, converted) = if asset == DepositAsset::Asset(self.places.network.cash_asset_id) {
+            (ConversionRoute::Teleport, Converter::Teleport, send)
+        } else if let Some((id, terms, internal)) = minted {
             let mint = PsmMint {
                 id,
                 terms,
                 max_fee_ppm: terms.fee_ppm,
             };
-            (route, Some(mint), terms.to_external(internal))
+            (
+                ConversionRoute::Psm {
+                    fee_ppm: terms.fee_ppm,
+                },
+                Converter::Mint(mint),
+                terms.to_external(internal),
+            )
+        } else {
+            let Some(given) = self.swap_in(asset, send).await? else {
+                return Ok(None);
+            };
+            let swap = PoolSwap {
+                from: asset,
+                min_native: matches!(asset, DepositAsset::Asset(_)).then_some(1),
+                min_cash: send,
+            };
+            (ConversionRoute::Pool, Converter::Swap(swap), given)
         };
         let extensions = self
             .extensions
@@ -276,7 +389,7 @@ impl Chains {
             nonce: 0,
         };
         let fees = self
-            .estimate_fees(signing, &[0; 32], asset, converted, mint, false)
+            .estimate_fees(signing, &[0; 32], asset, converted, converter, false)
             .await?;
         let kept = self.min_balance(asset).await?;
         let deposit = [fees.allowance, fees.dispatch, kept]
@@ -305,7 +418,7 @@ impl Chains {
         account: &[u8; 32],
         asset: DepositAsset,
         converted: u128,
-        mint: Option<PsmMint>,
+        converter: Converter,
         funded: bool,
     ) -> Result<Fees, ConversionError> {
         let fee_asset = self.places.deposit_location(asset);
@@ -314,12 +427,13 @@ impl Chains {
             false => (converted.saturating_mul(2), converted),
         };
         let draft = self
-            .measured(self.places.conversion_call(account, withdrawn, allowance, mint)?)
+            .measured(self.places.conversion_call(account, withdrawn, allowance, converter.drafted())?)
             .await?;
         let local = self.local_fee(&draft.program, &fee_asset).await?;
-        let cash = match mint {
-            None => converted,
-            Some(mint) => psm_mint_out(mint.terms.to_internal(converted), mint.terms.fee_ppm),
+        let cash = match converter {
+            Converter::Teleport => converted,
+            Converter::Mint(mint) => psm_mint_out(mint.terms.to_internal(converted), mint.terms.fee_ppm),
+            Converter::Swap(swap) => swap.min_cash,
         };
         let forwarded = self.places.forwarded_to_people(account, cash);
         let mut delivery = self.delivery_fee(&forwarded, &fee_asset).await?;
@@ -517,9 +631,9 @@ impl Chains {
             .extensions
             .as_deref()
             .ok_or_else(|| chain("signing metadata was not loaded"))?;
-        let mint = match (deposit.route, deposit.asset) {
-            (ConversionRoute::Teleport, _) => None,
-            (ConversionRoute::Psm { fee_ppm }, DepositAsset::Asset(id)) => Some(PsmMint {
+        let converter = match (deposit.route, deposit.asset) {
+            (ConversionRoute::Teleport, _) => Converter::Teleport,
+            (ConversionRoute::Psm { fee_ppm }, DepositAsset::Asset(id)) => Converter::Mint(PsmMint {
                 id,
                 terms: self
                     .psm(id)
@@ -530,6 +644,7 @@ impl Chains {
             (ConversionRoute::Psm { .. }, DepositAsset::Native) => {
                 return Err(ConversionError::Refused("the PSM mints only from assets".into()));
             }
+            (ConversionRoute::Pool, _) => Converter::Swap(self.swap(deposit.asset, spendable).await?),
         };
 
         let signing = Signing {
@@ -538,22 +653,41 @@ impl Chains {
             nonce,
         };
         let fees = self
-            .estimate_fees(signing, &account, deposit.asset, spendable, mint, true)
+            .estimate_fees(signing, &account, deposit.asset, spendable, converter, true)
             .await?;
-        let available = spendable
-            .checked_sub(fees.dispatch)
-            .and_then(|left| left.checked_sub(fees.allowance))
-            .filter(|left| *left > 0)
-            .ok_or_else(|| ConversionError::Refused("the deposit does not cover the fees".into()))?;
-        let call = self
-            .measured(self.places.conversion_call(
-                &account,
-                available + fees.allowance,
-                fees.allowance,
-                mint,
-            )?)
-            .await?;
-        let forwarded = self.dry_run(&account, &call).await?;
+        // A stablecoin swap moves its own pool before delivery is charged in
+        // that stablecoin, so a large one can need more than the allowance
+        // quoted beforehand: it retries with the allowance doubled, and
+        // what goes unspent is refunded to the account.
+        let retries = match converter {
+            Converter::Swap(PoolSwap {
+                min_native: Some(_), ..
+            }) => SWAP_ALLOWANCE_RETRIES,
+            _ => 0,
+        };
+        let mut allowance = fees.allowance;
+        let (call, forwarded) = loop {
+            let given = spendable
+                .checked_sub(fees.dispatch)
+                .and_then(|left| left.checked_sub(allowance))
+                .filter(|left| *left > 0)
+                .ok_or_else(|| ConversionError::Refused("the deposit does not cover the fees".into()))?;
+            // A swap's least outputs are quoted for what it actually gives.
+            let converter = match converter {
+                Converter::Swap(_) => Converter::Swap(self.swap(deposit.asset, given).await?),
+                other => other,
+            };
+            let call = self
+                .measured(self.places.conversion_call(&account, given + allowance, allowance, converter)?)
+                .await?;
+            match self.dry_run(&account, &call).await {
+                Ok(forwarded) => break (call, forwarded),
+                Err(ConversionError::Refused(_)) if allowance < fees.allowance << retries => {
+                    allowance *= 2;
+                }
+                Err(error) => return Err(error),
+            }
+        };
         self.dry_run_on_people(&forwarded).await?;
         Ok(Prepared {
             extrinsic: self.sign(extensions, &signer, &call, &fee_asset, nonce)?,
@@ -705,15 +839,15 @@ impl Chains {
             vec![Value::from_bytes(&unprefixed), Value::u128(length.into())],
         )
         .await?;
-        let native = u128_at(&info, "partial_fee")?;
-        if fee_asset == &location(1, Vec::new()) {
-            return Ok(native);
+        let native_fee = u128_at(&info, "partial_fee")?;
+        if fee_asset == &native() {
+            return Ok(native_fee);
         }
         let quoted = call_api(
             &self.asset_hub,
             "AssetConversionApi",
             "quote_price_tokens_for_exact_tokens",
-            vec![fee_asset.clone(), location(1, Vec::new()), Value::u128(native), Value::bool(true)],
+            vec![fee_asset.clone(), native(), Value::u128(native_fee), Value::bool(true)],
         )
         .await?;
         let quoted = variant_fields(&quoted)
@@ -790,7 +924,7 @@ impl Places {
     /// The deposited asset as Asset Hub names it.
     fn deposit_location(&self, asset: DepositAsset) -> Value {
         match asset {
-            DepositAsset::Native => location(1, Vec::new()),
+            DepositAsset::Native => native(),
             DepositAsset::Asset(id) => self.asset_location(id),
         }
     }
@@ -814,14 +948,50 @@ impl Places {
         account: &[u8; 32],
         withdrawn: u128,
         allowance: u128,
-        mint: Option<PsmMint>,
+        converter: Converter,
     ) -> Result<ConversionCall, ConversionError> {
         let converted = withdrawn
             .checked_sub(allowance)
             .ok_or_else(|| ConversionError::Refused("the fee allowance exceeds the deposit".into()))?;
-        let (cash, withdrawn_assets) = match mint {
-            None => (converted, vec![self.asset(&self.cash(), withdrawn)]),
-            Some(mint) => {
+        let mut exchanges = Vec::new();
+        let (cash, withdrawn_assets) = match converter {
+            Converter::Teleport => (converted, vec![self.asset(&self.cash(), withdrawn)]),
+            Converter::Swap(swap) => {
+                let from = self.deposit_location(swap.from);
+                let exchange = |give: Value, want: Value| {
+                    Value::named_variant(
+                        "ExchangeAsset",
+                        [
+                            ("give", give),
+                            ("want", Value::unnamed_composite([want])),
+                            ("maximal", Value::bool(true)),
+                        ],
+                    )
+                };
+                let definite = |asset: Value| {
+                    Value::unnamed_variant("Definite", [Value::unnamed_composite([asset])])
+                };
+                let cash_out = self.asset(&self.cash(), swap.min_cash);
+                match swap.min_native {
+                    None => exchanges.push(exchange(definite(self.asset(&from, converted)), cash_out)),
+                    Some(min_native) => {
+                        exchanges.push(exchange(
+                            definite(self.asset(&from, converted)),
+                            self.asset(&native(), min_native),
+                        ));
+                        let all_native = Value::unnamed_variant(
+                            "Wild",
+                            [Value::named_variant(
+                                "AllOf",
+                                [("id", native()), ("fun", Value::unnamed_variant("Fungible", []))],
+                            )],
+                        );
+                        exchanges.push(exchange(all_native, cash_out));
+                    }
+                }
+                (swap.min_cash, vec![self.asset(&from, withdrawn)])
+            }
+            Converter::Mint(mint) => {
                 let internal = mint.terms.to_internal(converted);
                 if internal < mint.terms.min_swap_amount {
                     return Err(ConversionError::Refused(
@@ -862,13 +1032,17 @@ impl Places {
             )
         };
         let teleport = |filter: Value| Value::unnamed_variant("Teleport", [filter]);
-        let fee_asset = match mint {
-            None => self.asset(&self.cash(), allowance),
-            Some(mint) => self.asset(&self.asset_location(mint.id), allowance),
+        let fee_asset = match converter {
+            Converter::Teleport => self.asset(&self.cash(), allowance),
+            Converter::Mint(mint) => self.asset(&self.asset_location(mint.id), allowance),
+            Converter::Swap(swap) => self.asset(&self.deposit_location(swap.from), allowance),
         };
-        let program = vec![
+        let mut program = vec![
             Value::unnamed_variant("WithdrawAsset", [Value::unnamed_composite(withdrawn_assets)]),
             Value::named_variant("PayFees", [("asset", fee_asset)]),
+        ];
+        program.extend(exchanges);
+        program.extend([
             Value::named_variant(
                 "InitiateTransfer",
                 [
@@ -899,7 +1073,11 @@ impl Places {
             ),
             Value::unnamed_variant("RefundSurplus", []),
             deposit_everything(),
-        ];
+        ]);
+        let mint = match converter {
+            Converter::Mint(mint) => Some(mint),
+            Converter::Teleport | Converter::Swap(_) => None,
+        };
         let mint_call = mint.map(|mint| {
             RuntimeCall::new(
                 "Psm",
@@ -962,6 +1140,45 @@ impl Places {
             ("fun", Value::unnamed_variant("Fungible", [Value::u128(amount)])),
         ])
     }
+}
+
+/// How a conversion turns the deposit into CASH before the teleport.
+#[derive(Debug, Clone, Copy)]
+enum Converter {
+    /// The deposit is CASH.
+    Teleport,
+    /// A PSM mint, batched ahead of the program.
+    Mint(PsmMint),
+    /// Pool swaps inside the program.
+    Swap(PoolSwap),
+}
+
+impl Converter {
+    /// The converter a fee draft runs: a swap's least outputs set just above
+    /// what executing on People needs, since a draft is weighed and
+    /// dry-run, not executed for value, and any real deposit swaps for more.
+    fn drafted(self) -> Self {
+        match self {
+            Self::Swap(swap) => Self::Swap(PoolSwap {
+                min_native: swap.min_native.map(|_| 1),
+                min_cash: 2 * REMOTE_FEE_FLOOR,
+                ..swap
+            }),
+            other => other,
+        }
+    }
+}
+
+/// Pool swaps from the deposit asset to CASH: straight for the native token,
+/// through it for a stablecoin, each giving all of what it holds.
+#[derive(Debug, Clone, Copy)]
+struct PoolSwap {
+    /// The deposit asset given.
+    from: DepositAsset,
+    /// Least native token the first hop returns, for a stablecoin.
+    min_native: Option<u128>,
+    /// Least CASH the last hop returns.
+    min_cash: u128,
 }
 
 /// A PSM mint ahead of the teleport.
@@ -1086,6 +1303,22 @@ fn teleported_for(target: u128) -> Option<u128> {
     Some(send)
 }
 
+/// The native token, as Asset Hub names it.
+fn native() -> Value {
+    location(1, Vec::new())
+}
+
+/// `amount` less the slippage headroom: a swap's least output.
+fn less_slippage(amount: u128) -> u128 {
+    amount / 100 * (100 - SWAP_SLIPPAGE_PERCENT)
+}
+
+/// An output to ask the pools for so that, less the slippage headroom, it
+/// still covers `amount`.
+fn with_slippage_room(amount: u128) -> u128 {
+    amount.saturating_mul(100).div_ceil(100 - SWAP_SLIPPAGE_PERCENT)
+}
+
 /// CASH set aside for execution on People out of `cash` teleported.
 fn remote_fee(cash: u128) -> u128 {
     (cash / 100 * REMOTE_FEE_PERCENT).max(REMOTE_FEE_FLOOR)
@@ -1113,10 +1346,13 @@ impl Chains {
             .transaction_extensions_to_use_for_encoding()
             .find(|extension| extension.identifier() == "ChargeAssetTxPayment")
             .ok_or_else(|| chain("Asset Hub does not charge fees in assets"))?;
-        Value::named_composite([
-            ("tip", Value::u128(0)),
-            ("asset_id", Value::unnamed_variant("Some", [fee_asset.clone()])),
-        ])
+        // Fees in the native token are the default and name no asset.
+        let asset_id = if fee_asset == &native() {
+            Value::unnamed_variant("None", [])
+        } else {
+            Value::unnamed_variant("Some", [fee_asset.clone()])
+        };
+        Value::named_composite([("tip", Value::u128(0)), ("asset_id", asset_id)])
         .encode_as_type(extension.extra_ty(), metadata.types())
         .map_err(chain)
     }
@@ -1443,7 +1679,7 @@ mod tests {
     fn a_teleport_encodes_as_an_asset_hub_xcm_execute() {
         let metadata = asset_hub_metadata();
         let call = PLACES
-            .conversion_call(&[1; 32], 1_000_000, 100_000, None)
+            .conversion_call(&[1; 32], 1_000_000, 100_000, Converter::Teleport)
             .expect("sized")
             .runtime_call();
         let pallet = metadata.pallet_by_name("PolkadotXcm").expect("pallet");
@@ -1452,6 +1688,44 @@ mod tests {
         let encoded = call.encode(&metadata).expect("encodes");
 
         assert_eq!(encoded[..2], [pallet.call_index(), execute.index]);
+    }
+
+    // The swaps are XCM `ExchangeAsset`s built from names, as getcash builds
+    // them: one hop for the native token, two through it for a stablecoin.
+    // Each encodes as an Asset Hub `PolkadotXcm.execute`.
+    #[test]
+    fn pool_swaps_encode_as_asset_hub_xcm_executes() {
+        let metadata = asset_hub_metadata();
+        let encoded = |from, min_native| {
+            PLACES
+                .conversion_call(
+                    &[1; 32],
+                    10_000_000_000,
+                    100_000_000,
+                    Converter::Swap(PoolSwap {
+                        from,
+                        min_native,
+                        min_cash: 1_000_000,
+                    }),
+                )
+                .expect("sized")
+                .runtime_call()
+                .encode(&metadata)
+                .map(|bytes| bytes[..2].to_vec())
+        };
+        let pallet = metadata.pallet_by_name("PolkadotXcm").expect("pallet");
+        let execute = vec![
+            pallet.call_index(),
+            pallet.call_variant_by_name("execute").expect("call").index,
+        ];
+
+        assert_eq!(
+            [
+                encoded(DepositAsset::Native, None),
+                encoded(DepositAsset::Asset(1984), Some(1_000_000_000)),
+            ],
+            [Ok(execute.clone()), Ok(execute)]
+        );
     }
 
     // Sized from the getcash formulas: the PSM keeps its fee, rounded up,
@@ -1527,7 +1801,7 @@ mod tests {
     #[test]
     fn a_deposit_too_small_for_the_fee_on_people_is_refused() {
         let refused = PLACES
-            .conversion_call(&[1; 32], 1_500, 600, None)
+            .conversion_call(&[1; 32], 1_500, 600, Converter::Teleport)
             .map(|_| ());
 
         assert_eq!(
@@ -1582,6 +1856,12 @@ mod live {
 
     /// An account holding at least `least` of asset `id` on Asset Hub.
     async fn holder(chains: &Chains, id: u32, least: u128) -> [u8; 32] {
+        holder_between(chains, id, least, u128::MAX).await
+    }
+
+    /// An account holding between `least` and `most` of asset `id`: a
+    /// deposit-sized balance, which a swap does not move the pool much for.
+    async fn holder_between(chains: &Chains, id: u32, least: u128, most: u128) -> [u8; 32] {
         let mut entries = chains
             .asset_hub
             .storage()
@@ -1594,7 +1874,7 @@ mod live {
         while let Some(entry) = entries.next().await {
             let entry = entry.expect("entry reads");
             let balance = u128_at(&entry.value().decode().expect("decodes"), "balance").expect("balance");
-            if balance >= least {
+            if (least..=most).contains(&balance) {
                 let key = entry.key_bytes();
                 return key[key.len() - 32..].try_into().expect("account id");
             }
@@ -1641,7 +1921,7 @@ mod live {
         let account = holder(&chains, NETWORK.cash_asset_id, 5_000_000).await;
         let cash = chains.places.cash();
         let call = chains
-            .measured(chains.places.conversion_call(&account, 2_000_000, 200_000, None).expect("sized"))
+            .measured(chains.places.conversion_call(&account, 2_000_000, 200_000, Converter::Teleport).expect("sized"))
             .await
             .expect("measured");
         let forwarded = chains.dry_run(&account, &call).await.expect("dry run");
@@ -1699,6 +1979,56 @@ mod live {
         assert_eq!(
             format!("{validity:?}"),
             format!("{:?}", ValidationResult::Invalid(subxt::tx::TransactionInvalid::Payment))
+        );
+    }
+
+    /// An account holding at least `least` of the native token.
+    async fn native_holder(chains: &Chains, least: u128) -> [u8; 32] {
+        let mut entries = chains
+            .asset_hub
+            .storage()
+            .iter(dynamic::storage::<(Value,), Value>("System", "Account"), ())
+            .await
+            .expect("accounts iterate");
+        while let Some(entry) = entries.next().await {
+            let entry = entry.expect("entry reads");
+            let value = entry.value().decode().expect("decodes");
+            let free = u128_at(field(&value, "data").expect("data"), "free").expect("free");
+            if free >= least {
+                let key = entry.key_bytes();
+                return key[key.len() - 32..].try_into().expect("account id");
+            }
+        }
+        panic!("no account holds {least} of the native token");
+    }
+
+    // The native token has no PSM pair, so it always swaps through the
+    // pool; a stablecoin swaps the same way, through the native token, when
+    // the PSM cannot serve it.
+    #[tokio::test]
+    #[ignore = "reaches Paseo Next"]
+    async fn native_and_stable_deposits_swap_through_the_pools_and_teleport() {
+        let chains = chains().await;
+        let keypair = schnorrkel::MiniSecretKey::from_bytes(&[7; 32])
+            .expect("seed")
+            .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
+        let native_account = native_holder(&chains, 100_000_000_000).await;
+        let usdt_account = holder_between(&chains, USDT, 5_000_000, 50_000_000).await;
+        let route = chains.choose_route(DepositAsset::Native, 10_000_000_000).await;
+        let quote = chains.deposit_quote(DepositAsset::Native, 2_000_000).await;
+        eprintln!("native route {route:?}, quote {quote:?}");
+        let native = chains
+            .prepare(&deposit(DepositAsset::Native, native_account, ConversionRoute::Pool), &keypair, 0)
+            .await
+            .map(|_| ());
+        let stable = chains
+            .prepare(&deposit(DepositAsset::Asset(USDT), usdt_account, ConversionRoute::Pool), &keypair, 0)
+            .await
+            .map(|_| ());
+
+        assert_eq!(
+            (route, native, stable),
+            (Ok(Some(ConversionRoute::Pool)), Ok(()), Ok(()))
         );
     }
 

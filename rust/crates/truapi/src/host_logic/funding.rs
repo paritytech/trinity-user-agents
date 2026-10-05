@@ -111,6 +111,10 @@ pub enum ConversionRoute {
         /// Minting fee the route was chosen at, in parts per million.
         fee_ppm: u32,
     },
+    /// The deposit is the native token, or a stablecoin the PSM cannot
+    /// serve: swap it to CASH through the asset-conversion pools, then
+    /// teleport.
+    Pool,
 }
 
 /// A conversion transaction handed to Asset Hub, with what tells whether it

@@ -32,6 +32,8 @@ const MISSING_POLLS: u32 = 5;
 /// The asset a provider pays the deposit in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum FundingAsset {
+    /// The native token, swapped into CASH through the pools.
+    Dot,
     /// dotUSD, which is CASH already: teleported to People.
     Cash,
     /// Minted into CASH through the PSM, then teleported.
@@ -60,12 +62,13 @@ impl FundingAssets {
         }
     }
 
-    /// The asset id and the getcash source id for `asset`.
-    fn source(&self, asset: FundingAsset) -> (u32, &'static str) {
+    /// The deposit asset and the getcash source id for `asset`.
+    fn source(&self, asset: FundingAsset) -> (DepositAsset, &'static str) {
         match asset {
-            FundingAsset::Cash => (self.cash, "dotusd-assethub"),
-            FundingAsset::Usdt => (self.usdt, "usdt-assethub"),
-            FundingAsset::Usdc => (self.usdc, "usdc-assethub"),
+            FundingAsset::Dot => (DepositAsset::Native, "dot-assethub"),
+            FundingAsset::Cash => (DepositAsset::Asset(self.cash), "dotusd-assethub"),
+            FundingAsset::Usdt => (DepositAsset::Asset(self.usdt), "usdt-assethub"),
+            FundingAsset::Usdc => (DepositAsset::Asset(self.usdc), "usdc-assethub"),
         }
     }
 }
@@ -139,14 +142,14 @@ async fn open_and_assign(
     asset: FundingAsset,
     amount: u128,
 ) -> Result<String> {
-    let (asset_id, source_id) = assets.source(asset);
+    let (deposit_asset, source_id) = assets.source(asset);
     let intent = runtime
         .open_funding(FundingDirection::In, Some(amount))
         .await
         .map_err(|error| anyhow::anyhow!("opening a session failed: {}", error.reason))?
         .context("the session was dismissed")?;
     let expected = runtime
-        .quote_funding_deposit(&intent, DepositAsset::Asset(asset_id))
+        .quote_funding_deposit(&intent, deposit_asset)
         .await
         .map_err(|error| anyhow::anyhow!("quoting the deposit failed: {}", error.reason))?;
     let account = runtime
@@ -154,14 +157,14 @@ async fn open_and_assign(
             &intent,
             DepositRequest {
                 source_id: source_id.to_string(),
-                asset: DepositAsset::Asset(asset_id),
+                asset: deposit_asset,
                 expected,
             },
         )
         .await
         .map_err(|error| anyhow::anyhow!("assigning a deposit account failed: {}", error.reason))?;
     println!("session  {intent}, crediting {amount} CASH units");
-    println!("pay      {expected} of asset {asset_id} ({source_id}) on Asset Hub to");
+    println!("pay      {expected} of {deposit_asset:?} ({source_id}) on Asset Hub to");
     println!(
         "         {}",
         truapi::host_logic::product_account::product_public_key_to_address(account)
