@@ -20,12 +20,14 @@ use subxt::utils::H256;
 
 mod block_backend;
 mod heads;
+mod mortality;
 mod subxt_chain;
 mod tx_submitter;
 mod tx_validator;
 
 pub use block_backend::{BlockBackend, DispatchOutcome};
 pub use heads::{ChainHeads, HeadEvent, Heads};
+pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
 pub use tx_submitter::{TxSubmitter, WatchEvent};
 pub use tx_validator::TxValidator;
 
