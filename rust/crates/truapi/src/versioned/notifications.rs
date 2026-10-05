@@ -1,7 +1,7 @@
 //! Versioned wrappers for [`Notifications`](crate::api::Notifications) methods.
 
-use alloc::vec::Vec;
 use crate::v01;
+use alloc::vec::Vec;
 
 truapi_macros::versioned_type! {
     pub enum HostPushNotificationRequest { V1 => v01::HostPushNotificationRequest }
