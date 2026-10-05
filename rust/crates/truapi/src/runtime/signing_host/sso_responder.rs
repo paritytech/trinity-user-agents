@@ -2127,6 +2127,42 @@ mod tests {
         );
     }
 
+    /// The pairing host sends the calling product id as it holds it, so both secrets come
+    /// from its normalized form or they would not belong to the same product.
+    #[test]
+    fn auto_signing_allocation_derives_both_secrets_from_the_normalized_product_id() {
+        let platform = Arc::new(StubPlatform {
+            resource_allocation_confirmed: true,
+            ..StubPlatform::default()
+        });
+        let (_, signing_host) = signing_fixture(platform);
+        let expected = SsoAllocatedResource::AutoSigning {
+            product_root_private_key: signing_host
+                .product_subtree_secret("myapp.dot")
+                .expect("product subtree secret derives"),
+            ring_vrf_domain_entropy: derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot")
+                .expect("ring-VRF domain entropy derives"),
+        };
+
+        let response = answer(
+            &signing_host,
+            "alloc-auto-signing-mixed-case",
+            v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ResourceAllocationRequest {
+                calling_product_id: "MyApp.dot".to_string(),
+                resources: vec![api::AllocatableResource::AutoSigning],
+                on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
+            }),
+        );
+
+        let v1::RemoteMessage::ResourceAllocationResponse(response) = response else {
+            panic!("expected resource allocation response");
+        };
+        assert_eq!(
+            response.payload.unwrap(),
+            vec![SsoAllocationOutcome::Allocated(expected)]
+        );
+    }
+
     fn allocation_after_session_change(replacement: Option<Vec<u8>>) {
         use futures::{FutureExt, channel::oneshot};
 

@@ -58,8 +58,8 @@ use crate::host_logic::entropy::derive_product_entropy;
 use crate::host_logic::features::genesis_for;
 use crate::host_logic::product_account::{
     ProductAccountError, SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_identity_keypair,
-    derive_product_keypair, derive_product_subtree_keypair, derive_ring_vrf_entropy,
-    derive_root_keypair_from_entropy, personhood_product_id,
+    derive_product_keypair, derive_product_subtree_keypair, derive_ring_vrf_domain_entropy,
+    derive_ring_vrf_entropy, derive_root_keypair_from_entropy, personhood_product_id,
 };
 use crate::host_logic::product_account::{
     derive_full_person_ring_vrf_entropy, derive_lite_person_ring_vrf_entropy,
@@ -370,6 +370,18 @@ impl SigningHost {
         derive_product_subtree_keypair(&root, &product_id)
             .map(|keypair| keypair.secret.to_bytes())
             .map_err(product_authority_error)
+    }
+
+    /// Entropy of the product's ring-VRF domain, from the same normalized product id as
+    /// [`Self::product_subtree_secret`].
+    fn ring_vrf_domain_entropy(&self, product_id: &str) -> Result<[u8; 32], AuthorityError> {
+        let entropy = self.root_entropy()?;
+        let product_id = normalize_product_identifier(product_id).map_err(|err| {
+            AuthorityError::Unavailable {
+                reason: err.to_string(),
+            }
+        })?;
+        derive_ring_vrf_domain_entropy(&entropy, &product_id).map_err(product_authority_error)
     }
 
     fn sso_replay_locks(&self) -> &SsoReplayLocks {
