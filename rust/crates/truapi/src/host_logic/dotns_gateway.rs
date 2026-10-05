@@ -20,7 +20,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::dotns_views::{
-    call_string, label_owner, network_tld, protocol_component, tld_node,
+    LabelOwner, call_string, label_owner, network_tld, protocol_component, tld_node,
 };
 
 /// Ring-VRF context for `register_name` proofs.
@@ -454,8 +454,9 @@ pub struct DotnsIdentity {
 /// username. Anything that is not one of those shapes — oversized, non-ASCII,
 /// control characters, markup, other dotted strings — is skipped before the
 /// provenance read, so no unscreened contract string is even asked about.
-/// First hit per slot wins. Labels are expected bare: [`resolve_labels`]
-/// strips the network TLD.
+/// First owned hit per slot wins; filled slots require no further views.
+/// Deterministically unusable owners are skipped, but RPC/ABI failures propagate.
+/// Labels are expected bare: [`resolve_labels`] strips the network TLD.
 pub async fn classify_labels<T, I>(
     transport: &mut T,
     controller: &[u8; 20],
@@ -472,8 +473,13 @@ where
     let mut owner_context = None;
     for label in labels {
         let label = label.as_ref();
-        let shape_ok = is_dotted_lite_username(label) || is_dns_label(label);
-        if !shape_ok {
+        let is_lite = is_dotted_lite_username(label);
+        let slot_filled = if is_lite {
+            identity.lite_username.is_some()
+        } else {
+            identity.full_username.is_some()
+        };
+        if slot_filled || (!is_lite && !is_dns_label(label)) {
             continue;
         }
         if !is_pop_issued(transport, controller, label).await? {
@@ -495,17 +501,13 @@ where
                 (registry, tld)
             }
         };
-        if label_owner(transport, &registry, &tld, label).await? != Some(expected_owner) {
+        if label_owner(transport, &registry, &tld, label).await? != LabelOwner::Owned(expected_owner) {
             continue;
         }
-        if is_dotted_lite_username(label) {
-            identity
-                .lite_username
-                .get_or_insert_with(|| label.to_string());
+        if is_lite {
+            identity.lite_username = Some(label.to_string());
         } else {
-            identity
-                .full_username
-                .get_or_insert_with(|| label.to_string());
+            identity.full_username = Some(label.to_string());
         }
     }
     Ok(identity)
@@ -1478,49 +1480,61 @@ mod tests {
         });
     }
 
+    #[derive(Default)]
+    struct Directory {
+        owners: std::collections::HashMap<[u8; 32], [u8; 20]>,
+        issued: bool,
+        failing_owner: Option<[u8; 32]>,
+        malformed_owner: Option<[u8; 32]>,
+        failing_provenance: Option<&'static str>,
+    }
+
+    #[crate::platform::async_trait]
+    impl DotnsTransport for Directory {
+        async fn storage(&mut self, _: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+            unreachable!("pending name ownership does not read a reservation clock")
+        }
+
+        async fn view(&mut self, _: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
+            let function = &input[..4];
+            let mut word = [0u8; 32];
+            if function == selector("pendingClaims(address,uint256,uint256)") {
+                return Ok(abi_pending_claims(&[("alice.01".to_string(), 1)]));
+            } else if function == selector("isPopIssued(string)") {
+                if self
+                    .failing_provenance
+                    .is_some_and(|label| input == call_string("isPopIssued(string)", label))
+                {
+                    return Err(DotnsViewError::Failed("provenance offline".into()));
+                }
+                word[31] = u8::from(self.issued);
+            } else if function == selector("protocolRegistry()")
+                || function == selector("get(bytes32)")
+            {
+                word[12..].fill(0xaa);
+            } else if function == selector("tld()") {
+                return Ok([abi_word(32).to_vec(), abi_string(".paseo")].concat());
+            } else {
+                let node: [u8; 32] = input[4..].try_into().unwrap();
+                if function == selector("recordExists(bytes32)") {
+                    word[31] = u8::from(self.owners.contains_key(&node));
+                } else {
+                    assert_eq!(function, selector("owner(bytes32)"));
+                    if self.failing_owner == Some(node) {
+                        return Err(DotnsViewError::Failed("owner offline".into()));
+                    }
+                    if self.malformed_owner == Some(node) {
+                        return Ok(vec![0xff]);
+                    }
+                    word[12..].copy_from_slice(&self.owners[&node]);
+                }
+            }
+            Ok(word.to_vec())
+        }
+    }
+
     #[test]
     fn old_pending_names_require_current_unambiguous_ownership_and_provenance() {
-        struct Directory {
-            owners: std::collections::HashMap<[u8; 32], [u8; 20]>,
-            issued: bool,
-        }
-
-        #[crate::platform::async_trait]
-        impl DotnsTransport for Directory {
-            async fn storage(&mut self, _: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-                unreachable!("pending name ownership does not read a reservation clock")
-            }
-
-            async fn view(
-                &mut self,
-                _: &[u8; 20],
-                input: Vec<u8>,
-            ) -> Result<Vec<u8>, DotnsViewError> {
-                let function = &input[..4];
-                let mut word = [0u8; 32];
-                if function == selector("pendingClaims(address,uint256,uint256)") {
-                    return Ok(abi_pending_claims(&[("alice.01".to_string(), 1)]));
-                } else if function == selector("isPopIssued(string)") {
-                    word[31] = u8::from(self.issued);
-                } else if function == selector("protocolRegistry()")
-                    || function == selector("get(bytes32)")
-                {
-                    word[12..].fill(0xaa);
-                } else if function == selector("tld()") {
-                    return Ok([abi_word(32).to_vec(), abi_string(".paseo")].concat());
-                } else {
-                    let node: [u8; 32] = input[4..].try_into().unwrap();
-                    if function == selector("recordExists(bytes32)") {
-                        word[31] = u8::from(self.owners.contains_key(&node));
-                    } else {
-                        assert_eq!(function, selector("owner(bytes32)"));
-                        word[12..].copy_from_slice(&self.owners[&node]);
-                    }
-                }
-                Ok(word.to_vec())
-            }
-        }
-
         futures::executor::block_on(async {
             let account = [0xa1; 32];
             let owner = account_to_h160(&account);
@@ -1531,6 +1545,7 @@ mod tests {
             let mut directory = Directory {
                 owners: std::collections::HashMap::from([(atomic, owner)]),
                 issued: true,
+                ..Directory::default()
             };
             let labels = pending_claim_labels(&mut directory, &controller, &owner)
                 .await
@@ -1548,10 +1563,11 @@ mod tests {
                 );
             }
             directory.owners.insert(atomic, [0xbb; 20]);
-            assert!(
+            assert_eq!(
                 classify_labels(&mut directory, &controller, &account, &labels)
                     .await
-                    .is_err()
+                    .unwrap(),
+                DotnsIdentity::default(),
             );
             directory.owners.remove(&nested);
             assert_eq!(
@@ -1577,6 +1593,118 @@ mod tests {
                 DotnsIdentity::default(),
                 "current ownership alone does not establish gateway provenance"
             );
+        });
+    }
+
+    #[test]
+    fn unusable_candidate_does_not_poison_owned_identity() {
+        futures::executor::block_on(async {
+            let account = [0xa1; 32];
+            let owner = account_to_h160(&account);
+            let tld = tld_node(".paseo");
+            let atomic = namehash_under(&tld, "alice.01");
+            let nested = namehash_under(&namehash_under(&tld, "01"), "alice");
+            for invalid in [
+                vec![(atomic, owner), (nested, [0xbb; 20])],
+                vec![(atomic, [0; 20])],
+                vec![(atomic, owner), (nested, [0; 20])],
+            ] {
+                let mut directory = Directory {
+                    owners: invalid.into_iter().collect(),
+                    issued: true,
+                    ..Directory::default()
+                };
+                assert_eq!(
+                    classify_labels(&mut directory, &[0xc0; 20], &account, ["alice.01"])
+                        .await
+                        .unwrap(),
+                    DotnsIdentity::default(),
+                );
+                directory
+                    .owners
+                    .insert(namehash_under(&tld, "bob.02"), owner);
+                directory
+                    .owners
+                    .insert(namehash_under(&tld, "charlie"), owner);
+                let identity = classify_labels(
+                    &mut directory,
+                    &[0xc0; 20],
+                    &account,
+                    ["alice.01", "bob.02", "charlie"],
+                )
+                .await
+                .unwrap();
+                assert_eq!(identity.lite_username.as_deref(), Some("bob.02"));
+                assert_eq!(identity.full_username.as_deref(), Some("charlie"));
+            }
+        });
+    }
+
+    #[test]
+    fn candidate_rpc_and_abi_failures_remain_errors() {
+        futures::executor::block_on(async {
+            let account = [0xa1; 32];
+            let owner = account_to_h160(&account);
+            let tld = tld_node(".paseo");
+            let failed = namehash_under(&tld, "alice.01");
+            for malformed in [false, true] {
+                let mut directory = Directory {
+                    owners: [(failed, owner), (namehash_under(&tld, "bob.02"), owner)]
+                        .into_iter()
+                        .collect(),
+                    issued: true,
+                    failing_owner: (!malformed).then_some(failed),
+                    malformed_owner: malformed.then_some(failed),
+                    ..Directory::default()
+                };
+                assert!(
+                    classify_labels(
+                        &mut directory,
+                        &[0xc0; 20],
+                        &account,
+                        ["alice.01", "bob.02"],
+                    )
+                    .await
+                    .is_err()
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn filled_identity_slots_preserve_first_owned_name_despite_late_failure() {
+        futures::executor::block_on(async {
+            let account = [0xa1; 32];
+            let owner = account_to_h160(&account);
+            let tld = tld_node(".paseo");
+            for (first, irrelevant, other) in [
+                ("alice.01", "bob.02", "charlie"),
+                ("charlie", "david", "alice.01"),
+            ] {
+                for provenance_failure in [false, true] {
+                    let irrelevant_node = namehash_under(&tld, irrelevant);
+                    let mut directory = Directory {
+                        owners: [first, irrelevant, other]
+                            .into_iter()
+                            .map(|label| (namehash_under(&tld, label), owner))
+                            .collect(),
+                        issued: true,
+                        failing_owner: (!provenance_failure).then_some(irrelevant_node),
+                        failing_provenance: provenance_failure.then_some(irrelevant),
+                        ..Directory::default()
+                    };
+                    let identity = classify_labels(
+                        &mut directory,
+                        &[0xc0; 20],
+                        &account,
+                        [first, irrelevant, other],
+                    )
+                    .await
+                    .unwrap();
+                    assert_eq!(identity.lite_username.as_deref(), Some("alice.01"));
+                    assert_eq!(identity.full_username.as_deref(), Some("charlie"));
+                }
+            }
         });
     }
 

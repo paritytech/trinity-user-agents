@@ -91,10 +91,9 @@ pub async fn resolve_session_identity_with_chain(
 const IDENTITY_LOOKUP_MAX_ATTEMPTS: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LookupOutcome {
-    /// A username record was found and applied.
+enum LookupOutcome {    /// A username record was found and applied.
     Applied,
-    /// The account has no dotNS labels. Definitive, not worth a retry.
+    /// The account has no usable owned dotNS username. Definitive, not worth a retry.
     NoRecord,
 }
 
@@ -135,7 +134,7 @@ async fn lookup_and_apply(
             Ok(None) => {
                 debug!(
                     account = %hex::encode(account),
-                    "dotNS {label} lookup found no labels"
+                    "dotNS {label} lookup found no usable owned username"
                 );
                 return Ok(LookupOutcome::NoRecord);
             }
@@ -163,7 +162,7 @@ async fn lookup_and_apply(
 /// Resolves `account_id`'s usernames from the dotNS contracts at a fresh Asset
 /// Hub head. Each step carries the lookup transport's own step timeout; the caller's
 /// [`LOOKUP_BUDGET`] bounds the whole resolution. Returns `None` only when
-/// the account holds no labels; absent gateway discovery is unavailable.
+/// the account has no usable owned username; absent gateway discovery is unavailable.
 #[instrument(skip_all, fields(runtime.method = "session.identity.lookup"))]
 async fn lookup_dotns_identity(
     chain: &ChainRuntime,
@@ -186,9 +185,11 @@ async fn lookup_dotns_identity(
         if labels.is_empty() {
             return Ok(None);
         }
-        Ok(Some(
-            classify_labels(&mut lookup, &controller, &account_id, labels).await?,
-        ))
+        let identity = classify_labels(&mut lookup, &controller, &account_id, labels).await?;
+        Ok(
+            (identity.lite_username.is_some() || identity.full_username.is_some())
+                .then_some(identity),
+        )
     }
     .fuse();
     pin_mut!(lookup);
@@ -464,12 +465,12 @@ mod tests {
     }
 
     #[derive(Clone, Copy, Default)]
-    enum ScriptedLookup {
-        #[default]
+    enum ScriptedLookup {        #[default]
         Labels,
         NoRecord,
         Unavailable,
         GatewayMissing,
+        RejectedPreferred,
     }
 
     struct ScriptedAssetHub {
@@ -585,7 +586,9 @@ mod tests {
                     let input = Vec::<u8>::decode(&mut &args[70..]).unwrap();
                     let sel: [u8; 4] = input[..4].try_into().unwrap();
                     if dest == FACTORY && sel == selector("getLabelStore(address)") {
-                        assert_eq!(&input[16..36], account_to_h160(&ACCOUNT));
+                        if !matches!(self.lookup, ScriptedLookup::RejectedPreferred) {
+                            assert_eq!(&input[16..36], account_to_h160(&ACCOUNT));
+                        }
                         self.lookup_requests.fetch_add(1, Ordering::SeqCst);
                         if matches!(self.lookup, ScriptedLookup::Unavailable) {
                             return vec![json!({
@@ -596,6 +599,9 @@ mod tests {
                         }
                     }
                     let output = match self.lookup {
+                        ScriptedLookup::RejectedPreferred => {
+                            rejected_preferred_view_output(&dest, &input)
+                        }
                         ScriptedLookup::NoRecord
                             if dest == CONTROLLER
                                 && sel == selector("pendingClaims(address,uint256,uint256)") =>
@@ -711,6 +717,59 @@ mod tests {
             calls, 22,
             "discovery, provenance and current ownership share the runtime follow"
         );
+    }
+
+    // Both accounts enumerate nonempty pending labels. Only the root account's
+    // candidate is still owned; the preferred account's candidates are rejected.
+    fn rejected_preferred_view_output(dest: &[u8; 20], input: &[u8]) -> Vec<u8> {
+        let sel: [u8; 4] = input[..4].try_into().unwrap();
+        let data = match (*dest, sel) {
+            (CONTROLLER, s) if s == selector("pendingClaims(address,uint256,uint256)") => {
+                if input[16..36] == account_to_h160(&ACCOUNT) {
+                    abi_pending_claims(&[("transferred.01", 1), ("not-issued", 1)])
+                } else {
+                    assert_eq!(&input[16..36], account_to_h160(&[0x11; 32]));
+                    abi_pending_claims(&[("root.01", 1)])
+                }
+            }
+            (FACTORY, s) if s == selector("getLabelStore(address)") => abi_address(&[0; 20]),
+            (CONTROLLER, s) if s == selector("isPopIssued(string)") => abi_word(u64::from(
+                input != crate::dotns_views::call_string("isPopIssued(string)", "not-issued"),
+            ))
+            .to_vec(),
+            (NAME_REGISTRY, s) if s == selector("recordExists(bytes32)") => {
+                let tld = crate::dotns_views::tld_node(".paseo");
+                abi_word(u64::from(["transferred.01", "root.01"].iter().any(
+                    |label| {
+                        input[4..] == crate::host_logic::dotns_gateway::namehash_under(&tld, label)
+                    },
+                )))
+                .to_vec()
+            }
+            (NAME_REGISTRY, s) if s == selector("owner(bytes32)") => {
+                abi_address(&account_to_h160(&[0x11; 32]))
+            }
+            _ => return view_output(dest, input),
+        };
+        contract_result(&data)
+    }
+
+    #[test]
+    fn rejected_preferred_labels_fall_back_to_owned_root_name() {
+        let mut provider = ScriptedAssetHub::new();
+        provider.lookup = ScriptedLookup::RejectedPreferred;
+        let chain = ChainRuntime::new(Arc::new(provider), thread_per_subscription_spawner());
+        let mut session = unnamed_session();
+        session.public_key = [0x11; 32];
+        let mut expected = session.clone();
+        expected.apply_usernames(Some("root.01".to_string()), None);
+        futures::executor::block_on(resolve_session_identity_with_chain(
+            &chain,
+            [0xcc; 32],
+            &mut session,
+        ))
+        .unwrap();
+        assert_eq!(session, expected);
     }
 
     fn unnamed_session() -> SessionInfo {

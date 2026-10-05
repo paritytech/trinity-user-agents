@@ -6,15 +6,15 @@
 //! one finalized pin. The registry, not the append-only LabelStore, owns names.
 
 use super::{NativeChatContext, normalize_username, rpc::Snapshot, schema};
-use crate::dotns_views::{label_owner, network_tld, protocol_component, tld_node};
+use crate::dotns_views::{LabelOwner, label_owner, network_tld, protocol_component, tld_node};
 #[cfg(test)]
 use crate::host_logic::dotns_gateway as gateway;
+#[cfg(test)]
+use crate::host_logic::dotns_gateway::namehash_under;
 use crate::host_logic::dotns_gateway::{
     DotnsTransport, account_to_h160, call_no_args, decode_address, discover_pop_controller,
     is_dns_label, is_pop_issued, resolve_labels,
 };
-#[cfg(test)]
-use crate::host_logic::dotns_gateway::namehash_under;
 
 pub(super) struct Directory {
     snapshot: Snapshot,
@@ -227,7 +227,11 @@ async fn forward_owner<T: DotnsTransport + ?Sized>(
     {
         return Ok(None);
     }
-    label_owner(transport, registry, tld, username).await
+    match label_owner(transport, registry, tld, username).await? {
+        LabelOwner::Missing => Ok(None),
+        LabelOwner::Owned(owner) => Ok(Some(owner)),
+        LabelOwner::Unusable(reason) => Err(reason.to_string()),
+    }
 }
 
 fn address(bytes: &[u8]) -> Result<[u8; 20], String> {
@@ -296,6 +300,12 @@ mod tests {
                 Some([4; 20])
             );
             registry.owners.insert(atomic, [1; 20]);
+            assert!(
+                forward_owner(&mut registry, &[2; 20], &[3; 20], &tld, "alice.42")
+                    .await
+                    .is_err()
+            );
+            registry.owners.insert(nested, [0; 20]);
             assert!(
                 forward_owner(&mut registry, &[2; 20], &[3; 20], &tld, "alice.42")
                     .await
