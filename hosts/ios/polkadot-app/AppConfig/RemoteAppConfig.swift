@@ -30,7 +30,7 @@ struct RemoteAppConfig {
 
 extension RemoteAppConfig {
     var isValid: Bool {
-        var result = identityBackendUrl != nil
+        let result = identityBackendUrl != nil
             && ipfsGatewayUrl != nil
             && dotNsResolver != nil
             && coinageInstanceId != nil
