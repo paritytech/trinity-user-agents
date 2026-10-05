@@ -346,15 +346,9 @@ private extension RootInteractor {
     func logWallets() {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
         let main = try? walletRepo.main().getRawPublicKey().toAddress(using: .genericFormat)
-        let candidate = try? walletRepo.candidate().getRawPublicKey().toAddress(using: .genericFormat)
-        let score = try? walletRepo.scoreAlias().getRawPublicKey().toAddress(using: .genericFormat)
-        let mobRule = try? walletRepo.mobRuleAlias().getRawPublicKey().toAddress(using: .genericFormat)
         let resources = try? walletRepo.resourcesAlias().getRawPublicKey().toAddress(using: .genericFormat)
 
         logger.debug("Main address: \(main ?? "")")
-        logger.debug("Candidate address: \(candidate ?? "")")
-        logger.debug("Score address: \(score ?? "")")
-        logger.debug("Mob rule address: \(mobRule ?? "")")
         logger.debug("Resources address: \(resources ?? "")")
     }
 }
