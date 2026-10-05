@@ -21,7 +21,7 @@ use crate::platform::{ProductContext, TopUpPlatform};
 
 /// Smallest amount a top-up claims, in CASH units: the landed CASH is
 /// claimed rounded down to it.
-const CLAIM_UNIT: u128 = 10_000;
+pub const CLAIM_UNIT: u128 = 10_000;
 /// Top-up attempts before crediting gives up.
 const MAX_ATTEMPTS: u8 = 3;
 /// How long one attempt may run before the next replaces it.

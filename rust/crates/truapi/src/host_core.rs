@@ -628,6 +628,21 @@ impl SigningHostRuntime {
             })
     }
 
+    /// The deposit of `asset` a provider must deliver to credit the amount
+    /// session `intent` names, fees and minimum balances included.
+    pub async fn quote_funding_deposit(
+        &self,
+        intent: &str,
+        asset: crate::host_logic::funding::DepositAsset,
+    ) -> Result<u128, v01::GenericError> {
+        self.services
+            .quote_funding_deposit(intent, asset)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
     /// Give the open inbound session `intent` its deposit account for the
     /// request's source, and watch it until the expected balance arrives on
     /// Asset Hub, which moves the session to converting. Returns the account

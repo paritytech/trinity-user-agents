@@ -21,7 +21,8 @@ use truapi::latest::{GenericError, TxPayloadExtension};
 
 use crate::host_internal::extrinsic::{Sr25519Signer, build_signed_extrinsic_v4};
 use super::DepositBalances;
-use crate::host_logic::funding::{ConversionRoute, DepositAsset, FundingDeposit};
+use super::credit::CLAIM_UNIT;
+use crate::host_logic::funding::{ConversionRoute, DepositAsset, DepositQuote, FundingDeposit};
 use crate::runtime::statement_allowance::ChainContext;
 use crate::runtime::statement_allowance::extension::{ChainState, Metadata as ExtensionMetadata};
 
@@ -86,6 +87,32 @@ pub struct Prepared {
     pub landing: u128,
     /// Deposit it takes from the account on Asset Hub.
     pub spent: u128,
+}
+
+/// Fees a conversion pays in its deposit asset, margins included.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Fees {
+    /// For the transaction itself.
+    dispatch: u128,
+    /// For executing the program on Asset Hub and delivering it to People.
+    allowance: u128,
+}
+
+/// What signing a conversion needs.
+#[derive(Clone, Copy)]
+struct Signing<'a> {
+    extensions: &'a ExtensionMetadata,
+    signer: &'a Sr25519Signer,
+    nonce: u32,
+}
+
+/// A signer whose signature only gives a quote's transaction its length.
+fn quoting_signer() -> Sr25519Signer {
+    Sr25519Signer::from_keypair(
+        &schnorrkel::MiniSecretKey::from_bytes(&[1; 32])
+            .expect("32 bytes are a mini secret")
+            .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519),
+    )
 }
 
 /// What a conversion pass reads and does on the chains.
@@ -186,14 +213,132 @@ impl Chains {
         let Some(psm) = self.psm(id).await? else {
             return Ok(None);
         };
-        let amount = psm.to_internal(expected);
-        let margin = (amount * PSM_CAPACITY_MARGIN_PERCENT / 100).max(PSM_CAPACITY_MARGIN_FLOOR);
-        let serves = psm.minting_enabled
-            && amount >= psm.min_swap_amount
-            && psm.headroom >= amount.saturating_add(margin);
-        Ok(serves.then_some(ConversionRoute::Psm {
+        Ok(psm.serves(psm.to_internal(expected)).then_some(ConversionRoute::Psm {
             fee_ppm: psm.fee_ppm,
         }))
+    }
+
+    /// The route for a deposit of `asset` that credits at least `target`
+    /// CASH, with the deposit it takes: the target rounded up to what a
+    /// top-up claims, plus the CASH set aside to execute on People, the PSM
+    /// fee, the transaction fees with their margin, and the account's
+    /// minimum balance.
+    ///
+    /// The set-aside on People is the quote's cushion: what execution there
+    /// does not spend is refunded to the account and lands as CASH, so fees
+    /// that rise between the quote and the conversion still credit the
+    /// target.
+    pub async fn deposit_quote(
+        &self,
+        asset: DepositAsset,
+        target: u128,
+    ) -> Result<Option<DepositQuote>, ConversionError> {
+        let DepositAsset::Asset(id) = asset else {
+            return Ok(None);
+        };
+        let too_large = || ConversionError::Refused("the amount is too large to quote".into());
+        if target == 0 {
+            return Err(ConversionError::Refused("the amount to credit is zero".into()));
+        }
+        let claimed = target
+            .div_ceil(CLAIM_UNIT)
+            .checked_mul(CLAIM_UNIT)
+            .ok_or_else(too_large)?;
+        let send = teleported_for(claimed).ok_or_else(too_large)?;
+        let (route, mint, converted) = if id == self.places.network.cash_asset_id {
+            (ConversionRoute::Teleport, None, send)
+        } else {
+            let Some(terms) = self.psm(id).await? else {
+                return Ok(None);
+            };
+            let internal = psm_mint_in(send, terms.fee_ppm).ok_or_else(too_large)?;
+            if !terms.serves(internal) {
+                return Ok(None);
+            }
+            let route = ConversionRoute::Psm {
+                fee_ppm: terms.fee_ppm,
+            };
+            let mint = PsmMint {
+                id,
+                terms,
+                max_fee_ppm: terms.fee_ppm,
+            };
+            (route, Some(mint), terms.to_external(internal))
+        };
+        let extensions = self
+            .extensions
+            .as_deref()
+            .ok_or_else(|| chain("signing metadata was not loaded"))?;
+        let signer = quoting_signer();
+        let signing = Signing {
+            extensions,
+            signer: &signer,
+            nonce: 0,
+        };
+        let fees = self
+            .estimate_fees(signing, &[0; 32], asset, converted, mint, false)
+            .await?;
+        let kept = self.min_balance(asset).await?;
+        let deposit = [fees.allowance, fees.dispatch, kept]
+            .into_iter()
+            .try_fold(converted, u128::checked_add)
+            .ok_or_else(too_large)?;
+        Ok(Some(DepositQuote {
+            asset,
+            route,
+            deposit,
+        }))
+    }
+
+    /// Fees a conversion of about `converted` from `account` pays in its
+    /// deposit asset, with their margins: local execution from the program's
+    /// weight, dispatch from the transaction's length, and delivery to People.
+    ///
+    /// Delivery is priced on the message the transfer forwards as the
+    /// executor builds it, so a quote needs no funded account. When `funded`,
+    /// the draft is also dry-run and its real forwarded message priced, and
+    /// the dearer of the two counts, so a change in what the runtime forwards
+    /// cannot leave a conversion short.
+    async fn estimate_fees(
+        &self,
+        signing: Signing<'_>,
+        account: &[u8; 32],
+        asset: DepositAsset,
+        converted: u128,
+        mint: Option<PsmMint>,
+        funded: bool,
+    ) -> Result<Fees, ConversionError> {
+        let fee_asset = self.places.deposit_location(asset);
+        let (withdrawn, allowance) = match funded {
+            true => (converted, converted / 5),
+            false => (converted.saturating_mul(2), converted),
+        };
+        let draft = self
+            .measured(self.places.conversion_call(account, withdrawn, allowance, mint)?)
+            .await?;
+        let local = self.local_fee(&draft.program, &fee_asset).await?;
+        let cash = match mint {
+            None => converted,
+            Some(mint) => psm_mint_out(mint.terms.to_internal(converted), mint.terms.fee_ppm),
+        };
+        let forwarded = self.places.forwarded_to_people(account, cash);
+        let mut delivery = self.delivery_fee(&forwarded, &fee_asset).await?;
+        if funded {
+            let real = self.dry_run(account, &draft).await?;
+            delivery = delivery.max(self.delivery_fee(&real, &fee_asset).await?);
+        }
+        let extrinsic = self.sign(
+            signing.extensions,
+            signing.signer,
+            &draft,
+            &fee_asset,
+            signing.nonce,
+        )?;
+        let dispatch = self.dispatch_fee(&extrinsic, &fee_asset).await?;
+        Ok(Fees {
+            dispatch: with_margin(dispatch),
+            allowance: with_margin(local.saturating_add(delivery)),
+        })
     }
 
     /// The PSM's terms for minting CASH against asset `id`, if it lists it.
@@ -222,16 +367,17 @@ impl Chains {
             return Ok(None);
         };
         let max_debt = u128_at(&instance, "max_debt")?;
-        let fee_ppm = fetch_value(
-            &self.asset_hub,
-            "Psm",
-            "MintingFee",
-            vec![cash.clone(), external.clone()],
-        )
-        .await?
-        .map(|fee| as_u128(&fee))
-        .transpose()?
-        .unwrap_or(0);
+        // An unset fee is the pallet's default, not zero: reading it as zero
+        // would cap every mint's fee at nothing and have the PSM refuse it.
+        let fee_ppm = as_u128(
+            &fetch_or_default(
+                &self.asset_hub,
+                "Psm",
+                "MintingFee",
+                vec![cash.clone(), external.clone()],
+            )
+            .await?,
+        )?;
 
         let suffix = external_key_suffix(&self.asset_hub, &external)?;
         let mut total_weight = 0u128;
@@ -386,26 +532,26 @@ impl Chains {
             }
         };
 
-        // A first draft with a generous fee allowance measures the fees,
-        // which barely depend on the amounts; the final call is then sized
-        // from them.
-        let draft = self
-            .measured(self.places.conversion_call(&account, spendable, spendable / 5, mint)?)
+        let signing = Signing {
+            extensions,
+            signer: &signer,
+            nonce,
+        };
+        let fees = self
+            .estimate_fees(signing, &account, deposit.asset, spendable, mint, true)
             .await?;
-        let forwarded = self.dry_run(&account, &draft).await?;
-        let local_fee = self.local_fee(&draft.program, &fee_asset).await?;
-        let delivery_fee = self.delivery_fee(&forwarded, &fee_asset).await?;
-        let draft_extrinsic = self.sign(extensions, &signer, &draft, &fee_asset, nonce)?;
-        let dispatch_fee = self.dispatch_fee(&draft_extrinsic, &fee_asset).await?;
-
-        let allowance = with_margin(local_fee.saturating_add(delivery_fee));
         let available = spendable
-            .checked_sub(with_margin(dispatch_fee))
-            .and_then(|left| left.checked_sub(allowance))
+            .checked_sub(fees.dispatch)
+            .and_then(|left| left.checked_sub(fees.allowance))
             .filter(|left| *left > 0)
             .ok_or_else(|| ConversionError::Refused("the deposit does not cover the fees".into()))?;
         let call = self
-            .measured(self.places.conversion_call(&account, available + allowance, allowance, mint)?)
+            .measured(self.places.conversion_call(
+                &account,
+                available + fees.allowance,
+                fees.allowance,
+                mint,
+            )?)
             .await?;
         let forwarded = self.dry_run(&account, &call).await?;
         self.dry_run_on_people(&forwarded).await?;
@@ -693,22 +839,13 @@ impl Places {
                 (minted, assets.into_iter().map(|(_, asset)| asset).collect())
             }
         };
-        let remote_fee = (cash * REMOTE_FEE_PERCENT / 100).max(REMOTE_FEE_FLOOR);
+        let remote_fee = remote_fee(cash);
         if remote_fee >= cash {
             return Err(ConversionError::Refused(
                 "the deposit does not cover the fee on People".into(),
             ));
         }
-        let beneficiary = location(
-            0,
-            vec![Value::named_variant(
-                "AccountId32",
-                [
-                    ("network", Value::unnamed_variant("None", [])),
-                    ("id", Value::from_bytes(account)),
-                ],
-            )],
-        );
+        let beneficiary = beneficiary(account);
         let everything = || {
             Value::unnamed_variant(
                 "Wild",
@@ -784,6 +921,41 @@ impl Places {
         })
     }
 
+    /// The message a teleport of `cash` forwards to People, as Asset Hub's
+    /// executor builds it from the program: what prices its delivery before
+    /// a dry run can produce the real one.
+    fn forwarded_to_people(&self, account: &[u8; 32], cash: u128) -> Value {
+        let remote_fee = remote_fee(cash);
+        let on_people = |amount| self.asset(&self.cash_on_people(), amount);
+        versioned(Value::unnamed_composite([
+            Value::unnamed_variant(
+                "ReceiveTeleportedAsset",
+                [Value::unnamed_composite([on_people(remote_fee)])],
+            ),
+            Value::named_variant("PayFees", [("asset", on_people(remote_fee))]),
+            Value::unnamed_variant(
+                "ReceiveTeleportedAsset",
+                [Value::unnamed_composite([on_people(cash.saturating_sub(remote_fee))])],
+            ),
+            Value::unnamed_variant("ClearOrigin", []),
+            Value::unnamed_variant("RefundSurplus", []),
+            Value::named_variant(
+                "DepositAsset",
+                [
+                    (
+                        "assets",
+                        Value::unnamed_variant(
+                            "Wild",
+                            [Value::unnamed_variant("AllCounted", [Value::u128(1)])],
+                        ),
+                    ),
+                    ("beneficiary", beneficiary(account)),
+                ],
+            ),
+            Value::unnamed_variant("SetTopic", [Value::from_bytes([0; 32])]),
+        ]))
+    }
+
     fn asset(&self, id: &Value, amount: u128) -> Value {
         Value::named_composite([
             ("id", id.clone()),
@@ -855,6 +1027,25 @@ struct PsmTerms {
 }
 
 impl PsmTerms {
+    /// Whether the PSM mints `amount` CASH: minting is on, it is at least the
+    /// minimum swap, and it leaves the capacity margin spare.
+    fn serves(self, amount: u128) -> bool {
+        let margin = (amount * PSM_CAPACITY_MARGIN_PERCENT / 100).max(PSM_CAPACITY_MARGIN_FLOOR);
+        self.minting_enabled
+            && amount >= self.min_swap_amount
+            && self.headroom >= amount.saturating_add(margin)
+    }
+
+    /// `amount` CASH in the stablecoin's units, rounded up.
+    fn to_external(self, amount: u128) -> u128 {
+        let (internal, external) = (u32::from(self.internal_decimals), u32::from(self.external_decimals));
+        if external >= internal {
+            amount.saturating_mul(10u128.pow(external - internal))
+        } else {
+            amount.div_ceil(10u128.pow(internal - external))
+        }
+    }
+
     /// `amount` of the stablecoin in CASH units, rounded down.
     fn to_internal(self, amount: u128) -> u128 {
         let (internal, external) = (u32::from(self.internal_decimals), u32::from(self.external_decimals));
@@ -864,6 +1055,40 @@ impl PsmTerms {
             amount / 10u128.pow(external - internal)
         }
     }
+}
+
+/// CASH the PSM must be given, in CASH units, to mint `out` at `fee_ppm`,
+/// or `None` when no amount does.
+fn psm_mint_in(out: u128, fee_ppm: u32) -> Option<u128> {
+    let kept = PARTS_PER_MILLION.checked_sub(u128::from(fee_ppm)).filter(|kept| *kept > 0)?;
+    let mut amount = out.checked_mul(PARTS_PER_MILLION)?.div_ceil(kept);
+    while psm_mint_out(amount, fee_ppm) < out {
+        amount = amount.checked_add(1)?;
+    }
+    Some(amount)
+}
+
+/// The least CASH to teleport so that at least `target` lands on People
+/// after the CASH set aside to execute there, or `None` on overflow.
+fn teleported_for(target: u128) -> Option<u128> {
+    let lands = |send: u128| send.saturating_sub(remote_fee(send)) >= target;
+    let mut send = target.checked_add(
+        target
+            .div_ceil(100 / REMOTE_FEE_PERCENT - 1)
+            .max(REMOTE_FEE_FLOOR),
+    )?;
+    while !lands(send) {
+        send = send.checked_add(1)?;
+    }
+    while send > target && lands(send - 1) {
+        send -= 1;
+    }
+    Some(send)
+}
+
+/// CASH set aside for execution on People out of `cash` teleported.
+fn remote_fee(cash: u128) -> u128 {
+    (cash / 100 * REMOTE_FEE_PERCENT).max(REMOTE_FEE_FLOOR)
 }
 
 /// CASH the PSM mints for `amount` in CASH units at `fee_ppm`.
@@ -968,6 +1193,20 @@ impl RuntimeCall {
     }
 }
 
+/// `account` on the chain a message executes on.
+fn beneficiary(account: &[u8; 32]) -> Value {
+    location(
+        0,
+        vec![Value::named_variant(
+            "AccountId32",
+            [
+                ("network", Value::unnamed_variant("None", [])),
+                ("id", Value::from_bytes(account)),
+            ],
+        )],
+    )
+}
+
 /// A location `parents` up with `junctions` below.
 fn location(parents: u8, junctions: Vec<Value>) -> Value {
     let interior = match junctions.len() {
@@ -1054,6 +1293,23 @@ async fn fetch_value(
         Some(value) => value.decode().map(Some).map_err(chain),
         None => Ok(None),
     }
+}
+
+/// The value of `pallet.item` at `keys`, or the default the runtime declares
+/// for it when unset.
+async fn fetch_or_default(
+    at: &OnlineClientAtBlock<SubstrateConfig>,
+    pallet: &str,
+    item: &str,
+    keys: Vec<Value>,
+) -> Result<Value, ConversionError> {
+    let address = dynamic::storage::<Vec<Value>, Value>(pallet, item);
+    at.storage()
+        .fetch(address, keys)
+        .await
+        .map_err(chain)?
+        .decode()
+        .map_err(chain)
 }
 
 async fn call_api(
@@ -1227,6 +1483,45 @@ mod tests {
         );
     }
 
+    // A quoted deposit must credit at least what the session asked for, or
+    // the user is short; each inverse is checked against the forward rule
+    // the conversion applies.
+    #[test]
+    fn sizing_inverts_the_conversion_rounding_up() {
+        let terms = PsmTerms {
+            minting_enabled: true,
+            min_swap_amount: 0,
+            internal_decimals: 6,
+            external_decimals: 18,
+            fee_ppm: 5_000,
+            headroom: 0,
+        };
+        let teleport = |target: u128| {
+            let send = teleported_for(target).expect("sized");
+            (send, send - remote_fee(send), send - 1 - remote_fee(send - 1))
+        };
+        let mint = |out: u128| {
+            let given = psm_mint_in(out, 5_000).expect("sized");
+            (given, psm_mint_out(given, 5_000), psm_mint_out(given - 1, 5_000))
+        };
+
+        assert_eq!(
+            (
+                [teleport(10_000), teleport(2_000_000)],
+                [mint(995), mint(1_990_000)],
+                (terms.to_external(1), terms.to_internal(terms.to_external(1_234_567))),
+                (psm_mint_in(1, 1_000_000), teleported_for(u128::MAX)),
+            ),
+            (
+                [(11_000, 10_000, 9_999), (2_020_202, 2_000_000, 1_999_999)],
+                [(1_000, 995, 994), (2_000_000, 1_990_000, 1_989_999)],
+                (1_000_000_000_000, 1_234_567),
+                (None, None),
+            )
+        );
+    }
+
+
     // Without CASH left for execution on People the teleport would land
     // nothing, so a deposit that small is refused before any dry run.
     #[test]
@@ -1334,6 +1629,44 @@ mod live {
             .prepare(&deposit(DepositAsset::Asset(NETWORK.cash_asset_id), account, ConversionRoute::Teleport), &keypair, 0)
             .await;
         assert_eq!((route, prepared.map(|_| ())), (Some(ConversionRoute::Teleport), Ok(())));
+    }
+
+    // A quote is made before any deposit exists, so its delivery fee is
+    // priced on a stand-in for the message the transfer forwards; it must
+    // cost what the real one does.
+    #[tokio::test]
+    #[ignore = "reaches Paseo Next"]
+    async fn the_quoted_delivery_fee_is_the_real_ones() {
+        let chains = chains().await;
+        let account = holder(&chains, NETWORK.cash_asset_id, 5_000_000).await;
+        let cash = chains.places.cash();
+        let call = chains
+            .measured(chains.places.conversion_call(&account, 2_000_000, 200_000, None).expect("sized"))
+            .await
+            .expect("measured");
+        let forwarded = chains.dry_run(&account, &call).await.expect("dry run");
+
+        assert_eq!(
+            chains
+                .delivery_fee(&chains.places.forwarded_to_people(&account, 1_800_000), &cash)
+                .await,
+            chains.delivery_fee(&forwarded, &cash).await
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "reaches Paseo Next"]
+    async fn deposits_are_quoted_for_cash_and_usdt() {
+        let chains = chains().await;
+        let quote = |id| chains.deposit_quote(DepositAsset::Asset(id), 2_000_000);
+        let (cash, usdt) = (quote(NETWORK.cash_asset_id).await, quote(USDT).await);
+        eprintln!("quotes for 2 CASH: {cash:?} {usdt:?}");
+
+        assert!(
+            matches!(cash, Ok(Some(DepositQuote { route: ConversionRoute::Teleport, deposit, .. })) if deposit > 2_000_000)
+                && matches!(usdt, Ok(Some(DepositQuote { route: ConversionRoute::Psm { .. }, deposit, .. })) if deposit > 2_000_000),
+            "{cash:?} {usdt:?}"
+        );
     }
 
     // The dry runs above never see the signed extensions. Signed by an

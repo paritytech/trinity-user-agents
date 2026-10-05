@@ -406,7 +406,9 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   Once a provider is chosen, a signing host calls `assign_funding_deposit` to
   give an inbound session its deposit account under `fund.<network suffix>`;
   the core then polls that account at finalized Asset Hub blocks and moves the
-  session to `Converting` once the expected balance is there. Assignment needs
+  session to `Converting` once the expected balance is there. `quote_funding_deposit` gives the
+  deposit that credits the session's amount, and assignment refuses less.
+  Assignment needs
   `enable_funding_conversion` with the network's CASH asset id, and fixes the
   route then: a teleport for CASH, a PSM mint for a stablecoin the PSM serves.
   The core converts with one Asset Hub transaction signed by the deposit

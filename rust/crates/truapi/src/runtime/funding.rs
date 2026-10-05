@@ -39,7 +39,8 @@ use super::statement_allowance::{ChainClient, ChainContext};
 use super::statement_allowance::rpc::RpcClient;
 use crate::host_logic::features;
 use crate::host_logic::funding::{
-    ConversionRoute, ConversionStep, ConversionSubmission, CreditAttempt, CreditStep, DepositAsset, DepositRequest,
+    ConversionRoute, ConversionStep, ConversionSubmission, CreditAttempt, CreditStep, DepositAsset,
+    DepositQuote, DepositRequest,
     FundingDeposit, FundingSession, FundingSessionError, FundingStage,
     load_sessions, next_account_number, retained, store_sessions,
 };
@@ -599,6 +600,19 @@ pub enum AssignDepositError {
     /// No route turns this asset into CASH.
     #[display("no route converts this deposit into CASH")]
     NoRoute,
+    /// The chain refused to price the deposit.
+    #[display("{_0}")]
+    Refused(String),
+    /// The session names no amount to quote a deposit for.
+    #[display("the funding session names no amount")]
+    NoAmount,
+    /// The provider would deliver less than it takes to credit the session's
+    /// amount.
+    #[display("the deposit must be at least {needed} to credit the amount")]
+    DepositTooSmall {
+        /// Least deposit, in the asset's units.
+        needed: u128,
+    },
     /// Every account tried already holds funds.
     #[display("every funding account tried already holds funds")]
     AccountsInUse,
@@ -611,6 +625,16 @@ pub enum AssignDepositError {
     /// The session could not be stored.
     #[display("{_0}")]
     Session(FundingSessionError),
+}
+
+impl AssignDepositError {
+    /// A conversion error as an assignment error: a refusal stays one.
+    fn from_conversion(error: ConversionError) -> Self {
+        match error {
+            ConversionError::Refused(reason) => Self::Refused(reason),
+            ConversionError::Chain(reason) => Self::Chain(GenericError { reason }),
+        }
+    }
 }
 
 impl From<FundingSessionError> for AssignDepositError {
@@ -687,25 +711,39 @@ impl RuntimeServices {
         request: DepositRequest,
         derive: impl Fn(u32) -> Result<[u8; 32], GenericError>,
     ) -> Result<[u8; 32], AssignDepositError> {
-        self.funding()
-            .get(intent)
-            .ok_or(AssignDepositError::NotFound)
-            .and_then(|session| assignable(&session))?;
-        let network = self
+        let session = self
             .funding()
-            .conversion
-            .get()
-            .ok_or(AssignDepositError::ConversionUnavailable)?
-            .network;
+            .get(intent)
+            .ok_or(AssignDepositError::NotFound)?;
+        assignable(&session)?;
+        let network = self.funding_network()?;
+        let quoting = session.amount.is_some() && session.quote.is_none();
         let chains = self
-            .funding_chains(network, false)
+            .funding_chains(network, quoting)
             .await
-            .map_err(|error| AssignDepositError::Chain(GenericError { reason: error.to_string() }))?;
-        let route = chains
-            .choose_route(request.asset, request.expected)
-            .await
-            .map_err(|error| AssignDepositError::Chain(GenericError { reason: error.to_string() }))?
-            .ok_or(AssignDepositError::NoRoute)?;
+            .map_err(AssignDepositError::from_conversion)?;
+        // A session that names its amount must be paid enough to credit it,
+        // judged against the quote the provider was given; one that does not
+        // takes what the provider delivers.
+        let route = match (session.amount, session.quoted_route(request.asset, request.expected)) {
+            (_, Some(judged)) => {
+                judged.map_err(|needed| AssignDepositError::DepositTooSmall { needed })?
+            }
+            (Some(target), None) => {
+                let quote = self.record_quote(intent, &chains, request.asset, target).await?;
+                if request.expected < quote.deposit {
+                    return Err(AssignDepositError::DepositTooSmall {
+                        needed: quote.deposit,
+                    });
+                }
+                quote.route
+            }
+            (None, None) => within_chain_timeout(chains.choose_route(request.asset, request.expected))
+                .await
+                .map_err(AssignDepositError::Chain)?
+                .map_err(AssignDepositError::from_conversion)?
+                .ok_or(AssignDepositError::NoRoute)?,
+        };
         let account = self
             .funding()
             .assign_empty_deposit(
@@ -719,6 +757,61 @@ impl RuntimeServices {
             .await?;
         self.watch_funding_deposits();
         Ok(account)
+    }
+
+    /// The deposit of `asset` a provider must deliver to credit the amount
+    /// session `intent` names.
+    pub async fn quote_funding_deposit(
+        self: &Arc<Self>,
+        intent: &str,
+        asset: DepositAsset,
+    ) -> Result<u128, AssignDepositError> {
+        let session = self
+            .funding()
+            .get(intent)
+            .ok_or(AssignDepositError::NotFound)?;
+        let target = session.amount.ok_or(AssignDepositError::NoAmount)?;
+        let chains = self
+            .funding_chains(self.funding_network()?, true)
+            .await
+            .map_err(AssignDepositError::from_conversion)?;
+        self.record_quote(intent, &chains, asset, target)
+            .await
+            .map(|quote| quote.deposit)
+    }
+
+    /// Quote `target` in `asset` and freeze the quote on session `intent`,
+    /// so the deposit is later held to the figure the provider was given.
+    async fn record_quote(
+        &self,
+        intent: &str,
+        chains: &Chains,
+        asset: DepositAsset,
+        target: u128,
+    ) -> Result<DepositQuote, AssignDepositError> {
+        let quote = within_chain_timeout(chains.deposit_quote(asset, target))
+            .await
+            .map_err(AssignDepositError::Chain)?
+            .map_err(AssignDepositError::from_conversion)?
+            .ok_or(AssignDepositError::NoRoute)?;
+        let intent = intent.to_string();
+        self.funding()
+            .commit(self.platform.as_ref(), current_unix_millis(), move |sessions| {
+                if let Some(session) = sessions.get_mut(&intent) {
+                    session.quote = Some(quote);
+                }
+                ((), Vec::new())
+            })
+            .await?;
+        Ok(quote)
+    }
+
+    fn funding_network(&self) -> Result<FundingNetwork, AssignDepositError> {
+        self.funding()
+            .conversion
+            .get()
+            .map(|conversion| conversion.network)
+            .ok_or(AssignDepositError::ConversionUnavailable)
     }
 
     /// Keep one task polling the awaited deposits while any is awaited. The

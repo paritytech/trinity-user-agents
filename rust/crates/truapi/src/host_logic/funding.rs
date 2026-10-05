@@ -44,6 +44,21 @@ pub struct FundingSession {
     /// Where an inbound session's provider delivers, once the source is
     /// known.
     pub deposit: Option<FundingDeposit>,
+    /// The deposit quoted to credit `amount`, frozen so the provider is held
+    /// to the figure it was given rather than one re-priced later.
+    pub quote: Option<DepositQuote>,
+}
+
+/// The route for a deposit and what it must deliver to credit a session's
+/// amount.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct DepositQuote {
+    /// Asset the deposit is quoted in.
+    pub asset: DepositAsset,
+    /// How the deposit becomes CASH.
+    pub route: ConversionRoute,
+    /// Least deposit, in the asset's units.
+    pub deposit: u128,
 }
 
 /// Asset Hub asset a deposit arrives in.
@@ -186,6 +201,7 @@ impl FundingSession {
             opened_at_ms: now_ms,
             deadline_ms: now_ms.saturating_add(SESSION_WINDOW_MS),
             deposit: None,
+            quote: None,
         }
     }
 
@@ -261,6 +277,23 @@ impl FundingSession {
         self.expires_by_sweep()
             && now_ms >= self.deadline_ms
             && self.fail(FundingFailure::Expired, now_ms)
+    }
+
+    /// The route for a provider delivering `expected` of `asset`, judged
+    /// against the quote frozen for that asset: the quoted route when it
+    /// covers the quote, the deposit needed when it falls short, `None`
+    /// without a quote for the asset.
+    pub fn quoted_route(
+        &self,
+        asset: DepositAsset,
+        expected: u128,
+    ) -> Option<Result<ConversionRoute, u128>> {
+        let quote = self.quote.filter(|quote| quote.asset == asset)?;
+        Some(if expected >= quote.deposit {
+            Ok(quote.route)
+        } else {
+            Err(quote.deposit)
+        })
     }
 
     /// The deposit an open inbound session is waiting on, if one is assigned.
@@ -821,6 +854,31 @@ mod tests {
                     settled_at_ms: NOW,
                 },
             ]
+        );
+    }
+
+    // The provider is told the quoted figure, so the quote it was given,
+    // not one re-priced when the account is assigned, decides whether its
+    // deposit is enough.
+    #[test]
+    fn a_deposit_is_judged_against_the_quote_for_its_asset() {
+        let usdt = DepositAsset::Asset(1984);
+        let session = FundingSession {
+            quote: Some(DepositQuote {
+                asset: usdt,
+                route: ConversionRoute::Psm { fee_ppm: 5_000 },
+                deposit: 2_136_987,
+            }),
+            ..session(FundingDirection::In)
+        };
+
+        assert_eq!(
+            [
+                session.quoted_route(usdt, 2_136_987),
+                session.quoted_route(usdt, 2_136_986),
+                session.quoted_route(DepositAsset::Asset(1337), 9_000_000),
+            ],
+            [Some(Ok(ConversionRoute::Psm { fee_ppm: 5_000 })), Some(Err(2_136_987)), None]
         );
     }
 

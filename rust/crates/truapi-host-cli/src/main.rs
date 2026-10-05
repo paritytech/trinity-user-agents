@@ -318,9 +318,10 @@ enum Command {
         /// Asset the deposit is paid in.
         #[arg(long, value_enum, default_value = "usdt")]
         asset: funding_check::FundingAsset,
-        /// Balance that counts as delivered, in the asset's smallest units.
+        /// CASH to credit, in its smallest units; core quotes the deposit
+        /// that covers it.
         #[arg(long, default_value_t = 2_000_000)]
-        expected: u128,
+        amount: u128,
         /// Where sessions and account counters persist between runs. Keep it:
         /// a fresh directory restarts the account numbers.
         #[arg(long, default_value = ".funding-check")]
@@ -674,7 +675,7 @@ async fn dispatch(
             mnemonic,
             network,
             asset,
-            expected,
+            amount,
             state_dir,
             intent,
         } => {
@@ -682,7 +683,7 @@ async fn dispatch(
                 mnemonic,
                 network,
                 asset,
-                expected,
+                amount,
                 state_dir,
                 intent,
             };

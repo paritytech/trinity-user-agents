@@ -97,8 +97,8 @@ pub struct FundingCheck {
     pub network: Network,
     /// Asset the deposit is paid in.
     pub asset: FundingAsset,
-    /// Balance that counts as delivered, in the asset's smallest units.
-    pub expected: u128,
+    /// CASH to credit, in its smallest units.
+    pub amount: u128,
     /// Where sessions and account counters persist between runs.
     pub state_dir: PathBuf,
     /// A session to follow instead of opening a new one.
@@ -127,7 +127,7 @@ pub async fn run(
 
     let intent = match check.intent {
         Some(intent) => intent,
-        None => open_and_assign(&runtime, &assets, check.asset, check.expected).await?,
+        None => open_and_assign(&runtime, &assets, check.asset, check.amount).await?,
     };
     follow(&runtime, &intent).await
 }
@@ -137,14 +137,18 @@ async fn open_and_assign(
     runtime: &SigningHostRuntime,
     assets: &FundingAssets,
     asset: FundingAsset,
-    expected: u128,
+    amount: u128,
 ) -> Result<String> {
     let (asset_id, source_id) = assets.source(asset);
     let intent = runtime
-        .open_funding(FundingDirection::In, Some(expected))
+        .open_funding(FundingDirection::In, Some(amount))
         .await
         .map_err(|error| anyhow::anyhow!("opening a session failed: {}", error.reason))?
         .context("the session was dismissed")?;
+    let expected = runtime
+        .quote_funding_deposit(&intent, DepositAsset::Asset(asset_id))
+        .await
+        .map_err(|error| anyhow::anyhow!("quoting the deposit failed: {}", error.reason))?;
     let account = runtime
         .assign_funding_deposit(
             &intent,
@@ -156,7 +160,7 @@ async fn open_and_assign(
         )
         .await
         .map_err(|error| anyhow::anyhow!("assigning a deposit account failed: {}", error.reason))?;
-    println!("session  {intent}");
+    println!("session  {intent}, crediting {amount} CASH units");
     println!("pay      {expected} of asset {asset_id} ({source_id}) on Asset Hub to");
     println!(
         "         {}",
