@@ -159,9 +159,9 @@ jobs:
 
   # The app jobs all need the core generated from this commit, and it is the
   # same output for each of them, so it is built once here and carried across.
-  # Both slices, because the build job archives for a device. Every job here
-  # runs on the standard macOS runner, which is free for a public repository;
-  # the larger runner roughly halves the core build but is billed.
+  # Both slices, because the build job archives for a device. The jobs here run
+  # on the standard macOS runner, which is free for a public repository, except
+  # the test job, which needs the larger, billed one.
   core:
     name: Build the in-tree core
     needs: check-skip-label
@@ -474,8 +474,11 @@ jobs:
   test:
     needs: [check-skip-label, core]
     if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
-    timeout-minutes: 45
-    runs-on: macos-26
+    timeout-minutes: 30
+    # The larger runner, unlike the jobs above: many of the app's tests wait on
+    # timeouts, and on the standard runner a few hundred of them exceed those
+    # limits, while they pass here.
+    runs-on: macos-26-xlarge
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
