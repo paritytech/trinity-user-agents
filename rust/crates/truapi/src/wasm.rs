@@ -44,6 +44,9 @@ use crate::{
 };
 
 mod generated_bridge;
+mod receiving;
+
+pub use receiving::WasmNotificationReceiver;
 
 use generated_bridge::JsBridge;
 
@@ -569,7 +572,7 @@ fn get_optional_function(callbacks: &JsValue, name: &str) -> Result<Option<Funct
         .map_err(|_| JsValue::from_str(&format!("callbacks.{name} must be a function")))
 }
 
-/// Both stubs below are built from Rust closures rather than from source text:
+/// Callback defaults are built from Rust closures rather than from source text:
 /// `Function::new_no_args` compiles a string the way `eval` does, which a
 /// Content-Security-Policy without `unsafe-eval` blocks even where it still
 /// allows WebAssembly. They run at startup for every host, so a source-string
@@ -577,6 +580,12 @@ fn get_optional_function(callbacks: &JsValue, name: &str) -> Result<Option<Funct
 /// stands in for.
 fn noop_function() -> Function {
     Closure::<dyn Fn()>::new(|| {})
+        .into_js_value()
+        .unchecked_into()
+}
+
+fn absent_optional_callback() -> Function {
+    Closure::<dyn Fn() -> JsValue>::new(|| JsValue::UNDEFINED)
         .into_js_value()
         .unchecked_into()
 }
@@ -1073,6 +1082,10 @@ fn install_worker_demand_observer(
     Ok(())
 }
 
+fn receiving_error_to_js(error: crate::latest::HostNotificationReceivingError) -> JsValue {
+    js_sys::Error::new(&format!("background receiving: {error:?}")).into()
+}
+
 /// JS-callable handle to a long-lived pairing-host runtime shared by product
 /// cores.
 #[wasm_bindgen]
@@ -1082,6 +1095,83 @@ pub struct WasmPairingHostRuntime {
 
 #[wasm_bindgen]
 impl WasmPairingHostRuntime {
+    /// All durable registrations as SCALE `Vec<ReceivingRegistration>`.
+    #[wasm_bindgen(js_name = receivingPending)]
+    pub async fn receiving_pending(&self) -> Result<Vec<u8>, JsValue> {
+        self.runtime.receiving().pending().await.map(|value| value.encode()).map_err(receiving_error_to_js)
+    }
+
+    /// Acknowledge the exact durable local revision synchronized by transport.
+    #[wasm_bindgen(js_name = receivingSynchronized)]
+    pub async fn receiving_synchronized(&self, product_id: String, revision: u64) -> Result<bool, JsValue> {
+        self.runtime.receiving().synchronized(&product_id, revision).await.map_err(receiving_error_to_js)
+    }
+
+    /// Verify source chain/channel/topics and all candidates; returns SCALE `Vec<ReceivingEvent>`.
+    #[wasm_bindgen(js_name = receivingIngest)]
+    pub async fn receiving_ingest(
+        &self, product_id: String, revision: u64, watch_id: String,
+        actual_genesis: String, actual_channel: String, actual_topics: Vec<String>, frame: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
+        self.runtime.receiving().ingest(&product_id, revision, watch_id, actual_genesis, actual_channel, actual_topics, frame)
+            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
+    }
+
+    /// Authenticate a raw SCALE statement; returns SCALE `Vec<ReceivingEvent>`.
+    #[wasm_bindgen(js_name = receivingIngestStatement)]
+    pub async fn receiving_ingest_statement(
+        &self, product_id: String, revision: u64, watch_id: String,
+        actual_genesis: String, statement: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
+        self.runtime.receiving().ingest_statement(&product_id, revision, watch_id, actual_genesis, statement)
+            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
+    }
+
+    /// Reserve display after grace and revalidation; returns SCALE `Option<ReceivingEvent>`.
+    #[wasm_bindgen(js_name = receivingPrepareDisplay)]
+    pub async fn receiving_prepare_display(&self, product_id: String, revision: u64, event_id: String) -> Result<Vec<u8>, JsValue> {
+        self.runtime.receiving().prepare_display(&product_id, revision, event_id)
+            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
+    }
+
+    /// Validate a click without enqueueing activation; returns SCALE `Option<ReceivingEvent>`.
+    #[wasm_bindgen(js_name = receivingValidateActivation)]
+    pub async fn receiving_validate_activation(&self, product_id: String, revision: u64, event_id: String) -> Result<Vec<u8>, JsValue> {
+        self.runtime.receiving().validate_activation(&product_id, revision, event_id)
+            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
+    }
+
+    /// Confirm actual platform display, not ingestion or transport acknowledgement.
+    #[wasm_bindgen(js_name = receivingConfirmDisplay)]
+    pub async fn receiving_confirm_display(&self, product_id: String, revision: u64, event_id: String) -> Result<(), JsValue> {
+        self.runtime.receiving().confirm_display(&product_id, revision, event_id).await.map_err(receiving_error_to_js)
+    }
+
+    /// Clear a reservation only after explicit platform display failure.
+    #[wasm_bindgen(js_name = receivingCancelDisplay)]
+    pub async fn receiving_cancel_display(&self, product_id: String, revision: u64, event_id: String) -> Result<(), JsValue> {
+        self.runtime.receiving().cancel_display(&product_id, revision, event_id).await.map_err(receiving_error_to_js)
+    }
+
+    /// Resolve a click under current authority; returns SCALE `Option<ReceivingEvent>`.
+    #[wasm_bindgen(js_name = receivingActivate)]
+    pub async fn receiving_activate(&self, product_id: String, revision: u64, event_id: String) -> Result<Vec<u8>, JsValue> {
+        self.runtime.receiving().activate(&product_id, revision, event_id)
+            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
+    }
+
+    /// Revoke locally without waiting for remote transport.
+    #[wasm_bindgen(js_name = receivingRevoke)]
+    pub async fn receiving_revoke(&self, product_id: String) -> Result<(), JsValue> {
+        self.runtime.receiving().revoke(&product_id).await.map_err(receiving_error_to_js)
+    }
+
+    /// Queue synchronization after durable provider-token rotation.
+    #[wasm_bindgen(js_name = receivingMarkTransportChanged)]
+    pub async fn receiving_mark_transport_changed(&self, product_id: String) -> Result<(), JsValue> {
+        self.runtime.receiving().mark_transport_changed(&product_id).await.map_err(receiving_error_to_js)
+    }
+
     /// Build a shared runtime from host-level platform callbacks and host config.
     #[wasm_bindgen(constructor)]
     pub fn new(
@@ -1387,6 +1477,83 @@ pub struct WasmSigningHostRuntime {
 #[cfg(feature = "wasm-signing-host")]
 #[wasm_bindgen]
 impl WasmSigningHostRuntime {
+    /// All durable registrations as SCALE `Vec<ReceivingRegistration>`.
+    #[wasm_bindgen(js_name = receivingPending)]
+    pub async fn receiving_pending(&self) -> Result<Vec<u8>, JsValue> {
+        self.runtime.receiving().pending().await.map(|value| value.encode()).map_err(receiving_error_to_js)
+    }
+
+    /// Acknowledge the exact durable local revision synchronized by transport.
+    #[wasm_bindgen(js_name = receivingSynchronized)]
+    pub async fn receiving_synchronized(&self, product_id: String, revision: u64) -> Result<bool, JsValue> {
+        self.runtime.receiving().synchronized(&product_id, revision).await.map_err(receiving_error_to_js)
+    }
+
+    /// Verify source chain/channel/topics and all candidates; returns SCALE `Vec<ReceivingEvent>`.
+    #[wasm_bindgen(js_name = receivingIngest)]
+    pub async fn receiving_ingest(
+        &self, product_id: String, revision: u64, watch_id: String,
+        actual_genesis: String, actual_channel: String, actual_topics: Vec<String>, frame: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
+        self.runtime.receiving().ingest(&product_id, revision, watch_id, actual_genesis, actual_channel, actual_topics, frame)
+            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
+    }
+
+    /// Authenticate a raw SCALE statement; returns SCALE `Vec<ReceivingEvent>`.
+    #[wasm_bindgen(js_name = receivingIngestStatement)]
+    pub async fn receiving_ingest_statement(
+        &self, product_id: String, revision: u64, watch_id: String,
+        actual_genesis: String, statement: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
+        self.runtime.receiving().ingest_statement(&product_id, revision, watch_id, actual_genesis, statement)
+            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
+    }
+
+    /// Reserve display after grace and revalidation; returns SCALE `Option<ReceivingEvent>`.
+    #[wasm_bindgen(js_name = receivingPrepareDisplay)]
+    pub async fn receiving_prepare_display(&self, product_id: String, revision: u64, event_id: String) -> Result<Vec<u8>, JsValue> {
+        self.runtime.receiving().prepare_display(&product_id, revision, event_id)
+            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
+    }
+
+    /// Validate a click without enqueueing activation; returns SCALE `Option<ReceivingEvent>`.
+    #[wasm_bindgen(js_name = receivingValidateActivation)]
+    pub async fn receiving_validate_activation(&self, product_id: String, revision: u64, event_id: String) -> Result<Vec<u8>, JsValue> {
+        self.runtime.receiving().validate_activation(&product_id, revision, event_id)
+            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
+    }
+
+    /// Confirm actual platform display, not ingestion or transport acknowledgement.
+    #[wasm_bindgen(js_name = receivingConfirmDisplay)]
+    pub async fn receiving_confirm_display(&self, product_id: String, revision: u64, event_id: String) -> Result<(), JsValue> {
+        self.runtime.receiving().confirm_display(&product_id, revision, event_id).await.map_err(receiving_error_to_js)
+    }
+
+    /// Clear a reservation only after explicit platform display failure.
+    #[wasm_bindgen(js_name = receivingCancelDisplay)]
+    pub async fn receiving_cancel_display(&self, product_id: String, revision: u64, event_id: String) -> Result<(), JsValue> {
+        self.runtime.receiving().cancel_display(&product_id, revision, event_id).await.map_err(receiving_error_to_js)
+    }
+
+    /// Resolve a click under current authority; returns SCALE `Option<ReceivingEvent>`.
+    #[wasm_bindgen(js_name = receivingActivate)]
+    pub async fn receiving_activate(&self, product_id: String, revision: u64, event_id: String) -> Result<Vec<u8>, JsValue> {
+        self.runtime.receiving().activate(&product_id, revision, event_id)
+            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
+    }
+
+    /// Revoke locally without waiting for remote transport.
+    #[wasm_bindgen(js_name = receivingRevoke)]
+    pub async fn receiving_revoke(&self, product_id: String) -> Result<(), JsValue> {
+        self.runtime.receiving().revoke(&product_id).await.map_err(receiving_error_to_js)
+    }
+
+    /// Queue synchronization after durable provider-token rotation.
+    #[wasm_bindgen(js_name = receivingMarkTransportChanged)]
+    pub async fn receiving_mark_transport_changed(&self, product_id: String) -> Result<(), JsValue> {
+        self.runtime.receiving().mark_transport_changed(&product_id).await.map_err(receiving_error_to_js)
+    }
+
     /// Answer resource allocation as granted without performing it.
     ///
     /// A test host serves suites that exercise allowance-dependent product

@@ -230,6 +230,9 @@ pub fn snake_case(name: &str) -> String {
 pub fn collect_local_bridge_payload_types(definition: &PlatformDefinition) -> BTreeSet<&str> {
     let local: BTreeSet<&str> = definition.types.iter().map(|ty| ty.name.as_str()).collect();
     let mut out = BTreeSet::new();
+    if local.contains("ReceivingRegistration") {
+        out.insert("ReceivingRegistration");
+    }
     for trait_def in &definition.traits {
         for method in &trait_def.methods {
             for param in &method.params {

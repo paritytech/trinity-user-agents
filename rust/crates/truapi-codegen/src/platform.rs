@@ -298,6 +298,9 @@ fn collect_referenced_local_types(
     names: &NameContext,
 ) -> Result<Vec<TypeDef>> {
     let mut referenced = BTreeSet::new();
+    // Resident runtime results are not platform callbacks, but share the
+    // canonical host-side codec surface.
+    referenced.insert("ReceivingRegistration".to_string());
     for trait_def in traits {
         for method in &trait_def.methods {
             for param in &method.params {

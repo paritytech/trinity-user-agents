@@ -72,6 +72,12 @@ impl From<v01::GenericError> for HostRejection {
     }
 }
 
+impl From<crate::latest::HostNotificationReceivingError> for HostRejection {
+    fn from(error: crate::latest::HostNotificationReceivingError) -> Self {
+        Self::Rejected { reason: format!("background receiving: {error:?}") }
+    }
+}
+
 /// Why the core database status could not be read.
 #[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
 pub enum NativeCoreDatabaseError {

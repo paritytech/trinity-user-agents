@@ -232,6 +232,11 @@ pub struct StubPlatform {
     pub notification_id: u32,
     pub pushed_notifications: Arc<Mutex<Vec<v01::HostPushNotificationRequest>>>,
     pub cancelled_notifications: Arc<Mutex<Vec<u32>>>,
+    pub receiving_authority: parking_lot::Mutex<Option<crate::platform::ReceivingAuthority>>,
+    pub receiving_consent: AtomicBool,
+    pub receiving_prompts: AtomicUsize,
+    pub receiving_consent_gate: parking_lot::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+    pub receiving_write_failure: AtomicBool,
     pub sent_rpc: Arc<Mutex<Vec<String>>>,
     pub rpc_responses: Vec<String>,
     /// Responses keyed by JSON-RPC method, answered as each request arrives with
@@ -1188,6 +1193,9 @@ impl PlatformCoreStorage for StubPlatform {
                 reason: "injected core write failure".into(),
             });
         }
+        if key == CoreStorageKey::NotificationReceiving && self.receiving_write_failure.load(Ordering::SeqCst) {
+            return Err(v01::GenericError { reason: "receiving storage unavailable".to_owned() });
+        }
         if let CoreStorageKey::AuthSession = key {
             self.session_writes
                 .lock()
@@ -1255,6 +1263,17 @@ impl PlatformNavigation for StubPlatform {
 
 #[crate::platform::async_trait]
 impl PlatformNotifications for StubPlatform {
+    async fn receiver_authority(&self, product_id: &str) -> Result<Option<crate::platform::ReceivingAuthority>, v01::GenericError> {
+        Ok(self.receiving_authority.lock().clone().filter(|a| a.product_id == product_id))
+    }
+
+    async fn receiver_consent(&self, _authority: crate::platform::ReceivingAuthority, _watches: Vec<crate::latest::ReceivingWatch>) -> Result<bool, v01::GenericError> {
+        self.receiving_prompts.fetch_add(1, Ordering::SeqCst);
+        let gate = self.receiving_consent_gate.lock().take();
+        if let Some(gate) = gate { let _ = gate.await; }
+        Ok(self.receiving_consent.load(Ordering::SeqCst))
+    }
+
     async fn push_notification(
         &self,
         notification: v01::HostPushNotificationRequest,

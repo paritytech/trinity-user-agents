@@ -7,6 +7,7 @@ import type { PermissionAuthorizationRuntime } from "./worker-permission-authori
 import type { LocalIdentity } from "./worker-protocol.js";
 import type { WalletAllowanceSnapshot } from "./wallet-allowances.js";
 import type { NativeChatContactsSnapshot } from "./runtime.js";
+import type { RawNotificationReceiver, RawReceivingRuntime } from "./runtime.js";
 
 /** Cancellable handle on one live render stream inside the core. */
 export interface WorkerRendererSubscription {
@@ -49,7 +50,7 @@ export interface WorkerProductRuntime {
 export type WorkerTransition = "Start" | "Stop";
 
 /** Runtime operations shared by paired and browser-local signing hosts. */
-export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
+export interface WorkerHostRuntime extends PermissionAuthorizationRuntime, RawReceivingRuntime {
   productRuntime(
     product: unknown,
     coreCallbacks: unknown,
@@ -130,6 +131,8 @@ export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
 /** Module surface the wasm-pack glue exports. */
 export interface WasmModuleShape {
   default: (input?: unknown) => Promise<unknown>;
+  /** Wallet-free receiver for the host's single durable service-worker owner. */
+  WasmNotificationReceiver: new (callbacks: unknown) => RawNotificationReceiver;
   WasmPairingHostRuntime: new (
     callbacks: unknown,
     hostConfig: unknown,

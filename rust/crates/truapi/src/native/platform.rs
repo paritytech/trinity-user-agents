@@ -271,6 +271,33 @@ impl Notifications for CallbackPlatform {
             .cancel_notification(id)
             .map_err(v01::GenericError::from)
     }
+
+    async fn receiver_authority(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<crate::platform::ReceivingAuthority>, v01::GenericError> {
+        self.callbacks.receiver_authority(product_id.to_owned()).await
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn receiver_consent(
+        &self,
+        authority: crate::platform::ReceivingAuthority,
+        watches: Vec<crate::latest::ReceivingWatch>,
+    ) -> Result<bool, v01::GenericError> {
+        self.callbacks.receiver_consent(authority, watches).await
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn receiver_changed(&self) -> Result<(), v01::GenericError> {
+        self.callbacks.receiver_changed().await.map_err(v01::GenericError::from)
+    }
+
+    async fn receiver_command(
+        &self, product_id: String, action: u8, payload: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, v01::GenericError> {
+        self.callbacks.receiver_command(product_id, action, payload).await.map_err(v01::GenericError::from)
+    }
 }
 
 #[async_trait]
