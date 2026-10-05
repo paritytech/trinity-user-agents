@@ -45,6 +45,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- Browser receiving synchronizes and revokes each authority scope independently, so account or verified-artifact replacement cannot leave the current enrollment in a revoke/register loop.
 - Message catch-up receipts preserve an already queued notification activation until the product explicitly acknowledges its sequence.
 - Generated WASM bridges preserve owned `String` parameters instead of emitting unsized `str` arguments.
 - Generated host tagged-union codecs preserve explicit SCALE discriminants, including receiving storage slot 20 when slots 13–19 are absent from the generic runtime.
