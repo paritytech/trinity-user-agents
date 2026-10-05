@@ -35,7 +35,7 @@ pub use conversion::{FundingNetwork, FundingSigner};
 
 use super::services::RuntimeServices;
 
-use super::statement_allowance::ChainClient;
+use super::statement_allowance::{ChainClient, ChainContext};
 use super::statement_allowance::rpc::RpcClient;
 use crate::host_logic::features;
 use crate::host_logic::funding::{
@@ -698,7 +698,7 @@ impl RuntimeServices {
             .ok_or(AssignDepositError::ConversionUnavailable)?
             .network;
         let chains = self
-            .funding_chains(network)
+            .funding_chains(network, false)
             .await
             .map_err(|error| AssignDepositError::Chain(GenericError { reason: error.to_string() }))?;
         let route = chains
@@ -746,38 +746,61 @@ impl RuntimeServices {
         }));
     }
 
-    /// Asset Hub and People, pinned at their latest finalized blocks.
-    async fn funding_chains(&self, network: FundingNetwork) -> Result<Chains, ConversionError> {
+    /// Asset Hub and People, pinned at their latest finalized blocks, with the
+    /// signed-extension metadata when `signing`.
+    async fn funding_chains(
+        &self,
+        network: FundingNetwork,
+        signing: bool,
+    ) -> Result<Chains, ConversionError> {
         within_chain_timeout(async {
+            let failed = |error: &dyn core::fmt::Display| ConversionError::Chain(error.to_string());
             let chains = features::supported_chains(self.platform.as_ref())
                 .await
                 .map_err(|error| ConversionError::Chain(error.reason))?;
-            let failed = |error: &dyn core::fmt::Display| ConversionError::Chain(error.to_string());
             let genesis = |chain: ChainIdentifier| {
                 features::genesis_for(&chains, chain)
                     .ok_or_else(|| ConversionError::Chain(format!("the host serves no {chain:?}")))
             };
             let (asset_hub_genesis, people_genesis) =
                 (genesis(ChainIdentifier::AssetHub)?, genesis(ChainIdentifier::People)?);
-            let asset_hub = self.chain.online_client(&asset_hub_genesis).await.map_err(|e| failed(&e))?;
-            let people = self.chain.online_client(&people_genesis).await.map_err(|e| failed(&e))?;
-            // The signed-extension metadata comes from the per-chain cache the
-            // allowance path keeps, so signing never downloads it again.
-            let rpc = RpcClient::new(subxt_rpcs::RpcClient::new(
-                self.chain
-                    .rpc_client("funding conversion", &asset_hub_genesis)
-                    .await
-                    .map_err(|e| failed(&e))?,
-            ));
-            let context = self
-                .chain_context
-                .get(&ChainClient::new(rpc, asset_hub_genesis))
+            let asset_hub = self
+                .chain
+                .online_client(&asset_hub_genesis)
                 .await
-                .map_err(|e| failed(&e))?;
-            Chains::at_finalized(&asset_hub, &people, network, context.metadata).await
+                .map_err(|error| failed(&error))?;
+            let people = self
+                .chain
+                .online_client(&people_genesis)
+                .await
+                .map_err(|error| failed(&error))?;
+            let extensions = match signing {
+                true => Some(self.signing_metadata(asset_hub_genesis).await?),
+                false => None,
+            };
+            Chains::at_finalized(&asset_hub, &people, network, extensions).await
         })
         .await
         .map_err(|error| ConversionError::Chain(error.reason))?
+    }
+
+    /// Asset Hub's signed-extension metadata from the per-chain cache the
+    /// allowance path keeps, so signing never downloads it again.
+    async fn signing_metadata(
+        &self,
+        asset_hub_genesis: [u8; 32],
+    ) -> Result<ChainContext, ConversionError> {
+        let failed = |error: &dyn core::fmt::Display| ConversionError::Chain(error.to_string());
+        let rpc = RpcClient::new(subxt_rpcs::RpcClient::new(
+            self.chain
+                .rpc_client("funding conversion", &asset_hub_genesis)
+                .await
+                .map_err(|error| failed(&error))?,
+        ));
+        self.chain_context
+            .get(&ChainClient::new(rpc, asset_hub_genesis))
+            .await
+            .map_err(|error| failed(&error))
     }
 
     /// One pass over the sessions whose CASH landed: register top-ups and
@@ -831,20 +854,29 @@ impl RuntimeServices {
         let Some(conversion) = registry.conversion.get() else {
             return Ok(());
         };
-        let pending = registry.lock_sessions().values().any(|session| {
-            session.awaited_deposit().is_some() || session.converting().is_some()
-        });
+        let (pending, signing) = {
+            let sessions = registry.lock_sessions();
+            let pending = sessions.values().any(|session| {
+                session.awaited_deposit().is_some() || session.converting().is_some()
+            });
+            let signing = sessions
+                .values()
+                .any(|session| matches!(session.converting(), Some((_, None))));
+            (pending, signing)
+        };
         if !pending {
             return Ok(());
         }
         let chains = self
-            .funding_chains(conversion.network)
+            .funding_chains(conversion.network, signing)
             .await
             .map_err(|error| error.to_string())?;
-        registry
+        let observed = registry
             .observe_deposits(self.platform.as_ref(), current_unix_millis(), &chains)
-            .await
-            .map_err(|error| error.to_string())?;
+            .await;
+        if let Err(error) = observed {
+            tracing::warn!(%error, "recording funding deposits failed");
+        }
         self.advance_conversions(&chains, conversion).await
     }
 

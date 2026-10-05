@@ -7,6 +7,8 @@
 //! the transaction is dry-run on Asset Hub and the message it forwards is
 //! dry-run on People, so a conversion that would trap funds is never sent.
 
+use std::sync::Arc;
+
 use parity_scale_codec::{Decode, Encode};
 use subxt::client::OnlineClientAtBlock;
 use subxt::config::substrate::SubstrateConfig;
@@ -18,10 +20,9 @@ use futures::future::BoxFuture;
 use truapi::latest::{GenericError, TxPayloadExtension};
 
 use crate::host_internal::extrinsic::{Sr25519Signer, build_signed_extrinsic_v4};
-use std::sync::Arc;
-
 use super::DepositBalances;
 use crate::host_logic::funding::{ConversionRoute, DepositAsset, FundingDeposit};
+use crate::runtime::statement_allowance::ChainContext;
 use crate::runtime::statement_allowance::extension::{ChainState, Metadata as ExtensionMetadata};
 
 /// XCM version every program and dry run uses.
@@ -70,7 +71,8 @@ pub struct Chains {
     asset_hub: OnlineClientAtBlock<SubstrateConfig>,
     people: OnlineClientAtBlock<SubstrateConfig>,
     places: Places,
-    extensions: Arc<ExtensionMetadata>,
+    /// Signed-extension metadata, loaded only when a conversion is signed.
+    extensions: Option<Arc<ExtensionMetadata>>,
 }
 
 /// A signed conversion, with what tells later whether it worked.
@@ -135,9 +137,18 @@ impl Chains {
         asset_hub: &subxt::OnlineClient<SubstrateConfig>,
         people: &subxt::OnlineClient<SubstrateConfig>,
         network: FundingNetwork,
-        extensions: Arc<ExtensionMetadata>,
+        signing: Option<ChainContext>,
     ) -> Result<Self, ConversionError> {
         let asset_hub = asset_hub.at_current_block().await.map_err(chain)?;
+        // The cache is checked against the best block; signing at the
+        // finalized one needs the same runtime's extensions.
+        let extensions = match signing {
+            Some(context) if context.state.spec_version == asset_hub.spec_version() => {
+                Some(context.metadata)
+            }
+            Some(_) => return Err(chain("Asset Hub is between runtime versions")),
+            None => None,
+        };
         let people = people.at_current_block().await.map_err(chain)?;
         let asset_hub_para = parachain_id(&asset_hub).await?;
         let people_para = parachain_id(&people).await?;
@@ -356,6 +367,10 @@ impl Chains {
         let spendable = held
             .checked_sub(kept)
             .ok_or_else(|| ConversionError::Refused("the deposit is below the minimum balance".into()))?;
+        let extensions = self
+            .extensions
+            .as_deref()
+            .ok_or_else(|| chain("signing metadata was not loaded"))?;
         let mint = match (deposit.route, deposit.asset) {
             (ConversionRoute::Teleport, _) => None,
             (ConversionRoute::Psm { fee_ppm }, DepositAsset::Asset(id)) => Some(PsmMint {
@@ -380,7 +395,7 @@ impl Chains {
         let forwarded = self.dry_run(&account, &draft).await?;
         let local_fee = self.local_fee(&draft.program, &fee_asset).await?;
         let delivery_fee = self.delivery_fee(&forwarded, &fee_asset).await?;
-        let draft_extrinsic = self.sign(&self.extensions, &signer, &draft, &fee_asset, nonce)?;
+        let draft_extrinsic = self.sign(extensions, &signer, &draft, &fee_asset, nonce)?;
         let dispatch_fee = self.dispatch_fee(&draft_extrinsic, &fee_asset).await?;
 
         let allowance = with_margin(local_fee.saturating_add(delivery_fee));
@@ -395,7 +410,7 @@ impl Chains {
         let forwarded = self.dry_run(&account, &call).await?;
         self.dry_run_on_people(&forwarded).await?;
         Ok(Prepared {
-            extrinsic: self.sign(&self.extensions, &signer, &call, &fee_asset, nonce)?,
+            extrinsic: self.sign(extensions, &signer, &call, &fee_asset, nonce)?,
             valid_until_block: self.asset_hub.block_number() + MORTAL_PERIOD_BLOCKS,
             landing: call.landing,
             spent: call.spent,
@@ -795,8 +810,8 @@ impl DepositBalances for Chains {
         account: &'a [u8; 32],
     ) -> BoxFuture<'a, Result<u128, GenericError>> {
         Box::pin(async move {
-            self.asset_hub_balance(asset, account)
-                .await
+            super::within_chain_timeout(self.asset_hub_balance(asset, account))
+                .await?
                 .map_err(|error| GenericError {
                     reason: error.to_string(),
                 })
@@ -1254,20 +1269,20 @@ mod live {
     }
 
     async fn chains() -> Chains {
+        let asset_hub = client(ASSET_HUB).await;
         let rpc = crate::runtime::statement_allowance::rpc::RpcClient::connect(ASSET_HUB)
             .await
             .expect("node reachable");
-        let extensions = crate::runtime::statement_allowance::fetch_metadata(&rpc)
+        let context = crate::runtime::statement_allowance::ChainContextCache::default()
+            .get(&crate::runtime::statement_allowance::ChainClient::new(
+                rpc,
+                asset_hub.genesis_hash().0,
+            ))
             .await
             .expect("metadata");
-        Chains::at_finalized(
-            &client(ASSET_HUB).await,
-            &client(PEOPLE).await,
-            NETWORK,
-            Arc::new(extensions),
-        )
-        .await
-        .expect("chains pinned")
+        Chains::at_finalized(&asset_hub, &client(PEOPLE).await, NETWORK, Some(context))
+            .await
+            .expect("chains pinned")
     }
 
     /// An account holding at least `least` of asset `id` on Asset Hub.

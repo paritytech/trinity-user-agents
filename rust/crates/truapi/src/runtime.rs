@@ -858,7 +858,10 @@ impl ProductRuntimeHost {
 }
 
 /// Whether `product_id` is the reserved funding product or a subname of it.
-/// Its accounts hold users' funds in transit, so only the host derives them.
+/// Its entropy is the key to every funding account, which holds users' funds
+/// in transit, so no product derives it or uses its accounts. Paired hosts
+/// hold the root entropy source and can compute it, as getcash's burners
+/// always could be: the host is trusted with funding keys, products are not.
 fn is_funding_product(product_id: &str) -> bool {
     bare_product_label(product_id) == FUNDING_LABEL
 }

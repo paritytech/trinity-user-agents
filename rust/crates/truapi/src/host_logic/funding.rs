@@ -13,8 +13,8 @@ use parity_scale_codec::{Decode, Encode};
 use tracing::warn;
 use truapi::latest::{FundingDirection, FundingFailure, HostFundingStatusSubscribeItem};
 
-use crate::host_logic::entropy::derive_product_entropy;
-use crate::host_logic::product_account::derive_root_keypair_from_entropy;
+use crate::host_logic::entropy::{ProductEntropyError, derive_product_entropy};
+use crate::host_logic::product_account::{ProductAccountError, derive_root_keypair_from_entropy};
 use crate::platform::{CoreStorage, CoreStorageKey};
 
 /// How long a session may stay open before it expires.
@@ -472,14 +472,17 @@ pub enum FundingAccountKind {
 }
 
 /// Why a funding account could not be derived.
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[derive(Debug, PartialEq, Eq, derive_more::Display, derive_more::Error)]
 pub enum FundingAccountError {
     /// The label is longer than the 32 bytes entropy derivation takes.
     #[display("funding account label is longer than 32 bytes")]
     LabelTooLong,
-    /// The key could not be derived.
+    /// The entropy could not be derived.
     #[display("{_0}")]
-    Derivation(#[error(not(source))] String),
+    Entropy(ProductEntropyError),
+    /// The key could not be derived from the entropy.
+    #[display("{_0}")]
+    Key(ProductAccountError),
 }
 
 /// The label of the `number`th account of `kind` for `source_id`:
@@ -513,10 +516,9 @@ pub fn funding_keypair(
     number: u32,
 ) -> Result<schnorrkel::Keypair, FundingAccountError> {
     let label = funding_account_label(kind, source_id, number)?;
-    let derivation = |err: &dyn core::fmt::Display| FundingAccountError::Derivation(err.to_string());
     let entropy = derive_product_entropy(root_entropy, funding_product_id, label.as_bytes())
-        .map_err(|err| derivation(&err))?;
-    derive_root_keypair_from_entropy(&entropy).map_err(|err| derivation(&err))
+        .map_err(FundingAccountError::Entropy)?;
+    derive_root_keypair_from_entropy(&entropy).map_err(FundingAccountError::Key)
 }
 
 /// Why a session operation failed.
@@ -890,35 +892,32 @@ mod tests {
         );
     }
 
-    // getcash turns 32 bytes of entropy into its burner with
-    // `entropyToMiniSecret` and `sr25519CreateDerive(mini)("")`. The vector is
-    // from those libraries for entropy `[7; 32]`, so the same seed reaches the
-    // same account through either implementation.
+    // getcash turns its `deriveEntropy(label)` into the burner with
+    // `entropyToMiniSecret` and `sr25519CreateDerive(mini)("")`. The keys are
+    // from those libraries, fed the entropy core's `deriveEntropy` gives
+    // `fund.dot` for the label (itself pinned to dotli's vector), so the same
+    // root reaches the same account through either implementation.
     #[test]
     fn a_funding_key_is_the_one_getcash_derives_from_the_same_entropy() {
-        let root = [9u8; 32];
-        let entropy = derive_product_entropy(&root, "fund.dot", b"onramp:eph:usdt-assethub:1")
-            .expect("entropy");
+        let key = |root: &[u8]| {
+            funding_keypair(root, "fund.dot", FundingAccountKind::Deposit, "usdt-assethub", 1)
+                .map(|keypair| hex::encode(keypair.public.to_bytes()))
+        };
 
         assert_eq!(
             (
-                hex::encode(
-                    derive_root_keypair_from_entropy(&[7; 32])
-                        .expect("key")
-                        .public
-                        .to_bytes()
-                ),
-                funding_keypair(&root, "fund.dot", FundingAccountKind::Deposit, "usdt-assethub", 1)
-                    .map(|keypair| keypair.public),
+                derive_root_keypair_from_entropy(&[7; 32])
+                    .map(|keypair| hex::encode(keypair.public.to_bytes())),
+                key(&[9; 32]),
             ),
             (
-                "ae78b88f68f8a3391cd7d1a8908766e1d068b2c1db6244a373e8b643e49d085f".to_string(),
-                derive_root_keypair_from_entropy(&entropy).map(|keypair| keypair.public).map_err(|err| {
-                    FundingAccountError::Derivation(err.to_string())
-                }),
+                Ok("ae78b88f68f8a3391cd7d1a8908766e1d068b2c1db6244a373e8b643e49d085f".to_string()),
+                Ok("fefa1fc85ecec3e8efa2cf47672fe85220dfa74c4aeda155b673f414b141b054".to_string()),
             )
         );
     }
+
+
 
     #[test]
     fn storing_nothing_clears_the_slot() {
