@@ -217,3 +217,34 @@ pub struct HostNotificationAcknowledgeReceiverEventRequest {
     /// Durable event sequence.
     pub sequence: u64,
 }
+
+/// A host-admitted notification activation for the authenticated product,
+/// account and environment bound to this runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct NotificationActivation {
+    /// Host-assigned sequence, unique within the bound activation queue.
+    pub sequence: u64,
+    /// Identifier of the activated notification.
+    pub notification_id: u32,
+    /// Validated product-relative route beginning with exactly one slash.
+    pub route: String,
+}
+
+/// Pending activations, retained until individually acknowledged. Hosts return
+/// at most 32 events in sequence order, without consuming them on retrieval.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct NotificationActivations {
+    /// Pending events in ascending sequence order.
+    pub events: Vec<NotificationActivation>,
+}
+
+/// Acknowledge one handled activation in the runtime's bound queue.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct NotificationActivationAcknowledgeRequest {
+    /// Exact sequence to acknowledge; never a cumulative watermark.
+    pub sequence: u64,
+}

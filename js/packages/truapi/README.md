@@ -166,6 +166,11 @@ runs inside a TrUAPI host, repeatedly announces iframe readiness until the host 
 builds the matching provider, and caches the resulting client. Use it instead of assembling
 `createTransport` / `createClient` by hand.
 
+Iframe readiness messages carry a public `connectionId`: retries keep the same identifier,
+while a new provider (including a document reload) gets a new one. Hosts must not replace an
+adopted port for another readiness message with the same identifier. This identifier only
+distinguishes transport attempts; it does not authenticate the product or grant authority.
+
 ```ts
 import {
   getClientSync,

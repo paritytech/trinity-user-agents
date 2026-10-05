@@ -48,6 +48,7 @@ import uniffi.truapi.HostLocaleLocalizeTimestampsResponse
 import uniffi.truapi.HostLocaleLocalizedTimestamp
 import uniffi.truapi.PocketCard
 import uniffi.truapi.HostPushNotificationRequest
+import uniffi.truapi.NotificationActivation
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.RemotePermission
@@ -252,6 +253,16 @@ interface HostBridge : NativeChatFilesHost {
 
     /** Forward to the sole receiving owner, or return null to use the native engine. */
     suspend fun receiverCommand(productId: String, action: UByte, payload: ByteArray): ByteArray? = null
+
+    /** Non-consuming ordered batch (at most 32) for this verified execution. */
+    @Throws(HostRejection::class)
+    suspend fun activationEvents(): List<NotificationActivation> =
+        throw HostRejection.Rejected("notification activation unsupported")
+
+    /** Idempotently acknowledge one sequence in this execution's scope. */
+    @Throws(HostRejection::class)
+    suspend fun acknowledgeActivation(sequence: ULong): Unit =
+        throw HostRejection.Rejected("notification activation unsupported")
 
     /**
      * Prompt for a device-level permission [product] requested on the main
@@ -588,6 +599,12 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override suspend fun receiverCommand(productId: String, action: UByte, payload: ByteArray): ByteArray? =
         withHostRejection { bridge.receiverCommand(productId, action, payload) }
+
+    override suspend fun activationEvents(): List<NotificationActivation> =
+        withHostRejection { bridge.activationEvents() }
+
+    override suspend fun acknowledgeActivation(sequence: ULong) =
+        withHostRejection { bridge.acknowledgeActivation(sequence) }
 
     override suspend fun devicePermission(
         product: ProductExecutionConfig,
