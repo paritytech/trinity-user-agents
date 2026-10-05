@@ -52,7 +52,7 @@ extension PocketOpenService {
                     // A session with no Pocket has nowhere to put the card and
                     // nothing to open. The host claimed the link, so it says so
                     // rather than dropping it.
-                    guard let pocket = PocketService.current else {
+                    guard let pocket = ProductPocketService.current else {
                         PocketRefusalPresenter.show(String(localized: .Products.pocketDeeplinkNoPocket))
                         return
                     }

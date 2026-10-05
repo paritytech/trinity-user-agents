@@ -10,7 +10,7 @@ enum PocketAddCardViewFactory {
     static func createView(
         for link: PocketDeeplink,
         flowState: SPAFlowState,
-        pocket: PocketService
+        pocket: ProductPocketService
     ) -> UIViewController? {
         let viewModel = PocketAddCardViewModel(
             productId: link.productHost,

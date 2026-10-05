@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Products
 import TrUAPIHost
 
@@ -13,13 +14,16 @@ protocol PocketFaceStreaming: Sendable {
     func send(action: String, payload: Data, for key: PocketCardKey)
 }
 
-/// Faces over the core: one worker reference is taken for as long as the card
-/// is on screen, the product's worker is awaited, and `render` is opened on the
-/// card's own context.
+/// The Pocket half of one product's worker: the faces it draws for the cards
+/// the user holds, and the presses going back to it.
+///
+/// Started by ``ProductPocketService`` while the user holds at least one of
+/// this product's cards, which is what asks for the worker. One handler serves
+/// every card its product draws, so three of them on screen run one worker.
 ///
 /// A render stream that ends or fails leaves the last face on screen and is
 /// opened again; a worker that restarts gets a fresh stream.
-struct TrUAPIPocketFaceStreams: PocketFaceStreaming {
+final class TrUAPIPocketHandler: PocketFaceStreaming, @unchecked Sendable {
     private enum Retry {
         /// A worker that has just booted is not yet listening, so the first
         /// renders are expected to be refused.
@@ -34,18 +38,46 @@ struct TrUAPIPocketFaceStreams: PocketFaceStreaming {
         static let maxBackoffDoublings = 5
     }
 
+    private let productId: ProductId
     private let workers: any TrUAPIWorkerManaging
-    private let publishedCards: any PublishedPocketCardsResolving
     private let logger: LoggerProtocol
 
+    /// Whether this handler's worker request is out, so a dispose gives back
+    /// exactly what the start asked for and never more.
+    private let holdsWorker = OSAllocatedUnfairLock(initialState: false)
+
     init(
+        productId: ProductId,
         workers: any TrUAPIWorkerManaging,
-        publishedCards: any PublishedPocketCardsResolving,
         logger: LoggerProtocol = Logger.shared
     ) {
+        self.productId = productId
         self.workers = workers
-        self.publishedCards = publishedCards
         self.logger = logger
+    }
+
+    /// Asks for the product's worker and returns once it is up, so the first
+    /// card to draw finds something to ask.
+    ///
+    /// The request is ours from the moment we ask, including when the ask
+    /// fails, so ``dispose()`` gives it back either way.
+    func start() async throws {
+        holdsWorker.withLock { $0 = true }
+
+        _ = try await workers.ensureWorker(for: productId)
+    }
+
+    func dispose() {
+        let held = holdsWorker.withLock { held -> Bool in
+            defer { held = false }
+            return held
+        }
+        guard held else { return }
+
+        // A release, not a close. A chat session with the same product may
+        // still be asking for the worker, and the core stops it once the last
+        // request goes.
+        workers.releaseWorker(for: productId)
     }
 
     func renderFaces(for key: PocketCardKey) -> AsyncThrowingStream<RendererNode, Error> {
@@ -72,29 +104,8 @@ struct TrUAPIPocketFaceStreams: PocketFaceStreaming {
     }
 }
 
-private extension TrUAPIPocketFaceStreams {
+private extension TrUAPIPocketHandler {
     func stream(_ key: PocketCardKey, into continuation: AsyncThrowingStream<RendererNode, Error>.Continuation) async {
-        // A card whose product publishes no Pocket worker has nothing to
-        // stream, and the request below is what starts one: asking regardless
-        // would boot a worker for the personhood product every time the default
-        // tab is opened.
-        guard await awaitPublished(key) else {
-            continuation.finish()
-            return
-        }
-
-        // The request is ours from the moment we ask, so it is given back
-        // whether or not a worker came up.
-        defer { workers.releaseWorker(for: key.productId) }
-
-        do {
-            _ = try await workers.ensureWorker(for: key.productId)
-        } catch {
-            logger.error("[pocket] no worker for \(key.cardId.value); it keeps the face it has: \(error)")
-            continuation.finish()
-            return
-        }
-
         await followExecutions(of: key, into: continuation)
         continuation.finish()
     }
@@ -185,29 +196,5 @@ private extension TrUAPIPocketFaceStreams {
         let doublings = min(attempt, Retry.maxBackoffDoublings)
 
         return min(Retry.reopenDelay * (1 << doublings), Retry.maxReopenDelay)
-    }
-
-    /// Whether the card's product publishes it, waited for rather than asked
-    /// once. A product that publishes no such card is a settled answer. Any
-    /// other failure is a chain read that did not land, and ending on one would
-    /// leave the card on its cached face for as long as it stays on screen.
-    func awaitPublished(_ key: PocketCardKey) async -> Bool {
-        var attempt = 0
-        while !Task.isCancelled {
-            do {
-                _ = try await publishedCards.find(productId: key.productId, cardId: key.cardId)
-                return true
-            } catch let refusal as PocketPublishError {
-                logger.debug("[pocket] \(key.cardId.value): \(refusal); it keeps the face it has")
-                return false
-            } catch {
-                logger.warning("[pocket] \(key.cardId.value) could not be looked up, asking again: \(error)")
-            }
-
-            try? await Task.sleep(for: reopenDelay(after: attempt))
-            attempt += 1
-        }
-
-        return false
     }
 }

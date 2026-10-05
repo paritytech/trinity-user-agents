@@ -6,7 +6,7 @@ final class WalletMainInteractor {
     private let collectiblesURLProvider: CollectiblesURLProviding
     private let networkStatusObserver: NetworkStatusObserving
     private let pocketPrewarmer: PocketPrewarmer
-    private let pocket: PocketService?
+    private let pocket: ProductPocketService?
     private var resolutionTask: Task<Void, Never>?
     private var pocketTask: Task<Void, Never>?
     private var warming: Task<Void, Never>?
@@ -15,7 +15,7 @@ final class WalletMainInteractor {
         collectiblesURLProvider: CollectiblesURLProviding,
         networkStatusObserver: NetworkStatusObserving,
         pocketPrewarmer: PocketPrewarmer,
-        pocket: PocketService?
+        pocket: ProductPocketService?
     ) {
         self.collectiblesURLProvider = collectiblesURLProvider
         self.networkStatusObserver = networkStatusObserver
@@ -62,18 +62,19 @@ extension WalletMainInteractor: WalletMainInteractorInputProtocol {
 }
 
 private extension WalletMainInteractor {
-    /// The collection is followed from storage, so the tab shows what the host
-    /// holds without waiting on any product's worker, and shows every change
-    /// whoever made it, the core removing a card included.
+    /// The cards come from the Pocket rather than from storage directly, so the
+    /// tab shows what the host holds without waiting on any product's worker,
+    /// and shows every change whoever made it, the core removing a card
+    /// included.
     func followPocket() {
-        guard let collection = pocket?.collection else { return }
+        guard let pocket else { return }
 
         pocketTask = Task { [weak self] in
             do {
-                for try await cards in collection.observeCards() {
+                for try await cards in pocket.cards() {
                     guard let self else { return }
 
-                    await show(cards, from: collection)
+                    await show(cards)
                 }
             } catch {
                 Logger.shared.error("[pocket] the wallet tab stopped following the collection: \(error)")
@@ -81,16 +82,15 @@ private extension WalletMainInteractor {
         }
     }
 
-    func show(_ cards: [PocketCardEntry], from store: any PocketCardStore) async {
-        let drawn = await PocketCardsProvider(store: store).cards(cards)
-        let held = Set(drawn.map(\.key))
+    func show(_ cards: [PocketCardViewModel]) async {
+        let held = Set(cards.map(\.key))
 
         await MainActor.run { [pocket] in
-            presenter?.didReceive(pocketCards: drawn)
+            presenter?.didReceive(pocketCards: cards)
             pocket?.cardHosts.keepOnly { held.contains($0) }
         }
 
-        prewarm(drawn)
+        prewarm(cards)
     }
 
     /// Warming fetches an archive, so it runs beside the collection rather than

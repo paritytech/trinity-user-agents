@@ -14,7 +14,7 @@ enum PocketCardOpening {
         _ card: PocketCardViewModel,
         flowState: SPAFlowState,
         navigator: ModuleNavigating,
-        pocket: PocketService
+        pocket: ProductPocketService
     ) {
         guard
             let url = card.key.launchUrl,
@@ -44,7 +44,7 @@ enum PocketCardOpening {
         link: PocketDeeplink,
         flowState: SPAFlowState,
         navigator: ModuleNavigating,
-        pocket: PocketService
+        pocket: ProductPocketService
     ) {
         let key = PocketCardKey(productId: link.productHost, cardId: link.cardId)
 

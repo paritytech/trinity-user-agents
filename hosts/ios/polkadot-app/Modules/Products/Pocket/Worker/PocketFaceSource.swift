@@ -1,4 +1,5 @@
 import Foundation
+import Products
 import TrUAPIHost
 
 /// Where a card's face comes from: what the host already holds, then everything
@@ -26,12 +27,14 @@ struct RealPocketFaceSource: PocketFaceSourcing {
     /// Resolved per call rather than held: the collection is not readable until
     /// the network's dotNS suffix is, and the cards are drawn before that.
     private let store: @Sendable () async -> (any PocketCardStore)?
-    private let streams: any PocketFaceStreaming
+    /// The handler drawing that product's cards, or nil while none is running,
+    /// which is a product the host is not running a worker for.
+    private let streams: @Sendable (ProductId) -> (any PocketFaceStreaming)?
     private let logger: LoggerProtocol
 
     init(
         store: @escaping @Sendable () async -> (any PocketCardStore)?,
-        streams: any PocketFaceStreaming,
+        streams: @escaping @Sendable (ProductId) -> (any PocketFaceStreaming)?,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.store = store
@@ -46,6 +49,13 @@ struct RealPocketFaceSource: PocketFaceSourcing {
 
                 if let kept = await store?.face(for: key) {
                     continuation.yield(kept)
+                }
+
+                // A card whose product is not running keeps the face it has
+                // rather than going blank.
+                guard let streams = streams(key.productId) else {
+                    continuation.finish()
+                    return
                 }
 
                 var unkept: RendererNode?
@@ -79,6 +89,6 @@ struct RealPocketFaceSource: PocketFaceSourcing {
     }
 
     func send(action: String, payload: Data, for key: PocketCardKey) {
-        streams.send(action: action, payload: payload, for: key)
+        streams(key.productId)?.send(action: action, payload: payload, for: key)
     }
 }

@@ -85,7 +85,7 @@ private func makeInteractor(
             products: StubProductResolver(),
             dotNsResolver: SlowArchives(delay: warmDelay)
         ),
-        pocket: PocketService(collection: collection)
+        pocket: ProductPocketService(collection: collection)
     )
     interactor.presenter = presenter
     return interactor

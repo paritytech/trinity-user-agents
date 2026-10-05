@@ -14,7 +14,9 @@ struct PocketFaceSourceTests {
         let store = RecordingFaceStore()
         let source = RealPocketFaceSource(
             store: { store },
-            streams: StubFaceStreams(faces: ["one", "two", "three"].map { RendererNode.string(text: $0) })
+            streams: { _ in
+                StubFaceStreams(faces: ["one", "two", "three"].map { RendererNode.string(text: $0) })
+            }
         )
 
         var drawn: [String] = []
