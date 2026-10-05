@@ -141,7 +141,6 @@ dependencies {
     implementation(project(":feature:splash:impl"))
     implementation(project(":feature:prices:impl"))
     implementation(project(":feature:account:impl"))
-    implementation(project(":feature:vouchers:impl"))
     implementation(project(":feature:settings:impl"))
     implementation(project(":feature:balances:impl"))
     implementation(project(":feature:transfers:impl"))
