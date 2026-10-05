@@ -7,6 +7,8 @@ import io.paritytech.polkadotapp.feature_products_api.model.scale.ProductDerivat
 import io.paritytech.polkadotapp.feature_products_api.model.scale.ProductIdScale
 import kotlinx.serialization.Serializable
 
+private const val RING_VRF_DOMAIN_ENTROPY_SIZE_BYTES = 32
+
 @Serializable
 sealed class SsoApAllocatableResourceScale {
     @Serializable
@@ -40,12 +42,15 @@ sealed class SsoApAllocatedResourceScale {
     @EnumIndex(2)
     data object SmartContractAllowance : SsoApAllocatedResourceScale()
 
-    // RFC-0022 secret key of //product//{productId}. Shape only — nothing allocates this yet.
+    // RFC-0022 secret key of //product//{productId} and the entropy of the product's ring-VRF
+    // domain. Shape only — nothing allocates this yet.
     @Serializable
     @EnumIndex(3)
     class AutoSigning(
         @FixedLength(Sr25519SecretKey.SIZE_BYTES)
         val productRootSecretKey: ByteArray,
+        @FixedLength(RING_VRF_DOMAIN_ENTROPY_SIZE_BYTES)
+        val ringVrfDomainEntropy: ByteArray,
     ) : SsoApAllocatedResourceScale()
 }
 

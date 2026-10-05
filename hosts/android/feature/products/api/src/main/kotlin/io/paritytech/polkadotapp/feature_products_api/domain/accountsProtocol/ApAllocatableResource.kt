@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol
 
 import io.paritytech.polkadotapp.chains.util.Sr25519SecretKey
+import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
 
 sealed interface ApAllocatableResource {
@@ -30,11 +31,15 @@ sealed interface ApAllocatedResource {
 
     /**
      * RFC-0022: secret key of `//product//{productId}`. The hard product junction is what makes handing
-     * this out safe — it exposes that product's subtree and nothing above it.
+     * this out safe — it exposes that product's subtree and nothing above it. [ringVrfDomainEntropy] is
+     * the 32-byte entropy of the product's ring-VRF domain.
      *
      * Shape only for now: nothing produces this variant until AutoSigning allocation ships.
      */
-    data class AutoSigning(val productRootSecretKey: Sr25519SecretKey) : ApAllocatedResource
+    data class AutoSigning(
+        val productRootSecretKey: Sr25519SecretKey,
+        val ringVrfDomainEntropy: DataByteArray,
+    ) : ApAllocatedResource
 }
 
 enum class OnExistingAllowancePolicy {

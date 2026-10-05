@@ -309,7 +309,8 @@ private fun ApAllocatedResource.toScale(): SsoApAllocatedResourceScale = when (t
     is ApAllocatedResource.BulletInAllowance ->
         SsoApAllocatedResourceScale.BulletInAllowance(slotAccountKey.bytes.value)
     ApAllocatedResource.SmartContractAllowance -> SsoApAllocatedResourceScale.SmartContractAllowance
-    is ApAllocatedResource.AutoSigning -> SsoApAllocatedResourceScale.AutoSigning(productRootSecretKey.bytes.value)
+    is ApAllocatedResource.AutoSigning ->
+        SsoApAllocatedResourceScale.AutoSigning(productRootSecretKey.bytes.value, ringVrfDomainEntropy.value)
 }
 
 @Suppress("unused")
@@ -327,7 +328,10 @@ private fun SsoApAllocatedResourceScale.toDomain(): ApAllocatedResource = when (
         ApAllocatedResource.BulletInAllowance(SlotAccountKey.fromBytes(DataByteArray(slotAccountKey)).getOrThrow())
     SsoApAllocatedResourceScale.SmartContractAllowance -> ApAllocatedResource.SmartContractAllowance
     is SsoApAllocatedResourceScale.AutoSigning ->
-        ApAllocatedResource.AutoSigning(Sr25519SecretKey.fromBytes(DataByteArray(productRootSecretKey)).getOrThrow())
+        ApAllocatedResource.AutoSigning(
+            Sr25519SecretKey.fromBytes(DataByteArray(productRootSecretKey)).getOrThrow(),
+            DataByteArray(ringVrfDomainEntropy),
+        )
 }
 
 // ==================== SigningRequest mappers ====================
