@@ -4967,43 +4967,6 @@ fn resource_allocation_respects_a_shorter_call_context_timeout() {
     );
 }
 
-/// A signing host that answers AutoSigning in a layout this host cannot decode
-/// fails that allocation with the decode error as soon as the reply arrives.
-#[test]
-fn resource_allocation_fails_at_once_when_its_own_reply_does_not_decode() {
-    let session = sso_session_info();
-    let message_id = "allocation-undecodable";
-    let platform = Arc::new(StubPlatform {
-        resource_allocation_confirmed: true,
-        sso_response_script: Some(sso_peer_messages_response_script(&session, |message_id| {
-            vec![auto_signing_reply_without_domain_entropy(message_id)]
-        })),
-        ..Default::default()
-    });
-    let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-    install_pairing_session(&host, session);
-    let mut cx = CallContext::with_request_id(message_id.to_string());
-    cx.set_timeout(std::time::Duration::from_secs(5));
-
-    let err = futures::executor::block_on(ResourceAllocation::request(
-        &host,
-        &cx,
-        resource_allocation_request(),
-    ))
-    .unwrap_err();
-
-    match err {
-        CallError::Domain(HostRequestResourceAllocationError::V1(
-            v01::ResourceAllocationError::Unknown { reason },
-        )) => assert!(
-            reason.starts_with("Undecodable SSO response for resource_allocation:")
-                && reason.contains("ring_vrf_domain_entropy"),
-            "{reason}"
-        ),
-        other => panic!("expected the allocation's decode error, got {other:?}"),
-    }
-}
-
 /// An allocation the person approves spends chain resources on the phone, so
 /// one the product withdrew while the prompt was open must never be sent.
 #[test]

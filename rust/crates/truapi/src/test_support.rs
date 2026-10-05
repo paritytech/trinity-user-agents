@@ -282,12 +282,6 @@ pub enum SsoResponseScript {
     },
     /// Peer acknowledges the request and then sends `Disconnected`.
     PeerDisconnect { session: SessionInfo },
-    /// Peer acknowledges the request and then sends raw encoded messages,
-    /// built from the id of the request it answers.
-    PeerMessages {
-        session: SessionInfo,
-        messages: fn(&str) -> Vec<Vec<u8>>,
-    },
 }
 
 struct PendingThemeStream {
@@ -590,18 +584,6 @@ pub fn sso_success_response_script(
     }
 }
 
-/// Dynamic JSON-RPC response script where the SSO peer answers with the raw
-/// encoded messages `messages` builds from the request's message id.
-pub fn sso_peer_messages_response_script(
-    session: &SessionInfo,
-    messages: fn(&str) -> Vec<Vec<u8>>,
-) -> SsoResponseScript {
-    SsoResponseScript::PeerMessages {
-        session: session.clone(),
-        messages,
-    }
-}
-
 /// Dynamic JSON-RPC response script where the SSO peer sends `Disconnected`.
 pub fn sso_peer_disconnect_response_script(session: &SessionInfo) -> SsoResponseScript {
     SsoResponseScript::PeerDisconnect {
@@ -796,29 +778,6 @@ pub fn sign_response_message(
             ),
         ),
     }
-}
-
-/// An AutoSigning allocation reply laid out without `ring_vrf_domain_entropy`,
-/// the field that ends the encoding. Its header decodes; its payload does not.
-pub fn auto_signing_reply_without_domain_entropy(responding_to: &str) -> Vec<u8> {
-    use crate::host_internal::sso_messages::{
-        Response, SsoAllocatedResource, SsoAllocationOutcome,
-    };
-    let mut encoded = RemoteMessage {
-        message_id: format!("wallet-{responding_to}"),
-        data: RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(Response {
-            responding_to: responding_to.to_string(),
-            payload: Ok(vec![SsoAllocationOutcome::Allocated(
-                SsoAllocatedResource::AutoSigning {
-                    product_root_private_key: [0x11; 64],
-                    ring_vrf_domain_entropy: [0; 32],
-                },
-            )]),
-        })),
-    }
-    .encode();
-    encoded.truncate(encoded.len() - 32);
-    encoded
 }
 
 /// SSO legacy-account raw signing response for the given request id.
@@ -1374,8 +1333,7 @@ fn sso_scripted_responses(
                 }
                 3 => match &script {
                     SsoResponseScript::Success { session, .. }
-                    | SsoResponseScript::PeerDisconnect { session }
-                    | SsoResponseScript::PeerMessages { session, .. } => {
+                    | SsoResponseScript::PeerDisconnect { session } => {
                         let (statement_request_id, _) = submitted_sso_request(&sent, session);
                         Some((
                             new_statements_frame(
@@ -1408,26 +1366,6 @@ fn sso_scripted_responses(
                                             request.message_id
                                         ),
                                         data: vec![response.encode()],
-                                    },
-                                    2,
-                                )],
-                            ),
-                            5,
-                        ))
-                    }
-                    SsoResponseScript::PeerMessages { session, messages } => {
-                        let (_, request) = submitted_sso_request(&sent, &session);
-                        Some((
-                            new_statements_frame(
-                                "peer-sub",
-                                vec![sso_statement(
-                                    &session,
-                                    pairing::SsoStatementData::Request {
-                                        request_id: format!(
-                                            "wallet-response-{}",
-                                            request.message_id
-                                        ),
-                                        data: messages(&request.message_id),
                                     },
                                     2,
                                 )],

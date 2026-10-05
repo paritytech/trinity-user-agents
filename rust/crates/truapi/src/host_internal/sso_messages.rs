@@ -399,70 +399,9 @@ pub type CreateTransactionResponse = Result<Vec<u8>, String>;
 pub enum SsoSessionStatement {
     /// The outbound request statement was acknowledged with a success code.
     RequestAccepted,
-    /// Application messages in wire order, each decoded on its own so one
-    /// that fails to decode leaves the others readable.
-    RemoteMessages(Vec<Result<v1::RemoteMessage, UndecodableRemoteMessage>>),
-}
-
-/// A remote message that failed to decode, with what its leading fields still
-/// say about it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UndecodableRemoteMessage {
-    /// What the message id, version and variant tags, and the string after
-    /// them identify.
-    pub header: UndecodableHeader,
-    /// Why the message failed to decode.
-    pub error: String,
-}
-
-/// What the leading fields of an undecodable remote message identify.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UndecodableHeader {
-    /// The leading fields do not decode as a v1 message, so it belongs to no
-    /// request in particular.
-    Unattributed,
-    /// A `Disconnected` whose body does not decode.
-    Disconnected,
-    /// A `Cancel`, which answers no request.
-    Cancel,
-    /// Any other variant, with the string in the position a [`Response`] holds
-    /// `responding_to`. A request can fill that position too, so only an exact
-    /// match with a pending request's id marks the message as its reply.
-    RespondingTo(String),
-}
-
-impl UndecodableRemoteMessage {
-    fn from_encoded(message: &[u8], error: String) -> Self {
-        Self {
-            header: UndecodableHeader::read(message),
-            error,
-        }
-    }
-}
-
-impl UndecodableHeader {
-    fn read(message: &[u8]) -> Self {
-        let mut input = message;
-        let (Ok(_message_id), Ok([version, variant])) =
-            (String::decode(&mut input), <[u8; 2]>::decode(&mut input))
-        else {
-            return Self::Unattributed;
-        };
-        let disconnected = RemoteMessageData::V1(v1::RemoteMessage::Disconnected).encode();
-        let cancel = v1::RemoteMessage::Cancel(Withdrawal {
-            message_id: String::new(),
-        })
-        .encode();
-        if version != disconnected[0] {
-            Self::Unattributed
-        } else if variant == disconnected[1] {
-            Self::Disconnected
-        } else if variant == cancel[0] {
-            Self::Cancel
-        } else {
-            String::decode(&mut input).map_or(Self::Unattributed, Self::RespondingTo)
-        }
-    }
+    /// Application messages in wire order, each decoded on its own so a
+    /// consumer can stop at its match before a later undecodable message.
+    RemoteMessages(Vec<Result<v1::RemoteMessage, String>>),
 }
 
 /// Decode and classify an inbound encrypted SSO session statement.
@@ -508,12 +447,10 @@ pub fn decode_sso_session_statement(
         SsoStatementData::Request { data, .. } => Ok(Some(SsoSessionStatement::RemoteMessages(
             data.iter()
                 .map(|message| {
-                    decode_remote_message(message)
-                        .map(|decoded| {
-                            let RemoteMessageData::V1(decoded) = decoded.data;
-                            decoded
-                        })
-                        .map_err(|error| UndecodableRemoteMessage::from_encoded(message, error))
+                    decode_remote_message(message).map(|message| {
+                        let RemoteMessageData::V1(message) = message.data;
+                        message
+                    })
                 })
                 .collect(),
         ))),

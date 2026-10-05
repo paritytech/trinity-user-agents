@@ -381,38 +381,6 @@ fn sign_raw_accepts_confirmation_then_returns_sso_response() {
     assert_eq!(unsubscribe_ids, vec!["own-sub", "peer-sub"]);
 }
 
-/// An AutoSigning reply to an earlier request that this host cannot decode
-/// stays on the session channel; a later request skips it and returns its own
-/// reply.
-#[test]
-fn sign_raw_skips_an_undecodable_reply_to_an_earlier_request() {
-    let session = sso_session_info();
-    let message_id = "sign-raw-after-stale-allocation";
-    let platform = Arc::new(StubPlatform {
-        sign_raw_confirmed: true,
-        sso_response_script: Some(sso_peer_messages_response_script(&session, |message_id| {
-            vec![
-                auto_signing_reply_without_domain_entropy("earlier-allocation"),
-                sign_response_message(message_id, vec![7, 7], None).encode(),
-            ]
-        })),
-        ..Default::default()
-    });
-    let host = ProductRuntimeHost::new(platform, runtime_config("myapp.dot"), test_spawner());
-    install_pairing_session(&host, session);
-    let mut cx = CallContext::with_request_id(message_id.to_string());
-    cx.set_timeout(std::time::Duration::from_secs(5));
-    let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
-        account: account_id("myapp.dot", 0),
-        payload: raw_payload(),
-    });
-
-    let response = futures::executor::block_on(host.sign_raw(&cx, request)).unwrap();
-
-    let HostSignRawResponse::V1(inner) = response;
-    assert_eq!(inner.signature, vec![7, 7]);
-}
-
 #[test]
 fn sign_raw_uses_call_context_timeout_for_sso_response_wait() {
     let session = sso_session_info();

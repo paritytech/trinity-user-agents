@@ -8,8 +8,7 @@ use std::sync::Mutex;
 
 use super::statement_store_rpc;
 use crate::host_internal::sso_messages::{
-    Response, SsoSessionStatement, UndecodableHeader, UndecodableRemoteMessage,
-    decode_sso_session_statement, v1,
+    Response, SsoSessionStatement, decode_sso_session_statement, v1,
 };
 use crate::host_internal::sso_wire::SsoRequest;
 use crate::host_logic::session::SsoSessionInfo;
@@ -247,45 +246,13 @@ fn disconnect_error(reason: String) -> SsoRemoteResponseError {
     }
 }
 
-/// A peer message as read off the session channel, decoded or not.
-pub type ReadRemoteMessage = Result<v1::RemoteMessage, UndecodableRemoteMessage>;
-
-/// Whether `message` is the peer ending the session, including a
-/// `Disconnected` whose body does not decode.
-pub fn announces_disconnect(message: &ReadRemoteMessage) -> bool {
-    matches!(
-        message,
-        Ok(v1::RemoteMessage::Disconnected)
-            | Err(UndecodableRemoteMessage {
-                header: UndecodableHeader::Disconnected,
-                ..
-            })
-    )
-}
-
 /// Matcher for [`wait_for_sso_remote_response`]: the response to the request
-/// sent as `message_id`. A response addressed to it but of another kind, one
-/// whose payload does not decode, or a message too broken to attribute is an
+/// sent as `message_id`. A response addressed to it but of another kind is an
 /// error, so a confused peer fails the call instead of stalling it.
 pub fn reply_matcher<R: SsoRequest>(
     message_id: &str,
-) -> impl Fn(ReadRemoteMessage) -> Option<Result<Response<R::Response>, String>> + '_ {
+) -> impl Fn(v1::RemoteMessage) -> Option<Result<Response<R::Response>, String>> + '_ {
     move |message| {
-        let message = match message {
-            Ok(message) => message,
-            Err(UndecodableRemoteMessage { header, error }) => {
-                let name = R::NAME;
-                return match header {
-                    UndecodableHeader::RespondingTo(id) if id == message_id => {
-                        Some(Err(format!("Undecodable SSO response for {name}: {error}")))
-                    }
-                    UndecodableHeader::Unattributed => Some(Err(format!(
-                        "Unattributable SSO message while waiting for {name}: {error}"
-                    ))),
-                    _ => None,
-                };
-            }
-        };
         if message.responding_to() != Some(message_id) {
             return None;
         }
@@ -300,14 +267,13 @@ pub fn reply_matcher<R: SsoRequest>(
 /// Wait for the reply `matches` accepts, racing the statement streams against
 /// submit failure, cancellation, and disconnect signals.
 ///
-/// `matches` sees every peer message in wire order, including ones that fail
-/// to decode: `None` skips a message meant for someone else,
-/// `Some(Err(reason))` fails the wait for a message addressed to this request
-/// but unusable as its reply.
+/// `matches` sees every peer message in wire order: `None` skips a message
+/// meant for someone else, `Some(Err(reason))` fails the wait for a message
+/// addressed to this request but of the wrong kind.
 #[instrument(skip_all, fields(runtime.method = "sso.remote_response.wait"))]
 pub async fn wait_for_sso_remote_response<T>(
     wait: RemoteResponseWait<'_>,
-    matches: impl Fn(ReadRemoteMessage) -> Option<Result<T, String>>,
+    matches: impl Fn(v1::RemoteMessage) -> Option<Result<T, String>>,
 ) -> Result<T, SsoRemoteResponseError> {
     let RemoteResponseWait {
         own_statements,
@@ -363,7 +329,7 @@ async fn wait_for_sso_remote_response_inner<T>(
     session: &SsoSessionInfo,
     statement_request_id: &str,
     remote_message_id: &str,
-    matches: &impl Fn(ReadRemoteMessage) -> Option<Result<T, String>>,
+    matches: &impl Fn(v1::RemoteMessage) -> Option<Result<T, String>>,
 ) -> Result<T, SsoRemoteResponseError> {
     let mut own_statements = own_statements.fuse();
     let mut peer_statements = peer_statements.fuse();
@@ -428,7 +394,7 @@ fn handle_sso_remote_statement_page<T>(
     session: &SsoSessionInfo,
     value: &Value,
     statement_request_id: &str,
-    matches: &impl Fn(ReadRemoteMessage) -> Option<Result<T, String>>,
+    matches: &impl Fn(v1::RemoteMessage) -> Option<Result<T, String>>,
     request_accepted: &mut bool,
     pending_remote_response: &mut Option<T>,
 ) -> Result<Option<T>, SsoRemoteResponseError> {
@@ -446,14 +412,17 @@ fn handle_sso_remote_statement_page<T>(
             }
             Some(SsoSessionStatement::RemoteMessages(messages)) => {
                 for message in messages {
-                    if announces_disconnect(&message) {
+                    let message = match message {
+                        Ok(message) => message,
+                        Err(error) => {
+                            debug!(%error, "skipping undecodable SSO remote message");
+                            continue;
+                        }
+                    };
+                    if message == v1::RemoteMessage::Disconnected {
                         return Err(SsoRemoteResponseError::PeerDisconnected);
                     }
-                    let undecodable = message.as_ref().err().map(|message| message.error.clone());
                     let Some(matched) = matches(message) else {
-                        if let Some(error) = undecodable {
-                            debug!(%error, "skipping undecodable SSO message for another request");
-                        }
                         continue;
                     };
                     let response = matched.map_err(SsoRemoteResponseError::Failure)?;
@@ -514,7 +483,7 @@ fn next_statement_expiry(last: u64, expiry_floor: u64) -> u64 {
 mod tests {
     use super::*;
     use crate::host_internal::sso_messages::{
-        ProductSubtreeRequest, ProductSubtreeResponse, RemoteMessage, RemoteMessageData, Withdrawal,
+        ProductSubtreeRequest, ProductSubtreeResponse, RemoteMessage, RemoteMessageData,
         build_outgoing_request_statement, build_signed_session_response_statement,
     };
     use crate::host_logic::sso::pairing::{SsoStatementData, encrypt_session_statement_data};
@@ -751,143 +720,53 @@ mod tests {
         );
     }
 
-    fn accepted(responder: &SsoSessionInfo) -> Vec<u8> {
-        build_signed_session_response_statement(
-            responder,
+    /// A message that does not decode, such as a stale reply from an older peer
+    /// left on the session channel, is skipped wherever it sits, so it cannot
+    /// fail a wait for another request.
+    #[test]
+    fn an_undecodable_message_is_skipped() {
+        let (host, responder) = sso_host_and_responder_sessions();
+        let ack = build_signed_session_response_statement(
+            &responder,
             "request-1".to_string(),
             0,
             fresh_statement_expiry(),
         )
-        .unwrap()
-    }
-
-    fn statement_with(responder: &SsoSessionInfo, data: Vec<Vec<u8>>) -> Vec<u8> {
-        let encrypted = encrypt_session_statement_data(
-            responder,
-            &SsoStatementData::Request {
-                request_id: "resp-statement".to_string(),
-                data,
-            },
-        )
         .unwrap();
-        build_signed_session_request_statement(responder, encrypted, fresh_statement_expiry())
-            .unwrap()
-    }
-
-    /// A reply whose payload is cut short: its header still names the request
-    /// it answers.
-    fn truncated_subtree_response(responding_to: &str) -> Vec<u8> {
-        let mut encoded = subtree_response(responding_to).encode();
-        encoded.pop();
-        encoded
-    }
-
-    /// A message whose body does not decode but whose header still does.
-    fn with_trailing_byte(message: RemoteMessage) -> Vec<u8> {
-        let mut encoded = message.encode();
-        encoded.push(0);
-        encoded
-    }
-
-    /// Stale replies to older requests stay on the channel, and a `Cancel`
-    /// carries a request id where a reply carries `responding_to`; neither may
-    /// fail the wait when it does not decode.
-    #[test]
-    fn an_undecodable_reply_to_another_request_is_skipped() {
-        let (host, responder) = sso_host_and_responder_sessions();
-        let cancel = RemoteMessage {
-            message_id: "cancel-1".to_string(),
-            data: RemoteMessageData::V1(v1::RemoteMessage::Cancel(Withdrawal {
-                message_id: "request-1".to_string(),
-            })),
+        let statement_with = |data: Vec<Vec<u8>>| {
+            let encrypted = encrypt_session_statement_data(
+                &responder,
+                &SsoStatementData::Request {
+                    request_id: "resp-statement".to_string(),
+                    data,
+                },
+            )
+            .unwrap();
+            build_signed_session_request_statement(&responder, encrypted, fresh_statement_expiry())
+                .unwrap()
         };
-        let statement = statement_with(
-            &responder,
+        let garbage = vec![0xff, 0xff, 0xff];
+        let reply = subtree_response("request-1").encode();
+
+        let after = wait_for_subtree(
+            &host,
             vec![
-                truncated_subtree_response("older-request"),
-                with_trailing_byte(cancel),
-                subtree_response("request-1").encode(),
+                peer_page(ack.clone()),
+                peer_page(statement_with(vec![reply.clone(), garbage.clone()])),
+            ],
+        );
+        let before = wait_for_subtree(
+            &host,
+            vec![
+                peer_page(ack),
+                peer_page(statement_with(vec![garbage, reply])),
             ],
         );
 
-        let response =
-            wait_for_subtree(&host, vec![peer_page(accepted(&responder)), peer_page(statement)])
-                .unwrap();
-
-        assert_eq!(
-            response,
-            Response {
-                responding_to: "request-1".to_string(),
-                payload: Ok([7; 32]),
-            }
-        );
-    }
-
-    /// The waiting request's own reply failing to decode ends the wait with the
-    /// decode error, without waiting for the transport acknowledgement or the
-    /// timeout.
-    #[test]
-    fn an_undecodable_reply_to_the_waiting_request_fails_at_once() {
-        let (host, responder) = sso_host_and_responder_sessions();
-        let statement = statement_with(&responder, vec![truncated_subtree_response("request-1")]);
-
-        let err = wait_for_subtree(&host, vec![peer_page(statement)]).unwrap_err();
-
-        assert!(
-            matches!(&err, SsoRemoteResponseError::Failure(reason) if reason.starts_with("Undecodable SSO response for product_subtree: invalid SSO remote message")),
-            "{err:?}"
-        );
-    }
-
-    /// A message whose header does not decode could be any request's reply,
-    /// so the wait ends with its decode error rather than timing out.
-    #[test]
-    fn an_unattributable_message_fails_the_wait_at_once() {
-        let (host, responder) = sso_host_and_responder_sessions();
-        let statement = statement_with(&responder, vec![vec![0xff, 0xff, 0xff]]);
-
-        let err = wait_for_subtree(&host, vec![peer_page(statement)]).unwrap_err();
-
-        assert!(
-            matches!(&err, SsoRemoteResponseError::Failure(reason) if reason.starts_with("Unattributable SSO message while waiting for product_subtree: invalid SSO remote message")),
-            "{err:?}"
-        );
-    }
-
-    /// A `Disconnected` from a peer that adds to its body still ends the session.
-    #[test]
-    fn an_undecodable_disconnected_ends_the_wait() {
-        let (host, responder) = sso_host_and_responder_sessions();
-        let disconnect = RemoteMessage {
-            message_id: "bye".to_string(),
-            data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
-        };
-        let statement = statement_with(&responder, vec![with_trailing_byte(disconnect)]);
-
-        let err = wait_for_subtree(&host, vec![peer_page(accepted(&responder)), peer_page(statement)])
-            .unwrap_err();
-
-        assert_eq!(err, SsoRemoteResponseError::PeerDisconnected);
-    }
-
-    #[test]
-    fn a_disconnect_after_an_undecodable_message_ends_the_wait() {
-        let (host, responder) = sso_host_and_responder_sessions();
-        let disconnect = RemoteMessage {
-            message_id: "bye".to_string(),
-            data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
-        };
-        let statement = statement_with(
-            &responder,
-            vec![
-                truncated_subtree_response("older-request"),
-                disconnect.encode(),
-            ],
-        );
-
-        let err = wait_for_subtree(&host, vec![peer_page(accepted(&responder)), peer_page(statement)])
-            .unwrap_err();
-
-        assert_eq!(err, SsoRemoteResponseError::PeerDisconnected);
+        let expected = Ok(Response {
+            responding_to: "request-1".to_string(),
+            payload: Ok([7; 32]),
+        });
+        assert_eq!((before, after), (expected.clone(), expected));
     }
 }

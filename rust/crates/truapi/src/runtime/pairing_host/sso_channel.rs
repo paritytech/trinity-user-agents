@@ -8,7 +8,7 @@ use super::super::authority::{
     SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
 };
 use super::super::sso_remote::{
-    RemoteResponseWait, SSO_LOCAL_DISCONNECT_REASON, SSO_PEER_DISCONNECT_REASON, announces_disconnect,
+    RemoteResponseWait, SSO_LOCAL_DISCONNECT_REASON, SSO_PEER_DISCONNECT_REASON,
     SsoRemoteResponseError, SsoSessionKey, fresh_statement_expiry, reply_matcher, sso_message_id,
     statement_subscription_stream, subscribe_statement_topic, wait_for_sso_remote_response,
 };
@@ -882,8 +882,10 @@ async fn wait_for_sso_peer_disconnect(
             else {
                 continue;
             };
-            if messages.iter().any(announces_disconnect) {
-                return Ok(());
+            for message in messages {
+                if message == Ok(v1::RemoteMessage::Disconnected) {
+                    return Ok(());
+                }
             }
         }
     }
