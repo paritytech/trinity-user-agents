@@ -135,9 +135,6 @@ pub struct StubPlatform {
     /// Pause disclosure consent to exercise session changes while the UI awaits.
     pub identity_disclosure_confirmation_gate:
         parking_lot::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
-    pub calling_confirmed: bool,
-    pub calling_error: Option<&'static str>,
-    pub calling_reviews: Arc<Mutex<Vec<crate::platform::CallingReview>>>,
     pub sign_payload_confirmed: bool,
     /// Every `SignPayload` review passed to `confirm_user_action`, in order.
     /// Empty proves an AutoSigning grant suppressed the prompt.

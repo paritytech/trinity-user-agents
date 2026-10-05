@@ -5935,6 +5935,81 @@ fn notification_activation_rejects_oversized_platform_batch() {
 }
 
 #[test]
+fn notification_activation_unsupported_does_not_request_permission() {
+    use truapi::versioned::notifications::{
+        NotificationActivationAcknowledgeError, NotificationActivationAcknowledgeRequest,
+        NotificationActivationEventsError, NotificationActivationEventsRequest,
+    };
+
+    let platform = Arc::new(StubPlatform {
+        device_permission_decisions: Mutex::new([crate::platform::PermissionDecision::Deny].into()),
+        ..Default::default()
+    });
+    let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+    let cx = CallContext::default();
+    let unsupported = v01::GenericError {
+        reason: "notification activation is unsupported".to_string(),
+    };
+
+    assert_eq!(
+        futures::executor::block_on(
+            host.activation_events(&cx, NotificationActivationEventsRequest::V1)
+        ),
+        Err(CallError::Domain(NotificationActivationEventsError::V1(
+            unsupported.clone()
+        )))
+    );
+    for sequence in [0, 1, u64::MAX] {
+        assert_eq!(
+            futures::executor::block_on(host.acknowledge_activation(
+                &cx,
+                NotificationActivationAcknowledgeRequest::V1(
+                    v01::NotificationActivationAcknowledgeRequest { sequence }
+                ),
+            )),
+            Err(CallError::Domain(NotificationActivationAcknowledgeError::V1(
+                unsupported.clone()
+            )))
+        );
+    }
+    assert!(platform.device_permission_requests.lock().is_ok_and(|calls| calls.is_empty()));
+    assert!(platform.remote_permission_requests.lock().is_ok_and(|calls| calls.is_empty()));
+    assert!(platform.pushed_notifications.lock().is_ok_and(|calls| calls.is_empty()));
+    assert!(platform.cancelled_notifications.lock().is_ok_and(|calls| calls.is_empty()));
+}
+
+#[test]
+fn notification_activation_rejects_oversized_platform_batch() {
+    use truapi::versioned::notifications::NotificationActivationEventsRequest;
+
+    for count in [0, 32, 33] {
+        let platform = Arc::new(StubPlatform {
+            notification_activations: Some(v01::NotificationActivations {
+                events: (0..count)
+                    .map(|sequence| v01::NotificationActivation {
+                        sequence,
+                        notification_id: 42,
+                        route: "/inbox".to_string(),
+                    })
+                    .collect(),
+            }),
+            ..Default::default()
+        });
+        let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        let response = futures::executor::block_on(
+            host.activation_events(&CallContext::default(), NotificationActivationEventsRequest::V1),
+        );
+        if count > 32 {
+            assert!(matches!(response, Err(CallError::HostFailure { .. })));
+        } else {
+            assert!(response.is_ok());
+        }
+        assert!(platform.device_permission_requests.lock().is_ok_and(|calls| calls.is_empty()));
+        assert!(platform.remote_permission_requests.lock().is_ok_and(|calls| calls.is_empty()));
+    }
+}
+
+#[test]
 fn get_account_requires_session() {
 	let host =
 		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
@@ -6660,6 +6735,18 @@ fn get_user_id_rejects_a_cached_name_after_owner_changes_during_consent() {
         ));
     });
 }
+
+#[test]
+fn get_user_id_respects_pre_authorized_identity_disclosure() {
+    let platform = Arc::new(StubPlatform::default());
+    let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+    install_pairing_session(&host, session_info());
+    let cx = CallContext::default();
+    futures::executor::block_on(host.set_permission_authorization_status(
+        PermissionAuthorizationRequest::IdentityDisclosure,
+        PermissionAuthorizationStatus::Authorized,
+    ))
+    .unwrap();
 
 #[test]
 fn get_user_id_respects_pre_authorized_identity_disclosure() {

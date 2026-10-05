@@ -455,6 +455,15 @@ mod tests {
         GatewayMissing,
     }
 
+    #[derive(Clone, Copy, Default)]
+    enum ScriptedLookup {
+        #[default]
+        Labels,
+        NoRecord,
+        Unavailable,
+        GatewayMissing,
+    }
+
     struct ScriptedAssetHub {
         sent: Arc<Mutex<Vec<String>>>,
         follow_with_runtime: Arc<Mutex<Option<bool>>>,
