@@ -18,6 +18,9 @@ use truapi::versioned::notifications::{
     HostPushNotificationCancelError, HostPushNotificationCancelRequest,
     HostPushNotificationCancelResponse, HostPushNotificationError, HostPushNotificationRequest,
     HostPushNotificationResponse,
+    NotificationActivationAcknowledgeError, NotificationActivationAcknowledgeRequest,
+    NotificationActivationAcknowledgeResponse, NotificationActivationEventsError,
+    NotificationActivationEventsRequest, NotificationActivationEventsResponse,
 };
 use truapi::versioned::permissions::{
     HostDevicePermissionError, HostDevicePermissionRequest, HostDevicePermissionResponse,
@@ -474,5 +477,39 @@ impl Notifications for ProductRuntimeHost {
                     reason: err.reason,
                 }))
             })
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "notifications.activation_events"))]
+    async fn activation_events(
+        &self,
+        _cx: &CallContext,
+        request: NotificationActivationEventsRequest,
+    ) -> Result<NotificationActivationEventsResponse, CallError<NotificationActivationEventsError>> {
+        let NotificationActivationEventsRequest::V1 = request;
+        let events = self.platform.activation_events().await.map_err(|err| {
+            CallError::Domain(NotificationActivationEventsError::V1(err))
+        })?;
+        if events.events.len() > 32 {
+            return Err(CallError::HostFailure {
+                reason: "notification activation batch exceeds 32 events".to_string(),
+            });
+        }
+        Ok(NotificationActivationEventsResponse::V1(events))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "notifications.acknowledge_activation"))]
+    async fn acknowledge_activation(
+        &self,
+        _cx: &CallContext,
+        request: NotificationActivationAcknowledgeRequest,
+    ) -> Result<NotificationActivationAcknowledgeResponse, CallError<NotificationActivationAcknowledgeError>> {
+        let NotificationActivationAcknowledgeRequest::V1(
+            v01::NotificationActivationAcknowledgeRequest { sequence },
+        ) = request;
+        self.platform
+            .acknowledge_activation(v01::NotificationActivationAcknowledgeRequest { sequence })
+            .await
+            .map(|()| NotificationActivationAcknowledgeResponse::V1)
+            .map_err(|err| CallError::Domain(NotificationActivationAcknowledgeError::V1(err)))
     }
 }
