@@ -17,7 +17,7 @@ import type {
 import { createWasmRawCallbacks } from "../generated/host-callbacks-adapter.js";
 import {
   AuthState,
-  CoreStorageKey,
+  SecretCoreStorageKey,
   ProductContext,
 } from "../generated/host-callbacks.js";
 import type {
@@ -652,12 +652,12 @@ describe("createWebWorkerPairingHostRuntime", () => {
   it("dispatches callback requests to host hooks", async () => {
     const worker = new FakeWorker();
     let clears = 0;
-    const authSessionKey = CoreStorageKey.enc({ tag: "AuthSession" });
+    const authSessionKey = SecretCoreStorageKey.enc({ tag: "AuthSession" });
     const providerPromise = createProviderFromRuntime(
       asWorker(worker),
       makeHostCallbacks({
-        coreStorage: {
-          clearCoreStorage: async (key) => {
+        secretCoreStorage: {
+          clearSecretCoreStorage: async (key) => {
             expect(key).toEqual({ tag: "AuthSession", value: undefined });
             clears += 1;
           },
@@ -672,7 +672,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     worker.emit({
       kind: "callbackRequest",
       requestId: 7,
-      name: "clearCoreStorage",
+      name: "clearSecretCoreStorage",
       args: [authSessionKey],
     });
     await settle();
