@@ -6554,10 +6554,15 @@ fn disconnect_during_external_activation_prevents_stale_reinstallation() {
     futures::executor::block_on(activation_entered)
         .expect("external activation reached the installation fence");
 
-    futures::executor::block_on(host.disconnect()).unwrap();
-    resume_activation
-        .send(())
-        .expect("external activation remains in flight");
+    futures::executor::block_on(async {
+        let disconnect = host.disconnect();
+        futures::pin_mut!(disconnect);
+        assert!(disconnect.as_mut().now_or_never().is_none());
+        resume_activation
+            .send(())
+            .expect("external activation remains in flight");
+        disconnect.await.unwrap();
+    });
     activation
         .join()
         .expect("external activation thread panicked")
@@ -7303,7 +7308,9 @@ fn disconnect_fences_a_restore_that_already_read_the_protected_session() {
     let stored = sso_session_info();
     let (resume, paused_read) = futures::channel::oneshot::channel();
     let platform = Arc::new(StubPlatform {
-        session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
+        session_blob: Some(crate::host_logic::session::encode_persisted_session(
+            &stored,
+        )),
         auth_session_read_pauses: Mutex::new([None, Some(paused_read)].into()),
         ..Default::default()
     });

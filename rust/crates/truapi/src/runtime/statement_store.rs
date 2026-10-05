@@ -585,8 +585,8 @@ mod tests {
         let host =
             ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
         let session = sso_session_info();
+        host.test_session_state().set_session(session.clone());
         host.test_cache_product_subtree(&session, "myapp.dot", session.public_key);
-        host.test_session_state().set_session(session);
         let cx = CallContext::default();
         let request = RemoteStatementStoreCreateProofRequest::V1(
             latest::RemoteStatementStoreCreateProofRequest {
