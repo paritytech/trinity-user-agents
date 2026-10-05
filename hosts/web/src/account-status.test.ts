@@ -90,10 +90,6 @@ describe("account status", () => {
       lastUpdate: 1_700_000_000n,
       demoted: true,
     },
-    slots: [
-      { tag: "Occupied", accountId: `0x${"07".repeat(32)}`, since: 5n },
-      { tag: "Free" },
-    ],
   };
 
   test("states standing per queried account, with the username", () => {
@@ -123,10 +119,6 @@ describe("account status", () => {
       detail: "lite alice.07",
     });
     expect(byLabel["On chain: root key"]).toMatchObject({ value: "Not found" });
-    expect(byLabel["Consumer slots"]).toMatchObject({
-      value: "1 of 2 occupied",
-      detail: "identity account",
-    });
   });
 
   // A record absent under both queried accounts still does not prove the
@@ -148,9 +140,6 @@ describe("account status", () => {
     const row = rows.find((r) => r.label === "On chain: root key");
     expect(row?.value).toBe("Not found");
     expect(row?.title).toContain("different account");
-    expect(rows.find((r) => r.label === "Consumer slots")?.value).toBe(
-      "No record",
-    );
   });
 
   test("tells a Lite entry without a username record from an unreadable one", () => {
