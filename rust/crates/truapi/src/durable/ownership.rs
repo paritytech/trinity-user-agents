@@ -45,6 +45,17 @@ impl Ownership {
         state.released.insert((id, tx_hash));
     }
 
+    /// Gives up attempts whose rows rolled back. Unlike [`Self::release`]
+    /// they can be owned again: a rolled-back id is handed out anew.
+    pub fn abandon_all(&self, attempts: &[(DurableTxId, H256)]) {
+        let mut state = self.state.lock();
+        for (id, tx_hash) in attempts {
+            if state.owned.get(id) == Some(tx_hash) {
+                state.owned.remove(id);
+            }
+        }
+    }
+
     /// Whether a watch owns `id`.
     pub fn is_owned(&self, id: DurableTxId) -> bool {
         self.state.lock().owned.contains_key(&id)

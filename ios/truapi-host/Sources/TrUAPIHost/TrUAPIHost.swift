@@ -882,7 +882,9 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// returns. Await it from the background task
     /// ``HostBridge/durableWorkChanged(pending:)`` asks for; a throw means
     /// recovery stopped early and the task should be retried. Cancelling the
-    /// task stops it.
+    /// Swift task does not stop the run in the core, so a background task
+    /// completes itself from its expiration handler rather than waiting for
+    /// this call to return.
     public func runDurableRecovery() async throws {
         try await inner.runDurableRecovery()
     }

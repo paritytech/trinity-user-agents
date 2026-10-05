@@ -50,7 +50,7 @@ impl GroupId {
 /// Where a transaction stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DurableTxStatus {
-    /// On the wire or about to be, with no evidence either way.
+    /// Submitted or about to be, with no evidence either way.
     Pending,
     /// Took effect at a block that is not finalized yet.
     PendingSuccess,
@@ -96,7 +96,7 @@ pub struct DurableTxEntry {
     pub domain: DomainId,
     /// The operation it belongs to, if any.
     pub group: Option<GroupId>,
-    /// Hash of the extrinsic on the wire.
+    /// Hash of the extrinsic of the current attempt.
     pub tx_hash: H256,
     /// The era it was signed with.
     pub mortality: Mortality,

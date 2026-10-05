@@ -17,11 +17,14 @@ pub struct Mortality {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum MortalityError {
     /// Eras have a power-of-two period between 4 and 65536.
-    #[error("{0} is not a mortal era period")]
+    #[error("{0} is not a mortal era period, expected a power of two from 4 to 65536")]
     InvalidPeriod(u64),
     /// An era with this period cannot be born at this block: periods above
     /// 4096 quantize the birth block, and the extrinsic would name another one.
-    #[error("no era with period {period} is born at block {birth}")]
+    #[error(
+        "no era with period {period} is born at block {birth}, expected a birth whose phase \
+         is a multiple of period / 4096"
+    )]
     UnalignedBirth {
         /// Birth block number.
         birth: u64,

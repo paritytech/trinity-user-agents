@@ -92,7 +92,7 @@ impl DurableTxEngine {
         for _ in 0..2 {
             match self.decide_round(domain, oracle, genesis, view).await {
                 Ok(0) => return,
-                Ok(_) => {}
+                Ok(_) => continue,
                 Err(error) => {
                     return warn!(domain = domain.as_str(), %error, "durable recovery round failed");
                 }

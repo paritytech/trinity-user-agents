@@ -149,43 +149,45 @@ pub fn live_domains(conn: &Connection) -> rusqlite::Result<Vec<DomainId>> {
 const HAS_LIVE: &str = "SELECT EXISTS (SELECT 1 FROM durable_tx
     WHERE status IN ('PENDING', 'PENDING_SUCCESS')) AS live";
 
-/// Whether any transaction still awaits a verdict.
-pub fn has_live(conn: &Connection) -> rusqlite::Result<bool> {
-    conn.prepare_cached(HAS_LIVE)?
-        .query_row([], |row| row.get("live"))
-}
-
-/// [`has_live`], re-read after every commit that changes it.
+/// Whether any transaction still awaits a verdict, re-read after every
+/// commit that changes it.
 pub fn observe_has_live(db: &Db) -> BoxStream<'static, Result<bool, DbError>> {
     db.observe(HAS_LIVE, |stmt| stmt.query_row([], |row| row.get("live")))
 }
 
 impl DurableTxEntry {
     fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
-        let birth = HashAndNumber {
-            hash: H256(row.get("birth_hash")?),
-            number: row.get("birth_number")?,
-        };
-        let mortality = Mortality::new(birth, row.get("period")?).map_err(|error| {
-            rusqlite::Error::FromSqlConversionFailure(0, Type::Integer, Box::new(error))
-        })?;
-        let success_number: Option<u64> = row.get("success_number")?;
-        let success_hash: Option<[u8; 32]> = row.get("success_hash")?;
         Ok(Self {
             id: DurableTxId(row.get("id")?),
             domain: DomainId::new(row.get::<_, String>("domain")?),
             group: row.get::<_, Option<String>>("group_id")?.map(GroupId::new),
             tx_hash: H256(row.get("tx_hash")?),
-            mortality,
+            mortality: mortality_from_row(row)?,
             status: row.get("status")?,
-            success_detected_at: success_number.zip(success_hash).map(|(number, hash)| {
-                HashAndNumber {
-                    hash: H256(hash),
-                    number,
-                }
-            }),
+            success_detected_at: success_from_row(row)?,
         })
     }
+}
+
+/// The era of the row's attempt, checked as [`Mortality::new`] checks it.
+fn mortality_from_row(row: &Row<'_>) -> rusqlite::Result<Mortality> {
+    let birth = HashAndNumber {
+        hash: H256(row.get("birth_hash")?),
+        number: row.get("birth_number")?,
+    };
+    Mortality::new(birth, row.get("period")?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(0, Type::Integer, Box::new(error))
+    })
+}
+
+/// The block the row's success was recorded at, when it has one.
+fn success_from_row(row: &Row<'_>) -> rusqlite::Result<Option<HashAndNumber>> {
+    let number: Option<u64> = row.get("success_number")?;
+    let hash: Option<[u8; 32]> = row.get("success_hash")?;
+    Ok(number.zip(hash).map(|(number, hash)| HashAndNumber {
+        hash: H256(hash),
+        number,
+    }))
 }
 
 impl DurableTxState {
@@ -216,7 +218,11 @@ impl FromSql for DurableTxStatus {
             "FINALIZED_SUCCESS" => Ok(Self::FinalizedSuccess),
             "FAILURE" => Ok(Self::Failure),
             other => Err(FromSqlError::Other(
-                format!("unknown durable status {other}").into(),
+                format!(
+                    "unknown durable status {other:?}, expected PENDING, PENDING_SUCCESS, \
+                     FINALIZED_SUCCESS or FAILURE"
+                )
+                .into(),
             )),
         }
     }
@@ -439,15 +445,9 @@ mod tests {
     #[test]
     fn only_domains_with_a_transaction_awaiting_a_verdict_are_live() {
         let (_dir, db) = open_db();
-        assert_eq!(
-            read(&db, |conn| Ok((live_domains(conn)?, has_live(conn)?))),
-            (vec![], false)
-        );
+        assert_eq!(read(&db, live_domains), Vec::<DomainId>::new());
         let id = register(&db, None, 1);
-        assert_eq!(
-            read(&db, |conn| Ok((live_domains(conn)?, has_live(conn)?))),
-            (vec![DOMAIN], true)
-        );
+        assert_eq!(read(&db, live_domains), vec![DOMAIN]);
 
         let observed = read(&db, move |conn| entry(conn, id)).unwrap();
         write_verdict(
@@ -456,10 +456,7 @@ mod tests {
             verdict(DurableTxStatus::FinalizedSuccess, None),
         );
 
-        assert_eq!(
-            read(&db, |conn| Ok((live_domains(conn)?, has_live(conn)?))),
-            (vec![], false)
-        );
+        assert_eq!(read(&db, live_domains), Vec::<DomainId>::new());
     }
 
     #[test]

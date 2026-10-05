@@ -59,26 +59,42 @@ pub async fn evaluate_ladder(
     if let Some(recorded) = tx.success_detected_at {
         return recorded_inclusion(tx, recorded, scope, &heads, recorded_canonical);
     }
-
-    if scope.proven_completed(tx, HeadKind::Finalized) {
-        return decided(DurableTxStatus::FinalizedSuccess, None, None);
-    }
-    if scope.proven_completed(tx, HeadKind::Best) {
-        return decided(DurableTxStatus::PendingSuccess, Some(heads.best), None);
-    }
-
     // One block past the era's death, as on Android, so a terminal verdict
     // never rests on the death block itself.
     let window_closed = heads.finalized.number > tx.mortality.death();
+    if let Some(outcome) = oracle_rules(tx, scope, &heads, window_closed) {
+        return outcome;
+    }
+    search_rule(tx, view, window_closed).await
+}
+
+/// Rules 1 to 4: what the domain's oracle proved, if it proved anything.
+fn oracle_rules(
+    tx: &DurableTxEntry,
+    scope: &dyn PassScope,
+    heads: &Heads,
+    window_closed: bool,
+) -> Option<RuleOutcome> {
+    if scope.proven_completed(tx, HeadKind::Finalized) {
+        return Some(decided(DurableTxStatus::FinalizedSuccess, None, None));
+    }
+    if scope.proven_completed(tx, HeadKind::Best) {
+        return Some(decided(
+            DurableTxStatus::PendingSuccess,
+            Some(heads.best),
+            None,
+        ));
+    }
     if window_closed && scope.proven_not_completed(tx, HeadKind::Finalized) {
-        return decided(DurableTxStatus::Failure, None, Some(FailureKind::Expired));
+        return Some(decided(
+            DurableTxStatus::Failure,
+            None,
+            Some(FailureKind::Expired),
+        ));
     }
     // Past the era the search is the only thing left that can decide it.
-    if !window_closed && scope.proven_not_completed(tx, HeadKind::Best) {
-        return decided(DurableTxStatus::Pending, None, None);
-    }
-
-    search_rule(tx, view, window_closed).await
+    let short_circuit = !window_closed && scope.proven_not_completed(tx, HeadKind::Best);
+    short_circuit.then(|| decided(DurableTxStatus::Pending, None, None))
 }
 
 /// Rule 5: nothing above decided it, so look for the transaction itself
@@ -93,7 +109,13 @@ async fn search_rule(
     if from > to {
         return decided(DurableTxStatus::Pending, None, None);
     }
-    match view.search(from, to, tx.tx_hash).await {
+    searched(view.search(from, to, tx.tx_hash).await, window_closed)
+}
+
+/// The verdict a search result supports. Absence fails the transaction only
+/// when every block of a closed window was read.
+fn searched(result: SearchResult, window_closed: bool) -> RuleOutcome {
+    match result {
         SearchResult::Found {
             block,
             outcome: Some(DispatchOutcome::Succeeded),

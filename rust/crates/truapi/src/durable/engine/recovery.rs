@@ -1,14 +1,16 @@
-//! The recovery loop: passes on every head and nudge until nothing is live.
+//! The recovery loop: passes on every head and wake until nothing is live.
 
 use futures::FutureExt;
 use futures::channel::mpsc;
 use futures::stream::{self, BoxStream, StreamExt};
-use parking_lot::Mutex;
 use subxt::utils::H256;
 use tracing::warn;
 
 use super::DurableTxEngine;
 use crate::durable::dao;
+
+/// What wakes the loop for another pass. An `Err` stops it.
+type Triggers = BoxStream<'static, Result<(), RecoveryError>>;
 
 /// Why recovery stopped while transactions were still live. The host retries.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -27,55 +29,33 @@ pub enum RecoveryError {
     },
 }
 
-/// Asks a running recovery loop for a pass without waiting for a head.
-#[derive(Default)]
-pub struct Nudges {
-    loops: Mutex<Vec<mpsc::Sender<()>>>,
-}
-
-impl Nudges {
-    /// A stream of nudges for one loop. Nudges sent while one is pending
-    /// collapse into it.
-    pub fn subscribe(&self) -> mpsc::Receiver<()> {
-        let (sender, receiver) = mpsc::channel(0);
-        self.loops.lock().push(sender);
-        receiver
-    }
-
-    /// Wakes every running loop.
-    pub fn nudge(&self) {
-        let mut loops = self.loops.lock();
-        loops.retain(|sender| !sender.is_closed());
-        for sender in loops.iter_mut() {
-            // A full channel already holds a nudge, which says the same.
-            let _ = sender.try_send(());
-        }
-    }
-}
-
 impl DurableTxEngine {
-    /// Runs recovery passes until no transaction is live: one at once, then
-    /// one per new head of any registered chain and per nudge, collapsing
-    /// whatever arrives while a pass runs. An unreadable ledger counts as
-    /// live. Fails when a head subscription does; dropping the future stops
-    /// it.
+    /// Runs recovery passes until no transaction a registered domain can
+    /// decide is live: one at once, then one per new head of any registered
+    /// chain and per wake, collapsing whatever arrives while a pass runs. An
+    /// unreadable ledger counts as live. Fails when a head subscription does;
+    /// dropping the future stops it.
     pub async fn run_until_settled(&self) -> Result<(), RecoveryError> {
-        let mut triggers = self.triggers().await?;
+        let wakes = self.recovery_wakes.subscribe();
+        self.run_pass().await;
+        if !self.has_live().await {
+            return Ok(());
+        }
+        let mut triggers = self.triggers(wakes).await?;
         loop {
+            next_trigger(&mut triggers).await?;
             self.run_pass().await;
             if !self.has_live().await {
                 return Ok(());
             }
-            next_trigger(&mut triggers).await?;
         }
     }
 
-    /// Every head of every registered chain, and every nudge. A head
-    /// subscription that ends yields an error, so the loop stops.
-    async fn triggers(
-        &self,
-    ) -> Result<BoxStream<'static, Result<(), RecoveryError>>, RecoveryError> {
-        let mut sources = vec![self.nudges.subscribe().map(Ok).boxed()];
+    /// Every head of every registered chain, and every wake. Subscribed only
+    /// after the first pass, so a ledger that is already settled needs no
+    /// head at all.
+    async fn triggers(&self, wakes: mpsc::Receiver<()>) -> Result<Triggers, RecoveryError> {
+        let mut sources = vec![wakes.map(Ok).boxed()];
         for genesis in self.registry.chains() {
             sources.push(self.head_triggers(genesis).await?);
         }
@@ -84,24 +64,14 @@ impl DurableTxEngine {
 
     /// One trigger per head of the chain with `genesis`. A failed head read
     /// is one missed head; the subscription ending is an error.
-    async fn head_triggers(
-        &self,
-        genesis: H256,
-    ) -> Result<BoxStream<'static, Result<(), RecoveryError>>, RecoveryError> {
-        let heads =
-            self.heads
-                .head_events(genesis)
-                .await
-                .map_err(|error| RecoveryError::HeadsLost {
-                    genesis,
-                    reason: error.to_string(),
-                })?;
-        let ended = stream::once(async move {
-            Err(RecoveryError::HeadsLost {
-                genesis,
-                reason: "head events ended".into(),
-            })
-        });
+    async fn head_triggers(&self, genesis: H256) -> Result<Triggers, RecoveryError> {
+        let heads = self
+            .heads
+            .head_events(genesis)
+            .await
+            .map_err(|error| heads_lost(genesis, error.to_string()))?;
+        let ended =
+            stream::once(async move { Err(heads_lost(genesis, "head events ended".into())) });
         Ok(heads
             .filter_map(move |head| async move {
                 head.map_err(|error| warn!(?genesis, %error, "durable recovery missed a head"))
@@ -112,24 +82,30 @@ impl DurableTxEngine {
             .boxed())
     }
 
-    /// Whether any transaction is live. An unreadable ledger counts as live:
-    /// abandoning transactions is far worse than one more pass.
+    /// Whether a transaction some registered domain can decide is live. Rows
+    /// of a domain without an oracle stay as they are: no pass could decide
+    /// them. An unreadable ledger counts as live: abandoning transactions is
+    /// far worse than one more pass.
     async fn has_live(&self) -> bool {
-        self.db
-            .read(|conn| Ok(dao::has_live(conn)?))
-            .await
-            .unwrap_or_else(|error| {
+        match self.db.read(|conn| Ok(dao::live_domains(conn)?)).await {
+            Ok(domains) => domains
+                .iter()
+                .any(|domain| self.registry.oracle(domain).is_some()),
+            Err(error) => {
                 warn!(%error, "durable recovery could not read the ledger");
                 true
-            })
+            }
+        }
     }
+}
+
+fn heads_lost(genesis: H256, reason: String) -> RecoveryError {
+    RecoveryError::HeadsLost { genesis, reason }
 }
 
 /// Waits for the next trigger, then takes every one already queued behind
 /// it, so heads that arrived during a pass cost one more pass, not one each.
-async fn next_trigger(
-    triggers: &mut BoxStream<'static, Result<(), RecoveryError>>,
-) -> Result<(), RecoveryError> {
+async fn next_trigger(triggers: &mut Triggers) -> Result<(), RecoveryError> {
     triggers.next().await.unwrap_or(Ok(()))?;
     while let Some(Some(trigger)) = triggers.next().now_or_never() {
         trigger?;
@@ -141,7 +117,6 @@ async fn next_trigger(
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Duration;
 
     use futures::executor::block_on;
 
@@ -281,7 +256,7 @@ mod tests {
         let running = run_in_background(&fixture.engine);
         wait_until(|| passes(&fixture) == 1, "the first pass runs at once");
 
-        fixture.engine.nudges.nudge();
+        fixture.engine.recovery_wakes.wake();
 
         assert_eq!((running.join().unwrap(), passes(&fixture)), (Ok(()), 2));
     }
@@ -340,13 +315,51 @@ mod tests {
 
     /// Android: DurableRecoveryLoopTest `an unreadable ledger keeps the loop running rather than abandoning entries`.
     #[test]
-    fn an_unreadable_ledger_keeps_the_loop_running() {
+    fn an_unreadable_ledger_counts_as_live() {
         let fixture = fixture(1);
         block_on(fixture.engine.db.close()).unwrap();
 
-        let running = run_in_background(&fixture.engine);
-        std::thread::sleep(Duration::from_millis(200));
+        assert!(block_on(fixture.engine.has_live()));
+    }
 
-        assert!(!running.is_finished());
+    /// Nothing could decide a domain without an oracle, so its rows must not
+    /// keep recovery running.
+    #[test]
+    fn live_rows_no_oracle_can_decide_do_not_keep_recovery_running() {
+        let chain = FakeChain::new(130, 140);
+        chain.script_heads();
+        let (_dir, engine, _timer) = engine_with(
+            &chain,
+            DurableRegistry::new().with_domain(
+                TEST,
+                Arc::new(crate::durable::oracle::Unobservable(GENESIS)),
+            ),
+        );
+        insert(
+            &engine.db,
+            &DomainId::from_static("orphan"),
+            extrinsic(1, 100, 64),
+        );
+
+        let running = run_in_background(&engine);
+
+        wait_until(|| running.is_finished(), "recovery returns");
+        assert_eq!(running.join().unwrap(), Ok(()));
+    }
+
+    /// Android: the launch pass runs before any head subscription, so a
+    /// settled ledger finishes even when no head can be read.
+    #[test]
+    fn a_settled_ledger_needs_no_head_subscription() {
+        let chain = FakeChain::new(130, 140);
+        let (_dir, engine, _timer) = engine_with(
+            &chain,
+            DurableRegistry::new().with_domain(
+                TEST,
+                Arc::new(crate::durable::oracle::Unobservable(GENESIS)),
+            ),
+        );
+
+        assert_eq!(block_on(engine.run_until_settled()), Ok(()));
     }
 }

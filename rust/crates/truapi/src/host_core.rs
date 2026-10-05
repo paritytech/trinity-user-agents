@@ -1046,27 +1046,18 @@ fn durable_engine(
 }
 
 /// Reports every change of the engine's pending work to the host observer,
-/// for as long as the services live.
+/// for as long as the engine lives.
 #[cfg(not(target_arch = "wasm32"))]
 fn forward_durable_work(services: &Arc<RuntimeServices>, engine: &crate::durable::DurableTxEngine) {
-    let spawner = services.spawner.clone();
     let services = Arc::downgrade(services);
-    let mut live_work = engine.live_work();
-    spawner(Box::pin(async move {
-        while let Some(pending) = live_work.next().await {
-            let Some(services) = services.upgrade() else {
-                return;
-            };
-            match pending {
-                Ok(pending) => {
-                    if let Some(observer) = services.durable_work_observer() {
-                        observer.durable_work_changed(pending);
-                    }
-                }
-                Err(error) => warn!(%error, "durable work could not be read"),
-            }
+    engine.report_work_to(move |pending| {
+        let observer = services
+            .upgrade()
+            .and_then(|services| services.durable_work_observer());
+        if let Some(observer) = observer {
+            observer.durable_work_changed(pending);
         }
-    }));
+    });
 }
 
 #[cfg(not(target_arch = "wasm32"))]
