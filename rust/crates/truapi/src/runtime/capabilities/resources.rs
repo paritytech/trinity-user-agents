@@ -21,6 +21,125 @@ use crate::runtime::{
 	versioning::version,
 };
 
+impl ProductRuntimeHost {
+    /// Resolve a durable allowance grant in the product connection's storage,
+    /// never the signing host's (potentially differently scoped) storage.
+    pub(in crate::runtime) async fn require_statement_store_allowance(
+        &self,
+        session: &crate::runtime::authority::AuthoritySession,
+        derivation_index: Option<v01::DerivationIndex>,
+    ) -> Result<(), String> {
+        let product_id = self.product_id();
+        let require_session = || {
+            if self
+                .authority
+                .session_is_current(session, Some(&product_id))
+            {
+                Ok(())
+            } else {
+                Err("Statement allowance session changed".to_string())
+            }
+        };
+        require_session()?;
+        let service = self.permissions_service();
+        let request = PermissionAuthorizationRequest::StatementStoreAllowance {
+            derivation_index: derivation_index.clone(),
+        };
+        let mut status = service
+            .authorization_status(&request)
+            .await
+            .map_err(|err| {
+                format!(
+                    "statement allowance authorization read failed: {}",
+                    err.reason
+                )
+            })?;
+        require_session()?;
+        if status == PermissionAuthorizationStatus::NotDetermined {
+            let resource = match derivation_index {
+                Some(index) => v01::AllocatableResource::ProductStatementStoreAllowance(index),
+                None => v01::AllocatableResource::StatementStoreAllowance,
+            };
+            let confirmed = self
+                .platform
+                .confirm_user_action(UserConfirmationReview::ResourceAllocation(
+                    ResourceAllocationReview {
+                        calling_product_id: product_id.clone(),
+                        resources: vec![resource],
+                    },
+                ))
+                .await
+                .map_err(|err| {
+                    format!("statement allowance confirmation failed: {}", err.reason)
+                })?;
+            require_session()?;
+            // An administrative decision made while the prompt was open wins.
+            status = service
+                .authorization_status(&request)
+                .await
+                .map_err(|err| {
+                    format!(
+                        "statement allowance authorization read failed: {}",
+                        err.reason
+                    )
+                })?;
+            require_session()?;
+            if status != PermissionAuthorizationStatus::NotDetermined {
+                return Err(
+                    "Statement allowance authorization changed during confirmation".to_string(),
+                );
+            }
+            status = if confirmed {
+                PermissionAuthorizationStatus::Authorized
+            } else {
+                PermissionAuthorizationStatus::Denied
+            };
+            service
+                .set_authorization_status(&request, status)
+                .await
+                .map_err(|err| {
+                    format!(
+                        "statement allowance authorization write failed: {}",
+                        err.reason
+                    )
+                })?;
+            require_session()?;
+        }
+        if status != PermissionAuthorizationStatus::Authorized {
+            return Err("Statement allowance authorization denied".to_string());
+        }
+        Ok(())
+    }
+
+    pub(in crate::runtime) async fn check_statement_store_allowance(
+        &self,
+        session: &crate::runtime::authority::AuthoritySession,
+        derivation_index: Option<v01::DerivationIndex>,
+    ) -> Result<(), String> {
+        let status = self
+            .permission_authorization_status(
+                PermissionAuthorizationRequest::StatementStoreAllowance { derivation_index },
+            )
+            .await
+            .map_err(|err| {
+                format!(
+                    "statement allowance authorization read failed: {}",
+                    err.reason
+                )
+            })?;
+        if !self
+            .authority
+            .session_is_current(session, Some(&self.product_id()))
+        {
+            return Err("Statement allowance session changed".to_string());
+        }
+        if status != PermissionAuthorizationStatus::Authorized {
+            return Err("Statement allowance authorization denied".to_string());
+        }
+        Ok(())
+    }
+}
+
 #[truapi::async_trait]
 impl ResourceAllocation for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "resource_allocation.request"))]
@@ -38,8 +157,12 @@ impl ResourceAllocation for ProductRuntimeHost {
 					})
 				})?;
 
+        let product_id = self.product_id();
         let require_session = || {
-            if self.authority.current_session().as_ref() == Some(&session) {
+            if self
+                .authority
+                .session_is_current(&session, Some(&product_id))
+            {
                 Ok(())
             } else {
                 Err(CallError::HostFailure {
@@ -79,12 +202,13 @@ impl ResourceAllocation for ProductRuntimeHost {
         // A withdrawn call stops waiting on the review and authorizes nothing.
         let confirmed = until_cancelled(
             cx,
-            self.platform.confirm_user_action(UserConfirmationReview::ResourceAllocation(
-                ResourceAllocationReview {
-                    calling_product_id: self.product_id(),
-                    resources: inner.resources.clone(),
-                },
-            )),
+            self.platform
+                .confirm_user_action(UserConfirmationReview::ResourceAllocation(
+                    ResourceAllocationReview {
+                        calling_product_id: product_id.clone(),
+                        resources: inner.resources.clone(),
+                    },
+                )),
         )
         .await
         .map_err(|err| {
@@ -149,7 +273,7 @@ impl ResourceAllocation for ProductRuntimeHost {
         remote_authority_call(
             &cx,
             self.authority
-                .allocate_resources(&cx, &session, self.product_id(), inner),
+                .allocate_resources(&cx, &session, product_id, inner),
         )
         .await
         .map(HostRequestResourceAllocationResponse::V1)

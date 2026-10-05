@@ -1549,7 +1549,10 @@ impl ProductRuntimeHost {
         let resolved =
             resolve_contact_accounts(&self.services, platform.as_ref(), &handles, requested)
                 .await?;
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(ContactResolutionError::NotConnected);
         }
         Ok(resolved)
@@ -1664,7 +1667,10 @@ impl Contacts for ProductRuntimeHost {
         // Read before the picker opens: a removal signalled while the user is
         // choosing must not be undone by caching their choice.
         let generation = self.services.contact_handles.generation();
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(CallError::Domain(wrap(
                 v01::HostContactsPickError::NotConnected,
             )));
@@ -1676,7 +1682,10 @@ impl Contacts for ProductRuntimeHost {
                     reason: "contact picker interrupted".into(),
                 })
             })?;
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(CallError::Domain(wrap(
                 v01::HostContactsPickError::NotConnected,
             )));
@@ -1731,7 +1740,10 @@ impl Contacts for ProductRuntimeHost {
             }),
         })?;
         let generation = self.services.contact_handles.generation();
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(error(Error::NotConnected));
         }
         let resolved = until_cancelled(
@@ -1744,7 +1756,10 @@ impl Contacts for ProductRuntimeHost {
                 reason: "contact lookup interrupted".into(),
             })
         })?;
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(error(Error::NotConnected));
         }
         if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
@@ -1775,7 +1790,10 @@ impl Contacts for ProductRuntimeHost {
                 reason: "contact picker interrupted".into(),
             })
         })?;
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(error(Error::NotConnected));
         }
         if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
@@ -1850,7 +1868,10 @@ impl Contacts for ProductRuntimeHost {
             return Err(error(Error::NotConnected));
         }
         let generation = self.services.contact_handles.generation();
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(error(Error::NotConnected));
         }
         let requested: Vec<_> = request.slots.iter().map(|slot| slot.handle.bytes).collect();
@@ -1864,7 +1885,10 @@ impl Contacts for ProductRuntimeHost {
                 reason: "contact lookup interrupted".into(),
             })
         })?;
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(error(Error::NotConnected));
         }
         if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
@@ -1904,9 +1928,12 @@ impl Contacts for ProductRuntimeHost {
                 },
             )
             .await;
-        if self.authority.current_session() != session
-            || cx.cancel().is_cancelled()
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) || cx.cancel().is_cancelled()
             || placement.is_closed()
+            || self.services.contact_handles.generation() != generation
         {
             let _ = platform
                 .place_contact_labels(

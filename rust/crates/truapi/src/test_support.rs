@@ -105,6 +105,7 @@ pub struct StubPlatform {
     pub remote_permission_denied: bool,
     pub remote_permission_decisions:
         Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
+    pub remote_permission_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Every `remote_permission` request, in order, so a test can assert which
     /// domains reached the prompt and that a stored grant suppresses a re-ask.
     pub remote_permission_requests: Arc<Mutex<Vec<v01::RemotePermissionRequest>>>,
@@ -1312,33 +1313,37 @@ impl PlatformPermissions for StubPlatform {
 			.unwrap_or(crate::platform::PermissionDecision::AllowAlways))
 	}
 
-	async fn remote_permission(
-		&self,
-		product: &ProductContext,
-		request: v01::RemotePermissionRequest,
-	) -> Result<crate::platform::PermissionDecision, v01::GenericError> {
-		self.permission_prompt_products
-			.lock()
-			.expect("permission prompt products mutex poisoned")
-			.push(product.clone());
-		self.remote_permission_requests
-			.lock()
-			.expect("remote permission list mutex poisoned")
-			.push(request);
-		if let Some(decision) = self
-			.remote_permission_decisions
-			.lock()
-			.expect("remote permission decisions mutex poisoned")
-			.pop_front()
-		{
-			return Ok(decision);
-		}
-		Ok(if self.remote_permission_denied {
-			crate::platform::PermissionDecision::Deny
-		} else {
-			crate::platform::PermissionDecision::AllowAlways
-		})
-	}
+    async fn remote_permission(
+        &self,
+        product: &ProductContext,
+        request: v01::RemotePermissionRequest,
+    ) -> Result<crate::platform::PermissionDecision, v01::GenericError> {
+        self.permission_prompt_products
+            .lock()
+            .expect("permission prompt products mutex poisoned")
+            .push(product.clone());
+        self.remote_permission_requests
+            .lock()
+            .expect("remote permission list mutex poisoned")
+            .push(request);
+        let gate = self.remote_permission_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
+        if let Some(decision) = self
+            .remote_permission_decisions
+            .lock()
+            .expect("remote permission decisions mutex poisoned")
+            .pop_front()
+        {
+            return Ok(decision);
+        }
+        Ok(if self.remote_permission_denied {
+            crate::platform::PermissionDecision::Deny
+        } else {
+            crate::platform::PermissionDecision::AllowAlways
+        })
+    }
 }
 
 #[crate::platform::async_trait]

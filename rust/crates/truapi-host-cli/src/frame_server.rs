@@ -741,13 +741,14 @@ mod tests {
 		}
 	}
 
-	#[derive(Default)]
-	struct PendingRuntime {
-		dispatch_started: Notify,
-		second_dispatch_finished: Notify,
-		dispatch_cancelled: Arc<AtomicBool>,
-		dispose_calls: AtomicUsize,
-	}
+    #[derive(Default)]
+    struct PendingRuntime {
+        dispatch_started: Notify,
+        second_dispatch_finished: Notify,
+        dispatch_cancelled: Arc<AtomicBool>,
+        dispose_calls: AtomicUsize,
+        ui: Option<crate::terminal_ui::UiHandle>,
+    }
 
 	struct DispatchCancellation(Arc<AtomicBool>);
 
@@ -757,17 +758,22 @@ mod tests {
 		}
 	}
 
-	#[async_trait::async_trait]
-	impl ConnectionRuntime for PendingRuntime {
-		async fn receive_frame(&self, frame: Vec<u8>) -> Result<(), ProductRuntimeError> {
-			if frame != [0] {
-				self.second_dispatch_finished.notify_one();
-				return Ok(());
-			}
-			let _cancellation = DispatchCancellation(self.dispatch_cancelled.clone());
-			self.dispatch_started.notify_one();
-			std::future::pending().await
-		}
+    #[async_trait::async_trait]
+    impl ConnectionRuntime for PendingRuntime {
+        async fn receive_frame(&self, frame: Vec<u8>) -> Result<(), ProductRuntimeError> {
+            if frame != [0] {
+                self.second_dispatch_finished.notify_one();
+                return Ok(());
+            }
+            let _cancellation = DispatchCancellation(self.dispatch_cancelled.clone());
+            self.dispatch_started.notify_one();
+            if let Some(ui) = &self.ui {
+                ui.confirm("sign raw", "pending product payload").await;
+                Ok(())
+            } else {
+                std::future::pending().await
+            }
+        }
 
 		fn dispose(&self) {
 			self.dispose_calls.fetch_add(1, Ordering::SeqCst);
@@ -983,50 +989,65 @@ mod tests {
 		Ok(())
 	}
 
-	#[tokio::test]
-	async fn disconnect_cancels_pending_dispatch_and_disposes_runtime() -> Result<()> {
-		let listener = TcpListener::bind("127.0.0.1:0").await?;
-		let address = listener.local_addr()?;
-		let runtime = Arc::new(PendingRuntime::default());
-		let server_runtime = runtime.clone();
-		let product = ProductSelection::new("localhost:3000".into(), ProductExecutionKind::App)?;
-		let product_updates = product.subscribe();
-		let server = tokio::spawn(async move {
-			let (stream, _) = listener.accept().await?;
-			let websocket = accept_async(stream).await?;
-			let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
-			let result = drive_connection(
-				websocket,
-				server_runtime,
-				None,
-				product_updates,
-				outbound_tx,
-				outbound_rx,
-			)
-			.await;
-			drop(product);
-			result
-		});
+    #[tokio::test]
+    async fn disconnect_cancels_pending_dispatch_and_disposes_runtime() -> Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let (mut ui, handle) = crate::terminal_ui::TerminalUi::new(
+            "testnet",
+            "localhost:3000",
+            "default",
+            Vec::new(),
+            "info".into(),
+        );
+        let runtime = Arc::new(PendingRuntime {
+            ui: Some(handle),
+            ..PendingRuntime::default()
+        });
+        let server_runtime = runtime.clone();
+        let product = ProductSelection::new("localhost:3000".into(), ProductExecutionKind::App)?;
+        let product_updates = product.subscribe();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await?;
+            let websocket = accept_async(stream).await?;
+            let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
+            let result = drive_connection(
+                websocket,
+                server_runtime,
+                None,
+                product_updates,
+                outbound_tx,
+                outbound_rx,
+            )
+            .await;
+            drop(product);
+            result
+        });
 
-		let stream = TcpStream::connect(address).await?;
-		let (mut websocket, _) = client_async("ws://localhost/", stream).await?;
-		websocket.send(Message::Binary(vec![0])).await?;
-		tokio::time::timeout(Duration::from_secs(1), runtime.dispatch_started.notified()).await?;
-		websocket.send(Message::Binary(vec![1])).await?;
-		tokio::time::timeout(Duration::from_secs(1), runtime.second_dispatch_finished.notified())
-			.await?;
-		drop(websocket);
+        let stream = TcpStream::connect(address).await?;
+        let (mut websocket, _) = client_async("ws://localhost/", stream).await?;
+        websocket.send(Message::Binary(vec![0])).await?;
+        tokio::time::timeout(Duration::from_secs(1), runtime.dispatch_started.notified()).await?;
+        assert!(ui.has_pending_approval());
+        websocket.send(Message::Binary(vec![1])).await?;
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            runtime.second_dispatch_finished.notified(),
+        )
+        .await?;
+        drop(websocket);
 
-		tokio::time::timeout(Duration::from_secs(1), server).await???;
-		assert_eq!(
-			(
-				runtime.dispose_calls.load(Ordering::SeqCst),
-				runtime.dispatch_cancelled.load(Ordering::SeqCst),
-			),
-			(1, true),
-		);
-		Ok(())
-	}
+        tokio::time::timeout(Duration::from_secs(1), server).await???;
+        assert!(!ui.has_pending_approval());
+        assert_eq!(
+            (
+                runtime.dispose_calls.load(Ordering::SeqCst),
+                runtime.dispatch_cancelled.load(Ordering::SeqCst),
+            ),
+            (1, true),
+        );
+        Ok(())
+    }
 
 	#[tokio::test]
 	async fn a_loopback_tcp_client_may_omit_origin() -> Result<()> {

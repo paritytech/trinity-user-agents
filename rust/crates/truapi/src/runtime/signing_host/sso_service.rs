@@ -469,21 +469,43 @@ impl SigningHostSsoService {
 		allocation_reply(payload, failures)
 	}
 
-	/// Build a signed transaction for a product account.
-	async fn create_transaction(
-		&self,
-		cx: &SsoRequestContext,
-		request: CreateTransactionRequest,
-	) -> CreateTransactionResponse {
-		let CreateTransactionPayload::V1(payload) = request.payload;
-		let payload = payload.into_product_payload();
-		self.serve_create_transaction(
-			cx,
-			CreateTransactionReview::Product { calling_product_id: None, payload: payload.clone() },
-			CreateTransactionAuthorityRequest::Product(payload),
-		)
-		.await
-	}
+            self.signing_host
+                .require_current_product_session(&cx.session, &request.calling_product_id)
+                .map_err(|err| err.to_string())?;
+            let mut outcomes = Vec::with_capacity(request.resources.len());
+            for resource in request.resources {
+                self.signing_host
+                    .require_current_product_session(&cx.session, &request.calling_product_id)
+                    .map_err(|err| err.to_string())?;
+                if cx.call.cancel().is_cancelled() {
+                    return Err(WITHDRAWN.to_string());
+                }
+                let outcome = self
+                    .allocate(
+                        &cx.session,
+                        &request.calling_product_id,
+                        resource,
+                        request.on_existing,
+                    )
+                    .await;
+                self.signing_host
+                    .require_current_product_session(&cx.session, &request.calling_product_id)
+                    .map_err(|err| err.to_string())?;
+                outcomes.push(outcome.unwrap_or_else(|err| {
+                    let reason = err.to_string();
+                    warn!(%reason, "resource allocation item failed");
+                    failures.push(reason);
+                    SsoAllocationOutcome::NotAvailable
+                }));
+            }
+            Ok(outcomes)
+        }
+        .await;
+        if let Err(reason) = &payload {
+            warn!(%reason, "resource allocation request failed");
+        }
+        allocation_reply(payload, failures)
+    }
 
 	/// Build a signed transaction for the wallet's identity account.
 	async fn create_transaction_with_legacy_account(
@@ -638,7 +660,7 @@ impl SigningHostSsoService {
         };
 
         self.signing_host
-            .require_current_session(&cx.session)
+            .require_current_product_session(&cx.session, &request.calling_product_id)
             .map_err(|_| WireError::V1(api::HostProductDeviceChatError::NotConnected))?;
         let calling_product_id = normalize_product_identifier(&request.calling_product_id)
             .map_err(|_| WireError::V1(api::HostProductDeviceChatError::InvalidRequest))?;

@@ -9,79 +9,68 @@ use crate::platform::{
 	AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, HostScan,
 	PermissionAuthorizationRequest, ProductExecutionKind,
 };
-use parity_scale_codec::{Decode, Encode};
-use truapi::{
-	api::{
-		Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
-		Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
-	},
-	v02,
-	versioned::{
-		account::{
-			HostAccountConnectionStatusSubscribeItem, HostAccountCreateProofError,
-			HostAccountCreateProofResponse, HostAccountGetAliasError, HostAccountGetAliasResponse,
-			HostAccountGetError, HostAccountGetRequest, HostAccountGetResponse,
-			HostAccountListRingVrfKeysRequest, HostAccountRingVrfSignError,
-			HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse, HostAccountSignVrfError,
-			HostAccountSignVrfRequest, HostAccountSignVrfResponse, HostGetLegacyAccountsRequest,
-			HostGetLegacyAccountsResponse, HostGetUserIdError, HostGetUserIdRequest,
-			HostGetUserIdResponse,
-		},
-		chain::{
-			RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
-			RemoteChainTransactionBroadcastError, RemoteChainTransactionBroadcastRequest,
-			RemoteChainTransactionBroadcastResponse,
-		},
-		entropy::{HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse},
-		expanded_card::HostExpandedCardSetFaceShownRequest,
-		game::{
-			HostCancelNextGameError, HostCancelNextGameRequest, HostCancelNextGameResponse,
-			HostRemindNextGameError, HostRemindNextGameRequest, HostRemindNextGameResponse,
-		},
-		local_storage::{
-			HostLocalStorageChangeItem, HostLocalStorageClearRequest, HostLocalStorageReadError,
-			HostLocalStorageReadRequest, HostLocalStorageReadResponse,
-			HostLocalStorageSubscribeError, HostLocalStorageSubscribeRequest,
-			HostLocalStorageWriteRequest,
-		},
-		notifications::{
-			HostPushNotificationCancelRequest, HostPushNotificationCancelResponse,
-			HostPushNotificationError, HostPushNotificationRequest, HostPushNotificationResponse,
-		},
-		permissions::{HostDevicePermissionRequest, HostDevicePermissionResponse},
-		preimage::{
-			RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
-			RemotePreimageSubmitError, RemotePreimageSubmitRequest,
-		},
-		resource_allocation::{
-			HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
-			HostRequestResourceAllocationResponse,
-		},
-		scanner::{HostScannerScanError, HostScannerScanRequest, HostScannerScanResponse},
-		signing::{
-			HostCreateTransactionError, HostCreateTransactionRequest,
-			HostCreateTransactionResponse, HostCreateTransactionWithLegacyAccountError,
-			HostCreateTransactionWithLegacyAccountRequest,
-			HostCreateTransactionWithLegacyAccountResponse, HostSignPayloadError,
-			HostSignPayloadRequest, HostSignPayloadResponse, HostSignPayloadWithLegacyAccountError,
-			HostSignPayloadWithLegacyAccountRequest, HostSignRawError, HostSignRawRequest,
-			HostSignRawResponse, HostSignRawWithLegacyAccountError,
-			HostSignRawWithLegacyAccountRequest, HostSignRawWithLegacyAccountResponse,
-		},
-		statement_store::{
-			RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-		},
-		system::{
-			HostFeatureSupportedRequest, HostFeatureSupportedResponse,
-			HostGetProductContextRequest, HostGetProductContextResponse, HostNavigateToError,
-			HostNavigateToRequest, HostNavigateToResponse,
-		},
-		theme::HostThemeSubscribeItem,
-		worker::{
-			HostWorkerBeginOperationRequest, HostWorkerBeginOperationResponse,
-			HostWorkerEndOperationRequest,
-		},
-	},
+use crate::runtime::signing_host::LocalActivation;
+use parity_scale_codec::Encode;
+use truapi::api::{
+    Account, Chain, Entropy, LocalStorage, Notifications, Permissions, Preimage,
+    ResourceAllocation, Signing, StatementStore, System, Theme, Worker,
+};
+use truapi::v02;
+use truapi::versioned::account::{
+    HostAccountConnectionStatusSubscribeItem, HostAccountCreateProofError,
+    HostAccountCreateProofResponse, HostAccountGetAliasError, HostAccountGetAliasResponse,
+    HostAccountGetRequest, HostAccountGetResponse, HostAccountRingVrfSignError,
+    HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse, HostAccountSignVrfRequest,
+    HostAccountSignVrfResponse, HostGetLegacyAccountsRequest, HostGetLegacyAccountsResponse,
+    HostGetUserIdError, HostGetUserIdRequest, HostGetUserIdResponse,
+};
+use truapi::versioned::chain::{
+    RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
+    RemoteChainTransactionBroadcastError, RemoteChainTransactionBroadcastRequest,
+    RemoteChainTransactionBroadcastResponse,
+};
+use truapi::versioned::entropy::{
+    HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse,
+};
+use truapi::versioned::local_storage::{
+    HostLocalStorageChangeItem, HostLocalStorageClearRequest, HostLocalStorageReadError,
+    HostLocalStorageReadRequest, HostLocalStorageReadResponse, HostLocalStorageSubscribeError,
+    HostLocalStorageSubscribeRequest, HostLocalStorageWriteRequest,
+};
+use truapi::versioned::notifications::{
+    HostPushNotificationCancelRequest, HostPushNotificationCancelResponse,
+    HostPushNotificationError, HostPushNotificationRequest, HostPushNotificationResponse,
+};
+use truapi::versioned::permissions::{HostDevicePermissionRequest, HostDevicePermissionResponse};
+use truapi::versioned::preimage::{
+    RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
+    RemotePreimageSubmitRequest,
+};
+use truapi::versioned::resource_allocation::{
+    HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
+    HostRequestResourceAllocationResponse,
+};
+use truapi::versioned::signing::{
+    HostCreateTransactionError, HostCreateTransactionRequest, HostCreateTransactionResponse,
+    HostCreateTransactionWithLegacyAccountError, HostCreateTransactionWithLegacyAccountRequest,
+    HostCreateTransactionWithLegacyAccountResponse, HostSignPayloadError, HostSignPayloadRequest,
+    HostSignPayloadResponse, HostSignPayloadWithLegacyAccountError,
+    HostSignPayloadWithLegacyAccountRequest, HostSignRawError, HostSignRawRequest,
+    HostSignRawResponse, HostSignRawWithLegacyAccountError, HostSignRawWithLegacyAccountRequest,
+    HostSignRawWithLegacyAccountResponse,
+};
+use truapi::versioned::statement_store::{
+    RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
+};
+use truapi::versioned::system::{
+    HostFeatureSupportedRequest, HostFeatureSupportedResponse, HostGetProductContextRequest,
+    HostGetProductContextResponse, HostNavigateToError, HostNavigateToRequest,
+    HostNavigateToResponse,
+};
+use truapi::versioned::theme::HostThemeSubscribeItem;
+use truapi::versioned::worker::{
+    HostWorkerBeginOperationRequest, HostWorkerBeginOperationResponse,
+    HostWorkerEndOperationRequest,
 };
 
 use super::{
@@ -827,6 +816,8 @@ struct AudienceContactsPlatform {
     after_lookup: parking_lot::Mutex<Option<Box<dyn FnOnce() + Send>>>,
     after_pick: parking_lot::Mutex<Option<Box<dyn FnOnce() + Send>>>,
     after_labels: parking_lot::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    pick_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+    labels_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
 }
 
 impl AudienceContactsPlatform {
@@ -842,6 +833,8 @@ impl AudienceContactsPlatform {
             after_lookup: Default::default(),
             after_pick: Default::default(),
             after_labels: Default::default(),
+            pick_gate: Default::default(),
+            labels_gate: Default::default(),
         })
     }
 }
@@ -866,6 +859,10 @@ impl crate::platform::ContactsPlatform for AudienceContactsPlatform {
         selection: crate::platform::ContactSelection,
     ) -> Result<crate::platform::HostContactsPick, truapi::latest::GenericError> {
         self.selected.lock().push(selection.selected);
+        let gate = self.pick_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
         if let Some(changed) = self.after_pick.lock().take() {
             changed();
         }
@@ -878,6 +875,10 @@ impl crate::platform::ContactsPlatform for AudienceContactsPlatform {
         placed: crate::platform::PlacedContactLabels,
     ) -> Result<bool, truapi::latest::HostContactsPlaceLabelsError> {
         self.labels.lock().push(placed);
+        let gate = self.labels_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
         if let Some(changed) = self.after_labels.lock().take() {
             changed();
         }
@@ -894,6 +895,146 @@ fn pick_many(
         &CallContext::default(),
         HostContactsPickManyRequest::V1(truapi::latest::HostContactsPickManyRequest { selected }),
     ))
+}
+
+fn local_contacts_host(
+    contacts: Arc<AudienceContactsPlatform>,
+) -> (ProductRuntimeHost, Arc<SigningHostRole>) {
+    let mut host = contacts_host("seity.dot", stub_platform(), Some(contacts), false);
+    let authority = SigningHostRole::new(host.services.clone(), "dot".into(), None);
+    futures::executor::block_on(authority.activate_local_session(vec![0xAB; 16])).unwrap();
+    host.authority = authority.clone();
+    (host, authority)
+}
+
+fn revoke_contact_authority(authority: &SigningHostRole, product: Option<&str>) {
+    futures::executor::block_on(async {
+        if let Some(product) = product {
+            authority.clear_product_state(product).await.unwrap();
+        } else {
+            authority
+                .activate_local_session(vec![0xAB; 16])
+                .await
+                .unwrap();
+        }
+    });
+}
+
+#[test]
+fn local_contact_selection_preserves_directory_and_authority_fences() {
+    for revoked_product in [Some("other.dot"), Some("seity.dot"), None] {
+        let account = [10; 32];
+        let contacts = AudienceContactsPlatform::new(
+            vec![account],
+            crate::platform::HostContactsPick::Picked {
+                accounts: vec![account],
+            },
+        );
+        let (host, authority) = local_contacts_host(contacts.clone());
+        let (_, handles) = host.contacts_picker().unwrap();
+        let handle = truapi::latest::ContactHandle {
+            bytes: handles.mint(&account),
+        };
+        let (release, gate) = futures::channel::oneshot::channel();
+        *contacts.pick_gate.lock().unwrap() = Some(gate);
+        let cx = CallContext::default();
+        let mut call = Box::pin(Contacts::pick_many(
+            &host,
+            &cx,
+            HostContactsPickManyRequest::V1(truapi::latest::HostContactsPickManyRequest {
+                selected: vec![],
+            }),
+        ));
+        assert!(call.as_mut().now_or_never().is_none());
+        revoke_contact_authority(&authority, revoked_product);
+        release.send(()).unwrap();
+        let result = futures::executor::block_on(call);
+        if revoked_product == Some("other.dot") {
+            // Product clearing also invalidates the shared contact directory.
+            // Retry that selection, but do not report the account disconnected.
+            assert!(matches!(
+                result,
+                Err(CallError::Domain(HostContactsPickManyError::V1(
+                    truapi::latest::HostContactsPickManyError::Unknown { .. }
+                )))
+            ));
+            assert_eq!(
+                host.services.contact_handles.get(&handle.bytes, &handles),
+                None
+            );
+            let HostContactsPickManyResponse::V1(response) = pick_many(&host, vec![]).unwrap();
+            assert_eq!(
+                response.outcome,
+                truapi::latest::ContactPickManyOutcome::Picked {
+                    handles: vec![handle],
+                }
+            );
+            assert_eq!(
+                host.services.contact_handles.get(&handle.bytes, &handles),
+                Some(account)
+            );
+        } else {
+            assert_eq!(
+                result,
+                Err(CallError::Domain(HostContactsPickManyError::V1(
+                    truapi::latest::HostContactsPickManyError::NotConnected,
+                )))
+            );
+            assert_eq!(
+                host.services.contact_handles.get(&handle.bytes, &handles),
+                None
+            );
+        }
+    }
+}
+
+#[test]
+fn local_contact_labels_withdraw_on_product_or_directory_revocation() {
+    for revoked_product in [Some("other.dot"), Some("seity.dot"), None] {
+        let account = [10; 32];
+        let contacts = AudienceContactsPlatform::new(
+            vec![account],
+            crate::platform::HostContactsPick::Dismissed,
+        );
+        let (host, authority) = local_contacts_host(contacts.clone());
+        let (_, handles) = host.contacts_picker().unwrap();
+        let (release, gate) = futures::channel::oneshot::channel();
+        *contacts.labels_gate.lock().unwrap() = Some(gate);
+        let rect = truapi::latest::AvatarRect {
+            x: 0,
+            y: 0,
+            width: 180,
+            height: 24,
+        };
+        let cx = CallContext::default();
+        let mut call = Box::pin(Contacts::place_labels(
+            &host,
+            &cx,
+            HostContactsPlaceLabelsRequest::V1(truapi::latest::HostContactsPlaceLabelsRequest {
+                surface_width: 300,
+                surface_height: 200,
+                slots: vec![truapi::latest::ContactLabelSlot {
+                    slot: 0,
+                    handle: truapi::latest::ContactHandle {
+                        bytes: handles.mint(&account),
+                    },
+                    rect,
+                    clip: rect,
+                }],
+            }),
+        ));
+        assert!(call.as_mut().now_or_never().is_none());
+        revoke_contact_authority(&authority, revoked_product);
+        release.send(()).unwrap();
+        let result = futures::executor::block_on(call);
+        assert_eq!(
+            result,
+            Err(CallError::Domain(HostContactsPlaceLabelsError::V1(
+                truapi::latest::HostContactsPlaceLabelsError::NotConnected,
+            )))
+        );
+        assert!(contacts.labels.lock().last().unwrap().labels.is_empty());
+    }
 }
 
 #[test]

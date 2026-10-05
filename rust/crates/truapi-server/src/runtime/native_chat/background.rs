@@ -25,7 +25,7 @@ const RECONCILE_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_RETRY: Duration = Duration::from_secs(30);
 
 pub(super) struct Recovery {
-    session: Vec<u8>,
+    session_valid: Arc<dyn Fn() -> bool + Send + Sync>,
     active: Arc<AtomicBool>,
     abort: AbortHandle,
 }
@@ -55,8 +55,7 @@ impl NativeChatRegistry {
             return;
         }
         if recoveries.get(&key).is_some_and(|recovery| {
-            recovery.session == context.session.validation_id
-                && recovery.active.load(Ordering::Acquire)
+            (recovery.session_valid)() && recovery.active.load(Ordering::Acquire)
         }) {
             return;
         }
@@ -70,7 +69,7 @@ impl NativeChatRegistry {
         recoveries.insert(
             key,
             Recovery {
-                session: context.session.validation_id.clone(),
+                session_valid: context.session_valid.clone(),
                 active: active.clone(),
                 abort,
             },

@@ -408,15 +408,17 @@ pub trait ProductAuthority: Send + Sync {
 	/// Current account-authority session, if connected.
 	fn current_session(&self) -> Option<AuthoritySession>;
 
-	/// Seed a product subtree for authority tests.
-	#[cfg(test)]
-	fn cache_product_subtree_for_test(
-		&self,
-		_session: &SessionInfo,
-		_product_id: &ProductId,
-		_public_key: [u8; 32],
-	) {
-	}
+    /// Whether a snapshot still authorizes work for this product, or for the
+    /// account itself when no product is supplied.
+    fn session_is_current(&self, session: &AuthoritySession, _product_id: Option<&str>) -> bool {
+        self.current_session().as_ref() == Some(session)
+    }
+
+    /// Shared session holder owned by this authority.
+    ///
+    /// Product runtimes use it for connection-status subscriptions. The
+    /// concrete authority keeps ownership of the actual session material.
+    fn session_state(&self) -> Arc<SessionState>;
 
 	/// Resolve the public key for a product's hard subtree.
 	async fn product_subtree_public_key(
