@@ -200,6 +200,8 @@ pub struct EventCallbacks {
     pub worker_demand: Mutex<Vec<(String, WorkerTransition)>>,
     /// Devices reported as paired, in arrival order.
     pub paired_devices: Mutex<Vec<PairedSsoPeer>>,
+    /// Every `durable_work_changed` report, in order.
+    pub durable_work: Mutex<Vec<bool>>,
     /// Capability this host reports as refused by the OS, if any.
     pub os_refused: Option<v01::HostDevicePermissionRequest>,
     /// Configurable prompt outcome for grant, denial, and callback failure tests.
@@ -252,6 +254,7 @@ impl EventCallbacks {
             chain_closes: Mutex::new(Vec::new()),
             worker_demand: Mutex::new(Vec::new()),
             paired_devices: Mutex::new(Vec::new()),
+            durable_work: Mutex::new(Vec::new()),
             os_refused: None,
             remote_permission_result: Ok(PermissionDecision::Deny),
             remote_permission_reply: Mutex::new(None),
@@ -280,6 +283,13 @@ impl HostCallbacks for EventCallbacks {
             .lock()
             .expect("paired device mutex poisoned")
             .push(device);
+    }
+
+    fn durable_work_changed(&self, pending: bool) {
+        self.durable_work
+            .lock()
+            .expect("durable work mutex poisoned")
+            .push(pending);
     }
     async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
         Ok(())
@@ -1923,6 +1933,7 @@ fn start_ws_bridge_twice_returns_already_running() {
 
         fn on_core_log(&self, _marker: String, _detail: String) {}
         fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
+        fn durable_work_changed(&self, _pending: bool) {}
         fn device_paired(&self, _device: PairedSsoPeer) {}
         async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
             Ok(())
@@ -2098,6 +2109,7 @@ fn pending_permission_decision_does_not_stall_bridge() {
 
         fn on_core_log(&self, _marker: String, _detail: String) {}
         fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
+        fn durable_work_changed(&self, _pending: bool) {}
         fn device_paired(&self, _device: PairedSsoPeer) {}
         async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
             Ok(())

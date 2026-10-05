@@ -77,6 +77,26 @@ pub enum NativeCoreDatabaseError {
     },
 }
 
+/// Why durable recovery stopped while transactions were still live. The host
+/// retries with backoff.
+#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
+pub enum NativeDurableRecoveryError {
+    /// Recovery could not keep running.
+    #[error("durable recovery stopped: {reason}")]
+    Stopped {
+        /// What failed.
+        reason: String,
+    },
+}
+
+impl From<crate::durable::RecoveryError> for NativeDurableRecoveryError {
+    fn from(error: crate::durable::RecoveryError) -> Self {
+        Self::Stopped {
+            reason: error.to_string(),
+        }
+    }
+}
+
 impl From<crate::store::DbError> for NativeCoreDatabaseError {
     fn from(error: crate::store::DbError) -> Self {
         Self::Unavailable {

@@ -60,6 +60,7 @@ import uniffi.truapi.HostCallbacks
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.NativeChatCallbacks
 import uniffi.truapi.NativeCoreDatabaseException
+import uniffi.truapi.NativeDurableRecoveryException
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.NativePocketCallbacks
 import uniffi.truapi.NativePocketRemoval
@@ -333,6 +334,16 @@ interface HostBridge {
      */
     fun devicePaired(device: PairedSsoPeer) {}
 
+    /**
+     * Whether the core has durable transactions still awaiting a verdict.
+     * While [pending] is true, keep a background task running that awaits
+     * [TrUAPIHostRuntime.runDurableRecovery]; false means nothing needs it.
+     * Reported on change, starting with the state the runtime finds at
+     * launch. Runtime-wide, like [workerDemandChanged], and arrives on a core
+     * thread: marshal the work off rather than blocking.
+     */
+    fun durableWorkChanged(pending: Boolean) {}
+
     /** Product-scoped key-value storage for the Rust core. */
     val storage: HostStorage
 
@@ -434,6 +445,11 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     // Infallible across the FFI for the same reason `onCoreLog` is.
     override fun devicePaired(device: PairedSsoPeer) {
         runCatching { bridge.devicePaired(device) }
+    }
+
+    // Infallible across the FFI for the same reason `onCoreLog` is.
+    override fun durableWorkChanged(pending: Boolean) {
+        runCatching { bridge.durableWorkChanged(pending) }
     }
 
     override suspend fun navigateTo(url: String) =
@@ -832,6 +848,15 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /** Report the core database's SQLite version, schema version and file path. */
     @Throws(NativeCoreDatabaseException::class)
     suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
+
+    /**
+     * Decide durable transactions from the chain until none is live, then
+     * return. Await it from the background task [HostBridge.durableWorkChanged]
+     * asks for; a throw means recovery stopped early and the task should be
+     * retried. Cancelling the coroutine stops it.
+     */
+    @Throws(NativeDurableRecoveryException::class)
+    suspend fun runDurableRecovery() = inner.runDurableRecovery()
 
     /** Activate or replace the process-wide local signing session. */
     @Throws(HostRejection::class)

@@ -237,6 +237,19 @@ host owns where the bytes live. The crate stores nothing itself: a host implemen
 `StorageClient` over storage it already owns, on web and native alike, so it keeps
 control of quota and of whether the bytes are backed up or encrypted.
 
+### Durable transactions
+
+Native signing hosts keep a ledger of signed transactions in the core database,
+so a payment or transfer is followed to a verdict across crashes and restarts.
+A domain in the core registers presigned mortal extrinsics; the core broadcasts
+them once the rows commit, watches each one, and decides whatever it no longer
+watches from the chain. Signed bytes are never stored, so a transaction left
+live by a previous process is decided by recovery rather than sent again.
+
+The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
+run a background task that awaits `runDurableRecovery()`, which returns once
+nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
+
 ### Wire debugger
 
 [`@parity/truapi-debugger`](js/packages/truapi-debugger) is the consumer for the

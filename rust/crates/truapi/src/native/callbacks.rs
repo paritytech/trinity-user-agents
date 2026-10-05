@@ -178,6 +178,16 @@ pub trait HostCallbacks: Send + Sync {
     /// inline.
     fn device_paired(&self, device: PairedSsoPeer);
 
+    /// Whether durable transactions are still awaiting a verdict. `true`
+    /// means keep a background task running that awaits
+    /// [`NativeTrUApiHostRuntime::run_durable_recovery`]; `false` that
+    /// nothing needs it any more. Reported on change, starting with the state
+    /// the runtime finds at launch.
+    ///
+    /// Runtime-wide, so invoked only on the callbacks the runtime was built
+    /// with. Arrives on a core thread: hand it off rather than blocking.
+    fn durable_work_changed(&self, pending: bool);
+
     /// Read a value from the host's scoped key-value store.
     async fn local_storage_read(
         &self,
