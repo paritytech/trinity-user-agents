@@ -6,19 +6,24 @@ import Individuality
 extension Chat.RemoteContact {
     enum RemoteError: Error {
         case invalidUsername
+        case missingChatKey
     }
 
-    init(consumer: ResourcesPallet.ConsumerWithAccountId) throws {
+    init(accountName: DotnsGatewayPallet.AccountNameWithAccountId) throws {
+        let chatKeyData = try accountName.record.chatKey.mapOrThrow(RemoteError.missingChatKey)
+
         let chatPublicKey = try Chat.OnChainEncryptionIdentifier
-            .fromScaleEncoded(consumer.info.identifierKey)
+            .fromScaleEncoded(chatKeyData)
             .localPublicKey
 
-        let username = try String(data: consumer.info.username, encoding: .utf8).mapOrThrow(
+        let usernameData = try accountName.record.username.mapOrThrow(RemoteError.invalidUsername)
+
+        let username = try String(data: usernameData, encoding: .utf8).mapOrThrow(
             RemoteError.invalidUsername
         )
 
         self.init(
-            accountId: consumer.accountId,
+            accountId: accountName.accountId,
             username: username,
             chatPublicKey: chatPublicKey,
             imageData: nil
