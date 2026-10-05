@@ -120,8 +120,6 @@ Defined in `AppConfig/AppConfig.swift`:
 |-------------------------------------------|-----------------------------------------------------------|
 | Hardcoding on-chain values (prices, scores)| Derive from chain state via storage queries              |
 | Custom async stream initializers          | Use `AsyncPassthroughSubject` or `AsyncStream.makeStream` |
-| Manual SCALE decoding for standard types  | Use SDK's `resultDecoder` parameter                       |
-| Polling for state changes                 | Use storage subscriptions                                 |
 | Fetching remotely what's available locally | Check local data first; only fetch if stale              |
 | Using `keysFactory` for prefix queries    | Use `requestFactory.queryByPrefix` instead                |
 | Sync StorageRequestFactory init           | Use `StorageRequestFactory.asyncInit()`                   |
