@@ -73,9 +73,11 @@ extension ProductPermissionDataProviderMaking {
 }
 
 private func subscribeRustGrants() -> AnyAsyncSequence<[ProductPermissionGrant]> {
-    truapiRecordChanges(.truapiPermissionsChanged).map { _ in
-        try await readActiveRuntimeRecords(empty: []) { runtime in
-            try await runtime.permissions().flatMap(\.productGrants)
+    truapiRecordChanges(.truapiPermissionsChanged)
+        .map { _ in
+            try await readActiveRuntimeRecords(empty: []) { runtime in
+                try await runtime.permissions().flatMap(\.productGrants)
+            }
         }
-    }.eraseToAnyAsyncSequence()
+        .eraseToAnyAsyncSequence()
 }
