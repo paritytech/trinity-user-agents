@@ -795,6 +795,15 @@ impl SigningHostRuntime {
         installed
     }
 
+    /// One funding session as the core holds it, stage and deposit included,
+    /// for the host's own status and history views.
+    pub fn funding_session(
+        &self,
+        intent: &str,
+    ) -> Option<crate::host_logic::funding::FundingSession> {
+        self.services.funding().get(intent)
+    }
+
     /// Convert funding deposits into CASH on People on `network`, signing
     /// with the deposit accounts this host derives. Without it, assigning a
     /// deposit account fails. Set-once; returns whether this call enabled it.

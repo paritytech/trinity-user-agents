@@ -21,6 +21,7 @@ mod chat;
 mod contacts;
 mod dotns_read;
 mod frame_server;
+mod funding_check;
 mod network;
 mod platform;
 mod pocket;
@@ -303,6 +304,30 @@ enum Command {
         /// Submit the claim instead of only reporting what it would do.
         #[arg(long)]
         submit: bool,
+    },
+    /// Run a real on-ramp: open a funding session, print the deposit address,
+    /// and follow the session while you pay that address from any funded
+    /// account, until the CASH lands on People.
+    FundingCheck {
+        /// BIP-39 mnemonic of the identity whose funding accounts are used.
+        #[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+        mnemonic: String,
+        /// Network preset to use.
+        #[arg(long, value_enum, default_value = "paseo-next-v2")]
+        network: Network,
+        /// Asset the deposit is paid in.
+        #[arg(long, value_enum, default_value = "usdt")]
+        asset: funding_check::FundingAsset,
+        /// Balance that counts as delivered, in the asset's smallest units.
+        #[arg(long, default_value_t = 2_000_000)]
+        expected: u128,
+        /// Where sessions and account counters persist between runs. Keep it:
+        /// a fresh directory restarts the account numbers.
+        #[arg(long, default_value = ".funding-check")]
+        state_dir: PathBuf,
+        /// Follow an existing session instead of opening a new one.
+        #[arg(long)]
+        intent: Option<String>,
     },
     /// Install the current stable release over this one.
     ///
@@ -645,6 +670,36 @@ async fn dispatch(
             lookback,
             submit,
         } => run_pgas_check(mnemonic, network.config(), target, lookback, submit).await,
+        Command::FundingCheck {
+            mnemonic,
+            network,
+            asset,
+            expected,
+            state_dir,
+            intent,
+        } => {
+            let check = funding_check::FundingCheck {
+                mnemonic,
+                network,
+                asset,
+                expected,
+                state_dir,
+                intent,
+            };
+            funding_check::run(check, |config, state_dir| {
+                build_signing_runtime(
+                    config,
+                    state_dir.join("core"),
+                    state_dir.join("products"),
+                    ApprovalPolicy::AutoAccept,
+                    None,
+                    None,
+                    None,
+                )
+                .map(|(runtime, _platform)| runtime)
+            })
+            .await
+        }
     }
 }
 
