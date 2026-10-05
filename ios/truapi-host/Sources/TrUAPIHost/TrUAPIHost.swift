@@ -119,8 +119,15 @@ public protocol HostBridge: NativeChatFilesHost {
     /// Cancel a previously scheduled notification id.
     func cancelNotification(id: UInt32) throws
 
+    /// Non-consuming ordered batch (at most 32), bound to the verified execution.
+    /// Must not enroll receiving or request notification permission.
+    func activationEvents() async throws -> [NotificationActivation]
+    /// Idempotently acknowledge one sequence, never a notification id or range.
+    func acknowledgeActivation(sequence: UInt64) async throws
+
     /// Resident bridge: current host scope even with products closed.
     /// Product bridge: immutable verified artifact/account scope captured at execution creation.
+    /// OS permission and transport readiness must reflect current availability within that scope.
     func receiverAuthority(productId: String) async throws -> ReceivingAuthority?
     /// Request receiving consent separately from OS notification permission.
     func receiverConsent(authority: ReceivingAuthority, watches: [ReceivingWatch]) async throws -> Bool
@@ -371,6 +378,12 @@ public extension HostBridge {
     func onCoreLog(marker: String, detail: String) {}
     func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32 { 0 }
     func cancelNotification(id: UInt32) throws {}
+    func activationEvents() async throws -> [NotificationActivation] {
+        throw HostRejection.Rejected(reason: "notification activation unsupported")
+    }
+    func acknowledgeActivation(sequence: UInt64) async throws {
+        throw HostRejection.Rejected(reason: "notification activation unsupported")
+    }
     func receiverAuthority(productId: String) async throws -> ReceivingAuthority? { nil }
     func receiverConsent(authority: ReceivingAuthority, watches: [ReceivingWatch]) async throws -> Bool {
         throw HostRejection.Rejected(reason: "background receiving unsupported")
@@ -665,6 +678,14 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         try withHostRejection {
             try bridge.cancelNotification(id: id)
         }
+    }
+
+    func activationEvents() async throws -> [NotificationActivation] {
+        try await withHostRejection { try await bridge.activationEvents() }
+    }
+
+    func acknowledgeActivation(sequence: UInt64) async throws {
+        try await withHostRejection { try await bridge.acknowledgeActivation(sequence: sequence) }
     }
 
     func receiverAuthority(productId: String) async throws -> ReceivingAuthority? {

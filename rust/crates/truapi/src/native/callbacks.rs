@@ -72,9 +72,17 @@ pub trait HostCallbacks: Send + Sync {
     /// Cancel a notification by id.
     fn cancel_notification(&self, id: u32) -> Result<(), HostRejection>;
 
+    /// Non-consuming, ordered activation batch for this execution's trusted scope.
+    /// Independent of receiving enrollment and OS permission prompts.
+    async fn activation_events(&self) -> Result<Vec<v01::NotificationActivation>, HostRejection>;
+
+    /// Acknowledge exactly one sequence in the same trusted execution scope.
+    async fn acknowledge_activation(&self, sequence: u64) -> Result<(), HostRejection>;
+
     /// Runtime callbacks return current host scope, including while products are closed.
     /// Per-execution callbacks return the immutable verified artifact/account scope
     /// captured at execution creation, never the latest replacement scope.
+    /// Availability (OS permission and transport readiness) remains live within that scope.
     async fn receiver_authority(
         &self,
         product_id: String,

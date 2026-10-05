@@ -48,6 +48,7 @@ import uniffi.truapi.HostLocaleLocalizeTimestampsResponse
 import uniffi.truapi.HostLocaleLocalizedTimestamp
 import uniffi.truapi.PocketCard
 import uniffi.truapi.HostPushNotificationRequest
+import uniffi.truapi.NotificationActivation
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.RemotePermission
@@ -237,6 +238,16 @@ interface HostBridge : NativeChatFilesHost {
     /** Cancel a previously scheduled notification id. */
     @Throws(HostRejection::class)
     fun cancelNotification(id: UInt) {}
+
+    /** Non-consuming ordered batch (at most 32) for this verified execution. */
+    @Throws(HostRejection::class)
+    suspend fun activationEvents(): List<NotificationActivation> =
+        throw HostRejection.Rejected("notification activation unsupported")
+
+    /** Idempotently acknowledge one sequence in this execution's scope. */
+    @Throws(HostRejection::class)
+    suspend fun acknowledgeActivation(sequence: ULong): Unit =
+        throw HostRejection.Rejected("notification activation unsupported")
 
     /** Resident bridge returns current host scope even with products closed.
      * Product bridge returns immutable verified artifact/account scope captured at execution creation. */
@@ -576,6 +587,12 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override fun cancelNotification(id: UInt) =
         withHostRejection { bridge.cancelNotification(id) }
+
+    override suspend fun activationEvents(): List<NotificationActivation> =
+        withHostRejection { bridge.activationEvents() }
+
+    override suspend fun acknowledgeActivation(sequence: ULong) =
+        withHostRejection { bridge.acknowledgeActivation(sequence) }
 
     override suspend fun receiverAuthority(productId: String): ReceivingAuthority? =
         withHostRejection { bridge.receiverAuthority(productId) }
