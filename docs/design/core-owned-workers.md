@@ -8,20 +8,16 @@ created: 2026-10-02
 
 # Core-Owned Workers: When a Product Worker Runs and Who Decides
 
-_Starts with the iOS host (`hosts/ios`) with the TrUAPI runtime on. The core API is platform neutral, so Android follows
-the same contract._
+_Starts with the iOS host (`hosts/ios`) with the TrUAPI runtime on. The core API is platform neutral, so Android follows the same contract._
 
 ## Summary
 
-**The Rust core decides which product workers run, records why in its SQLite database, and keeps their bundles up to
-date. The host app only reports what the user did and runs the JavaScript engine the core asks for.**
+**The Rust core decides which product workers run, records why in its SQLite database, and keeps their bundles up to date. The host app only reports what the user did and runs the JavaScript engine the core asks for.**
 
-- The app sends one kind of message to the core: a worker intent, such as "the user opened this product's chat" or "the
-  user added this card".
+- The app sends one kind of message to the core: a worker intent, such as "the user opened this product's chat" or "the user added this card".
 - The core turns intents into durable rows in a `product_workers` table and decides from that table which workers run.
 - The core asks the host to start or stop an engine for a product. The host owns no lifecycle state of its own.
-- A worker with a durable reason (an installed chat, an added card) runs from app launch until that reason is removed.
-  Navigating away from the chat or Pocket screen does not stop it.
+- A worker with a durable reason (an installed chat, an added card) runs from app launch until that reason is removed. Navigating away from the chat or Pocket screen does not stop it.
 - One product has one worker, however many reasons it has.
 
 ```
@@ -52,10 +48,7 @@ The host and the core both make worker decisions today, and on iOS the core's de
 | Swift resolves dotNS, downloads bundles and caches them; the core resolves manifests  | Two resolvers, two caches, no shared update policy             |
 | Android runs the core counter for Pocket and a native counter for Chat and operations | Two counters on one platform, split by modality                |
 
-Sources: `hosts/ios/polkadot-app/Modules/Products/ProductBotFactory.swift`,
-`hosts/ios/polkadot-app/Modules/Products/Worker/ProductWorkerManager.swift`,
-`hosts/ios/polkadot-app/Modules/Products/Chat/Rust/ChatRustRuntime.swift`,
-`rust/crates/truapi/src/host_logic/worker.rs`, `hosts/android/.../truapi/worker/TrUAPIWorkerSupervisor.kt`.
+Sources: `hosts/ios/polkadot-app/Modules/Products/ProductBotFactory.swift`, `hosts/ios/polkadot-app/Modules/Products/Worker/ProductWorkerManager.swift`, `hosts/ios/polkadot-app/Modules/Products/Chat/Rust/ChatRustRuntime.swift`, `rust/crates/truapi/src/host_logic/worker.rs`, `hosts/android/.../truapi/worker/TrUAPIWorkerSupervisor.kt`.
 
 ## Responsibilities
 
@@ -63,18 +56,14 @@ Sources: `hosts/ios/polkadot-app/Modules/Products/ProductBotFactory.swift`,
 
 - Owns the worker table and every rule that reads or writes it.
 - Decides when a worker starts, stops and restarts.
-- Opens the Worker execution for the product and hands the host what it needs to run it: the execution, the local bundle
-  path and the bootstrap script.
-- Decides when a product's bundle is fetched or checked for a newer version, and records which content hash is
-  installed. The fetch itself goes through a host callback (see [Updates](#updates)).
-- Restarts a worker whose engine died, with backoff. The core sees this when the execution's ws-bridge connection drops,
-  so the host reports nothing.
+- Opens the Worker execution for the product and hands the host what it needs to run it: the execution, the local bundle path and the bootstrap script.
+- Decides when a product's bundle is fetched or checked for a newer version, and records which content hash is installed. The fetch itself goes through a host callback (see [Updates](#updates)).
+- Restarts a worker whose engine died, with backoff. The core sees this when the execution's ws-bridge connection drops, so the host reports nothing.
 
 ### Host app (Swift)
 
 - Sends intents when the user acts. It never persists which workers exist.
-- Runs an engine when asked: a hidden WKWebView attached to the window so its timers are not throttled, connected to the
-  execution's ws-bridge.
+- Runs an engine when asked: a hidden WKWebView attached to the window so its timers are not throttled, connected to the execution's ws-bridge.
 - Fetches a worker bundle when the core asks: dotNS content hash, CAR download from IPFS, unpack to a local directory.
 - Forwards app lifecycle (foreground, background) as it does today.
 
@@ -82,8 +71,7 @@ The host keeps no `ProductWorkerManager`, `ProductWorkerOperationReconciler` or 
 
 ## Rules
 
-A worker runs while it has at least one **reason** (durable, stored in SQLite) or at least one **transient reference**
-(in memory, held while work is in flight). Both feed the same per-product decision, so a product never gets two workers.
+A worker runs while it has at least one **reason** (durable, stored in SQLite) or at least one **transient reference** (in memory, held while work is in flight). Both feed the same per-product decision, so a product never gets two workers.
 
 ### Durable reasons
 
@@ -100,22 +88,16 @@ A worker runs while it has at least one **reason** (durable, stored in SQLite) o
 These already exist in the core and stay as they are:
 
 - An open render stream (Pocket face, chat render) holds a reference while it is open.
-- A worker operation (`worker.begin_operation` until it ends) holds a reference. Operations are stored in the core
-  database so they survive a restart, which replaces `CDProductOperation`.
+- A worker operation (`worker.begin_operation` until it ends) holds a reference. Operations are stored in the core database so they survive a restart, which replaces `CDProductOperation`.
 
 ### What does not start a worker
 
-- Opening a product's SPA (App executable). The App has no worker reference, as in
-  [Worker Lifecycle](../rfcs/worker-lifecycle.md).
-- Navigating to or away from the Chat or Pocket screen. Workers with a durable reason stay running, so their state is
-  hot when the user returns.
+- Opening a product's SPA (App executable). The App has no worker reference, as in [Worker Lifecycle](../rfcs/worker-lifecycle.md).
+- Navigating to or away from the Chat or Pocket screen. Workers with a durable reason stay running, so their state is hot when the user returns.
 
 ### Sharing
 
-The table is keyed by product id (dotNS base name). Reasons are rows under that key, so a product that is both a chat
-bot and a Pocket card has one row in `product_workers`, two rows in `product_worker_reasons`, and one running worker.
-The core already enforces one Worker execution per product (`rust/crates/truapi/src/native/runtime.rs`, the
-`worker_executions` map); the supervisor makes that the only path.
+The table is keyed by product id (dotNS base name). Reasons are rows under that key, so a product that is both a chat bot and a Pocket card has one row in `product_workers`, two rows in `product_worker_reasons`, and one running worker. The core already enforces one Worker execution per product (`rust/crates/truapi/src/native/runtime.rs`, the `worker_executions` map); the supervisor makes that the only path.
 
 ## Storage
 
@@ -149,15 +131,11 @@ CREATE TABLE product_worker_operations (
 );
 ```
 
-A `product_workers` row with no reason and no operation is deleted. Whether the worker runs is derived from the reason
-and operation rows plus the in-memory references, never stored, so there is no `enabled` flag to keep in sync.
+A `product_workers` row with no reason and no operation is deleted. Whether the worker runs is derived from the reason and operation rows plus the in-memory references, never stored, so there is no `enabled` flag to keep in sync.
 
-Bundle bytes stay where Swift keeps them today, addressed by content hash, as [Product Manifest](product-manifest.md)
-already specifies (bytes cached forever by CID). The core stores only the hash.
+Bundle bytes stay where Swift keeps them today, addressed by content hash, as [Product Manifest](product-manifest.md) already specifies (bytes cached forever by CID). The core stores only the hash.
 
-The database is per account: the host gives each account its own `database_directory`, so signing in as another account
-opens other rows and switching back restores them. Today the runtime is built once per process with a single directory
-(`Application Support/truapi`), so this needs the runtime to be rebuilt, or its database reopened, on account switch.
+The database is per account: the host gives each account its own `database_directory`, so signing in as another account opens other rows and switching back restores them. Today the runtime is built once per process with a single directory (`Application Support/truapi`), so this needs the runtime to be rebuilt, or its database reopened, on account switch.
 
 ### Mapping from the iOS host
 
@@ -173,21 +151,15 @@ What `hosts/ios` stores today (CoreData `UserDataModel52` and UserDefaults) and 
 | Files under `Application Support/DotNsContent/<hash>`                                                                 | Unchanged, still Swift owned                                               |
 | Nothing                                                                                                               | `pending_hash`, `checked_at`, `failure_count`, `last_error`                |
 
-The iOS model has no record of why a product is installed beyond "it has a chat", no update state and no failure state.
-Everything else maps one to one.
+The iOS model has no record of why a product is installed beyond "it has a chat", no update state and no failure state. Everything else maps one to one.
 
-On the first launch with the runtime on, the host sends an `Add` intent for each `CDProduct` row and an operation for
-each `CDProductOperation` row, then deletes them. Adding is idempotent, so a repeated import does no harm.
+The experiment creates its own account-scoped schema. It does not import or delete legacy worker records. New user actions create durable reasons and operations through Rust.
 
 ## Updates
 
-- The core checks a product's content hash at launch and when `checked_at` is older than a fixed interval, the same 24
-  hour bound the core uses for manifests (`rust/crates/truapi/src/runtime/product_manifest.rs`).
-- The download goes through a host callback, `fetch_worker_bundle`, so Swift keeps its dotNS and IPFS code. The core
-  calls it, stores the returned hash as `pending_hash`, and owns every decision around it. Moving the fetch into the
-  core later changes only who implements the callback.
-- Once the new bundle is on disk, the core restarts the worker onto it. A worker with an operation in flight restarts
-  when the operation ends.
+- The core checks a product's content hash at launch and when `checked_at` is older than a fixed interval, the same 24 hour bound the core uses for manifests (`rust/crates/truapi/src/runtime/product_manifest.rs`).
+- The download goes through a host callback, `fetch_worker_bundle`, so Swift keeps its dotNS and IPFS code. The core calls it, stores the returned hash as `pending_hash`, and owns every decision around it. Moving the fetch into the core later changes only who implements the callback.
+- Once the new bundle is on disk, the core restarts the worker onto it. A worker with an operation in flight restarts when the operation ends.
 - `appVersion` is not a change signal; the content hash is.
 
 ## Interface sketch
@@ -212,9 +184,7 @@ impl NativeTrUApiHostRuntime {
 }
 ```
 
-Engine loss needs no entry point: the core already disposes an execution when its ws-bridge connection closes
-(`rust/crates/truapi/src/native/ws_bridge.rs`). One case to handle: a socket dropped because iOS suspended the app must
-not count as a crash. The bridge relistens on foreground today, and the supervisor restarts workers then.
+Engine loss needs no entry point: the core already disposes an execution when its ws-bridge connection closes (`rust/crates/truapi/src/native/ws_bridge.rs`). One case to handle: a socket dropped because iOS suspended the app must not count as a crash. The bridge relistens on foreground today, and the supervisor restarts workers then.
 
 Core to host, replacing `worker_demand_changed`:
 
@@ -229,13 +199,11 @@ pub trait WorkerEngineHost {
 }
 ```
 
-`acquire_worker` and `release_worker` stop being host API on native hosts: transient references are taken by the core
-itself (render streams, operations), and durable ones come from intents.
+`acquire_worker` and `release_worker` stop being host API on native hosts: transient references are taken by the core itself (render streams, operations), and durable ones come from intents.
 
 ## Comparison with the legacy app
 
-The legacy app is `polkadot-ios-community`; `hosts/ios` is an import of it (`hosts/imports.json`), so its native path is
-the same code.
+The legacy app is `polkadot-ios-community`; `hosts/ios` is an import of it (`hosts/imports.json`), so its native path is the same code.
 
 | Concern                | Legacy app (native path)                                                                                       | Legacy app (TrUAPI path)                                     | This design                                                   |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------- |
@@ -252,29 +220,19 @@ the same code.
 | Logout                 | No explicit teardown found; operation rows have no clearing caller                                             | Same                                                         | Stop all; rows stay in that account's database                |
 | Limits                 | No cap, no eviction, no background execution                                                                   | Same                                                         | No cap; a lighter engine (QuickJS) comes later                |
 
-Legacy references: `polkadot-app/Modules/Products/Worker/ProductWorkerManager.swift`,
-`Modules/SPA/SPANativeRuntimeInteractor.swift`, `Modules/Chat/ChatExtension/ChatExtensionRegistring.swift`,
-`Modules/Products/Worker/ProductWorkerOperationReconciler.swift`, `Packages/Products/Sources/Products/DotNs/`.
+Legacy references: `polkadot-app/Modules/Products/Worker/ProductWorkerManager.swift`, `Modules/SPA/SPANativeRuntimeInteractor.swift`, `Modules/Chat/ChatExtension/ChatExtensionRegistring.swift`, `Modules/Products/Worker/ProductWorkerOperationReconciler.swift`, `Packages/Products/Sources/Products/DotNs/`.
 
-The legacy rules on start triggers and sharing already match the direction here. What changes is where they live, that
-they cover Pocket, and that updates and crashes get a policy.
+The legacy rules on start triggers and sharing already match the direction here. What changes is where they live, that they cover Pocket, and that updates and crashes get a policy.
 
 ## Relationship to the Worker Lifecycle RFC
 
-[Worker Lifecycle](../rfcs/worker-lifecycle.md) says a worker runs only while referenced, references last only while
-work is on screen or in flight, and the host may stop an unreferenced worker at any time. It lists an always-on worker
-as considered and dropped.
+[Worker Lifecycle](../rfcs/worker-lifecycle.md) says a worker runs only while referenced, references last only while work is on screen or in flight, and the host may stop an unreferenced worker at any time. It lists an always-on worker as considered and dropped.
 
-This design keeps its contract for products: one worker, products must still not rely on staying warm, state that must
-survive goes through host storage, nothing is added to the protocol. It changes the host policy: an installed chat or an
-added card is a durable reference, so those workers run for the whole session. The RFC's reference table needs that row
-added, or this design needs to say it overrides the RFC.
+This design keeps its contract for products: one worker, products must still not rely on staying warm, state that must survive goes through host storage, nothing is added to the protocol. It changes the host policy: an installed chat or an added card is a durable reference, so those workers run for the whole session. The RFC's reference table needs that row added, or this design needs to say it overrides the RFC.
 
 ## Decisions
 
-- **No resource cap for now.** Each worker is a hidden WKWebView with its own WebContent process. The cost is accepted
-  until workers move to QuickJS. With QuickJS the core could run the engine itself, and `start_worker` and `stop_worker`
-  would go away.
+- **No resource cap for now.** Each worker is a hidden WKWebView with its own WebContent process. The cost is accepted until workers move to QuickJS. With QuickJS the core could run the engine itself, and `start_worker` and `stop_worker` would go away.
 - **Bundle fetching stays in Swift** behind the `fetch_worker_bundle` callback.
 - **Updates restart the worker** as soon as the new bundle is downloaded, unless an operation is in flight.
 - **One database per account**, chosen by the directory the host passes.
@@ -282,5 +240,4 @@ added, or this design needs to say it overrides the RFC.
 
 ## Open questions
 
-1. **Background.** iOS suspends the app, and the engines with it. "Hot" therefore means hot while the app is alive. Is
-   that enough, or do some products need background time?
+1. **Background.** iOS suspends the app, and the engines with it. "Hot" therefore means hot while the app is alive. Is that enough, or do some products need background time?

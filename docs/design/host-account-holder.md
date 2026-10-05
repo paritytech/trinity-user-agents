@@ -12,9 +12,7 @@
 - Own native runtime records and product data in Rust SQLite.
 - Route native product and account-holder operations through Rust whenever the TrUAPI runtime feature is enabled.
 
-The separation applies to all host-managed account operations. 
-Internal Rust interfaces and SDK construction may change; update their consumers directly. 
-Storage migration and compatibility with old persisted formats are out of scope.
+The separation applies to all host-managed account operations. Internal Rust interfaces and SDK construction may change; update their consumers directly. Storage migration and compatibility with old persisted formats are out of scope.
 
 ## Architecture
 
@@ -159,13 +157,13 @@ Rust owns encoding, scope and lifetime. Platform adapters protect and store byte
 - Lock, owner changes and reset invalidate in-flight operations. Serialize grant writes and clearing so late results cannot restore revoked state.
 - Product/account reset clears the relevant persisted grants. Report storage failures; never claim successful persistence or cleanup when it failed.
 
-## Stacked PR plan
+## Implementation milestones
 
-Open the PRs in this order, each targeting the previous branch. Every layer must compile and pass its applicable checks with only its ancestors applied. Include required binding and caller adjustments with the interface change that requires them.
+Deliver these milestones on one experimental branch and one draft PR. Keep interface changes and their callers together in compiling commits. The experiment is the basis for reviewing and revising the design.
 
-Prerequisites: the native SQLite foundation (`Db`, database-directory configuration and `core.sqlite3`) must land before PR 7. The [worker lifecycle implementation](core-owned-workers.md) must land before PR 12. Keep those implementations in their own reviewable PRs and use the same database and worker tables.
+Use the existing native SQLite foundation (`Db`, database-directory configuration and `core.sqlite3`). Include any missing [worker lifecycle prerequisites](core-owned-workers.md) in this experiment, using the same account services and databases.
 
-| PR | Review scope | Completion check |
+| Milestone | Review scope | Completion check |
 | --- | --- | --- |
 | 1. Wallet account holder | Extract `AccountHolder` and `WalletAccountHolder`; move wallet approval, derivation and execution out of `SigningHost`. | Existing local wallet operations execute through the new holder. |
 | 2. SSO account holder | Extract `SsoAccountHolderClient` and `SsoAccountHolderService`; dispatch incoming SSO directly to the wallet. | Existing SSO messages interoperate; remote requests cannot inherit native grants or permissions. |
@@ -184,9 +182,9 @@ Prerequisites: the native SQLite foundation (`Db`, database-directory configurat
 | 15. Android product routing | Route enabled SPA/browser, chat and worker entry points through Rust; connect product permissions, catalog and notifications to Rust APIs. | Every product execution uses Rust; startup errors surface without a Kotlin fallback. |
 | 16. Android wallet routing | Route pairing/SSO, allowance renewal, wallet administration and cleanup through Rust; stop superseded native handlers/jobs. | The enabled Android runtime has one owner for account operations and persistence, including across lock, restart and reset. |
 
-Remove superseded paths in the PR that switches their callers. Each platform's cutover is complete only after both its product and wallet routing PRs land; feature-disabled behavior remains available. Persisted-data migration stays out of scope.
+Remove superseded enabled paths with their caller changes. Each platform requires both product and wallet routing; feature-disabled behavior remains available. Persisted-data migration stays out of scope.
 
-The completion checks describe outcomes, not a quota of new tests. Reuse existing suites and add coverage only for a new failure mode or a demonstrated gap. Keep validation with the PR that changes the behavior; do not add tests solely for extraction, forwarding or type layout.
+The completion checks describe outcomes, not a quota of new tests. Reuse existing suites and add coverage only for a new failure mode or a demonstrated gap. Keep validation with the code that changes the behavior; do not add tests solely for extraction, forwarding or type layout.
 
 ## Definition of Done
 

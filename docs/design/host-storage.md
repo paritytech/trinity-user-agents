@@ -4,14 +4,14 @@ Part of the [host/account-holder specification](host-account-holder.md). Scope: 
 
 ## Ownership
 
-- Native Rust owns runtime records and product data in the existing `core.sqlite3`. Reuse `Db` and add schemas through `core_migrations()`; production tables do not exist yet.
+- Native Rust owns runtime records and product data in the existing `core.sqlite3`. Reuse `Db` and version schemas through `core_migrations()`.
 - Swift/Kotlin provide the database directory, protected secret storage and OS services. They do not keep a second authoritative runtime database.
 - `SecretCoreStorage` retains delegated keys, session secrets and device keys in Keychain or Android's Keystore-protected encrypted preferences. Root wallet secrets stay in the wallet's existing secure-storage boundary.
 - Runtime settings screens use Rust query/update APIs. Product-storage changes are published to all executions after the database transaction commits.
 
 ## Existing stores and their replacements
 
-CoreData entities are prefixed `CD`; Android entities below use Room unless preferences are named. The generic Rust core adapters currently use UserDefaults on iOS and encrypted preferences on Android.
+CoreData entities are prefixed `CD`; Android entities below use Room unless preferences are named. This inventory maps native stores to the Rust repositories used when the feature is enabled.
 
 | State | iOS today | Android today | Rust owner/store |
 | --- | --- | --- | --- |

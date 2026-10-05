@@ -99,6 +99,14 @@ The shared Rust core asks blessed products (`peopl`, `dim2` and `stash`,
 on every supported network) only for device permissions and legacy-account signing.
 All other operations it handles bypass permission prompts and recorded decisions.
 
+## Experimental host account holders
+
+Native and paired runtimes use `HostAccounts<H>` with a concrete wallet or SSO account holder. The wallet owns root entropy and independent authorization; incoming SSO calls the wallet directly. Hosts retain delegated grants in typed `SecretCoreStorage`, with separate native and paired scopes. Wallet construction receives a protected root provider and activation selects a wallet identifier.
+
+With the native Rust feature enabled, Rust owns encrypted product/core SQLite records, permissions, paired devices, allocation and statement slots, catalog entries, notification retries, and worker reasons and operations. Each owner has a separate database directory. Wallet lock fences existing executions and stops engines; eligible native grants and worker reasons survive. Native lifecycle APIs are asynchronous so OS teardown completes before a wallet switch. No legacy persisted data is imported.
+
+See the [account-holder design](docs/design/host-account-holder.md), [storage inventory](docs/design/host-storage.md), [worker lifecycle](docs/design/core-owned-workers.md), and [implementation findings and validation](docs/design/host-account-holder-findings.md). This branch is an experimental implementation for revising those designs, not a release candidate.
+
 ## Repository layout
 
 ```
@@ -179,13 +187,7 @@ The [container permission boundary](js/container/README.md) documents the protec
 operations and the built-ins that remain mutable for product compatibility.
 Native bindings expose the canonical Rust domain and protocol value types;
 native-only adapter types are limited to lifecycle and callback behavior.
-On iOS, a wallet host that manages its own statement-store SSO session can call
-`handleSsoRequest` (routes one decrypted remote message through the core,
-returning a typed outcome: response bytes to post back, a disconnect marker, or
-ignored; a `Cancel` returns at once, so the wallet passes it on without queueing
-it behind the request it withdraws) and `prepareDisconnectRequest` (builds the SCALE-encoded wire message
-for a wallet-initiated disconnect) on `TrUAPIHostRuntime`. Response posting and
-session-record cleanup remain on the wallet side.
+Enabled native hosts use the Rust pairing roster, SSO listener and allowance-renewal services. Swift and Kotlin provide protected bytes, approval UI, OS notifications and worker engines. SSO response correlation, replay handling and wallet authorization stay in Rust.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.
 Product and SSO signing share canonical payloads and the one-byte `OptionBool`
