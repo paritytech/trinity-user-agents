@@ -2,21 +2,16 @@
 import Foundation
 import PackageDescription
 
-// This app is built two ways: vendored into the host monorepo, where the shared
-// core sits in the same tree, and checked out on its own, where the core is a
-// published dependency. Detect which by looking for the core's crates, the same
-// marker the Android host checks for.
-//
-// The path is derived from #filePath rather than the working directory, which is
-// not guaranteed to be the package root while the manifest is evaluated.
+// Media consumes the generated ABI and native binary from this same checkout.
 let corePath = "../../../.."
-let coreIsInTree: Bool = {
-    var root = URL(fileURLWithPath: #filePath)
-    for _ in 0 ..< 5 { root.deleteLastPathComponent() }
-    return FileManager.default.fileExists(
-        atPath: root.appendingPathComponent("rust/crates/truapi").path
-    )
-}()
+let coreRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent(corePath)
+for artifact in [
+    "ios/truapi-host/Binaries/truapi_server.xcframework",
+    "ios/truapi-host/Sources/TrUAPIHost/truapi.swift"
+] {
+    precondition(FileManager.default.fileExists(atPath: coreRoot.appendingPathComponent(artifact).path),
+        "Build and stage this checkout's TrUAPIHost SDK before resolving the iOS app: missing \(artifact)")
+}
 
 let dependencyConfigs: [DependencyConfig] = [
     .init(
@@ -141,8 +136,8 @@ let dependencyConfigs: [DependencyConfig] = [
     ),
     .init(
         name: "trinity-user-agents",
-        url: coreIsInTree ? corePath : "https://github.com/paritytech/trinity-user-agents",
-        version: coreIsInTree ? .local : .exact("0.16.0"),
+        url: corePath,
+        version: .local,
         products: ["TrUAPIHost"]
     ),
     .init(

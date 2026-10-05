@@ -30,7 +30,7 @@ export function installContainer(
     installFetchGate(window, _authorize.network);
     installXhrGate(window, _authorize.network);
   }
-  installMediaPolicy(window, _authorize.media);
+  installMediaPolicy(window);
 
   // --- Network: delete (no future permission path) ---
   freezeAndDelete(window, 'EventSource');
@@ -75,7 +75,7 @@ export function installContainer(
     return _createElement(tagName, options);
   });
 
-  installWebRtcPolicy(window, _authorize.webRtc);
+  installWebRtcPolicy(window);
 
   // --- Report: every lock above has been attempted, so a failure can throw ---
   // A lock that did not take is a hole in the sandbox. Reporting last means the

@@ -9,6 +9,15 @@
 //! Async capability traits use `async_trait` so the combined [`Platform`]
 //! surface can be used as a trait object by the runtime.
 
+pub mod media;
+
+pub use media::{
+    MediaBackendCapabilities, MediaBackendCommand, MediaBackendEvent, MediaBackendPeerState,
+    MediaBackendResponse, MediaDescription, MediaDescriptionKind, MediaIceCandidate, MediaPlatform,
+    MediaConsentRequest, MediaRevocationSource,
+    MediaRevokedPermission,
+};
+
 use std::collections::BTreeSet;
 
 use futures::stream::BoxStream;
@@ -121,6 +130,7 @@ pub struct SigningHostConfig {
 // constructor. Not a doc comment: wire-type docs are emitted into the generated
 // host API, and this is a Rust-side implementation note.
 #[derive(Debug, Clone, PartialEq, Eq, Encode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductContext {
     /// Product identifier used for account derivation and product-scoped
     /// storage/permission namespaces.
@@ -317,12 +327,15 @@ pub fn has_dotns_tld(normalized: &str) -> bool {
 /// Blessed product labels across every network in [`DOTNS_TLDS`].
 ///
 /// These products bypass recorded permissions and prompt only for device access.
+/// They never hold [`RemotePermission::Calling`], which requires scoped consent.
 pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", "dim2", "stash"];
 
 /// Hosts available to every product unless a stored permission decision blocks them.
 pub const BLESSED_REMOTE_DOMAINS: &[&str] = &["fonts.googleapis.com", "fonts.gstatic.com"];
 
-/// Whether `product_id` holds every [`RemotePermission`] without prompting.
+/// Whether `product_id` holds ordinary remote permissions without prompting.
+///
+/// This never authorizes [`RemotePermission::Calling`], which requires scoped consent.
 ///
 /// Expects the [`normalize_product_identifier`] form. Matches the whole label
 /// and nothing else: `peopl.dot` and `peopl.paseo` are trusted, while
@@ -336,8 +349,8 @@ pub fn has_trusted_remote_permissions(product_id: &str) -> bool {
             .is_some_and(|(label, _tld)| REMOTE_PERMISSION_TRUSTED_LABELS.contains(&label))
 }
 
-/// Whether `product_id` in any accepted spelling holds every
-/// [`RemotePermission`] without prompting.
+/// Whether `product_id` in any accepted spelling holds ordinary remote
+/// permissions without prompting, excluding [`RemotePermission::Calling`].
 ///
 /// [`has_trusted_remote_permissions`] reads the normalized form, which is what
 /// the core always holds. A host holds whatever spelling it received, so this
@@ -1244,6 +1257,18 @@ pub enum PermissionAuthorizationRequest {
         /// `None` selects the legacy allowance account; `Some` selects a product account.
         derivation_index: Option<DerivationIndex>,
     },
+    /// Calling consent for this product's authenticated network and account.
+    ///
+    /// The core resolves both fields from the active authority session, never
+    /// from product-supplied identity claims. Unscoped `Remote(Calling)` grants
+    /// do not authorize this request.
+    #[codec(index = 6)]
+    Calling {
+        /// Genesis hash of the authenticated network.
+        network: [u8; 32],
+        /// Product's authority-derived `Index(0)` sr25519 public key.
+        account: [u8; 32],
+    },
 }
 
 /// Authorization status for a permission request.
@@ -1293,12 +1318,19 @@ pub trait CoreAdmin: Send + Sync {
         requests: Vec<PermissionAuthorizationRequest>,
     ) -> Result<Vec<PermissionAuthorizationStatus>, GenericError>;
 
-    /// Update a stored permission authorization status. `NotDetermined` clears
-    /// the stored value so the next product request prompts again.
+    /// Update a stored permission authorization status. `NotDetermined` resets
+    /// the decision so the next product request prompts again.
     async fn set_permission_authorization_status(
         &self,
         request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus,
+    ) -> Result<(), GenericError>;
+
+    /// Re-read a stored product decision and fence revoked Media authorization.
+    /// Host-only, read-only, and never prompts or consults OS permission state.
+    async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
     ) -> Result<(), GenericError>;
 
     /// Read the active session's X25519 chat identity private key, for hosts
@@ -1930,6 +1962,9 @@ pub struct CoreStorageKeyDescription {
     pub kind: &'static str,
     /// Product that owns this exact slot, when the key is product-indexed.
     pub product_id: Option<String>,
+    /// Exact permission scope for an authorization slot, including inactive accounts.
+    /// No current authority, stored value, or secret material is consulted.
+    pub permission_request: Option<PermissionAuthorizationRequest>,
 }
 
 /// Failure to decode exactly one [`CoreStorageKey`].
@@ -1954,10 +1989,12 @@ pub fn describe_core_storage_key(
     if !input.is_empty() {
         return Err(CoreStorageKeyDescriptionError::TrailingBytes);
     }
+    let mut permission_request = None;
     let (kind, product_id) = match key {
         CoreStorageKey::AuthSession => ("AuthSession", None),
         CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
-        CoreStorageKey::PermissionAuthorization { product_id, .. } => {
+        CoreStorageKey::PermissionAuthorization { product_id, request } => {
+            permission_request = Some(request);
             ("PermissionAuthorization", Some(product_id))
         }
         CoreStorageKey::AllowanceKeys { .. } => ("AllowanceKeys", None),
@@ -1977,7 +2014,7 @@ pub fn describe_core_storage_key(
             ("NativeChatFileChunk", Some(product_id))
         }
     };
-    Ok(CoreStorageKeyDescription { kind, product_id })
+    Ok(CoreStorageKeyDescription { kind, product_id, permission_request })
 }
 
 impl CoreStorageKey {
@@ -2058,6 +2095,21 @@ impl CoreStorageKey {
         Self::PermissionAuthorization {
             product_id: product_id.to_string(),
             request: PermissionAuthorizationRequest::StatementStoreAllowance { derivation_index },
+        }
+    }
+
+    /// Persisted calling consent for one canonical product, network, and account.
+    ///
+    /// Callers supply the authenticated network genesis and the product's
+    /// authority-derived `Index(0)` account, not product-provided selectors.
+    pub fn calling_authorization(
+        product_id: &str,
+        network: [u8; 32],
+        account: [u8; 32],
+    ) -> Self {
+        Self::PermissionAuthorization {
+            product_id: product_id.to_string(),
+            request: PermissionAuthorizationRequest::Calling { network, account },
         }
     }
 }
@@ -3035,6 +3087,9 @@ mod tests {
             Ok(CoreStorageKeyDescription {
                 kind: "PermissionAuthorization",
                 product_id: Some("product.dot".to_string()),
+                permission_request: Some(PermissionAuthorizationRequest::Device(
+                    HostDevicePermissionRequest::Camera,
+                )),
             })
         );
         for (key, kind, product_id) in [
@@ -3377,6 +3432,21 @@ pub trait CoreStorage: Send + Sync {
 
     /// Clear a core-owned value by typed slot.
     async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError>;
+
+    /// Atomically replace exactly `expected` decoded bytes in this physical slot.
+    /// `None` differs from an empty value. Serialize with every write, clear and
+    /// compare-exchange across all cores sharing the store, through actual
+    /// persistence completion even if the requesting future is dropped.
+    /// On persisted success, `notify_on_success` enqueues `core_storage_changed`
+    /// before completion even if the requester was cancelled. Initial unanswered
+    /// snapshots pass false; explicit policy decisions pass true.
+    async fn compare_exchange_core_storage(&self, key: CoreStorageKey, expected: Option<Vec<u8>>, replacement: Vec<u8>, notify_on_success: bool) -> Result<bool, GenericError>;
+
+    /// Nonblocking notification after an explicit policy decision or reset.
+    /// Queue deferred refreshes for every core group sharing the store and exact
+    /// product, including the writer. Never await or reenter a core here. Raw
+    /// writes/clears and CAS with `notify_on_success == false` must not emit this.
+    fn core_storage_changed(&self, key: CoreStorageKey);
 }
 
 /// Decoded session fields a host shell needs to render account UI without
@@ -3665,6 +3735,22 @@ pub struct PreimageSubmitReview {
     pub size: u64,
 }
 
+/// Immutable calling-consent context resolved by the trusted core.
+///
+/// Approval applies only to this exact canonical product, authenticated network,
+/// and authority-derived account. It neither grants camera/microphone access nor
+/// carries over to another account or network.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct CallingReview {
+    /// Canonical product requesting calling authority.
+    pub product_id: String,
+    /// Genesis hash of the authenticated network.
+    pub network: [u8; 32],
+    /// Product's authority-derived `Index(0)` sr25519 public key.
+    pub account: [u8; 32],
+}
+
 /// Review shown before a user-confirmed core action continues.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -3698,6 +3784,8 @@ pub enum UserConfirmationReview {
     ChatAuthority(ChatAuthorityReview),
     /// Confirm this exact main-purse payment; never eligible for auto-approval.
     MainPurseChatPayment(MainPurseChatPaymentReview),
+    /// Allow calling only in the immutable authenticated product/account/network scope.
+    Calling(CallingReview),
 }
 
 /// Local user confirmation UI for sensitive core-owned operations.
@@ -4075,7 +4163,13 @@ impl<T> Platform for T where
 /// selects the built-in Rust wallet. Codegen reads this list to emit each
 /// capability as an optional group on the host-callback surface.
 pub trait OptionalPlatform:
-    ChatPlatform + ContactsPlatform + PermissionStatusHost + PocketPlatform + IdentityBackendHost + CoinageWalletHost
+    ChatPlatform
+    + ContactsPlatform
+    + PermissionStatusHost
+    + PocketPlatform
+    + IdentityBackendHost
+    + CoinageWalletHost
+    + MediaPlatform
 {
 }
 
@@ -4086,5 +4180,6 @@ impl<T> OptionalPlatform for T where
         + PocketPlatform
         + IdentityBackendHost
         + CoinageWalletHost
+        + MediaPlatform
 {
 }

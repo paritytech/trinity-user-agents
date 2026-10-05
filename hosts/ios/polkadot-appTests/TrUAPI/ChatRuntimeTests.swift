@@ -176,25 +176,18 @@ struct ChatRuntimeTests {
         #expect(execution.publishedChatActions.isEmpty)
     }
 
-    @Test func rustRuntimeInstallsMediaHandlerAndScriptsBeforeLoading() async throws {
+    @Test func rustRuntimeDeniesDirectProductCapture() async throws {
         let execution = MockProductExecution()
         let engine = MockJSEngine()
         let runtime = makeRustRuntime(execution: execution, engine: engine)
 
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
-        #expect(execution.startWsBridgeCallCount == 1)
-        #expect(engine.mediaHandlerWasInstalledAtInitialization)
         #expect(execution.permissionRequests.isEmpty)
 
-        #expect(engine.initializedScripts.count == 2)
-        #expect(engine.initializedScripts[0]
-            .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
-        #expect(engine.initializedScripts[0].insertionPoint == .atDocStart)
-        #expect(engine.initializedScripts[1].content.contains("freezeAndDelete"))
-        #expect(engine.initializedScripts[1].insertionPoint == .atDocStart)
-        #expect(!engine.evaluatedScripts.contains { $0.contains("__truapi_localhost") })
-        #expect(!engine.evaluatedScripts.contains { $0.contains("freezeAndDelete") })
+        let capture = try #require(engine.deviceCapabilityHandler)
+        #expect(try await capture(.camera) == .denied)
+        #expect(try await capture(.microphone) == .denied)
 
         await runtime.dispose()
     }

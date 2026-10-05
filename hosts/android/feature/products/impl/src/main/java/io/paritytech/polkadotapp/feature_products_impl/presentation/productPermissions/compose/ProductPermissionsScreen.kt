@@ -26,6 +26,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productPermissions.ProductPermissionsViewModel
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productPermissions.compose.components.ProductPermissionItem
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productPermissions.models.ProductPermissionsUiModel
+import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.NativeMediaPermissionStatus
+import io.paritytech.polkadotapp.feature_products_impl.presentation.productPermissions.compose.components.NativeMediaPermissionItem
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -35,7 +37,8 @@ fun ProductPermissionsScreen(viewModel: ProductPermissionsViewModel) {
     ProductPermissionsScreenInternal(
         state = state,
         onBack = viewModel::onBack,
-        onPermissionToggle = viewModel::onPermissionToggle
+        onPermissionToggle = viewModel::onPermissionToggle,
+        onMediaPermissionToggle = viewModel::onMediaPermissionToggle,
     )
 }
 
@@ -43,7 +46,8 @@ fun ProductPermissionsScreen(viewModel: ProductPermissionsViewModel) {
 private fun ProductPermissionsScreenInternal(
     state: LoadingState<ProductPermissionsUiModel>,
     onBack: () -> Unit,
-    onPermissionToggle: (ProductPermissionStatus) -> Unit
+    onPermissionToggle: (ProductPermissionStatus) -> Unit,
+    onMediaPermissionToggle: (NativeMediaPermissionStatus) -> Unit,
 ) {
     PolkadotSurface {
         Column(
@@ -66,6 +70,9 @@ private fun ProductPermissionsScreenInternal(
                                 permissionStatus = permissionStatus,
                                 onToggle = { onPermissionToggle(permissionStatus) }
                             )
+                        }
+                        items(uiModel.mediaPermissions) { permission ->
+                            NativeMediaPermissionItem(permission) { onMediaPermissionToggle(permission) }
                         }
                     }
                 }
@@ -92,7 +99,8 @@ private fun ProductPermissionsScreenPreview() {
                 )
             ),
             onBack = {},
-            onPermissionToggle = { _ -> }
+            onPermissionToggle = { _ -> },
+            onMediaPermissionToggle = { _ -> },
         )
     }
 }

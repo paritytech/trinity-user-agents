@@ -680,7 +680,7 @@ fn a_chain_follow_that_cannot_start_interrupts_with_the_failure() {
 fn make_core() -> TrUApiCore {
     let (host_config, product) = test_runtime_config();
     TrUApiCore::from_platform_with_config(
-        Arc::new(WireShapePlatform),
+        Arc::new(WireShapePlatform::default()),
         host_config,
         product,
         test_spawner(),

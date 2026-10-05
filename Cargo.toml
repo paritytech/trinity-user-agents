@@ -35,6 +35,7 @@ futures-util = "0.3"
 getrandom = "0.2"
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 hkdf = "0.12"
+hpke = { version = "0.12", default-features = false }
 image = { version = "0.25", default-features = false }
 indoc = "2"
 js-sys = "0.3"
@@ -54,6 +55,7 @@ proc-macro2 = "1"
 qrcode = { version = "0.14.1", default-features = false }
 quote = "1"
 rand = "0.8"
+rand_core = "0.6"
 ratatui = { version = "0.30.2", default-features = false }
 reqwest = { version = "0.12", default-features = false }
 rqrr = { version = "0.10.1", default-features = false }

@@ -43,6 +43,7 @@ pub mod contacts;
 pub mod entropy;
 pub mod local_storage;
 pub mod locale;
+pub mod media;
 pub mod notifications;
 pub mod payment;
 pub mod permissions;

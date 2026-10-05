@@ -64,6 +64,10 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         .deny
     }
 
+    func devicePermissionStatus(request: HostDevicePermissionRequest) async throws -> DevicePermissionStatus {
+        NativeMediaBackend.devicePermissionStatus(request)
+    }
+
     func remotePermission(
         product _: ProductExecutionConfig,
         request _: RemotePermission

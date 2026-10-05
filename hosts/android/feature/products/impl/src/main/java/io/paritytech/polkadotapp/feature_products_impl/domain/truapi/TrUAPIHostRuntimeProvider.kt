@@ -32,7 +32,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -80,6 +79,14 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
     private val bootMutex = Mutex()
     private var boot: Deferred<Result<TrUAPIHostRuntime>>? = null
+    private val sessionMutation = Mutex()
+    private val revision = MutableStateFlow(0L)
+    val sessionRevision: StateFlow<Long> = revision.asStateFlow()
+    @Volatile internal var sessionOwner: Long? = null
+        private set
+
+    internal suspend fun <T> withSessionMutation(block: suspend () -> T): T =
+        sessionMutation.withLock { block() }
 
     private val authState = MutableStateFlow<AuthState>(AuthState.Disconnected)
 
@@ -112,8 +119,11 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     }
 
     private suspend fun build(): Result<TrUAPIHostRuntime> = runCatching {
+        val owner = accountRepository.getWalletAccount().id
         val config = buildRuntimeConfig()
         cachedChains.set(chainDirectory.resolve())
+        check(accountRepository.getWalletAccount().id == owner) { "Wallet changed while booting runtime" }
+        sessionOwner = owner
         TrUAPIHostRuntime(HostRuntimeBridge(), config)
     }
 
@@ -176,11 +186,20 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             accountRepository.walletAccountFlow()
                 .map { it.id }
                 .distinctUntilChanged()
-                .drop(1)
-                .collect {
-                    localSessionSource.resolve()
-                        .mapCatching { session -> runtime.activateLocalSession(session.secret, session.liteUsername) }
-                        .logFailure("TrUAPI local session could not follow the wallet switch")
+                .collect { owner ->
+                    sessionMutation.withLock {
+                        if (sessionOwner == owner) return@withLock
+                        revision.value += 1
+                        sessionOwner = null
+                        runtime.disconnect()
+                        localSessionSource.resolve()
+                            .mapCatching { session ->
+                                check(accountRepository.getWalletAccount().id == owner) { "Wallet changed" }
+                                runtime.activateLocalSession(session.secret, session.liteUsername)
+                                sessionOwner = owner
+                            }
+                            .logFailure("TrUAPI local session could not follow the wallet switch")
+                    }
                 }
         }
     }

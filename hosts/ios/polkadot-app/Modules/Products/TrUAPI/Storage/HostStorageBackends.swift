@@ -30,6 +30,7 @@ final class ProductStorageBackend: HostStorageBackend, @unchecked Sendable {
 /// Plain Swift errors (including ambiguous durable writes) become HostRejection.
 final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
     private let storage: TrUAPILocalStoring
+    var storageIdentifier: String { storage.storageIdentifier }
 
     init(storage: TrUAPILocalStoring) {
         self.storage = storage
@@ -47,6 +48,7 @@ final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
             return try withHostRejection { try TrUAPIWalletStorage.shared.write(key: key, value: value) }
         }
         try withHostRejection { try storage.write(key: key.toHex(), value: value) }
+        notifyPermissionChange(key: key)
     }
 
     func clear(key: Data) throws {
@@ -54,6 +56,16 @@ final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
             return try withHostRejection { try TrUAPIWalletStorage.shared.clear(key: key) }
         }
         try withHostRejection { try storage.clear(key: key.toHex()) }
+        notifyPermissionChange(key: key)
+    }
+
+    // UI metadata observation only; cross-core policy refresh is exclusively
+    // driven by explicit policy-change intent, never raw writes or Ask stamping.
+    private func notifyPermissionChange(key: Data) {
+        guard let description = try? nativeDescribeCoreStorageKey(encoded: key),
+              description.permissionRequest != nil, let productId = description.productId else { return }
+        NotificationCenter.default.post(name: TrUAPIMediaPermissionSettings.didChange,
+            object: nil, userInfo: ["productId": productId])
     }
 }
 

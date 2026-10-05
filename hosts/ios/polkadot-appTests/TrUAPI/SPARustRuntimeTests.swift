@@ -53,7 +53,7 @@ private func makeRuntime(
 // MARK: - Tests
 
 struct SPARustRuntimeTests {
-    @Test func startWithDirectURLStartsBridgeAndInitializesEngine() async throws {
+    @Test func startWithDirectURLReturnsProductURL() async throws {
         let directURL = try #require(URL(string: "http://localhost:3000"))
         let configuration = try makeConfiguration(contentSource: .directURL(directURL))
         let execution = MockProductExecution()
@@ -63,21 +63,10 @@ struct SPARustRuntimeTests {
         let url = try await runtime.start(with: engine)
 
         #expect(url == directURL)
-        #expect(execution.startWsBridgeCallCount == 1)
         #expect(execution.permissionRequests.isEmpty)
-        #expect(engine.mediaHandlerWasInstalledAtInitialization)
-
-        // Bootstrap → container → zoom disable, doc-start ordering intact.
-        #expect(engine.initializedScripts.count == 3)
-        #expect(engine.initializedScripts[0]
-            .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
-        #expect(engine.initializedScripts[0].insertionPoint == .atDocStart)
-        #expect(!engine.initializedScripts[0].content.contains("__truapi_policy__"))
-        #expect(engine.initializedScripts[1].content.contains("freezeAndDelete"))
-        #expect(engine.initializedScripts[1].insertionPoint == .atDocStart)
-        #expect(engine.initializedScripts[2].content.contains("viewport"))
-        #expect(engine.initializedScripts[2].insertionPoint == .atDocEnd)
-        #expect(engine.initializedScripts[2].frameScope == .mainFrameOnly)
+        let capture = try #require(engine.deviceCapabilityHandler)
+        #expect(try await capture(.camera) == .denied)
+        #expect(try await capture(.microphone) == .denied)
 
         await runtime.dispose()
     }
@@ -94,8 +83,6 @@ struct SPARustRuntimeTests {
         #expect(url.scheme == ProductScriptSchemeHandler.scheme)
         #expect(url.host == "test.dot")
         #expect(url.path == "/")
-        #expect(engine.initializedScripts[0]
-            .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
 
         await runtime.dispose()
     }
@@ -123,19 +110,7 @@ struct SPARustRuntimeTests {
         #expect(engine.destroyCallCount == 1)
     }
 
-    @Test func rustScriptsFactoryOrdersBootstrapBeforeContainer() throws {
-        let factory = RustRuntimeScriptsFactory(bootstrapScript: "/*bootstrap*/")
 
-        let scripts = try factory.makeScripts()
-
-        #expect(scripts.count == 2)
-        #expect(scripts[0].content == "/*bootstrap*/")
-        #expect(scripts[0].insertionPoint == .atDocStart)
-        #expect(scripts[0].frameScope == .mainFrameOnly)
-        #expect(scripts[1].content.contains("__truapi_localhost"))
-        #expect(scripts[1].insertionPoint == .atDocStart)
-        #expect(scripts[1].frameScope == .allFrames)
-    }
 
     @Test func directURLHandlerAllowsSameHostInterceptsOthers() throws {
         let handler = try DirectURLNavigationDecisionHandler(
