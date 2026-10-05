@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "62e34089b454506c";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "c65372a0f63019ad";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1519,6 +1519,62 @@ impl RequestMethod for NotificationsCancelPushNotification {
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
+/// `notifications_activation_events` method marker.
+pub struct NotificationsActivationEvents;
+impl NotificationsActivationEvents {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "activation_events",
+        wire_name: "notifications_activation_events",
+        request_type: "truapi::versioned::notifications::NotificationActivationEventsRequest",
+        response_type: "truapi::versioned::notifications::NotificationActivationEventsResponse",
+        error_type: Some("truapi::versioned::notifications::NotificationActivationEventsError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 8,
+        }),
+    };
+}
+impl RequestMethod for NotificationsActivationEvents {
+    type Request = truapi::versioned::notifications::NotificationActivationEventsRequest;
+    type Response = truapi::versioned::notifications::NotificationActivationEventsResponse;
+    type Error = truapi::versioned::notifications::NotificationActivationEventsError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_acknowledge_activation` method marker.
+pub struct NotificationsAcknowledgeActivation;
+impl NotificationsAcknowledgeActivation {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "acknowledge_activation",
+        wire_name: "notifications_acknowledge_activation",
+        request_type: "truapi::versioned::notifications::NotificationActivationAcknowledgeRequest",
+        response_type: "truapi::versioned::notifications::NotificationActivationAcknowledgeResponse",
+        error_type: Some(
+            "truapi::versioned::notifications::NotificationActivationAcknowledgeError",
+        ),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 9,
+        }),
+    };
+}
+impl RequestMethod for NotificationsAcknowledgeActivation {
+    type Request = truapi::versioned::notifications::NotificationActivationAcknowledgeRequest;
+    type Response = truapi::versioned::notifications::NotificationActivationAcknowledgeResponse;
+    type Error = truapi::versioned::notifications::NotificationActivationAcknowledgeError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
 /// `payment_balance_subscribe` method marker.
 pub struct PaymentBalanceSubscribe;
 impl PaymentBalanceSubscribe {
@@ -2525,6 +2581,8 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     LocaleLocalizeTimestamps::DESCRIPTOR,
     NotificationsSendPushNotification::DESCRIPTOR,
     NotificationsCancelPushNotification::DESCRIPTOR,
+    NotificationsActivationEvents::DESCRIPTOR,
+    NotificationsAcknowledgeActivation::DESCRIPTOR,
     PaymentBalanceSubscribe::DESCRIPTOR,
     PaymentRequest::DESCRIPTOR,
     PaymentStatusSubscribe::DESCRIPTOR,
@@ -2609,6 +2667,8 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     LocaleLocalizeTimestamps::DESCRIPTOR,
     NotificationsSendPushNotification::DESCRIPTOR,
     NotificationsCancelPushNotification::DESCRIPTOR,
+    NotificationsActivationEvents::DESCRIPTOR,
+    NotificationsAcknowledgeActivation::DESCRIPTOR,
     PaymentBalanceSubscribe::DESCRIPTOR,
     PaymentRequest::DESCRIPTOR,
     PaymentStatusSubscribe::DESCRIPTOR,
@@ -2698,6 +2758,8 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     LocaleLocalizeTimestamps::DESCRIPTOR,
     NotificationsSendPushNotification::DESCRIPTOR,
     NotificationsCancelPushNotification::DESCRIPTOR,
+    NotificationsActivationEvents::DESCRIPTOR,
+    NotificationsAcknowledgeActivation::DESCRIPTOR,
     PaymentBalanceSubscribe::DESCRIPTOR,
     PaymentRequest::DESCRIPTOR,
     PaymentStatusSubscribe::DESCRIPTOR,
