@@ -44,8 +44,6 @@ struct RustRuntimeEnvironment {
     func makeSPAExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
         try makeExecution(productId: productId, routers: routers)
     }
-
-
 }
 
 private extension RustRuntimeEnvironment {

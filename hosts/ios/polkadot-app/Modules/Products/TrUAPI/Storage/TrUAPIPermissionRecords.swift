@@ -52,6 +52,10 @@ extension PermissionRecord {
         case .identityDisclosure: permissions = [.userIdentityAccess]
         case let .remote(remote): permissions = remote.permission.toDomainRequest().toDomainPermissions()
         }
-        return permissions.map { ProductPermissionGrant(productId: productId, permission: $0, granted: status == .authorized, grantedAt: nil) }
+        return permissions.map {
+            ProductPermissionGrant(
+                productId: productId, permission: $0, granted: status == .authorized, grantedAt: nil
+            )
+        }
     }
 }

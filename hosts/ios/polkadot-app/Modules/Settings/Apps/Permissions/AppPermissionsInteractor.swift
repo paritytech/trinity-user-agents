@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import Products
 
 final class AppPermissionsInteractor {

@@ -17,18 +17,25 @@ extension Notification.Name {
 }
 
 func notifyRuntimeRecordsChanged() {
-    for name in [Notification.Name.truapiProductsChanged, .truapiPermissionsChanged, .truapiWorkerRecordsChanged, .truapiPairedHostsChanged] {
+    let names: [Notification.Name] = [
+        .truapiProductsChanged, .truapiPermissionsChanged, .truapiWorkerRecordsChanged, .truapiPairedHostsChanged
+    ]
+    for name in names {
         NotificationCenter.default.post(name: name, object: nil)
     }
 }
 
-func readActiveRuntimeRecords<Value>(empty: Value, read: (TrUAPIHostRuntime) async throws -> Value) async throws -> Value {
+func readActiveRuntimeRecords<Value>(
+    empty: Value,
+    read: (TrUAPIHostRuntime) async throws -> Value
+) async throws -> Value {
     guard let provider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() else {
         throw HostRejection.Rejected(reason: "Rust runtime provider unavailable")
     }
     guard let runtime = try await provider.activeRuntimeForRecords() else { return empty }
-    do { return try await read(runtime) }
-    catch {
+    do {
+        return try await read(runtime)
+    } catch {
         guard try await provider.activeRuntimeForRecords() != nil else { return empty }
         throw error
     }

@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import FoundationExt
 import Individuality
 import MessageExchangeKit

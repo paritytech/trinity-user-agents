@@ -157,7 +157,9 @@ private extension SPARustRuntimeInteractor {
         guard let provider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() else {
             throw ProductBotFactoryError.dependenciesUnavailable
         }
-        try await provider.sharedRuntime().notifyWorkerIntent(productId: product.identifier, action: .add, modality: .chat)
+        try await provider.sharedRuntime().notifyWorkerIntent(
+            productId: product.identifier, action: .add, modality: .chat
+        )
         return extensionId
     }
 

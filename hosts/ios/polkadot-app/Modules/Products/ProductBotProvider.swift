@@ -52,9 +52,13 @@ final class ProductBotProvider: ProductBotProviding {
                     var bots: [ProductBot] = []
                     for worker in try await runtime.workerProducts() {
                         let reasons = try await runtime.workerReasons(productId: worker.productId)
-                        guard reasons.contains(where: { if case .chat = $0 { return true }; return false }) else { continue }
+                        guard reasons.contains(where: {
+                            if case .chat = $0 { return true }
+                            return false
+                        }) else { continue }
                         let name = catalog.first { $0.productId == worker.productId }?.name ?? worker.productId
-                        bots.append(try await botFactory.createRustBot(product: Product(id: worker.productId, name: name)))
+                        let product = Product(id: worker.productId, name: name)
+                        bots.append(try await botFactory.createRustBot(product: product))
                     }
                     return bots
                 } catch {

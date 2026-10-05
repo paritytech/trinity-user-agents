@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import Foundation_iOS
 import Operation_iOS
 import OperationExt
@@ -30,7 +31,8 @@ extension LocalDeviceDataProviderFactory: LocalDeviceDataProviderMaking {
                 let task = Task { [logger] in
                     for await _ in truapiRecordChanges(.truapiPairedHostsChanged) {
                         do {
-                            guard let provider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() else {
+                            let provider: TrUAPIHostRuntimeProviding? = RootDependencyLocator.getDependency()
+                            guard let provider else {
                                 throw ProductBotFactoryError.dependenciesUnavailable
                             }
                             let peers = try await provider.activeRuntimeForRecords()?.pairedHosts() ?? []

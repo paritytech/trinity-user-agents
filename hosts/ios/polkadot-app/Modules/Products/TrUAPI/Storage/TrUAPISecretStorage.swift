@@ -23,12 +23,16 @@ final class TrUAPISecretStorage: HostSecretStorageBackend, @unchecked Sendable {
     }
 
     func write(key: SecretCoreStorageKey, value: Data) async throws {
-        if case .deviceEncryptionKey = key { throw HostRejection.Rejected(reason: "Shared device identity is owned by its protected provider") }
+        if case .deviceEncryptionKey = key {
+            throw HostRejection.Rejected(reason: "Shared device identity is owned by its protected provider")
+        }
         try keychain.saveKey(value, with: identifier(key))
     }
 
     func clear(key: SecretCoreStorageKey) async throws {
-        if case .deviceEncryptionKey = key { throw HostRejection.Rejected(reason: "Shared device identity cannot be removed by host cleanup") }
+        if case .deviceEncryptionKey = key {
+            throw HostRejection.Rejected(reason: "Shared device identity cannot be removed by host cleanup")
+        }
         try keychain.deleteKeyIfExists(for: identifier(key))
     }
 

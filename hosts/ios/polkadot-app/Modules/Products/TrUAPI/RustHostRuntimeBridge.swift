@@ -82,7 +82,10 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         product: ProductExecutionConfig,
         request: HostDevicePermissionRequest
     ) async throws -> TrUAPIPermissionDecision {
-        let decision = await permissionRequester.prompt(productId: product.productId, permission: .deviceCapability(request.deviceCapabilityType))
+        let decision = await permissionRequester.prompt(
+            productId: product.productId,
+            permission: .deviceCapability(request.deviceCapabilityType)
+        )
         guard decision != .deny else { return .deny }
         guard await osPermissionAsker.requestPermission(for: request.deviceCapabilityType) else {
             throw HostRejection.Rejected(reason: "Operating system permission denied")
@@ -94,7 +97,10 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         product: ProductExecutionConfig,
         request: RemotePermission
     ) async throws -> TrUAPIPermissionDecision {
-        await permissionRequester.promptBatched(productId: product.productId, permissions: request.toDomainRequest().toDomainPermissions()).hostDecision
+        await permissionRequester.promptBatched(
+            productId: product.productId,
+            permissions: request.toDomainRequest().toDomainPermissions()
+        ).hostDecision
     }
 
     func chainConnect(genesisHash: Data) throws -> UInt32? {

@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import Operation_iOS
 import Products
 import TrUAPIHost
@@ -19,7 +20,10 @@ final class ProductPermissionRepository: @unchecked Sendable {
     private let oneTimeLock = NSLock()
     private var oneTimeGrants: Set<String> = []
 
-    init(storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared, runtimeEnabled: Bool = SettingsManager.shared.isTrUAPIRuntimeEnabled) {
+    init(
+        storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
+        runtimeEnabled: Bool = SettingsManager.shared.isTrUAPIRuntimeEnabled
+    ) {
         self.runtimeEnabled = runtimeEnabled
         self.storageFacade = storageFacade
 
@@ -40,7 +44,9 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         permission: ProductPermission
     ) async throws -> ProductPermissionState {
         if runtimeEnabled {
-            switch try await runtime().permissionAuthorizationStatus(productId: productId, request: permission.coreRequest()) {
+            switch try await runtime().permissionAuthorizationStatus(
+                productId: productId, request: permission.coreRequest()
+            ) {
             case .authorized: return .allowedAlways
             case .denied: return .denied
             case .notDetermined: return .notDetermined
@@ -76,7 +82,9 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         if runtimeEnabled {
             for key in keys {
                 if let permission = ProductPermission.from(typeName: typeName, key: key),
-                   try await getPermissionState(productId: productId, permission: permission) == .allowedAlways { return true }
+                   try await getPermissionState(productId: productId, permission: permission) == .allowedAlways {
+                    return true
+                }
             }
             return false
         }
@@ -101,7 +109,9 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
 
     func grant(productId: String, permission: ProductPermission) async throws {
         if runtimeEnabled {
-            try await runtime().setPermissionAuthorizationStatus(productId: productId, request: permission.coreRequest(), status: .authorized)
+            try await runtime().setPermissionAuthorizationStatus(
+                productId: productId, request: permission.coreRequest(), status: .authorized
+            )
             return
         }
         let grant = ProductPermissionGrant(
@@ -116,7 +126,9 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
 
     func deny(productId: String, permission: ProductPermission) async throws {
         if runtimeEnabled {
-            try await runtime().setPermissionAuthorizationStatus(productId: productId, request: permission.coreRequest(), status: .denied)
+            try await runtime().setPermissionAuthorizationStatus(
+                productId: productId, request: permission.coreRequest(), status: .denied
+            )
             return
         }
         let grant = ProductPermissionGrant(
@@ -133,7 +145,9 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
 
     func revoke(productId: String, permission: ProductPermission) async throws {
         if runtimeEnabled {
-            try await runtime().setPermissionAuthorizationStatus(productId: productId, request: permission.coreRequest(), status: .notDetermined)
+            try await runtime().setPermissionAuthorizationStatus(
+                productId: productId, request: permission.coreRequest(), status: .notDetermined
+            )
             return
         }
         let identifier = ProductPermissionGrant.makeIdentifier(
@@ -167,7 +181,9 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     func revokeAllByProduct(productId: String) async throws {
         if runtimeEnabled {
             for record in try await runtime().permissions() where record.productId == productId {
-                try await runtime().setPermissionAuthorizationStatus(productId: productId, request: record.request, status: .notDetermined)
+                try await runtime().setPermissionAuthorizationStatus(
+                    productId: productId, request: record.request, status: .notDetermined
+                )
             }
             return
         }

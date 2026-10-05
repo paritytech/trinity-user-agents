@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import CoreData
 import AsyncExtensions
 import StructuredConcurrency
@@ -11,7 +12,9 @@ extension ProductPermissionDataProviderMaking {
         grantedOnly: Bool = true
     ) -> AnyAsyncSequence<[ProductPermissionGrant]> {
         if SettingsManager.shared.isTrUAPIRuntimeEnabled {
-            return subscribeRustGrants().map { grants in grants.filter { $0.productId == productId && (!grantedOnly || $0.granted) } }.eraseToAnyAsyncSequence()
+            return subscribeRustGrants().map { grants in
+                grants.filter { $0.productId == productId && (!grantedOnly || $0.granted) }
+            }.eraseToAnyAsyncSequence()
         }
         var predicates: [NSPredicate] = [.permissionGrant(productId: productId)]
 
@@ -28,7 +31,9 @@ extension ProductPermissionDataProviderMaking {
         grantedOnly: Bool
     ) -> AnyAsyncSequence<[ProductPermissionGrant]> {
         if SettingsManager.shared.isTrUAPIRuntimeEnabled {
-            return subscribeRustGrants().map { grants in grants.filter { !grantedOnly || $0.granted } }.eraseToAnyAsyncSequence()
+            return subscribeRustGrants().map { grants in
+                grants.filter { !grantedOnly || $0.granted }
+            }.eraseToAnyAsyncSequence()
         }
         let predicate: NSPredicate? = grantedOnly ? .permissionGrantGrantedOnly() : nil
         return subscribeGrantsWithPredicate(predicate)

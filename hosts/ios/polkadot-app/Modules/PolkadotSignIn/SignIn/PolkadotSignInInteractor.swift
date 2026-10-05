@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 
 final class PolkadotSignInInteractor {
     weak var presenter: PolkadotSignInInteractorOutputProtocol?

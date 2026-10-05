@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import CryptoKit
 import Products
 import TrUAPIHost
@@ -37,17 +38,27 @@ final class TrUAPIWorkerEngines: WorkerEngineHost, @unchecked Sendable {
         self.resolver = resolver
         self.logger = logger
         self.host = host
-        observers.append(NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: nil) { [weak self] _ in
+        observers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification, object: nil, queue: nil
+        ) { [weak self] _ in
             guard let self else { return }
             Task.detached { [weak self] in
-                do { try await self?.host?.suspendWorkers() }
-                catch { self?.logger.error("Rust worker suspension failed: \(error)") }
+                do {
+                    try await self?.host?.suspendWorkers()
+                } catch {
+                    self?.logger.error("Rust worker suspension failed: \(error)")
+                }
             }
         })
-        observers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: nil) { [weak self] _ in
+        observers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: nil
+        ) { [weak self] _ in
             Task { [weak self] in
-                do { try await self?.host?.updateWorkers() }
-                catch { self?.logger.error("Rust worker restoration failed: \(error)") }
+                do {
+                    try await self?.host?.updateWorkers()
+                } catch {
+                    self?.logger.error("Rust worker restoration failed: \(error)")
+                }
             }
         })
     }
@@ -67,11 +78,16 @@ final class TrUAPIWorkerEngines: WorkerEngineHost, @unchecked Sendable {
     func pocketBridge(productId _: String) -> (any PocketHostBridge)? { nil }
 
     func fetchWorkerBundle(productId: String, contentHash: Data?) async throws -> WorkerBundle {
-        let metadataDirectory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let metadataDirectory = try FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+        )
             .appendingPathComponent("TrUAPIWorkerBundles", isDirectory: true)
         try FileManager.default.createDirectory(at: metadataDirectory, withIntermediateDirectories: true)
         if let contentHash {
-            let cached = try JSONDecoder().decode(CachedBundle.self, from: Data(contentsOf: metadataDirectory.appendingPathComponent(contentHash.toHex())))
+            let cached = try JSONDecoder().decode(
+                CachedBundle.self,
+                from: Data(contentsOf: metadataDirectory.appendingPathComponent(contentHash.toHex()))
+            )
             guard let directory = DotNsContentStorage().getContentDirectory(contentHash: cached.contentId) else {
                 throw HostRejection.Rejected(reason: "Worker bundle files are missing")
             }
@@ -81,7 +97,8 @@ final class TrUAPIWorkerEngines: WorkerEngineHost, @unchecked Sendable {
         let text = try await resolver.getMetadataEntry(dotNsName: subname, key: ProductManifestRecords.executableKey)
         let source: ProductWorkerSource
         if let text {
-            guard case let .worker(worker)? = ProductManifestParser(logger: logger).parseExecutable(text, kind: .worker, identifier: subname) else {
+            guard case let .worker(worker)? = ProductManifestParser(logger: logger)
+                .parseExecutable(text, kind: .worker, identifier: subname) else {
                 throw HostRejection.Rejected(reason: "Product has no valid worker manifest")
             }
             source = ProductWorkerSource(contentId: subname, entryRelativePath: worker.entrypoint)
@@ -91,11 +108,17 @@ final class TrUAPIWorkerEngines: WorkerEngineHost, @unchecked Sendable {
             guard let workerOverride else { throw HostRejection.Rejected(reason: "Product has no worker executable") }
             let url = URL(string: workerOverride.contains("://") ? workerOverride : "https://" + workerOverride)
             guard let domain = url?.host,
-                  let productHost = try await ProductHostFactory(tldProvider: DotNsTldProviderFacade.shared).resolveHost(rawString: domain),
+                  let productHost = try await ProductHostFactory(tldProvider: DotNsTldProviderFacade.shared)
+                    .resolveHost(rawString: domain),
                   let path = url?.path, !path.isEmpty else {
-                throw HostRejection.Rejected(reason: "Arbitrary HTTP development worker bundles are unsupported in this experiment; use a published dotNS bundle")
+                throw HostRejection.Rejected(
+                    reason: "Arbitrary HTTP development worker bundles are unsupported in this experiment; "
+                        + "use a published dotNS bundle"
+                )
             }
-            source = ProductWorkerSource(contentId: productHost.toDotDomain(), entryRelativePath: String(path.drop(while: { $0 == "/" })))
+            source = ProductWorkerSource(
+                contentId: productHost.toDotDomain(), entryRelativePath: String(path.drop(while: { $0 == "/" }))
+            )
         }
         let directory = try await resolver.resolveToLocalURL(dotNsName: source.contentId)
         let encoder = JSONEncoder()
@@ -122,7 +145,11 @@ final class TrUAPIWorkerEngines: WorkerEngineHost, @unchecked Sendable {
         let permissions = OSPermissionAsker()
         let runtime = ChatRustRuntime(
             productUrl: context.productUrl,
-            makeExecutionModel: { _ in RustRuntimeEnvironment.ExecutionModel(execution: execution, chainConnections: connections, osPermissionAsker: permissions) },
+            makeExecutionModel: { _ in
+                RustRuntimeEnvironment.ExecutionModel(
+                    execution: execution, chainConnections: connections, osPermissionAsker: permissions
+                )
+            },
             routers: routers,
             engineFactory: context.engineFactory,
             chatSurface: surface,
@@ -136,8 +163,9 @@ final class TrUAPIWorkerEngines: WorkerEngineHost, @unchecked Sendable {
             logger: logger
         )
         let task = Task<Void, Error> { [weak self] in
-            do { try await runtime.start(messagingSupport: .init(bot: bot, context: messaging)) }
-            catch {
+            do {
+                try await runtime.start(messagingSupport: .init(bot: bot, context: messaging))
+            } catch {
                 if !(error is CancellationError) {
                     self?.host?.notifyWorkerFailed(execution: execution, reason: String(describing: error))
                 }
@@ -180,7 +208,6 @@ final class TrUAPIWorkerEngines: WorkerEngineHost, @unchecked Sendable {
         }
         throw CancellationError()
     }
-
 }
 
 private struct WorkerFiles: ChatProductFileProviding {
@@ -217,21 +244,38 @@ final class TrUAPIWorkerChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {
     func onUserMessage(text: String, roomId: String?) async throws {
         try await engines.chatRuntime(productId: productId).onUserMessage(text: text, roomId: roomId)
     }
-    func renderMessage(roomId: String?, messageId: String, messageType: String, messageData: Data) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
-        do { return try await engines.chatRuntime(productId: productId).renderMessage(roomId: roomId, messageId: messageId, messageType: messageType, messageData: messageData) }
-        catch { return AsyncThrowingStream { $0.finish(throwing: error) } }
+    func renderMessage(
+        roomId: String?, messageId: String, messageType: String, messageData: Data
+    ) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
+        do {
+            return try await engines.chatRuntime(productId: productId).renderMessage(
+                roomId: roomId, messageId: messageId, messageType: messageType, messageData: messageData
+            )
+        } catch {
+            return AsyncThrowingStream { $0.finish(throwing: error) }
+        }
     }
-    func dispatchEvent(roomId: String?, messageId: String, messageType: String?, actionId: String, payload: String?) async {
-        do { try await engines.chatRuntime(productId: productId).dispatchEvent(roomId: roomId, messageId: messageId, messageType: messageType, actionId: actionId, payload: payload) }
-        catch { Logger.shared.error("Worker event failed: \(error)") }
+    func dispatchEvent(
+        roomId: String?, messageId: String, messageType: String?, actionId: String, payload: String?
+    ) async {
+        do {
+            try await engines.chatRuntime(productId: productId).dispatchEvent(
+                roomId: roomId, messageId: messageId, messageType: messageType, actionId: actionId, payload: payload
+            )
+        } catch {
+            Logger.shared.error("Worker event failed: \(error)")
+        }
     }
     @MainActor func attach(presentationView: ControllerBackedProtocol) {
         lock.withLock {
             presentationTask?.cancel()
             presentationTask = Task { @MainActor [engines, productId] in
-                do { try await engines.chatRuntime(productId: productId).attach(presentationView: presentationView) }
-                catch is CancellationError {}
-                catch { Logger.shared.error("Worker presentation failed: \(error)") }
+                do {
+                    try await engines.chatRuntime(productId: productId).attach(presentationView: presentationView)
+                } catch is CancellationError {
+                } catch {
+                    Logger.shared.error("Worker presentation failed: \(error)")
+                }
             }
         }
     }

@@ -117,11 +117,17 @@ actor TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding {
         if !available {
             if let pendingRuntime { _ = try? await pendingRuntime.value }
             walletId = nil
-            do { try await cachedRuntime?.lockWallet() }
-            catch { logger.error("Rust wallet lock failed: \(error)") }
+            do {
+                try await cachedRuntime?.lockWallet()
+            } catch {
+                logger.error("Rust wallet lock failed: \(error)")
+            }
         } else if InstallationKeyIdStore().getInstallationKeyId() != nil {
-            do { _ = try await sharedRuntime() }
-            catch { logger.error("Rust wallet activation failed: \(error)") }
+            do {
+                _ = try await sharedRuntime()
+            } catch {
+                logger.error("Rust wallet activation failed: \(error)")
+            }
         }
     }
 
@@ -194,8 +200,11 @@ actor TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding {
         notifyRuntimeRecordsChanged()
         runtime.startStatementAllowanceRenewal()
         Task { [logger] in
-            do { try await runtime.reconcileNotifications() }
-            catch { logger.error("Rust notification reconciliation failed: \(error)") }
+            do {
+                try await runtime.reconcileNotifications()
+            } catch {
+                logger.error("Rust notification reconciliation failed: \(error)")
+            }
         }
         return runtime
     }
@@ -266,8 +275,12 @@ private final class TrUAPIWalletProtectionObserver {
 
     init(changed: @escaping @Sendable (Bool) -> Void) {
         observers = [
-            NotificationCenter.default.addObserver(forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: nil) { _ in changed(false) },
-            NotificationCenter.default.addObserver(forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: nil) { _ in changed(true) }
+            NotificationCenter.default.addObserver(
+                forName: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil, queue: nil
+            ) { _ in changed(false) },
+            NotificationCenter.default.addObserver(
+                forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: nil
+            ) { _ in changed(true) }
         ]
     }
 

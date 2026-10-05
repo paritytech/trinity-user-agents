@@ -7,7 +7,8 @@ import Keystore_iOS
     private let defaultTrUAPIRuntimeEnabled = false
 #endif
 
-private let selectedTrUAPIRuntime = SettingsManager.shared.bool(for: SettingsKey.truApiRuntimeEnabled.rawValue) ?? defaultTrUAPIRuntimeEnabled
+private let selectedTrUAPIRuntime = SettingsManager.shared.bool(for: SettingsKey.truApiRuntimeEnabled.rawValue)
+    ?? defaultTrUAPIRuntimeEnabled
 
 extension SettingsManagerProtocol {
     /// Nightly sets `TRUAPI_RUNTIME_DEFAULT` (see Configs/base.nightly.xcconfig) so testers land on

@@ -26,7 +26,9 @@ extension SSOTruAPICoordinator: MessageExchangeSignInHostCoordinating {
     }
 
     func setup() async {
-        observer = NotificationCenter.default.addObserver(forName: .truapiPairedHostsChanged, object: nil, queue: nil) { [weak self] _ in
+        observer = NotificationCenter.default.addObserver(
+            forName: .truapiPairedHostsChanged, object: nil, queue: nil
+        ) { [weak self] _ in
             Task { await self?.resumeHosts() }
         }
         await resumeHosts()
@@ -81,12 +83,16 @@ private extension SSOTruAPICoordinator {
             let identifier = UUID()
             let task = Task {
                 defer { if tasks[host.peerEncryption]?.id == identifier { tasks[host.peerEncryption] = nil } }
-                let peer = PairedSsoPeer(statementAccountId: host.peerStatement, encryptionPublicKey: host.peerEncryption)
+                let peer = PairedSsoPeer(
+                    statementAccountId: host.peerStatement, encryptionPublicKey: host.peerEncryption
+                )
                 while !Task.isCancelled {
                     do {
                         let result = try await runtime.resumePairing(peer: peer)
                         if result == .peerDisconnected {
-                            try await runtime.removePairedHost(peerStatement: host.peerStatement, peerEncryption: host.peerEncryption)
+                            try await runtime.removePairedHost(
+                                peerStatement: host.peerStatement, peerEncryption: host.peerEncryption
+                            )
                             NotificationCenter.default.post(name: .truapiPairedHostsChanged, object: nil)
                             break
                         }

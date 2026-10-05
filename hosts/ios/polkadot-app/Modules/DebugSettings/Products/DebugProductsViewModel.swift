@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import Operation_iOS
 import Products
 
@@ -40,7 +41,8 @@ final class DebugProductsViewModel {
 
     func saveProduct(name: String, scriptURL: String) {
         guard !SettingsManager.shared.isTrUAPIRuntimeEnabled else {
-            downloadError = "Arbitrary HTTP development worker bundles are unsupported in this experiment. Install a published dotNS product."
+            downloadError = "Arbitrary HTTP development worker bundles are unsupported in this experiment. "
+                + "Install a published dotNS product."
             return
         }
         let product = Product(id: UUID().uuidString, name: name)

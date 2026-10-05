@@ -62,5 +62,4 @@ private extension ProductBotFactory {
             ProductWorkerSource(contentId: resolved.id, entryRelativePath: $0)
         }
     }
-
 }
