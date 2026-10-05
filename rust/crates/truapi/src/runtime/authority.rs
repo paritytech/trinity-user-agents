@@ -370,9 +370,10 @@ pub trait ProductAuthority: Send + Sync {
     async fn disconnect(&self);
 
     /// Refresh identity fields for the current session if the authority can do
-    /// so without user interaction.
-    async fn refresh_session_identity(&self) -> Option<AuthoritySession> {
-        self.current_session()
+    /// so without user interaction. Lookup failures must not be presented as
+    /// an authoritative absence of a username.
+    async fn refresh_session_identity(&self) -> Result<Option<AuthoritySession>, String> {
+        Ok(self.current_session())
     }
 
     /// Return the public key of `//product//{product_id}`.
