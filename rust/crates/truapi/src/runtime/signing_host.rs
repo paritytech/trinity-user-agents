@@ -908,6 +908,108 @@ impl ProductAuthority for SigningHost {
         Ok(self.current_local_session())
     }
 
+    fn session_state(&self) -> Arc<SessionState> {
+        SigningHost::session_state(self)
+    }
+
+    async fn request_login(
+        &self,
+        _product: &ProductContext,
+    ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
+        if let Some(session) = self.session_state.current() {
+            self.auth_state
+                .connected(&connected_session_ui_info(&session));
+            Ok(HostRequestLoginResponse::V1(
+                v01::HostRequestLoginResponse::AlreadyConnected,
+            ))
+        } else {
+            // The host activates a local session out of band once the wallet
+            // is unlocked; there is no in-core login prompt to drive.
+            Ok(HostRequestLoginResponse::V1(
+                v01::HostRequestLoginResponse::Rejected,
+            ))
+        }
+    }
+
+    async fn disconnect(&self) {
+        self.clear_local_session();
+        self.auth_state.store_disconnected();
+    }
+
+    async fn product_subtree_public_key(
+        &self,
+        _cx: &CallContext,
+        session: &AuthoritySession,
+        product_id: String,
+    ) -> Result<[u8; 32], AuthorityError> {
+        self.require_current_session(session)?;
+        let product_id = normalize_product_identifier(&product_id).map_err(|err| {
+            AuthorityError::Unavailable {
+                reason: err.to_string(),
+            }
+        })?;
+        let entropy = self.root_entropy()?;
+        let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+        derive_product_subtree_keypair(&root, &product_id)
+            .map(|keypair| keypair.public.to_bytes())
+            .map_err(product_authority_error)
+    }
+
+    async fn subtree_resolution_reaches_account_holder(
+        &self,
+        _session: &AuthoritySession,
+        _product_id: &str,
+    ) -> bool {
+        // A signing host derives the subtree locally from root entropy, so
+        // resolution never reaches a remote Account Holder and never prompts.
+        false
+    }
+
+    async fn auto_signing_status(
+        &self,
+        session: &AuthoritySession,
+        calling_product_id: &str,
+        account: &v01::ProductAccountId,
+    ) -> Result<AutoSigningGrant, AuthorityError> {
+        // A stale session is not a grant, and is answered here rather than
+        // raising a prompt against a session that no longer exists.
+        // `grant_auto_signing` refuses to record a grant whose owner is not
+        // the session's own key, so the session carries the owner a grant can
+        // be keyed on and no root derivation is needed to answer this.
+        let (current, activation_generation) = self.require_current_session(session)?;
+        if super::authority::is_blessed_owner(calling_product_id, &account.dot_ns_identifier)
+            || self.has_auto_signing_grant(
+                activation_generation,
+                current.public_key,
+                calling_product_id,
+                &account.dot_ns_identifier,
+            )
+        {
+            Ok(AutoSigningGrant::Active)
+        } else {
+            Ok(AutoSigningGrant::Absent)
+        }
+    }
+
+    async fn sign_vrf(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        calling_product_id: String,
+        request: v01::HostAccountSignVrfRequest,
+    ) -> Result<v01::VrfSignature, AuthorityError> {
+        self.sign_vrf_request(cx, session, calling_product_id, request, true)
+            .await
+            .map_err(|error| error.reason)?;
+        if !self
+            .local_identity_context()
+            .is_ok_and(|current| current.activation_id == context.activation_id)
+        {
+            return Ok(None);
+        }
+        Ok(self.current_local_session())
+    }
+
 	async fn subtree_resolution_reaches_account_holder(
 		&self,
 		_session: &AuthoritySession,
