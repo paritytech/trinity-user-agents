@@ -118,3 +118,54 @@ pub async fn network_tld<T: DotnsTransport + ?Sized>(
 pub fn tld_node(tld: &str) -> [u8; 32] {
     namehash_under(&[0u8; 32], tld.trim_start_matches('.'))
 }
+
+/// Current owner of a bare name in either deployed dotNS representation.
+/// Earlier controllers minted dotted lite names as atomic second-level tokens;
+/// newer controllers register them beneath the numeric suffix. Conflicting
+/// owners are an error, never permission to select whichever matches a caller.
+/// Shape and PoP provenance are checked by the identity caller.
+pub async fn label_owner<T: DotnsTransport + ?Sized>(
+    transport: &mut T,
+    registry: &[u8; 20],
+    tld: &[u8; 32],
+    label: &str,
+) -> Result<Option<[u8; 20]>, String> {
+    let atomic = node_owner(transport, registry, &namehash_under(tld, label)).await?;
+    let Some((stem, suffix)) = label.split_once('.') else {
+        return Ok(atomic);
+    };
+    let nested_node = namehash_under(&namehash_under(tld, suffix), stem);
+    let nested = node_owner(transport, registry, &nested_node).await?;
+    match (atomic, nested) {
+        (Some(a), Some(b)) if a != b => Err("ambiguous dotNS lite name owner".into()),
+        (Some(owner), _) | (_, Some(owner)) => Ok(Some(owner)),
+        (None, None) => Ok(None),
+    }
+}
+
+async fn node_owner<T: DotnsTransport + ?Sized>(
+    transport: &mut T,
+    registry: &[u8; 20],
+    node: &[u8; 32],
+) -> Result<Option<[u8; 20]>, String> {
+    let exists = transport
+        .view(registry, call_bytes32("recordExists(bytes32)", node))
+        .await?;
+    if exists.len() != 32 {
+        return Err("dotNS recordExists returned a non-word".into());
+    }
+    if !decode_bool(&exists).map_err(|error| error.to_string())? {
+        return Ok(None);
+    }
+    let output = transport
+        .view(registry, call_bytes32("owner(bytes32)", node))
+        .await?;
+    if output.len() != 32 {
+        return Err("dotNS address is not one ABI word".into());
+    }
+    let owner = decode_address(&output).map_err(|error| error.to_string())?;
+    if owner == [0; 20] {
+        return Err("existing dotNS record has a zero owner".into());
+    }
+    Ok(Some(owner))
+}

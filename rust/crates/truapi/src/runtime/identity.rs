@@ -187,7 +187,7 @@ async fn lookup_dotns_identity(
             return Ok(None);
         }
         Ok(Some(
-            classify_labels(&mut lookup, &controller, labels).await?,
+            classify_labels(&mut lookup, &controller, &account_id, labels).await?,
         ))
     }
     .fuse();
@@ -231,7 +231,7 @@ pub(super) async fn lookup_local_identity(
                 owned.push(label);
             }
         }
-        classify_labels(&mut lookup, &controller, owned).await
+        classify_labels(&mut lookup, &controller, &account, owned).await
     }
     .fuse();
     let timeout = futures_timer::Delay::new(LOOKUP_BUDGET).fuse();
@@ -276,7 +276,7 @@ mod tests {
     use super::*;
     use crate::chain_runtime::{RuntimeChainProvider, RuntimeFailure};
     use crate::host_logic::dotns_gateway::{
-        VIEW_CALL_ORIGIN, account_to_h160, dispatcher_address_key, selector, timestamp_now_key,
+        VIEW_CALL_ORIGIN, account_to_h160, dispatcher_address_key, selector,
     };
     use crate::platform::JsonRpcConnection;
     use crate::subscription::thread_per_subscription_spawner;
@@ -294,6 +294,7 @@ mod tests {
     const DISPATCHER: [u8; 20] = [0xd1; 20];
     const CONTROLLER: [u8; 20] = [0xc0; 20];
     const REGISTRY: [u8; 20] = [0x9e; 20];
+    const NAME_REGISTRY: [u8; 20] = [0x9f; 20];
     const FACTORY: [u8; 20] = [0xfa; 20];
     const STORE: [u8; 20] = [0x57; 20];
     const ACCOUNT: [u8; 32] = [0xaa; 32];
@@ -365,11 +366,6 @@ mod tests {
         out
     }
 
-    /// Chain time the scripted `Timestamp.Now` reports, in seconds.
-    const NOW_SECS: u64 = 1_800_000_000;
-    /// The scripted controller's `reservationDuration()`.
-    const RESERVATION_DURATION: u64 = 604_800;
-
     /// `ReviveApi_call` output carrying successful return `data`.
     fn contract_result(data: &[u8]) -> Vec<u8> {
         contract_result_with_flags(0, data)
@@ -414,22 +410,43 @@ mod tests {
                 );
                 assert_eq!(&input[36..68], &abi_word(0));
                 assert_eq!(&input[68..100], &abi_word(16));
-                // One live claim and one that lapsed a second ago.
+                // A transferred candidate must not win; the still-owned name
+                // was minted long before the old seven-day reservation cutoff.
                 abi_pending_claims(&[
-                    ("alice.01", NOW_SECS - 10),
-                    ("stale.01", NOW_SECS - RESERVATION_DURATION - 1),
+                    ("transferred.01", 1_800_000_000),
+                    ("alice.01", 1),
                 ])
             }
             (CONTROLLER, s) if s == selector("isPopIssued(string)") => {
-                // Both surviving labels were issued through the gateway.
+                // Provenance alone cannot authorize the transferred name.
                 abi_word(1).to_vec()
             }
-            (CONTROLLER, s) if s == selector("reservationDuration()") => {
-                abi_word(RESERVATION_DURATION).to_vec()
-            }
             (CONTROLLER, s) if s == selector("protocolRegistry()") => abi_address(&REGISTRY),
-            (REGISTRY, s) if s == selector("get(bytes32)") => abi_address(&FACTORY),
+            (REGISTRY, s) if s == selector("get(bytes32)") => {
+                if input[4..] == crate::host_logic::dotns_gateway::registry_key("registry") {
+                    abi_address(&NAME_REGISTRY)
+                } else {
+                    abi_address(&FACTORY)
+                }
+            }
             (REGISTRY, s) if s == selector("tld()") => abi_string(".paseo"),
+            (NAME_REGISTRY, s) if s == selector("recordExists(bytes32)") => {
+                let tld = crate::dotns_views::tld_node(".paseo");
+                let present = ["transferred.01", "alice.01", "myproject"].iter().any(|label| {
+                    input[4..] == crate::host_logic::dotns_gateway::namehash_under(&tld, label)
+                });
+                abi_word(u64::from(present)).to_vec()
+            }
+            (NAME_REGISTRY, s) if s == selector("owner(bytes32)") => {
+                let transferred = crate::host_logic::dotns_gateway::namehash_under(
+                    &crate::dotns_views::tld_node(".paseo"), "transferred.01",
+                );
+                if input[4..] == transferred {
+                    abi_address(&[0xbb; 20])
+                } else {
+                    abi_address(&account_to_h160(&ACCOUNT))
+                }
+            }
             (FACTORY, s) if s == selector("getLabelStore(address)") => {
                 assert_eq!(&input[16..36], account_to_h160(&ACCOUNT));
                 abi_address(&STORE)
@@ -531,13 +548,6 @@ mod tests {
                     let mut frames = vec![response(
                         json!({"result": "started", "operationId": operation_id}),
                     )];
-                    if key_bytes == timestamp_now_key() {
-                        frames.push(follow_event(json!({
-                            "event": "operationStorageItems",
-                            "operationId": operation_id,
-                            "items": [{"key": key, "value": format!("0x{}", hex::encode((NOW_SECS * 1_000).to_le_bytes()))}]
-                        })));
-                    }
                     if key_bytes == dispatcher_address_key()
                         && !matches!(self.lookup, ScriptedLookup::GatewayMissing)
                     {
@@ -694,14 +704,12 @@ mod tests {
             .iter()
             .filter(|request| request.contains("chainHead_v1_call"))
             .count();
-        // protocolRegistry (reverts on the dispatcher), TARGET, pendingClaims,
-        // reservationDuration, protocolRegistry, get(storeFactory), getLabelStore, tld,
-        // one short getLabels page, then one isPopIssued per surviving label
-        // (alice.01, myproject). A repointed chain resolves on the first probe
-        // and needs ten.
+        // Discovery and label enumeration use eight views. Classification
+        // reads provenance for all three candidates, discovers registry/TLD
+        // once, and checks atomic plus nested owners for both dotted names.
         assert_eq!(
-            calls, 11,
-            "the discovery, label and provenance chain is exactly eleven views on a dispatcher chain"
+            calls, 22,
+            "discovery, provenance and current ownership share the runtime follow"
         );
     }
 
