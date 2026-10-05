@@ -1,5 +1,6 @@
 import Foundation
 import Operation_iOS
+import StructuredConcurrency
 import Products
 import TrUAPIHost
 
@@ -19,7 +20,8 @@ final class TrUAPIProductRepository: DataProviderRepositoryProtocol {
     ) -> BaseOperation<Product?> {
         AsyncTaskOperation {
             let identifier = try modelIdClosure()
-            return try await self.runtime().products()
+            return try await self.runtime()
+                .products()
                 .first { $0.productId == identifier }
                 .map { Product(id: $0.productId, name: $0.name) }
         }

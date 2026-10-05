@@ -14,15 +14,15 @@ extension Products.ProductPermission {
         case .balanceAccess:
             throw HostRejection.Rejected(reason: "Balance disclosure is not a persisted TrUAPI permission")
         case let .networkAccess(domain):
-            return .remote(TrUAPIHost.RemotePermissionRequest(permission: .remote(domains: [domain])))
+            return .remote(.init(permission: .remote(domains: [domain])))
         case .webRtcAccess:
-            return .remote(TrUAPIHost.RemotePermissionRequest(permission: .webRtc))
+            return .remote(.init(permission: .webRtc))
         case .chainSubmitAccess:
-            return .remote(TrUAPIHost.RemotePermissionRequest(permission: .chainSubmit))
+            return .remote(.init(permission: .chainSubmit))
         case .preimageSubmitAccess:
-            return .remote(TrUAPIHost.RemotePermissionRequest(permission: .preimageSubmit))
+            return .remote(.init(permission: .preimageSubmit))
         case .statementSubmitAccess:
-            return .remote(TrUAPIHost.RemotePermissionRequest(permission: .statementSubmit))
+            return .remote(.init(permission: .statementSubmit))
         }
     }
 }

@@ -138,10 +138,12 @@ actor TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding {
         contactsChangeNotifier = nil
         walletId = nil
         let networkSuffix = try tldProvider.currentTldOrError()
+        let platformVersion = await MainActor.run { UIDevice.current.systemVersion }
         let runtimeConfig = try Self.makeRuntimeConfig(
             chainRegistry: chainRegistry,
             networkSuffix: networkSuffix,
-            databaseDirectory: Self.coreDatabaseDirectory()
+            databaseDirectory: Self.coreDatabaseDirectory(),
+            platformVersion: platformVersion
         )
 
         let chainConnections = TrUAPIChainConnectionPool(
@@ -220,7 +222,8 @@ extension TrUAPIHostRuntimeProvider {
     static func makeRuntimeConfig(
         chainRegistry: ChainRegistryProtocol,
         networkSuffix: String,
-        databaseDirectory: String
+        databaseDirectory: String,
+        platformVersion: String
     ) throws -> HostRuntimeConfig {
         let peopleChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.usernameChain)
         let bulletinChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.bulletInChain)
@@ -246,7 +249,7 @@ extension TrUAPIHostRuntimeProvider {
             hostName: "Polkadot App",
             hostVersion: version,
             platformType: "ios",
-            platformVersion: UIDevice.current.systemVersion,
+            platformVersion: platformVersion,
             peopleChainGenesisHash: Data(hexString: peopleGenesisHex),
             bulletinChainGenesisHash: Data(hexString: bulletinGenesisHex),
             assetHubChainGenesisHash: Data(hexString: assetHubGenesisHex),

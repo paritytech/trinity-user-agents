@@ -4,7 +4,7 @@ import UserNotifications
 
 struct TrUAPINotifications: Sendable {
     let walletId: String?
-    private let center = UNUserNotificationCenter.current()
+    private var center: UNUserNotificationCenter { .current() }
 
     func schedule(productId: String, id: UInt32, request: HostPushNotificationRequest) async throws {
         let content = UNMutableNotificationContent()

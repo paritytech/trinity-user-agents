@@ -127,7 +127,8 @@ struct TrUAPIHostRuntimeProviderConfigTests {
             _ = try TrUAPIHostRuntimeProvider.makeRuntimeConfig(
                 chainRegistry: MockChainRegistry(),
                 networkSuffix: "paseo",
-                databaseDirectory: NSTemporaryDirectory()
+                databaseDirectory: NSTemporaryDirectory(),
+                platformVersion: "test"
             )
         }
     }
