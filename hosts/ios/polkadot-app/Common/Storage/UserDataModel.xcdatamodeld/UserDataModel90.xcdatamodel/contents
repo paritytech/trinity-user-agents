@@ -238,17 +238,12 @@
         <attribute name="memberKey" attributeType="String"/>
     </entity>
     <entity name="CDPocketCard" representedClassName="CDPocketCard" syncable="YES" codeGenerationType="class">
-        <attribute name="addedAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="addedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="cardId" attributeType="String"/>
+        <attribute name="face" optional="YES" attributeType="Binary"/>
         <attribute name="identifier" attributeType="String"/>
         <attribute name="productId" attributeType="String"/>
-        <attribute name="title" attributeType="String"/>
-    </entity>
-    <entity name="CDPocketCardFace" representedClassName="CDPocketCardFace" syncable="YES" codeGenerationType="class">
-        <attribute name="cardId" attributeType="String"/>
-        <attribute name="face" attributeType="Binary"/>
-        <attribute name="identifier" attributeType="String"/>
-        <attribute name="productId" attributeType="String"/>
+        <attribute name="title" optional="YES" attributeType="String"/>
     </entity>
     <entity name="CDPolkadotSignInHost" representedClassName="CDPolkadotSignInHost" syncable="YES" codeGenerationType="class">
         <attribute name="iconUrl" optional="YES" attributeType="String"/>

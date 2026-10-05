@@ -7,9 +7,10 @@ import TrUAPIHost
 /// The settled collection: the cards the host placed, then the ones the user
 /// added, each with the newest face held for it.
 ///
-/// One type between the callers and CoreData. The cards the user added and the
-/// newest face for any card are rows here; a host-placed card has no membership
-/// row, but its face is kept like every other.
+/// One type between the callers and CoreData, over one row per card. A row
+/// carries what the user added, the newest face its product drew, or both: a
+/// host-placed card is placed on every run rather than added, so its row holds
+/// only a face.
 ///
 /// Reads, additions and removals raise what went wrong. The core tells a
 /// failure apart from an empty Pocket and from a card that was already gone,
@@ -58,14 +59,12 @@ final class CoreDataPocketCardStore: PocketCardStore, @unchecked Sendable {
         let pinned = pinned
 
         return storageFacade
-            .subscribeSnapshot(mapper: cardMapper, transform: { $0.sorted { $0.addedAt < $1.addedAt } })
-            .map { stored in
+            .subscribeSnapshot(mapper: cardMapper)
+            .map { rows in
                 let placed = await pinned.cards()
                 let placedKeys = Set(placed.map(\.key))
 
-                return placed + stored
-                    .map { PocketCardEntry(key: $0.key, title: $0.title, privileged: false) }
-                    .filter { !placedKeys.contains($0.key) }
+                return placed + Self.added(rows).filter { !placedKeys.contains($0.key) }
             }
             .eraseToAnyAsyncSequence()
     }
@@ -79,16 +78,19 @@ final class CoreDataPocketCardStore: PocketCardStore, @unchecked Sendable {
             .fetchOperation(by: { key.storageId }, options: .init())
             .asyncExecute() != nil
 
-        // The face goes with the card: a card added again must not inherit the
-        // face the last one was approved by.
+        // The whole row goes: a card added again must not inherit the face the
+        // last one was approved by.
         try await cardRows.saveOperation({ [] }, { [key.storageId] }).asyncExecute()
-        try await faceRows.saveOperation({ [] }, { [key.storageId] }).asyncExecute()
 
         return held ? .removed : .absent
     }
 
     func add(_ card: PocketCardEntry, face: RendererNode) async throws {
-        let stored = StoredPocketCard(key: card.key, title: card.title, addedAt: Date())
+        let stored = StoredPocketCard(
+            key: card.key,
+            membership: .init(title: card.title, addedAt: Date()),
+            face: nil
+        )
         try await cardRows.saveOperation({ [stored] }, { [] }).asyncExecute()
 
         await cacheFace(face, for: card.key)
@@ -114,13 +116,18 @@ final class CoreDataPocketCardStore: PocketCardStore, @unchecked Sendable {
 }
 
 private extension CoreDataPocketCardStore {
-    /// Oldest first, so the Pocket keeps the order cards were added in rather
-    /// than whatever order the store happens to return them.
     func added() async throws -> [PocketCardEntry] {
-        try await cardRows.fetchAllOperation(with: .init())
-            .asyncExecute()
-            .sorted { $0.addedAt < $1.addedAt }
-            .map { PocketCardEntry(key: $0.key, title: $0.title, privileged: false) }
+        try await Self.added(cardRows.fetchAllOperation(with: .init()).asyncExecute())
+    }
+
+    /// The cards the user added, oldest first. A row holding only a face is not
+    /// one of them, and the Pocket keeps the order cards were added in rather
+    /// than whatever order the rows come back in.
+    static func added(_ rows: [StoredPocketCard]) -> [PocketCardEntry] {
+        rows
+            .compactMap { row in row.membership.map { (key: row.key, membership: $0) } }
+            .sorted { $0.membership.addedAt < $1.membership.addedAt }
+            .map { PocketCardEntry(key: $0.key, title: $0.membership.title, privileged: false) }
     }
 
     func settle(_ added: [PocketCardEntry]) async -> [PocketCardEntry] {
@@ -134,14 +141,15 @@ private extension CoreDataPocketCardStore {
     /// keeps its place and waits for its product to draw again.
     func keptFace(for key: PocketCardKey) async -> RendererNode? {
         do {
-            guard let stored = try await faceRows
+            guard let face = try await cardRows
                 .fetchOperation(by: { key.storageId }, options: .init())
-                .asyncExecute()
+                .asyncExecute()?
+                .face
             else {
                 return nil
             }
 
-            return try decodeRendererNode(bytes: stored.face)
+            return try decodeRendererNode(bytes: face)
         } catch {
             logger.warning("pocket: the kept face for '\(key.storageId)' no longer reads: \(error)")
             return nil

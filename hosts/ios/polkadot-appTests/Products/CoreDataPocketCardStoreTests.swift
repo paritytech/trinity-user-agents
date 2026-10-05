@@ -134,6 +134,31 @@ struct CoreDataPocketCardStoreTests {
         #expect(await store.face(for: humanity.key) == .string(text: "drawn"))
     }
 
+    /// A host-placed card is placed on every run rather than stored, so the row
+    /// that keeps the face its product drew must not read back as a card the
+    /// user added: listed that way it would also be offered for removal.
+    @Test
+    func keepingAFaceDoesNotAddTheCardToTheCollection() async throws {
+        let store = makeStore()
+
+        await store.cacheFace(.string(text: "drawn"), for: loyalty.key)
+
+        #expect(try await store.cards().isEmpty)
+    }
+
+    /// What the user added and the newest face share a row, so writing the face
+    /// must not take the membership with it.
+    @Test
+    func keepingAFaceLeavesTheCardTheUserAdded() async throws {
+        let store = makeStore()
+        try await store.add(loyalty, face: .string(text: "approved"))
+
+        await store.cacheFace(.string(text: "drawn"), for: loyalty.key)
+
+        #expect(try await store.cards().map(\.key) == [loyalty.key])
+        #expect(await store.face(for: loyalty.key) == .string(text: "drawn"))
+    }
+
     /// A card nobody holds has no face to answer with, pinned or not.
     @Test
     func answersNoFaceForACardItDoesNotHold() async {
