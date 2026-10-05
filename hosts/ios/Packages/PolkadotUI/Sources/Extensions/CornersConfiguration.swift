@@ -56,18 +56,6 @@ public extension CornersConfiguration {
         .all(16)
             .corners(.bottomRight, 4)
     }
-
-    static var tattooMedia: CornersConfiguration {
-        .all(18)
-    }
-
-    static var mobRuleMedia: CornersConfiguration {
-        .all(14)
-    }
-
-    static var compactMobRuleMedia: CornersConfiguration {
-        .all(4)
-    }
 }
 
 extension CornersConfiguration: Equatable {
