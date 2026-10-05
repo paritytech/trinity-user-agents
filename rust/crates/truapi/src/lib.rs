@@ -582,6 +582,9 @@ runtime_items! {
     #[cfg(not(target_arch = "wasm32"))]
     pub mod store;
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub mod durable;
+
     pub use truapi_core::TrUApiCore;
     pub use host_core::{
         ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,

@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use async_sqlite::{JournalMode, Pool, PoolBuilder};
 use rusqlite::{OpenFlags, TransactionBehavior};
-use rusqlite_migration::Migrations;
+use rusqlite_migration::{M, Migrations};
 
 pub use observe::ObservedStatement;
 use observe::{Invalidation, authorize_for_change_tracking, track_changes};
@@ -47,7 +47,25 @@ const CORE_DB_READERS: usize = 2;
 
 /// Schema of the core database, one migration per change, in order.
 pub fn core_migrations() -> Migrations<'static> {
-    Migrations::new(Vec::new())
+    Migrations::new(vec![M::up(
+        "CREATE TABLE durable_tx (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            domain TEXT NOT NULL,
+            group_id TEXT,
+            tx_hash BLOB,
+            birth_number INTEGER,
+            birth_hash BLOB,
+            period INTEGER,
+            success_number INTEGER,
+            success_hash BLOB,
+            status TEXT NOT NULL CHECK (status IN
+                ('PENDING_SUBMISSION', 'PENDING', 'PENDING_SUCCESS', 'FINALIZED_SUCCESS', 'FAILURE')),
+            policy_id TEXT,
+            policy_params BLOB
+        );
+        CREATE INDEX durable_tx_group ON durable_tx(domain, group_id);
+        CREATE INDEX durable_tx_status ON durable_tx(domain, status);",
+    )])
 }
 
 /// The core database configuration for a host-provided directory.
