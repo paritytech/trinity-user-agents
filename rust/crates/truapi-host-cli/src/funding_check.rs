@@ -2,23 +2,31 @@
 //!
 //! The command opens a funding session on a signing host, prints the deposit
 //! address its provider would pay, and follows the session while someone pays
-//! that address from any funded account. It ends once the CASH lands on
-//! People, or the session fails.
+//! that address from any funded account. It ends once the session is
+//! credited, or fails. The CLI has no coinage engine, so a stand-in top-up
+//! checks the claim and reports it without moving coins.
 //!
 //! Sessions and account counters live under the state directory, so a second
 //! run with `--intent` picks up the same session, and no run reuses an
 //! account.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::ValueEnum;
+use futures::stream::{self, BoxStream, StreamExt};
 use truapi::host_logic::funding::{DepositAsset, DepositRequest, FundingStage};
-use truapi::latest::{FundingDirection, GenericError, HostFundingStatusSubscribeItem};
+use truapi::latest::{
+    FundingDirection, GenericError, HostFundingStatusSubscribeItem, HostPaymentTopUpError,
+    HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
+    HostPaymentTopUpStatusSubscribeItem, PaymentTopUpSource,
+};
 use truapi::platform::{
-    FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext, async_trait,
+    FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext, TopUpPlatform,
+    async_trait,
 };
 use truapi::{FundingNetwork, SigningHostRuntime};
 
@@ -92,6 +100,100 @@ impl FundingPlatform for TerminalFundingHost {
     }
 }
 
+/// A top-up that stands in for a host's coinage engine, which the CLI does
+/// not have.
+///
+/// It checks what a real claim would rest on: the source key controls the
+/// session's deposit account, and the amount is within the CASH core saw land
+/// on People. Then it reports the claim finalized without moving anything, so
+/// a run reaches `Delivered` with every core step real except the claim.
+struct StandInTopUp {
+    runtime: OnceLock<Weak<SigningHostRuntime>>,
+    intent: OnceLock<String>,
+    claimed: Mutex<HashMap<[u8; 32], u128>>,
+}
+
+impl StandInTopUp {
+    fn new() -> Self {
+        Self {
+            runtime: OnceLock::new(),
+            intent: OnceLock::new(),
+            claimed: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Why the claim in `request` would fail, if it would.
+    fn refusal(&self, request: &HostPaymentTopUpRequest) -> Option<&'static str> {
+        let PaymentTopUpSource::PrivateKey { sr25519_secret_key } = &request.source else {
+            return Some("the source is not a private key");
+        };
+        let Ok(secret) = schnorrkel::SecretKey::from_bytes(sr25519_secret_key) else {
+            return Some("the source key is not a schnorrkel secret");
+        };
+        let session = self
+            .runtime
+            .get()
+            .and_then(Weak::upgrade)
+            .zip(self.intent.get())
+            .and_then(|(runtime, intent)| runtime.funding_session(intent));
+        let Some(session) = session else {
+            return Some("no session to claim for");
+        };
+        let landed = match session.stage {
+            FundingStage::Converted { landed } | FundingStage::Crediting { landed, .. } => landed,
+            _ => return Some("no CASH has landed for the session"),
+        };
+        if session.deposit.map(|deposit| deposit.account) != Some(secret.to_public().to_bytes()) {
+            return Some("the source key does not control the deposit account");
+        }
+        (request.amount > landed).then_some("the amount exceeds the CASH that landed")
+    }
+}
+
+#[async_trait]
+impl TopUpPlatform for StandInTopUp {
+    async fn top_up(
+        &self,
+        _product: &ProductContext,
+        request: HostPaymentTopUpRequest,
+    ) -> Result<(), HostPaymentTopUpError> {
+        if let Some(reason) = self.refusal(&request) {
+            println!("stand-in top-up refused: {reason}");
+            return Err(HostPaymentTopUpError::InvalidSource);
+        }
+        let mut claimed = self.claimed.lock().expect("claims mutex poisoned");
+        if claimed.contains_key(&request.id) {
+            return Err(HostPaymentTopUpError::AlreadyExists);
+        }
+        println!(
+            "stand-in top-up: would claim {} CASH units into the balance (no coins moved)",
+            request.amount
+        );
+        claimed.insert(request.id, request.amount);
+        Ok(())
+    }
+
+    fn subscribe_top_up_status(
+        &self,
+        _product: &ProductContext,
+        id: [u8; 32],
+    ) -> BoxStream<
+        'static,
+        Result<HostPaymentTopUpStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError>,
+    > {
+        let known = self
+            .claimed
+            .lock()
+            .expect("claims mutex poisoned")
+            .contains_key(&id);
+        let status = match known {
+            true => Ok(HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }),
+            false => Err(HostPaymentTopUpStatusSubscribeError::NotFound),
+        };
+        stream::iter([status]).boxed()
+    }
+}
+
 /// What to run.
 pub struct FundingCheck {
     /// Mnemonic of the identity whose funding accounts are used.
@@ -124,6 +226,9 @@ pub async fn run(
         .await
         .map_err(|error| anyhow::anyhow!("activating the signer failed: {}", error.reason))?;
     runtime.set_funding_platform(Arc::new(TerminalFundingHost));
+    let top_up = Arc::new(StandInTopUp::new());
+    let _ = top_up.runtime.set(Arc::downgrade(&runtime));
+    runtime.set_top_up_platform(top_up.clone());
     runtime.enable_funding_conversion(FundingNetwork {
         cash_asset_id: assets.cash,
     });
@@ -132,6 +237,7 @@ pub async fn run(
         Some(intent) => intent,
         None => open_and_assign(&runtime, &assets, check.asset, check.amount).await?,
     };
+    let _ = top_up.intent.set(intent.clone());
     follow(&runtime, &intent).await
 }
 
@@ -194,19 +300,61 @@ async fn follow(runtime: &SigningHostRuntime, intent: &str) -> Result<()> {
             last = Some(session.stage.clone());
         }
         match session.stage {
-            FundingStage::Converted { landed } => {
-                println!("landed   {landed} CASH units on People");
-                return Ok(());
-            }
             FundingStage::Failed { reason, .. } => bail!("the session failed: {reason:?}"),
             FundingStage::Delivered { credited, .. } => {
-                println!("credited {credited} CASH units to the balance");
+                println!("credited {credited} CASH units (stand-in top-up: no coins moved)");
                 return Ok(());
             }
             FundingStage::Open
             | FundingStage::Converting { .. }
+            | FundingStage::Converted { .. }
             | FundingStage::Crediting { .. } => {}
         }
         tokio::time::sleep(POLL).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(source: PaymentTopUpSource) -> HostPaymentTopUpRequest {
+        HostPaymentTopUpRequest {
+            into: None,
+            amount: 1_000,
+            source,
+            id: [1; 32],
+        }
+    }
+
+    // The stand-in must refuse what a real coinage engine would, or a run
+    // that reaches `Delivered` proves nothing about the claim core asked for.
+    #[test]
+    fn the_stand_in_refuses_claims_a_real_engine_would() {
+        let top_up = StandInTopUp::new();
+        let secret = schnorrkel::MiniSecretKey::from_bytes(&[7; 32])
+            .expect("seed")
+            .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519)
+            .secret
+            .to_bytes();
+
+        assert_eq!(
+            [
+                top_up.refusal(&request(PaymentTopUpSource::Coins {
+                    sr25519_secret_keys: vec![secret],
+                })),
+                top_up.refusal(&request(PaymentTopUpSource::PrivateKey {
+                    sr25519_secret_key: [0xff; 64],
+                })),
+                top_up.refusal(&request(PaymentTopUpSource::PrivateKey {
+                    sr25519_secret_key: secret,
+                })),
+            ],
+            [
+                Some("the source is not a private key"),
+                Some("the source key is not a schnorrkel secret"),
+                Some("no session to claim for"),
+            ]
+        );
     }
 }
