@@ -55,6 +55,10 @@ pub trait FundingSigner: Send + Sync {
         source_id: &str,
         number: u32,
     ) -> Result<Option<schnorrkel::Keypair>, GenericError>;
+
+    /// The reserved funding product the deposit accounts sit under, which
+    /// the top-ups crediting them are made as.
+    fn funding_product_id(&self) -> String;
 }
 
 /// Asset Hub and People, each pinned to its latest finalized block, with the

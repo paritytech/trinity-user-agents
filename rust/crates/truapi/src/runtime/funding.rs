@@ -26,6 +26,7 @@ use truapi::latest::{
 };
 
 mod conversion;
+mod credit;
 
 use conversion::{Chains, ConversionChains, ConversionError};
 #[cfg(test)]
@@ -40,7 +41,7 @@ use super::statement_allowance::blake2_128_concat;
 use super::statement_allowance::rpc::RpcClient;
 use crate::host_logic::features;
 use crate::host_logic::funding::{
-    ConversionRoute, ConversionStep, ConversionSubmission, DepositAsset, DepositRequest,
+    ConversionRoute, ConversionStep, ConversionSubmission, CreditAttempt, CreditStep, DepositAsset, DepositRequest,
     FundingDeposit, FundingSession, FundingSessionError, FundingStage,
     load_sessions, next_account_number, retained, store_sessions,
 };
@@ -355,7 +356,11 @@ impl FundingRegistry {
     fn awaits_deposit(&self) -> bool {
         self.lock_sessions()
             .values()
-            .any(|session| session.awaited_deposit().is_some() || session.converting().is_some())
+            .any(|session| {
+                session.awaited_deposit().is_some()
+                    || session.converting().is_some()
+                    || session.crediting().is_some()
+            })
     }
 
     /// Every session being converted, with its deposit and submission.
@@ -367,6 +372,41 @@ impl FundingRegistry {
                 Some((session.intent.clone(), deposit.clone(), submission))
             })
             .collect()
+    }
+
+    /// Every session awaiting or being credited, with its deposit, landed
+    /// CASH and running attempt.
+    fn crediting_sessions(&self) -> Vec<CreditingSession> {
+        self.lock_sessions()
+            .values()
+            .filter_map(|session| {
+                let (deposit, landed, running) = session.crediting()?;
+                Some(CreditingSession {
+                    intent: session.intent.clone(),
+                    deposit: deposit.clone(),
+                    landed,
+                    running,
+                })
+            })
+            .collect()
+    }
+
+    /// Apply one credit `step` to session `intent`.
+    async fn record_credit(
+        &self,
+        storage: &(impl CoreStorage + ?Sized),
+        now_ms: u64,
+        intent: &str,
+        step: CreditStep,
+    ) -> Result<(), FundingSessionError> {
+        let intent = intent.to_string();
+        self.commit(storage, now_ms, move |sessions| {
+            let changed = sessions
+                .get_mut(&intent)
+                .is_some_and(|session| session.advance_credit(step, now_ms));
+            ((), if changed { vec![intent] } else { Vec::new() })
+        })
+        .await
     }
 
     /// Apply one conversion `step` to session `intent`.
@@ -416,6 +456,14 @@ impl FundingRegistry {
             .lock()
             .expect("funding subscribers mutex poisoned")
     }
+}
+
+/// A session awaiting or being credited, as one credit pass reads it.
+struct CreditingSession {
+    intent: String,
+    deposit: FundingDeposit,
+    landed: u128,
+    running: Option<CreditAttempt>,
 }
 
 /// A deposit request with the route core chose for it.
@@ -572,13 +620,18 @@ impl DepositBalances for FinalizedAssetHubBalances {
 /// Run a chain read, giving up after [`CHAIN_TIMEOUT`] so a stalled
 /// connection cannot park the deposit watch.
 async fn within_chain_timeout<T>(read: impl Future<Output = T>) -> Result<T, GenericError> {
-    let read = read.fuse();
-    let timeout = futures_timer::Delay::new(CHAIN_TIMEOUT).fuse();
-    futures::pin_mut!(read, timeout);
+    within_timeout(CHAIN_TIMEOUT, read).await
+}
+
+/// Run `work`, giving up after `limit`.
+async fn within_timeout<T>(limit: Duration, work: impl Future<Output = T>) -> Result<T, GenericError> {
+    let work = work.fuse();
+    let timeout = futures_timer::Delay::new(limit).fuse();
+    futures::pin_mut!(work, timeout);
     futures::select! {
-        value = read => Ok(value),
+        value = work => Ok(value),
         () = timeout => Err(GenericError {
-            reason: "Asset Hub read timed out".into(),
+            reason: format!("timed out after {}s", limit.as_secs()),
         }),
     }
 }
@@ -789,6 +842,9 @@ impl RuntimeServices {
                 if let Err(reason) = services.advance_conversions().await {
                     tracing::warn!(%reason, "funding conversion pass failed");
                 }
+                if let Err(reason) = services.advance_credits().await {
+                    tracing::warn!(%reason, "funding credit pass failed");
+                }
             }
         }));
     }
@@ -816,6 +872,49 @@ impl RuntimeServices {
         })
         .await
         .map_err(|error| ConversionError::Chain(error.reason))?
+    }
+
+    /// One pass over the sessions whose CASH landed: register top-ups and
+    /// record what they credited. Waits while the host has no top-up.
+    async fn advance_credits(self: &Arc<Self>) -> Result<(), String> {
+        let registry = self.funding();
+        let (Some(conversion), Some(top_up)) = (registry.conversion.get(), self.top_up_platform())
+        else {
+            return Ok(());
+        };
+        let crediting = registry.crediting_sessions();
+        if crediting.is_empty() {
+            return Ok(());
+        }
+        let product = ProductContext {
+            product_id: conversion.signer.funding_product_id(),
+            execution_kind: Default::default(),
+        };
+        let credit = credit::Credit {
+            top_up: top_up.as_ref(),
+            signer: conversion.signer.as_ref(),
+            product: &product,
+        };
+        for CreditingSession {
+            intent,
+            deposit,
+            landed,
+            running,
+        } in crediting
+        {
+            let now_ms = current_unix_millis();
+            match credit.plan(&deposit, landed, running, now_ms).await {
+                Ok(Some(step)) => registry
+                    .record_credit(self.platform.as_ref(), now_ms, &intent, step)
+                    .await
+                    .map_err(|error| error.to_string())?,
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(%intent, reason = %error.reason, "funding credit pass failed");
+                }
+            }
+        }
+        Ok(())
     }
 
     /// One pass over the sessions being converted: record what landed,
@@ -1403,6 +1502,10 @@ mod tests {
             _: u32,
         ) -> Result<Option<schnorrkel::Keypair>, GenericError> {
             Ok(self.0.clone())
+        }
+
+        fn funding_product_id(&self) -> String {
+            "fund.dot".into()
         }
     }
 

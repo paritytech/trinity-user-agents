@@ -177,17 +177,17 @@ impl Payment for ProductRuntimeHost {
             .services
             .top_up_platform()
             .ok_or(CallError::Unsupported)?;
-        if self.authority.current_session().is_none() {
+        // The core credits funding deposits through top-ups made as the
+        // funding product, so a product under that name could race or fake
+        // them.
+        if self.authority.current_session().is_none()
+            || crate::runtime::is_funding_product(&self.product_id())
+        {
             return Err(CallError::Denied);
         }
         let domain = |error| CallError::Domain(HostPaymentTopUpError::V1(error));
         if !source_keys_are_valid(&request.source) {
             return Err(domain(v01::HostPaymentTopUpError::InvalidSource));
-        }
-        if matches!(request.source, v01::PaymentTopUpSource::ProductAccount { .. })
-            && crate::runtime::is_funding_product(&self.product_id())
-        {
-            return Err(CallError::Denied);
         }
         platform
             .top_up(&self.product, request)
@@ -209,7 +209,9 @@ impl Payment for ProductRuntimeHost {
         let Some(platform) = self.services.top_up_platform() else {
             return Subscription::interrupted(CallError::Unsupported);
         };
-        if self.authority.current_session().is_none() {
+        if self.authority.current_session().is_none()
+            || crate::runtime::is_funding_product(&self.product_id())
+        {
             return Subscription::interrupted(CallError::Denied);
         }
         Subscription::new(Box::pin(

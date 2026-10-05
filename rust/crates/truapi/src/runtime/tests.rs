@@ -2685,6 +2685,49 @@ fn a_top_up_with_a_malformed_key_is_refused_before_the_host_sees_it() {
     );
 }
 
+// The core credits funding deposits with top-ups made as the funding
+// product, under ids anyone can work out from the deposit address. A product
+// under that name could otherwise register them first or read their status.
+#[test]
+fn no_product_tops_up_or_follows_top_ups_as_the_funding_product() {
+    let services = funding_services();
+    let engine = Arc::new(RecordingTopUpPlatform::default());
+    assert!(services.install_top_up_platform(engine.clone()));
+    let host = funding_host(&services, "fund.dot", true);
+    let secret = schnorrkel::MiniSecretKey::from_bytes(&[7; 32])
+        .expect("seed")
+        .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519)
+        .secret
+        .to_bytes();
+
+    let started = top_up(
+        &host,
+        v01::PaymentTopUpSource::PrivateKey {
+            sr25519_secret_key: secret,
+        },
+    );
+    let followed = futures::executor::block_on(
+        futures::executor::block_on(truapi::api::Payment::top_up_status_subscribe(
+            &host,
+            &CallContext::default(),
+            truapi::versioned::payment::HostPaymentTopUpStatusSubscribeRequest::V1(
+                v01::HostPaymentTopUpStatusSubscribeRequest { id: [7; 32] },
+            ),
+        ))
+        .collect::<Vec<_>>(),
+    );
+
+    assert_eq!(
+        (
+            started,
+            followed,
+            engine.started.lock().expect("started mutex poisoned").len(),
+            engine.followed.lock().expect("followed mutex poisoned").len(),
+        ),
+        (Err(CallError::Denied), vec![Err(CallError::Denied)], 0, 0)
+    );
+}
+
 #[test]
 fn a_top_up_needs_a_session() {
     let services = funding_services();

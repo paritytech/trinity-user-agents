@@ -138,6 +138,25 @@ pub enum FundingStage {
         /// CASH on People, in payment balance units.
         landed: u128,
     },
+    /// Inbound: the host's top-up is claiming the landed CASH into the
+    /// user's balance.
+    Crediting {
+        /// CASH on People, in payment balance units.
+        landed: u128,
+        /// Which top-up attempt is running, from 0.
+        attempt: u8,
+        /// When that attempt was registered, in Unix milliseconds.
+        since_ms: u64,
+        /// When the first attempt was registered, in Unix milliseconds.
+        started_ms: u64,
+    },
+    /// Inbound terminal success: the CASH is in the user's balance.
+    Delivered {
+        /// Amount credited, in payment balance units.
+        credited: u128,
+        /// When it was credited, in Unix milliseconds.
+        settled_at_ms: u64,
+    },
     /// Ended without success.
     Failed {
         /// Why it ended.
@@ -176,9 +195,11 @@ impl FundingSession {
     /// When the session ended, if it has.
     pub fn settled_at_ms(&self) -> Option<u64> {
         match self.stage {
-            FundingStage::Open | FundingStage::Converting { .. } | FundingStage::Converted { .. } => {
-                None
-            }
+            FundingStage::Open
+            | FundingStage::Converting { .. }
+            | FundingStage::Converted { .. }
+            | FundingStage::Crediting { .. } => None,
+            FundingStage::Delivered { settled_at_ms, .. } => Some(settled_at_ms),
             FundingStage::Failed { settled_at_ms, .. } => Some(settled_at_ms),
         }
     }
@@ -194,8 +215,16 @@ impl FundingSession {
             (FundingStage::Open, FundingDirection::Out) => {
                 HostFundingStatusSubscribeItem::AwaitingRelease
             }
-            (FundingStage::Converting { .. } | FundingStage::Converted { .. }, _) => {
-                HostFundingStatusSubscribeItem::Converting
+            (
+                FundingStage::Converting { .. }
+                | FundingStage::Converted { .. }
+                | FundingStage::Crediting { .. },
+                _,
+            ) => HostFundingStatusSubscribeItem::Converting,
+            (FundingStage::Delivered { credited, .. }, _) => {
+                HostFundingStatusSubscribeItem::Delivered {
+                    credited: *credited,
+                }
             }
             (FundingStage::Failed { reason, .. }, _) => HostFundingStatusSubscribeItem::Failed {
                 reason: reason.clone(),
@@ -309,6 +338,100 @@ impl FundingSession {
         }
         true
     }
+}
+
+/// A top-up attempt that is running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CreditAttempt {
+    /// Which attempt, from 0.
+    pub attempt: u8,
+    /// When it was registered, in Unix milliseconds.
+    pub since_ms: u64,
+    /// When the first attempt was registered, in Unix milliseconds.
+    pub started_ms: u64,
+}
+
+impl FundingSession {
+    /// The deposit and landed CASH of a session awaiting or being credited,
+    /// with the attempt running, if any.
+    pub fn crediting(&self) -> Option<(&FundingDeposit, u128, Option<CreditAttempt>)> {
+        let deposit = self.deposit.as_ref()?;
+        match self.stage {
+            FundingStage::Converted { landed } => Some((deposit, landed, None)),
+            FundingStage::Crediting {
+                landed,
+                attempt,
+                since_ms,
+                started_ms,
+            } => Some((
+                deposit,
+                landed,
+                Some(CreditAttempt {
+                    attempt,
+                    since_ms,
+                    started_ms,
+                }),
+            )),
+            _ => None,
+        }
+    }
+
+    /// Advance a session being credited by one step. Returns whether it
+    /// changed.
+    pub fn advance_credit(&mut self, step: CreditStep, now_ms: u64) -> bool {
+        let (landed, started_ms) = match self.stage {
+            FundingStage::Converted { landed } => (landed, now_ms),
+            FundingStage::Crediting {
+                landed, started_ms, ..
+            } => (landed, started_ms),
+            _ => return false,
+        };
+        match step {
+            CreditStep::Registered { attempt } => {
+                self.stage = FundingStage::Crediting {
+                    landed,
+                    attempt,
+                    since_ms: now_ms,
+                    started_ms,
+                };
+                true
+            }
+            CreditStep::Credited { credited } => {
+                self.stage = FundingStage::Delivered {
+                    credited,
+                    settled_at_ms: now_ms,
+                };
+                true
+            }
+            CreditStep::Abandoned { reason } => self.fail(
+                FundingFailure::Other {
+                    code: "credit_failed".into(),
+                    message: reason,
+                },
+                now_ms,
+            ),
+        }
+    }
+}
+
+/// What one pass of crediting found or did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CreditStep {
+    /// The host accepted top-up `attempt`.
+    Registered {
+        /// Which attempt, from 0.
+        attempt: u8,
+    },
+    /// The top-up credited the user's balance.
+    Credited {
+        /// Amount credited, in payment balance units.
+        credited: u128,
+    },
+    /// Crediting cannot succeed; the CASH stays on the account on People.
+    Abandoned {
+        /// Why.
+        reason: String,
+    },
 }
 
 /// What one pass of a conversion found or did.
@@ -676,6 +799,33 @@ mod tests {
                     settled_at_ms: NOW,
                 },
             ]
+        );
+    }
+
+    // Delivered is the one inbound success: it ends the session for
+    // subscribers and history, and the credited amount is what they see.
+    #[test]
+    fn a_credited_session_is_delivered() {
+        let mut session = converting();
+        session.advance_conversion(ConversionStep::Landed { landed: 49 }, NOW);
+        session.advance_credit(CreditStep::Registered { attempt: 0 }, NOW);
+        let crediting = session.crediting().map(|(_, landed, running)| (landed, running));
+        session.advance_credit(CreditStep::Credited { credited: 40 }, NOW + 1);
+
+        assert_eq!(
+            (crediting, session.wire_item(), session.settled_at_ms()),
+            (
+                Some((
+                    49,
+                    Some(CreditAttempt {
+                        attempt: 0,
+                        since_ms: NOW,
+                        started_ms: NOW,
+                    })
+                )),
+                HostFundingStatusSubscribeItem::Delivered { credited: 40 },
+                Some(NOW + 1),
+            )
         );
     }
 

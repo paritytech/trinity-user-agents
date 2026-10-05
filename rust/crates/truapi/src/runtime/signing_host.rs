@@ -511,9 +511,9 @@ impl SigningHost {
     /// `source_id`, under the reserved funding product. `None` while no
     /// signing session is active.
     ///
-    /// The host claims it by calling its top-up engine as the funding product
-    /// with source `ProductAccount { derivation_index: Raw(index) }`, where
-    /// `index` is [`funding_account_index`] for the same arguments.
+    /// The core credits what lands on it by handing the account's key to the
+    /// host's top-up as a `PrivateKey` source; the key is the product account
+    /// at [`funding_account_index`] for the same arguments.
     pub fn derive_funding_account(
         &self,
         kind: FundingAccountKind,
@@ -1728,6 +1728,10 @@ impl super::FundingSigner for SigningHost {
             .map_err(|err| GenericError {
                 reason: err.to_string(),
             })
+    }
+
+    fn funding_product_id(&self) -> String {
+        funding_product_id(&self.network_suffix)
     }
 }
 

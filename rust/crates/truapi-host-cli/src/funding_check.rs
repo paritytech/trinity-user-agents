@@ -192,7 +192,13 @@ async fn follow(runtime: &SigningHostRuntime, intent: &str) -> Result<()> {
                 return Ok(());
             }
             FundingStage::Failed { reason, .. } => bail!("the session failed: {reason:?}"),
-            FundingStage::Open | FundingStage::Converting { .. } => {}
+            FundingStage::Delivered { credited, .. } => {
+                println!("credited {credited} CASH units to the balance");
+                return Ok(());
+            }
+            FundingStage::Open
+            | FundingStage::Converting { .. }
+            | FundingStage::Crediting { .. } => {}
         }
         tokio::time::sleep(POLL).await;
     }

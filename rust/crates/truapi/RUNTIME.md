@@ -411,8 +411,9 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   route then: a teleport for CASH, a PSM mint for a stablecoin the PSM serves.
   The core converts with one Asset Hub transaction signed by the deposit
   account, paying fees in the deposited asset, after dry-running it on Asset
-  Hub and the message it forwards on People, and records the CASH that lands
-  on People.
+  Hub and the message it forwards on People. Once the CASH lands on People,
+  the core credits it through `TopUpPlatform` with the deposit account's key
+  as a `PrivateKey` source, and the session ends `Delivered`.
 - `TopUpPlatform`: claim a top-up source's funds into the user's balance and
   stream each top-up's status. Installed with `set_top_up_platform`. The core
   requires a session and checks the source keys; the host owns claiming,
