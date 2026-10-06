@@ -32,8 +32,9 @@ use crate::host_internal::sso_messages::{
 use crate::host_internal::sso_wire::ResponseOutcome;
 use crate::host_logic::session::SsoSessionInfo;
 use crate::host_logic::sso::pairing::{
-    ResponderIdentity, VersionedHandshakeProposal, bootstrap_topic, decode_pairing_deeplink,
-    encrypt_v2_handshake_response, establish_responder_session_info, v2, x25519_public_key,
+    ResponderIdentity, VersionedHandshakeProposal, bootstrap_channel, bootstrap_topic,
+    decode_pairing_deeplink, encrypt_v2_handshake_response, establish_responder_session_info, v2,
+    x25519_public_key,
 };
 use crate::host_logic::statement_store::{build_signed_statement, parse_new_statements_result};
 use crate::runtime::services::RuntimeServices;
@@ -392,10 +393,11 @@ fn prepare_handshake_answer(
     response: &v2::EncryptedResponse,
 ) -> Result<Vec<u8>, String> {
     let handshake = encrypt_v2_handshake_response(peer.encryption_public_key, response)?;
+    let channel = bootstrap_channel(peer.statement_account_id, peer.encryption_public_key);
     let topic = bootstrap_topic(peer.statement_account_id, peer.encryption_public_key);
     build_signed_statement(
         session,
-        topic,
+        channel,
         topic,
         handshake.encode(),
         fresh_statement_expiry(),
@@ -1267,6 +1269,117 @@ mod tests {
             )],
             ..Default::default()
         }))
+    }
+
+    #[test]
+    fn pairing_answers_use_the_mobile_bootstrap_channel_and_topic() {
+        use crate::host_logic::entropy::root_entropy_source;
+        use crate::host_logic::sso::pairing::{
+            VersionedHandshakeResponse, decode_app_handshake_data, decrypt_v2_handshake_response,
+            derive_identity_chat_private_key,
+        };
+        use crate::host_logic::statement_store::decode_signed_statement;
+        use crate::platform::SecretCoreStorageKey;
+        use crate::test_support::secret_core_storage_test_key;
+
+        let peer = PairedSsoPeer {
+            statement_account_id: [0x31; 32],
+            encryption_public_key: hex::decode(
+                "132c442be010fbd57e72603328aa76e71fccc1503aae219327d14d9c9993f472",
+            )
+            .unwrap()
+            .try_into()
+            .unwrap(),
+        };
+        let channel: [u8; 32] =
+            hex::decode("2bd4e8fb801403ff2b2f1438cb579c6ceb1eb6f6a7dd007099ded3ea98976375")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        let topic: [u8; 32] =
+            hex::decode("c1f11593c6fd127a6c4d34e27168e9e6f9f457dcdee8d68ecf0e490423f5f047")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        let platform = Arc::new(StubPlatform {
+            rpc_method_responses: vec![("statement_submit", r#"{"status":"new"}"#.to_string()); 3],
+            ..Default::default()
+        });
+        platform.local_storage.lock().unwrap().insert(
+            secret_core_storage_test_key(SecretCoreStorageKey::DeviceEncryptionKey),
+            vec![0x23; 32],
+        );
+        let (services, signing_host) = signing_fixture(platform.clone());
+        let deeplink = pairing_deeplink(peer);
+        futures::executor::block_on(async {
+            let announced =
+                notify_pairing_allowance_allocation(services.clone(), signing_host.clone(), &deeplink)
+                    .await
+                    .unwrap();
+            establish_pairing(services.clone(), signing_host.clone(), &deeplink)
+                .await
+                .unwrap();
+            notify_pairing_failed(services, &announced, "allocation failed".to_string())
+                .await
+                .unwrap();
+        });
+
+        let identity = derive_identity_keypair(&ENTROPY, NETWORK_SUFFIX).unwrap();
+        let answers: Vec<_> = platform
+            .sent_rpc
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| {
+                let request: serde_json::Value = serde_json::from_str(request).unwrap();
+                assert_eq!(request["method"], "statement_submit");
+                let statement = hex::decode(
+                    request["params"][0]
+                        .as_str()
+                        .unwrap()
+                        .trim_start_matches("0x"),
+                )
+                .unwrap();
+                let verified =
+                    decode_verified_statement_data(&statement, Some(identity.public.to_bytes()))
+                        .unwrap();
+                let signed = decode_signed_statement(&statement).unwrap();
+                let VersionedHandshakeResponse::V2 {
+                    encrypted_message,
+                    public_key,
+                } = decode_app_handshake_data(&verified.data).unwrap();
+                let response =
+                    decrypt_v2_handshake_response([0x42; 32], public_key, &encrypted_message).unwrap();
+                (signed.channel, signed.topics, response)
+            })
+            .collect();
+        let success = v2::EncryptedResponse::Success(Box::new(v2::Success {
+            identity_account_id: identity.public.to_bytes(),
+            root_account_id: derive_root_keypair_from_entropy(&ENTROPY)
+                .unwrap()
+                .public
+                .to_bytes(),
+            identity_chat_private_key: derive_identity_chat_private_key(&ENTROPY),
+            sso_enc_pub_key: derive_x25519_keypair_from_entropy(&ENTROPY, SSO_ENCRYPTION_DOMAIN).1,
+            device_enc_pub_key: x25519_public_key([0x23; 32]),
+            root_entropy_source: root_entropy_source(&ENTROPY),
+        }));
+        assert_eq!(
+            answers,
+            vec![
+                (
+                    Some(channel),
+                    vec![topic],
+                    v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation)
+                ),
+                (Some(channel), vec![topic], success),
+                (
+                    Some(channel),
+                    vec![topic],
+                    v2::EncryptedResponse::Failed("allocation failed".to_string())
+                ),
+            ],
+        );
     }
 
     #[test]

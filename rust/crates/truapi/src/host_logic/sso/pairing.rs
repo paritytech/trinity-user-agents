@@ -26,8 +26,6 @@ use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::host_logic::session::SsoSessionInfo;
 
-const HANDSHAKE_TOPIC_SUFFIX: &[u8] = b"topic";
-
 /// Byte length of the ChaCha20-Poly1305 nonce prepended to encrypted payloads.
 pub const AEAD_NONCE_LEN: usize = 12;
 const SESSION_PREFIX: &[u8] = b"session";
@@ -584,10 +582,25 @@ pub fn bootstrap_topic(
     statement_store_public_key: [u8; 32],
     encryption_public_key: [u8; 32],
 ) -> [u8; 32] {
-    let mut message =
-        Vec::with_capacity(encryption_public_key.len() + HANDSHAKE_TOPIC_SUFFIX.len());
+    bootstrap_hash(statement_store_public_key, encryption_public_key, b"topic")
+}
+
+/// Derive the statement-store pairing channel from advertised host keys.
+pub fn bootstrap_channel(
+    statement_store_public_key: [u8; 32],
+    encryption_public_key: [u8; 32],
+) -> [u8; 32] {
+    bootstrap_hash(statement_store_public_key, encryption_public_key, b"channel")
+}
+
+fn bootstrap_hash(
+    statement_store_public_key: [u8; 32],
+    encryption_public_key: [u8; 32],
+    suffix: &[u8],
+) -> [u8; 32] {
+    let mut message = Vec::with_capacity(encryption_public_key.len() + suffix.len());
     message.extend_from_slice(&encryption_public_key);
-    message.extend_from_slice(HANDSHAKE_TOPIC_SUFFIX);
+    message.extend_from_slice(suffix);
 
     keyed_hash(statement_store_public_key, &message)
 }
