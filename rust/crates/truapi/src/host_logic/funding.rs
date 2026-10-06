@@ -539,8 +539,9 @@ pub fn funding_account_label(
 }
 
 /// The keypair of the `number`th account of `kind` for `source_id`, derived
-/// as getcash derives its burners: the funding product's `deriveEntropy` for
-/// the account's label, taken as a mini secret.
+/// with getcash's scheme: the funding product's `deriveEntropy` for the
+/// account's getcash label, taken as a mini secret. getcash derives under its
+/// own product id, so its existing burners are other accounts.
 pub fn funding_keypair(
     root_entropy: &[u8],
     funding_product_id: &str,
