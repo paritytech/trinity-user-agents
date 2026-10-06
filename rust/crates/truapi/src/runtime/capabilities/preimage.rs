@@ -25,7 +25,7 @@ use crate::runtime::{
 };
 
 #[truapi::async_trait]
-impl Preimage for ProductRuntimeHost {
+impl<H: crate::runtime::AccountHolder> Preimage for ProductRuntimeHost<H> {
     #[instrument(skip_all, fields(runtime.method = "preimage.lookup_subscribe"))]
     async fn lookup_subscribe(
         &self,
@@ -100,7 +100,7 @@ impl Preimage for ProductRuntimeHost {
         request: RemotePreimageSubmitRequest,
     ) -> Result<RemotePreimageSubmitResponse, CallError<RemotePreimageSubmitError>> {
         let RemotePreimageSubmitRequest::V1(value) = request;
-        let Some(operation) = self.authority.current_operation() else {
+        let Some(operation) = self.accounts.current_operation() else {
             return Err(preimage_submit_error("No active session".to_string()));
         };
         let bulletin = &self.connection.services.bulletin;
@@ -138,14 +138,24 @@ impl Preimage for ProductRuntimeHost {
             .account_operation(
                 &operation,
                 &authority_cx,
-                self.authority
-                    .bulletin_allowance_key(&authority_cx, &operation, self.connection.product_id()),
+                self.accounts.bulletin_allowance_key(
+                    &authority_cx,
+                    &operation,
+                    self.connection.product_id(),
+                ),
             )
             .await
             .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
 
         let key = match bulletin
-            .submit_preimage(cx, submission_deadline, &allowance, &value)
+            .submit_preimage(
+                cx,
+                submission_deadline,
+                self.accounts.as_ref(),
+                &operation,
+                &allowance,
+                &value,
+            )
             .await
         {
             Ok(key) => key,
@@ -158,19 +168,27 @@ impl Preimage for ProductRuntimeHost {
                     PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
                     submission_deadline,
                 );
-                let allowance = self.account_operation(
-                    &operation,
-                    &authority_cx,
-                    self.authority.refresh_bulletin_allowance_key(
-                        &authority_cx,
+                let allowance = self
+                    .account_operation(
                         &operation,
-                        self.connection.product_id(),
-                    ),
-                )
-                .await
-                .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
+                        &authority_cx,
+                        self.accounts.refresh_bulletin_allowance_key(
+                            &authority_cx,
+                            &operation,
+                            self.connection.product_id(),
+                        ),
+                    )
+                    .await
+                    .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
                 bulletin
-                    .submit_preimage(cx, submission_deadline, &allowance, &value)
+                    .submit_preimage(
+                        cx,
+                        submission_deadline,
+                        self.accounts.as_ref(),
+                        &operation,
+                        &allowance,
+                        &value,
+                    )
                     .await
                     .map_err(|err| preimage_submit_error(err.to_string()))?
             }

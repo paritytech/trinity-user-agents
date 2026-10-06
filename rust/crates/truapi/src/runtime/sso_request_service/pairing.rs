@@ -549,7 +549,7 @@ mod tests {
     use crate::host_rpc_client::HostRpcClient;
     use crate::platform::{AuthState, ChainProvider, CoreStorageKey};
     use crate::runtime::connected_session_ui_info;
-    use crate::runtime::{PairingHostRole, ProductRuntimeHost};
+    use crate::runtime::{ProductRuntimeHost, SsoRequestService};
     use crate::test_support::{
         StubPlatform, core_storage_test_key, pairing_device_from_deeplink, peer_statement_keypair,
         runtime_config, session_info, signed_test_statement, stub_platform, subscribe_ack_frame,
@@ -564,13 +564,13 @@ mod tests {
 
     /// Cancel the login as soon as the host observes the `Pairing` state,
     /// mimicking a user dismissing the pairing UI immediately.
-    fn cancel_on_pairing(platform: &StubPlatform, pairing_host: Arc<PairingHostRole>) {
+    fn cancel_on_pairing(platform: &StubPlatform, sso: Arc<SsoRequestService>) {
         *platform
             .on_auth_state
             .lock()
             .expect("auth state hook mutex poisoned") = Some(Arc::new(move |state| {
             if matches!(state, AuthState::Pairing { .. }) {
-                pairing_host.sso_for_tests().cancel_login();
+                sso.cancel_login();
             }
         }));
     }
@@ -578,10 +578,10 @@ mod tests {
     #[test]
     fn request_login_presents_pairing_and_rejects_when_cancelled() {
         let platform = stub_platform();
-        let (host, pairing_host) =
+        let (host, _, sso) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
-        cancel_on_pairing(&platform, pairing_host);
+        cancel_on_pairing(&platform, sso);
         let cx = CallContext::default();
         let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let response = futures::executor::block_on(host.request_login(&cx, request)).unwrap();
@@ -624,7 +624,7 @@ mod tests {
             pairing_silent_after_subscribe: true,
             ..Default::default()
         });
-        let (host, _pairing_host) =
+        let (host, _, _) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
         let cx = CallContext::default();
@@ -645,7 +645,7 @@ mod tests {
     #[test]
     fn request_login_gives_up_when_the_pairing_topic_never_acks() {
         let platform = stub_platform();
-        let (host, _pairing_host) =
+        let (host, _, _) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
         let cx = CallContext::default();
@@ -693,7 +693,7 @@ mod tests {
             chain_connect_pending: true,
             ..Default::default()
         });
-        let (host, _pairing_host) =
+        let (host, _, _) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
         let cx = CallContext::default();
@@ -711,10 +711,10 @@ mod tests {
     #[test]
     fn request_login_regenerates_unmarked_pairing_device_identity_between_attempts() {
         let platform = stub_platform();
-        let (host, pairing_host) =
+        let (host, _, sso) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
-        cancel_on_pairing(&platform, pairing_host);
+        cancel_on_pairing(&platform, sso);
         let cx = CallContext::default();
         let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
 
@@ -776,10 +776,10 @@ mod tests {
                 core_storage_test_key(CoreStorageKey::LastProcessedPairingStatement),
                 vec![0xde, 0xad],
             );
-        let (host, pairing_host) =
+        let (host, _, sso) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
-        cancel_on_pairing(&platform, pairing_host);
+        cancel_on_pairing(&platform, sso);
         let cx = CallContext::default();
         let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
 
@@ -994,15 +994,15 @@ mod tests {
             pairing_pending_response: true,
             ..Default::default()
         });
-        let (host, pairing_host) =
+        let (host, _, sso) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
-        let cancel_host = pairing_host.clone();
+        let cancel_host = sso.clone();
         *platform
             .on_auth_state
             .lock()
             .expect("auth state hook mutex poisoned") = Some(Arc::new(move |state| {
             if matches!(state, AuthState::Authenticating) {
-                cancel_host.sso_for_tests().cancel_login();
+                cancel_host.cancel_login();
             }
         }));
 
@@ -1077,14 +1077,14 @@ mod tests {
             session_clears: session_clears.clone(),
             ..Default::default()
         });
-        let (host, pairing_host) =
+        let (host, _, sso) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
-        let cancel_host = pairing_host.clone();
+        let cancel_host = sso.clone();
         *platform
             .on_auth_session_write
             .lock()
             .expect("auth session write hook mutex poisoned") = Some(Arc::new(move || {
-            cancel_host.sso_for_tests().cancel_login();
+            cancel_host.cancel_login();
         }));
 
         let cx = CallContext::default();
@@ -1270,7 +1270,7 @@ mod tests {
             chain_connect_pending: true,
             ..Default::default()
         });
-        let (host, pairing_host) =
+        let (host, _, sso) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
         let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
@@ -1302,7 +1302,7 @@ mod tests {
             "dropping the login future should drop the pending statement-store connect"
         );
 
-        cancel_on_pairing(&platform, pairing_host);
+        cancel_on_pairing(&platform, sso);
         let second_cx = CallContext::default();
         let mut second_login = Box::pin(host.request_login(&second_cx, request));
         let second = match second_login.as_mut().poll(&mut task_cx) {
@@ -1324,10 +1324,10 @@ mod tests {
             )),
             ..Default::default()
         });
-        let (host, pairing_host) =
+        let (host, _, sso) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
-        cancel_on_pairing(&platform, pairing_host);
+        cancel_on_pairing(&platform, sso);
         let cx = CallContext::default();
         let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let response = futures::executor::block_on(host.request_login(&cx, request)).unwrap();
@@ -1347,10 +1347,10 @@ mod tests {
             session_clears: session_clears.clone(),
             ..Default::default()
         });
-        let (host, pairing_host) =
+        let (host, _, sso) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
-        cancel_on_pairing(&platform, pairing_host);
+        cancel_on_pairing(&platform, sso);
         let cx = CallContext::default();
         let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let response = futures::executor::block_on(host.request_login(&cx, request)).unwrap();
@@ -1369,10 +1369,10 @@ mod tests {
             session_error: Some("storage failed"),
             ..Default::default()
         });
-        let (host, pairing_host) =
+        let (host, _, sso) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
-        cancel_on_pairing(&platform, pairing_host);
+        cancel_on_pairing(&platform, sso);
         let cx = CallContext::default();
         let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let response = futures::executor::block_on(host.request_login(&cx, request)).unwrap();

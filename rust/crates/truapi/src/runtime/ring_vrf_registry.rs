@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::platform::{CoreStorageKey, Platform, normalize_product_identifier};
 use parity_scale_codec::{Decode, Encode};
-use truapi::v01::{ProductAccountId, RegisteredRingVrfKey, RingLocation};
+use truapi::latest::{ProductAccountId, RegisteredRingVrfKey, RingLocation};
 
 use crate::host_internal::sso_messages::RingVrfError;
 
@@ -102,6 +102,68 @@ impl RegistryUpdate<'_> {
             .selected_providers
             .push(SelectedProvider { ring, handle });
         Ok(())
+    }
+
+    /// Merge a complete owner listing without discarding local registrations.
+    pub fn reconcile_owner(
+        &mut self,
+        owner: &str,
+        entries: Vec<RegisteredRingVrfKey>,
+    ) -> Result<Vec<RegisteredRingVrfKey>, RingVrfError> {
+        validate_authoritative_owner_entries(owner, &entries)?;
+        let snapshot = &mut self.snapshot;
+        let mut owner_entries = snapshot
+            .entries
+            .iter()
+            .filter(|entry| entry.handle.dot_ns_identifier == owner)
+            .cloned()
+            .collect::<Vec<_>>();
+        for entry in entries {
+            if let Some(existing) = owner_entries
+                .iter_mut()
+                .find(|existing| existing.handle == entry.handle)
+            {
+                if existing.public_key != entry.public_key {
+                    return Err(invalid_registry_listing(
+                        "owner snapshot conflicts with a locally registered public key",
+                    ));
+                }
+                for ring in entry.rings {
+                    if !existing.rings.contains(&ring) {
+                        existing.rings.push(ring);
+                    }
+                }
+            } else {
+                owner_entries.push(entry);
+            }
+        }
+        snapshot
+            .entries
+            .retain(|entry| entry.handle.dot_ns_identifier != owner);
+        snapshot.entries.extend(owner_entries.iter().cloned());
+        if !snapshot.complete_owners.iter().any(|item| item == owner) {
+            snapshot.complete_owners.push(owner.to_string());
+        }
+        snapshot.selected_providers.retain(|provider| {
+            snapshot.entries.iter().any(|entry| {
+                entry.handle == provider.handle && entry.rings.contains(&provider.ring)
+            })
+        });
+        for entry in &snapshot.entries {
+            for ring in &entry.rings {
+                if !snapshot
+                    .selected_providers
+                    .iter()
+                    .any(|provider| provider.ring == *ring)
+                {
+                    snapshot.selected_providers.push(SelectedProvider {
+                        ring: ring.clone(),
+                        handle: entry.handle.clone(),
+                    });
+                }
+            }
+        }
+        Ok(owner_entries)
     }
 
     /// Persist only to the root captured during preparation.
@@ -206,62 +268,10 @@ impl RingVrfRegistryStore {
         owner: &str,
         entries: Vec<RegisteredRingVrfKey>,
     ) -> Result<Vec<RegisteredRingVrfKey>, RingVrfError> {
-        validate_authoritative_owner_entries(owner, &entries)?;
-        let _guard = self.storage_guard.lock().await;
-        let mut snapshot = self.load_under_guard(root_public_key).await?;
-        let mut owner_entries = snapshot
-            .entries
-            .iter()
-            .filter(|entry| entry.handle.dot_ns_identifier == owner)
-            .cloned()
-            .collect::<Vec<_>>();
-        for entry in entries {
-            if let Some(existing) = owner_entries
-                .iter_mut()
-                .find(|existing| existing.handle == entry.handle)
-            {
-                if existing.public_key != entry.public_key {
-                    return Err(invalid_registry_listing(
-                        "owner snapshot conflicts with a locally registered public key",
-                    ));
-                }
-                for ring in entry.rings {
-                    if !existing.rings.contains(&ring) {
-                        existing.rings.push(ring);
-                    }
-                }
-            } else {
-                owner_entries.push(entry);
-            }
-        }
-        snapshot
-            .entries
-            .retain(|entry| entry.handle.dot_ns_identifier != owner);
-        snapshot.entries.extend(owner_entries.iter().cloned());
-        if !snapshot.complete_owners.iter().any(|item| item == owner) {
-            snapshot.complete_owners.push(owner.to_string());
-        }
-        snapshot.selected_providers.retain(|provider| {
-            snapshot.entries.iter().any(|entry| {
-                entry.handle == provider.handle && entry.rings.contains(&provider.ring)
-            })
-        });
-        for entry in &snapshot.entries {
-            for ring in &entry.rings {
-                if !snapshot
-                    .selected_providers
-                    .iter()
-                    .any(|provider| provider.ring == *ring)
-                {
-                    snapshot.selected_providers.push(SelectedProvider {
-                        ring: ring.clone(),
-                        handle: entry.handle.clone(),
-                    });
-                }
-            }
-        }
-        self.persist_under_guard(root_public_key, snapshot).await?;
-        Ok(owner_entries)
+        let mut update = self.prepare_update(root_public_key).await?;
+        let entries = update.reconcile_owner(owner, entries)?;
+        update.persist().await?;
+        Ok(entries)
     }
 
     pub async fn selected_provider(
@@ -361,6 +371,15 @@ impl RingVrfRegistryStore {
         snapshot: RegistrySnapshot,
     ) -> Result<(), RingVrfError> {
         validate_snapshot(&snapshot)?;
+        if self
+            .cache
+            .lock()
+            .expect("ring-VRF registry cache mutex poisoned")
+            .get(&root_public_key)
+            == Some(&snapshot)
+        {
+            return Ok(());
+        }
         self.platform
             .write_core_storage(
                 CoreStorageKey::RingVrfRegistry { root_public_key },

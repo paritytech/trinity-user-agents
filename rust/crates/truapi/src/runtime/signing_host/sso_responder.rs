@@ -873,7 +873,6 @@ mod tests {
     use super::super::LocalActivation;
     use super::super::wallet_account_holder::SSO_ENCRYPTION_DOMAIN;
     use super::super::wallet_account_holder::WalletKeys;
-    use super::super::wallet_account_holder::current_unix_secs;
     use super::*;
     use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
     use crate::host_internal::sso_messages::{
@@ -886,6 +885,7 @@ mod tests {
         derive_identity_keypair, derive_root_keypair_from_entropy,
     };
     use crate::host_logic::sso::pairing::derive_x25519_keypair_from_entropy;
+    use crate::runtime::allowances::current_unix_secs;
 
     /// The key a host advertises on chain must be the one it serves over
     /// pairing. These derive independently, so a test that asks only one of

@@ -19,11 +19,11 @@ mod capabilities;
 mod chat;
 pub mod contacts;
 mod dotns_lookup;
+mod host_accounts;
 mod host_grants;
 mod host_session;
 mod identity;
 pub mod login_failure;
-mod pairing_host;
 pub mod product_manifest;
 mod product_subtree;
 mod renderer;
@@ -31,6 +31,7 @@ mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
+mod sso_account_holder_client;
 mod sso_account_holder_service;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
@@ -53,8 +54,8 @@ use std::time::Instant;
 pub use actions::ActionChannel;
 use authority::AuthorityCancelError;
 pub use authority::{
-    AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
-    BulletinAllowanceKey, HostOperation, ProductAuthority,
+    AccountCaller, AccountHolder, AuthorityError, AuthoritySession, BulletinAllowanceKey,
+    HostOperation,
 };
 /// Wallet-issued permission for one product during one activation.
 #[derive(Clone)]
@@ -74,11 +75,12 @@ type ContactsPicker = (
     crate::runtime::contacts::ContactHandles,
 );
 use futures::{FutureExt, StreamExt, pin_mut};
+pub use host_accounts::HostAccounts;
+pub use ring_vrf_registry::RingVrfRegistryStore;
+#[cfg(feature = "test-host")]
+mod test_resource_controls;
 pub use host_grants::HostGrantStore;
 pub use host_session::HostSession;
-#[cfg(test)]
-use pairing_host::PairingHost;
-pub use pairing_host::PairingHost as PairingHostRole;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
 pub use signing_host::{
@@ -90,6 +92,7 @@ pub use signing_host::{
     establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
     respond_to_pairing, resume_pairing,
 };
+pub use sso_account_holder_client::SsoAccountHolderClient;
 pub use sso_account_holder_service::SsoAccountHolderService;
 pub use sso_request_service::SsoRequestService;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
@@ -307,9 +310,9 @@ fn authority_cancellation_error(cx: &CallContext, reason: CancellationReason) ->
 
 /// Product-scoped adapter that exposes a long-lived host runtime through the
 /// `truapi::api::*` trait set the generated dispatcher routes to.
-pub struct ProductRuntimeHost {
+pub struct ProductRuntimeHost<H: AccountHolder> {
     connection: Arc<ProductConnection>,
-    authority: Arc<dyn ProductAuthority>,
+    accounts: Arc<HostAccounts<H>>,
     host_session: Arc<dyn HostSession>,
 }
 
@@ -691,13 +694,13 @@ impl ProductConnection {
     }
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
     /// Build a product-scoped dispatcher target from a long-lived host runtime
     /// and the adapters scoped to this product connection.
     pub fn from_services(
         services: Arc<RuntimeServices>,
         adapters: crate::host_core::ConnectionAdapters,
-        authority: Arc<dyn ProductAuthority>,
+        accounts: Arc<HostAccounts<H>>,
         host_session: Arc<dyn HostSession>,
         product: ProductContext,
     ) -> Self {
@@ -718,7 +721,7 @@ impl ProductRuntimeHost {
         });
         Self {
             connection,
-            authority,
+            accounts,
             host_session,
         }
     }
@@ -728,100 +731,14 @@ impl ProductRuntimeHost {
         &self.connection
     }
 
+    /// Account service shared by this connection and its host administration.
+    pub fn accounts(&self) -> &Arc<HostAccounts<H>> {
+        &self.accounts
+    }
+
     /// Lifecycle owner shared by this connection and its host administration.
     pub fn host_session(&self) -> &Arc<dyn HostSession> {
         &self.host_session
-    }
-
-    /// Test constructor building a standalone pairing-host runtime.
-    #[cfg(test)]
-    pub fn new<P>(
-        platform: Arc<P>,
-        config: (crate::platform::PairingHostConfig, ProductContext),
-        spawner: Spawner,
-    ) -> Self
-    where
-        P: Platform + 'static,
-    {
-        let (host_config, product) = config;
-        let platform: Arc<dyn Platform> = platform;
-        Self::new_pairing_for_tests(platform, host_config, product, spawner).0
-    }
-
-    /// Compatibility constructor used only by tests that do not exercise
-    /// product-scoped behavior.
-    #[cfg(test)]
-    fn new_compat(platform: Arc<dyn Platform>, spawner: Spawner) -> Self {
-        Self::new_compat_with_pairing(platform, spawner).0
-    }
-
-    #[cfg(test)]
-    fn compat_host_config() -> crate::platform::PairingHostConfig {
-        crate::platform::PairingHostConfig::new(
-            crate::platform::HostInfo {
-                name: "Polkadot Web".to_string(),
-                icon: Some("https://example.invalid/dotli.png".to_string()),
-                version: None,
-                platform: truapi::latest::HostPlatform::Web,
-            },
-            crate::platform::PlatformInfo::default(),
-            [0; 32],
-            [0xbb; 32],
-            [0xcc; 32],
-            "polkadotapp".to_string(),
-        )
-        .expect("compat runtime config is valid")
-    }
-
-    /// Compat host used by preimage tests.
-    #[cfg(test)]
-    fn new_compat_with_bulletin(platform: Arc<dyn Platform>, spawner: Spawner) -> Self {
-        Self::new_pairing_for_tests(
-            platform,
-            Self::compat_host_config(),
-            ProductContext::new("unknown.dot".to_string())
-                .expect("compat product context is valid"),
-            spawner,
-        )
-        .0
-    }
-
-    #[cfg(test)]
-    fn new_compat_with_pairing(
-        platform: Arc<dyn Platform>,
-        spawner: Spawner,
-    ) -> (Self, Arc<PairingHost>) {
-        let host_config = Self::compat_host_config();
-        Self::new_pairing_for_tests(
-            platform,
-            host_config,
-            ProductContext::new("unknown.dot".to_string())
-                .expect("compat product context is valid"),
-            spawner,
-        )
-    }
-
-    #[cfg(test)]
-    fn new_pairing_for_tests(
-        platform: Arc<dyn Platform>,
-        host_config: crate::platform::PairingHostConfig,
-        product: ProductContext,
-        spawner: Spawner,
-    ) -> (Self, Arc<PairingHost>) {
-        let services = RuntimeServices::new(
-            platform.clone(),
-            host_config.host.host_info.clone(),
-            host_config.people_chain_genesis_hash,
-            host_config.bulletin_chain_genesis_hash,
-            host_config.asset_hub_chain_genesis_hash,
-            spawner.clone(),
-        );
-        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-        let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-        let pairing_host = PairingHost::new(services.clone(), sso.clone(), grants);
-        let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-        let host = Self::from_services(services, adapters, pairing_host.clone(), sso, product);
-        (host, pairing_host)
     }
 
     /// Test-only access to the shared session-state holder.
@@ -838,7 +755,7 @@ impl ProductRuntimeHost {
         product_id: &str,
         public_key: [u8; 32],
     ) {
-        self.authority
+        self.accounts
             .cache_product_subtree_for_test(session, product_id, public_key);
     }
 
@@ -877,10 +794,7 @@ impl ProductRuntimeHost {
         F: Future<Output = Result<T, E>>,
         E: From<AuthorityError>,
     {
-        self.authority.require_current_operation(operation)?;
-        let result = call.await?;
-        self.authority.require_current_operation(operation)?;
-        Ok(result)
+        operation.run(self.accounts.as_ref(), call).await
     }
 
     async fn product_account_public_key(
@@ -888,15 +802,19 @@ impl ProductRuntimeHost {
         cx: &CallContext,
         operation: &HostOperation,
         product_account_id: &v01::ProductAccountId,
+        outbound_review: Option<&UserConfirmationReview>,
     ) -> Result<[u8; 32], AuthorityError> {
-        let cx = remote_authority_context(cx);
         let subtree = self
-            .account_operation(
+            .account_call(
                 operation,
-                &cx,
-                self.authority.account_holder().product_subtree_public_key(
-                    &cx,
-                    &operation.session,
+                self.accounts.product_subtree_public_key(
+                    operation,
+                    cx,
+                    AccountCaller::Local {
+                        product: &self.connection.product,
+                        authorization: None,
+                        outbound_review,
+                    },
                     product_account_id.dot_ns_identifier.clone(),
                 ),
             )
@@ -922,6 +840,7 @@ impl ProductRuntimeHost {
                 dot_ns_identifier: self.connection.product_id(),
                 derivation_index: v01::DerivationIndex::Index(0),
             },
+            None,
         )
         .await
         .map_err(|err| err.to_string())
@@ -1082,7 +1001,11 @@ fn account_get_authority_error(err: AuthorityError) -> CallError<HostAccountGetE
     let error = match err {
         AuthorityError::Disconnected => v01::HostAccountGetError::NotConnected,
         AuthorityError::Rejected => v01::HostAccountGetError::Rejected,
-        error @ AuthorityError::ConfirmationFailed(_) => v01::HostAccountGetError::Unknown { reason: error.to_string() },
+        AuthorityError::ConfirmationFailed(error) => {
+            return CallError::HostFailure {
+                reason: error.reason,
+            };
+        }
         AuthorityError::Cancelled(err) => v01::HostAccountGetError::Unknown {
             reason: err.to_string(),
         },
@@ -1171,7 +1094,11 @@ fn signing_call_error<E>(
         AuthorityError::Rejected | AuthorityError::Disconnected => {
             v01::HostSignPayloadError::Rejected
         }
-        AuthorityError::ConfirmationFailed(error) => return CallError::HostFailure { reason: format!("sign payload confirmation failed: {error:?}") },
+        AuthorityError::ConfirmationFailed(error) => {
+            return CallError::HostFailure {
+                reason: format!("sign payload confirmation failed: {error:?}"),
+            };
+        }
         AuthorityError::Cancelled(err) => v01::HostSignPayloadError::Unknown {
             reason: err.to_string(),
         },
@@ -1189,7 +1116,11 @@ fn transaction_call_error<E>(
         AuthorityError::Rejected | AuthorityError::Disconnected => {
             v01::HostCreateTransactionError::Rejected
         }
-        AuthorityError::ConfirmationFailed(error) => return CallError::HostFailure { reason: format!("create transaction confirmation failed: {error:?}") },
+        AuthorityError::ConfirmationFailed(error) => {
+            return CallError::HostFailure {
+                reason: format!("create transaction confirmation failed: {error:?}"),
+            };
+        }
         AuthorityError::Cancelled(err) => v01::HostCreateTransactionError::Unknown {
             reason: err.to_string(),
         },
@@ -1204,7 +1135,7 @@ fn transaction_call_error<E>(
 
 const PAYMENTS_NOT_IMPLEMENTED: &str = "Payments are not supported in dot.li";
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
     /// Replace the contact handles a call declares with the accounts they
     /// name, before the call is shown to the user or signed.
     ///
@@ -1294,23 +1225,21 @@ impl ProductRuntimeHost {
             .services
             .contacts_platform()
             .ok_or(CallError::Unsupported)?;
-        let session = self
-            .authority
-            .account_holder()
-            .current_session()
+        let operation = self
+            .accounts
+            .current_operation()
             .ok_or(CallError::Domain(v01::HostContactsPickError::NotConnected))?;
-        let handle_key = self
-            .authority
-            .account_holder()
-            .contacts_handle_key(&session)
-            .map_err(|error| match error {
-                AuthorityError::Disconnected => {
-                    CallError::Domain(v01::HostContactsPickError::NotConnected)
-                }
-                other => CallError::Domain(v01::HostContactsPickError::Unknown {
-                    reason: other.to_string(),
-                }),
-            })?;
+        let handle_key =
+            self.accounts
+                .contacts_handle_key(&operation)
+                .map_err(|error| match error {
+                    AuthorityError::Disconnected => {
+                        CallError::Domain(v01::HostContactsPickError::NotConnected)
+                    }
+                    other => CallError::Domain(v01::HostContactsPickError::Unknown {
+                        reason: other.to_string(),
+                    }),
+                })?;
         Ok((
             platform,
             crate::runtime::contacts::ContactHandles::from_handle_key(handle_key),
@@ -1319,7 +1248,7 @@ impl ProductRuntimeHost {
 }
 
 #[crate::platform::async_trait]
-impl Contacts for ProductRuntimeHost {
+impl<H: AccountHolder> Contacts for ProductRuntimeHost<H> {
     #[instrument(skip_all, fields(runtime.method = "contacts.pick"))]
     async fn pick(
         &self,
@@ -1382,7 +1311,7 @@ fn contacts_error<E>(
 }
 
 #[crate::platform::async_trait]
-impl Chat for ProductRuntimeHost {
+impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
     #[instrument(skip_all, fields(runtime.method = "chat.create_room"))]
     async fn create_room(
         &self,
@@ -1496,7 +1425,7 @@ impl Chat for ProductRuntimeHost {
 }
 
 #[crate::platform::async_trait]
-impl Renderer for ProductRuntimeHost {
+impl<H: AccountHolder> Renderer for ProductRuntimeHost<H> {
     #[instrument(skip_all, fields(runtime.method = "renderer.action_subscribe"))]
     async fn action_subscribe(
         &self,
@@ -1512,7 +1441,7 @@ impl Renderer for ProductRuntimeHost {
 }
 
 #[truapi::async_trait]
-impl Pocket for ProductRuntimeHost {
+impl<H: AccountHolder> Pocket for ProductRuntimeHost<H> {
     #[instrument(skip_all, fields(runtime.method = "pocket.list_subscribe"))]
     async fn list_subscribe(
         &self,
@@ -1618,7 +1547,7 @@ fn chat_create_room_field_error(
     ))
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
     /// Cache a just-submitted preimage under its key for immediate lookups.
     fn prime_preimage_cache(&self, key: &[u8], value: Vec<u8>) {
         if let Ok(key_bytes) = <[u8; 32]>::try_from(key) {
@@ -1644,6 +1573,110 @@ fn bulletin_allowance_error_reason(err: AuthorityError) -> String {
             "Signing host disconnected while allocating Bulletin allowance".to_string()
         }
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+impl ProductRuntimeHost<SsoAccountHolderClient> {
+    /// Test constructor building a standalone pairing-host runtime.
+    pub fn new<P>(
+        platform: Arc<P>,
+        config: (crate::platform::PairingHostConfig, ProductContext),
+        spawner: Spawner,
+    ) -> Self
+    where
+        P: Platform + 'static,
+    {
+        let (host_config, product) = config;
+        let platform: Arc<dyn Platform> = platform;
+        Self::new_pairing_for_tests(platform, host_config, product, spawner).0
+    }
+
+    /// Compatibility constructor used only by tests that do not exercise
+    /// product-scoped behavior.
+    fn new_compat(platform: Arc<dyn Platform>, spawner: Spawner) -> Self {
+        Self::new_compat_with_pairing(platform, spawner).0
+    }
+
+    fn compat_host_config() -> crate::platform::PairingHostConfig {
+        crate::platform::PairingHostConfig::new(
+            crate::platform::HostInfo {
+                name: "Polkadot Web".to_string(),
+                icon: Some("https://example.invalid/dotli.png".to_string()),
+                version: None,
+                platform: truapi::latest::HostPlatform::Web,
+            },
+            crate::platform::PlatformInfo::default(),
+            [0; 32],
+            [0xbb; 32],
+            [0xcc; 32],
+            "polkadotapp".to_string(),
+        )
+        .expect("compat runtime config is valid")
+    }
+
+    /// Compat host used by preimage tests.
+    fn new_compat_with_bulletin(platform: Arc<dyn Platform>, spawner: Spawner) -> Self {
+        Self::new_pairing_for_tests(
+            platform,
+            Self::compat_host_config(),
+            ProductContext::new("unknown.dot".to_string())
+                .expect("compat product context is valid"),
+            spawner,
+        )
+        .0
+    }
+
+    fn new_compat_with_pairing(
+        platform: Arc<dyn Platform>,
+        spawner: Spawner,
+    ) -> (
+        Self,
+        Arc<HostAccounts<SsoAccountHolderClient>>,
+        Arc<SsoRequestService>,
+    ) {
+        let host_config = Self::compat_host_config();
+        Self::new_pairing_for_tests(
+            platform,
+            host_config,
+            ProductContext::new("unknown.dot".to_string())
+                .expect("compat product context is valid"),
+            spawner,
+        )
+    }
+
+    fn new_pairing_for_tests(
+        platform: Arc<dyn Platform>,
+        host_config: crate::platform::PairingHostConfig,
+        product: ProductContext,
+        spawner: Spawner,
+    ) -> (
+        Self,
+        Arc<HostAccounts<SsoAccountHolderClient>>,
+        Arc<SsoRequestService>,
+    ) {
+        let services = RuntimeServices::new(
+            platform.clone(),
+            host_config.host.host_info.clone(),
+            host_config.people_chain_genesis_hash,
+            host_config.bulletin_chain_genesis_hash,
+            host_config.asset_hub_chain_genesis_hash,
+            spawner.clone(),
+        );
+        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+        let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+        let accounts = HostAccounts::new(
+            services.clone(),
+            Arc::new(SsoAccountHolderClient::new(sso.clone())),
+            sso.session_state(),
+            grants,
+            ring_vrf_registry::RingVrfRegistryStore::new(services.platform.clone()),
+            #[cfg(feature = "test-host")]
+            Arc::default(),
+        );
+        let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+        let host = Self::from_services(services, adapters, accounts.clone(), sso.clone(), product);
+        (host, accounts, sso)
     }
 }
 

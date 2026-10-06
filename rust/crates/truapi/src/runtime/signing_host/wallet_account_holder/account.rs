@@ -1,8 +1,9 @@
 //! Wallet account execution and consent.
 
-use super::WalletAccountHolder;
+use super::{AllowanceAllocationError, WalletAccountHolder, product_authority_error};
 use crate::host_internal::extrinsic::Sr25519Signer;
 use crate::host_internal::extrinsic::{build_signed_transaction, local_transaction_metadata};
+use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
 use crate::host_internal::sso_messages::RingVrfError;
 use crate::host_internal::transaction::sign_extrinsic_payload;
 use crate::host_logic::features::genesis_for;
@@ -12,25 +13,33 @@ use crate::platform::{
     AccountAccessReview, PermissionAuthorizationStatus, SignVrfReview,
     StatementStoreProductSignReview, UserConfirmationReview, normalize_product_identifier,
 };
+use crate::platform::{ResourceAllocationReview, has_trusted_remote_permissions};
 use crate::runtime::authority::{
-    AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
-    AutoSigningGrant, CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest,
-    SignRawAuthorityRequest,
+    AccountCaller, AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation,
+    AuthorityError, AuthoritySession, AutoSigningGrant, AutoSigningKey, BulletinAllowanceKey,
+    CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
+    StatementStoreAllowanceKey,
 };
 use crate::runtime::signing_host::ring_vrf::{
     MemberCandidate, create_proof, development_context_bytes,
 };
 use crate::runtime::statement_allowance::collection::PersonhoodCollection;
 use crate::runtime::vrf::{self, Vrf};
+use crate::runtime::{WalletAuthorization, allowances::AllowanceResource};
 use crate::runtime::{
     remote_authority_call, remote_authority_context, until_cancelled, validate_vrf_transcript,
 };
+use futures::{
+    StreamExt,
+    stream::{self, BoxStream},
+};
+use std::sync::Arc;
+use truapi::latest as api;
 use truapi::latest::{
     ChainIdentifier, DerivationIndex, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
     HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
     HostAccountRingVrfSignRequest, ProductAccountId, RingLocation, RingLocationJunction,
 };
-use truapi::{CallContext, latest as api};
 
 impl WalletAccountHolder {
     /// Derive the product's hard-subtree public key from the active session root.
@@ -90,6 +99,7 @@ impl WalletAccountHolder {
             AccountCaller::Local {
                 product,
                 authorization,
+                ..
             } => Ok(self.auto_signing_status(
                 invocation.session,
                 &product.product_id,
@@ -345,19 +355,212 @@ impl AccountHolder for WalletAccountHolder {
         WalletAccountHolder::current_session(self)
     }
 
-    async fn product_subtree_public_key(
+    fn require_current_session(
         &self,
-        _cx: &CallContext,
         session: &AuthoritySession,
+    ) -> Result<crate::host_logic::session::SessionInfo, AuthorityError> {
+        WalletAccountHolder::require_current_session(self, session)
+    }
+
+    async fn allocate_grants<'a>(
+        &'a self,
+        invocation: AccountInvocation<'a>,
+        request: api::HostRequestResourceAllocationRequest,
+        policy: OnExistingAllowancePolicy,
+    ) -> Result<BoxStream<'a, Result<AccountGrantOutcome, AuthorityError>>, AuthorityError> {
+        let caller = invocation
+            .caller
+            .product_id()
+            .ok_or(AuthorityError::Rejected)?;
+        let confirmed = crate::runtime::until_cancelled(invocation.call, async {
+            if matches!(invocation.caller, AccountCaller::Local { .. })
+                && has_trusted_remote_permissions(caller)
+            {
+                return Ok(true);
+            }
+            self.services
+                .platform
+                .confirm_user_action(UserConfirmationReview::ResourceAllocation(
+                    ResourceAllocationReview {
+                        calling_product_id: caller.to_string(),
+                        resources: request.resources.clone(),
+                    },
+                ))
+                .await
+        })
+        .await?
+        .map_err(AuthorityError::ConfirmationFailed)?;
+        if !confirmed {
+            return Err(AuthorityError::Rejected);
+        }
+        self.require_current_session(invocation.session)?;
+        let product_id = caller.to_string();
+        Ok(stream::unfold(
+            (request.resources.into_iter(), product_id, invocation),
+            move |(mut resources, product_id, invocation)| async move {
+                let resource = resources.next()?;
+                let outcome = async {
+                    self.require_current_session(invocation.session)?;
+                    if let Some(reason) = invocation.call.cancel().reason() {
+                        return Err(crate::runtime::authority_cancellation_error(
+                            invocation.call,
+                            reason,
+                        )
+                        .into());
+                    }
+                    #[cfg(feature = "test-host")]
+                    if matches!(invocation.caller, AccountCaller::Local { .. }) {
+                        self.resource_controls.refuse_withheld(&resource)?;
+                    }
+                    let product_id = product_id.as_str();
+                    let grant = match resource {
+                        api::AllocatableResource::StatementStoreAllowance => {
+                            let allocation = self
+                                .allocate_statement_store_allowance(
+                                    invocation.session,
+                                    product_id,
+                                    policy,
+                                )
+                                .await?;
+                            AccountGrant::StatementStore {
+                                key: StatementStoreAllowanceKey::from_secret_bytes(
+                                    allocation.secret,
+                                )?,
+                                period: Some(allocation.period),
+                            }
+                        }
+                        api::AllocatableResource::BulletinAllowance => {
+                            AccountGrant::Bulletin(BulletinAllowanceKey::from_secret_bytes(
+                                self.allocate_bulletin_allowance(
+                                    invocation.session,
+                                    product_id,
+                                    policy,
+                                )
+                                .await?,
+                            )?)
+                        }
+                        api::AllocatableResource::SmartContractAllowance(index) => {
+                            self.allocate_smart_contract_allowance(
+                                invocation.session,
+                                product_id,
+                                index,
+                                policy,
+                            )
+                            .await?;
+                            AccountGrant::SmartContract
+                        }
+                        api::AllocatableResource::AutoSigning => self
+                            .with_keys::<_, AuthorityError>(invocation.session, |keys| {
+                                Ok(match invocation.caller {
+                                    AccountCaller::Local { .. } => {
+                                        let product_id = normalize_product_identifier(product_id)
+                                            .map_err(|error| {
+                                            AuthorityError::Unavailable {
+                                                reason: error.to_string(),
+                                            }
+                                        })?;
+                                        keys.product_subtree_public_key(&product_id)?;
+                                        AccountGrant::WalletAuthorization(WalletAuthorization {
+                                            issuer: Arc::downgrade(&self.session_state),
+                                            validation_id: invocation.session.validation_id.clone(),
+                                            product_id,
+                                        })
+                                    }
+                                    AccountCaller::Remote { .. } => {
+                                        AccountGrant::AutoSigning(AutoSigningKey::from_parts(
+                                            keys.product_subtree_secret(product_id)?,
+                                            keys.ring_vrf_domain_entropy(product_id)
+                                                .map_err(product_authority_error)?,
+                                        ))
+                                    }
+                                })
+                            })?,
+                    };
+                    Ok(grant)
+                }
+                .await;
+                let outcome = self
+                    .require_current_session(invocation.session)
+                    .map_err(AllowanceAllocationError::from)
+                    .and(outcome);
+                let outcome = match outcome {
+                    Ok(grant) => Ok(AccountGrantOutcome::Allocated(grant)),
+                    Err(AllowanceAllocationError::Authority(
+                        error @ (AuthorityError::Disconnected | AuthorityError::Cancelled(_)),
+                    )) => Err(error),
+                    Err(AllowanceAllocationError::Authority(AuthorityError::Rejected)) => {
+                        Ok(AccountGrantOutcome::Rejected)
+                    }
+                    Err(error) => Ok(AccountGrantOutcome::NotAvailable {
+                        reason: Some(error.to_string()),
+                    }),
+                };
+                Some((outcome, (resources, product_id, invocation)))
+            },
+        )
+        .boxed())
+    }
+
+    async fn ensure_allowance(
+        &self,
+        invocation: AccountInvocation<'_>,
+        resource: AllowanceResource,
+        policy: OnExistingAllowancePolicy,
+    ) -> Result<AccountGrant, AuthorityError> {
+        match resource {
+            AllowanceResource::StatementStore => {
+                let allocation = self
+                    .allocate_statement_store_allowance(
+                        invocation.session,
+                        invocation
+                            .caller
+                            .product_id()
+                            .ok_or(AuthorityError::Rejected)?,
+                        policy,
+                    )
+                    .await
+                    .map_err(AllowanceAllocationError::into_authority_error)?;
+                Ok(AccountGrant::StatementStore {
+                    key: StatementStoreAllowanceKey::from_secret_bytes(allocation.secret)?,
+                    period: Some(allocation.period),
+                })
+            }
+            AllowanceResource::Bulletin => {
+                let secret = self
+                    .allocate_bulletin_allowance(
+                        invocation.session,
+                        invocation
+                            .caller
+                            .product_id()
+                            .ok_or(AuthorityError::Rejected)?,
+                        policy,
+                    )
+                    .await
+                    .map_err(AllowanceAllocationError::into_authority_error)?;
+                Ok(AccountGrant::Bulletin(
+                    BulletinAllowanceKey::from_secret_bytes(secret)?,
+                ))
+            }
+        }
+    }
+
+    async fn product_subtree_public_key<'a>(
+        &'a self,
+        invocation: AccountInvocation<'a>,
         product_id: String,
-    ) -> Result<[u8; 32], AuthorityError> {
-        self.require_current_session(session)?;
+    ) -> Result<futures::future::BoxFuture<'a, Result<[u8; 32], AuthorityError>>, AuthorityError>
+    {
+        self.require_current_session(invocation.session)?;
         let product_id = normalize_product_identifier(&product_id).map_err(|err| {
             AuthorityError::Unavailable {
                 reason: err.to_string(),
             }
         })?;
-        self.with_keys(session, |keys| keys.product_subtree_public_key(&product_id))
+        Ok(Box::pin(async move {
+            self.with_keys(invocation.session, |keys| {
+                keys.product_subtree_public_key(&product_id)
+            })
+        }))
     }
 
     async fn sign_vrf(

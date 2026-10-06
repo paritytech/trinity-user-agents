@@ -227,6 +227,61 @@ impl SsoRequestService {
         }
     }
 
+    /// Present host-owned review metadata before starting an outbound exchange.
+    pub async fn approve(
+        &self,
+        invocation: &super::authority::AccountInvocation<'_>,
+    ) -> Result<(), super::authority::AuthorityError> {
+        use super::authority::{AccountCaller, AuthorityError};
+        use crate::platform::{UserConfirmationReview, has_trusted_remote_permissions};
+        if let AccountCaller::Local {
+            product,
+            outbound_review: Some(review),
+            ..
+        } = invocation.caller
+        {
+            if has_trusted_remote_permissions(&product.product_id)
+                && matches!(
+                    review,
+                    UserConfirmationReview::ResourceAllocation(_)
+                        | UserConfirmationReview::ProductSubtree(_)
+                )
+            {
+                return Ok(());
+            }
+            invocation
+                .confirm(self.platform.as_ref(), review.clone())
+                .await
+                .map_err(|error| match (review, error) {
+                    (
+                        UserConfirmationReview::SignVrf(_),
+                        AuthorityError::ConfirmationFailed(error),
+                    ) => AuthorityError::Unknown {
+                        reason: format!("VRF signing confirmation failed: {error:?}"),
+                    },
+                    (_, error) => error,
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Clear all capability material owned by one product while preserving the
+    /// active session and unrelated products.
+    pub async fn clear_product_state(&self, product_id: &str) -> Result<(), String> {
+        let product_id = crate::platform::normalize_product_identifier(product_id)
+            .map_err(|error| error.to_string())?;
+        let session = {
+            let mut lifecycle = self.grants.lifecycle();
+            lifecycle.revoke_product(&product_id);
+            self.session_state().current()
+        };
+        self.grants
+            .persistence()
+            .await
+            .clear_product(session.as_ref(), &product_id)
+            .await
+    }
+
     /// Selected remote account identity.
     pub fn current_session(&self) -> Option<AuthoritySession> {
         self.session_state.current().as_ref().map(authority_session)

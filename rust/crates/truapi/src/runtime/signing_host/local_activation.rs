@@ -32,11 +32,8 @@ impl LocalActivation for SigningHost {
     ) -> Result<(), AuthorityError> {
         let activation = self.wallet.prepare_activation(secret, lite_username)?;
         let session = {
-            let mut state = self
-                .local_grants
-                .lock()
-                .expect("local AutoSigning grant mutex poisoned");
-            state.clear_grants();
+            let mut state = self.grants.lifecycle();
+            state.clear_memory();
             self.wallet.install(activation)
         };
         self.auth_state

@@ -11,9 +11,8 @@ use truapi::latest::{
     HostAccountListRingVrfKeysResponse, HostAccountRegisterRingVrfKeyRequest,
     HostAccountRegisterRingVrfKeyResponse, HostAccountRingVrfSignRequest,
     HostAccountRingVrfSignResponse, HostAccountSignVrfError, HostAccountSignVrfRequest,
-    HostCreateTransactionResponse, HostRequestResourceAllocationRequest,
-    HostRequestResourceAllocationResponse, HostSignPayloadRequest, HostSignPayloadResponse,
-    HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
+    HostCreateTransactionResponse, HostRequestResourceAllocationRequest, HostSignPayloadRequest,
+    HostSignPayloadResponse, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
     HostSignRawWithLegacyAccountRequest, LegacyAccountTxPayload, ProductAccountId,
     ProductAccountTxPayload, VrfSignature,
 };
@@ -27,6 +26,7 @@ use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::host_logic::statement_store::statement_public_key_from_secret;
 
 /// Wallet call bound to a session and the origin that supplied its caller.
+#[derive(Clone, Copy)]
 pub struct AccountInvocation<'a> {
     /// Cancellation and deadline for this operation.
     pub call: &'a CallContext,
@@ -36,7 +36,24 @@ pub struct AccountInvocation<'a> {
     pub caller: AccountCaller<'a>,
 }
 
-impl AccountInvocation<'_> {
+impl<'a> AccountInvocation<'a> {
+    /// Attach host review metadata while preserving the original caller binding.
+    pub fn with_outbound_review(self, review: &'a crate::platform::UserConfirmationReview) -> Self {
+        let caller = match self.caller {
+            AccountCaller::Local {
+                product,
+                authorization,
+                ..
+            } => AccountCaller::Local {
+                product,
+                authorization,
+                outbound_review: Some(review),
+            },
+            remote => remote,
+        };
+        Self { caller, ..self }
+    }
+
     /// Review wallet work, preserving the local product's trusted-review policy.
     pub async fn confirm(
         &self,
@@ -80,6 +97,8 @@ pub enum AccountCaller<'a> {
         product: &'a ProductContext,
         /// Wallet-issued permission retained by this host.
         authorization: Option<&'a WalletAuthorization>,
+        /// Host review prepared before conversion to an outbound SSO payload.
+        outbound_review: Option<&'a crate::platform::UserConfirmationReview>,
     },
     /// Product identity reported by an authenticated paired host.
     Remote {
@@ -98,10 +117,7 @@ impl AccountCaller<'_> {
     }
 }
 
-/// Secret key allocated for Bulletin preimage submission.
-///
-/// The core is the sole holder: the secret never crosses the host boundary.
-/// Zeroized on drop, and its `Debug` redacts the material.
+/// Validated Bulletin signing material, redacted in diagnostics and zeroized on drop.
 #[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop, derive_more::Debug)]
 pub struct BulletinAllowanceKey {
     #[debug("\"<redacted>\"")]
@@ -109,7 +125,7 @@ pub struct BulletinAllowanceKey {
 }
 
 impl BulletinAllowanceKey {
-    /// Wrap a 64-byte sr25519 secret; other lengths are `Unavailable`.
+    /// Reject invalid sr25519 material before it can be retained.
     pub fn from_secret_bytes(secret: Vec<u8>) -> Result<Self, AuthorityError> {
         let secret: [u8; 64] =
             secret
@@ -120,6 +136,9 @@ impl BulletinAllowanceKey {
                         secret.len()
                     ),
                 })?;
+        schnorrkel::SecretKey::from_bytes(&secret).map_err(|_| AuthorityError::Unavailable {
+            reason: "invalid bulletin allowance key".to_string(),
+        })?;
         Ok(Self { secret })
     }
 
@@ -199,7 +218,7 @@ impl AuthoritySession {
 }
 
 /// A product operation bound to its account session and host grants.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct HostOperation {
     /// Account activation selected before product approval.
     pub session: AuthoritySession,
@@ -212,20 +231,24 @@ impl HostOperation {
         Self { session, revision }
     }
 
-    /// Stop native acquisition before resuming work invalidated by a host reset.
-    pub async fn run<T, E, F>(&self, authority: &dyn ProductAuthority, call: F) -> Result<T, E>
+    /// Stop work invalidated by account selection or a host grant reset.
+    pub async fn run<H: AccountHolder, T, E, F>(
+        &self,
+        accounts: &super::HostAccounts<H>,
+        call: F,
+    ) -> Result<T, E>
     where
         F: core::future::Future<Output = Result<T, E>>,
         E: From<AuthorityError>,
     {
         futures::pin_mut!(call);
         futures::future::poll_fn(|context| {
-            if let Err(error) = authority.require_current_operation(self) {
+            if let Err(error) = accounts.require_current_operation(self) {
                 return core::task::Poll::Ready(Err(error.into()));
             }
             match call.as_mut().poll(context) {
                 core::task::Poll::Ready(Ok(value)) => core::task::Poll::Ready(
-                    authority
+                    accounts
                         .require_current_operation(self)
                         .map(|()| value)
                         .map_err(Into::into),
@@ -515,22 +538,75 @@ impl StatementStoreAllowanceKey {
     }
 }
 
+/// Issued capability material, ready for the host to validate and retain.
+pub enum AccountGrant {
+    /// Statement signing material and a known on-chain allocation period, if supplied.
+    StatementStore {
+        /// Validated statement signing key.
+        key: StatementStoreAllowanceKey,
+        /// Actual period returned by wallet issuance; SSO does not provide one.
+        period: Option<u32>,
+    },
+    /// Dedicated Bulletin allowance key.
+    Bulletin(BulletinAllowanceKey),
+    /// Funded product account.
+    SmartContract,
+    /// Exported product signing material.
+    AutoSigning(AutoSigningKey),
+    /// Wallet permission without exported signing material.
+    WalletAuthorization(WalletAuthorization),
+}
+
+/// One resource result in an otherwise valid allocation batch.
+pub enum AccountGrantOutcome {
+    /// Issued capability material.
+    Allocated(AccountGrant),
+    /// The holder declined this resource.
+    Rejected,
+    /// No grant is available; local issuers may supply diagnostic context.
+    NotAvailable {
+        /// Issuer detail absent from the existing SSO response.
+        reason: Option<String>,
+    },
+}
+
 /// Wallet account operations bound to a selected session.
 #[async_trait]
-pub trait AccountHolder: Send + Sync {
+pub trait AccountHolder: Send + Sync + 'static {
     /// Current account-authority session, if connected.
     fn current_session(&self) -> Option<AuthoritySession>;
 
-    /// Return the public key of `//product//{product_id}`.
-    ///
-    /// Pairing hosts obtain this consent-free value from the Account Holder;
-    /// signing hosts derive it locally from root entropy.
-    async fn product_subtree_public_key(
+    /// Reject replacement of the originally selected wallet or paired channel.
+    fn require_current_session(
         &self,
-        cx: &CallContext,
         session: &AuthoritySession,
+    ) -> Result<SessionInfo, AuthorityError>;
+
+    /// Review an explicit request before lazily issuing its ordered grants.
+    async fn allocate_grants<'a>(
+        &'a self,
+        invocation: AccountInvocation<'a>,
+        request: HostRequestResourceAllocationRequest,
+        policy: crate::host_internal::sso_messages::OnExistingAllowancePolicy,
+    ) -> Result<
+        futures::stream::BoxStream<'a, Result<AccountGrantOutcome, AuthorityError>>,
+        AuthorityError,
+    >;
+
+    /// Obtain one implicit allowance without introducing an explicit allocation review.
+    async fn ensure_allowance(
+        &self,
+        invocation: AccountInvocation<'_>,
+        resource: super::allowances::AllowanceResource,
+        policy: crate::host_internal::sso_messages::OnExistingAllowancePolicy,
+    ) -> Result<AccountGrant, AuthorityError>;
+
+    /// Resolve the public hard subtree under the selected account holder.
+    async fn product_subtree_public_key<'a>(
+        &'a self,
+        invocation: AccountInvocation<'a>,
         product_id: String,
-    ) -> Result<[u8; 32], AuthorityError>;
+    ) -> Result<futures::future::BoxFuture<'a, Result<[u8; 32], AuthorityError>>, AuthorityError>;
 
     /// Sign an RFC-0023 Merlin transcript with a product account.
     async fn sign_vrf(
@@ -630,83 +706,6 @@ pub trait AccountHolder: Send + Sync {
     /// products and host roles. The key must remain inaccessible to products
     /// to prevent recovering contacts by hashing candidate accounts.
     fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;
-}
-
-/// Account selection, resource acquisition and retained grants for product runtimes.
-#[async_trait]
-pub trait ProductAuthority: Send + Sync {
-    /// Account holder selected by this host.
-    fn account_holder(&self) -> &dyn AccountHolder;
-
-    /// Capture account identity and host grants before product approval.
-    fn current_operation(&self) -> Option<HostOperation>;
-
-    /// Reject a product operation invalidated by account or host changes.
-    fn require_current_operation(&self, operation: &HostOperation) -> Result<(), AuthorityError>;
-
-    /// Acquire and retain product-scoped resources for this host.
-    async fn allocate_resources(
-        &self,
-        cx: &CallContext,
-        operation: &HostOperation,
-        product: &ProductContext,
-        request: HostRequestResourceAllocationRequest,
-    ) -> Result<HostRequestResourceAllocationResponse, AuthorityError>;
-
-    /// Seed the paired subtree cache for account-operation tests.
-    #[cfg(test)]
-    fn cache_product_subtree_for_test(
-        &self,
-        _session: &SessionInfo,
-        _product_id: &str,
-        _public_key: [u8; 32],
-    ) {
-    }
-
-    /// Whether subtree resolution needs SSO and therefore host consent.
-    ///
-    /// True for a paired cache miss; false for local derivation or a cached subtree.
-    async fn subtree_resolution_reaches_account_holder(
-        &self,
-        session: &AuthoritySession,
-        product_id: &str,
-    ) -> bool;
-
-    /// Select retained wallet permission under the original host operation fence.
-    fn wallet_authorization(
-        &self,
-        operation: &HostOperation,
-        product: &ProductContext,
-    ) -> Result<Option<WalletAuthorization>, AuthorityError>;
-
-    /// Return statement-store allowance key material for the calling product.
-    async fn statement_store_allowance_key(
-        &self,
-        cx: &CallContext,
-        operation: &HostOperation,
-        product_id: String,
-    ) -> Result<StatementStoreAllowanceKey, AuthorityError>;
-
-    /// Forget the cached key only if it matches `public_key`, preserving any
-    /// replacement. Hosts without a local cache use the no-op default.
-    fn forget_statement_store_allowance_key(&self, _product_id: &str, _public_key: [u8; 32]) {}
-
-    /// Return Bulletin allowance key material for the calling product.
-    async fn bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        operation: &HostOperation,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError>;
-
-    /// Invalidate the cached Bulletin key and increase or recreate its allowance
-    /// after a submission is rejected for an exhausted or missing allowance.
-    async fn refresh_bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        operation: &HostOperation,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError>;
 }
 
 /// Build the neutral authority-session snapshot for `session`.

@@ -6,16 +6,12 @@ mod allowance;
 mod allowance_renewal;
 #[cfg(test)]
 mod allowance_tests;
-pub use allowance::{
-    AccountGrant, AllowanceAllocationError, StatementStoreAllocation, current_unix_secs,
-};
+pub use allowance::AllowanceAllocationError;
 pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
 
 use crate::runtime::WalletAuthorization;
-#[cfg(feature = "test-host")]
-use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use truapi::latest::ProductAccountId;
 use zeroize::Zeroizing;
@@ -51,9 +47,7 @@ pub struct WalletAccountHolder {
     ring_vrf_registry: Arc<crate::runtime::ring_vrf_registry::RingVrfRegistryStore>,
     renewal: allowance_renewal::RenewalState,
     #[cfg(feature = "test-host")]
-    grant_allowances_unchecked: std::sync::atomic::AtomicBool,
-    #[cfg(feature = "test-host")]
-    withheld_resources: Mutex<HashSet<String>>,
+    resource_controls: Arc<crate::runtime::test_resource_controls::TestResourceControls>,
     network_suffix: String,
     lifecycle: Mutex<WalletState>,
     session_state: Arc<SessionState>,
@@ -162,16 +156,20 @@ pub struct PreparedWalletActivation {
 
 impl WalletAccountHolder {
     /// Start locked, with no wallet secrets.
-    pub fn new(services: Arc<crate::runtime::RuntimeServices>, network_suffix: String) -> Self {
+    pub fn new(
+        services: Arc<crate::runtime::RuntimeServices>,
+        network_suffix: String,
+        ring_vrf_registry: Arc<crate::runtime::ring_vrf_registry::RingVrfRegistryStore>,
+    ) -> Self {
         Self {
             ring_resolver: super::ring_vrf::ChainRingResolver::new(services.chain.clone()),
-            ring_vrf_registry: crate::runtime::ring_vrf_registry::RingVrfRegistryStore::new(services.platform.clone()),
+            ring_vrf_registry,
             services,
             renewal: allowance_renewal::RenewalState::default(),
             #[cfg(feature = "test-host")]
-            grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
-            #[cfg(feature = "test-host")]
-            withheld_resources: Mutex::new(HashSet::new()),
+            resource_controls: Arc::new(
+                crate::runtime::test_resource_controls::TestResourceControls::default(),
+            ),
             network_suffix,
             lifecycle: Mutex::new(WalletState::default()),
             session_state: SessionState::new(),
@@ -184,10 +182,11 @@ impl WalletAccountHolder {
         services: Arc<crate::runtime::RuntimeServices>,
         network_suffix: String,
         ring_resolver: Arc<dyn super::ring_vrf::RingResolver>,
+        ring_vrf_registry: Arc<crate::runtime::ring_vrf_registry::RingVrfRegistryStore>,
     ) -> Self {
         Self {
             ring_resolver,
-            ..Self::new(services, network_suffix)
+            ..Self::new(services, network_suffix, ring_vrf_registry)
         }
     }
 
@@ -217,58 +216,12 @@ impl WalletAccountHolder {
         })
     }
 
-    /// Whether allocation is answered as granted without performing it.
+    /// Shared synthetic resource controls used by this test wallet and its host.
     #[cfg(feature = "test-host")]
-    pub fn grants_allowances_unchecked(&self) -> bool {
-        self.grant_allowances_unchecked
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Answer resource allocation as granted without performing it.
-    #[cfg(feature = "test-host")]
-    pub fn set_grant_allowances_unchecked(&self, granted: bool) {
-        self.grant_allowances_unchecked
-            .store(granted, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// Replace refused resource tags; SmartContractAllowance covers every index.
-    #[cfg(feature = "test-host")]
-    pub fn set_withheld_resources(&self, tags: Vec<String>) {
-        *self
-            .withheld_resources
-            .lock()
-            .expect("withheld resource mutex poisoned") = tags.into_iter().collect();
-    }
-
-    /// Whether `resource` is answered as refused.
-    #[cfg(feature = "test-host")]
-    pub fn withholds(&self, resource: &truapi::latest::AllocatableResource) -> bool {
-        let tag = match resource {
-            truapi::latest::AllocatableResource::StatementStoreAllowance => {
-                "StatementStoreAllowance"
-            }
-            truapi::latest::AllocatableResource::BulletinAllowance => "BulletinAllowance",
-            truapi::latest::AllocatableResource::SmartContractAllowance(_) => {
-                "SmartContractAllowance"
-            }
-            truapi::latest::AllocatableResource::AutoSigning => "AutoSigning",
-        };
-        self.withheld_resources
-            .lock()
-            .expect("withheld resource mutex poisoned")
-            .contains(tag)
-    }
-
-    /// Withholding also applies to implicit native allowance access.
-    #[cfg(feature = "test-host")]
-    pub fn refuse_withheld(
+    pub fn resource_controls(
         &self,
-        resource: &truapi::latest::AllocatableResource,
-    ) -> Result<(), AuthorityError> {
-        if self.withholds(resource) {
-            return Err(AuthorityError::Rejected);
-        }
-        Ok(())
+    ) -> &Arc<crate::runtime::test_resource_controls::TestResourceControls> {
+        &self.resource_controls
     }
 
     fn authorization_matches(
