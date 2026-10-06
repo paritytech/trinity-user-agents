@@ -70,7 +70,7 @@ Run `rebuild.sh` after changing anything host-visible — the `NativeTrUApiHostR
 
 For local iteration without publishing, set `TRUAPI_USE_LOCAL_BINARY=1` so the root `Package.swift` builds against `Binaries/` directly.
 
-The embedding app implements `HostBridge` (defined in `TrUAPIHost.swift`): navigation, push, permissions, auth state, scoped + core storage, chain JSON-RPC, confirmations, preimage, theme, feature support, and the served chain set. UI-decision callbacks are `async` and awaited by the Rust core. `HostCallbackAdapter` translates it to the UniFFI-generated `HostCallbacks` protocol; `TrUAPIHostRuntime` and each product execution retain their own adapter. Conform to `HostBridge` rather than to the generated protocol: its extension defaults the optional callbacks, so a newly added one does not break the build. Storage arrives as the `storage` and `coreStorage` sub-objects, which the adapter flattens.
+The embedding app implements `HostBridge` (defined in `TrUAPIHost.swift`): navigation, push, permissions, auth state, product, public core and protected secret storage, chain JSON-RPC, confirmations, preimage, theme, feature support, and the served chain set. UI-decision callbacks are `async` and awaited by the Rust core. `HostCallbackAdapter` translates it to the UniFFI-generated `HostCallbacks` protocol; `TrUAPIHostRuntime` and each product execution retain their own adapter. Conform to `HostBridge` rather than to the generated protocol: its extension defaults the optional callbacks, so a newly added one does not break the build. Storage arrives as the required `storage`, `coreStorage` and `secretStorage` sub-objects. `HostSecretStorageBackend` uses typed `SecretCoreStorageKey` values and async read/write/clear. Use `secretCoreStorageKeyIdentifier(key:)` for physical record names and share the backend across all bridges. Missing alone returns nil; inaccessible or corrupt storage throws. Order complete storage effects against cleanup and check cancellation after acquiring the shared storage lock.
 
 ## Integrating in an iOS app
 
@@ -422,6 +422,8 @@ An account id must be exactly 32 bytes. Anything else is rejected where the bind
 > `cancelNotification`) run inline on the dispatcher thread and must return
 > promptly without blocking.
 
+The example receives `secretStorage` from the embedding app's shared durable secret backend.
+
 ```swift
 import Foundation
 import WebKit
@@ -446,6 +448,11 @@ final class MyCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
 final class MyBridge: HostBridge, @unchecked Sendable {
     let storage: HostStorageBackend = MyStorage()
     let coreStorage: HostCoreStorageBackend = MyCoreStorage()
+    let secretStorage: HostSecretStorageBackend
+
+    init(secretStorage: HostSecretStorageBackend) {
+        self.secretStorage = secretStorage
+    }
 
     func onCoreLog(marker: String, detail: String) { /* log */ }
 
@@ -523,7 +530,7 @@ final class MyBridge: HostBridge, @unchecked Sendable {
 
 }
 
-let bridge = MyBridge()
+let bridge = MyBridge(secretStorage: secretStorage)
 let runtimeConfig = HostRuntimeConfig(
     hostName: "My Host",
     hostIcon: "https://host.example/icon.png",

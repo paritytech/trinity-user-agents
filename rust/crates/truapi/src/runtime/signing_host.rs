@@ -80,7 +80,7 @@ impl SigningHost {
     pub fn new(services: Arc<RuntimeServices>, network_suffix: String) -> Arc<Self> {
         let platform = services.platform.clone();
         let registry = RingVrfRegistryStore::new(platform.clone());
-        let grants = Arc::new(HostGrantStore::new(platform.clone()));
+        let grants = Arc::new(HostGrantStore::new(platform.clone(), platform.clone()));
         let wallet = Arc::new(WalletAccountHolder::new(
             services.clone(),
             network_suffix,
@@ -157,7 +157,7 @@ impl SigningHost {
             crate::test_support::test_spawner(),
         );
         let registry = RingVrfRegistryStore::new(platform.clone());
-        let grants = Arc::new(HostGrantStore::new(platform.clone()));
+        let grants = Arc::new(HostGrantStore::new(platform.clone(), platform.clone()));
         let wallet = Arc::new(WalletAccountHolder::new_with_ring_resolver(
             services.clone(),
             network_suffix.to_string(),

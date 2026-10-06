@@ -2,6 +2,8 @@ package io.parity.truapi
 
 import android.content.SharedPreferences
 import uniffi.truapi.HostRejection
+import uniffi.truapi.SecretCoreStorageKey
+import uniffi.truapi.secretCoreStorageKeyIdentifier
 import uniffi.truapi.HostLocalStorageReadException
 
 /**
@@ -27,8 +29,7 @@ class PrefsHostStorage(private val prefs: SharedPreferences) : HostStorage {
 }
 
 /**
- * Holds the core's auth and pairing session state plus persisted permission
- * decisions. Uses `commit()` because a write the core believes succeeded must
+ * Holds public core records, including persisted permission decisions. Uses `commit()` because a write the core believes succeeded must
  * not be lost on process death; failures surface as the declared [HostRejection].
  */
 class PrefsHostCoreStorage(private val prefs: SharedPreferences) : HostCoreStorage {
@@ -43,6 +44,20 @@ class PrefsHostCoreStorage(private val prefs: SharedPreferences) : HostCoreStora
         if (!prefs.edit().remove(bytesToHex(key)).commit()) {
             throw HostRejection.Rejected("failed to clear core storage key")
         }
+    }
+}
+
+class PrefsHostSecretStorage(private val prefs: SharedPreferences) : HostSecretStorage {
+    @OptIn(ExperimentalStdlibApi::class)
+    override suspend fun read(key: SecretCoreStorageKey): ByteArray? =
+        prefs.getString(secretCoreStorageKeyIdentifier(key), null)?.hexToByteArray()
+
+    override suspend fun write(key: SecretCoreStorageKey, value: ByteArray) {
+        check(prefs.edit().putString(secretCoreStorageKeyIdentifier(key), bytesToHex(value)).commit())
+    }
+
+    override suspend fun clear(key: SecretCoreStorageKey) {
+        check(prefs.edit().remove(secretCoreStorageKeyIdentifier(key)).commit())
     }
 }
 

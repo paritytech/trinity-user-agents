@@ -122,3 +122,9 @@ pub fn set_log_level(level: String) {
 
 #[cfg(test)]
 mod tests;
+
+/// Rust-owned opaque identifier for a protected host record.
+#[uniffi::export]
+pub fn secret_core_storage_key_identifier(key: crate::platform::SecretCoreStorageKey) -> String {
+    key.storage_key()
+}

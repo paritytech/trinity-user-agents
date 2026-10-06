@@ -37,13 +37,18 @@ public protocol HostStorageBackend: AnyObject, Sendable {
     func clear(key: String) throws
 }
 
-/// Core-owned host-private storage backend. Keys are SCALE-encoded
-/// `truapi::platform::CoreStorageKey` values, so embedders can persist them
-/// opaquely or decode them to choose a secure backing store per slot.
+/// Public core records addressed by opaque SCALE-encoded `CoreStorageKey` values.
 public protocol HostCoreStorageBackend: AnyObject, Sendable {
     func read(key: Data) throws -> Data?
     func write(key: Data, value: Data) throws
     func clear(key: Data) throws
+}
+
+/// Protected host secrets. Missing records return nil; inaccessible or corrupt storage throws.
+public protocol HostSecretStorageBackend: AnyObject, Sendable {
+    func read(key: SecretCoreStorageKey) async throws -> Data?
+    func write(key: SecretCoreStorageKey, value: Data) async throws
+    func clear(key: SecretCoreStorageKey) async throws
 }
 
 /// Host-side callback bundle that the Rust core invokes for capabilities the
@@ -187,9 +192,11 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Scoped key-value storage for the Rust core.
     var storage: HostStorageBackend { get }
 
-    /// Core-owned host-private storage for auth session, pairing identity,
-    /// and persisted permission decisions.
+    /// Public core records, including permissions and cached public keys.
     var coreStorage: HostCoreStorageBackend { get }
+
+    /// Installation-scoped protected storage shared by every bridge for this host.
+    var secretStorage: HostSecretStorageBackend { get }
 
 }
 
@@ -517,6 +524,18 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
 
     func authStateChanged(state: AuthState) {
         bridge.authStateChanged(state: state)
+    }
+
+    func readSecretCoreStorage(key: SecretCoreStorageKey) async throws -> Data? {
+        try await withHostRejection { try await bridge.secretStorage.read(key: key) }
+    }
+
+    func writeSecretCoreStorage(key: SecretCoreStorageKey, value: Data) async throws {
+        try await withHostRejection { try await bridge.secretStorage.write(key: key, value: value) }
+    }
+
+    func clearSecretCoreStorage(key: SecretCoreStorageKey) async throws {
+        try await withHostRejection { try await bridge.secretStorage.clear(key: key) }
     }
 
     func coreStorageRead(key: Data) throws -> Data? {

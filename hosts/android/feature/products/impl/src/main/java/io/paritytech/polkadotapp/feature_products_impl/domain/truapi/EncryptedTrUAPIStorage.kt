@@ -3,9 +3,10 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
-import uniffi.truapi.HostRejection
 import uniffi.truapi.HostLocalStorageReadException
 import java.text.Normalizer
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Product-scoped storage for the Rust core, encrypted at rest.
@@ -38,28 +39,21 @@ class EncryptedHostStorage(
         productStorageKeyOwner(key)?.takeUnless { it == normalizedProductId } ?: productId
 }
 
-/**
- * Core-owned storage: auth session, pairing identity, and persisted permission
- * decisions.
- *
- * Deliberately *not* product-scoped. The pairing identity belongs to the user,
- * not to a product, and scoping it per product would make every product demand
- * its own pairing. The core disambiguates internally through the SCALE-encoded
- * `CoreStorageKey` it passes here.
- */
-class EncryptedHostCoreStorage(
+/** Public core records share the secret adapter's cleanup ordering. */
+@Singleton
+class EncryptedHostCoreStorage @Inject constructor(
     private val preferences: EncryptedPreferences,
+    private val gate: TrUAPIStorageGate,
 ) : HostCoreStorage {
-    override suspend fun read(key: ByteArray): ByteArray? = readValue(preferences, qualify(key))
+    override suspend fun read(key: ByteArray): ByteArray? =
+        gate.withStorage { readCommittedStorageValue(preferences, qualify(key)) }
 
     override suspend fun write(key: ByteArray, value: ByteArray) {
-        writeValue(preferences, qualify(key), value)
-            ?.let { throw HostRejection.Rejected("core storage: $it") }
+        gate.withStorage { writeCommittedStorageValue(preferences, qualify(key), value) }
     }
 
     override suspend fun clear(key: ByteArray) {
-        runCatching { preferences.removeKey(qualify(key)) }
-            .getOrElse { throw HostRejection.Rejected("failed to clear core storage key: ${it.message}") }
+        gate.withStorage { preferences.removeKeyCommitted(qualify(key)) }
     }
 
     private fun qualify(key: ByteArray) = "$CORE_NAMESPACE/${key.toHex()}"

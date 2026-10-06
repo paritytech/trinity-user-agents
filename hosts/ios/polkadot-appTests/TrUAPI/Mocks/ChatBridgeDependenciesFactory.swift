@@ -25,7 +25,11 @@ func makeChatBridgeDependencies(
             productId: productId,
             defaults: defaults
         ),
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults),
+        coreStorage: CoreStorageBackend(
+            storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults),
+            lock: NSLock()
+        ),
+        secretStorage: StubSecretStorage(),
         confirmationPresenter: MockConfirmationPresenter(),
         preimageCache: TrUAPIPreimageCache { _ in nil },
         hostProvider: InertHostProvider(),

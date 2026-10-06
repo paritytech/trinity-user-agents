@@ -167,6 +167,8 @@ Polkadot Android is a self-custodial superapp: your keys are created on your pho
 
 A modular **Kotlin** / **Jetpack Compose** codebase: features are split into `api` and `impl` modules wired with Hilt, performance-critical crypto is compiled from **Rust** via the NDK ([`bindings/`](./bindings)), and chain access goes through [substrate-sdk-android](https://github.com/novasamatech/substrate-sdk-android) (JSON-RPC, storage subscriptions, extrinsics).
 
+The Rust host shares singleton public core and protected secret adapters. Their common operation gate checks cancellation and flushes pending preference persistence before encrypted storage access. Secret writes and removals require committed persistence; device identity remains owned by `OurDeviceKeypairProvider`.
+
 GitHub Actions validate pull requests. The remaining workflows are the maintainers'
 own build and distribution flows; a fork does not need them. Build-time
 configuration and the steps to sign and publish the app are documented in

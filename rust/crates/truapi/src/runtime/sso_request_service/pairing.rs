@@ -2,6 +2,9 @@
 //! topic on the statement store (live subscription plus periodic snapshot
 //! queries), and decrypts the wallet's V2 handshake response into a session.
 
+use crate::platform::{SecretCoreStorage, SecretCoreStorageKey};
+#[cfg(test)]
+use crate::test_support::secret_core_storage_test_key;
 use core::pin::Pin;
 
 use futures::future::Fuse;
@@ -296,12 +299,15 @@ impl<'a> SsoPairingFlow<'a> {
 
 #[instrument(skip_all, fields(runtime.method = "sso.pairing_device.create_fresh"))]
 async fn create_fresh_pairing_device_identity(
-    storage: &(impl CoreStorage + ?Sized),
+    storage: &(impl SecretCoreStorage + ?Sized),
 ) -> Result<PairingDeviceIdentity, String> {
     let identity = generate_pairing_device_identity()
         .map_err(|err| format!("pairing identity failed: {err}"))?;
     storage
-        .write_core_storage(CoreStorageKey::PairingDeviceIdentity, identity.encode())
+        .write_secret_core_storage(
+            SecretCoreStorageKey::PairingDeviceIdentity,
+            identity.encode(),
+        )
         .await
         .map_err(|err| format!("pairing device identity write failed: {err:?}"))?;
     Ok(identity)
@@ -309,19 +315,20 @@ async fn create_fresh_pairing_device_identity(
 
 #[instrument(skip_all, fields(runtime.method = "sso.pairing_device.read_or_create"))]
 async fn read_or_create_pairing_device_identity(
-    storage: &(impl CoreStorage + ?Sized),
+    storage: &(impl SecretCoreStorage + ?Sized),
 ) -> Result<(PairingDeviceIdentity, bool), String> {
     let stored = storage
-        .read_core_storage(CoreStorageKey::PairingDeviceIdentity)
+        .read_secret_core_storage(SecretCoreStorageKey::PairingDeviceIdentity)
         .await
         .map_err(|err| format!("pairing device identity read failed: {err:?}"))?;
     if let Some(stored) = stored {
-        match PairingDeviceIdentity::decode(&mut stored.as_slice()) {
-            Ok(identity) => return Ok((identity, true)),
-            Err(err) => {
-                debug!("discarding invalid stored pairing device identity: {err}");
-            }
+        let mut input = stored.as_slice();
+        let identity = PairingDeviceIdentity::decode(&mut input)
+            .map_err(|error| format!("stored pairing device identity is invalid: {error}"))?;
+        if !input.is_empty() {
+            return Err("stored pairing device identity contains trailing bytes".to_string());
         }
+        return Ok((identity, true));
     }
 
     create_fresh_pairing_device_identity(storage)
@@ -576,6 +583,35 @@ mod tests {
     }
 
     #[test]
+    fn malformed_pairing_identity_is_not_replaced() {
+        let mut trailing = generate_pairing_device_identity().unwrap().encode();
+        trailing.push(0);
+        for malformed in [vec![1, 2, 3], trailing] {
+            futures::executor::block_on(async {
+                let storage = StubPlatform::default();
+                storage
+                    .write_secret_core_storage(
+                        SecretCoreStorageKey::PairingDeviceIdentity,
+                        malformed.clone(),
+                    )
+                    .await
+                    .unwrap();
+                let result = read_or_create_pairing_device_identity(&storage).await;
+                assert_eq!(
+                    (
+                        result.is_err(),
+                        storage
+                            .read_secret_core_storage(SecretCoreStorageKey::PairingDeviceIdentity)
+                            .await
+                            .unwrap()
+                    ),
+                    (true, Some(malformed)),
+                );
+            });
+        }
+    }
+
+    #[test]
     fn request_login_presents_pairing_and_rejects_when_cancelled() {
         let platform = stub_platform();
         let (host, _, sso) =
@@ -670,7 +706,7 @@ mod tests {
     #[test]
     fn request_login_gives_up_when_core_storage_never_answers() {
         let platform = Arc::new(StubPlatform {
-            core_storage_pending: true,
+            secret_core_storage_pending: true,
             ..Default::default()
         });
         let host = ProductRuntimeHost::new_compat(platform, test_spawner());
@@ -749,8 +785,8 @@ mod tests {
                 .local_storage
                 .lock()
                 .expect("local storage mutex poisoned")
-                .contains_key(&core_storage_test_key(
-                    CoreStorageKey::PairingDeviceIdentity
+                .contains_key(&secret_core_storage_test_key(
+                    SecretCoreStorageKey::PairingDeviceIdentity
                 )),
             "cancelled pairing keeps the latest identity; the next unmarked reuse regenerates it"
         );
@@ -765,7 +801,7 @@ mod tests {
             .lock()
             .expect("local storage mutex poisoned")
             .insert(
-                core_storage_test_key(CoreStorageKey::PairingDeviceIdentity),
+                secret_core_storage_test_key(SecretCoreStorageKey::PairingDeviceIdentity),
                 identity.encode(),
             );
         platform
@@ -811,8 +847,8 @@ mod tests {
                 .local_storage
                 .lock()
                 .expect("local storage mutex poisoned")
-                .contains_key(&core_storage_test_key(
-                    CoreStorageKey::PairingDeviceIdentity
+                .contains_key(&secret_core_storage_test_key(
+                    SecretCoreStorageKey::PairingDeviceIdentity
                 )),
             "cancelled pairing keeps the rotated identity; the next login rotates again"
         );

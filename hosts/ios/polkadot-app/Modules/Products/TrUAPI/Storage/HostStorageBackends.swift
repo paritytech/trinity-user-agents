@@ -31,21 +31,38 @@ final class ProductStorageBackend: HostStorageBackend, @unchecked Sendable {
 /// surface as `HostRejection`.
 final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
     private let storage: TrUAPILocalStoring
+    private let lock: NSLock
 
-    init(storage: TrUAPILocalStoring) {
+    init(storage: TrUAPILocalStoring, lock: NSLock) {
         self.storage = storage
+        self.lock = lock
     }
 
     func read(key: Data) throws -> Data? {
-        try withHostRejection { try storage.read(key: key.toHex()) }
+        try withHostRejection {
+            try lock.withLock {
+                try Task.checkCancellation()
+                return try storage.read(key: key.toHex())
+            }
+        }
     }
 
     func write(key: Data, value: Data) throws {
-        try withHostRejection { try storage.write(key: key.toHex(), value: value) }
+        try withHostRejection {
+            try lock.withLock {
+                try Task.checkCancellation()
+                try storage.write(key: key.toHex(), value: value)
+            }
+        }
     }
 
     func clear(key: Data) throws {
-        try withHostRejection { try storage.clear(key: key.toHex()) }
+        try withHostRejection {
+            try lock.withLock {
+                try Task.checkCancellation()
+                try storage.clear(key: key.toHex())
+            }
+        }
     }
 }
 

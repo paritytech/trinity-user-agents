@@ -1,5 +1,6 @@
 use crate::platform::{
-    AuthState, DevicePermissionStatus, PermissionDecision, UserConfirmationReview,
+    AuthState, DevicePermissionStatus, PermissionDecision, SecretCoreStorageKey,
+    UserConfirmationReview,
 };
 use truapi::v01;
 
@@ -102,6 +103,25 @@ pub trait HostCallbacks: Send + Sync {
     /// Clear a core-owned host-private storage slot. `key` is a SCALE-encoded
     /// [`CoreStorageKey`].
     async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection>;
+
+    /// Read a protected record; only missing keys return `None`.
+    async fn read_secret_core_storage(
+        &self,
+        key: SecretCoreStorageKey,
+    ) -> Result<Option<Vec<u8>>, HostRejection>;
+
+    /// Complete protected persistence before acknowledging the write.
+    async fn write_secret_core_storage(
+        &self,
+        key: SecretCoreStorageKey,
+        value: Vec<u8>,
+    ) -> Result<(), HostRejection>;
+
+    /// Remove a protected record after earlier storage effects have settled.
+    async fn clear_secret_core_storage(
+        &self,
+        key: SecretCoreStorageKey,
+    ) -> Result<(), HostRejection>;
 
     /// Open a JSON-RPC connection for a chain. Return a host-assigned
     /// connection id, or `None` when unsupported.

@@ -102,7 +102,11 @@ private func makeBridge(
         chainRegistry: chainRegistry,
         chainConnections: pool,
         productStorage: productStorage,
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
+        coreStorage: CoreStorageBackend(
+            storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
+            lock: NSLock()
+        ),
+        secretStorage: StubSecretStorage(),
         confirmationPresenter: confirmationPresenter,
         preimageCache: preimageCache,
         hostProvider: hostProvider,
@@ -547,7 +551,11 @@ struct RustRuntimeBridgeTests {
                 productId: "test.dot",
                 defaults: makeTestDefaults()
             ),
-            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
+            coreStorage: CoreStorageBackend(
+                storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
+                lock: NSLock()
+            ),
+            secretStorage: StubSecretStorage(),
             confirmationPresenter: MockConfirmationPresenter(),
             preimageCache: TrUAPIPreimageCache { _ in nil },
             hostProvider: StubHostProvider(),

@@ -8,6 +8,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import io.parity.truapi.HostSecretStorage
+import uniffi.truapi.SecretCoreStorageKey
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import uniffi.truapi.HostRuntimeConfig
@@ -151,6 +153,12 @@ class MediaPermissionIntegrationTest {
             override suspend fun read(key: ByteArray): ByteArray? = values[key.toList()]
             override suspend fun write(key: ByteArray, value: ByteArray) { values[key.toList()] = value }
             override suspend fun clear(key: ByteArray) { values.remove(key.toList()) }
+        }
+        override val secretStorage = object : HostSecretStorage {
+            private val values = ConcurrentHashMap<SecretCoreStorageKey, ByteArray>()
+            override suspend fun read(key: SecretCoreStorageKey): ByteArray? = values[key]
+            override suspend fun write(key: SecretCoreStorageKey, value: ByteArray) { values[key] = value }
+            override suspend fun clear(key: SecretCoreStorageKey) { values.remove(key) }
         }
         override suspend fun navigateTo(url: String) = Unit
         override suspend fun featureSupported(request: HostFeatureSupportedRequest) = false

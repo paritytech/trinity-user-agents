@@ -121,14 +121,6 @@ export type AuthState =
  */
 export type CoreStorageKey =
   /**
-   * Opaque SSO/auth session blob.
-   */
-  | { tag: "AuthSession"; value?: undefined }
-  /**
-   * Pairing device identity used during SSO flows.
-   */
-  | { tag: "PairingDeviceIdentity"; value?: undefined }
-  /**
    * Persisted authorization for one product-scoped permission request.
    */
   | {
@@ -136,22 +128,9 @@ export type CoreStorageKey =
       value: { productId: string; request: PermissionAuthorizationRequest };
     }
   /**
-   * Persisted allowance-slot keys for one paired SSO session.
-   */
-  | { tag: "AllowanceKeys"; value: { sessionId: string } }
-  /**
    * Last processed SSO pairing response statement for the pairing device.
    */
   | { tag: "LastProcessedPairingStatement"; value?: undefined }
-  /**
-   * Legacy unscoped RFC-0010 AutoSigning secret. Core only addresses this
-   * slot to reject and erase pre-scoping entries.
-   */
-  | { tag: "AutoSigningKey"; value: { productId: string } }
-  /**
-   * Wallet-bound RFC-0010 AutoSigning capabilities for the active pairing.
-   */
-  | { tag: "AutoSigningKeys"; value?: undefined }
   /**
    * Wallet-bound RFC-0024 ring-VRF registry snapshot.
    */
@@ -160,16 +139,6 @@ export type CoreStorageKey =
    * Statement-store allowance targets the signing host keeps renewed.
    */
   | { tag: "StatementRenewalTargets"; value?: undefined }
-  /**
-   * This device's long-lived X25519 encryption secret, advertised to peers
-   * as the device encryption public key. Random rather than identity-derived
-   * so devices restoring one identity stay individually addressable.
-   *
-   * Hosts must back this slot with storage scoped to the install, outliving
-   * logout and any per-user namespacing: once it changes, peers addressing
-   * the previous key can no longer reach this device.
-   */
-  | { tag: "DeviceEncryptionKey"; value?: undefined }
   /**
    * One product's hard-subtree public key, as the Account Holder answered it
    * for this paired session. Product account is a hard derivation, so the
@@ -478,8 +447,33 @@ export interface ResourceAllocationReview {
 }
 
 /**
+ * Protected host slots; root wallet entropy has a separate owner.
+ */
+export type SecretCoreStorageKey =
+  /**
+   * Authenticated paired-session state.
+   */
+  | { tag: "AuthSession"; value?: undefined }
+  /**
+   * Signing and encryption identity used while pairing.
+   */
+  | { tag: "PairingDeviceIdentity"; value?: undefined }
+  /**
+   * Installation identity shared with device messaging, independent of logout.
+   */
+  | { tag: "DeviceEncryptionKey"; value?: undefined }
+  /**
+   * Retained allowance keys for one authenticated pairing.
+   */
+  | { tag: "AllowanceKeys"; value: { sessionId: string } }
+  /**
+   * Wallet-bound delegated product signing capabilities.
+   */
+  | { tag: "AutoSigningKeys"; value?: undefined };
+
+/**
  * Decoded session fields a host shell needs to render account UI without
- * parsing the opaque session blob the core persists through `CoreStorage`.
+ * parsing the opaque session blob persisted through `SecretCoreStorage`.
  */
 export interface SessionUiInfo {
   /**
@@ -718,45 +712,48 @@ export const AuthState: S.Codec<AuthState> = S.lazy(
  */
 export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
   (): S.Codec<CoreStorageKey> =>
-    S.TaggedUnion({
-      AuthSession: S._void,
-      PairingDeviceIdentity: S._void,
-      PermissionAuthorization: S.Struct({
-        productId: S.str,
-        request: PermissionAuthorizationRequest,
-      }) as S.Codec<{
-        productId: string;
-        request: PermissionAuthorizationRequest;
-      }>,
-      AllowanceKeys: S.Struct({ sessionId: S.str }) as S.Codec<{
-        sessionId: string;
-      }>,
-      LastProcessedPairingStatement: S._void,
-      AutoSigningKey: S.Struct({ productId: S.str }) as S.Codec<{
-        productId: string;
-      }>,
-      AutoSigningKeys: S._void,
-      RingVrfRegistry: S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
-        rootPublicKey: Uint8Array;
-      }>,
-      StatementRenewalTargets: S._void,
-      DeviceEncryptionKey: S._void,
-      ProductSubtree: S.Struct({
-        sessionId: S.str,
-        productId: S.str,
-      }) as S.Codec<{ sessionId: string; productId: string }>,
-      SsoResponderRequestLedger: S.Struct({
-        rootPublicKey: S.Bytes(32),
-        peerStatementAccountId: S.Bytes(32),
-        peerEncryptionPublicKey: S.Bytes(32),
-      }) as S.Codec<{
-        rootPublicKey: Uint8Array;
-        peerStatementAccountId: Uint8Array;
-        peerEncryptionPublicKey: Uint8Array;
-      }>,
-      ProductManifest: S.Struct({ productId: S.str }) as S.Codec<{
-        productId: string;
-      }>,
+    S.indexedTaggedUnion({
+      PermissionAuthorization: [
+        2,
+        S.Struct({
+          productId: S.str,
+          request: PermissionAuthorizationRequest,
+        }) as S.Codec<{
+          productId: string;
+          request: PermissionAuthorizationRequest;
+        }>,
+      ] as const,
+      LastProcessedPairingStatement: [4, S._void] as const,
+      RingVrfRegistry: [
+        7,
+        S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
+          rootPublicKey: Uint8Array;
+        }>,
+      ] as const,
+      StatementRenewalTargets: [8, S._void] as const,
+      ProductSubtree: [
+        10,
+        S.Struct({ sessionId: S.str, productId: S.str }) as S.Codec<{
+          sessionId: string;
+          productId: string;
+        }>,
+      ] as const,
+      SsoResponderRequestLedger: [
+        11,
+        S.Struct({
+          rootPublicKey: S.Bytes(32),
+          peerStatementAccountId: S.Bytes(32),
+          peerEncryptionPublicKey: S.Bytes(32),
+        }) as S.Codec<{
+          rootPublicKey: Uint8Array;
+          peerStatementAccountId: Uint8Array;
+          peerEncryptionPublicKey: Uint8Array;
+        }>,
+      ] as const,
+      ProductManifest: [
+        12,
+        S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
+      ] as const,
     }),
 );
 
@@ -981,8 +978,24 @@ export const ResourceAllocationReview: S.Codec<ResourceAllocationReview> =
   );
 
 /**
+ * Protected host slots; root wallet entropy has a separate owner.
+ */
+export const SecretCoreStorageKey: S.Codec<SecretCoreStorageKey> = S.lazy(
+  (): S.Codec<SecretCoreStorageKey> =>
+    S.TaggedUnion({
+      AuthSession: S._void,
+      PairingDeviceIdentity: S._void,
+      DeviceEncryptionKey: S._void,
+      AllowanceKeys: S.Struct({ sessionId: S.str }) as S.Codec<{
+        sessionId: string;
+      }>,
+      AutoSigningKeys: S._void,
+    }),
+);
+
+/**
  * Decoded session fields a host shell needs to render account UI without
- * parsing the opaque session blob the core persists through `CoreStorage`.
+ * parsing the opaque session blob persisted through `SecretCoreStorage`.
  */
 export const SessionUiInfo: S.Codec<SessionUiInfo> = S.lazy(
   (): S.Codec<SessionUiInfo> =>
@@ -1349,7 +1362,7 @@ export interface CoreAdmin {
  * `describe_core_storage_key` names the product owning a slot:
  * `CoreStorageKeyDescription::product_id` is `Some` exactly for the
  * product-indexed variants, which are `PermissionAuthorization`,
- * `AutoSigningKey`, and `ProductSubtree`. Keying host storage by that value
+ * `ProductSubtree`, and `ProductManifest`. Keying host storage by that value
  * makes the sweep a prefix delete rather than a scan.
  */
 export interface CoreStorage {
@@ -1636,6 +1649,31 @@ export interface ProductStorage {
 }
 
 /**
+ * Protected persistence whose errors never masquerade as absent secrets.
+ */
+export interface SecretCoreStorage {
+  /**
+   * Only a missing record returns ``undefined``.
+   */
+  readSecretCoreStorage(
+    key: SecretCoreStorageKey,
+  ): Promise<Uint8Array | undefined>;
+
+  /**
+   * A successful write has completed persistent storage, including protection.
+   */
+  writeSecretCoreStorage(
+    key: SecretCoreStorageKey,
+    value: Uint8Array,
+  ): Promise<void>;
+
+  /**
+   * Completion orders removal after earlier writes, including cancelled waits.
+   */
+  clearSecretCoreStorage(key: SecretCoreStorageKey): Promise<void>;
+}
+
+/**
  * Host theme source.
  */
 export interface ThemeHost {
@@ -1679,6 +1717,7 @@ export interface HostCallbacks {
   features: Features;
   productStorage: ProductStorage;
   coreStorage: CoreStorage;
+  secretCoreStorage: SecretCoreStorage;
   chain: ChainProvider;
   auth: AuthPresenter;
   userConfirmation: UserConfirmation;
@@ -1699,6 +1738,7 @@ export interface RequiredHostCallbacks {
   features: Required<Features>;
   productStorage: Required<ProductStorage>;
   coreStorage: Required<CoreStorage>;
+  secretCoreStorage: Required<SecretCoreStorage>;
   chain: Required<ChainProvider>;
   auth: Required<AuthPresenter>;
   userConfirmation: Required<UserConfirmation>;

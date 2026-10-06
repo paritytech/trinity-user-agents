@@ -236,7 +236,10 @@ impl PairingHostRuntime {
         if let Some(contacts_platform) = contacts_platform {
             services.install_contacts_platform(contacts_platform);
         }
-        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+        let grants = Arc::new(HostGrantStore::new(
+            services.platform.clone(),
+            services.platform.clone(),
+        ));
         let sso = SsoRequestService::new(services.clone(), config, grants.clone());
         let accounts = HostAccounts::new(
             services.clone(),

@@ -5,10 +5,14 @@ import type {
   RendererNode,
   WireProvider,
 } from "@parity/truapi";
-import { CoreStorageKey as GeneratedCoreStorageKey } from "./generated/host-callbacks.js";
+import {
+  CoreStorageKey as GeneratedCoreStorageKey,
+  SecretCoreStorageKey as GeneratedSecretCoreStorageKey,
+} from "./generated/host-callbacks.js";
 import type {
   CoreAdmin,
   CoreStorageKey,
+  SecretCoreStorageKey,
   ProductExecutionKind,
 } from "./generated/host-callbacks.js";
 
@@ -26,6 +30,13 @@ export type {
 /** Encode a typed core-storage slot for hosts that need an opaque backing key. */
 export function encodeCoreStorageKey(key: CoreStorageKey): Uint8Array {
   return GeneratedCoreStorageKey.enc(key);
+}
+
+/** Encode a typed secret slot without exposing its representation to hosts. */
+export function encodeSecretCoreStorageKey(
+  key: SecretCoreStorageKey,
+): Uint8Array {
+  return GeneratedSecretCoreStorageKey.enc(key);
 }
 
 /**

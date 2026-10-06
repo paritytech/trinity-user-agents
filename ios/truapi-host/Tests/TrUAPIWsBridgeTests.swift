@@ -202,10 +202,6 @@ final class StubCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
     }
 }
 
-// Conforms to HostBridge rather than the generated HostCallbacks, so the
-// protocol extension supplies every optional callback and a new one cannot
-// leave this file behind. Only the six requirements without a default are
-// written out, plus the core log recorder.
 /// A fresh directory for one runtime's core database.
 func temporaryDatabaseDirectory() throws -> String {
     let directory = FileManager.default.temporaryDirectory
@@ -214,9 +210,27 @@ func temporaryDatabaseDirectory() throws -> String {
     return directory.path
 }
 
+final class StubSecretStorage: HostSecretStorageBackend, @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: Data] = [:]
+
+    func read(key: SecretCoreStorageKey) async throws -> Data? {
+        lock.withLock { values[secretCoreStorageKeyIdentifier(key: key)] }
+    }
+
+    func write(key: SecretCoreStorageKey, value: Data) async throws {
+        lock.withLock { values[secretCoreStorageKeyIdentifier(key: key)] = value }
+    }
+
+    func clear(key: SecretCoreStorageKey) async throws {
+        lock.withLock { values[secretCoreStorageKeyIdentifier(key: key)] = nil }
+    }
+}
+
 final class StubHostBridge: HostBridge, @unchecked Sendable {
     let storage: HostStorageBackend = StubStorage()
     let coreStorage: HostCoreStorageBackend = StubCoreStorage()
+    let secretStorage: HostSecretStorageBackend = StubSecretStorage()
     private let logLock = NSLock()
     private var logs: [String] = []
     private let permissionLock = NSLock()

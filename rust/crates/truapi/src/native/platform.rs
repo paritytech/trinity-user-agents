@@ -314,6 +314,40 @@ impl CoreStorage for CallbackPlatform {
     }
 }
 
+#[async_trait]
+impl crate::platform::SecretCoreStorage for CallbackPlatform {
+    async fn read_secret_core_storage(
+        &self,
+        key: crate::platform::SecretCoreStorageKey,
+    ) -> Result<Option<Vec<u8>>, crate::latest::GenericError> {
+        self.callbacks
+            .read_secret_core_storage(key)
+            .await
+            .map_err(crate::latest::GenericError::from)
+    }
+
+    async fn write_secret_core_storage(
+        &self,
+        key: crate::platform::SecretCoreStorageKey,
+        value: Vec<u8>,
+    ) -> Result<(), crate::latest::GenericError> {
+        self.callbacks
+            .write_secret_core_storage(key, value)
+            .await
+            .map_err(crate::latest::GenericError::from)
+    }
+
+    async fn clear_secret_core_storage(
+        &self,
+        key: crate::platform::SecretCoreStorageKey,
+    ) -> Result<(), crate::latest::GenericError> {
+        self.callbacks
+            .clear_secret_core_storage(key)
+            .await
+            .map_err(crate::latest::GenericError::from)
+    }
+}
+
 struct NativeJsonRpcConnection {
     id: u32,
     callbacks: Arc<dyn HostCallbacks>,

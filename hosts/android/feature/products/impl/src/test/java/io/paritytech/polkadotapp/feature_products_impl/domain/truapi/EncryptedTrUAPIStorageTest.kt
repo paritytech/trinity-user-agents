@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.mockk.every
+import io.mockk.mockk
+import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -98,10 +101,13 @@ class EncryptedTrUAPIStorageTest {
 
     @Test
     fun `core storage is shared across products by design`() = runTest {
-        val first = EncryptedHostCoreStorage(prefs)
+        val backing = mockk<Preferences>()
+        every { backing.edit().commit() } returns true
+        val gate = TrUAPIStorageGate(backing)
+        val first = EncryptedHostCoreStorage(prefs, gate)
         first.write(byteArrayOf(1), byteArrayOf(42))
 
-        assertArrayEquals(byteArrayOf(42), EncryptedHostCoreStorage(prefs).read(byteArrayOf(1)))
+        assertArrayEquals(byteArrayOf(42), EncryptedHostCoreStorage(prefs, gate).read(byteArrayOf(1)))
     }
 }
 

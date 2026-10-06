@@ -23,6 +23,7 @@ import { createWasmRawCallbacks } from "./generated/host-callbacks-adapter.js";
 import {
   AuthState,
   CoreStorageKey,
+  SecretCoreStorageKey,
   PermissionDecision,
   ProductContext,
   ProductExecutionKind,
@@ -58,6 +59,38 @@ it("preserves one-use permission decisions across the WASM callback", async () =
       reviews: [review],
     });
   }
+});
+
+it("keeps public storage separate from the required secret callback group", async () => {
+  const calls: unknown[] = [];
+  const raw = createWasmRawCallbacks(
+    makeHostCallbacks({
+      coreStorage: {
+        readCoreStorage: async (key) => {
+          calls.push(["public", key]);
+          return undefined;
+        },
+      },
+      secretCoreStorage: {
+        readSecretCoreStorage: async (key) => {
+          calls.push(["secret", key]);
+          throw new Error("protected store unavailable");
+        },
+      },
+    }),
+  );
+  expect(
+    await raw.readCoreStorage(
+      CoreStorageKey.enc({ tag: "StatementRenewalTargets" }),
+    ),
+  ).toBeUndefined();
+  await expect(
+    raw.readSecretCoreStorage(SecretCoreStorageKey.enc({ tag: "AuthSession" })),
+  ).rejects.toThrow("protected store unavailable");
+  expect(calls).toEqual([
+    ["public", { tag: "StatementRenewalTargets", value: undefined }],
+    ["secret", { tag: "AuthSession", value: undefined }],
+  ]);
 });
 
 const defaultTheme = (variant: ThemeVariant): HostThemeSubscribeItemValue => ({
@@ -218,14 +251,14 @@ describe("createWasmRawCallbacks", () => {
             calls.push(["authStateChanged", state]);
           },
         },
-        coreStorage: {
-          readCoreStorage: async (key) =>
+        secretCoreStorage: {
+          readSecretCoreStorage: async (key) =>
             key.tag === "AuthSession" ? new Uint8Array([1, 2, 3]) : undefined,
-          writeCoreStorage: async (key, value) => {
-            calls.push(["writeCoreStorage", key, [...value]]);
+          writeSecretCoreStorage: async (key, value) => {
+            calls.push(["writeSecretCoreStorage", key, [...value]]);
           },
-          clearCoreStorage: async (key) => {
-            calls.push(["clearCoreStorage", key]);
+          clearSecretCoreStorage: async (key) => {
+            calls.push(["clearSecretCoreStorage", key]);
           },
         },
         userConfirmation: {
@@ -311,12 +344,15 @@ describe("createWasmRawCallbacks", () => {
         value: { deeplink: "polkadotapp://example" },
       }),
     );
-    const authSessionKey = CoreStorageKey.enc({ tag: "AuthSession" });
-    expect(await raw.readCoreStorage!(authSessionKey)).toEqual(
+    const authSessionKey = SecretCoreStorageKey.enc({ tag: "AuthSession" });
+    expect(await raw.readSecretCoreStorage!(authSessionKey)).toEqual(
       new Uint8Array([1, 2, 3]),
     );
-    await raw.writeCoreStorage!(authSessionKey, new Uint8Array([3, 2, 1]));
-    await raw.clearCoreStorage!(authSessionKey);
+    await raw.writeSecretCoreStorage!(
+      authSessionKey,
+      new Uint8Array([3, 2, 1]),
+    );
+    await raw.clearSecretCoreStorage!(authSessionKey);
     expect(
       await raw.confirmUserAction?.(
         UserConfirmationReview.enc({
@@ -441,8 +477,12 @@ describe("createWasmRawCallbacks", () => {
         "authStateChanged",
         { tag: "Pairing", value: { deeplink: "polkadotapp://example" } },
       ],
-      ["writeCoreStorage", { tag: "AuthSession", value: undefined }, [3, 2, 1]],
-      ["clearCoreStorage", { tag: "AuthSession", value: undefined }],
+      [
+        "writeSecretCoreStorage",
+        { tag: "AuthSession", value: undefined },
+        [3, 2, 1],
+      ],
+      ["clearSecretCoreStorage", { tag: "AuthSession", value: undefined }],
       ["confirmUserAction:PreimageSubmit", 42n],
     ]);
 

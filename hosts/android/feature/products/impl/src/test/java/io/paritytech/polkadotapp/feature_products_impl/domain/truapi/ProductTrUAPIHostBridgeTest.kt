@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.mockk.mockk
 import uniffi.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
@@ -27,6 +28,8 @@ class ProductTrUAPIHostBridgeTest {
         hostApiInteractor = mock(HostApiInteractor::class.java),
         chainHttpClient = OkHttpClient(),
         encryptedPreferences = mock(EncryptedPreferences::class.java),
+        coreStorage = mockk(),
+        secretStorage = mockk(),
         confirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
         appLifecycleObserver = mock(AppLifecycleObserver::class.java),
         dotNsTldProvider = mock(DotNsTldProvider::class.java),

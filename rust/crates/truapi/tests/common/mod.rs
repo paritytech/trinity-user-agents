@@ -235,6 +235,29 @@ impl CoreStorage for WireShapePlatform {
 }
 
 #[truapi::platform::async_trait]
+impl truapi::platform::SecretCoreStorage for WireShapePlatform {
+    async fn read_secret_core_storage(
+        &self,
+        _key: truapi::platform::SecretCoreStorageKey,
+    ) -> Result<Option<Vec<u8>>, v01::GenericError> {
+        Ok(None)
+    }
+    async fn write_secret_core_storage(
+        &self,
+        _key: truapi::platform::SecretCoreStorageKey,
+        _value: Vec<u8>,
+    ) -> Result<(), v01::GenericError> {
+        Ok(())
+    }
+    async fn clear_secret_core_storage(
+        &self,
+        _key: truapi::platform::SecretCoreStorageKey,
+    ) -> Result<(), v01::GenericError> {
+        Ok(())
+    }
+}
+
+#[truapi::platform::async_trait]
 impl UserConfirmation for WireShapePlatform {
     async fn confirm_user_action(
         &self,

@@ -1,6 +1,6 @@
 //! Retained allowance scopes and paired-session storage encoding.
 
-use crate::platform::{CoreStorage, CoreStorageKey};
+use crate::platform::{SecretCoreStorage, SecretCoreStorageKey};
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::GenericError;
 
@@ -80,7 +80,7 @@ struct StoredAllowanceEntry {
 
 /// Read the persisted allowance key for `(product_id, resource)`, if any.
 pub async fn read_allowance_key(
-    storage: &(impl CoreStorage + ?Sized),
+    storage: &(impl SecretCoreStorage + ?Sized),
     session: &SessionInfo,
     product_id: &str,
     resource: AllowanceResource,
@@ -95,7 +95,7 @@ pub async fn read_allowance_key(
 /// Persist an allowance key, replacing any prior key for the same
 /// `(product_id, resource)`.
 pub async fn write_allowance_key(
-    storage: &(impl CoreStorage + ?Sized),
+    storage: &(impl SecretCoreStorage + ?Sized),
     session: &SessionInfo,
     product_id: &str,
     resource: AllowanceResource,
@@ -109,7 +109,7 @@ pub async fn write_allowance_key(
         slot_account_key,
     });
     storage
-        .write_core_storage(storage_key(session)?, encode_entries(entries))
+        .write_secret_core_storage(storage_key(session)?, encode_entries(entries))
         .await
         .map_err(storage_error)
 }
@@ -117,7 +117,7 @@ pub async fn write_allowance_key(
 /// Remove the persisted allowance key for `(product_id, resource)`; a miss is
 /// not an error.
 pub async fn remove_allowance_key(
-    storage: &(impl CoreStorage + ?Sized),
+    storage: &(impl SecretCoreStorage + ?Sized),
     session: &SessionInfo,
     product_id: &str,
     resource: AllowanceResource,
@@ -129,7 +129,7 @@ pub async fn remove_allowance_key(
         return Ok(());
     }
     storage
-        .write_core_storage(storage_key(session)?, encode_entries(entries))
+        .write_secret_core_storage(storage_key(session)?, encode_entries(entries))
         .await
         .map_err(storage_error)
 }
@@ -137,13 +137,13 @@ pub async fn remove_allowance_key(
 /// Remove every persisted allowance key for `product_id` in the active SSO
 /// session while preserving entries owned by other products.
 pub async fn clear_product_allowance_keys(
-    storage: &(impl CoreStorage + ?Sized),
+    storage: &(impl SecretCoreStorage + ?Sized),
     session: &SessionInfo,
     product_id: &str,
 ) -> Result<(), AuthorityError> {
     let key = storage_key(session)?;
     let Some(blob) = storage
-        .read_core_storage(key.clone())
+        .read_secret_core_storage(key.clone())
         .await
         .map_err(storage_error)?
     else {
@@ -152,7 +152,10 @@ pub async fn clear_product_allowance_keys(
     let mut entries = match decode_entries(&blob) {
         Ok(entries) => entries,
         Err(_) => {
-            return storage.clear_core_storage(key).await.map_err(storage_error);
+            return storage
+                .clear_secret_core_storage(key)
+                .await
+                .map_err(storage_error);
         }
     };
     let before = entries.len();
@@ -161,10 +164,13 @@ pub async fn clear_product_allowance_keys(
         return Ok(());
     }
     if entries.is_empty() {
-        storage.clear_core_storage(key).await.map_err(storage_error)
+        storage
+            .clear_secret_core_storage(key)
+            .await
+            .map_err(storage_error)
     } else {
         storage
-            .write_core_storage(key, encode_entries(entries))
+            .write_secret_core_storage(key, encode_entries(entries))
             .await
             .map_err(storage_error)
     }
@@ -172,21 +178,21 @@ pub async fn clear_product_allowance_keys(
 
 /// Drop every persisted allowance key belonging to the session.
 pub async fn clear_session_allowance_keys(
-    storage: &(impl CoreStorage + ?Sized),
+    storage: &(impl SecretCoreStorage + ?Sized),
     session: &SessionInfo,
 ) -> Result<(), AuthorityError> {
     storage
-        .clear_core_storage(storage_key(session)?)
+        .clear_secret_core_storage(storage_key(session)?)
         .await
         .map_err(storage_error)
 }
 
 async fn read_entries(
-    storage: &(impl CoreStorage + ?Sized),
+    storage: &(impl SecretCoreStorage + ?Sized),
     session: &SessionInfo,
 ) -> Result<Vec<StoredAllowanceEntry>, AuthorityError> {
     let Some(blob) = storage
-        .read_core_storage(storage_key(session)?)
+        .read_secret_core_storage(storage_key(session)?)
         .await
         .map_err(storage_error)?
     else {
@@ -213,8 +219,8 @@ fn decode_entries(blob: &[u8]) -> Result<Vec<StoredAllowanceEntry>, AuthorityErr
     Ok(entries)
 }
 
-fn storage_key(session: &SessionInfo) -> Result<CoreStorageKey, AuthorityError> {
-    Ok(CoreStorageKey::AllowanceKeys {
+fn storage_key(session: &SessionInfo) -> Result<SecretCoreStorageKey, AuthorityError> {
+    Ok(SecretCoreStorageKey::AllowanceKeys {
         session_id: session_storage_id(session.sso.as_ref().ok_or(AuthorityError::Disconnected)?),
     })
 }
@@ -261,10 +267,10 @@ mod tests {
     }
 
     #[crate::platform::async_trait]
-    impl CoreStorage for MemStorage {
-        async fn read_core_storage(
+    impl SecretCoreStorage for MemStorage {
+        async fn read_secret_core_storage(
             &self,
-            key: CoreStorageKey,
+            key: SecretCoreStorageKey,
         ) -> Result<Option<Vec<u8>>, GenericError> {
             Ok(self
                 .inner
@@ -274,9 +280,9 @@ mod tests {
                 .cloned())
         }
 
-        async fn write_core_storage(
+        async fn write_secret_core_storage(
             &self,
-            key: CoreStorageKey,
+            key: SecretCoreStorageKey,
             value: Vec<u8>,
         ) -> Result<(), GenericError> {
             self.inner
@@ -286,7 +292,10 @@ mod tests {
             Ok(())
         }
 
-        async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
+        async fn clear_secret_core_storage(
+            &self,
+            key: SecretCoreStorageKey,
+        ) -> Result<(), GenericError> {
             self.inner
                 .lock()
                 .expect("storage mutex poisoned")

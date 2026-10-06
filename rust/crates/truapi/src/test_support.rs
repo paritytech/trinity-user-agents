@@ -1,6 +1,7 @@
 //! Shared fixtures for the runtime test modules: a stub platform, a
 //! recording json-rpc connection, and SSO statement/frame builders.
 
+use crate::platform::SecretCoreStorageKey;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
@@ -200,14 +201,15 @@ pub struct StubPlatform {
     /// out `OPERATION_TIMEOUT`, which is the difference between a test that
     /// asserts a lookup failed and a test that spends ten seconds proving it.
     pub chain_responses_end: bool,
-    /// When true, `connect` stays pending forever.
-    /// Hold every core-storage read pending forever, standing in for a host
-    /// callback that is never answered.
-    pub core_storage_pending: bool,
-    /// Pause the first core-storage read until released.
-    pub core_storage_read_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Substitute storage for wallet lifecycle tests.
     pub core_storage_override: Option<Arc<dyn PlatformCoreStorage>>,
+    /// Protected-storage backend used by lifecycle fixtures.
+    pub secret_core_storage_override: Option<Arc<dyn crate::platform::SecretCoreStorage>>,
+    /// Delay protected reads before their effect.
+    pub secret_core_storage_read_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+    /// Keep protected reads pending for cancellation fixtures.
+    pub secret_core_storage_pending: bool,
+    /// When true, `connect` stays pending forever.
     pub chain_connect_pending: bool,
     /// Set when a `chain_connect_pending` connect future is dropped.
     pub pending_connect_dropped: Arc<AtomicBool>,
@@ -1071,21 +1073,6 @@ impl PlatformCoreStorage for StubPlatform {
         if let Some(storage) = &self.core_storage_override {
             return storage.read_core_storage(key).await;
         }
-        let gate = self.core_storage_read_gate.lock().unwrap().take();
-        if let Some(gate) = gate {
-            let _ = gate.await;
-        }
-        if self.core_storage_pending {
-            futures::future::pending::<()>().await;
-        }
-        if let CoreStorageKey::AuthSession = key {
-            if let Some(reason) = self.session_error {
-                return Err(v01::GenericError {
-                    reason: reason.to_string(),
-                });
-            }
-            return Ok(self.session_blob.clone());
-        }
         if let Some(reason) = self.local_storage_error {
             return Err(v01::GenericError {
                 reason: reason.to_string(),
@@ -1114,7 +1101,81 @@ impl PlatformCoreStorage for StubPlatform {
         if let Some(storage) = &self.core_storage_override {
             return storage.write_core_storage(key, value).await;
         }
-        if let CoreStorageKey::AuthSession = key {
+        if let Some(reason) = self.local_storage_error {
+            return Err(v01::GenericError {
+                reason: reason.to_string(),
+            });
+        }
+        self.local_storage
+            .lock()
+            .expect("local storage mutex poisoned")
+            .insert(core_storage_test_key(key), value);
+        Ok(())
+    }
+
+    async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
+        if let Some(storage) = &self.core_storage_override {
+            return storage.clear_core_storage(key).await;
+        }
+        if let Some(reason) = self.local_storage_error {
+            return Err(v01::GenericError {
+                reason: reason.to_string(),
+            });
+        }
+        self.local_storage
+            .lock()
+            .expect("local storage mutex poisoned")
+            .remove(&core_storage_test_key(key));
+        Ok(())
+    }
+}
+
+#[crate::platform::async_trait]
+impl crate::platform::SecretCoreStorage for StubPlatform {
+    async fn read_secret_core_storage(
+        &self,
+        key: SecretCoreStorageKey,
+    ) -> Result<Option<Vec<u8>>, v01::GenericError> {
+        if let Some(storage) = &self.secret_core_storage_override {
+            return storage.read_secret_core_storage(key).await;
+        }
+        let gate = self.secret_core_storage_read_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
+        if self.secret_core_storage_pending {
+            futures::future::pending::<()>().await;
+        }
+        if let SecretCoreStorageKey::AuthSession = key {
+            if let Some(reason) = self.session_error {
+                return Err(v01::GenericError {
+                    reason: reason.to_string(),
+                });
+            }
+            return Ok(self.session_blob.clone());
+        }
+        if let Some(reason) = self.local_storage_error {
+            return Err(v01::GenericError {
+                reason: reason.to_string(),
+            });
+        }
+        Ok(self
+            .local_storage
+            .lock()
+            .expect("local storage mutex poisoned")
+            .get(&secret_core_storage_test_key(key))
+            .cloned())
+    }
+
+    async fn write_secret_core_storage(
+        &self,
+        key: SecretCoreStorageKey,
+        value: Vec<u8>,
+    ) -> Result<(), v01::GenericError> {
+        if let Some(storage) = &self.secret_core_storage_override {
+            return storage.write_secret_core_storage(key, value).await;
+        }
+        if let SecretCoreStorageKey::AuthSession = key {
             self.session_writes
                 .lock()
                 .expect("session write list mutex poisoned")
@@ -1137,15 +1198,18 @@ impl PlatformCoreStorage for StubPlatform {
         self.local_storage
             .lock()
             .expect("local storage mutex poisoned")
-            .insert(core_storage_test_key(key), value);
+            .insert(secret_core_storage_test_key(key), value);
         Ok(())
     }
 
-    async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
-        if let Some(storage) = &self.core_storage_override {
-            return storage.clear_core_storage(key).await;
+    async fn clear_secret_core_storage(
+        &self,
+        key: SecretCoreStorageKey,
+    ) -> Result<(), v01::GenericError> {
+        if let Some(storage) = &self.secret_core_storage_override {
+            return storage.clear_secret_core_storage(key).await;
         }
-        if let CoreStorageKey::AuthSession = key {
+        if let SecretCoreStorageKey::AuthSession = key {
             *self
                 .session_clears
                 .lock()
@@ -1160,7 +1224,7 @@ impl PlatformCoreStorage for StubPlatform {
         self.local_storage
             .lock()
             .expect("local storage mutex poisoned")
-            .remove(&core_storage_test_key(key));
+            .remove(&secret_core_storage_test_key(key));
         Ok(())
     }
 }
@@ -1168,6 +1232,11 @@ impl PlatformCoreStorage for StubPlatform {
 /// Stable string key used by the stub core-storage map.
 pub fn core_storage_test_key(key: CoreStorageKey) -> String {
     format!("core:{}", hex::encode(key.encode()))
+}
+
+/// Namespaced fixture key for protected records.
+pub fn secret_core_storage_test_key(key: SecretCoreStorageKey) -> String {
+    key.storage_key()
 }
 
 #[crate::platform::async_trait]

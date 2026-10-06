@@ -1244,7 +1244,7 @@ mod tests {
     fn a_wallet_change_during_device_key_read_never_answers_pairing() {
         let (release, gate) = futures::channel::oneshot::channel();
         let platform = Arc::new(StubPlatform {
-            core_storage_read_gate: std::sync::Mutex::new(Some(gate)),
+            secret_core_storage_read_gate: std::sync::Mutex::new(Some(gate)),
             rpc_method_responses: vec![("statement_submit", r#"{"status":"new"}"#.to_string())],
             ..StubPlatform::default()
         });

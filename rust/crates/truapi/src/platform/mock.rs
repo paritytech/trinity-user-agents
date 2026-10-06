@@ -24,6 +24,7 @@
 //! the mock only implements host-side content retrieval via `lookup_preimage`.
 //! Seed retrievable content with [`MockPlatform::insert_preimage`](crate::platform::mock::MockPlatform::insert_preimage).
 
+use crate::platform::{SecretCoreStorage, SecretCoreStorageKey};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -766,21 +767,14 @@ fn hex_key(bytes: &[u8; 32]) -> String {
 /// Stable string key for a typed core-storage slot.
 fn core_key(key: &CoreStorageKey) -> String {
     match key {
-        CoreStorageKey::AuthSession => "core:auth-session".to_string(),
-        CoreStorageKey::PairingDeviceIdentity => "core:pairing-device-identity".to_string(),
         CoreStorageKey::PermissionAuthorization {
             product_id,
             request,
         } => format!("core:permission:{product_id}:{request:?}"),
-        CoreStorageKey::AutoSigningKey { product_id } => {
-            format!("core:auto-signing-key:{product_id}")
-        }
-        CoreStorageKey::AutoSigningKeys => "core:auto-signing-keys".to_string(),
         CoreStorageKey::RingVrfRegistry { root_public_key } => {
             format!("core:ring-vrf-registry:{}", hex_key(root_public_key))
         }
         CoreStorageKey::StatementRenewalTargets => "core:statement-renewal-targets".to_string(),
-        CoreStorageKey::DeviceEncryptionKey => "core:device-encryption-key".to_string(),
         CoreStorageKey::ProductSubtree {
             session_id,
             product_id,
@@ -797,9 +791,6 @@ fn core_key(key: &CoreStorageKey) -> String {
         ),
         CoreStorageKey::ProductManifest { product_id } => {
             format!("core:product-manifest:{product_id}")
-        }
-        CoreStorageKey::AllowanceKeys { session_id } => {
-            format!("core:allowance-keys:{session_id}")
         }
         CoreStorageKey::LastProcessedPairingStatement => {
             "core:last-processed-pairing-statement".to_string()
@@ -941,6 +932,59 @@ impl CoreStorage for MockPlatform {
             .lock()
             .expect("storage poisoned")
             .remove(&core_key(&key));
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl SecretCoreStorage for MockPlatform {
+    async fn read_secret_core_storage(
+        &self,
+        key: SecretCoreStorageKey,
+    ) -> Result<Option<Vec<u8>>, latest::GenericError> {
+        if let Some(reason) = &self.config.faults.storage_error {
+            return Err(latest::GenericError {
+                reason: reason.clone(),
+            });
+        }
+        Ok(self
+            .storage
+            .lock()
+            .expect("storage poisoned")
+            .get(&key.storage_key())
+            .cloned())
+    }
+
+    async fn write_secret_core_storage(
+        &self,
+        key: SecretCoreStorageKey,
+        value: Vec<u8>,
+    ) -> Result<(), latest::GenericError> {
+        if let Some(reason) = &self.config.faults.storage_error {
+            return Err(latest::GenericError {
+                reason: reason.clone(),
+            });
+        }
+        self.storage
+            .lock()
+            .expect("storage poisoned")
+            .insert(key.storage_key(), value);
+        Ok(())
+    }
+
+    async fn clear_secret_core_storage(
+        &self,
+        key: SecretCoreStorageKey,
+    ) -> Result<(), latest::GenericError> {
+        if let Some(reason) = &self.config.faults.storage_error {
+            return Err(latest::GenericError {
+                reason: reason.clone(),
+            });
+        }
+        self.storage
+            .lock()
+            .expect("storage poisoned")
+            .remove(&key.storage_key());
         Ok(())
     }
 }
@@ -1490,14 +1534,14 @@ mod tests {
     #[test]
     fn core_storage_round_trips() {
         let p = MockPlatform::new();
-        block_on(p.write_core_storage(CoreStorageKey::AuthSession, vec![7])).unwrap();
+        block_on(p.write_secret_core_storage(SecretCoreStorageKey::AuthSession, vec![7])).unwrap();
         assert_eq!(
-            block_on(p.read_core_storage(CoreStorageKey::AuthSession)).unwrap(),
+            block_on(p.read_secret_core_storage(SecretCoreStorageKey::AuthSession)).unwrap(),
             Some(vec![7])
         );
-        block_on(p.clear_core_storage(CoreStorageKey::AuthSession)).unwrap();
+        block_on(p.clear_secret_core_storage(SecretCoreStorageKey::AuthSession)).unwrap();
         assert_eq!(
-            block_on(p.read_core_storage(CoreStorageKey::AuthSession)).unwrap(),
+            block_on(p.read_secret_core_storage(SecretCoreStorageKey::AuthSession)).unwrap(),
             None
         );
     }
@@ -1505,14 +1549,15 @@ mod tests {
     #[test]
     fn core_and_product_keys_do_not_collide() {
         let p = MockPlatform::new();
-        block_on(p.write_core_storage(CoreStorageKey::AuthSession, vec![1])).unwrap();
+        block_on(p.write_secret_core_storage(SecretCoreStorageKey::AuthSession, vec![1])).unwrap();
         // Reading the same logical name as a product key must miss the core slot.
         assert_eq!(block_on(p.read("auth-session".into())).unwrap(), None);
         assert_eq!(block_on(p.read("core:auth-session".into())).unwrap(), None);
         // ...and a product key must not be visible through core storage.
         block_on(p.write("x".into(), vec![2])).unwrap();
         assert_eq!(
-            block_on(p.read_core_storage(CoreStorageKey::PairingDeviceIdentity)).unwrap(),
+            block_on(p.read_secret_core_storage(SecretCoreStorageKey::PairingDeviceIdentity))
+                .unwrap(),
             None
         );
     }
@@ -1733,7 +1778,7 @@ mod tests {
             ..Default::default()
         });
         assert!(block_on(p.read("k".into())).is_err());
-        assert!(block_on(p.read_core_storage(CoreStorageKey::AuthSession)).is_err());
+        assert!(block_on(p.read_secret_core_storage(SecretCoreStorageKey::AuthSession)).is_err());
     }
 
     #[test]

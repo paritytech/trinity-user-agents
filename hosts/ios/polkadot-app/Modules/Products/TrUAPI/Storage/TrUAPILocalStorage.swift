@@ -6,10 +6,8 @@ protocol TrUAPILocalStoring: AnyObject, Sendable {
     func clear(key: String) throws
 }
 
-/// UserDefaults-backed KV store for the TrUAPI core; values are stored as
-/// raw `Data`. Product storage is product-scoped; core storage is
-/// host-GLOBAL — its prefix must NOT include a product id, the auth-session
-/// slot is shared across product cores.
+/// UserDefaults-backed product data and public core records. The core namespace
+/// is shared across product executions; product storage follows the owning product.
 final class TrUAPILocalStorage: TrUAPILocalStoring, @unchecked Sendable {
     private static let productKeyPrefix = "io.polkadotapp.truapi.product.store"
     private static let coreKeyPrefix = "io.polkadotapp.truapi.core"

@@ -27,7 +27,11 @@ private func makeHostBridge(
     )
     return RustHostRuntimeBridge(
         chainRegistry: chainRegistry,
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
+        coreStorage: CoreStorageBackend(
+            storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
+            lock: NSLock()
+        ),
+        secretStorage: StubSecretStorage(),
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
         logger: Logger.shared

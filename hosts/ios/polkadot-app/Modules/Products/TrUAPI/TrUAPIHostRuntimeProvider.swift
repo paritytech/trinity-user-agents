@@ -17,6 +17,9 @@ enum TrUAPIRuntimeConfigError: Error {
 /// the single shared runtime, so its authentication and core services are
 /// shared across every SPA and chat product.
 protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
+    var coreStorage: HostCoreStorageBackend { get }
+    var secretStorage: HostSecretStorageBackend { get }
+
     /// Return the shared runtime, building and activating its local session on
     /// first use. Subsequent calls return the cached instance.
     func sharedRuntime() throws -> TrUAPIHostRuntime
@@ -34,7 +37,8 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let chainRegistry: ChainRegistryProtocol
     private let entropyManager: RootEntropyManaging
     private let settingsManager: SettingsManagerProtocol
-    private let coreStorage: TrUAPILocalStoring
+    let coreStorage: HostCoreStorageBackend
+    let secretStorage: HostSecretStorageBackend
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
@@ -47,7 +51,8 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         chainRegistry: ChainRegistryProtocol,
         entropyManager: RootEntropyManaging,
         settingsManager: SettingsManagerProtocol,
-        coreStorage: TrUAPILocalStoring,
+        coreStorage: HostCoreStorageBackend,
+        secretStorage: HostSecretStorageBackend,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         logger: LoggerProtocol
@@ -56,6 +61,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.entropyManager = entropyManager
         self.settingsManager = settingsManager
         self.coreStorage = coreStorage
+        self.secretStorage = secretStorage
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
         self.logger = logger
@@ -96,6 +102,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         let bridge = RustHostRuntimeBridge(
             chainRegistry: chainRegistry,
             coreStorage: coreStorage,
+            secretStorage: secretStorage,
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
             logger: logger

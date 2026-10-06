@@ -188,6 +188,8 @@ extension SPAViewFactory {
 
         let rustEnvironment = RustRuntimeEnvironment(
             runtime: runtime,
+            coreStorage: runtimeProvider.coreStorage,
+            secretStorage: runtimeProvider.secretStorage,
             chainRegistry: ChainRegistryFacade.sharedRegistry,
             notificationScheduler: ProductNotificationScheduler.shared,
             ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),

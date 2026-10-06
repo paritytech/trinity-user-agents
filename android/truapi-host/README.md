@@ -63,9 +63,10 @@ configuration update in the embedding app's package upgrade.
 
 The public surface lives in [`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](src/main/kotlin/io/parity/truapi/TrUAPIHost.kt):
 
-- `HostBridge` - callback bundle the embedding app implements. Splits device permissions, remote permissions, navigation, push, feature support, action and permission confirmations, and both storage backends.
+- `HostBridge` - callback bundle the embedding app implements. Splits device permissions, remote permissions, navigation, push, feature support, action and permission confirmations, and the product, public core and protected secret storage backends.
 - `HostStorage` - product-scoped read/write/clear interface the host backs with its own persistence. Its methods suspend, so a backend can await disk or keystore work.
-- `HostCoreStorage` - core-owned read/write/clear interface for auth session, pairing identity, and persisted permission decisions (`key` is a SCALE-encoded `CoreStorageKey`). Its methods suspend, like `HostStorage`'s.
+- `HostCoreStorage` - public core read/write/clear interface for permissions and cached public records (`key` is a SCALE-encoded `CoreStorageKey`). Its methods suspend, like `HostStorage`'s.
+- `HostSecretStorage` - required typed async read/write/clear for protected host secrets. Use `secretCoreStorageKeyIdentifier(key)` for record names, share one backend across bridges, and return null only for missing records. Serialize complete storage effects and cleanup, check cancellation inside the shared gate, and propagate commit/decryption failures.
 - `LocalhostBridgeBootstrap` - supplies the private WebSocket endpoint to the container.
 - `ContainerScriptBundle` - loads the bundled browser container for installation at document start.
 - `TrUAPIHostRuntime` - process-owned runtime whose product executions share one authentication session. Open a connection per executable with `openProductExecution`, which returns a `TrUAPIProductExecution` holding its own token on the runtime's shared WS bridge, permission authorization, theme/preimage/chain notifications, and the Chat controls below.
@@ -275,6 +276,8 @@ An account id must be exactly 32 bytes. Anything else is rejected where the bind
 > storage, chain, theme, and `cancelNotification`) run inline on the dispatcher
 > thread and must return promptly without blocking.
 
+The example receives `secretStorage` from the embedding app's shared durable secret backend.
+
 ```kt
 import android.os.Handler
 import android.os.Looper
@@ -284,6 +287,7 @@ import androidx.webkit.WebViewFeature
 import io.parity.truapi.ContainerScriptBundle
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
+import io.parity.truapi.HostSecretStorage
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
 import uniffi.truapi.HostRuntimeConfig
@@ -321,7 +325,7 @@ class MyCoreStorage : HostCoreStorage {
     override suspend fun clear(key: ByteArray) { map.remove(k(key)) }
 }
 
-class MyBridge(private val webView: WebView) : HostBridge {
+class MyBridge(private val webView: WebView, override val secretStorage: HostSecretStorage) : HostBridge {
     private val main = Handler(Looper.getMainLooper())
 
     override val storage = MyStorage()
@@ -393,7 +397,7 @@ class MyBridge(private val webView: WebView) : HostBridge {
 }
 
 val webView: WebView = existingWebView
-val bridge = MyBridge(webView)
+val bridge = MyBridge(webView, secretStorage)
 val runtimeConfig = HostRuntimeConfig(
     hostName = "My Host",
     hostIcon = "https://host.example/icon.png",

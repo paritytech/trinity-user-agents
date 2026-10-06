@@ -1,6 +1,8 @@
 //! Shared runtime fixtures and cross-capability integration tests.
 
 use super::authority::{AccountCaller, AutoSigningKey, StatementStoreAllowanceKey};
+use crate::platform::SecretCoreStorageKey;
+use crate::test_support::secret_core_storage_test_key;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -827,7 +829,10 @@ fn contacts_host(
     if let Some(contacts) = contacts {
         services.install_contacts_platform(contacts);
     }
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let grants = Arc::new(HostGrantStore::new(
+        services.platform.clone(),
+        services.platform.clone(),
+    ));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let accounts = paired_accounts(services.clone(), sso.clone(), grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
@@ -901,7 +906,10 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
         None,
     );
     services.install_contacts_platform(Arc::new(LookupOnlyContactsPlatform));
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let grants = Arc::new(HostGrantStore::new(
+        services.platform.clone(),
+        services.platform.clone(),
+    ));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let accounts = paired_accounts(services.clone(), sso.clone(), grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
@@ -1255,7 +1263,10 @@ fn host_with_contacts(
         None,
     );
     services.install_contacts_platform(contacts);
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let grants = Arc::new(HostGrantStore::new(
+        services.platform.clone(),
+        services.platform.clone(),
+    ));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let accounts = paired_accounts(services.clone(), sso.clone(), grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
@@ -1495,7 +1506,10 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let grants = Arc::new(HostGrantStore::new(
+        services.platform.clone(),
+        services.platform.clone(),
+    ));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let accounts = paired_accounts(services.clone(), sso.clone(), grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
@@ -1655,7 +1669,10 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let grants = Arc::new(HostGrantStore::new(
+        services.platform.clone(),
+        services.platform.clone(),
+    ));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let accounts = paired_accounts(services.clone(), sso.clone(), grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
@@ -1720,7 +1737,10 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let grants = Arc::new(HostGrantStore::new(
+        services.platform.clone(),
+        services.platform.clone(),
+    ));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let accounts = paired_accounts(services.clone(), sso.clone(), grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
@@ -1795,7 +1815,10 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let grants = Arc::new(HostGrantStore::new(
+        services.platform.clone(),
+        services.platform.clone(),
+    ));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let accounts = paired_accounts(services.clone(), sso.clone(), grants);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
@@ -1947,7 +1970,10 @@ fn chat_room_ids_agree_across_create_and_post() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let grants = Arc::new(HostGrantStore::new(
+        services.platform.clone(),
+        services.platform.clone(),
+    ));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let accounts = paired_accounts(services.clone(), sso.clone(), grants);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
@@ -2040,7 +2066,10 @@ fn chat_register_bot_rejects_unsafe_product_fields() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let grants = Arc::new(HostGrantStore::new(
+        services.platform.clone(),
+        services.platform.clone(),
+    ));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let accounts = paired_accounts(services.clone(), sso.clone(), grants);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
@@ -2133,7 +2162,10 @@ fn chat_register_bot_reaches_the_installed_adapter() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let grants = Arc::new(HostGrantStore::new(
+        services.platform.clone(),
+        services.platform.clone(),
+    ));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let accounts = paired_accounts(services.clone(), sso.clone(), grants);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
@@ -2247,7 +2279,10 @@ fn pocket_host(
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let grants = Arc::new(HostGrantStore::new(
+        services.platform.clone(),
+        services.platform.clone(),
+    ));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let accounts = paired_accounts(services.clone(), sso.clone(), grants);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
@@ -2433,7 +2468,10 @@ fn chain_follow_ids_are_scoped_per_product_core() {
         host_config.asset_hub_chain_genesis_hash,
         spawner.clone(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let grants = Arc::new(HostGrantStore::new(
+        services.platform.clone(),
+        services.platform.clone(),
+    ));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let accounts = paired_accounts(services.clone(), sso.clone(), grants);
     let first = ProductRuntimeHost::from_services(
@@ -2560,7 +2598,10 @@ fn permission_prompts_name_the_requesting_product_and_execution_kind() {
         spawner,
     );
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let grants = Arc::new(HostGrantStore::new(
+        services.platform.clone(),
+        services.platform.clone(),
+    ));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let accounts = paired_accounts(services.clone(), sso.clone(), grants);
     let host = ProductRuntimeHost::from_services(
@@ -5806,7 +5847,7 @@ fn a_broken_auto_signing_slot_fails_sign_raw_rather_than_prompting() {
     request_auto_signing(&host, "auto-broken");
 
     let expected_subtree = test_product_subtree("myapp.dot");
-    let storage_key = core_storage_test_key(CoreStorageKey::AutoSigningKeys);
+    let storage_key = secret_core_storage_test_key(SecretCoreStorageKey::AutoSigningKeys);
     {
         let mut storage = platform
             .local_storage
@@ -6141,7 +6182,7 @@ fn auto_signing_rejects_persisted_key_for_unexpected_product_subtree() {
     request_auto_signing(&host, "auto-tamper");
 
     let expected_subtree = test_product_subtree("myapp.dot");
-    let storage_key = core_storage_test_key(CoreStorageKey::AutoSigningKeys);
+    let storage_key = secret_core_storage_test_key(SecretCoreStorageKey::AutoSigningKeys);
     {
         let mut storage = platform
             .local_storage
@@ -6201,7 +6242,9 @@ fn auto_signing_logout_reset_clears_cached_and_persisted_capability() {
             .local_storage
             .lock()
             .expect("local storage mutex poisoned")
-            .contains_key(&core_storage_test_key(CoreStorageKey::AutoSigningKeys))
+            .contains_key(&secret_core_storage_test_key(
+                SecretCoreStorageKey::AutoSigningKeys
+            ))
     );
 
     futures::executor::block_on(sso.logout_and_reset_pairing()).unwrap();
@@ -6211,7 +6254,9 @@ fn auto_signing_logout_reset_clears_cached_and_persisted_capability() {
             .local_storage
             .lock()
             .expect("local storage mutex poisoned")
-            .contains_key(&core_storage_test_key(CoreStorageKey::AutoSigningKeys))
+            .contains_key(&secret_core_storage_test_key(
+                SecretCoreStorageKey::AutoSigningKeys
+            ))
     );
     assert!(
         !futures::executor::block_on(
@@ -6295,7 +6340,9 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
             .local_storage
             .lock()
             .expect("local storage mutex poisoned")
-            .contains_key(&core_storage_test_key(CoreStorageKey::AutoSigningKeys)),
+            .contains_key(&secret_core_storage_test_key(
+                SecretCoreStorageKey::AutoSigningKeys
+            )),
         "the stale allocation must not restore durable AutoSigning authority"
     );
     assert!(
@@ -6639,7 +6686,9 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
             .local_storage
             .lock()
             .expect("local storage mutex poisoned")
-            .contains_key(&core_storage_test_key(CoreStorageKey::AutoSigningKeys))
+            .contains_key(&secret_core_storage_test_key(
+                SecretCoreStorageKey::AutoSigningKeys
+            ))
     );
     assert!(
         platform
@@ -6704,54 +6753,9 @@ fn auto_signing_restored_different_wallet_rejects_persisted_capability() {
             .local_storage
             .lock()
             .expect("local storage mutex poisoned")
-            .contains_key(&core_storage_test_key(CoreStorageKey::AutoSigningKeys))
-    );
-}
-
-#[test]
-fn auto_signing_rejects_and_erases_legacy_unscoped_secret() {
-    let session = sso_session_info();
-    let root =
-        crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-    let subtree =
-        crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-            .unwrap();
-    let platform = Arc::new(StubPlatform::default());
-    let legacy_key = CoreStorageKey::AutoSigningKey {
-        product_id: "myapp.dot".to_string(),
-    };
-    platform
-        .local_storage
-        .lock()
-        .expect("local storage mutex poisoned")
-        .insert(
-            core_storage_test_key(legacy_key.clone()),
-            subtree.secret.to_bytes().to_vec(),
-        );
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
-    install_pairing_session(&host, session);
-
-    let err = futures::executor::block_on(
-        host.sign_vrf(&CallContext::default(), auto_signing_vrf_request()),
-    )
-    .unwrap_err();
-
-    assert!(matches!(
-        err,
-        CallError::Domain(HostAccountSignVrfError::V1(
-            v01::HostAccountSignVrfError::Unknown { reason }
-        )) if reason == "legacy unscoped AutoSigning capability was rejected"
-    ));
-    assert!(
-        !platform
-            .local_storage
-            .lock()
-            .expect("local storage mutex poisoned")
-            .contains_key(&core_storage_test_key(legacy_key))
+            .contains_key(&secret_core_storage_test_key(
+                SecretCoreStorageKey::AutoSigningKeys
+            ))
     );
 }
 
@@ -7331,7 +7335,7 @@ fn pairing_logout_clears_session_and_bootstrap_identity() {
             .lock()
             .expect("local storage mutex poisoned");
         storage.insert(
-            core_storage_test_key(CoreStorageKey::PairingDeviceIdentity),
+            secret_core_storage_test_key(SecretCoreStorageKey::PairingDeviceIdentity),
             vec![1, 2, 3],
         );
         storage.insert(
@@ -7347,8 +7351,8 @@ fn pairing_logout_clears_session_and_bootstrap_identity() {
         .local_storage
         .lock()
         .expect("local storage mutex poisoned");
-    assert!(!storage.contains_key(&core_storage_test_key(
-        CoreStorageKey::PairingDeviceIdentity
+    assert!(!storage.contains_key(&secret_core_storage_test_key(
+        SecretCoreStorageKey::PairingDeviceIdentity
     )));
     assert!(!storage.contains_key(&core_storage_test_key(
         CoreStorageKey::LastProcessedPairingStatement
@@ -7365,7 +7369,7 @@ fn disconnect_clears_session_store_and_broadcasts_disconnected() {
         .lock()
         .expect("local storage mutex poisoned")
         .insert(
-            core_storage_test_key(CoreStorageKey::PairingDeviceIdentity),
+            secret_core_storage_test_key(SecretCoreStorageKey::PairingDeviceIdentity),
             vec![1, 2, 3],
         );
     let mut statuses = host.test_session_state().subscribe();
@@ -7391,8 +7395,8 @@ fn disconnect_clears_session_store_and_broadcasts_disconnected() {
             .local_storage
             .lock()
             .expect("local storage mutex poisoned")
-            .contains_key(&core_storage_test_key(
-                CoreStorageKey::PairingDeviceIdentity
+            .contains_key(&secret_core_storage_test_key(
+                SecretCoreStorageKey::PairingDeviceIdentity
             )),
         "logout may leave the old pairing identity in storage; the next login rotates it before presenting QR"
     );
@@ -7509,7 +7513,10 @@ fn host_accounts_refuse_a_foreign_ring_vrf_key_without_a_grant() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let grants = Arc::new(HostGrantStore::new(
+        services.platform.clone(),
+        services.platform.clone(),
+    ));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let accounts = paired_accounts(services.clone(), sso.clone(), grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
@@ -7596,7 +7603,10 @@ fn a_grant_lookup_obeys_the_callers_deadline() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let grants = Arc::new(HostGrantStore::new(
+        services.platform.clone(),
+        services.platform.clone(),
+    ));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let accounts = paired_accounts(services.clone(), sso.clone(), grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);

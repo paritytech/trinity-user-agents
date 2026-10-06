@@ -347,6 +347,38 @@ impl HostCallbacks for EventCallbacks {
         self.core_storage.lock().unwrap().remove(&key);
         Ok(())
     }
+    async fn read_secret_core_storage(
+        &self,
+        key: crate::platform::SecretCoreStorageKey,
+    ) -> Result<Option<Vec<u8>>, HostRejection> {
+        Ok(self
+            .core_storage
+            .lock()
+            .unwrap()
+            .get(&key.storage_key().into_bytes())
+            .cloned())
+    }
+    async fn write_secret_core_storage(
+        &self,
+        key: crate::platform::SecretCoreStorageKey,
+        value: Vec<u8>,
+    ) -> Result<(), HostRejection> {
+        self.core_storage
+            .lock()
+            .unwrap()
+            .insert(key.storage_key().into_bytes(), value);
+        Ok(())
+    }
+    async fn clear_secret_core_storage(
+        &self,
+        key: crate::platform::SecretCoreStorageKey,
+    ) -> Result<(), HostRejection> {
+        self.core_storage
+            .lock()
+            .unwrap()
+            .remove(&key.storage_key().into_bytes());
+        Ok(())
+    }
     fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
         self.chain_connects
             .lock()
@@ -1973,6 +2005,25 @@ fn start_ws_bridge_twice_returns_already_running() {
         async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
             Ok(())
         }
+        async fn read_secret_core_storage(
+            &self,
+            _key: crate::platform::SecretCoreStorageKey,
+        ) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(None)
+        }
+        async fn write_secret_core_storage(
+            &self,
+            _key: crate::platform::SecretCoreStorageKey,
+            _value: Vec<u8>,
+        ) -> Result<(), HostRejection> {
+            Ok(())
+        }
+        async fn clear_secret_core_storage(
+            &self,
+            _key: crate::platform::SecretCoreStorageKey,
+        ) -> Result<(), HostRejection> {
+            Ok(())
+        }
         fn chain_connect(&self, _genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
             Ok(None)
         }
@@ -2153,6 +2204,25 @@ fn pending_permission_decision_does_not_stall_bridge() {
             Ok(())
         }
         async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
+            Ok(())
+        }
+        async fn read_secret_core_storage(
+            &self,
+            _key: crate::platform::SecretCoreStorageKey,
+        ) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(None)
+        }
+        async fn write_secret_core_storage(
+            &self,
+            _key: crate::platform::SecretCoreStorageKey,
+            _value: Vec<u8>,
+        ) -> Result<(), HostRejection> {
+            Ok(())
+        }
+        async fn clear_secret_core_storage(
+            &self,
+            _key: crate::platform::SecretCoreStorageKey,
+        ) -> Result<(), HostRejection> {
             Ok(())
         }
         fn chain_connect(&self, _genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {

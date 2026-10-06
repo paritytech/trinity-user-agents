@@ -217,7 +217,7 @@ fn wasm_core_storage_descriptors_are_strict_and_stable() {
     );
 
     assert!(truapi::wasm::describe_core_storage_key_for_wasm(Vec::new()).is_err());
-    let mut trailing = CoreStorageKey::AuthSession.encode();
+    let mut trailing = CoreStorageKey::LastProcessedPairingStatement.encode();
     trailing.push(0);
     assert!(truapi::wasm::describe_core_storage_key_for_wasm(trailing).is_err());
 }

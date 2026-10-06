@@ -305,11 +305,23 @@ extension ServiceCoordinator {
         // Host-level core confirmations route through an SSO-style facade whose
         // presentation view is attached with the main tab bar; until then,
         // host-level prompts deny.
+        let storageLock = NSLock()
+        let coreStorage = CoreStorageBackend(
+            storage: TrUAPILocalStorage.createCoreLocalStorage(),
+            lock: storageLock
+        )
+        let secretStorage = TrUAPISecretStorage(
+            keychain: Keychain(),
+            storeIdProvider: ProductResourceStoreIdStore(userDefaults: SharedContainerGroup.userDefaults),
+            deviceKeys: DeviceEncryptionKeyManager.shared,
+            lock: storageLock
+        )
         let truapiRuntimeProvider = TrUAPIHostRuntimeProvider(
             chainRegistry: ChainRegistryFacade.sharedRegistry,
             entropyManager: RootEntropyManager.shared,
             settingsManager: SettingsManager.shared,
-            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
+            coreStorage: coreStorage,
+            secretStorage: secretStorage,
             confirmationRouterFacade: ProductRoutersFacade.sso(),
             logger: logger
         )

@@ -2,6 +2,7 @@
 
 mod channel;
 mod pairing;
+use crate::platform::SecretCoreStorageKey;
 #[cfg(test)]
 mod tests;
 
@@ -531,7 +532,7 @@ impl SsoRequestService {
                 format!("session disconnected, but AutoSigning reset failed: {reason}")
             })?;
         self.platform
-            .clear_core_storage(CoreStorageKey::PairingDeviceIdentity)
+            .clear_secret_core_storage(SecretCoreStorageKey::PairingDeviceIdentity)
             .await
             .map_err(|error| {
                 format!(

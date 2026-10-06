@@ -10,8 +10,8 @@
 //   * `HostBridge` - the Kotlin-friendly callback interface the embedding app
 //     implements. It splits device and remote permissions, mirroring the
 //     `Permissions` platform trait in the Rust core.
-//   * `HostStorage` / `HostCoreStorage` - the product-scoped and core-owned
-//     key-value backends the host persists.
+//   * `HostStorage` / `HostCoreStorage` / `HostSecretStorage` - product data,
+//     public core records, and protected host secrets.
 //   * `TrUAPIHostRuntime` / `TrUAPIProductExecution` - process-owned host state
 //     and independently scoped product connections.
 //   * `LocalhostBridgeBootstrap` - private endpoint configuration consumed by
@@ -44,6 +44,7 @@ import uniffi.truapi.HostPushNotificationRequest
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.RemotePermission
+import uniffi.truapi.SecretCoreStorageKey
 import uniffi.truapi.RemotePermissionRequest
 import uniffi.truapi.RendererNode
 import uniffi.truapi.HostThemeSubscribeItem
@@ -112,9 +113,7 @@ interface HostStorage {
 }
 
 /**
- * Core-owned key-value storage the host backs with its own persistence. The
- * core writes auth session, pairing identity, and persisted permission
- * decisions here; [key] is a SCALE-encoded `CoreStorageKey`. Throws
+ * Public core records addressed by SCALE-encoded `CoreStorageKey` values. Throws
  * [HostRejection] on failure.
  */
 interface HostCoreStorage {
@@ -126,6 +125,18 @@ interface HostCoreStorage {
 
     @Throws(HostRejection::class)
     suspend fun clear(key: ByteArray)
+}
+
+/** Protected host secrets. Missing records return null; inaccessible or corrupt storage throws. */
+interface HostSecretStorage {
+    @Throws(HostRejection::class)
+    suspend fun read(key: SecretCoreStorageKey): ByteArray?
+
+    @Throws(HostRejection::class)
+    suspend fun write(key: SecretCoreStorageKey, value: ByteArray)
+
+    @Throws(HostRejection::class)
+    suspend fun clear(key: SecretCoreStorageKey)
 }
 
 /** Ids handed out by the default [HostBridge.beginOperation], distinct for the life of the process. */
@@ -337,8 +348,11 @@ interface HostBridge {
     /** Product-scoped key-value storage for the Rust core. */
     val storage: HostStorage
 
-    /** Core-owned key-value storage for auth session / pairing identity / permission decisions. */
+    /** Public core records, including permissions and cached public keys. */
     val coreStorage: HostCoreStorage
+
+    /** Installation-scoped protected storage shared by every bridge for this host. */
+    val secretStorage: HostSecretStorage
 }
 
 /**
@@ -475,6 +489,15 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
             }
         }
     }
+
+    override suspend fun readSecretCoreStorage(key: SecretCoreStorageKey): ByteArray? =
+        withHostRejection { bridge.secretStorage.read(key) }
+
+    override suspend fun writeSecretCoreStorage(key: SecretCoreStorageKey, value: ByteArray) =
+        withHostRejection { bridge.secretStorage.write(key, value) }
+
+    override suspend fun clearSecretCoreStorage(key: SecretCoreStorageKey) =
+        withHostRejection { bridge.secretStorage.clear(key) }
 
     override suspend fun coreStorageRead(key: ByteArray): ByteArray? =
         withHostRejection { bridge.coreStorage.read(key) }

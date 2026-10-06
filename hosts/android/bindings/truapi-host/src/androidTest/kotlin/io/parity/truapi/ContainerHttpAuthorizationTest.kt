@@ -19,6 +19,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import uniffi.truapi.SecretCoreStorageKey
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.RemotePermission
@@ -172,6 +173,7 @@ class ContainerHttpAuthorizationTest {
         private val memory = MemoryStorage()
         override val storage: HostStorage = memory
         override val coreStorage: HostCoreStorage = memory
+        override val secretStorage: HostSecretStorage = memory
         override suspend fun navigateTo(url: String) = Unit
         override suspend fun featureSupported(request: HostFeatureSupportedRequest) = false
         override suspend fun devicePermission(product: ProductExecutionConfig, request: HostDevicePermissionRequest) =
@@ -182,8 +184,11 @@ class ContainerHttpAuthorizationTest {
         }
     }
 
-    private class MemoryStorage : HostStorage, HostCoreStorage {
+    private class MemoryStorage : HostStorage, HostCoreStorage, HostSecretStorage {
         private val values = ConcurrentHashMap<Any, ByteArray>()
+        override suspend fun read(key: SecretCoreStorageKey): ByteArray? = values[key]
+        override suspend fun write(key: SecretCoreStorageKey, value: ByteArray) { values[key] = value }
+        override suspend fun clear(key: SecretCoreStorageKey) { values.remove(key) }
         override suspend fun read(key: String): ByteArray? = values[key]
         override suspend fun write(key: String, value: ByteArray) { values[key] = value }
         override suspend fun clear(key: String) { values.remove(key) }

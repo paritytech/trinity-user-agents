@@ -61,7 +61,9 @@ describe("createMockHost callbacks", () => {
     );
     // A product key never collides with a core slot.
     expect(
-      await callbacks.coreStorage.readCoreStorage({ tag: "AuthSession" }),
+      await callbacks.secretCoreStorage.readSecretCoreStorage({
+        tag: "AuthSession",
+      }),
     ).toBeUndefined();
     await callbacks.productStorage.clear("k");
     expect(await callbacks.productStorage.read("k")).toBeUndefined();
@@ -79,6 +81,33 @@ describe("createMockHost callbacks", () => {
     );
     await callbacks.coreStorage.clearCoreStorage(key);
     expect(await callbacks.coreStorage.readCoreStorage(key)).toBeUndefined();
+  });
+
+  it("secret storage keeps session keys separate from product storage", async () => {
+    const { callbacks } = createMockHost();
+    const secret = {
+      tag: "AllowanceKeys" as const,
+      value: { sessionId: "first" },
+    };
+    const other = {
+      tag: "AllowanceKeys" as const,
+      value: { sessionId: "second" },
+    };
+    await callbacks.secretCoreStorage.writeSecretCoreStorage(
+      secret,
+      new Uint8Array([9]),
+    );
+    await callbacks.secretCoreStorage.writeSecretCoreStorage(
+      other,
+      new Uint8Array([8]),
+    );
+    await callbacks.secretCoreStorage.clearSecretCoreStorage(secret);
+
+    expect([
+      await callbacks.secretCoreStorage.readSecretCoreStorage(secret),
+      await callbacks.secretCoreStorage.readSecretCoreStorage(other),
+      await callbacks.productStorage.read("AllowanceKeys"),
+    ]).toEqual([undefined, new Uint8Array([8]), undefined]);
   });
 
   it("permissions follow per-capability policy", async () => {
@@ -767,16 +796,36 @@ describe("createMockHost TestHostAPI parity", () => {
       "disk",
     );
     await expect(
-      storage.callbacks.coreStorage.readCoreStorage({ tag: "AuthSession" }),
+      storage.callbacks.coreStorage.readCoreStorage({
+        tag: "StatementRenewalTargets",
+      }),
     ).rejects.toThrow("disk");
     await expect(
       storage.callbacks.coreStorage.writeCoreStorage(
+        { tag: "StatementRenewalTargets" },
+        new Uint8Array([1]),
+      ),
+    ).rejects.toThrow("disk");
+    await expect(
+      storage.callbacks.coreStorage.clearCoreStorage({
+        tag: "StatementRenewalTargets",
+      }),
+    ).rejects.toThrow("disk");
+    await expect(
+      storage.callbacks.secretCoreStorage.readSecretCoreStorage({
+        tag: "AuthSession",
+      }),
+    ).rejects.toThrow("disk");
+    await expect(
+      storage.callbacks.secretCoreStorage.writeSecretCoreStorage(
         { tag: "AuthSession" },
         new Uint8Array([1]),
       ),
     ).rejects.toThrow("disk");
     await expect(
-      storage.callbacks.coreStorage.clearCoreStorage({ tag: "AuthSession" }),
+      storage.callbacks.secretCoreStorage.clearSecretCoreStorage({
+        tag: "AuthSession",
+      }),
     ).rejects.toThrow("disk");
 
     const navigation = createMockHost({ faults: { navigateError: "blocked" } });

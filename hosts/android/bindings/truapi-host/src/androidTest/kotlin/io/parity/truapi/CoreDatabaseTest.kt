@@ -70,6 +70,9 @@ class CoreDatabaseTest {
         override val coreStorage = PrefsHostCoreStorage(
             context.getSharedPreferences("truapi_core_db_test_core", android.content.Context.MODE_PRIVATE),
         )
+        override val secretStorage = PrefsHostSecretStorage(
+            context.getSharedPreferences("truapi_core_db_test_secrets", android.content.Context.MODE_PRIVATE),
+        )
 
         override suspend fun navigateTo(url: String) = Unit
 

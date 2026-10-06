@@ -115,6 +115,8 @@ Built with **UIKit** and programmatic layout (no Storyboards), using **VIPER** f
 
 With the Rust runtime enabled, the SSO coordinator binds its transport keys to one wallet activation and retains a separate account-holder service for each peer. Ordinary requests share one FIFO queue; cancellation reaches its peer's service immediately. Replies validate the same wallet activation before posting.
 
+The Rust host shares one public core storage backend and one installation-scoped Keychain secret backend across its runtime and product bridges. Both use the same cancellation-aware operation lock. The device encryption key remains owned by `DeviceEncryptionKeyManager`.
+
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time
 configuration, signing, the required secrets, and the pipeline itself are

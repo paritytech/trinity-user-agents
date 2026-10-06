@@ -41,6 +41,7 @@ import type {
 import type {
   AuthState,
   CoreStorageKey,
+  SecretCoreStorageKey,
   HostChainSet,
   JsonRpcConnection,
   PermissionDecision,
@@ -146,7 +147,7 @@ export interface ChainProxy {
 
 /** Optional error injection, mirroring the Rust `MockFaults`. */
 export interface MockFaults {
-  /** Product and core storage reads/writes/clears fail with this reason. */
+  /** Product, core, and secret storage reads/writes/clears fail with this reason. */
   storageError?: string;
   /** `navigateTo` fails with this reason. */
   navigateError?: string;
@@ -603,7 +604,7 @@ export interface MockHost {
   clearSentRpc(): void;
   /** Drop the seeded preimages. */
   clearPreimages(): void;
-  /** Drop the product and core storage contents. */
+  /** Drop the product, core, and secret storage contents. */
   clearStorage(): void;
   /** Drop the registered rooms and bots and the posted-message log. */
   clearChatState(): void;
@@ -962,20 +963,28 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   // product's and reading another's reads back the wrong one here and a miss on
   // Rust.
   const productKey = (key: string): string => `product:${key}`;
-  const coreKey = (key: CoreStorageKey): string =>
+  const typedStorageKey = (
+    prefix: string,
+    key: CoreStorageKey | SecretCoreStorageKey,
+  ): string =>
     key.value === undefined
-      ? `core:${key.tag}`
+      ? `${prefix}:${key.tag}`
       : // Entries sorted, so a payload built field-by-field in a different
         // order still addresses the slot it addressed before.
-        `core:${key.tag}:${JSON.stringify(key.value, (_, inner: unknown) =>
-          inner !== null && typeof inner === "object" && !Array.isArray(inner)
-            ? Object.fromEntries(
-                Object.entries(inner as Record<string, unknown>).sort(
-                  ([left], [right]) => left.localeCompare(right),
-                ),
-              )
-            : inner,
+        `${prefix}:${key.tag}:${JSON.stringify(
+          key.value,
+          (_, inner: unknown) =>
+            inner !== null && typeof inner === "object" && !Array.isArray(inner)
+              ? Object.fromEntries(
+                  Object.entries(inner as Record<string, unknown>).sort(
+                    ([left], [right]) => left.localeCompare(right),
+                  ),
+                )
+              : inner,
         )}`;
+  const coreKey = (key: CoreStorageKey): string => typedStorageKey("core", key);
+  const secretKey = (key: SecretCoreStorageKey): string =>
+    typedStorageKey("secret", key);
   /**
    * Drop the core's stored answer for `permission`, so the next request asks
    * again.
@@ -1130,6 +1139,21 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async clearCoreStorage(key) {
         if (faults.storageError) throw new Error(faults.storageError);
         storage.delete(coreKey(key));
+      },
+    },
+
+    secretCoreStorage: {
+      async readSecretCoreStorage(key) {
+        if (faults.storageError) throw new Error(faults.storageError);
+        return storage.get(secretKey(key));
+      },
+      async writeSecretCoreStorage(key, value) {
+        if (faults.storageError) throw new Error(faults.storageError);
+        storage.set(secretKey(key), value);
+      },
+      async clearSecretCoreStorage(key) {
+        if (faults.storageError) throw new Error(faults.storageError);
+        storage.delete(secretKey(key));
       },
     },
 

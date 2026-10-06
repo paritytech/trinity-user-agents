@@ -66,7 +66,10 @@ impl TrUApiCore {
             host_config.asset_hub_chain_genesis_hash,
             spawner.clone(),
         );
-        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+        let grants = Arc::new(HostGrantStore::new(
+            services.platform.clone(),
+            services.platform.clone(),
+        ));
         let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
         let accounts = HostAccounts::new(
             services.clone(),

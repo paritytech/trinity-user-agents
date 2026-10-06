@@ -15,6 +15,7 @@ import SubstrateSdk
 final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     let storage: HostStorageBackend
     let coreStorage: HostCoreStorageBackend
+    let secretStorage: HostSecretStorageBackend
 
     private let chainRegistry: ChainRegistryProtocol
     private let chainConnections: TrUAPIChainConnecting
@@ -24,7 +25,8 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
 
     init(
         chainRegistry: ChainRegistryProtocol,
-        coreStorage: TrUAPILocalStoring,
+        coreStorage: HostCoreStorageBackend,
+        secretStorage: HostSecretStorageBackend,
         chainConnections: TrUAPIChainConnecting,
         confirmationPresenter: TrUAPIConfirmationPresenting,
         logger: LoggerProtocol
@@ -33,7 +35,8 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         self.chainConnections = chainConnections
         self.confirmationPresenter = confirmationPresenter
         self.logger = logger
-        self.coreStorage = CoreStorageBackend(storage: coreStorage)
+        self.coreStorage = coreStorage
+        self.secretStorage = secretStorage
         storage = EmptyHostStorageBackend()
         chainConnections.eventHandler = self
     }

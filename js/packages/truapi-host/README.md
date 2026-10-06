@@ -106,6 +106,12 @@ this ships the full 1.4 MB `.wasm` where about 600 kB (gzip) or 470 kB (brotli)
 would do — and a server configured with `gzip_static` but no dynamic `gzip on`
 has no fallback.
 
+## Host storage
+
+Hosts implement both required callback groups: `coreStorage` for public core records, and `secretCoreStorage` for session credentials, pairing identity, device encryption keys and retained signing keys. `encodeCoreStorageKey` and `encodeSecretCoreStorageKey` encode their respective typed slots for opaque backing keys. Root wallet entropy is outside these interfaces.
+
+Secret reads return `undefined` only for a missing record. Present corrupt or inaccessible data must reject, and writes must wait for the backing store to acknowledge persistence. Adapters sharing a store must order writes and clears through the whole persistence operation, including work that continues after the core stops awaiting a callback. Auth-session changes still notify the core through `notifySessionStoreChanged()` so it re-reads and validates the bytes.
+
 ## Optional capabilities
 
 `HostCallbacks` groups are required except those listed on the Rust

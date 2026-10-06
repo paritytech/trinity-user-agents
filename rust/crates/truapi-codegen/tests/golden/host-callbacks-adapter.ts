@@ -37,6 +37,7 @@ import {
   HostContactPick,
   PermissionDecision,
   ProductContext,
+  SecretCoreStorageKey,
   UserConfirmationReview,
 } from "./host-callbacks.js";
 import type { RequiredHostCallbacks } from "./host-callbacks.js";
@@ -113,6 +114,11 @@ export interface RawCallbacks {
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
+  readSecretCoreStorage(
+    key: Uint8Array,
+  ): Promise<Uint8Array | null | undefined>;
+  writeSecretCoreStorage(key: Uint8Array, value: Uint8Array): Promise<void>;
+  clearSecretCoreStorage(key: Uint8Array): Promise<void>;
   subscribeTheme(
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
@@ -274,6 +280,19 @@ export function createWasmRawCallbacks(
         callbacks.productStorage.subscribeStorage(key),
         (item) => sendItem(HostLocalStorageChangeItem.enc(item)),
         sendError,
+      ),
+    readSecretCoreStorage: async (key) =>
+      await callbacks.secretCoreStorage.readSecretCoreStorage(
+        SecretCoreStorageKey.dec(key),
+      ),
+    writeSecretCoreStorage: async (key, value) =>
+      await callbacks.secretCoreStorage.writeSecretCoreStorage(
+        SecretCoreStorageKey.dec(key),
+        value,
+      ),
+    clearSecretCoreStorage: async (key) =>
+      await callbacks.secretCoreStorage.clearSecretCoreStorage(
+        SecretCoreStorageKey.dec(key),
       ),
     subscribeTheme: (sendItem, sendError) =>
       driveResultStream(

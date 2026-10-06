@@ -1335,18 +1335,32 @@ fn local_codec_expr_for_type(type_def: &TypeDef) -> Result<String> {
                         .join(", ")
                 ));
             }
+            let indexed = variants.iter().enumerate().any(|(position, variant)| {
+                variant
+                    .codec_index
+                    .is_some_and(|index| usize::from(index) != position)
+            });
             let entries = variants
                 .iter()
-                .map(|variant| {
-                    Ok(format!(
-                        "{}: {}",
-                        variant.name,
-                        local_variant_codec_expr(&variant.fields)?
-                    ))
+                .enumerate()
+                .map(|(position, variant)| {
+                    let codec = local_variant_codec_expr(&variant.fields)?;
+                    let codec = if indexed {
+                        let index = variant.codec_index.map(usize::from).unwrap_or(position);
+                        format!("[{index}, {codec}] as const")
+                    } else {
+                        codec
+                    };
+                    Ok(format!("{}: {}", variant.name, codec))
                 })
                 .collect::<Result<Vec<_>>>()?
                 .join(", ");
-            Ok(format!("S.TaggedUnion({{{entries}}})"))
+            let constructor = if indexed {
+                "indexedTaggedUnion"
+            } else {
+                "TaggedUnion"
+            };
+            Ok(format!("S.{constructor}({{{entries}}})"))
         }
     }
 }

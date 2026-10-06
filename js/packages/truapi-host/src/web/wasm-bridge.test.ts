@@ -34,11 +34,12 @@ suite("real WASM core ↔ createMockHost bridge", () => {
 
     const mock = createMockHost();
     const invoked: string[] = [];
-    const coreStorage = mock.callbacks.coreStorage;
-    const readCoreStorage = coreStorage.readCoreStorage.bind(coreStorage);
-    coreStorage.readCoreStorage = async (key) => {
-      invoked.push(`readCoreStorage:${key.tag}`);
-      return readCoreStorage(key);
+    const secretCoreStorage = mock.callbacks.secretCoreStorage;
+    const readSecretCoreStorage =
+      secretCoreStorage.readSecretCoreStorage.bind(secretCoreStorage);
+    secretCoreStorage.readSecretCoreStorage = async (key) => {
+      invoked.push(`readSecretCoreStorage:${key.tag}`);
+      return readSecretCoreStorage(key);
     };
 
     // The pairing-host runtime takes the platform callbacks and host config;
@@ -56,10 +57,12 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     // it per-core outside the generated adapter, so the harness does too.
     runtime.productRuntime({ productId }, { emitFrame: () => {} });
     // The real core reads its auth session on startup, which crosses the bridge
-    // into the mock's readCoreStorage with a SCALE-decoded CoreStorageKey.
+    // into the mock's readSecretCoreStorage with a SCALE-decoded SecretCoreStorageKey.
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    expect(invoked.some((c) => c.startsWith("readCoreStorage:"))).toBe(true);
+    expect(invoked.some((c) => c.startsWith("readSecretCoreStorage:"))).toBe(
+      true,
+    );
 
     // The same traffic must be visible through the control surface, because
     // that count is what a harness waits on to decide the wire is live.

@@ -15,6 +15,10 @@ use futures::stream::BoxStream;
 use parity_scale_codec::{Decode, Encode};
 use unicode_normalization::UnicodeNormalization;
 
+mod secrets;
+
+pub use secrets::{SecretCoreStorage, SecretCoreStorageKey};
+
 pub use async_trait::async_trait;
 pub use truapi_provider::ProviderError;
 pub use truapi_provider::platform::{ChainProvider, JsonRpcConnection};
@@ -1371,33 +1375,17 @@ pub trait Features: Send + Sync {
 /// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/storage.md?plain=1#L1-L7>
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum CoreStorageKey {
-    /// Opaque SSO/auth session blob.
-    #[codec(index = 0)]
-    AuthSession,
-    /// Pairing device identity used during SSO flows.
-    PairingDeviceIdentity,
     /// Persisted authorization for one product-scoped permission request.
+    #[codec(index = 2)]
     PermissionAuthorization {
         /// Product whose permission decision is being stored.
         product_id: String,
         /// Permission request whose authorization is being stored.
         request: PermissionAuthorizationRequest,
     },
-    /// Persisted allowance-slot keys for one paired SSO session.
-    AllowanceKeys {
-        /// Stable host-derived SSO session id.
-        session_id: String,
-    },
     /// Last processed SSO pairing response statement for the pairing device.
+    #[codec(index = 4)]
     LastProcessedPairingStatement,
-    /// Legacy unscoped RFC-0010 AutoSigning secret. Core only addresses this
-    /// slot to reject and erase pre-scoping entries.
-    AutoSigningKey {
-        /// Product whose hard subtree the legacy secret controlled.
-        product_id: String,
-    },
-    /// Wallet-bound RFC-0010 AutoSigning capabilities for the active pairing.
-    AutoSigningKeys,
     /// Wallet-bound RFC-0024 ring-VRF registry snapshot.
     #[codec(index = 7)]
     RingVrfRegistry {
@@ -1407,15 +1395,6 @@ pub enum CoreStorageKey {
     /// Statement-store allowance targets the signing host keeps renewed.
     #[codec(index = 8)]
     StatementRenewalTargets,
-    /// This device's long-lived X25519 encryption secret, advertised to peers
-    /// as the device encryption public key. Random rather than identity-derived
-    /// so devices restoring one identity stay individually addressable.
-    ///
-    /// Hosts must back this slot with storage scoped to the install, outliving
-    /// logout and any per-user namespacing: once it changes, peers addressing
-    /// the previous key can no longer reach this device.
-    #[codec(index = 9)]
-    DeviceEncryptionKey,
     /// One product's hard-subtree public key, as the Account Holder answered it
     /// for this paired session. Product account is a hard derivation, so the
     /// answer is fixed for the pair and read back instead of re-asking the
@@ -1492,19 +1471,13 @@ pub fn describe_core_storage_key(
         return Err(CoreStorageKeyDescriptionError::TrailingBytes);
     }
     let (kind, product_id) = match key {
-        CoreStorageKey::AuthSession => ("AuthSession", None),
-        CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
         CoreStorageKey::PermissionAuthorization { product_id, .. } => {
             ("PermissionAuthorization", Some(product_id))
         }
-        CoreStorageKey::AllowanceKeys { .. } => ("AllowanceKeys", None),
         CoreStorageKey::LastProcessedPairingStatement => ("LastProcessedPairingStatement", None),
-        CoreStorageKey::AutoSigningKey { product_id } => ("AutoSigningKey", Some(product_id)),
         CoreStorageKey::ProductSubtree { product_id, .. } => ("ProductSubtree", Some(product_id)),
-        CoreStorageKey::AutoSigningKeys => ("AutoSigningKeys", None),
         CoreStorageKey::RingVrfRegistry { .. } => ("RingVrfRegistry", None),
         CoreStorageKey::StatementRenewalTargets => ("StatementRenewalTargets", None),
-        CoreStorageKey::DeviceEncryptionKey => ("DeviceEncryptionKey", None),
         CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
         CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
     };
@@ -2252,8 +2225,8 @@ mod tests {
     }
 
     #[test]
-    fn auth_session_storage_key_has_stable_encoding() {
-        assert_eq!(CoreStorageKey::AuthSession.encode(), [0]);
+    fn pairing_cursor_storage_key_has_stable_encoding() {
+        assert_eq!(CoreStorageKey::LastProcessedPairingStatement.encode(), [4]);
     }
 
     #[test]
@@ -2522,32 +2495,11 @@ mod tests {
             })
         );
         for (key, kind, product_id) in [
-            (CoreStorageKey::AuthSession, "AuthSession", None),
-            (
-                CoreStorageKey::PairingDeviceIdentity,
-                "PairingDeviceIdentity",
-                None,
-            ),
-            (
-                CoreStorageKey::AllowanceKeys {
-                    session_id: "session".to_string(),
-                },
-                "AllowanceKeys",
-                None,
-            ),
             (
                 CoreStorageKey::LastProcessedPairingStatement,
                 "LastProcessedPairingStatement",
                 None,
             ),
-            (
-                CoreStorageKey::AutoSigningKey {
-                    product_id: "product.dot".to_string(),
-                },
-                "AutoSigningKey",
-                Some("product.dot"),
-            ),
-            (CoreStorageKey::AutoSigningKeys, "AutoSigningKeys", None),
             (
                 CoreStorageKey::RingVrfRegistry {
                     root_public_key: [0x42; 32],
@@ -2558,11 +2510,6 @@ mod tests {
             (
                 CoreStorageKey::StatementRenewalTargets,
                 "StatementRenewalTargets",
-                None,
-            ),
-            (
-                CoreStorageKey::DeviceEncryptionKey,
-                "DeviceEncryptionKey",
                 None,
             ),
             (
@@ -2584,7 +2531,7 @@ mod tests {
             describe_core_storage_key(&[]),
             Err(CoreStorageKeyDescriptionError::InvalidEncoding)
         );
-        let mut trailing = CoreStorageKey::AuthSession.encode();
+        let mut trailing = CoreStorageKey::LastProcessedPairingStatement.encode();
         trailing.push(0);
         assert_eq!(
             describe_core_storage_key(&trailing),
@@ -2839,7 +2786,7 @@ mod tests {
 /// [`describe_core_storage_key`] names the product owning a slot:
 /// [`CoreStorageKeyDescription::product_id`] is `Some` exactly for the
 /// product-indexed variants, which are `PermissionAuthorization`,
-/// `AutoSigningKey`, and `ProductSubtree`. Keying host storage by that value
+/// `ProductSubtree`, and `ProductManifest`. Keying host storage by that value
 /// makes the sweep a prefix delete rather than a scan.
 #[async_trait]
 pub trait CoreStorage: Send + Sync {
@@ -2859,7 +2806,7 @@ pub trait CoreStorage: Send + Sync {
 }
 
 /// Decoded session fields a host shell needs to render account UI without
-/// parsing the opaque session blob the core persists through [`CoreStorage`].
+/// parsing the opaque session blob persisted through [`SecretCoreStorage`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct SessionUiInfo {
@@ -3456,6 +3403,7 @@ pub trait Platform:
     + Features
     + ProductStorage
     + CoreStorage
+    + SecretCoreStorage
     + ChainProvider
     + AuthPresenter
     + UserConfirmation
@@ -3473,6 +3421,7 @@ impl<T> Platform for T where
         + Features
         + ProductStorage
         + CoreStorage
+        + SecretCoreStorage
         + ChainProvider
         + AuthPresenter
         + UserConfirmation

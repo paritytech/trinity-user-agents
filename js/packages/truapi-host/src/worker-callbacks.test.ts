@@ -32,6 +32,23 @@ function stubBridge() {
 }
 
 describe("worker raw callbacks", () => {
+  it("always proxies secret storage through the host callback bridge", async () => {
+    const { bridge, requests } = stubBridge();
+    const callbacks = createWorkerRawCallbacks(
+      bridge as unknown as Parameters<typeof createWorkerRawCallbacks>[0],
+    );
+    const key = new Uint8Array([0]);
+    const value = new Uint8Array([9]);
+    await callbacks.readSecretCoreStorage(key);
+    await callbacks.writeSecretCoreStorage(key, value);
+    await callbacks.clearSecretCoreStorage(key);
+    expect(requests).toEqual([
+      { name: "readSecretCoreStorage", args: [key] },
+      { name: "writeSecretCoreStorage", args: [key, value] },
+      { name: "clearSecretCoreStorage", args: [key] },
+    ]);
+  });
+
   it("omits the chat proxies when no chat capability is reported", () => {
     const { bridge } = stubBridge();
 
