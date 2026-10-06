@@ -38,9 +38,10 @@ pub use sso_responder::{
 pub use sso_service::SigningHostSsoService;
 
 use super::authority::{
-    AccountHolder, AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
-    CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
-    SignRawAuthorityRequest, StatementStoreAllowanceKey, authority_session_validation_id,
+    AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
+    AutoSigningGrant, BulletinAllowanceKey, CreateTransactionAuthorityRequest, ProductAuthority,
+    SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
+    authority_session_validation_id,
 };
 use super::ring_vrf_registry::RingVrfRegistryStore;
 use super::{RuntimeServices, connected_session_ui_info, validate_vrf_transcript};
@@ -69,8 +70,8 @@ use wallet_account_holder::{WalletAccountHolder, product_authority_error};
 const TEST_NETWORK_SUFFIX: &str = "dot";
 
 use crate::platform::{
-    PermissionAuthorizationStatus, Platform, ProductContext, SignVrfReview, UserConfirmationReview,
-    normalize_product_identifier,
+    AccountAccessReview, PermissionAuthorizationStatus, Platform, ProductContext, SignVrfReview,
+    UserConfirmationReview, normalize_product_identifier,
 };
 use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse};
 use truapi::{CallContext, CallError, v01};
@@ -632,14 +633,10 @@ impl SigningHost {
         })
     }
 
-    /// Whether `calling_product_id` may act on `handle`'s ring-VRF key.
-    ///
-    /// Delegates to [`crate::runtime::ring_vrf_key_access_granted`], which
-    /// resolves the owner's manifest here rather than trusting the request: on
-    /// this role the request can have arrived over the pairing wire.
+    /// Keep access checks and key derivation bound to the same canonical owner.
     async fn require_ring_vrf_key_access(
         &self,
-        calling_product_id: &str,
+        caller: AccountCaller<'_>,
         handle: &v01::ProductAccountId,
     ) -> Result<
         (
@@ -651,7 +648,7 @@ impl SigningHost {
         let access = crate::runtime::product_manifest::ring_vrf_key_access_granted(
             &self.services,
             self.platform.as_ref(),
-            calling_product_id,
+            caller,
             handle,
         )
         .await?;
@@ -662,6 +659,43 @@ impl SigningHost {
             },
             access,
         ))
+    }
+
+    async fn require_account_access(
+        &self,
+        invocation: &AccountInvocation<'_>,
+        requester: &str,
+        owner: &str,
+    ) -> Result<(), RingVrfError> {
+        let authorized = match invocation.caller {
+            AccountCaller::Local(_) => {
+                super::account_access_authorization(self.platform.as_ref(), requester, owner)
+                    .await
+                    .map(|status| status == PermissionAuthorizationStatus::Authorized)
+                    .map_err(|error| RingVrfError::Unknown {
+                        reason: error.to_string(),
+                    })?
+            }
+            AccountCaller::Remote { .. } => super::until_cancelled(
+                invocation.call,
+                self.platform
+                    .confirm_user_action(UserConfirmationReview::AccountAccess(
+                        AccountAccessReview {
+                            requesting_product_id: requester.to_string(),
+                            target_product_id: owner.to_string(),
+                        },
+                    )),
+            )
+            .await?
+            .map_err(|error| RingVrfError::Unknown {
+                reason: super::AccountAccessAuthorizationError::Confirmation(error).to_string(),
+            })?,
+        };
+        if authorized {
+            Ok(())
+        } else {
+            Err(RingVrfError::Rejected)
+        }
     }
 
     pub async fn ring_vrf_providers(
@@ -699,57 +733,6 @@ impl SigningHost {
         self.ring_vrf_registry
             .select_provider(session.public_key, ring, handle)
             .await
-    }
-
-    async fn sign_vrf_request(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: String,
-        request: v01::HostAccountSignVrfRequest,
-        authenticated_caller: bool,
-    ) -> Result<v01::VrfSignature, AuthorityError> {
-        self.require_current_session(session)?;
-        validate_vrf_transcript(&request).map_err(|reason| AuthorityError::Unknown { reason })?;
-        let keypair = self.wallet.keys()?.product_keypair(&request.account)?;
-        let (current, activation_generation) = self.require_current_session(session)?;
-        let granted = authenticated_caller
-            && super::authority::is_blessed_owner(
-                &calling_product_id,
-                &request.account.dot_ns_identifier,
-            )
-            || self.has_auto_signing_grant(
-                activation_generation,
-                current.public_key,
-                &calling_product_id,
-                &request.account.dot_ns_identifier,
-            );
-        if !granted {
-            let confirmed = super::until_cancelled(
-                cx,
-                self.platform
-                    .confirm_user_action(UserConfirmationReview::SignVrf(SignVrfReview {
-                        calling_product_id,
-                        request: request.clone(),
-                    })),
-            )
-            .await?
-            .map_err(|err| AuthorityError::Unknown {
-                reason: format!("VRF signing confirmation failed: {err:?}"),
-            })?;
-            if !confirmed {
-                return Err(AuthorityError::Rejected);
-            }
-        }
-        let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
-            &keypair,
-            &request.transcript_label,
-            request
-                .items
-                .iter()
-                .map(|item| (item.label.as_slice(), item.value.as_slice())),
-        );
-        Ok(v01::VrfSignature { pre_output, proof })
     }
 }
 
@@ -970,13 +953,58 @@ impl AccountHolder for SigningHost {
 
     async fn sign_vrf(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: String,
+        invocation: AccountInvocation<'_>,
         request: v01::HostAccountSignVrfRequest,
     ) -> Result<v01::VrfSignature, AuthorityError> {
-        self.sign_vrf_request(cx, session, calling_product_id, request, true)
-            .await
+        let session = invocation.session;
+        let calling_product_id = invocation
+            .caller
+            .product_id()
+            .ok_or(AuthorityError::Rejected)?;
+        self.require_current_session(session)?;
+        validate_vrf_transcript(&request).map_err(|reason| AuthorityError::Unknown { reason })?;
+        let keypair = self.wallet.keys()?.product_keypair(&request.account)?;
+        let (current, activation_generation) = self.require_current_session(session)?;
+        let granted = match invocation.caller {
+            AccountCaller::Local(_) => {
+                super::authority::is_blessed_owner(
+                    calling_product_id,
+                    &request.account.dot_ns_identifier,
+                ) || self.has_auto_signing_grant(
+                    activation_generation,
+                    current.public_key,
+                    calling_product_id,
+                    &request.account.dot_ns_identifier,
+                )
+            }
+            AccountCaller::Remote { .. } => false,
+        };
+        if !granted {
+            let confirmed = super::until_cancelled(
+                invocation.call,
+                self.platform
+                    .confirm_user_action(UserConfirmationReview::SignVrf(SignVrfReview {
+                        calling_product_id: calling_product_id.to_string(),
+                        request: request.clone(),
+                    })),
+            )
+            .await?
+            .map_err(|err| AuthorityError::Unknown {
+                reason: format!("VRF signing confirmation failed: {err:?}"),
+            })?;
+            if !confirmed {
+                return Err(AuthorityError::Rejected);
+            }
+        }
+        let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
+            &keypair,
+            &request.transcript_label,
+            request
+                .items
+                .iter()
+                .map(|item| (item.label.as_slice(), item.value.as_slice())),
+        );
+        Ok(v01::VrfSignature { pre_output, proof })
     }
 
     async fn sign_payload(
@@ -1111,15 +1139,15 @@ impl AccountHolder for SigningHost {
 
     async fn account_alias(
         &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountGetAliasRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountGetAliasRequest,
     ) -> Result<v01::ContextualAlias, RingVrfError> {
+        let session = invocation.session;
         self.require_current_session(session)?;
         // Aliases expose the same identity as `create_proof`, so both must enforce
         // the same RFC-0024 grant and context restrictions.
         let granted = match self
-            .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+            .require_ring_vrf_key_access(invocation.caller, &request.key_handle)
             .await
         {
             Ok(granted) => Some(granted),
@@ -1128,56 +1156,34 @@ impl AccountHolder for SigningHost {
         };
         let key_handle = match granted {
             Some((key_handle, access)) => {
-                crate::runtime::product_manifest::require_own_context(
-                    &access,
-                    &request.payload.context,
-                )?;
+                crate::runtime::product_manifest::require_own_context(&access, &request.context)?;
                 key_handle
             }
             None => {
                 // Permission lookups and prompts must use the same canonical identifiers.
-                let requester = normalize_product_identifier(&request.calling_product_id)
-                    .map_err(|_| RingVrfError::NotAllowlisted)?;
-                let owner =
-                    normalize_product_identifier(&request.payload.key_handle.dot_ns_identifier)
-                        .map_err(|_| RingVrfError::NotAllowlisted)?;
-                match super::account_access_authorization(
-                    self.services.platform.as_ref(),
-                    &requester,
-                    &owner,
+                let requester = normalize_product_identifier(
+                    invocation
+                        .caller
+                        .product_id()
+                        .ok_or(RingVrfError::NotAllowlisted)?,
                 )
-                .await
-                {
-                    Ok(PermissionAuthorizationStatus::Authorized) => {}
-                    Ok(
-                        PermissionAuthorizationStatus::Denied
-                        | PermissionAuthorizationStatus::NotDetermined,
-                    ) => return Err(RingVrfError::Rejected),
-                    Err(err) => {
-                        return Err(RingVrfError::Unknown {
-                            reason: err.to_string(),
-                        });
-                    }
-                }
+                .map_err(|_| RingVrfError::NotAllowlisted)?;
+                let owner = normalize_product_identifier(&request.key_handle.dot_ns_identifier)
+                    .map_err(|_| RingVrfError::NotAllowlisted)?;
+                self.require_account_access(&invocation, &requester, &owner)
+                    .await?;
                 v01::ProductAccountId {
                     dot_ns_identifier: owner,
-                    derivation_index: request.payload.key_handle.derivation_index.clone(),
+                    derivation_index: request.key_handle.derivation_index.clone(),
                 }
             }
         };
         let vrf = vrf::load().await?;
         let entropy = self
-            .resolve_ring_vrf_key_for_ring(
-                &vrf,
-                session,
-                &key_handle,
-                &request.payload.ring_location,
-            )
+            .resolve_ring_vrf_key_for_ring(&vrf, session, &key_handle, &request.ring_location)
             .await?;
-        self.ring_resolver
-            .validate(&request.payload.ring_location)
-            .await?;
-        let context = development_context_bytes(&request.payload.context);
+        self.ring_resolver.validate(&request.ring_location).await?;
+        let context = development_context_bytes(&request.context);
         let alias = vrf.alias(&entropy, &context)?;
         Ok(v01::ContextualAlias {
             context,
@@ -1187,40 +1193,29 @@ impl AccountHolder for SigningHost {
 
     async fn create_proof(
         &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountCreateProofRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountCreateProofRequest,
     ) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
+        let session = invocation.session;
         self.require_current_session(session)?;
         let (key_handle, access) = self
-            .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+            .require_ring_vrf_key_access(invocation.caller, &request.key_handle)
             .await?;
         // A grant must not expose the owner's alias in an unrelated product's context.
-        crate::runtime::product_manifest::require_own_context(&access, &request.payload.context)?;
+        crate::runtime::product_manifest::require_own_context(&access, &request.context)?;
         let vrf = vrf::load().await?;
         let entropy = self
-            .resolve_ring_vrf_key_for_ring(
-                &vrf,
-                session,
-                &key_handle,
-                &request.payload.ring_location,
-            )
+            .resolve_ring_vrf_key_for_ring(&vrf, session, &key_handle, &request.ring_location)
             .await?;
         let candidate = self.ring_vrf_member_candidate(&vrf, &entropy)?;
         let resolved = self
             .ring_resolver
-            .resolve(&request.payload.ring_location, &[candidate])
+            .resolve(&request.ring_location, &[candidate])
             .await?;
         // Chain resolution can outlive the active session.
         self.require_current_session(session)?;
-        let context = development_context_bytes(&request.payload.context);
-        let (proof, alias) = create_proof(
-            &vrf,
-            &entropy,
-            &resolved,
-            &context,
-            &request.payload.message,
-        )?;
+        let context = development_context_bytes(&request.context);
+        let (proof, alias) = create_proof(&vrf, &entropy, &resolved, &context, &request.message)?;
         Ok(v01::HostAccountCreateProofResponse {
             proof,
             contextual_alias: v01::ContextualAlias {
@@ -1259,38 +1254,26 @@ impl AccountHolder for SigningHost {
 
     async fn list_ring_vrf_keys(
         &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountListRingVrfKeysRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountListRingVrfKeysRequest,
     ) -> Result<Vec<v01::RegisteredRingVrfKey>, RingVrfError> {
+        let session = invocation.session;
         self.require_current_session(session)?;
-        let owner = normalize_product_identifier(&request.payload.owner).map_err(|err| {
-            RingVrfError::Unknown {
+        let owner =
+            normalize_product_identifier(&request.owner).map_err(|err| RingVrfError::Unknown {
                 reason: err.to_string(),
-            }
-        })?;
+            })?;
         // Ownership checks and permission decisions must use canonical identifiers.
-        let caller = normalize_product_identifier(&request.calling_product_id)
-            .map_err(|_| RingVrfError::NotAllowlisted)?;
+        let caller = normalize_product_identifier(
+            invocation
+                .caller
+                .product_id()
+                .ok_or(RingVrfError::NotAllowlisted)?,
+        )
+        .map_err(|_| RingVrfError::NotAllowlisted)?;
         if caller != owner {
-            match super::account_access_authorization(
-                self.services.platform.as_ref(),
-                &caller,
-                &owner,
-            )
-            .await
-            {
-                Ok(PermissionAuthorizationStatus::Authorized) => {}
-                Ok(
-                    PermissionAuthorizationStatus::Denied
-                    | PermissionAuthorizationStatus::NotDetermined,
-                ) => return Err(RingVrfError::Rejected),
-                Err(err) => {
-                    return Err(RingVrfError::Unknown {
-                        reason: err.to_string(),
-                    });
-                }
-            }
+            self.require_account_access(&invocation, &caller, &owner)
+                .await?;
         }
 
         self.register_builtin_personhood_keys_if_needed(session, &owner)
@@ -1300,7 +1283,7 @@ impl AccountHolder for SigningHost {
             .owner_entries(session.public_key, &owner)
             .await?;
         self.require_current_session(session)?;
-        if request.payload.disclosure == v01::RingVrfKeyDisclosure::Anonymized {
+        if request.disclosure == v01::RingVrfKeyDisclosure::Anonymized {
             for entry in &mut entries {
                 entry.public_key = None;
             }
@@ -1310,19 +1293,19 @@ impl AccountHolder for SigningHost {
 
     async fn ring_vrf_sign(
         &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountRingVrfSignRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountRingVrfSignRequest,
     ) -> Result<Vec<u8>, RingVrfError> {
+        let session = invocation.session;
         self.require_current_session(session)?;
         let (key_handle, _access) = self
-            .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+            .require_ring_vrf_key_access(invocation.caller, &request.key_handle)
             .await?;
         let vrf = vrf::load().await?;
         let entropy = self
             .resolve_registered_ring_vrf_key(&vrf, session, &key_handle)
             .await?;
-        vrf.sign(&entropy, &request.payload.message)
+        vrf.sign(&entropy, &request.message)
     }
 
     async fn allocate_resources(
@@ -1463,14 +1446,16 @@ mod tests {
     mod auto_signing;
     mod cross_product_account;
     mod raw_signing;
+    mod remote_consent;
     #[cfg(feature = "test-host")]
     mod withheld_resources;
 
     use std::sync::Arc;
 
     use super::super::authority::{
-        AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
-        SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
+        AccountCaller, AccountInvocation, AuthorityError, AuthoritySession,
+        CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
+        StatementStoreAllowanceKey,
     };
     use super::super::{
         AccountHolder, ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole,
@@ -1857,15 +1842,15 @@ mod tests {
         };
         let alias_for = |caller: &str| {
             futures::executor::block_on(authority.account_alias(
-                &CallContext::default(),
-                &session,
-                ProductRequest {
-                    calling_product_id: caller.to_string(),
-                    payload: v01::HostAccountGetAliasRequest {
-                        key_handle: full_person_key_handle(),
-                        context: context.clone(),
-                        ring_location: ring.clone(),
-                    },
+                AccountInvocation {
+                    call: &CallContext::default(),
+                    session: &session,
+                    caller: AccountCaller::Local(&ProductContext::new(caller.to_string()).unwrap()),
+                },
+                v01::HostAccountGetAliasRequest {
+                    key_handle: full_person_key_handle(),
+                    context: context.clone(),
+                    ring_location: ring.clone(),
                 },
             ))
         };
@@ -1921,38 +1906,38 @@ mod tests {
         // context at all, including a third product's.
         let mint_raw = |caller: &str| {
             futures::executor::block_on(authority.create_proof(
-                &CallContext::default(),
-                &session,
-                ProductRequest {
-                    calling_product_id: caller.to_string(),
-                    payload: v01::HostAccountCreateProofRequest {
-                        key_handle: full_person_key_handle(),
-                        context: v01::ProductProofContext {
-                            product_id: "raw:".to_string(),
-                            suffix: v01::DerivationIndex::Raw([0x11; 32]),
-                        },
-                        ring_location: ring.clone(),
-                        message: b"m".to_vec(),
+                AccountInvocation {
+                    call: &CallContext::default(),
+                    session: &session,
+                    caller: AccountCaller::Local(&ProductContext::new(caller.to_string()).unwrap()),
+                },
+                v01::HostAccountCreateProofRequest {
+                    key_handle: full_person_key_handle(),
+                    context: v01::ProductProofContext {
+                        product_id: "raw:".to_string(),
+                        suffix: v01::DerivationIndex::Raw([0x11; 32]),
                     },
+                    ring_location: ring.clone(),
+                    message: b"m".to_vec(),
                 },
             ))
         };
 
         let mint = |caller: &str, context: &str| {
             futures::executor::block_on(authority.create_proof(
-                &CallContext::default(),
-                &session,
-                ProductRequest {
-                    calling_product_id: caller.to_string(),
-                    payload: v01::HostAccountCreateProofRequest {
-                        key_handle: full_person_key_handle(),
-                        context: v01::ProductProofContext {
-                            product_id: context.to_string(),
-                            suffix: v01::DerivationIndex::Index(0),
-                        },
-                        ring_location: ring.clone(),
-                        message: b"m".to_vec(),
+                AccountInvocation {
+                    call: &CallContext::default(),
+                    session: &session,
+                    caller: AccountCaller::Local(&ProductContext::new(caller.to_string()).unwrap()),
+                },
+                v01::HostAccountCreateProofRequest {
+                    key_handle: full_person_key_handle(),
+                    context: v01::ProductProofContext {
+                        product_id: context.to_string(),
+                        suffix: v01::DerivationIndex::Index(0),
                     },
+                    ring_location: ring.clone(),
+                    message: b"m".to_vec(),
                 },
             ))
         };
@@ -2017,14 +2002,16 @@ mod tests {
         register_full_person_key(&authority, &session, &ring);
 
         let listed = futures::executor::block_on(authority.list_ring_vrf_keys(
-            &CallContext::default(),
-            &session,
-            ProductRequest {
-                calling_product_id: "PEOPL.DOT".to_string(),
-                payload: v01::HostAccountListRingVrfKeysRequest {
-                    owner: "peopl.dot".to_string(),
-                    disclosure: v01::RingVrfKeyDisclosure::PublicKey,
-                },
+            AccountInvocation {
+                call: &CallContext::default(),
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("PEOPL.DOT".to_string()).unwrap(),
+                ),
+            },
+            v01::HostAccountListRingVrfKeysRequest {
+                owner: "peopl.dot".to_string(),
+                disclosure: v01::RingVrfKeyDisclosure::PublicKey,
             },
         ));
         assert!(
@@ -2065,19 +2052,21 @@ mod tests {
         // `peopl.paseo` shares a label with the key's owner `peopl.dot` but is a
         // different product, so the grant admits it and the context still binds.
         let minted = futures::executor::block_on(authority.create_proof(
-            &CallContext::default(),
-            &session,
-            ProductRequest {
-                calling_product_id: "peopl.paseo".to_string(),
-                payload: v01::HostAccountCreateProofRequest {
-                    key_handle: full_person_key_handle(),
-                    context: v01::ProductProofContext {
-                        product_id: "bank.dot".to_string(),
-                        suffix: v01::DerivationIndex::Index(0),
-                    },
-                    ring_location: ring.clone(),
-                    message: b"m".to_vec(),
+            AccountInvocation {
+                call: &CallContext::default(),
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("peopl.paseo".to_string()).unwrap(),
+                ),
+            },
+            v01::HostAccountCreateProofRequest {
+                key_handle: full_person_key_handle(),
+                context: v01::ProductProofContext {
+                    product_id: "bank.dot".to_string(),
+                    suffix: v01::DerivationIndex::Index(0),
                 },
+                ring_location: ring.clone(),
+                message: b"m".to_vec(),
             },
         ));
         assert_eq!(
@@ -2105,19 +2094,21 @@ mod tests {
         register_full_person_key(&authority, &session, &ring);
         let mint = |context: &str| {
             futures::executor::block_on(authority.create_proof(
-                &CallContext::default(),
-                &session,
-                ProductRequest {
-                    calling_product_id: "dim2.dot".to_string(),
-                    payload: v01::HostAccountCreateProofRequest {
-                        key_handle: full_person_key_handle(),
-                        context: v01::ProductProofContext {
-                            product_id: context.to_string(),
-                            suffix: v01::DerivationIndex::Index(0),
-                        },
-                        ring_location: ring.clone(),
-                        message: b"m".to_vec(),
+                AccountInvocation {
+                    call: &CallContext::default(),
+                    session: &session,
+                    caller: AccountCaller::Local(
+                        &ProductContext::new("dim2.dot".to_string()).unwrap(),
+                    ),
+                },
+                v01::HostAccountCreateProofRequest {
+                    key_handle: full_person_key_handle(),
+                    context: v01::ProductProofContext {
+                        product_id: context.to_string(),
+                        suffix: v01::DerivationIndex::Index(0),
                     },
+                    ring_location: ring.clone(),
+                    message: b"m".to_vec(),
                 },
             ))
         };
@@ -2238,18 +2229,18 @@ mod tests {
         register_full_person_key(&authority, &session, &ring);
         let alias = |caller: &str, context: &str| {
             futures::executor::block_on(authority.account_alias(
-                &CallContext::default(),
-                &session,
-                ProductRequest {
-                    calling_product_id: caller.to_string(),
-                    payload: v01::HostAccountGetAliasRequest {
-                        key_handle: full_person_key_handle(),
-                        context: v01::ProductProofContext {
-                            product_id: context.to_string(),
-                            suffix: v01::DerivationIndex::Index(0),
-                        },
-                        ring_location: ring.clone(),
+                AccountInvocation {
+                    call: &CallContext::default(),
+                    session: &session,
+                    caller: AccountCaller::Local(&ProductContext::new(caller.to_string()).unwrap()),
+                },
+                v01::HostAccountGetAliasRequest {
+                    key_handle: full_person_key_handle(),
+                    context: v01::ProductProofContext {
+                        product_id: context.to_string(),
+                        suffix: v01::DerivationIndex::Index(0),
                     },
+                    ring_location: ring.clone(),
                 },
             ))
         };
@@ -2303,19 +2294,21 @@ mod tests {
         register_full_person_key(&authority, &session, &ring);
         let prove = |caller: &str| {
             futures::executor::block_on(authority.create_proof(
-                &CallContext::default(),
-                &session,
-                ProductRequest {
-                    calling_product_id: caller.to_string(),
-                    payload: v01::HostAccountCreateProofRequest {
-                        key_handle: full_person_key_handle(),
-                        context: v01::ProductProofContext {
-                            product_id: "peopl.dot".to_string(),
-                            suffix: v01::DerivationIndex::Index(0),
-                        },
-                        ring_location: ring.clone(),
-                        message: b"m".to_vec(),
+                AccountInvocation {
+                    call: &CallContext::default(),
+                    session: &session,
+                    caller: AccountCaller::Remote {
+                        product_id: Some(caller),
                     },
+                },
+                v01::HostAccountCreateProofRequest {
+                    key_handle: full_person_key_handle(),
+                    context: v01::ProductProofContext {
+                        product_id: "peopl.dot".to_string(),
+                        suffix: v01::DerivationIndex::Index(0),
+                    },
+                    ring_location: ring.clone(),
+                    message: b"m".to_vec(),
                 },
             ))
         };
@@ -2587,17 +2580,19 @@ mod tests {
         register_full_person_key(&authority, &session, &full_person_ring_location());
 
         futures::executor::block_on(authority.ring_vrf_sign(
-            &CallContext::default(),
-            &session,
-            ProductRequest {
-                calling_product_id: caller.to_string(),
-                payload: v01::HostAccountRingVrfSignRequest {
-                    key_handle: v01::ProductAccountId {
-                        dot_ns_identifier: handle_owner.to_string(),
-                        derivation_index: v01::DerivationIndex::Index(0),
-                    },
-                    message: b"sign me".to_vec(),
+            AccountInvocation {
+                call: &CallContext::default(),
+                session: &session,
+                caller: AccountCaller::Remote {
+                    product_id: Some(caller),
                 },
+            },
+            v01::HostAccountRingVrfSignRequest {
+                key_handle: v01::ProductAccountId {
+                    dot_ns_identifier: handle_owner.to_string(),
+                    derivation_index: v01::DerivationIndex::Index(0),
+                },
+                message: b"sign me".to_vec(),
             },
         ))
     }
@@ -2627,14 +2622,16 @@ mod tests {
         register_full_person_key(&authority, &session, &full_person_ring_location());
 
         futures::executor::block_on(authority.ring_vrf_sign(
-            &CallContext::default(),
-            &session,
-            ProductRequest {
-                calling_product_id: caller.to_string(),
-                payload: v01::HostAccountRingVrfSignRequest {
-                    key_handle: full_person_key_handle(),
-                    message: b"sign me".to_vec(),
+            AccountInvocation {
+                call: &CallContext::default(),
+                session: &session,
+                caller: AccountCaller::Remote {
+                    product_id: Some(caller),
                 },
+            },
+            v01::HostAccountRingVrfSignRequest {
+                key_handle: full_person_key_handle(),
+                message: b"sign me".to_vec(),
             },
         ))
     }
@@ -2665,19 +2662,19 @@ mod tests {
         register_full_person_key(&authority, &session, &ring_location);
 
         futures::executor::block_on(authority.create_proof(
-            &CallContext::default(),
-            &session,
-            ProductRequest {
-                calling_product_id: "dim2.dot".to_string(),
-                payload: v01::HostAccountCreateProofRequest {
-                    key_handle: full_person_key_handle(),
-                    context: v01::ProductProofContext {
-                        product_id: "dim2.dot".to_string(),
-                        suffix: v01::DerivationIndex::Index(0),
-                    },
-                    ring_location,
-                    message: b"prove me".to_vec(),
+            AccountInvocation {
+                call: &CallContext::default(),
+                session: &session,
+                caller: AccountCaller::Local(&ProductContext::new("dim2.dot".to_string()).unwrap()),
+            },
+            v01::HostAccountCreateProofRequest {
+                key_handle: full_person_key_handle(),
+                context: v01::ProductProofContext {
+                    product_id: "dim2.dot".to_string(),
+                    suffix: v01::DerivationIndex::Index(0),
                 },
+                ring_location,
+                message: b"prove me".to_vec(),
             },
         ))
     }
@@ -2828,29 +2825,33 @@ mod tests {
         register_full_person_key(&authority, &session, &ring_location);
 
         let alias = futures::executor::block_on(authority.account_alias(
-            &cx,
-            &session,
-            ProductRequest {
-                calling_product_id: "peopl.dot".to_string(),
-                payload: HostAccountGetAliasRequest {
-                    key_handle: full_person_key_handle(),
-                    context: context.clone(),
-                    ring_location: ring_location.clone(),
-                },
+            AccountInvocation {
+                call: &cx,
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("peopl.dot".to_string()).unwrap(),
+                ),
+            },
+            HostAccountGetAliasRequest {
+                key_handle: full_person_key_handle(),
+                context: context.clone(),
+                ring_location: ring_location.clone(),
             },
         ))
         .expect("alias succeeds");
         let proof = futures::executor::block_on(authority.create_proof(
-            &cx,
-            &session,
-            ProductRequest {
-                calling_product_id: "peopl.dot".to_string(),
-                payload: HostAccountCreateProofRequest {
-                    key_handle: full_person_key_handle(),
-                    context,
-                    ring_location,
-                    message: b"prove me".to_vec(),
-                },
+            AccountInvocation {
+                call: &cx,
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("peopl.dot".to_string()).unwrap(),
+                ),
+            },
+            HostAccountCreateProofRequest {
+                key_handle: full_person_key_handle(),
+                context,
+                ring_location,
+                message: b"prove me".to_vec(),
             },
         ))
         .expect("proof succeeds");
@@ -2873,20 +2874,22 @@ mod tests {
         register_full_person_key(&authority, &session, &registered_ring);
 
         let error = futures::executor::block_on(authority.account_alias(
-            &CallContext::default(),
-            &session,
-            ProductRequest {
-                calling_product_id: "peopl.dot".to_string(),
-                payload: HostAccountGetAliasRequest {
-                    key_handle: full_person_key_handle(),
-                    context: v01::ProductProofContext {
-                        product_id: "myapp.dot".to_string(),
-                        suffix: v01::DerivationIndex::Index(0),
-                    },
-                    ring_location: v01::RingLocation {
-                        chain_id: registered_ring.chain_id,
-                        junctions: vec![],
-                    },
+            AccountInvocation {
+                call: &CallContext::default(),
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("peopl.dot".to_string()).unwrap(),
+                ),
+            },
+            HostAccountGetAliasRequest {
+                key_handle: full_person_key_handle(),
+                context: v01::ProductProofContext {
+                    product_id: "myapp.dot".to_string(),
+                    suffix: v01::DerivationIndex::Index(0),
+                },
+                ring_location: v01::RingLocation {
+                    chain_id: registered_ring.chain_id,
+                    junctions: vec![],
                 },
             },
         ))
@@ -2916,14 +2919,16 @@ mod tests {
         .expect("synthetic registry entry persists");
 
         let error = futures::executor::block_on(authority.ring_vrf_sign(
-            &CallContext::default(),
-            &session,
-            ProductRequest {
-                calling_product_id: "myapp.dot".to_string(),
-                payload: HostAccountRingVrfSignRequest {
-                    key_handle: handle,
-                    message: b"reject mismatched registry state".to_vec(),
-                },
+            AccountInvocation {
+                call: &CallContext::default(),
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("myapp.dot".to_string()).unwrap(),
+                ),
+            },
+            HostAccountRingVrfSignRequest {
+                key_handle: handle,
+                message: b"reject mismatched registry state".to_vec(),
             },
         ))
         .unwrap_err();
@@ -2951,30 +2956,34 @@ mod tests {
         register_full_person_key(&authority, &session, &ring_location);
 
         let alias = futures::executor::block_on(authority.account_alias(
-            &cx,
-            &session,
-            ProductRequest {
-                calling_product_id: "myapp.dot".to_string(),
-                payload: HostAccountGetAliasRequest {
-                    key_handle: full_person_key_handle(),
-                    context: context.clone(),
-                    ring_location: ring_location.clone(),
-                },
+            AccountInvocation {
+                call: &cx,
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("myapp.dot".to_string()).unwrap(),
+                ),
+            },
+            HostAccountGetAliasRequest {
+                key_handle: full_person_key_handle(),
+                context: context.clone(),
+                ring_location: ring_location.clone(),
             },
         ));
         assert_eq!(alias, Err(RingVrfError::Rejected));
 
         let proof = futures::executor::block_on(authority.create_proof(
-            &cx,
-            &session,
-            ProductRequest {
-                calling_product_id: "myapp.dot".to_string(),
-                payload: HostAccountCreateProofRequest {
-                    key_handle: full_person_key_handle(),
-                    context,
-                    ring_location,
-                    message: b"prove me".to_vec(),
-                },
+            AccountInvocation {
+                call: &cx,
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("myapp.dot".to_string()).unwrap(),
+                ),
+            },
+            HostAccountCreateProofRequest {
+                key_handle: full_person_key_handle(),
+                context,
+                ring_location,
+                message: b"prove me".to_vec(),
             },
         ));
         assert_eq!(proof, Err(RingVrfError::NotAllowlisted));
@@ -3013,10 +3022,28 @@ mod tests {
         };
         register_full_person_key(&authority, &session, &request.payload.ring_location);
 
-        futures::executor::block_on(authority.account_alias(&cx, &session, request.clone()))
-            .expect("first alias succeeds");
-        futures::executor::block_on(authority.account_alias(&cx, &session, request))
-            .expect("second alias succeeds from cached grant");
+        futures::executor::block_on(authority.account_alias(
+            AccountInvocation {
+                call: &cx,
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new(request.calling_product_id.clone()).unwrap(),
+                ),
+            },
+            request.payload.clone(),
+        ))
+        .expect("first alias succeeds");
+        futures::executor::block_on(authority.account_alias(
+            AccountInvocation {
+                call: &cx,
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new(request.calling_product_id.clone()).unwrap(),
+                ),
+            },
+            request.payload,
+        ))
+        .expect("second alias succeeds from cached grant");
 
         assert_eq!(
             platform
@@ -3098,9 +3125,13 @@ mod tests {
         };
 
         let signature = futures::executor::block_on(authority.sign_vrf(
-            &CallContext::default(),
-            &session,
-            "myapp.dot".to_string(),
+            AccountInvocation {
+                call: &CallContext::default(),
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("myapp.dot".to_string()).unwrap(),
+                ),
+            },
             request,
         ))
         .expect("VRF signing succeeds");
@@ -3150,9 +3181,13 @@ mod tests {
 
         let session = authority.current_session().expect("active session");
         futures::executor::block_on(authority.sign_vrf(
-            &CallContext::default(),
-            &session,
-            "myapp.dot".to_string(),
+            AccountInvocation {
+                call: &CallContext::default(),
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("myapp.dot".to_string()).unwrap(),
+                ),
+            },
             vrf_request("myapp.dot"),
         ))
         .expect("granted product signs without another confirmation");
@@ -3166,9 +3201,13 @@ mod tests {
         );
 
         let error = futures::executor::block_on(authority.sign_vrf(
-            &CallContext::default(),
-            &session,
-            "other.dot".to_string(),
+            AccountInvocation {
+                call: &CallContext::default(),
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("other.dot".to_string()).unwrap(),
+                ),
+            },
             vrf_request("myapp.dot"),
         ))
         .expect_err("different calling product remains confirmation-bound");
@@ -3245,9 +3284,13 @@ mod tests {
             .expect("replacement activation succeeds");
         let replacement = authority.current_session().expect("replacement session");
         let error = futures::executor::block_on(authority.sign_vrf(
-            &CallContext::default(),
-            &replacement,
-            "myapp.dot".to_string(),
+            AccountInvocation {
+                call: &CallContext::default(),
+                session: &replacement,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("myapp.dot".to_string()).unwrap(),
+                ),
+            },
             vrf_request("myapp.dot"),
         ))
         .expect_err("replacement root must receive its own confirmation");
@@ -3287,9 +3330,13 @@ mod tests {
             .expect("same wallet reactivation succeeds");
         let reactivated = authority.current_session().expect("reactivated session");
         let error = futures::executor::block_on(authority.sign_vrf(
-            &CallContext::default(),
-            &reactivated,
-            "myapp.dot".to_string(),
+            AccountInvocation {
+                call: &CallContext::default(),
+                session: &reactivated,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("myapp.dot".to_string()).unwrap(),
+                ),
+            },
             vrf_request("myapp.dot"),
         ))
         .expect_err("reactivated wallet must receive its own confirmation");
@@ -3332,9 +3379,13 @@ mod tests {
         assert_eq!(error, AuthorityError::Disconnected);
 
         let error = futures::executor::block_on(authority.sign_vrf(
-            &CallContext::default(),
-            &current,
-            "myapp.dot".to_string(),
+            AccountInvocation {
+                call: &CallContext::default(),
+                session: &current,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("myapp.dot".to_string()).unwrap(),
+                ),
+            },
             vrf_request("myapp.dot"),
         ))
         .expect_err("stale allocation must not grant the replacement activation");
@@ -3374,9 +3425,13 @@ mod tests {
             .expect("replacement runtime activates with the same root");
         let session = replacement.current_session().expect("replacement session");
         let error = futures::executor::block_on(replacement.sign_vrf(
-            &CallContext::default(),
-            &session,
-            "myapp.dot".to_string(),
+            AccountInvocation {
+                call: &CallContext::default(),
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("myapp.dot".to_string()).unwrap(),
+                ),
+            },
             vrf_request("myapp.dot"),
         ))
         .expect_err("a separate runtime must receive its own confirmation");

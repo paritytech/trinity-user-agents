@@ -30,10 +30,10 @@ use truapi::{CallContext, CallError, Subscription, latest, v01};
 use crate::host_internal::product_manifest::Granted;
 use crate::host_internal::sso_messages::ProductRequest;
 use crate::runtime::{
-    ProductRuntimeHost, account_access_authorization, account_get_authority_error,
-    remote_authority_call, remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error,
-    ring_vrf_proof_error, ring_vrf_register_error, ring_vrf_sign_error, until_cancelled,
-    validate_vrf_transcript, vrf_call_error,
+    AccountCaller, AccountInvocation, ProductRuntimeHost, account_access_authorization,
+    account_get_authority_error, remote_authority_call, remote_authority_context,
+    ring_vrf_alias_error, ring_vrf_list_error, ring_vrf_proof_error, ring_vrf_register_error,
+    ring_vrf_sign_error, until_cancelled, validate_vrf_transcript, vrf_call_error,
 };
 
 #[truapi::async_trait]
@@ -143,17 +143,16 @@ impl Account for ProductRuntimeHost {
             )));
         };
 
-        let calling_product_id = self.product_id();
         let cx = remote_authority_context(cx);
         remote_authority_call(
             &cx,
             self.authority.account_alias(
-                &cx,
-                &session,
-                ProductRequest {
-                    calling_product_id,
-                    payload: request,
+                AccountInvocation {
+                    call: &cx,
+                    session: &session,
+                    caller: AccountCaller::Local(&self.product),
                 },
+                request,
             ),
         )
         .await
@@ -229,12 +228,12 @@ impl Account for ProductRuntimeHost {
         remote_authority_call(
             &cx,
             self.authority.create_proof(
-                &cx,
-                &session,
-                ProductRequest {
-                    calling_product_id,
-                    payload: request,
+                AccountInvocation {
+                    call: &cx,
+                    session: &session,
+                    caller: AccountCaller::Local(&self.product),
                 },
+                request,
             ),
         )
         .await
@@ -299,17 +298,16 @@ impl Account for ProductRuntimeHost {
                 },
             ))
         })?;
-        let calling_product_id = self.product_id();
         let cx = remote_authority_context(cx);
         remote_authority_call(
             &cx,
             self.authority.list_ring_vrf_keys(
-                &cx,
-                &session,
-                ProductRequest {
-                    calling_product_id,
-                    payload: request,
+                AccountInvocation {
+                    call: &cx,
+                    session: &session,
+                    caller: AccountCaller::Local(&self.product),
                 },
+                request,
             ),
         )
         .await
@@ -372,12 +370,12 @@ impl Account for ProductRuntimeHost {
         remote_authority_call(
             &cx,
             self.authority.ring_vrf_sign(
-                &cx,
-                &session,
-                ProductRequest {
-                    calling_product_id,
-                    payload: request,
+                AccountInvocation {
+                    call: &cx,
+                    session: &session,
+                    caller: AccountCaller::Local(&self.product),
                 },
+                request,
             ),
         )
         .await
@@ -412,8 +410,14 @@ impl Account for ProductRuntimeHost {
         let cx = remote_authority_context(cx);
         remote_authority_call(
             &cx,
-            self.authority
-                .sign_vrf(&cx, &session, self.product_id(), request),
+            self.authority.sign_vrf(
+                AccountInvocation {
+                    call: &cx,
+                    session: &session,
+                    caller: AccountCaller::Local(&self.product),
+                },
+                request,
+            ),
         )
         .await
         .map(HostAccountSignVrfResponse::V1)

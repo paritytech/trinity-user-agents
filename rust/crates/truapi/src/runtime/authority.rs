@@ -3,8 +3,7 @@
 //! Pairing and signing hosts implement these traits differently, but
 //! `ProductRuntimeHost` can use this module's shared request/session types
 //! without knowing where the key material lives.
-//! Alias, proof, and ring-VRF operations reuse the request payloads in
-//! `host_internal::sso_messages` for both local calls and SSO transport.
+//! Caller origin separates this host's product permissions from remote wallet consent.
 
 use crate::platform::ProductContext;
 use async_trait::async_trait;
@@ -30,6 +29,38 @@ use crate::host_internal::transaction::ExtrinsicPayloadError;
 use crate::host_logic::raw_signing::RawPayloadError;
 use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::host_logic::statement_store::statement_public_key_from_secret;
+
+/// Wallet call bound to a session and the origin that supplied its caller.
+pub struct AccountInvocation<'a> {
+    /// Cancellation and deadline for this operation.
+    pub call: &'a CallContext,
+    /// Session selected before the operation began.
+    pub session: &'a AuthoritySession,
+    /// This host's product binding or a paired host's reported identity.
+    pub caller: AccountCaller<'a>,
+}
+
+/// Trust boundary for product identity and host permissions.
+#[derive(Clone, Copy)]
+pub enum AccountCaller<'a> {
+    /// Product identity bound by this host's runtime.
+    Local(&'a ProductContext),
+    /// Product identity reported by an authenticated paired host.
+    Remote {
+        /// Some SSO operations carry no product identity.
+        product_id: Option<&'a str>,
+    },
+}
+
+impl AccountCaller<'_> {
+    /// Product named by this invocation, when the transport supplied one.
+    pub fn product_id(&self) -> Option<&str> {
+        match self {
+            Self::Local(product) => Some(&product.product_id),
+            Self::Remote { product_id } => *product_id,
+        }
+    }
+}
 
 /// Secret key allocated for Bulletin preimage submission.
 ///
@@ -354,9 +385,7 @@ pub trait AccountHolder: Send + Sync {
     /// Sign an RFC-0023 Merlin transcript with a product account.
     async fn sign_vrf(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: String,
+        invocation: AccountInvocation<'_>,
         request: HostAccountSignVrfRequest,
     ) -> Result<VrfSignature, AuthorityError>;
 
@@ -403,9 +432,8 @@ pub trait AccountHolder: Send + Sync {
     /// the alias bound to `context`; `create_proof` derives the same alias.
     async fn account_alias(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountGetAliasRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountGetAliasRequest,
     ) -> Result<HostAccountGetAliasResponse, RingVrfError>;
 
     /// Create a ring-VRF proof bound to a context and message.
@@ -414,9 +442,8 @@ pub trait AccountHolder: Send + Sync {
     /// `contextual_alias` matches `account_alias` for the same inputs.
     async fn create_proof(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountCreateProofRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountCreateProofRequest,
     ) -> Result<HostAccountCreateProofResponse, RingVrfError>;
 
     /// Register a ring-VRF key owned by the calling product.
@@ -430,17 +457,15 @@ pub trait AccountHolder: Send + Sync {
     /// List registered ring-VRF keys.
     async fn list_ring_vrf_keys(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountListRingVrfKeysRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountListRingVrfKeysRequest,
     ) -> Result<HostAccountListRingVrfKeysResponse, RingVrfError>;
 
     /// Sign bytes directly with a registered ring-VRF key.
     async fn ring_vrf_sign(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountRingVrfSignRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountRingVrfSignRequest,
     ) -> Result<HostAccountRingVrfSignResponse, RingVrfError>;
 
     /// Ask the account authority to allocate product-scoped resources.

@@ -399,7 +399,10 @@ impl SigningHostSsoService {
         request: ProductRequest<api::HostAccountGetAliasRequest>,
     ) -> GetAccountAliasResponse {
         self.signing_host
-            .account_alias(&cx.call, &cx.session, request)
+            .account_alias(
+                cx.account_invocation(Some(&request.calling_product_id)),
+                request.payload,
+            )
             .await
     }
 
@@ -517,7 +520,10 @@ impl SigningHostSsoService {
         request: ProductRequest<api::HostAccountCreateProofRequest>,
     ) -> CreateAccountProofResponse {
         self.signing_host
-            .create_proof(&cx.call, &cx.session, request)
+            .create_proof(
+                cx.account_invocation(Some(&request.calling_product_id)),
+                request.payload,
+            )
             .await
     }
 
@@ -528,12 +534,9 @@ impl SigningHostSsoService {
         request: ProductRequest<api::HostAccountSignVrfRequest>,
     ) -> SignVrfResponse {
         self.signing_host
-            .sign_vrf_request(
-                &cx.call,
-                &cx.session,
-                request.calling_product_id,
+            .sign_vrf(
+                cx.account_invocation(Some(&request.calling_product_id)),
                 request.payload,
-                false,
             )
             .await
             .map_err(api::HostAccountSignVrfError::from)
@@ -569,7 +572,10 @@ impl SigningHostSsoService {
         request: ProductRequest<api::HostAccountListRingVrfKeysRequest>,
     ) -> ListRingVrfKeysResponse {
         self.signing_host
-            .list_ring_vrf_keys(&cx.call, &cx.session, request)
+            .list_ring_vrf_keys(
+                cx.account_invocation(Some(&request.calling_product_id)),
+                request.payload,
+            )
             .await
     }
 
@@ -580,7 +586,10 @@ impl SigningHostSsoService {
         request: ProductRequest<api::HostAccountRingVrfSignRequest>,
     ) -> RingVrfSignResponse {
         self.signing_host
-            .ring_vrf_sign(&cx.call, &cx.session, request)
+            .ring_vrf_sign(
+                cx.account_invocation(Some(&request.calling_product_id)),
+                request.payload,
+            )
             .await
     }
 }

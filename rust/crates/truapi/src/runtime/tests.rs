@@ -1,5 +1,6 @@
 //! Shared runtime fixtures and cross-capability integration tests.
 
+use super::authority::{AccountCaller, AccountInvocation};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -7156,22 +7157,22 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 
     let proof = futures::executor::block_on(AccountHolder::create_proof(
         &*pairing_host,
-        &CallContext::default(),
-        &session,
-        crate::host_internal::sso_messages::ProductRequest {
-            calling_product_id: "dim2.dot".to_string(),
-            payload: v01::HostAccountCreateProofRequest {
-                key_handle: v01::ProductAccountId {
-                    dot_ns_identifier: "peopl.dot".to_string(),
-                    derivation_index: v01::DerivationIndex::Index(0),
-                },
-                context: v01::ProductProofContext {
-                    product_id: "dim2.dot".to_string(),
-                    suffix: v01::DerivationIndex::Index(0),
-                },
-                ring_location: ring_location_fixture(),
-                message: b"prove me".to_vec(),
+        AccountInvocation {
+            call: &CallContext::default(),
+            session: &session,
+            caller: AccountCaller::Local(&ProductContext::new("dim2.dot".to_string()).unwrap()),
+        },
+        v01::HostAccountCreateProofRequest {
+            key_handle: v01::ProductAccountId {
+                dot_ns_identifier: "peopl.dot".to_string(),
+                derivation_index: v01::DerivationIndex::Index(0),
             },
+            context: v01::ProductProofContext {
+                product_id: "dim2.dot".to_string(),
+                suffix: v01::DerivationIndex::Index(0),
+            },
+            ring_location: ring_location_fixture(),
+            message: b"prove me".to_vec(),
         },
     ));
     assert_eq!(
@@ -7182,17 +7183,17 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 
     let signed = futures::executor::block_on(AccountHolder::ring_vrf_sign(
         &*pairing_host,
-        &CallContext::default(),
-        &session,
-        crate::host_internal::sso_messages::ProductRequest {
-            calling_product_id: "dim2.dot".to_string(),
-            payload: v01::HostAccountRingVrfSignRequest {
-                key_handle: v01::ProductAccountId {
-                    dot_ns_identifier: "peopl.dot".to_string(),
-                    derivation_index: v01::DerivationIndex::Index(0),
-                },
-                message: b"sign me".to_vec(),
+        AccountInvocation {
+            call: &CallContext::default(),
+            session: &session,
+            caller: AccountCaller::Local(&ProductContext::new("dim2.dot".to_string()).unwrap()),
+        },
+        v01::HostAccountRingVrfSignRequest {
+            key_handle: v01::ProductAccountId {
+                dot_ns_identifier: "peopl.dot".to_string(),
+                derivation_index: v01::DerivationIndex::Index(0),
             },
+            message: b"sign me".to_vec(),
         },
     ));
     assert_eq!(
