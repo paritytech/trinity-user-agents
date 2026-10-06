@@ -425,6 +425,8 @@ An account id must be exactly 32 bytes. Anything else is rejected where the bind
 
 The example receives `secretStorage` from the embedding app's shared durable secret backend and `walletSecrets`, a separate `NativeWalletSecretProvider` whose async `readWalletRootEntropy(walletId:)` reads the exact selected protected root or throws `HostRejection`. Construction asynchronously opens encrypted SQLite and durably initializes its installation key; it starts locked and does not read wallet entropy. Share that construction task independently of wallet activation so cancelling a caller or switching wallets cannot initialize the installation key twice. Await `activateWallet` before opening wallet-backed product or SSO operations; call `lockWallet` immediately when the native wallet selection becomes invalid. A failed explicit replacement preserves the active wallet unless the host locked it first.
 
+For full installation reset, join pending construction and await `runtime.shutdown()` before deleting the database directory. Shutdown permanently refuses wallet activation and closes the shared database, including handles held by existing executions. Retire the host's protected-storage backend before wiping Keychain, then create a new runtime and backend for the next installation. Ordinary `lockWallet()` preserves storage. A construction failure reported as `RuntimeUnavailable` does not confirm cleanup; retain that failure and require an app restart before deleting files. `DatabaseUnavailable` confirms that initialization failed with all opened connections closed.
+
 ```swift
 import Foundation
 import WebKit

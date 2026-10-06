@@ -80,6 +80,38 @@ struct TrUAPISecretStorageTests {
         #expect(try await secret.read(key: .authSession) == nil)
     }
 
+    @Test func retirementWaitsForStartedWritesAndRejectsTheOldAdapter() async throws {
+        let lock = ObservableLock()
+        let keychain = MemoryKeychain()
+        let device = TestDeviceKeys()
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let waiting = DispatchSemaphore(value: 0)
+        keychain.onCheck = {
+            entered.signal()
+            precondition(release.wait(timeout: .now() + 5) == .success)
+        }
+        let old = storage(keychain: keychain, device: device, lock: lock)
+        let writer = Task.detached { try await old.write(key: .authSession, value: Data([1])) }
+        #expect(await waitForSignal(entered) == .success)
+        lock.onLock = { waiting.signal() }
+        let retirement = Task.detached { old.retire() }
+        #expect(await waitForSignal(waiting) == .success)
+        keychain.onCheck = nil
+        release.signal()
+        try await writer.value
+        await retirement.value
+        keychain.removeAll()
+        let fresh = storage(keychain: keychain, installation: "fresh")
+        try await fresh.write(key: .authSession, value: Data([2]))
+        await #expect(throws: HostRejection.self) { try await old.read(key: .deviceEncryptionKey) }
+        await #expect(throws: HostRejection.self) { try await old.write(key: .authSession, value: Data([3])) }
+        await #expect(throws: HostRejection.self) { try await old.clear(key: .authSession) }
+        #expect(device.reads == 0)
+        #expect(try await fresh.read(key: .authSession) == Data([2]))
+        #expect(keychain.snapshot.count == 1)
+    }
+
     @Test func aCancelledTaskWaitingForTheLockCannotResurrectASecret() async throws {
         let lock = ObservableLock()
         let keychain = MemoryKeychain()
@@ -146,6 +178,8 @@ private final class MemoryKeychain: KeystoreProtocol, @unchecked Sendable {
     var fetchFailure: Error?
     var onCheck: (@Sendable () -> Void)?
     var snapshot: [String: Data] { lock.withLock { values } }
+
+    func removeAll() { lock.withLock { values.removeAll() } }
 
     func addKey(_ key: Data, with identifier: String) throws {
         lock.withLock { values[identifier] = key }

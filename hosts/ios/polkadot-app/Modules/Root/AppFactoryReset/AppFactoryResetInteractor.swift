@@ -17,8 +17,12 @@
             let presenter = presenter
 
             Task { [resetService] in
-                await resetService.resetAllData()
-                await presenter?.didCompleteReset()
+                do {
+                    try await resetService.resetAllData()
+                    await presenter?.didCompleteReset()
+                } catch {
+                    await presenter?.didFailReset(error)
+                }
             }
         }
     }

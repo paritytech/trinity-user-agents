@@ -757,6 +757,12 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.lockWallet()
     }
 
+    /// Permanently retire the wallet and close its shared database before deleting host data.
+    public func shutdown() async throws {
+        try await inner.shutdown()
+        notificationCenter.removeObserver(foregroundObserver)
+    }
+
     /// Take one reference on the product's worker for a modality holder that
     /// is on screen or in flight. The first one reports `.start` to
     /// ``HostBridge/workerDemandChanged(productId:transition:)``, which is

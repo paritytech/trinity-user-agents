@@ -76,16 +76,16 @@ pub enum NativeRuntimeConfigError {
         /// Which field was refused, and why.
         reason: String,
     },
-    /// The core runtime's worker threads could not be started.
+    /// Runtime startup or cleanup failed without confirming that all resources were closed.
     #[error("core runtime unavailable: {reason}")]
     RuntimeUnavailable {
-        /// Why the runtime failed to start.
+        /// Why startup or cleanup failed.
         reason: String,
     },
-    /// The core database could not be opened in `database_directory`.
+    /// Protected database initialization failed after every opened connection was closed.
     #[error("core database unavailable: {reason}")]
     DatabaseUnavailable {
-        /// Which directory, and why opening it failed.
+        /// Why protected database initialization failed.
         reason: String,
     },
 }

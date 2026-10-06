@@ -57,6 +57,7 @@ pub struct WalletAccountHolder {
 struct WalletState {
     activation: u64,
     keys: Option<WalletKeys>,
+    retired: bool,
 }
 
 impl WalletState {
@@ -373,11 +374,16 @@ impl WalletAccountHolder {
         wallet_id: String,
         lite_username: Option<String>,
     ) -> Result<PreparedWalletActivation, AuthorityError> {
-        let expected_activation = self
-            .lifecycle
-            .lock()
-            .expect("wallet lifecycle mutex poisoned")
-            .activation;
+        let expected_activation = {
+            let state = self
+                .lifecycle
+                .lock()
+                .expect("wallet lifecycle mutex poisoned");
+            if state.retired {
+                return Err(AuthorityError::Disconnected);
+            }
+            state.activation
+        };
         let entropy = Zeroizing::new(provider.read_wallet_root_entropy(wallet_id).await.map_err(
             |error| AuthorityError::Unavailable {
                 reason: error.reason,
@@ -436,7 +442,7 @@ impl WalletAccountHolder {
             .lifecycle
             .lock()
             .expect("wallet lifecycle mutex poisoned");
-        if state.activation != activation.expected_activation {
+        if state.retired || state.activation != activation.expected_activation {
             return Err(AuthorityError::Disconnected);
         }
         state.advance();
@@ -451,6 +457,18 @@ impl WalletAccountHolder {
             .lifecycle
             .lock()
             .expect("wallet lifecycle mutex poisoned");
+        state.advance();
+        state.keys.take();
+        self.session_state.clear_session();
+    }
+
+    /// Permanently refuse activation under the host's grant lifecycle lock.
+    pub fn retire(&self) {
+        let mut state = self
+            .lifecycle
+            .lock()
+            .expect("wallet lifecycle mutex poisoned");
+        state.retired = true;
         state.advance();
         state.keys.take();
         self.session_state.clear_session();

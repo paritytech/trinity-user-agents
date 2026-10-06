@@ -35,6 +35,12 @@
     }
 
     extension AppFactoryResetPresenter: AppFactoryResetInteractorOutputProtocol {
+        func didFailReset(_ error: Error) {
+            wireframe.presentResetFailure(error) { [self] in
+                interactor.performReset()
+            }
+        }
+
         func didCompleteReset() {
             wireframe.navigateToFreshStart()
         }

@@ -76,20 +76,26 @@ impl NativeTrUApiHostRuntime {
         })?;
         let directory = &runtime_config.database_directory;
         let core_db = Db::open(core_db_config(directory)).await.map_err(|error| {
-            NativeRuntimeConfigError::DatabaseUnavailable {
+            NativeRuntimeConfigError::RuntimeUnavailable {
                 reason: format!("{}: {error}", directory.display()),
             }
         })?;
         let secrets = Arc::new(SecretStorageCallback {
             callbacks: callbacks.clone(),
         });
-        let storage = Arc::new(
-            RuntimeStore::open(core_db.clone(), secrets.as_ref())
-                .await
-                .map_err(|error| NativeRuntimeConfigError::DatabaseUnavailable {
+        let storage = match RuntimeStore::open(core_db.clone(), secrets.as_ref()).await {
+            Ok(storage) => Arc::new(storage),
+            Err(error) => {
+                core_db.close().await.map_err(|close| {
+                    NativeRuntimeConfigError::RuntimeUnavailable {
+                        reason: format!("{error}; failed to close database: {close}"),
+                    }
+                })?;
+                return Err(NativeRuntimeConfigError::DatabaseUnavailable {
                     reason: error.to_string(),
-                })?,
-        );
+                });
+            }
+        };
         let events = Arc::new(NativeEventBus::default());
         let platform = Arc::new(CallbackPlatform {
             callbacks: callbacks.clone(),
@@ -467,6 +473,14 @@ impl NativeTrUApiHostRuntime {
     /// Invalidate active wallet work and release in-memory secrets.
     pub fn lock_wallet(&self) {
         self.runtime.lock_wallet();
+    }
+
+    /// Permanently retire this wallet owner and close its shared database.
+    pub async fn shutdown(&self) -> Result<(), NativeCoreDatabaseError> {
+        self.runtime
+            .shutdown()
+            .await
+            .map_err(NativeCoreDatabaseError::from)
     }
 
     /// Record the accounts a renewal pass should keep allowed. The ledger
@@ -1032,6 +1046,12 @@ mod tests {
             ),
             (Err("protected wallet unavailable".to_string()), false, 1),
         );
+        futures::executor::block_on(runtime.shutdown()).unwrap();
+        assert!(
+            futures::executor::block_on(runtime.activate_wallet("selected".to_string(), None))
+                .is_err()
+        );
+        assert_eq!(provider.0.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -1123,6 +1143,81 @@ mod tests {
             futures::executor::block_on(execution.platform.read(key)),
             Ok(Some(vec![7])),
         );
+    }
+
+    #[test]
+    fn shutdown_fences_old_storage_and_activation_after_database_recreation() {
+        use futures::executor::block_on;
+
+        let callbacks = Arc::new(EventCallbacks::new());
+        let config = native_host_runtime_config();
+        let host = native_host_runtime(callbacks.clone(), config.clone()).unwrap();
+        let execution = host
+            .open_product_execution(
+                callbacks.clone(),
+                None,
+                None,
+                native_execution_config("myapp.dot", ProductExecutionKind::App),
+            )
+            .unwrap();
+        let key = crate::platform::ProductStorageKey::new("myapp.dot", "progress")
+            .unwrap()
+            .encode();
+        block_on(execution.platform.write(key.clone(), vec![7])).unwrap();
+        block_on(host.set_permission_record(
+            "myapp.dot".to_string(),
+            PermissionAuthorizationRequest::Device(
+                crate::latest::HostDevicePermissionRequest::Camera,
+            ),
+            PermissionAuthorizationStatus::Authorized,
+        ))
+        .unwrap();
+        host.lock_wallet();
+        assert_eq!(
+            block_on(execution.platform.read(key.clone())),
+            Ok(Some(vec![7]))
+        );
+        block_on(host.activate_wallet("alice".to_string(), None)).unwrap();
+        block_on(host.shutdown()).unwrap();
+        block_on(host.shutdown()).unwrap();
+        assert!(block_on(host.activate_wallet("alice".to_string(), None)).is_err());
+        assert!(!host.runtime.has_active_session());
+        assert!(block_on(host.core_database_status()).is_err());
+
+        std::fs::remove_dir_all(&config.database_directory).unwrap();
+        callbacks.secret_storage.lock().unwrap().clear();
+        std::fs::create_dir(&config.database_directory).unwrap();
+        let fresh = native_host_runtime(callbacks.clone(), config).unwrap();
+        let fresh_execution = fresh
+            .open_product_execution(
+                callbacks,
+                None,
+                None,
+                native_execution_config("myapp.dot", ProductExecutionKind::App),
+            )
+            .unwrap();
+        assert!(block_on(execution.platform.write(key.clone(), vec![8])).is_err());
+        assert_eq!(
+            block_on(fresh_execution.platform.read(key.clone())),
+            Ok(None)
+        );
+        block_on(fresh_execution.platform.write(key.clone(), vec![9])).unwrap();
+        assert_eq!(
+            block_on(fresh_execution.platform.read(key)),
+            Ok(Some(vec![9]))
+        );
+        assert!(
+            block_on(
+                fresh
+                    .storage
+                    .permission_records(None, "paseo".to_string())
+                    .next()
+            )
+            .unwrap()
+            .unwrap()
+            .is_empty()
+        );
+        block_on(fresh.shutdown()).unwrap();
     }
 
     /// The runtime installs its own observer, so a host cannot be left with a
@@ -1491,7 +1586,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(NativeRuntimeConfigError::DatabaseUnavailable { .. })
+            Err(NativeRuntimeConfigError::RuntimeUnavailable { .. })
         ));
     }
 }

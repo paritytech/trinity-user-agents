@@ -897,6 +897,13 @@ impl SigningHostRuntime {
         self.signing_host.lock_wallet();
     }
 
+    /// Permanently retire the wallet and close every shared database handle.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn shutdown(&self) -> Result<(), crate::store::DbError> {
+        self.signing_host.retire();
+        self.services.core_db()?.close().await
+    }
+
     /// Read and activate the selected wallet through its protected provider.
     pub async fn activate_wallet(
         &self,

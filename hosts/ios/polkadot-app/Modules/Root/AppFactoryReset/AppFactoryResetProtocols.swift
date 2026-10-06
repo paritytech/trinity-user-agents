@@ -17,6 +17,7 @@
     @MainActor
     protocol AppFactoryResetInteractorOutputProtocol: AnyObject {
         func didCompleteReset()
+        func didFailReset(_ error: Error)
     }
 
     @MainActor
@@ -24,6 +25,7 @@
         /// Releases the current screen hierarchy, so the dashboard's deinit stops its services before the wipe.
         func detachCurrentSession(from view: AppFactoryResetViewProtocol?)
         func navigateToFreshStart()
+        func presentResetFailure(_ error: Error, retry: @escaping () -> Void)
         func dismiss(from view: AppFactoryResetViewProtocol?)
     }
 #endif

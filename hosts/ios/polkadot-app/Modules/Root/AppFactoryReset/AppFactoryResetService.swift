@@ -31,9 +31,15 @@
             self.logger = logger
         }
 
-        func resetAllData() async {
+        func resetAllData() async throws {
             let runtimeProvider: TrUAPIHostRuntimeProviding? = RootDependencyLocator.getDependency()
-            runtimeProvider?.lockWallet()
+            if let runtimeProvider {
+                try await runtimeProvider.resetData()
+            } else {
+                do {
+                    try FileManager.default.removeItem(atPath: TrUAPIHostRuntimeProvider.coreDatabaseDirectory())
+                } catch CocoaError.fileNoSuchFile {}
+            }
             if #available(iOS 26.0, *) {
                 clearAlarmKitAlarms()
             }

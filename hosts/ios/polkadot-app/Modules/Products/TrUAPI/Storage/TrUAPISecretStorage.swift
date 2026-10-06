@@ -8,6 +8,7 @@ final class TrUAPISecretStorage: HostSecretStorageBackend, @unchecked Sendable {
     private let storeIdProvider: ProductResourceStoreIdProviding
     private let deviceKeys: DeviceEncryptionKeyManaging
     private let lock: NSLock
+    private var retired = false
 
     init(
         keychain: KeystoreProtocol,
@@ -24,6 +25,7 @@ final class TrUAPISecretStorage: HostSecretStorageBackend, @unchecked Sendable {
     func read(key: SecretCoreStorageKey) async throws -> Data? {
         try lock.withLock {
             try Task.checkCancellation()
+            guard !retired else { throw HostRejection.Rejected(reason: "Protected storage is retired") }
             if case .deviceEncryptionKey = key {
                 return try deviceKeys.getOrCreatePrivateKey().rawRepresentation
             }
@@ -38,6 +40,7 @@ final class TrUAPISecretStorage: HostSecretStorageBackend, @unchecked Sendable {
     func write(key: SecretCoreStorageKey, value: Data) async throws {
         try lock.withLock {
             try Task.checkCancellation()
+            guard !retired else { throw HostRejection.Rejected(reason: "Protected storage is retired") }
             if case .deviceEncryptionKey = key {
                 throw HostRejection.Rejected(reason: "Device encryption identity is managed by the device key provider")
             }
@@ -48,11 +51,16 @@ final class TrUAPISecretStorage: HostSecretStorageBackend, @unchecked Sendable {
     func clear(key: SecretCoreStorageKey) async throws {
         try lock.withLock {
             try Task.checkCancellation()
+            guard !retired else { throw HostRejection.Rejected(reason: "Protected storage is retired") }
             if case .deviceEncryptionKey = key {
                 throw HostRejection.Rejected(reason: "Device encryption identity is managed by the device key provider")
             }
             try keychain.deleteKeyIfExists(for: identifier(key))
         }
+    }
+
+    func retire() {
+        lock.withLock { retired = true }
     }
 
     private func identifier(_ key: SecretCoreStorageKey) -> String {

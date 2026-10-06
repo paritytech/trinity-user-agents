@@ -191,6 +191,8 @@ Native product and public core values are encrypted and authenticated in two tab
 
 Native runtimes start locked. Explicit `activateWallet` reads the selected protected root through a separate `WalletSecretProvider`, which is unavailable to product callbacks and account operations. Failed replacement preserves the active wallet; native selection changes call `lockWallet` first, invalidating pending reads and in-memory authorization.
 
+Full iOS factory reset retires the shared provider, joins pending construction, shuts down the Rust database and protected adapter, and deletes the dedicated database directory before wiping installation secrets. Retained runtime handles cannot reactivate the wallet or write to the replacement database.
+
 Native StatementStore and Bulletin allowance keys persist through `SecretCoreStorage`, scoped to the wallet and product. Locking preserves them; product reset removes only that product. StatementStore retains its allocation period so expiry and delayed rejection cannot erase a newer grant.
 
 Confirmed native and CLI product allocations record public account history and exact Statement Store slots in wallet-scoped SQLite tables. A failed journal write reports an error without resubmitting the claim; reusing an observed allowance does not establish device ownership. Renewal still uses its separate target ledger, and mobile renewal scheduling remains native.

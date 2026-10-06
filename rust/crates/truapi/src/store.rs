@@ -283,11 +283,10 @@ impl Db {
 
     /// Checkpoints the write-ahead log and closes every connection.
     pub async fn close(&self) -> Result<(), DbError> {
-        self.writer
-            .conn(|conn| conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())))
-            .await?;
-        self.readers.close().await?;
-        self.writer.close().await?;
+        let readers = self.readers.close().await;
+        let writer = self.writer.close().await;
+        readers?;
+        writer?;
         self.invalidation.close();
         Ok(())
     }
@@ -473,7 +472,41 @@ mod tests {
     fn a_closed_database_rejects_further_work() {
         let db = block_on(Db::open(memory_config())).unwrap();
         block_on(db.close()).unwrap();
+        block_on(db.close()).unwrap();
 
         assert!(matches!(insert(&db, "late"), Err(DbError::Closed)));
+    }
+
+    #[test]
+    fn close_waits_for_started_writes_and_fences_retained_handles_after_reopen() {
+        use futures::FutureExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let db = block_on(Db::open(file_config(&directory))).unwrap();
+        let old = db.clone();
+        let (entered, started) = futures::channel::oneshot::channel();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let mut write = Box::pin(db.write(move |transaction| {
+            entered.send(()).unwrap();
+            blocked.recv().unwrap();
+            transaction.execute("INSERT INTO ledger (note) VALUES ('queued')", [])?;
+            Ok(())
+        }));
+        assert!(write.as_mut().now_or_never().is_none());
+        block_on(started).unwrap();
+        drop(write);
+        let mut close = Box::pin(db.close());
+        assert!(close.as_mut().now_or_never().is_none());
+        release.send(()).unwrap();
+        block_on(close).unwrap();
+
+        let reopened = block_on(Db::open(file_config(&directory))).unwrap();
+        assert_eq!(notes(&reopened), vec!["queued".to_owned()]);
+        block_on(reopened.close()).unwrap();
+        std::fs::remove_file(directory.path().join("core.sqlite3")).unwrap();
+        let fresh = block_on(Db::open(file_config(&directory))).unwrap();
+        assert!(matches!(insert(&old, "late"), Err(DbError::Closed)));
+        insert(&fresh, "fresh").unwrap();
+        assert_eq!(notes(&fresh), vec!["fresh".to_owned()]);
     }
 }

@@ -157,6 +157,116 @@ final class TrUAPIHostRuntimeReadinessTests {
         #expect(keychain.reads == 1)
     }
 
+    @Test func resetClosesRetainedRuntimeBeforeReopeningAnEmptyInstallation() async throws {
+        let protectedKeys = ObservedKeychain()
+        let secrets = makeSecretStorage(keychain: protectedKeys)
+        let selection = InstallationKeyIdStore(userDefaults: defaults)
+        let provider = try makeProvider(selection: selection, secretStorage: secrets)
+        let walletId = try #require(selection.getInstallationKeyId())
+        let runtime = try await provider.sharedRuntime()
+        try await runtime.setPermissionRecord(
+            productId: "calendar.paseo", request: .device(.camera), status: .authorized
+        )
+        provider.lockWallet()
+        var saved = runtime.permissionRecords().makeAsyncIterator()
+        #expect(try await saved.next()?.count == 1)
+        try await provider.resetData()
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+        await #expect(throws: TrUAPIRuntimeConfigError.self) { try await provider.constructedRuntime() }
+        await #expect(throws: HostRejection.self) {
+            try await runtime.activateWallet(walletId: walletId, liteUsername: nil)
+        }
+        await #expect(throws: HostRejection.self) {
+            try await runtime.setPermissionRecord(
+                productId: "calendar.paseo", request: .device(.camera), status: .authorized
+            )
+        }
+        await #expect(throws: HostRejection.self) { try await secrets.read(key: .storageEncryptionKey) }
+        defaults.removePersistentDomain(forName: suiteName)
+        let fresh = try makeProvider()
+        let freshRuntime = try await fresh.sharedRuntime()
+        await #expect(throws: HostRejection.self) {
+            try await secrets.write(key: .storageEncryptionKey, value: Data(repeating: 1, count: 32))
+        }
+        #expect(try freshRuntime.statementRenewalOwnerKey().count == 32)
+        var records = freshRuntime.permissionRecords().makeAsyncIterator()
+        #expect(try await records.next() == [])
+        try await provider.resetData()
+        #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("core.sqlite3").path))
+        try await fresh.resetData()
+    }
+
+    @Test func resetWithoutConstructionDoesNotReadProtectedStorage() async throws {
+        let protectedKeys = ObservedKeychain()
+        let provider = try makeProvider(secretStorage: makeSecretStorage(keychain: protectedKeys))
+        try await provider.resetData()
+        #expect(protectedKeys.reads == 0)
+        #expect(protectedKeys.writes == 0)
+        #expect(keychain.reads == 0)
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+        await #expect(throws: TrUAPIRuntimeConfigError.self) { try await provider.sharedRuntime() }
+    }
+
+    @Test(arguments: [false, true])
+    func resetWaitsForConstructionAndCannotPublishTheRetiredRuntime(failWrite: Bool) async throws {
+        let protectedKeys = ObservedKeychain()
+        let secrets = makeSecretStorage(keychain: protectedKeys)
+        let provider = try makeProvider(secretStorage: secrets)
+        protectedKeys.failWrites = failWrite
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        protectedKeys.onWrite = {
+            entered.signal()
+            precondition(release.wait(timeout: .now() + 10) == .success)
+        }
+        let construction = Task { try await provider.constructedRuntime() }
+        #expect(await waitForSignal(entered) == .success)
+        defer { release.signal() }
+        provider.lockWallet()
+        let reset = Task { try await provider.resetData() }
+        let deadline = Date().addingTimeInterval(5)
+        var retired = false
+        while !retired, Date() < deadline {
+            do {
+                _ = try await provider.sharedRuntime()
+                Issue.record("A locked provider must not activate during reset")
+                break
+            } catch TrUAPIRuntimeConfigError.walletLocked {
+                await Task.yield()
+            } catch TrUAPIRuntimeConfigError.runtimeRetired {
+                retired = true
+            }
+        }
+        #expect(retired)
+        reset.cancel()
+        release.signal()
+        try await reset.value
+        _ = await construction.result
+        #expect(protectedKeys.writes == 1)
+        #expect(keychain.reads == 0)
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+        await #expect(throws: TrUAPIRuntimeConfigError.self) { try await provider.constructedRuntime() }
+        await #expect(throws: HostRejection.self) {
+            try await secrets.write(key: .storageEncryptionKey, value: Data(repeating: 1, count: 32))
+        }
+    }
+
+    @Test func resetCanRetryDirectoryFailureWithoutReactivatingTheRuntime() async throws {
+        let failure = ResetDirectoryFailure()
+        let provider = try makeProvider(databaseDirectory: { [directory] in
+            try failure.resolve(directory.path)
+        })
+        let runtime = try await provider.sharedRuntime()
+        failure.fail = true
+        await #expect(throws: CocoaError.self) { try await provider.resetData() }
+        #expect(FileManager.default.fileExists(atPath: directory.path))
+        #expect(throws: HostRejection.self) { try runtime.statementRenewalOwnerKey() }
+        await #expect(throws: TrUAPIRuntimeConfigError.self) { try await provider.constructedRuntime() }
+        failure.fail = false
+        try await provider.resetData()
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+    }
+
     @Test(.timeLimit(.minutes(1)))
     @MainActor
     func lockedSettingsObserveAndResetWithoutWalletActivation() async throws {
@@ -275,7 +385,8 @@ final class TrUAPIHostRuntimeReadinessTests {
 
     private func makeProvider(
         selection: InstallationKeyIdStoring = ObservedSelection(),
-        secretStorage: HostSecretStorageBackend = StubSecretStorage()
+        secretStorage: TrUAPISecretStorage? = nil,
+        databaseDirectory: (@Sendable () throws -> String)? = nil
     ) throws -> TrUAPIHostRuntimeProvider {
         let roots = RootEntropyManager(keychain: keychain, installationKeyIdStore: selection)
         try roots.createRootEntropy(Data(repeating: 7, count: 16))
@@ -294,11 +405,11 @@ final class TrUAPIHostRuntimeReadinessTests {
             chainRegistry: registry,
             entropyManager: roots,
             settingsManager: InMemorySettingsManager(),
-            secretStorage: secretStorage,
+            secretStorage: secretStorage ?? makeSecretStorage(keychain: ObservedKeychain()),
             installationKeyIdStore: selection,
             confirmationRouterFacade: ProductRoutersFacade.sso(),
             tldProvider: StubDotNsTldProvider(tld: "paseo"),
-            databaseDirectory: { [directory] in directory.path },
+            databaseDirectory: databaseDirectory ?? { [directory] in directory.path },
             contactDataProviderFactory: MockChatContactDataProviderFactory(),
             logger: Logger.shared
         )
@@ -393,5 +504,14 @@ private final class SettingsPermissionsOutput: AppPermissionsInteractorOutputPro
 private final class FailingSettingsProductResolver: ProductResolving, Sendable {
     func resolve(_ productId: ProductId) async throws -> ResolvedProduct {
         throw HostRejection.Rejected(reason: "No manifest for \(productId)")
+    }
+}
+
+private final class ResetDirectoryFailure: @unchecked Sendable {
+    var fail = false
+
+    func resolve(_ path: String) throws -> String {
+        if fail { throw CocoaError(.fileWriteNoPermission) }
+        return path
     }
 }

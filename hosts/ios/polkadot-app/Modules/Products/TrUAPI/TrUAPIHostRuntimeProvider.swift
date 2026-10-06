@@ -13,6 +13,7 @@ enum TrUAPIRuntimeConfigError: Error {
     case missingGenesisHash(chain: String)
     case walletLocked
     case walletSelectionChanged
+    case runtimeRetired
 }
 
 /// Vends the process-wide ``TrUAPIHostRuntime``. Product executions open off
@@ -28,6 +29,9 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     func sharedRuntime() async throws -> TrUAPIHostRuntime
     func lockWallet()
 
+    /// Retire this provider before deleting its database and protected installation state.
+    func resetData() async throws
+
     /// Anchor the host's core confirmations (signing, permission prompts) to
     /// the given view. Until it is attached, host-level prompts deny.
     @MainActor func setPresentationView(_ view: ControllerBackedProtocol)
@@ -39,11 +43,12 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let walletSecrets: NativeWalletSecretProvider
     private let installationKeyIdStore: InstallationKeyIdStoring
     private let settingsManager: SettingsManagerProtocol
-    let secretStorage: HostSecretStorageBackend
+    private let protectedStorage: TrUAPISecretStorage
+    var secretStorage: HostSecretStorageBackend { protectedStorage }
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
-    private let databaseDirectory: () throws -> String
+    private let databaseDirectory: @Sendable () throws -> String
     private let contactDataProviderFactory: ChatContactDataProviderMaking
 
     private let lock = NSLock()
@@ -55,6 +60,8 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private var construction: Construction?
     private var readiness: (walletId: String, task: Task<Void, Error>)?
     private var isLocked = false
+    private var retired = false
+    private var resetTask: Task<Void, Error>?
     private var selectionObservers: [NSObjectProtocol] = []
     private var contactsChangeNotifier: ContactsChangeNotifier?
 
@@ -62,11 +69,12 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         chainRegistry: ChainRegistryProtocol,
         entropyManager: RootEntropyManaging,
         settingsManager: SettingsManagerProtocol,
-        secretStorage: HostSecretStorageBackend,
+        secretStorage: TrUAPISecretStorage,
         installationKeyIdStore: InstallationKeyIdStoring = InstallationKeyIdStore(),
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
-        databaseDirectory: @escaping () throws -> String = { try TrUAPIHostRuntimeProvider.coreDatabaseDirectory() },
+        databaseDirectory: @escaping @Sendable () throws
+            -> String = { try TrUAPIHostRuntimeProvider.coreDatabaseDirectory() },
         contactDataProviderFactory: ChatContactDataProviderMaking = ChatContactDataProviderFactory(),
         logger: LoggerProtocol
     ) {
@@ -77,7 +85,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             installationKeyIdStore: installationKeyIdStore
         )
         self.settingsManager = settingsManager
-        self.secretStorage = secretStorage
+        protectedStorage = secretStorage
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
         self.logger = logger
@@ -121,9 +129,47 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         }
     }
 
+    func resetData() async throws {
+        let pending = lock.withLock { () -> Task<Void, Error> in
+            if let resetTask { return resetTask }
+            retired = true
+            isLocked = true
+            readiness?.task.cancel()
+            readiness = nil
+            contactsChangeNotifier = nil
+            if case let .ready(runtime) = construction { runtime.lockWallet() }
+            let existing = construction
+            let task = Task.detached { [weak self, protectedStorage, databaseDirectory] in
+                do {
+                    switch existing {
+                    case let .pending(task):
+                        do {
+                            try await task.value.shutdown()
+                        } catch NativeRuntimeConfigError.DatabaseUnavailable, NativeRuntimeConfigError.Invalid {
+                            break
+                        }
+                    case let .ready(runtime): try await runtime.shutdown()
+                    case nil: break
+                    }
+                    protectedStorage.retire()
+                    do {
+                        try FileManager.default.removeItem(atPath: databaseDirectory())
+                    } catch CocoaError.fileNoSuchFile {}
+                } catch {
+                    self?.lock.withLock { self?.resetTask = nil }
+                    throw error
+                }
+            }
+            resetTask = task
+            return task
+        }
+        try await pending.value
+    }
+
     func constructedRuntime() async throws -> TrUAPIHostRuntime {
         let construction = try lock.withLock {
             try Task.checkCancellation()
+            guard !retired else { throw TrUAPIRuntimeConfigError.runtimeRetired }
             if let construction { return construction }
             let pending = try Construction.pending(makeRuntimeTask())
             self.construction = pending
@@ -135,17 +181,22 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             case let .ready(ready): ready
             }
         try Task.checkCancellation()
+        try lock.withLock {
+            guard !retired else { throw TrUAPIRuntimeConfigError.runtimeRetired }
+        }
         return runtime
     }
 
     func sharedRuntime() async throws -> TrUAPIHostRuntime {
         try lock.withLock {
             try Task.checkCancellation()
+            guard !retired else { throw TrUAPIRuntimeConfigError.runtimeRetired }
             guard !isLocked else { throw TrUAPIRuntimeConfigError.walletLocked }
         }
         let runtime = try await constructedRuntime()
         let pending = try lock.withLock { () throws -> Task<Void, Error> in
             try Task.checkCancellation()
+            guard !retired else { throw TrUAPIRuntimeConfigError.runtimeRetired }
             guard !isLocked else { throw TrUAPIRuntimeConfigError.walletLocked }
             guard let walletId = installationKeyIdStore.getInstallationKeyId() else {
                 throw RootEntropyManagerError.noEntropyFound
@@ -181,12 +232,20 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         }
         return runtime
     }
+}
 
-    private func makeRuntimeTask() throws -> Task<TrUAPIHostRuntime, Error> {
+private extension TrUAPIHostRuntimeProvider {
+    func makeRuntimeTask() throws -> Task<TrUAPIHostRuntime, Error> {
+        let directory = try URL(fileURLWithPath: databaseDirectory(), isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var excludedDirectory = directory
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try excludedDirectory.setResourceValues(values)
         let runtimeConfig = try Self.makeRuntimeConfig(
             chainRegistry: chainRegistry,
             networkSuffix: tldProvider.currentTldOrError(),
-            databaseDirectory: databaseDirectory()
+            databaseDirectory: directory.path
         )
 
         let chainConnections = TrUAPIChainConnectionPool(
@@ -213,6 +272,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
                     walletSecrets: walletSecrets,
                     runtimeConfig: runtimeConfig
                 )
+                if self?.lock.withLock({ self?.retired == true }) == true { return runtime }
                 try Task.checkCancellation()
                 bridge.attach(runtime)
                 let contactsBridge = AppContactsHostBridge(
@@ -234,13 +294,16 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
                 guard let self else { throw CancellationError() }
                 try lock.withLock {
                     try Task.checkCancellation()
-                    self.contactsChangeNotifier = notifier
-                    self.construction = .ready(runtime)
+                    if !retired {
+                        self.contactsChangeNotifier = notifier
+                        self.construction = .ready(runtime)
+                    }
                 }
                 return runtime
             } catch {
                 self?.lock.withLock {
-                    if !Task.isCancelled { self?.construction = nil }
+                    if case NativeRuntimeConfigError.RuntimeUnavailable = error { return }
+                    if !Task.isCancelled, self?.retired == false { self?.construction = nil }
                 }
                 throw error
             }
@@ -293,17 +356,11 @@ extension TrUAPIHostRuntimeProvider {
         )
     }
 
-    /// The core database directory under Application Support, created if
-    /// needed and excluded from backup: a durable-transaction ledger restored
-    /// onto another device would act on transactions that already settled.
+    /// Resolve the dedicated database path without creating it during reset.
     static func coreDatabaseDirectory(fileManager: FileManager = .default) throws -> String {
-        var directory = try fileManager
-            .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        try fileManager
+            .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
             .appendingPathComponent("truapi", isDirectory: true)
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        var values = URLResourceValues()
-        values.isExcludedFromBackup = true
-        try directory.setResourceValues(values)
-        return directory.path
+            .path
     }
 }
