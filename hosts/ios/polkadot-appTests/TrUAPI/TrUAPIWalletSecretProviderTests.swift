@@ -3,6 +3,7 @@ import Foundation_iOS
 import KeyDerivation
 import Keystore_iOS
 import Testing
+import Products
 import TrUAPIHost
 @testable import polkadot_app
 
@@ -106,8 +107,69 @@ final class TrUAPIHostRuntimeReadinessTests {
         #expect(keychain.reads == 2)
     }
 
-    private func makeProvider(selection: InstallationKeyIdStoring = ObservedSelection()) throws
-        -> TrUAPIHostRuntimeProvider {
+    @Test func constructionSurvivesCallerCancellationAndSelectionReplacement() async throws {
+        let selection = InstallationKeyIdStore(userDefaults: defaults)
+        let protectedKeys = ObservedKeychain()
+        let secrets = makeSecretStorage(keychain: protectedKeys)
+        let provider = try makeProvider(selection: selection, secretStorage: secrets)
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        protectedKeys.onWrite = {
+            if protectedKeys.writes == 1 {
+                entered.signal()
+                precondition(release.wait(timeout: .now() + 10) == .success)
+            }
+        }
+        defer { protectedKeys.onWrite = nil }
+        let first = Task { try await provider.sharedRuntime() }
+        #expect(await waitForSignal(entered) == .success)
+        first.cancel()
+        let roots = RootEntropyManager(keychain: keychain, installationKeyIdStore: selection)
+        try roots.createRootEntropy(Data(repeating: 8, count: 16))
+        let second = Task { try await provider.sharedRuntime() }
+        release.signal()
+        await #expect(throws: CancellationError.self) { try await first.value }
+        let runtime = try await second.value
+        #expect(try runtime.statementRenewalOwnerKey().count == 32)
+        #expect(try await provider.sharedRuntime() === runtime)
+        #expect(protectedKeys.reads == 1)
+        #expect(protectedKeys.writes == 1)
+        #expect(keychain.reads == 1)
+    }
+
+    @Test func failedConstructionRetriesAfterProtectedWriteFailure() async throws {
+        let protectedKeys = ObservedKeychain()
+        let provider = try makeProvider(secretStorage: makeSecretStorage(keychain: protectedKeys))
+        protectedKeys.failWrites = true
+        await #expect {
+            try await provider.sharedRuntime()
+        } throws: { error in
+            guard case let NativeRuntimeConfigError.DatabaseUnavailable(reason) = error else { return false }
+            return reason == "database protection failed: KeystoreError"
+        }
+        #expect(keychain.reads == 0)
+        protectedKeys.failWrites = false
+        let runtime = try await provider.sharedRuntime()
+        #expect(try runtime.statementRenewalOwnerKey().count == 32)
+        #expect(try await provider.sharedRuntime() === runtime)
+        #expect(protectedKeys.reads == 2)
+        #expect(protectedKeys.writes == 2)
+        #expect(keychain.reads == 1)
+    }
+
+    private func makeSecretStorage(keychain: ObservedKeychain) -> TrUAPISecretStorage {
+        TrUAPISecretStorage(
+            keychain: keychain,
+            storeIdProvider: ProductResourceStoreIdStore(userDefaults: defaults),
+            deviceKeys: TestDeviceKeys(),
+            lock: NSLock()
+        )
+    }
+
+    private func makeProvider(
+        selection: InstallationKeyIdStoring = ObservedSelection(),
+        secretStorage: HostSecretStorageBackend = StubSecretStorage()
+    ) throws -> TrUAPIHostRuntimeProvider {
         let roots = RootEntropyManager(keychain: keychain, installationKeyIdStore: selection)
         try roots.createRootEntropy(Data(repeating: 7, count: 16))
         let registry = MockChainRegistry()
@@ -125,11 +187,7 @@ final class TrUAPIHostRuntimeReadinessTests {
             chainRegistry: registry,
             entropyManager: roots,
             settingsManager: InMemorySettingsManager(),
-            coreStorage: CoreStorageBackend(
-                storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults),
-                lock: NSLock()
-            ),
-            secretStorage: StubSecretStorage(),
+            secretStorage: secretStorage,
             installationKeyIdStore: selection,
             confirmationRouterFacade: ProductRoutersFacade.sso(),
             tldProvider: StubDotNsTldProvider(tld: "paseo"),
@@ -164,16 +222,23 @@ private final class ObservedKeychain: KeystoreProtocol {
     private let storage = InMemoryKeychain()
     var failWrites = false
     var onRead: (() -> Void)?
+    var onWrite: (() -> Void)?
     private let lock = NSLock()
     private var readCount = 0
+    private var writeCount = 0
     var reads: Int { lock.withLock { readCount } }
+    var writes: Int { lock.withLock { writeCount } }
 
     func addKey(_ key: Data, with identifier: String) throws {
+        lock.withLock { writeCount += 1 }
+        onWrite?()
         if failWrites { throw KeystoreError.unexpectedFail }
         try storage.addKey(key, with: identifier)
     }
 
     func updateKey(_ key: Data, with identifier: String) throws {
+        lock.withLock { writeCount += 1 }
+        onWrite?()
         if failWrites { throw KeystoreError.unexpectedFail }
         try storage.updateKey(key, with: identifier)
     }

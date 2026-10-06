@@ -834,8 +834,7 @@ impl SigningHostRuntime {
         self.signing_host.disconnect().await;
     }
 
-    /// Revoke one product's grants from the current local activation while
-    /// preserving unrelated products.
+    /// Revoke one product's grants, including persisted native allowances, while preserving other products.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
     pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
         self.signing_host

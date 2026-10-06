@@ -30,6 +30,9 @@ pub enum SecretCoreStorageKey {
     /// Native resource grants bound to stable wallet ownership.
     #[codec(index = 5)]
     NativeAllowanceKeys,
+    /// Installation key protecting native product and core database values.
+    #[codec(index = 6)]
+    StorageEncryptionKey,
 }
 
 impl SecretCoreStorageKey {

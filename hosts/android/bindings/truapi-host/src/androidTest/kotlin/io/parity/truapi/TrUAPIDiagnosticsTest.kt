@@ -77,12 +77,6 @@ class TrUAPIDiagnosticsTest {
         // Grants every prompt without UI — acceptable ONLY here, in a
         // non-interactive diagnostics run; confirmUserAction gates signing.
         val bridge = object : HostBridge {
-            override val storage = PrefsHostStorage(
-                context.getSharedPreferences("truapi_product_storage", android.content.Context.MODE_PRIVATE),
-            )
-            override val coreStorage = PrefsHostCoreStorage(
-                context.getSharedPreferences("truapi_core_storage", android.content.Context.MODE_PRIVATE),
-            )
             override val secretStorage = PrefsHostSecretStorage(
                 context.getSharedPreferences("truapi_secret_storage", android.content.Context.MODE_PRIVATE),
             )
@@ -122,7 +116,7 @@ class TrUAPIDiagnosticsTest {
             override suspend fun readWalletRootEntropy(walletId: String): ByteArray =
                 ByteArray(32) { (it + 1).toByte() }
         }
-        val runtime = TrUAPIHostRuntime(bridge, walletSecrets, config)
+        val runtime = runBlocking { TrUAPIHostRuntime.create(bridge, walletSecrets, config) }
         runBlocking { runtime.activateWallet("diagnostics", "android-diag") }
         val execution = runtime.openProductExecution(
             bridge = bridge,

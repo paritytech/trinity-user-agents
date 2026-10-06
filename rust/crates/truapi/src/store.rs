@@ -6,6 +6,9 @@
 //! stream that follows every commit.
 
 mod observe;
+mod runtime_store;
+
+pub use runtime_store::RuntimeStore;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -47,7 +50,18 @@ const CORE_DB_READERS: usize = 2;
 
 /// Schema of the core database, one migration per change, in order.
 pub fn core_migrations() -> Migrations<'static> {
-    Migrations::new(Vec::new())
+    Migrations::new(vec![rusqlite_migration::M::up(
+        "CREATE TABLE product_storage (
+            product_id TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value BLOB NOT NULL,
+            PRIMARY KEY (product_id, key)
+        );
+        CREATE TABLE core_state (
+            key BLOB NOT NULL PRIMARY KEY,
+            value BLOB NOT NULL
+        );",
+    )])
 }
 
 /// The core database configuration for a host-provided directory.
@@ -74,6 +88,9 @@ pub enum DbError {
     /// A connection worker failed outside SQLite.
     #[error("database connection failed: {0}")]
     Connection(String),
+    /// Protected storage or authenticated database values are unavailable.
+    #[error("database protection failed: {0}")]
+    Protection(String),
     /// The database was closed.
     #[error("database closed")]
     Closed,

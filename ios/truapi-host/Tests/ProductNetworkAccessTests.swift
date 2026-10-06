@@ -269,7 +269,7 @@ private struct NetworkTestProduct {
     ) async throws -> NetworkTestProduct {
         let server = try await NetworkTestServer.start()
         do {
-                let runtime = try TrUAPIHostRuntime(
+                let runtime = try await TrUAPIHostRuntime(
                     bridge: bridge,
                     walletSecrets: StubWalletSecrets(),
                     runtimeConfig: HostRuntimeConfig(

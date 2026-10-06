@@ -30,20 +30,6 @@ public enum LocalhostBridgeBootstrap {
     }
 }
 
-/// Product-scoped key-value storage provided by the embedding host.
-public protocol HostStorageBackend: AnyObject, Sendable {
-    func read(key: String) throws -> Data?
-    func write(key: String, value: Data) throws
-    func clear(key: String) throws
-}
-
-/// Public core records addressed by opaque SCALE-encoded `CoreStorageKey` values.
-public protocol HostCoreStorageBackend: AnyObject, Sendable {
-    func read(key: Data) throws -> Data?
-    func write(key: Data, value: Data) throws
-    func clear(key: Data) throws
-}
-
 /// Protected host secrets. Missing records return nil; inaccessible or corrupt storage throws.
 public protocol HostSecretStorageBackend: AnyObject, Sendable {
     func read(key: SecretCoreStorageKey) async throws -> Data?
@@ -159,7 +145,7 @@ public protocol HostBridge: AnyObject, Sendable {
     /// taking a reference of its own included.
     ///
     /// Demand is runtime-wide, so the core invokes this only on the bridge
-    /// ``TrUAPIHostRuntime/init(bridge:runtimeConfig:)`` was given, never on
+    /// ``TrUAPIHostRuntime/init(bridge:walletSecrets:runtimeConfig:)`` was given, never on
     /// the per-execution bridge passed to
     /// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:)``.
     /// Can arrive on any thread, including synchronously on the calling
@@ -188,12 +174,6 @@ public protocol HostBridge: AnyObject, Sendable {
     /// announcing it inline. Defaults to a no-op for a host that answers no
     /// pairing.
     func devicePaired(device: PairedSsoPeer)
-
-    /// Scoped key-value storage for the Rust core.
-    var storage: HostStorageBackend { get }
-
-    /// Public core records, including permissions and cached public keys.
-    var coreStorage: HostCoreStorageBackend { get }
 
     /// Installation-scoped protected storage shared by every bridge for this host.
     var secretStorage: HostSecretStorageBackend { get }
@@ -538,24 +518,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         try await withHostRejection { try await bridge.secretStorage.clear(key: key) }
     }
 
-    func coreStorageRead(key: Data) throws -> Data? {
-        try withHostRejection {
-            try bridge.coreStorage.read(key: key)
-        }
-    }
-
-    func coreStorageWrite(key: Data, value: Data) throws {
-        try withHostRejection {
-            try bridge.coreStorage.write(key: key, value: value)
-        }
-    }
-
-    func coreStorageClear(key: Data) throws {
-        try withHostRejection {
-            try bridge.coreStorage.clear(key: key)
-        }
-    }
-
     func chainConnect(genesisHash: Data) throws -> UInt32? {
         try withHostRejection {
             try bridge.chainConnect(genesisHash: genesisHash)
@@ -616,24 +578,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    func localStorageRead(key: String) throws -> Data? {
-        try withStorageError {
-            try bridge.storage.read(key: key)
-        }
-    }
-
-    func localStorageWrite(key: String, value: Data) throws {
-        try withStorageError {
-            try bridge.storage.write(key: key, value: value)
-        }
-    }
-
-    func localStorageClear(key: String) throws {
-        try withStorageError {
-            try bridge.storage.clear(key: key)
-        }
-    }
-
     func beginOperation(productId: String, label: String) async throws -> UInt32 {
         try await withHostRejection {
             try await bridge.beginOperation(productId: productId, label: label)
@@ -685,16 +629,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
             throw HostNavigateToError.Unknown(reason: hostRejectionReason(error))
         }
     }
-
-    private func withStorageError<T>(_ operation: () throws -> T) throws -> T {
-        do {
-            return try operation()
-        } catch let error as HostLocalStorageReadError {
-            throw error
-        } catch {
-            throw HostLocalStorageReadError.Unknown(reason: hostRejectionReason(error))
-        }
-    }
 }
 
 /// Process-owned Rust host runtime. Product executables open independent
@@ -711,8 +645,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         bridge: HostBridge,
         walletSecrets: NativeWalletSecretProvider,
         runtimeConfig: HostRuntimeConfig
-    ) throws {
-        try self.init(
+    ) async throws {
+        try await self.init(
             bridge: bridge,
             walletSecrets: walletSecrets,
             runtimeConfig: runtimeConfig,
@@ -725,11 +659,11 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         walletSecrets: NativeWalletSecretProvider,
         runtimeConfig: HostRuntimeConfig,
         notificationCenter: NotificationCenter
-    ) throws {
+    ) async throws {
         let adapter = HostCallbackAdapter(bridge: bridge)
         callbackRetainer = adapter
         walletSecretsRetainer = walletSecrets
-        let inner = try NativeTrUApiHostRuntime.withRuntimeConfig(
+        let inner = try await NativeTrUApiHostRuntime.withRuntimeConfig(
             callbacks: adapter,
             walletSecrets: walletSecrets,
             runtimeConfig: runtimeConfig
@@ -1025,7 +959,6 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     ) throws
     func notifyThemeChanged(theme: HostThemeSubscribeItem)
     func notifyLocaleChanged(locale: HostLocaleSubscribeItem)
-    func notifyStorageChanged(key: String, value: Data?)
     func notifyPreimageChanged(key: Data, value: Data?)
     func notifyChainResponse(connectionId: UInt32, json: String)
     func notifyChainClosed(connectionId: UInt32)
@@ -1109,16 +1042,6 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
 
     public func notifyLocaleChanged(locale: HostLocaleSubscribeItem) {
         inner.notifyLocaleChanged(locale: locale)
-    }
-
-    /// Push a host storage change to active TrUAPI storage subscriptions,
-    /// across every execution of the product; `nil` means cleared.
-    ///
-    /// Only for changes the host makes itself. A write a product made through
-    /// TrUAPI already reaches its subscribers, so reporting one here delivers
-    /// it twice.
-    public func notifyStorageChanged(key: String, value: Data?) {
-        inner.notifyStorageChanged(key: key, value: value)
     }
 
     public func notifyPreimageChanged(key: Data, value: Data?) {

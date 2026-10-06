@@ -263,8 +263,8 @@ struct NetworkAccessPermissionHandlerTests {
     }
 
     @Test
-    func decisionRequestsFreshConsentWithoutTransferringLegacyOneTimeGrants() async throws {
-        let (_, repository, requester) = makeSUT(promptDecision: .allowAlways)
+    func decisionPromptsForEveryPermissionRegardlessOfLegacyGrants() async throws {
+        let (_, repository, requester) = makeSUT(promptDecision: .deny)
         let guardService = makeGuard(repository: repository, requester: requester)
         let temporary = ProductPermission.networkAccess(domain: "once.example.com")
         let permanent = ProductPermission.networkAccess(domain: "always.example.com")
@@ -272,10 +272,10 @@ struct NetworkAccessPermissionHandlerTests {
         repository.grantOneTime(productId: productId, permission: temporary)
         try await repository.grant(productId: productId, permission: permanent)
         let result = try await guardService.requestPermissionsDecision(
-            productId: productId, permissions: [temporary, permanent, newPermission]
+            productId: productId, permissions: [temporary, permanent, newPermission, permanent]
         )
-        #expect(result == .allowAlways)
-        #expect(requester.promptBatchedCalls.map(\.permissions) == [[temporary, newPermission]])
+        #expect(result == .deny)
+        #expect(requester.promptBatchedCalls.map(\.permissions) == [[temporary, permanent, newPermission]])
         let states = try await [
             repository.getPermissionState(productId: productId, permission: temporary),
             repository.getPermissionState(productId: productId, permission: permanent),

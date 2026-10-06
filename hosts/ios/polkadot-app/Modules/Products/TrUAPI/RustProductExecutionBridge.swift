@@ -22,8 +22,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let navigationRouter: ProductsNavigationRouting
         let chainRegistry: ChainRegistryProtocol
         let chainConnections: TrUAPIChainConnecting
-        let productStorage: TrUAPILocalStoring
-        let coreStorage: HostCoreStorageBackend
+
         let secretStorage: HostSecretStorageBackend
         let confirmationPresenter: TrUAPIConfirmationPresenting
         let preimageCache: TrUAPIPreimageLookuping
@@ -31,8 +30,6 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let logger: LoggerProtocol
     }
 
-    let storage: HostStorageBackend
-    let coreStorage: HostCoreStorageBackend
     let secretStorage: HostSecretStorageBackend
 
     private let dependencies: Dependencies
@@ -40,8 +37,6 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     init(dependencies: Dependencies) {
         self.dependencies = dependencies
-        storage = ProductStorageBackend(storage: dependencies.productStorage)
-        coreStorage = dependencies.coreStorage
         secretStorage = dependencies.secretStorage
     }
 

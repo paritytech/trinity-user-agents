@@ -10,8 +10,7 @@
 //   * `HostBridge` - the Kotlin-friendly callback interface the embedding app
 //     implements. It splits device and remote permissions, mirroring the
 //     `Permissions` platform trait in the Rust core.
-//   * `HostStorage` / `HostCoreStorage` / `HostSecretStorage` - product data,
-//     public core records, and protected host secrets.
+//   * `HostSecretStorage` - installation-scoped protected host secrets.
 //   * `TrUAPIHostRuntime` / `TrUAPIProductExecution` - process-owned host state
 //     and independently scoped product connections.
 //   * `LocalhostBridgeBootstrap` - private endpoint configuration consumed by
@@ -76,7 +75,6 @@ import uniffi.truapi.ResponderExit
 import uniffi.truapi.ProductRuntimeException
 import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostRejection
-import uniffi.truapi.HostLocalStorageReadException
 import uniffi.truapi.localhostBridgeBootstrapScript
 import uniffi.truapi.NativeRuntimeConfigException
 import uniffi.truapi.StatementRenewalTarget
@@ -95,37 +93,6 @@ import uniffi.truapi.NativeContactsCallbacks
 /** Package metadata. */
 object TrUAPIHost {
     const val VERSION = "0.1.0"
-}
-
-/**
- * Product-scoped key-value storage the host provides to the Rust core. Throws
- * [HostLocalStorageReadException] to signal quota exhaustion or unknown failure; the
- * variants are the v0.1 `HostLocalStorageReadError` wire shape.
- */
-interface HostStorage {
-    @Throws(HostLocalStorageReadException::class)
-    suspend fun read(key: String): ByteArray?
-
-    @Throws(HostLocalStorageReadException::class)
-    suspend fun write(key: String, value: ByteArray)
-
-    @Throws(HostLocalStorageReadException::class)
-    suspend fun clear(key: String)
-}
-
-/**
- * Public core records addressed by SCALE-encoded `CoreStorageKey` values. Throws
- * [HostRejection] on failure.
- */
-interface HostCoreStorage {
-    @Throws(HostRejection::class)
-    suspend fun read(key: ByteArray): ByteArray?
-
-    @Throws(HostRejection::class)
-    suspend fun write(key: ByteArray, value: ByteArray)
-
-    @Throws(HostRejection::class)
-    suspend fun clear(key: ByteArray)
 }
 
 /** Protected host secrets. Missing records return null; inaccessible or corrupt storage throws. */
@@ -346,12 +313,6 @@ interface HostBridge {
      */
     fun devicePaired(device: PairedSsoPeer) {}
 
-    /** Product-scoped key-value storage for the Rust core. */
-    val storage: HostStorage
-
-    /** Public core records, including permissions and cached public keys. */
-    val coreStorage: HostCoreStorage
-
     /** Installation-scoped protected storage shared by every bridge for this host. */
     val secretStorage: HostSecretStorage
 }
@@ -500,15 +461,6 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override suspend fun clearSecretCoreStorage(key: SecretCoreStorageKey) =
         withHostRejection { bridge.secretStorage.clear(key) }
 
-    override suspend fun coreStorageRead(key: ByteArray): ByteArray? =
-        withHostRejection { bridge.coreStorage.read(key) }
-
-    override suspend fun coreStorageWrite(key: ByteArray, value: ByteArray) =
-        withHostRejection { bridge.coreStorage.write(key, value) }
-
-    override suspend fun coreStorageClear(key: ByteArray) =
-        withHostRejection { bridge.coreStorage.clear(key) }
-
     override fun chainConnect(genesisHash: ByteArray): UInt? =
         withHostRejection { bridge.chainConnect(genesisHash) }
 
@@ -538,15 +490,6 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override fun supportedChains(): HostChainSet =
         withHostRejection { bridge.supportedChains() }
-
-    override suspend fun localStorageRead(key: String): ByteArray? =
-        withStorageException { bridge.storage.read(key) }
-
-    override suspend fun localStorageWrite(key: String, value: ByteArray) =
-        withStorageException { bridge.storage.write(key, value) }
-
-    override suspend fun localStorageClear(key: String) =
-        withStorageException { bridge.storage.clear(key) }
 
     override suspend fun beginOperation(productId: String, label: String): UInt =
         withHostRejection { bridge.beginOperation(productId, label) }
@@ -587,18 +530,6 @@ private inline fun <T> withNavigateRejection(operation: () -> T): T =
         throw cancellation
     } catch (error: Throwable) {
         throw HostNavigateToException.Unknown(hostRejectionReason(error))
-            .apply { initCause(error) }
-    }
-
-private inline fun <T> withStorageException(operation: () -> T): T =
-    try {
-        operation()
-    } catch (storage: HostLocalStorageReadException) {
-        throw storage
-    } catch (cancellation: CancellationException) {
-        throw cancellation
-    } catch (error: Throwable) {
-        throw HostLocalStorageReadException.Unknown(hostRejectionReason(error))
             .apply { initCause(error) }
     }
 
@@ -696,16 +627,24 @@ object LocalhostBridgeBootstrap {
  * Process-owned Rust host runtime. Product executables open independent
  * connections from this object and share its authentication and core services.
  */
-class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor(
-    bridge: HostBridge,
+class TrUAPIHostRuntime private constructor(
+    private val inner: NativeTrUApiHostRuntime,
+    private val callbackRetainer: HostCallbacks,
     private val walletSecrets: NativeWalletSecretProvider,
-    runtimeConfig: HostRuntimeConfig,
 ) : AutoCloseable {
-    // Co-owns the adapter alongside the generated FfiConverter handle map,
-    // which is what actually keeps the callback object alive for the runtime.
-    private val callbackRetainer: HostCallbacks = HostCallbackAdapter(bridge)
-    private val inner: NativeTrUApiHostRuntime =
-        NativeTrUApiHostRuntime.withRuntimeConfig(callbackRetainer, walletSecrets, runtimeConfig)
+    companion object {
+        /** Opens the encrypted installation database and returns a locked runtime. */
+        @Throws(NativeRuntimeConfigException::class)
+        suspend fun create(
+            bridge: HostBridge,
+            walletSecrets: NativeWalletSecretProvider,
+            runtimeConfig: HostRuntimeConfig,
+        ): TrUAPIHostRuntime {
+            val callbacks = HostCallbackAdapter(bridge)
+            val inner = NativeTrUApiHostRuntime.withRuntimeConfig(callbacks, walletSecrets, runtimeConfig)
+            return TrUAPIHostRuntime(inner, callbacks, walletSecrets)
+        }
+    }
 
     // Co-owns the contacts adapter for as long as the runtime holds it.
     private var contactsRetainer: NativeContactsCallbacks? = null
@@ -1100,18 +1039,6 @@ class TrUAPIProductExecution internal constructor(
     /** Push a host locale update to active TrUAPI locale subscriptions. */
     fun notifyLocaleChanged(locale: HostLocaleSubscribeItem) {
         inner.notifyLocaleChanged(locale)
-    }
-
-    /**
-     * Push a host storage change to active TrUAPI storage subscriptions, across
-     * every execution of the product; a null [value] means cleared.
-     *
-     * Only for changes the host makes itself. A write a product made through
-     * TrUAPI already reaches its subscribers, so reporting one here delivers it
-     * twice.
-     */
-    fun notifyStorageChanged(key: String, value: ByteArray?) {
-        inner.notifyStorageChanged(key, value)
     }
 
     /** Push a preimage lookup update to active subscriptions for [key]. */

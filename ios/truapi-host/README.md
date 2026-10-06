@@ -70,7 +70,7 @@ Run `rebuild.sh` after changing anything host-visible — the `NativeTrUApiHostR
 
 For local iteration without publishing, set `TRUAPI_USE_LOCAL_BINARY=1` so the root `Package.swift` builds against `Binaries/` directly.
 
-The embedding app implements `HostBridge` (defined in `TrUAPIHost.swift`): navigation, push, permissions, auth state, product, public core and protected secret storage, chain JSON-RPC, confirmations, preimage, theme, feature support, and the served chain set. UI-decision callbacks are `async` and awaited by the Rust core. `HostCallbackAdapter` translates it to the UniFFI-generated `HostCallbacks` protocol; `TrUAPIHostRuntime` and each product execution retain their own adapter. Conform to `HostBridge` rather than to the generated protocol: its extension defaults the optional callbacks, so a newly added one does not break the build. Storage arrives as the required `storage`, `coreStorage` and `secretStorage` sub-objects. `HostSecretStorageBackend` uses typed `SecretCoreStorageKey` values and async read/write/clear. Use `secretCoreStorageKeyIdentifier(key:)` for physical record names and share the backend across all bridges. Missing alone returns nil; inaccessible or corrupt storage throws. Order complete storage effects against cleanup and check cancellation after acquiring the shared storage lock.
+The embedding app implements `HostBridge` (defined in `TrUAPIHost.swift`): navigation, push, permissions, auth state, protected secret storage, chain JSON-RPC, confirmations, preimage, theme, feature support, and the served chain set. UI-decision callbacks are `async` and awaited by the Rust core. `HostCallbackAdapter` translates it to the UniFFI-generated `HostCallbacks` protocol; `TrUAPIHostRuntime` and each product execution retain their own adapter. Conform to `HostBridge` rather than to the generated protocol: its extension defaults the optional callbacks, so a newly added one does not break the build. Product data and public core records live in the runtime’s shared encrypted SQLite database. The required `secretStorage` backend retains its installation encryption key and other host secrets. `HostSecretStorageBackend` uses typed `SecretCoreStorageKey` values and async read/write/clear. Use `secretCoreStorageKeyIdentifier(key:)` for physical record names and share the backend across all bridges. Missing alone returns nil; inaccessible or corrupt storage throws. Order complete storage effects against cleanup and check cancellation after acquiring the shared storage lock.
 
 ## Integrating in an iOS app
 
@@ -152,7 +152,7 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
     func listRooms() throws -> [ChatRoom] { store.rooms() }
 }
 
-let runtime = try TrUAPIHostRuntime(
+let runtime = try await TrUAPIHostRuntime(
     bridge: bridge,
     walletSecrets: walletSecrets,
     runtimeConfig: HostRuntimeConfig(
@@ -305,7 +305,7 @@ announcing it inline. Defaults to a no-op for a host that answers no pairing.
                    Product execution
 ```
 
-The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
+The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `remotePermission`, `authStateChanged`, protected secret storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`) reach the embedder through `HostCallbacks`.
 
 ## Permissions split
 
@@ -415,40 +415,22 @@ An account id must be exactly 32 bytes. Anything else is rejected where the bind
 > (`MainActor` / `DispatchQueue.main`) before touching UIKit, WebKit, or the
 > `WKWebView`. The `async` callbacks (`navigateTo`, `pushNotification`,
 > `devicePermission`, `remotePermission`, `featureSupported`,
-> `confirmUserAction`, `confirmPermission`, `lookupPreimage`) are awaited by the core, so an
+> `confirmUserAction`, `confirmPermission`, `lookupPreimage`, protected secret storage) are awaited by the core, so an
 > implementation may suspend for as long as the user takes to decide (e.g.
 > `await MainActor.run { ... }` or an `withCheckedContinuation` around a
 > prompt); other TrUAPI traffic keeps flowing while you wait. The remaining
-> sync callbacks (auth state, storage, core storage, chain, theme,
+> sync callbacks (auth state, chain, theme,
 > `cancelNotification`) run inline on the dispatcher thread and must return
 > promptly without blocking.
 
-The example receives `secretStorage` from the embedding app's shared durable secret backend and `walletSecrets`, a separate `NativeWalletSecretProvider` whose async `readWalletRootEntropy(walletId:)` reads the exact selected protected root or throws `HostRejection`. Construction starts locked and does not read entropy. Await `activateWallet` before opening wallet-backed product or SSO operations; call `lockWallet` immediately when the native wallet selection becomes invalid. A failed explicit replacement preserves the active wallet unless the host locked it first.
+The example receives `secretStorage` from the embedding app's shared durable secret backend and `walletSecrets`, a separate `NativeWalletSecretProvider` whose async `readWalletRootEntropy(walletId:)` reads the exact selected protected root or throws `HostRejection`. Construction asynchronously opens encrypted SQLite and durably initializes its installation key; it starts locked and does not read wallet entropy. Share that construction task independently of wallet activation so cancelling a caller or switching wallets cannot initialize the installation key twice. Await `activateWallet` before opening wallet-backed product or SSO operations; call `lockWallet` immediately when the native wallet selection becomes invalid. A failed explicit replacement preserves the active wallet unless the host locked it first.
 
 ```swift
 import Foundation
 import WebKit
 import TrUAPIHost
 
-final class MyStorage: HostStorageBackend, @unchecked Sendable {
-    private var values: [String: Data] = [:]
-
-    func read(key: String) throws -> Data? { values[key] }
-    func write(key: String, value: Data) throws { values[key] = value }
-    func clear(key: String) throws { values.removeValue(forKey: key) }
-}
-
-final class MyCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
-    private var values: [Data: Data] = [:]
-
-    func read(key: Data) throws -> Data? { values[key] }
-    func write(key: Data, value: Data) throws { values[key] = value }
-    func clear(key: Data) throws { values.removeValue(forKey: key) }
-}
-
 final class MyBridge: HostBridge, @unchecked Sendable {
-    let storage: HostStorageBackend = MyStorage()
-    let coreStorage: HostCoreStorageBackend = MyCoreStorage()
     let secretStorage: HostSecretStorageBackend
 
     init(secretStorage: HostSecretStorageBackend) {
@@ -543,7 +525,7 @@ let runtimeConfig = HostRuntimeConfig(
     assetHubChainGenesisHash: Data(repeating: 1, count: 32),
     networkSuffix: "dot"
 )
-let runtime = try TrUAPIHostRuntime(bridge: bridge, walletSecrets: walletSecrets, runtimeConfig: runtimeConfig)
+let runtime = try await TrUAPIHostRuntime(bridge: bridge, walletSecrets: walletSecrets, runtimeConfig: runtimeConfig)
 try await runtime.activateWallet(walletId: selectedWalletId, liteUsername: nil)
 let execution = try runtime.openProductExecution(
     bridge: bridge,

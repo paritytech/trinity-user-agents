@@ -17,7 +17,7 @@ use crate::host_internal::permissions::TemporaryPermissions;
 use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1};
 use crate::runtime::AnnouncedPairing;
 use crate::runtime::sso_remote::sso_message_id;
-use crate::store::{Db, core_db_config};
+use crate::store::{Db, RuntimeStore, core_db_config};
 use crate::subscription::Spawner;
 use crate::{PairedSsoPeer, ResponderExit, SigningHostRuntime};
 
@@ -35,6 +35,7 @@ use super::executor::shared_native_executor;
 use super::events::NativeEventBus;
 use super::platform::{
     CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, PocketCallbackPlatform,
+    SecretStorageCallback,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
@@ -46,6 +47,8 @@ use super::parse_pairing_deeplink;
 pub struct NativeTrUApiHostRuntime {
     runtime: Arc<SigningHostRuntime>,
     wallet_secrets: WalletSecretCallback,
+    storage: Arc<RuntimeStore>,
+    secrets: Arc<SecretStorageCallback>,
     events: Arc<NativeEventBus>,
     spawner: Spawner,
     ws_bridge: Arc<SharedWsBridge>,
@@ -54,7 +57,7 @@ pub struct NativeTrUApiHostRuntime {
 }
 
 impl NativeTrUApiHostRuntime {
-    fn from_resolved(
+    async fn from_resolved(
         callbacks: Arc<dyn HostCallbacks>,
         wallet_secrets: Arc<dyn NativeWalletSecretProvider>,
         runtime_config: NativeResolvedHostRuntimeConfig,
@@ -69,17 +72,27 @@ impl NativeTrUApiHostRuntime {
             }
         })?;
         let directory = &runtime_config.database_directory;
-        let core_db =
-            futures::executor::block_on(Db::open(core_db_config(directory))).map_err(|err| {
-                NativeRuntimeConfigError::DatabaseUnavailable {
-                    reason: format!("{}: {err}", directory.display()),
-                }
-            })?;
+        let core_db = Db::open(core_db_config(directory)).await.map_err(|error| {
+            NativeRuntimeConfigError::DatabaseUnavailable {
+                reason: format!("{}: {error}", directory.display()),
+            }
+        })?;
+        let secrets = Arc::new(SecretStorageCallback {
+            callbacks: callbacks.clone(),
+        });
+        let storage = Arc::new(
+            RuntimeStore::open(core_db.clone(), secrets.as_ref())
+                .await
+                .map_err(|error| NativeRuntimeConfigError::DatabaseUnavailable {
+                    reason: error.to_string(),
+                })?,
+        );
         let events = Arc::new(NativeEventBus::default());
         let platform = Arc::new(CallbackPlatform {
             callbacks: callbacks.clone(),
             events: events.clone(),
-            storage_events: events.clone(),
+            storage: storage.clone(),
+            secrets: secrets.clone(),
         });
         let spawner = executor.spawner();
         let runtime = Arc::new(SigningHostRuntime::new(
@@ -107,6 +120,8 @@ impl NativeTrUApiHostRuntime {
                 provider: wallet_secrets,
             },
             events,
+            storage,
+            secrets,
             spawner,
             ws_bridge: Arc::new(SharedWsBridge::new(Arc::new(move |marker, detail| {
                 callbacks.on_core_log(marker.to_string(), detail.to_string());
@@ -126,7 +141,8 @@ impl NativeTrUApiHostRuntime {
         let callback_platform = Arc::new(CallbackPlatform {
             callbacks: callbacks.clone(),
             events: events.clone(),
-            storage_events: self.events.clone(),
+            storage: self.storage.clone(),
+            secrets: self.secrets.clone(),
         });
         let permission_status: Arc<dyn crate::platform::PermissionStatusHost> =
             callback_platform.clone();
@@ -237,7 +253,7 @@ pub struct NativeAnnouncedPairing {
 impl NativeTrUApiHostRuntime {
     /// Construct a locked host runtime without reading wallet secrets.
     #[uniffi::constructor]
-    pub fn with_runtime_config(
+    pub async fn with_runtime_config(
         callbacks: Arc<dyn HostCallbacks>,
         wallet_secrets: Arc<dyn NativeWalletSecretProvider>,
         runtime_config: HostRuntimeConfig,
@@ -250,6 +266,7 @@ impl NativeTrUApiHostRuntime {
             "truapi.native.host_runtime.boot",
             "host runtime ready",
         )
+        .await
     }
 
     /// Install the host's contacts adapter, which owns the contact list and
@@ -779,14 +796,6 @@ impl NativeProductExecution {
         self.events.notify_preimage_changed(&key, value);
     }
 
-    /// Push a host storage change to the product's subscriptions for `key`.
-    ///
-    /// Storage is one namespace per product rather than per execution, so this
-    /// reaches every execution of the product, not only this one.
-    pub fn notify_storage_changed(&self, key: String, value: Option<Vec<u8>>) {
-        self.shared_events.notify_storage_changed(&key, value);
-    }
-
     /// Notify this execution's chain adapter of one JSON-RPC response.
     pub fn notify_chain_response(&self, connection_id: u32, json: String) {
         self.shared_events
@@ -963,11 +972,11 @@ mod tests {
             }
         }
         let provider = Arc::new(Unavailable(std::sync::atomic::AtomicUsize::new(0)));
-        let runtime = NativeTrUApiHostRuntime::with_runtime_config(
+        let runtime = futures::executor::block_on(NativeTrUApiHostRuntime::with_runtime_config(
             Arc::new(EventCallbacks::new()),
             provider.clone(),
             native_host_runtime_config(),
-        )
+        ))
         .unwrap();
         assert_eq!(
             (
@@ -991,11 +1000,11 @@ mod tests {
     fn a_worker_write_reaches_a_storage_subscription_in_the_products_other_execution() {
         let callbacks = Arc::new(EventCallbacks::new());
         let config = native_host_runtime_config();
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
+        let host = futures::executor::block_on(NativeTrUApiHostRuntime::with_runtime_config(
             callbacks.clone(),
             Arc::new(TestWalletSecretProvider),
             config,
-        )
+        ))
         .expect("host runtime config should be valid");
         let screen = host
             .open_product_execution(
@@ -1014,7 +1023,9 @@ mod tests {
             )
             .expect("open worker execution");
 
-        let key = "myapp.dot/progress".to_string();
+        let key = crate::platform::ProductStorageKey::new("myapp.dot", "progress")
+            .unwrap()
+            .encode();
         let mut subscription = screen.platform.subscribe_storage(key.clone());
         assert_eq!(
             futures::executor::block_on(futures::StreamExt::next(&mut subscription)),
@@ -1025,25 +1036,31 @@ mod tests {
         futures::executor::block_on(worker.platform.write(key, vec![9])).expect("write");
 
         assert_eq!(
-            futures::FutureExt::now_or_never(futures::StreamExt::next(&mut subscription)),
-            Some(Some(Ok(v01::HostLocalStorageChangeItem {
+            futures::executor::block_on(futures::StreamExt::next(&mut subscription)),
+            Some(Ok(v01::HostLocalStorageChangeItem {
                 value: Some(vec![9]),
-            }))),
+            })),
             "the screen and the worker share one storage namespace, so a write in one \
              reaches a subscription in the other"
         );
     }
 
     #[test]
-    fn a_host_pushed_storage_change_reaches_the_products_subscription() {
+    fn product_storage_survives_native_runtime_recreation() {
         let callbacks = Arc::new(EventCallbacks::new());
         let config = native_host_runtime_config();
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
-            callbacks.clone(),
-            Arc::new(TestWalletSecretProvider),
-            config,
-        )
-        .expect("host runtime config should be valid");
+        let key = crate::platform::ProductStorageKey::new("myapp.dot", "progress")
+            .unwrap()
+            .encode();
+        let open = || {
+            futures::executor::block_on(NativeTrUApiHostRuntime::with_runtime_config(
+                callbacks.clone(),
+                Arc::new(TestWalletSecretProvider),
+                config.clone(),
+            ))
+            .unwrap()
+        };
+        let host = open();
         let execution = host
             .open_product_execution(
                 callbacks.clone(),
@@ -1051,24 +1068,22 @@ mod tests {
                 None,
                 native_execution_config("myapp.dot", ProductExecutionKind::App),
             )
-            .expect("open app execution");
-
-        let key = "myapp.dot/progress".to_string();
-        let mut subscription = execution.platform.subscribe_storage(key.clone());
+            .unwrap();
+        futures::executor::block_on(execution.platform.write(key.clone(), vec![7])).unwrap();
+        drop(execution);
+        drop(host);
+        let reopened = open();
+        let execution = reopened
+            .open_product_execution(
+                callbacks,
+                None,
+                None,
+                native_execution_config("myapp.dot", ProductExecutionKind::App),
+            )
+            .unwrap();
         assert_eq!(
-            futures::executor::block_on(futures::StreamExt::next(&mut subscription)),
-            Some(Ok(v01::HostLocalStorageChangeItem { value: None })),
-            "a subscription opens on the key's current value"
-        );
-
-        execution.notify_storage_changed(key, Some(vec![7]));
-
-        assert_eq!(
-            futures::FutureExt::now_or_never(futures::StreamExt::next(&mut subscription)),
-            Some(Some(Ok(v01::HostLocalStorageChangeItem {
-                value: Some(vec![7]),
-            }))),
-            "a change the host made itself still reaches the product"
+            futures::executor::block_on(execution.platform.read(key)),
+            Ok(Some(vec![7])),
         );
     }
 

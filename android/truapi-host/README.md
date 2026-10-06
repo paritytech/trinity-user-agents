@@ -63,9 +63,7 @@ configuration update in the embedding app's package upgrade.
 
 The public surface lives in [`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](src/main/kotlin/io/parity/truapi/TrUAPIHost.kt):
 
-- `HostBridge` - callback bundle the embedding app implements. Splits device permissions, remote permissions, navigation, push, feature support, action and permission confirmations, and the product, public core and protected secret storage backends.
-- `HostStorage` - product-scoped read/write/clear interface the host backs with its own persistence. Its methods suspend, so a backend can await disk or keystore work.
-- `HostCoreStorage` - public core read/write/clear interface for permissions and cached public records (`key` is a SCALE-encoded `CoreStorageKey`). Its methods suspend, like `HostStorage`'s.
+- `HostBridge` - callback bundle the embedding app implements. Splits device permissions, remote permissions, navigation, push, feature support, action and permission confirmations, and protected secret storage.
 - `HostSecretStorage` - required typed async read/write/clear for protected host secrets. Use `secretCoreStorageKeyIdentifier(key)` for record names, share one backend across bridges, and return null only for missing records. Serialize complete storage effects and cleanup, check cancellation inside the shared gate, and propagate commit/decryption failures.
 - `LocalhostBridgeBootstrap` - supplies the private WebSocket endpoint to the container.
 - `ContainerScriptBundle` - loads the bundled browser container for installation at document start.
@@ -74,7 +72,7 @@ The public surface lives in [`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](s
 - `ChatHostBridge` - native Chat storage and UI, implemented by hosts that serve the Chat modality and passed to `openProductExecution`. Hosts without it pass nothing and Chat calls answer unsupported.
 - `PocketHostBridge` - the host's Pocket card collection, implemented by hosts with a Pocket surface and passed as `pocket` to `openProductExecution`. The execution then offers `notifyPocketCardsChanged`. `removeCard` suspends, and decides and removes together, returning `NativePocketRemoval.Removed`, `Absent` or `Privileged`, so a card cannot be pinned between the check and the removal. Like Chat, Pocket is reachable only from a Worker execution with an active session, so without `activateWallet` every Pocket call answers `Denied`. Hosts without the bridge pass nothing and Pocket calls answer unsupported.
 
-The runtime constructor accepts public configuration and starts locked without reading wallet entropy. Await `activateWallet(walletId, liteUsername)` from a host-owned coroutine before exposing a ready signing runtime. A failed replacement preserves the active wallet. Call synchronous `lockWallet()` when the selected wallet changes or an explicit wallet lock occurs, before awaiting any replacement; a failed replacement then leaves it locked. The provider must bind reads to the requested identifier and reject a changed selection. `walletSecrets` in the examples is the host's implementation of that callback, backed by its existing protected wallet store.
+Await `TrUAPIHostRuntime.create(bridge, walletSecrets, runtimeConfig)` once from a shared host-owned coroutine. It opens the installation database, durably initializes its protected encryption key, and returns a locked runtime without reading wallet entropy. Product values and public core records use authenticated encryption in that shared `core.sqlite3`; `StorageEncryptionKey` belongs in `HostSecretStorage` and must survive ordinary wallet lock or switch. Set `databaseDirectory` to an existing application directory excluded from backup, such as a child of `noBackupFilesDir`. Initialization errors fail startup. Keep construction separate from selected-wallet readiness so activation failure does not discard the database owner. Await `activateWallet(walletId, liteUsername)` from a host-owned coroutine before exposing a ready signing runtime. A failed replacement preserves the active wallet. Call synchronous `lockWallet()` when the selected wallet changes or an explicit wallet lock occurs, before awaiting any replacement; a failed replacement then leaves it locked. The provider must bind reads to the requested identifier and reject a changed selection. `walletSecrets` in the examples is the host's implementation of that callback, backed by its existing protected wallet store.
 
 ## Chat
 
@@ -111,7 +109,7 @@ class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
     override fun listRooms(): List<ChatRoom> = store.rooms()
 }
 
-val runtime = TrUAPIHostRuntime(
+val runtime = TrUAPIHostRuntime.create(
     bridge = bridge,
     walletSecrets = walletSecrets,
     runtimeConfig = HostRuntimeConfig(
@@ -120,6 +118,7 @@ val runtime = TrUAPIHostRuntime(
         bulletinChainGenesisHash = bulletinChainGenesisHash,
         assetHubChainGenesisHash = assetHubChainGenesisHash,
         networkSuffix = "dot",
+        databaseDirectory = databaseDirectory,
     ),
 )
 // Chat needs an active session; without one every Chat call answers `Denied`.
@@ -184,7 +183,7 @@ Android intercepts HTTP requests natively, including scripts and images, and cal
 
 The main frame retains `window.__HOST_WEBVIEW_MARK__` for deployed products that use it to select native navigation or storage. New products should use the SDK's container detection.
 
-The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, `confirmUserAction`, `confirmPermission`, preimage lookup, theme, `featureSupported`, `storage`) reach the embedder through `HostBridge`. Bulletin preimage build/sign/submit now happens inside the core, so the host only serves `lookupPreimage`.
+The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `remotePermission`, `authStateChanged`, protected secret storage, chain JSON-RPC, `confirmUserAction`, `confirmPermission`, preimage lookup, theme, `featureSupported`) reach the embedder through `HostBridge`. Bulletin preimage build/sign/submit now happens inside the core, so the host only serves `lookupPreimage`.
 
 ## Permissions split
 
@@ -267,18 +266,7 @@ An account id must be exactly 32 bytes. Anything else is rejected where the bind
 
 ## Example
 
-> **Threading:** the Rust core invokes every `HostBridge` callback on a
-> background thread it owns, never the UI thread. Marshal any UI work
-> (navigation, prompts, notifications, touching the `WebView`) onto the main
-> thread with `Handler(Looper.getMainLooper())` or a `Dispatchers.Main`
-> `CoroutineScope`. The `suspend` callbacks (`navigateTo`, `pushNotification`,
-> `devicePermission`, `remotePermission`, `featureSupported`,
-> `confirmUserAction`, `confirmPermission`, `lookupPreimage`) are awaited by the core, so an
-> implementation may suspend for as long as the user takes to decide (e.g.
-> `withContext(Dispatchers.Main)` around a prompt); other TrUAPI traffic keeps
-> flowing while you wait. The remaining callbacks (auth state, storage, core
-> storage, chain, theme, and `cancelNotification`) run inline on the dispatcher
-> thread and must return promptly without blocking.
+> **Threading:** the Rust core invokes `HostBridge` callbacks off the UI thread. Marshal UI work to `Dispatchers.Main`. Suspend callbacks, including protected secret reads/writes, are awaited without blocking other TrUAPI traffic. Synchronous callbacks such as auth state, chain, theme and `cancelNotification` must return promptly. Runtime creation is also suspending; keep it in the host's shared startup coroutine.
 
 The example receives `secretStorage` from the embedding app's shared durable secret backend.
 
@@ -290,9 +278,7 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import io.parity.truapi.ContainerScriptBundle
 import io.parity.truapi.HostBridge
-import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostSecretStorage
-import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.ProductExecutionConfig
@@ -311,29 +297,8 @@ import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.HostPushNotificationRequest
 
-class MyStorage : HostStorage {
-    private val map = mutableMapOf<String, ByteArray>()
-    override suspend fun read(key: String) = map[key]
-    override suspend fun write(key: String, value: ByteArray) { map[key] = value }
-    override suspend fun clear(key: String) { map.remove(key) }
-}
-
-// Core-owned storage: keyed by SCALE-encoded CoreStorageKey bytes. Back it with
-// real persistence (e.g. EncryptedSharedPreferences); an in-memory map is shown
-// for brevity.
-class MyCoreStorage : HostCoreStorage {
-    private val map = HashMap<String, ByteArray>()
-    private fun k(key: ByteArray) = key.joinToString("") { "%02x".format(it) }
-    override suspend fun read(key: ByteArray) = map[k(key)]
-    override suspend fun write(key: ByteArray, value: ByteArray) { map[k(key)] = value }
-    override suspend fun clear(key: ByteArray) { map.remove(k(key)) }
-}
-
 class MyBridge(private val webView: WebView, override val secretStorage: HostSecretStorage) : HostBridge {
     private val main = Handler(Looper.getMainLooper())
-
-    override val storage = MyStorage()
-    override val coreStorage = MyCoreStorage()
 
     override suspend fun navigateTo(url: String) {
         withContext(Dispatchers.Main) { /* startActivity(Intent(ACTION_VIEW, Uri.parse(url))) */ }
@@ -412,8 +377,10 @@ val runtimeConfig = HostRuntimeConfig(
     // `trustedProducts` grant.
     assetHubChainGenesisHash = ByteArray(32) { 1.toByte() },
     networkSuffix = "dot",
+    databaseDirectory = webView.context.noBackupFilesDir.resolve("truapi").apply { mkdirs() }.absolutePath,
 )
-val runtime = TrUAPIHostRuntime(bridge, walletSecrets, runtimeConfig)
+// Run from the host's shared startup coroutine.
+val runtime = TrUAPIHostRuntime.create(bridge, walletSecrets, runtimeConfig)
 // Run from the host's shared startup coroutine before publishing the runtime.
 runtime.activateWallet(selectedWalletId)
 check(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {

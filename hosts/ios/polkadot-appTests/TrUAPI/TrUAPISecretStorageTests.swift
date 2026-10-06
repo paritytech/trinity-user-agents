@@ -38,7 +38,7 @@ struct TrUAPISecretStorageTests {
 
     @Test func deviceIdentityUsesItsSharedProviderAndCannotBeMutated() async throws {
         let keychain = MemoryKeychain()
-        let device = DeviceKeys()
+        let device = TestDeviceKeys()
         let backend = storage(keychain: keychain, device: device)
         #expect(try await backend.read(key: .deviceEncryptionKey) == device.key.rawRepresentation)
         await #expect(throws: HostRejection.self) {
@@ -51,7 +51,7 @@ struct TrUAPISecretStorageTests {
         #expect(keychain.snapshot.isEmpty)
     }
 
-    @Test func mixedCleanupWaitsForACancelledWriteAlreadyInsideKeychain() async throws {
+    @Test func cleanupWaitsForACancelledWriteAlreadyInsideKeychain() async throws {
         let lock = ObservableLock()
         let keychain = MemoryKeychain()
         let entered = DispatchSemaphore(value: 0)
@@ -63,20 +63,11 @@ struct TrUAPISecretStorageTests {
             precondition(release.wait(timeout: .now() + 5) == .success)
         }
         let secret = storage(keychain: keychain, lock: lock)
-        let suiteName = "io.polkadotapp.tests.secret-order.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let core = CoreStorageBackend(
-            storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults),
-            lock: lock
-        )
-        try core.write(key: Data([2]), value: Data([8]))
         let writer = Task.detached { try await secret.write(key: .authSession, value: Data([1])) }
         #expect(await waitForSignal(entered) == .success)
         writer.cancel()
         lock.onLock = { cleanupWaiting.signal() }
         let cleanup = Task.detached {
-            try core.clear(key: Data([2]))
             try await secret.clear(key: .authSession)
             cleanupFinished.signal()
         }
@@ -86,7 +77,6 @@ struct TrUAPISecretStorageTests {
         release.signal()
         _ = await writer.result
         try await cleanup.value
-        #expect(try core.read(key: Data([2])) == nil)
         #expect(try await secret.read(key: .authSession) == nil)
     }
 
@@ -122,7 +112,7 @@ struct TrUAPISecretStorageTests {
     private func storage(
         keychain: MemoryKeychain,
         installation: String = "test-install",
-        device: DeviceKeys = DeviceKeys(),
+        device: TestDeviceKeys = TestDeviceKeys(),
         lock: NSLock = NSLock()
     ) -> TrUAPISecretStorage {
         TrUAPISecretStorage(
@@ -139,7 +129,7 @@ private struct StoreId: ProductResourceStoreIdProviding {
     func getStoreId() -> String { value }
 }
 
-private final class DeviceKeys: DeviceEncryptionKeyManaging {
+final class TestDeviceKeys: DeviceEncryptionKeyManaging {
     let key = Curve25519.KeyAgreement.PrivateKey()
     private(set) var reads = 0
     func getOrCreatePrivateKey() throws -> Curve25519.KeyAgreement.PrivateKey {

@@ -2,8 +2,8 @@
 //! [`NativeProductExecution`], and the [`HostCallbacks`] callback interface
 //! that iOS and Android call into.
 //!
-//! The native side builds a `CallbackPlatform` that adapts every
-//! [`crate::platform::Platform`] trait to a corresponding callback. The
+//! The native `CallbackPlatform` shares encrypted SQLite product/core storage
+//! and adapts protected storage and host services to callbacks. The
 //! resulting platform is fed into [`SigningHostRuntime`] so the rest of the
 //! dispatcher pipeline behaves identically to the WS-bridge and wasm flavors.
 //! A native host therefore owns the signer, so it never pairs itself with a

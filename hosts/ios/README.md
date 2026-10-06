@@ -115,9 +115,9 @@ Built with **UIKit** and programmatic layout (no Storyboards), using **VIPER** f
 
 With the Rust runtime enabled, the SSO coordinator binds its transport keys to one wallet activation and retains a separate account-holder service for each peer. Ordinary requests share one FIFO queue; cancellation reaches its peer's service immediately. Replies validate the same wallet activation before posting.
 
-The Rust host shares one public core storage backend and one installation-scoped Keychain secret backend across its runtime and product bridges. Both use the same cancellation-aware operation lock. The device encryption key remains owned by `DeviceEncryptionKeyManager`.
+The Rust host shares encrypted SQLite product data and public core records across its runtime and product executions. Its installation-scoped Keychain backend retains the database encryption key and other secrets. The device encryption key remains owned by `DeviceEncryptionKeyManager`. Rust permission callbacks prompt without reading legacy saved decisions; settings routing and live revocation are a required follow-up.
 
-The Rust runtime starts locked and activates the selected installation ID through a separate wallet secret provider. Root entropy stays in the existing Keychain root store and never enters runtime configuration. SPA, bot and SSO startup share one activation task; selection changes invalidate Rust before publishing the new ID, and enabled Rust startup errors remain visible.
+The Rust runtime starts locked and activates the selected installation ID through a separate wallet secret provider. Root entropy stays in the existing Keychain root store and never enters runtime configuration. SPA, bot and SSO startup share process construction separately from wallet activation; selection changes invalidate Rust before publishing the new ID, and enabled Rust startup errors remain visible.
 
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time

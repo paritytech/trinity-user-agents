@@ -57,7 +57,7 @@ class TrUAPISecretStorageTest {
     }
 
     @Test
-    fun `native allowances and paired sessions survive adapter recreation in separate namespaces`() = runTest {
+    fun `installation keys and allowances survive adapter recreation in separate namespaces`() = runTest {
         val values = mutableMapOf<String, String>()
         every { preferences.putEncryptedStringCommitted(any(), any()) } answers { values[firstArg()] = secondArg() }
         every { preferences.getDecryptedStringOrThrow(any()) } answers { values[firstArg()] }
@@ -66,7 +66,7 @@ class TrUAPISecretStorageTest {
         val native = SecretCoreStorageKey.NativeAllowanceKeys
         storage.write(first, byteArrayOf(1))
         storage.write(second, byteArrayOf(2))
-        EncryptedHostCoreStorage(preferences, gate).write(byteArrayOf(0), byteArrayOf(3))
+        storage.write(SecretCoreStorageKey.StorageEncryptionKey, ByteArray(32) { 3 })
         storage.write(native, byteArrayOf(4))
 
         val recreatedGate = TrUAPIStorageGate(backing)
@@ -74,7 +74,7 @@ class TrUAPISecretStorageTest {
         assertEquals(4, values.size)
         assertArrayEquals(byteArrayOf(1), recreatedStorage.read(first))
         assertArrayEquals(byteArrayOf(2), recreatedStorage.read(second))
-        assertArrayEquals(byteArrayOf(3), EncryptedHostCoreStorage(preferences, recreatedGate).read(byteArrayOf(0)))
+        assertArrayEquals(ByteArray(32) { 3 }, recreatedStorage.read(SecretCoreStorageKey.StorageEncryptionKey))
         assertArrayEquals(byteArrayOf(4), recreatedStorage.read(native))
     }
 
@@ -113,7 +113,7 @@ class TrUAPISecretStorageTest {
     }
 
     @Test
-    fun `mixed cleanup waits for a cancelled write already inside storage`() = runTest {
+    fun `cleanup from another adapter waits for a cancelled write already inside storage`() = runTest {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
         val values = ConcurrentHashMap<String, String>()
@@ -131,8 +131,7 @@ class TrUAPISecretStorageTest {
         assertTrue(entered.await(5, TimeUnit.SECONDS))
         writer.cancel()
         val cleanup = async(start = CoroutineStart.UNDISPATCHED) {
-            EncryptedHostCoreStorage(preferences, gate).clear(byteArrayOf(2))
-            storage.clear(key)
+            TrUAPISecretStorage(preferences, gate, deviceKeys).clear(key)
         }
         try {
             assertFalse(cleanup.isCompleted)
@@ -142,7 +141,7 @@ class TrUAPISecretStorageTest {
         cleanup.await()
         writer.join()
         assertNull(storage.read(key))
-        verify(exactly = 1) { preferences.removeKeyCommitted("truapi/core/02") }
+        verify(exactly = 1) { preferences.removeKeyCommitted(identifier) }
     }
 
     @Test

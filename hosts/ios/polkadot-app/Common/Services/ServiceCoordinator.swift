@@ -306,10 +306,6 @@ extension ServiceCoordinator {
         // presentation view is attached with the main tab bar; until then,
         // host-level prompts deny.
         let storageLock = NSLock()
-        let coreStorage = CoreStorageBackend(
-            storage: TrUAPILocalStorage.createCoreLocalStorage(),
-            lock: storageLock
-        )
         let secretStorage = TrUAPISecretStorage(
             keychain: Keychain(),
             storeIdProvider: ProductResourceStoreIdStore(userDefaults: SharedContainerGroup.userDefaults),
@@ -320,7 +316,6 @@ extension ServiceCoordinator {
             chainRegistry: ChainRegistryFacade.sharedRegistry,
             entropyManager: RootEntropyManager.shared,
             settingsManager: SettingsManager.shared,
-            coreStorage: coreStorage,
             secretStorage: secretStorage,
             confirmationRouterFacade: ProductRoutersFacade.sso(),
             logger: logger

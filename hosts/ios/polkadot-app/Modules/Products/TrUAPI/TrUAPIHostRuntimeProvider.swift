@@ -19,7 +19,6 @@ enum TrUAPIRuntimeConfigError: Error {
 /// the single shared runtime, so its authentication and core services are
 /// shared across every SPA and chat product.
 protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
-    var coreStorage: HostCoreStorageBackend { get }
     var secretStorage: HostSecretStorageBackend { get }
 
     /// Join the selected wallet activation without owning its cancellation.
@@ -31,13 +30,12 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     @MainActor func setPresentationView(_ view: ControllerBackedProtocol)
 }
 
-/// Shares one runtime and one readiness task across every product and SSO caller.
+/// Shares process construction separately from selected-wallet activation.
 final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Sendable {
     private let chainRegistry: ChainRegistryProtocol
     private let walletSecrets: NativeWalletSecretProvider
     private let installationKeyIdStore: InstallationKeyIdStoring
     private let settingsManager: SettingsManagerProtocol
-    let coreStorage: HostCoreStorageBackend
     let secretStorage: HostSecretStorageBackend
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let tldProvider: DotNsTldProviding
@@ -46,8 +44,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let contactDataProviderFactory: ChatContactDataProviderMaking
 
     private let lock = NSLock()
-    private var cachedRuntime: TrUAPIHostRuntime?
-    private var readiness: (walletId: String, task: Task<TrUAPIHostRuntime, Error>)?
+    private enum Construction {
+        case pending(Task<TrUAPIHostRuntime, Error>)
+        case ready(TrUAPIHostRuntime)
+    }
+
+    private var construction: Construction?
+    private var readiness: (walletId: String, task: Task<Void, Error>)?
     private var isLocked = false
     private var selectionObservers: [NSObjectProtocol] = []
     private var contactsChangeNotifier: ContactsChangeNotifier?
@@ -56,7 +59,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         chainRegistry: ChainRegistryProtocol,
         entropyManager: RootEntropyManaging,
         settingsManager: SettingsManagerProtocol,
-        coreStorage: HostCoreStorageBackend,
         secretStorage: HostSecretStorageBackend,
         installationKeyIdStore: InstallationKeyIdStoring = InstallationKeyIdStore(),
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
@@ -72,7 +74,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             installationKeyIdStore: installationKeyIdStore
         )
         self.settingsManager = settingsManager
-        self.coreStorage = coreStorage
         self.secretStorage = secretStorage
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
@@ -100,6 +101,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     deinit {
         selectionObservers.forEach(NotificationCenter.default.removeObserver)
         readiness?.task.cancel()
+        if case let .pending(task) = construction { task.cancel() }
     }
 
     @MainActor
@@ -112,12 +114,25 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             isLocked = true
             readiness?.task.cancel()
             readiness = nil
-            cachedRuntime?.lockWallet()
+            if case let .ready(runtime) = construction { runtime.lockWallet() }
         }
     }
 
     func sharedRuntime() async throws -> TrUAPIHostRuntime {
-        let pending = try lock.withLock { () throws -> Task<TrUAPIHostRuntime, Error> in
+        let construction = try lock.withLock {
+            try Task.checkCancellation()
+            guard !isLocked else { throw TrUAPIRuntimeConfigError.walletLocked }
+            if let construction { return construction }
+            let pending = try Construction.pending(makeRuntimeTask())
+            self.construction = pending
+            return pending
+        }
+        let runtime: TrUAPIHostRuntime =
+            switch construction {
+            case let .pending(task): try await task.value
+            case let .ready(ready): ready
+            }
+        let pending = try lock.withLock { () throws -> Task<Void, Error> in
             try Task.checkCancellation()
             guard !isLocked else { throw TrUAPIRuntimeConfigError.walletLocked }
             guard let walletId = installationKeyIdStore.getInstallationKeyId() else {
@@ -127,16 +142,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
                 return readiness.task
             }
             readiness?.task.cancel()
-            cachedRuntime?.lockWallet()
-            let runtime = try cachedRuntime ?? makeRuntime()
-            cachedRuntime = runtime
+            runtime.lockWallet()
             let liteUsername = settingsManager.string(for: .username)
             let task = Task { [weak self] in
                 do {
                     try Task.checkCancellation()
                     try await runtime.activateWallet(walletId: walletId, liteUsername: liteUsername)
                     try Task.checkCancellation()
-                    return runtime
                 } catch {
                     self?.lock.withLock {
                         if !Task.isCancelled { self?.readiness = nil }
@@ -147,7 +159,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             readiness = (walletId, task)
             return task
         }
-        let runtime = try await pending.value
+        try await pending.value
         try Task.checkCancellation()
         try lock.withLock {
             guard !isLocked, !pending.isCancelled,
@@ -158,7 +170,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         return runtime
     }
 
-    private func makeRuntime() throws -> TrUAPIHostRuntime {
+    private func makeRuntimeTask() throws -> Task<TrUAPIHostRuntime, Error> {
         let runtimeConfig = try Self.makeRuntimeConfig(
             chainRegistry: chainRegistry,
             networkSuffix: tldProvider.currentTldOrError(),
@@ -176,34 +188,51 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
         let bridge = RustHostRuntimeBridge(
             chainRegistry: chainRegistry,
-            coreStorage: coreStorage,
             secretStorage: secretStorage,
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
             logger: logger
         )
 
-        let runtime = try TrUAPIHostRuntime(bridge: bridge, walletSecrets: walletSecrets, runtimeConfig: runtimeConfig)
-        bridge.attach(runtime)
-        // Before any product execution opens, so a product never sees the
-        // window where the host lists no contacts.
-        let contactsBridge = AppContactsHostBridge(
-            repositoryFactory: ChatContactRepositoryFactory(),
-            operationQueue: OperationManagerFacade.sharedDefaultQueue,
-            routerFacade: confirmationRouterFacade
-        )
-        runtime.setContacts(contactsBridge)
-        contactsChangeNotifier = ContactsChangeNotifier(
-            dataProviderFactory: contactDataProviderFactory,
-            logger: logger,
-            onSnapshot: { [weak contactsBridge] contacts in
-                contactsBridge?.update(contacts: contacts)
-            },
-            onRemoval: { [weak runtime] in
-                runtime?.notifyContactsChanged()
+        return Task { [weak self, walletSecrets, contactDataProviderFactory, confirmationRouterFacade, logger] in
+            do {
+                let runtime = try await TrUAPIHostRuntime(
+                    bridge: bridge,
+                    walletSecrets: walletSecrets,
+                    runtimeConfig: runtimeConfig
+                )
+                try Task.checkCancellation()
+                bridge.attach(runtime)
+                let contactsBridge = AppContactsHostBridge(
+                    repositoryFactory: ChatContactRepositoryFactory(),
+                    operationQueue: OperationManagerFacade.sharedDefaultQueue,
+                    routerFacade: confirmationRouterFacade
+                )
+                runtime.setContacts(contactsBridge)
+                let notifier = ContactsChangeNotifier(
+                    dataProviderFactory: contactDataProviderFactory,
+                    logger: logger,
+                    onSnapshot: { [weak contactsBridge] contacts in
+                        contactsBridge?.update(contacts: contacts)
+                    },
+                    onRemoval: { [weak runtime] in
+                        runtime?.notifyContactsChanged()
+                    }
+                )
+                guard let self else { throw CancellationError() }
+                try lock.withLock {
+                    try Task.checkCancellation()
+                    self.contactsChangeNotifier = notifier
+                    self.construction = .ready(runtime)
+                }
+                return runtime
+            } catch {
+                self?.lock.withLock {
+                    if !Task.isCancelled { self?.construction = nil }
+                }
+                throw error
             }
-        )
-        return runtime
+        }
     }
 }
 

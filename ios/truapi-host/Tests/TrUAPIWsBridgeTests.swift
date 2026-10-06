@@ -7,7 +7,7 @@ struct TrUAPIWsBridgeTests {
     @Test(.timeLimit(.minutes(1)))
     func testFeatureSupportedRoundTripOverWsBridge() async throws {
         let bridge = StubHostBridge()
-        let runtime = try TrUAPIHostRuntime(
+        let runtime = try await TrUAPIHostRuntime(
             bridge: bridge,
             walletSecrets: StubWalletSecrets(),
             runtimeConfig: Self.makeHostRuntimeConfig()
@@ -45,7 +45,7 @@ struct TrUAPIWsBridgeTests {
     @Test(.timeLimit(.minutes(1)))
     func testHostInfoReportsTheIosPlatform() async throws {
         let bridge = StubHostBridge()
-        let runtime = try TrUAPIHostRuntime(
+        let runtime = try await TrUAPIHostRuntime(
             bridge: bridge,
             walletSecrets: StubWalletSecrets(),
             runtimeConfig: Self.makeHostRuntimeConfig()
@@ -83,7 +83,7 @@ struct TrUAPIWsBridgeTests {
     func testReturningToTheForegroundRebindsTheBridgeOnItsPort() async throws {
         let bridge = StubHostBridge()
         let notifications = NotificationCenter()
-        let runtime = try TrUAPIHostRuntime(
+        let runtime = try await TrUAPIHostRuntime(
             bridge: bridge,
             walletSecrets: StubWalletSecrets(),
             runtimeConfig: Self.makeHostRuntimeConfig(),
@@ -180,31 +180,6 @@ private extension TrUAPIWsBridgeTests {
     }
 }
 
-final class StubStorage: HostStorageBackend, @unchecked Sendable {
-    private var store: [String: Data] = [:]
-
-    func read(key: String) throws -> Data? { store[key] }
-    func write(key: String, value: Data) throws { store[key] = value }
-    func clear(key: String) throws { store[key] = nil }
-}
-
-final class StubCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
-    private let lock = NSLock()
-    private var store: [Data: Data] = [:]
-
-    func read(key: Data) throws -> Data? {
-        lock.withLock { store[key] }
-    }
-
-    func write(key: Data, value: Data) throws {
-        lock.withLock { store[key] = value }
-    }
-
-    func clear(key: Data) throws {
-        lock.withLock { store[key] = nil }
-    }
-}
-
 /// A fresh directory for one runtime's core database.
 func temporaryDatabaseDirectory() throws -> String {
     let directory = FileManager.default.temporaryDirectory
@@ -231,8 +206,6 @@ final class StubSecretStorage: HostSecretStorageBackend, @unchecked Sendable {
 }
 
 final class StubHostBridge: HostBridge, @unchecked Sendable {
-    let storage: HostStorageBackend = StubStorage()
-    let coreStorage: HostCoreStorageBackend = StubCoreStorage()
     let secretStorage: HostSecretStorageBackend = StubSecretStorage()
     private let logLock = NSLock()
     private var logs: [String] = []
@@ -284,13 +257,6 @@ final class StubHostBridge: HostBridge, @unchecked Sendable {
     ) async throws -> PermissionDecision { nextRemoteDecision() }
     func featureSupported(request _: HostFeatureSupportedRequest) async throws -> Bool { true }
     func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
-    func localStorageRead(key: String) throws -> Data? { try storage.read(key: key) }
-    
-    func localStorageWrite(key: String, value: Data) throws {
-        try storage.write(key: key, value: value)
-    }
-    
-    func localStorageClear(key: String) throws { try storage.clear(key: key) }
 }
 
 // Conforms to `ChatHostBridge` so a new requirement there fails this job.

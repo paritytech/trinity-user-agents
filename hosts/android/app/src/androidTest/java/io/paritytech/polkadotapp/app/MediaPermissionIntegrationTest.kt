@@ -12,9 +12,7 @@ import io.parity.truapi.HostSecretStorage
 import uniffi.truapi.SecretCoreStorageKey
 import io.mockk.mockk
 import io.parity.truapi.HostBridge
-import io.parity.truapi.HostCoreStorage
 import uniffi.truapi.HostRuntimeConfig
-import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ProductExecutionKind
@@ -30,6 +28,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -73,7 +72,7 @@ class MediaPermissionIntegrationTest {
             networkSuffix = "paseo",
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
-        TrUAPIHostRuntime(bridge, mockk(), config).use { runtime ->
+        runBlocking { TrUAPIHostRuntime.create(bridge, mockk(), config) }.use { runtime ->
             runtime.openProductExecution(bridge, ProductExecutionConfig("media.paseo", ProductExecutionKind.APP)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 lateinit var webView: WebView
@@ -148,13 +147,6 @@ class MediaPermissionIntegrationTest {
     private class PermissionBridge : HostBridge {
         val decisions = LinkedBlockingQueue<PermissionDecision>()
         val events = LinkedBlockingQueue<String>()
-        override val storage: HostStorage = unused()
-        override val coreStorage = object : HostCoreStorage {
-            private val values = ConcurrentHashMap<List<Byte>, ByteArray>()
-            override suspend fun read(key: ByteArray): ByteArray? = values[key.toList()]
-            override suspend fun write(key: ByteArray, value: ByteArray) { values[key.toList()] = value }
-            override suspend fun clear(key: ByteArray) { values.remove(key.toList()) }
-        }
         override val secretStorage = object : HostSecretStorage {
             private val values = ConcurrentHashMap<SecretCoreStorageKey, ByteArray>()
             override suspend fun read(key: SecretCoreStorageKey): ByteArray? = values[key]

@@ -4,11 +4,7 @@ import android.content.Context
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.HostBridge
-import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostSecretStorage
-import uniffi.truapi.HostRuntimeConfig
-import io.parity.truapi.HostStorage
-import uniffi.truapi.ProductExecutionConfig
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
@@ -33,26 +29,27 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.dropWhile
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import timber.log.Timber
-import uniffi.truapi.HostDevicePermissionRequest
-import uniffi.truapi.HostFeatureSupportedRequest
-import uniffi.truapi.RemotePermission
 import uniffi.truapi.AuthState
 import uniffi.truapi.HostChainSet
-import uniffi.truapi.PermissionDecision
-import uniffi.truapi.UserConfirmationReview
+import uniffi.truapi.HostDevicePermissionRequest
+import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostNavigateToException
-import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.HostRuntimeConfig
+import uniffi.truapi.PermissionDecision
+import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.RemotePermission
+import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.WorkerTransition
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
@@ -73,7 +70,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val walletSecrets: TrUAPIWalletSecretProvider,
     private val accountRepository: AccountRepository,
     private val dotNsTldProvider: DotNsTldProvider,
-    private val coreStorage: EncryptedHostCoreStorage,
     private val secretStorage: TrUAPISecretStorage,
     @param:TrUAPIChainHttpClient private val chainHttpClient: OkHttpClient,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
@@ -85,6 +81,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
     private val bootMutex = Mutex()
+    private var construction: Deferred<Result<TrUAPIHostRuntime>>? = null
     private var boot: Deferred<Result<TrUAPIHostRuntime>>? = null
 
     private val authState = MutableStateFlow<AuthState>(AuthState.Disconnected)
@@ -102,50 +99,57 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         onLog = { Timber.tag("truapi.chain").d("%s", it) },
     )
 
-    /**
-     * Boots in the provider's own scope, not the caller's: a product closing
-     * mid-boot must not abandon a half-built runtime, which would leak the
-     * native handle and let the next product boot a second one. A failed boot
-     * is forgotten so the next caller retries.
-     */
+    /** Waits for shared construction and selected-wallet readiness in the provider's scope. */
     suspend fun runtime(): Result<TrUAPIHostRuntime> {
         val pending = bootMutex.withLock {
-            boot ?: scope.async { build() }.also { boot = it }
+            boot ?: scope.async { activate() }.also { boot = it }
         }
         return pending.await().onFailure {
             bootMutex.withLock { if (boot === pending) boot = null }
         }
     }
 
+    private suspend fun constructedRuntime(): Result<TrUAPIHostRuntime> {
+        val pending = bootMutex.withLock {
+            construction ?: scope.async { build() }.also { construction = it }
+        }
+        return pending.await().onFailure {
+            bootMutex.withLock { if (construction === pending) construction = null }
+        }
+    }
+
     private suspend fun build(): Result<TrUAPIHostRuntime> = runCancellableCatching {
         val config = buildRuntimeConfig()
         cachedChains.set(chainDirectory.resolve())
-        val runtime = TrUAPIHostRuntime(HostRuntimeBridge(), walletSecrets, config)
+        val runtime = TrUAPIHostRuntime.create(HostRuntimeBridge(), walletSecrets, config)
         try {
-            val walletId = accountRepository.getWalletAccount().id
-            val session = localSessionSource.resolve(walletId).getOrThrow()
-            runtime.activateWallet(session.walletId, session.liteUsername)
-            require(accountRepository.getWalletAccount().id == walletId) { "Wallet selection changed during startup" }
-            wire(runtime, session.walletId)
+            runtime.setContacts(contactsBridge)
+            observeContactRemovals(runtime)
+            chainProvider.attach(
+                onResponse = runtime::notifyChainResponse,
+                onClosed = runtime::notifyChainClosed,
+            )
+            observeAppLifecycle()
             runtime
         } catch (error: Throwable) {
-            runtime.lockWallet()
             runtime.close()
             throw error
         }
     }
 
-    private fun wire(runtime: TrUAPIHostRuntime, walletId: String) {
-        // Before any product execution opens, so a product never sees the
-        // window where the host lists no contacts.
-        runtime.setContacts(contactsBridge)
-        observeContactRemovals(runtime)
-        chainProvider.attach(
-            onResponse = runtime::notifyChainResponse,
-            onClosed = runtime::notifyChainClosed,
-        )
-        observeAppLifecycle()
-        observeWalletAccount(runtime, walletId)
+    private suspend fun activate(): Result<TrUAPIHostRuntime> = runCancellableCatching {
+        val runtime = constructedRuntime().getOrThrow()
+        try {
+            val walletId = accountRepository.getWalletAccount().id
+            val session = localSessionSource.resolve(walletId).getOrThrow()
+            runtime.activateWallet(session.walletId, session.liteUsername)
+            require(accountRepository.getWalletAccount().id == walletId) { "Wallet selection changed during startup" }
+            observeWalletAccount(runtime, session.walletId)
+            runtime
+        } catch (error: Throwable) {
+            runtime.lockWallet()
+            throw error
+        }
     }
 
     private suspend fun buildRuntimeConfig(): HostRuntimeConfig {
@@ -209,15 +213,11 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     }
 
     /**
-     * Serves the signing runtime only: core storage, auth state, signing-side
+     * Serves the signing runtime only: protected storage, auth state, signing-side
      * chain access and the confirmations SSO raises. Product-scoped calls have
      * no product here and fail closed, as they do on iOS.
      */
     private inner class HostRuntimeBridge : HostBridge {
-        override val storage: HostStorage = HostLevelStorage
-
-        override val coreStorage: HostCoreStorage = this@TrUAPIHostRuntimeProvider.coreStorage
-
         override val secretStorage: HostSecretStorage = this@TrUAPIHostRuntimeProvider.secretStorage
 
         override fun onCoreLog(marker: String, detail: String) {
@@ -297,15 +297,4 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
          */
         const val DATABASE_DIRECTORY = "truapi"
     }
-}
-
-private object HostLevelStorage : HostStorage {
-    override suspend fun read(key: String): ByteArray? = null
-
-    override suspend fun write(key: String, value: ByteArray) = throw noProductScope()
-
-    override suspend fun clear(key: String) = throw noProductScope()
-
-    private fun noProductScope() =
-        HostLocalStorageReadException.Unknown("no product scope at host level")
 }

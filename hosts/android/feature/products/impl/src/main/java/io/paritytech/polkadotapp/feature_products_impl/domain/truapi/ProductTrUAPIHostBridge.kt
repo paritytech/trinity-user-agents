@@ -5,17 +5,12 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import io.parity.truapi.HostBridge
-import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostSecretStorage
-import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
-import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
@@ -39,21 +34,23 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import timber.log.Timber
-import uniffi.truapi.HostDevicePermissionRequest
-import uniffi.truapi.HostFeatureSupportedRequest
-import uniffi.truapi.HostPushNotificationRequest
-import uniffi.truapi.HostThemeSubscribeItem
-import uniffi.truapi.RemotePermission
-import uniffi.truapi.ThemeName
 import uniffi.truapi.AuthState
 import uniffi.truapi.HostChainSet
-import uniffi.truapi.UserConfirmationReview
+import uniffi.truapi.HostDevicePermissionRequest
+import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostNavigateToException
+import uniffi.truapi.HostPushNotificationRequest
 import uniffi.truapi.HostRejection
+import uniffi.truapi.HostThemeSubscribeItem
+import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.RemotePermission
+import uniffi.truapi.ThemeName
+import uniffi.truapi.UserConfirmationReview
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
-import uniffi.truapi.ThemeVariant as NativeThemeVariant
 import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
+import uniffi.truapi.ThemeVariant as NativeThemeVariant
 
 /**
  * Native platform callbacks ([io.parity.truapi.HostBridge]) for one product
@@ -71,8 +68,6 @@ import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
 class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val hostApiInteractor: HostApiInteractor,
     @param:TrUAPIChainHttpClient private val chainHttpClient: OkHttpClient,
-    private val encryptedPreferences: EncryptedPreferences,
-    private val coreStorage: EncryptedHostCoreStorage,
     private val secretStorage: TrUAPISecretStorage,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
@@ -115,19 +110,14 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     }
 
     /**
-     * Built in [attach], where the product id is known, so the storage
-     * namespace and every product-scoped call are fixed at construction
+     * Built in [attach], where the product id is known, so every
+     * product-scoped call is fixed at construction
      * instead of resolved from mutable state the callbacks trust.
      */
     private fun buildBridge(
         callingProductId: ProductId,
         navigation: NavigationPolicy,
     ) = object : HostBridge {
-        override val storage: HostStorage =
-            EncryptedHostStorage(encryptedPreferences, callingProductId.value)
-
-        override val coreStorage: HostCoreStorage = this@ProductTrUAPIHostBridge.coreStorage
-
         override val secretStorage: HostSecretStorage = this@ProductTrUAPIHostBridge.secretStorage
 
         override fun onCoreLog(marker: String, detail: String) {

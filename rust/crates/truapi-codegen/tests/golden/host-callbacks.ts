@@ -473,7 +473,11 @@ export type SecretCoreStorageKey =
   /**
    * Native resource grants bound to stable wallet ownership.
    */
-  | { tag: "NativeAllowanceKeys"; value?: undefined };
+  | { tag: "NativeAllowanceKeys"; value?: undefined }
+  /**
+   * Installation key protecting native product and core database values.
+   */
+  | { tag: "StorageEncryptionKey"; value?: undefined };
 
 /**
  * Decoded session fields a host shell needs to render account UI without
@@ -995,6 +999,7 @@ export const SecretCoreStorageKey: S.Codec<SecretCoreStorageKey> = S.lazy(
       }>,
       AutoSigningKeys: S._void,
       NativeAllowanceKeys: S._void,
+      StorageEncryptionKey: S._void,
     }),
 );
 

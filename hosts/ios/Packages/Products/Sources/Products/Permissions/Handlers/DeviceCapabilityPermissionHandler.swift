@@ -70,17 +70,7 @@ public final class DeviceCapabilityPermissionHandler: Sendable {
         let osPermission = await osAsker.checkPermission(for: capability)
         guard !osPermission.isDenied else { throw DevicePermissionRequestError.osDenied }
         let permission = ProductPermission.deviceCapability(capability)
-        let state = try await repository.getPermissionState(productId: productId, permission: permission)
-        let decision: PermissionDecision
-        switch state {
-        case .allowedAlways:
-            decision = .allowAlways
-        case .denied:
-            decision = .deny
-        case .allowedOnce,
-             .notDetermined:
-            decision = await requester.prompt(productId: productId, permission: permission)
-        }
+        let decision = await requester.prompt(productId: productId, permission: permission)
         guard decision != .deny else { return .deny }
         guard try await promptOsPermissionIfNeeded(currentStatus: osPermission, capability: capability) else {
             throw DevicePermissionRequestError.osDenied

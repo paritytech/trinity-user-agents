@@ -174,15 +174,11 @@ automatically check that the configured suffix matches the chain.
 
 ### Core database
 
-Native signing hosts (iOS, Android, the CLI) give the core a directory for its
-own SQLite database (`store` module, bundled SQLite through `rusqlite` and
-`async-sqlite`). The runtime opens `core.sqlite3` there at startup, so a
-missing or unwritable directory stops it from starting. Keep the directory out
-of device backups: it holds durable-transaction state that must not be restored
-onto another device. The required `HostRuntimeConfig.database_directory` sets
-it on iOS and Android, `SigningHostRuntime::set_core_db` on any other embedder,
-and `core_database_status()` reports the SQLite version, schema version and
-path. Web hosts do not compile the store.
+Native hosts open one `core.sqlite3` in the configured database directory, excluded from device backups. `Db` owns one transactional writer, its read pool and commit observation. `core_database_status()` reports the SQLite version, schema version and path. Web hosts do not compile the store.
+
+On iOS and Android, `RuntimeStore` owns `product_storage(product_id, key, value)` and `core_state(key, value)` in that shared database. Product keys use the owner selected by Rust, including authorized cross-product reads; core keys retain their canonical SCALE encoding. ChaCha20Poly1305 encrypts each value with version, table and row identity as associated data. The installation key resides in `SecretCoreStorageKey::StorageEncryptionKey`, independently of wallet entropy and device messaging identity. Missing keys with existing records, malformed keys and authentication failures are errors.
+
+The native constructor awaits durable key initialization before publishing a locked runtime. Process construction is shared independently of wallet selection and activation. All executions use the same repository and observe committed writes, including commits whose awaiting writer was dropped. Native product/core callbacks and pushed storage values are not storage authorities. Ordinary wallet lock does not delete product/core records. No legacy values are imported. Permission settings and live revocation remain a required dependent layer before this storage milestone is complete. Other embedders install their database through `SigningHostRuntime::set_core_db` and retain their existing storage implementations.
 
 ### The two roles
 

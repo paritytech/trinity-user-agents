@@ -69,7 +69,7 @@ class ContainerHttpAuthorizationTest {
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
 
-        TrUAPIHostRuntime(bridge, UnavailableWalletSecrets, config).use { runtime ->
+        runBlocking { TrUAPIHostRuntime.create(bridge, UnavailableWalletSecrets, config) }.use { runtime ->
             runtime.openProductExecution(bridge, ProductExecutionConfig("http-policy.paseo", kind)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 BridgeProxy(endpoint.port.toInt()).use { proxy ->
@@ -171,8 +171,6 @@ class ContainerHttpAuthorizationTest {
         val decisions = LinkedBlockingQueue<PermissionDecision>()
         val requests = LinkedBlockingQueue<RemotePermission>()
         private val memory = MemoryStorage()
-        override val storage: HostStorage = memory
-        override val coreStorage: HostCoreStorage = memory
         override val secretStorage: HostSecretStorage = memory
         override suspend fun navigateTo(url: String) = Unit
         override suspend fun featureSupported(request: HostFeatureSupportedRequest) = false
@@ -184,17 +182,11 @@ class ContainerHttpAuthorizationTest {
         }
     }
 
-    private class MemoryStorage : HostStorage, HostCoreStorage, HostSecretStorage {
-        private val values = ConcurrentHashMap<Any, ByteArray>()
+    private class MemoryStorage : HostSecretStorage {
+        private val values = ConcurrentHashMap<SecretCoreStorageKey, ByteArray>()
         override suspend fun read(key: SecretCoreStorageKey): ByteArray? = values[key]
         override suspend fun write(key: SecretCoreStorageKey, value: ByteArray) { values[key] = value }
         override suspend fun clear(key: SecretCoreStorageKey) { values.remove(key) }
-        override suspend fun read(key: String): ByteArray? = values[key]
-        override suspend fun write(key: String, value: ByteArray) { values[key] = value }
-        override suspend fun clear(key: String) { values.remove(key) }
-        override suspend fun read(key: ByteArray): ByteArray? = values[key.toList()]
-        override suspend fun write(key: ByteArray, value: ByteArray) { values[key.toList()] = value }
-        override suspend fun clear(key: ByteArray) { values.remove(key.toList()) }
     }
 
     private class Reports {

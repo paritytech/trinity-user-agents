@@ -4,17 +4,15 @@ import ChainRegistry
 import SubstrateSdk
 
 /// `HostBridge` for the process-wide ``TrUAPIHostRuntime``. It has no product
-/// identity: it owns the host-global core storage, host-level chain access, and
+/// identity: it provides protected storage, host-level chain access, and
 /// the answers the runtime needs before any product opens. Product-scoped
-/// capabilities (navigation, permissions, notifications, product KV) live in
+/// capabilities (navigation, permissions and notifications) live in
 /// the per-execution ``RustProductExecutionBridge``; here they deny or fall to
 /// the `HostBridge` protocol defaults.
 ///
 /// Threading contract matches `HostBridge`: sync members run inline on the
 /// dispatcher thread and return promptly.
 final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
-    let storage: HostStorageBackend
-    let coreStorage: HostCoreStorageBackend
     let secretStorage: HostSecretStorageBackend
 
     private let chainRegistry: ChainRegistryProtocol
@@ -25,7 +23,6 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
 
     init(
         chainRegistry: ChainRegistryProtocol,
-        coreStorage: HostCoreStorageBackend,
         secretStorage: HostSecretStorageBackend,
         chainConnections: TrUAPIChainConnecting,
         confirmationPresenter: TrUAPIConfirmationPresenting,
@@ -35,9 +32,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         self.chainConnections = chainConnections
         self.confirmationPresenter = confirmationPresenter
         self.logger = logger
-        self.coreStorage = coreStorage
         self.secretStorage = secretStorage
-        storage = EmptyHostStorageBackend()
         chainConnections.eventHandler = self
     }
 

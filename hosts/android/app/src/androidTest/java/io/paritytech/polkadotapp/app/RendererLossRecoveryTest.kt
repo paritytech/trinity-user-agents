@@ -34,6 +34,7 @@ import org.junit.runner.RunWith
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.SecretCoreStorageKey
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
@@ -50,8 +51,11 @@ class RendererLossRecoveryTest {
         val context = instrumentation.targetContext
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
         val reports = Reports()
-        val bridge = mockk<HostBridge>(relaxed = true) { coEvery { coreStorage.read(any()) } returns null }
-        TrUAPIHostRuntime(bridge, mockk(), CONFIG).use { runtime ->
+        val bridge = mockk<HostBridge>(relaxed = true) {
+            coEvery { secretStorage.read(any()) } returns null
+            coEvery { secretStorage.read(SecretCoreStorageKey.StorageEncryptionKey) } returns ByteArray(32) { 1 }
+        }
+        runBlocking { TrUAPIHostRuntime.create(bridge, mockk(), CONFIG) }.use { runtime ->
             runtime.openProductExecution(bridge, ProductExecutionConfig(PRODUCT, ProductExecutionKind.APP)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 val provider = PageProvider(context, scope)

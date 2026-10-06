@@ -7,32 +7,18 @@ use truapi::v01;
 use crate::PairedSsoPeer;
 use crate::host_logic::worker::WorkerTransition;
 
-use super::config::ProductExecutionConfig;
-use super::errors::HostRejection;
-#[cfg(doc)]
-use crate::platform::CoreStorageKey;
 #[cfg(doc)]
 use super::NativeTrUApiHostRuntime;
+use super::config::ProductExecutionConfig;
+use super::errors::HostRejection;
 
 /// Callback surface that iOS and Android implement.
 ///
-/// Threading contract: every callback executes on the shared bridge
-/// executor's worker threads, and blocking one of those threads can stall
-/// the entire bridge — not just the request being served. Async callbacks
-/// (`navigate_to`, `push_notification`, `device_permission`,
-/// `remote_permission`, `feature_supported`, `confirm_user_action`, `confirm_permission`,
-/// `lookup_preimage`, and the core and local storage callbacks) are awaited by the core. Implementations hop to the
-/// main thread for any UI and may keep the future pending arbitrarily long,
-/// but must suspend rather than block the polling thread (foreign
-/// implementations bridged through UniFFI suspend naturally; the rule
-/// chiefly binds Rust implementations). Dropping the returned future
-/// cancels the foreign task. The remaining sync callbacks run inline on the
-/// dispatcher thread and must return promptly without blocking; in
-/// particular `auth_state_changed` should only hand the state to the host
-/// UI thread, never wait for the user. `chain_send` and `chain_close` are
-/// sync so requests reach the connection in the order the core sent them;
-/// they must only enqueue work on the host's connection, never wait on the
-/// network.
+/// Async implementations must suspend rather than block their polling thread.
+/// Foreign implementations may hop to the main thread for UI; dropping a Rust
+/// callback future cancels the foreign task. Synchronous callbacks must return
+/// promptly: state notifications enqueue UI work, and chain callbacks enqueue
+/// network work without waiting for responses.
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
 pub trait HostCallbacks: Send + Sync {
@@ -91,18 +77,6 @@ pub trait HostCallbacks: Send + Sync {
     /// persisted session, `Disconnected` included; later emissions happen
     /// only when the state changes.
     fn auth_state_changed(&self, state: AuthState);
-
-    /// Read a core-owned host-private storage slot. `key` is a SCALE-encoded
-    /// [`CoreStorageKey`].
-    async fn core_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;
-
-    /// Persist a core-owned host-private storage slot. `key` is a
-    /// SCALE-encoded [`CoreStorageKey`].
-    async fn core_storage_write(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), HostRejection>;
-
-    /// Clear a core-owned host-private storage slot. `key` is a SCALE-encoded
-    /// [`CoreStorageKey`].
-    async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection>;
 
     /// Read a protected record; only missing keys return `None`.
     async fn read_secret_core_storage(
@@ -197,20 +171,6 @@ pub trait HostCallbacks: Send + Sync {
     /// is still running: hand the device off rather than announcing it
     /// inline.
     fn device_paired(&self, device: PairedSsoPeer);
-
-    /// Read a value from the host's scoped key-value store.
-    async fn local_storage_read(
-        &self,
-        key: String,
-    ) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError>;
-    /// Write a value to the host's scoped key-value store.
-    async fn local_storage_write(
-        &self,
-        key: String,
-        value: Vec<u8>,
-    ) -> Result<(), v01::HostLocalStorageReadError>;
-    /// Clear a value from the host's scoped key-value store.
-    async fn local_storage_clear(&self, key: String) -> Result<(), v01::HostLocalStorageReadError>;
 
     /// Record a pending operation, whose id keeps the product's worker alive
     /// until it ends.

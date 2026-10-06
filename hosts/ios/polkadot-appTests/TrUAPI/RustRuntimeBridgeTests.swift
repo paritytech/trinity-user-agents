@@ -27,10 +27,6 @@ private func makeRegistryPool(chainRegistry: ChainRegistryProtocol) -> TrUAPICha
     )
 }
 
-private func makeTestDefaults() -> UserDefaults {
-    UserDefaults(suiteName: "io.polkadotapp.tests.truapi-bridge") ?? .standard
-}
-
 // MARK: - Stubs
 
 private struct StubHostProvider: ProductHostProviding {
@@ -82,17 +78,10 @@ private func makeBridge(
     chainRegistry: MockChainRegistry = MockChainRegistry(),
     confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter(),
     preimageCache: TrUAPIPreimageCache = TrUAPIPreimageCache { _ in nil },
-    productStorageFails: Bool = false,
     hostProvider: ProductHostProviding = StubHostProvider()
 ) -> RustProductExecutionBridge {
     let router = MockNavigationRouter()
     let pool = makeRegistryPool(chainRegistry: chainRegistry)
-    let productStorage: TrUAPILocalStoring = productStorageFails
-        ? FailingProductStorage()
-        : TrUAPILocalStorage.createProductLocalStorage(
-            productId: productId,
-            defaults: makeTestDefaults()
-        )
     return RustProductExecutionBridge(dependencies: .init(
         productId: productId,
         permissionGuard: permissionGuard,
@@ -101,11 +90,6 @@ private func makeBridge(
         navigationRouter: router,
         chainRegistry: chainRegistry,
         chainConnections: pool,
-        productStorage: productStorage,
-        coreStorage: CoreStorageBackend(
-            storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
-            lock: NSLock()
-        ),
         secretStorage: StubSecretStorage(),
         confirmationPresenter: confirmationPresenter,
         preimageCache: preimageCache,
@@ -519,20 +503,6 @@ struct RustRuntimeBridgeTests {
         bridge.chainDidClose(connectionId: 1)
     }
 
-    /// Plain Swift errors from storage surface as FFI `HostLocalStorageReadError.Unknown`.
-    @Test func storageErrorsAreMappedToFfiTypes() {
-        let bridge = makeBridge(productStorageFails: true)
-
-        #expect {
-            try bridge.storage.read(key: "k")
-        } throws: { error in
-            guard case HostLocalStorageReadError.Unknown = error else {
-                return false
-            }
-            return true
-        }
-    }
-
     /// After `attach`, the bridge sets itself as the chain event handler on
     /// the connection pool. Mocked execution — the Rust cdylib never boots in
     /// unit tests.
@@ -547,14 +517,6 @@ struct RustRuntimeBridgeTests {
             navigationRouter: MockNavigationRouter(),
             chainRegistry: chainRegistry,
             chainConnections: pool,
-            productStorage: TrUAPILocalStorage.createProductLocalStorage(
-                productId: "test.dot",
-                defaults: makeTestDefaults()
-            ),
-            coreStorage: CoreStorageBackend(
-                storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
-                lock: NSLock()
-            ),
             secretStorage: StubSecretStorage(),
             confirmationPresenter: MockConfirmationPresenter(),
             preimageCache: TrUAPIPreimageCache { _ in nil },
@@ -583,18 +545,5 @@ struct RustRuntimeBridgeTests {
         #expect(execution.chainResponses.first?.0 == 7)
         #expect(execution.chainResponses.first?.1 == "{\"ok\":true}")
         #expect(execution.chainClosed == [7])
-    }
-
-    /// Core storage keys (`Data`) are hex-encoded for the underlying store;
-    /// a write then read round-trips through the hex key.
-    @Test func coreStorageBackendHexEncodesKeys() throws {
-        let bridge = makeBridge()
-        let key = Data([0xDE, 0xAD])
-        let value = Data([0x01, 0x02, 0x03])
-
-        try bridge.coreStorage.write(key: key, value: value)
-        let read = try bridge.coreStorage.read(key: key)
-
-        #expect(read == value)
     }
 }

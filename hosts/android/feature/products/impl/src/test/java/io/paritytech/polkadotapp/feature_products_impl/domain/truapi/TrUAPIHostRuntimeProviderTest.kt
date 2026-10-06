@@ -36,6 +36,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import uniffi.truapi.AuthState
+import uniffi.truapi.SecretCoreStorageKey
+import java.util.concurrent.ConcurrentHashMap
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrUAPIHostRuntimeProviderTest {
@@ -48,6 +50,60 @@ class TrUAPIHostRuntimeProviderTest {
     }
     private val secrets = mockk<AccountSecretsStorage> {
         coEvery { getMetaAccountPassphrase(any()) } returns MnemonicCreator.fromEntropy(ByteArray(32) { 1 })
+    }
+
+    private val protectedValues = ConcurrentHashMap<SecretCoreStorageKey, ByteArray>()
+    private val secretStorage = mockk<TrUAPISecretStorage> {
+        coEvery { read(any()) } answers { protectedValues[firstArg()] }
+        coEvery { write(any(), any()) } answers { protectedValues[firstArg()] = secondArg() }
+        coEvery { clear(any()) } answers { protectedValues.remove(firstArg()); Unit }
+    }
+
+    @Test
+    fun `cancelled startup and changed selection share the pending installation key creation`() = runTest {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        coEvery { secretStorage.write(SecretCoreStorageKey.StorageEncryptionKey, any()) } coAnswers {
+            entered.complete(Unit)
+            release.await()
+            protectedValues[SecretCoreStorageKey.StorageEncryptionKey] = secondArg()
+        }
+        val provider = provider(StandardTestDispatcher(testScheduler))
+        val first = async { provider.runtime() }
+        entered.await()
+        first.cancelAndJoin()
+        selected.value = wallet(2)
+        val second = async { provider.runtime().getOrThrow() }
+        runCurrent()
+        assertFalse(second.isCompleted)
+        coVerify(exactly = 0) { secrets.getMetaAccountPassphrase(any()) }
+        release.complete(Unit)
+
+        second.await().use { runtime ->
+            assertSame(runtime, provider.runtime().getOrThrow())
+            assertTrue(runtime.statementRenewalOwnerKey().isNotEmpty())
+            coVerify(exactly = 1) { secretStorage.read(SecretCoreStorageKey.StorageEncryptionKey) }
+            coVerify(exactly = 1) { secretStorage.write(SecretCoreStorageKey.StorageEncryptionKey, any()) }
+            coVerify(exactly = 1) { secrets.getMetaAccountPassphrase(2) }
+            coVerify(exactly = 0) { secrets.getMetaAccountPassphrase(1) }
+        }
+    }
+
+    @Test
+    fun `failed installation key persistence fails construction before wallet activation and can retry`() = runTest {
+        val failure = IllegalStateException("Protected storage unavailable")
+        coEvery { secretStorage.write(SecretCoreStorageKey.StorageEncryptionKey, any()) } throws failure
+        val provider = provider(StandardTestDispatcher(testScheduler))
+        assertTrue(provider.runtime().isFailure)
+        coVerify(exactly = 0) { secrets.getMetaAccountPassphrase(any()) }
+
+        coEvery { secretStorage.write(SecretCoreStorageKey.StorageEncryptionKey, any()) } answers {
+            protectedValues[SecretCoreStorageKey.StorageEncryptionKey] = secondArg()
+        }
+        provider.runtime().getOrThrow().use { runtime ->
+            assertTrue(runtime.statementRenewalOwnerKey().isNotEmpty())
+            coVerify(exactly = 2) { secretStorage.write(SecretCoreStorageKey.StorageEncryptionKey, any()) }
+        }
     }
 
     @Test
@@ -76,7 +132,7 @@ class TrUAPIHostRuntimeProviderTest {
     }
 
     @Test
-    fun `protected root failure fails startup and the next caller can retry`() = runTest {
+    fun `protected root failure keeps the constructed runtime for the next activation attempt`() = runTest {
         coEvery { secrets.getMetaAccountPassphrase(1) } returns null
         val provider = provider(StandardTestDispatcher(testScheduler))
         assertTrue(provider.runtime().isFailure)
@@ -84,6 +140,8 @@ class TrUAPIHostRuntimeProviderTest {
 
         provider.runtime().getOrThrow().use { runtime ->
             assertTrue(runtime.statementRenewalOwnerKey().isNotEmpty())
+            coVerify(exactly = 1) { secretStorage.read(SecretCoreStorageKey.StorageEncryptionKey) }
+            coVerify(exactly = 1) { secretStorage.write(SecretCoreStorageKey.StorageEncryptionKey, any()) }
         }
     }
 
@@ -125,8 +183,6 @@ class TrUAPIHostRuntimeProviderTest {
         val tld = mockk<DotNsTldProvider> { coEvery { getTld() } returns Result.success(DotNsTld.parse("dot")!!) }
         val lifecycle = mockk<AppLifecycleObserver> { every { subscribe() } returns emptyFlow() }
         val contacts = mockk<AppContactsHostBridge> { every { contactRemovals() } returns emptyFlow() }
-        val publicStorage = mockk<EncryptedHostCoreStorage>(relaxed = true) { coEvery { read(any()) } returns null }
-        val secretStorage = mockk<TrUAPISecretStorage>(relaxed = true) { coEvery { read(any()) } returns null }
         val dispatchers = mockk<CoroutineDispatchers> { every { computation } returns dispatcher }
         val chainDirectory = mockk<TrUAPIChainDirectory> { coEvery { resolve() } returns EMPTY_CHAINS }
         return TrUAPIHostRuntimeProvider(
@@ -138,7 +194,6 @@ class TrUAPIHostRuntimeProviderTest {
             TrUAPIWalletSecretProvider(accounts, secrets),
             accounts,
             tld,
-            publicStorage,
             secretStorage,
             OkHttpClient(),
             mockk(),

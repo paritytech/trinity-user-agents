@@ -1,15 +1,17 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::latest::GenericError;
+use crate::platform::SecretCoreStorage;
 use crate::platform::{
     AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus, Features,
     JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision, Permissions,
     PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError, ThemeHost,
     UserConfirmation, UserConfirmationReview, async_trait,
 };
+use crate::store::RuntimeStore;
 use futures::channel::mpsc;
 use futures::stream::{self, BoxStream, StreamExt};
-use parity_scale_codec::Encode;
 use truapi::v01;
 
 use crate::host_logic::worker::WorkerTransition;
@@ -55,17 +57,16 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
     }
 }
 
-/// Every [`crate::platform::Platform`] trait served by one execution's
-/// [`HostCallbacks`].
+/// Execution callbacks with shared native storage.
 pub struct CallbackPlatform {
     /// Host callbacks this execution was opened with.
     pub callbacks: Arc<dyn HostCallbacks>,
     /// Events scoped to this execution.
     pub events: Arc<NativeEventBus>,
-    /// Storage changes are product-wide rather than per-execution: a worker
-    /// and the screen share one namespace, so they subscribe and publish on
-    /// the runtime-wide bus instead of this execution's own.
-    pub storage_events: Arc<NativeEventBus>,
+    /// Shared installation records, independent of the execution's lifetime.
+    pub storage: Arc<RuntimeStore>,
+    /// The process owner's protected callback adapter.
+    pub secrets: Arc<SecretStorageCallback>,
 }
 
 impl crate::host_logic::worker::WorkerDemandObserver for CallbackPlatform {
@@ -209,7 +210,7 @@ impl Features for CallbackPlatform {
 #[async_trait]
 impl ProductStorage for CallbackPlatform {
     async fn read(&self, key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
-        self.callbacks.local_storage_read(key).await
+        self.storage.read(key).await
     }
 
     async fn write(
@@ -217,39 +218,18 @@ impl ProductStorage for CallbackPlatform {
         key: String,
         value: Vec<u8>,
     ) -> Result<(), v01::HostLocalStorageReadError> {
-        self.callbacks
-            .local_storage_write(key.clone(), value.clone())
-            .await?;
-        self.storage_events
-            .notify_storage_changed(&key, Some(value));
-        Ok(())
+        self.storage.write(key, value).await
     }
 
     async fn clear(&self, key: String) -> Result<(), v01::HostLocalStorageReadError> {
-        self.callbacks.local_storage_clear(key.clone()).await?;
-        self.storage_events.notify_storage_changed(&key, None);
-        Ok(())
+        self.storage.clear(key).await
     }
 
     fn subscribe_storage(
         &self,
         key: String,
-    ) -> BoxStream<'static, Result<v01::HostLocalStorageChangeItem, v01::GenericError>> {
-        // Subscribe before reading, so a change landing between the two repeats
-        // rather than being lost. The host pushes later changes via
-        // `notify_storage_changed`.
-        let rx = self.storage_events.subscribe_storage_changes(key.clone());
-        let callbacks = self.callbacks.clone();
-        let current = async move {
-            callbacks
-                .local_storage_read(key)
-                .await
-                .map(|value| v01::HostLocalStorageChangeItem { value })
-                .map_err(|error| v01::GenericError {
-                    reason: error.to_string(),
-                })
-        };
-        stream::once(current).chain(rx).boxed()
+    ) -> BoxStream<'static, Result<v01::HostLocalStorageChangeItem, GenericError>> {
+        self.storage.subscribe_storage(key)
     }
 }
 
@@ -288,34 +268,56 @@ impl CoreStorage for CallbackPlatform {
     async fn read_core_storage(
         &self,
         key: CoreStorageKey,
-    ) -> Result<Option<Vec<u8>>, v01::GenericError> {
-        self.callbacks
-            .core_storage_read(key.encode())
-            .await
-            .map_err(v01::GenericError::from)
+    ) -> Result<Option<Vec<u8>>, GenericError> {
+        self.storage.read_core_storage(key).await
     }
 
     async fn write_core_storage(
         &self,
         key: CoreStorageKey,
         value: Vec<u8>,
-    ) -> Result<(), v01::GenericError> {
-        self.callbacks
-            .core_storage_write(key.encode(), value)
-            .await
-            .map_err(v01::GenericError::from)
+    ) -> Result<(), GenericError> {
+        self.storage.write_core_storage(key, value).await
     }
 
-    async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
-        self.callbacks
-            .core_storage_clear(key.encode())
-            .await
-            .map_err(v01::GenericError::from)
+    async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
+        self.storage.clear_core_storage(key).await
     }
 }
 
 #[async_trait]
-impl crate::platform::SecretCoreStorage for CallbackPlatform {
+impl SecretCoreStorage for CallbackPlatform {
+    async fn read_secret_core_storage(
+        &self,
+        key: crate::platform::SecretCoreStorageKey,
+    ) -> Result<Option<Vec<u8>>, GenericError> {
+        self.secrets.read_secret_core_storage(key).await
+    }
+
+    async fn write_secret_core_storage(
+        &self,
+        key: crate::platform::SecretCoreStorageKey,
+        value: Vec<u8>,
+    ) -> Result<(), GenericError> {
+        self.secrets.write_secret_core_storage(key, value).await
+    }
+
+    async fn clear_secret_core_storage(
+        &self,
+        key: crate::platform::SecretCoreStorageKey,
+    ) -> Result<(), GenericError> {
+        self.secrets.clear_secret_core_storage(key).await
+    }
+}
+
+/// Protected callbacks available before database initialization.
+pub struct SecretStorageCallback {
+    /// The installation's shared callback owner.
+    pub callbacks: Arc<dyn HostCallbacks>,
+}
+
+#[async_trait]
+impl SecretCoreStorage for SecretStorageCallback {
     async fn read_secret_core_storage(
         &self,
         key: crate::platform::SecretCoreStorageKey,

@@ -26,7 +26,9 @@ use super::config::{
 };
 use super::errors::HostRejection;
 use super::events::NativeEventBus;
-use super::platform::{CallbackPlatform, ChatCallbackPlatform, PocketCallbackPlatform};
+use super::platform::{
+    CallbackPlatform, ChatCallbackPlatform, PocketCallbackPlatform, SecretStorageCallback,
+};
 use super::runtime::{NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime};
 use crate::platform::CreateTransactionReview;
 use futures::FutureExt;
@@ -207,7 +209,7 @@ pub struct EventCallbacks {
     pub remote_permission_reply: Mutex<
         Option<futures::channel::oneshot::Receiver<Result<PermissionDecision, HostRejection>>>,
     >,
-    pub core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+    pub secret_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
     /// Disclosure consent is distinct from boolean action confirmation.
     pub permission_confirmation_result: PermissionDecision,
     /// Counts prompts across the execution's separate connections.
@@ -255,7 +257,7 @@ impl EventCallbacks {
             os_refused: None,
             remote_permission_result: Ok(PermissionDecision::Deny),
             remote_permission_reply: Mutex::new(None),
-            core_storage: Mutex::default(),
+            secret_storage: Mutex::default(),
             permission_confirmation_result: PermissionDecision::Deny,
             remote_permission_calls: std::sync::atomic::AtomicUsize::new(0),
             remote_permission_products: Mutex::new(Vec::new()),
@@ -332,27 +334,12 @@ impl HostCallbacks for EventCallbacks {
             .expect("auth state mutex poisoned")
             .push(state);
     }
-    async fn core_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
-        Ok(self.core_storage.lock().unwrap().get(&key).cloned())
-    }
-    async fn core_storage_write(
-        &self,
-        key: Vec<u8>,
-        value: Vec<u8>,
-    ) -> Result<(), HostRejection> {
-        self.core_storage.lock().unwrap().insert(key, value);
-        Ok(())
-    }
-    async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection> {
-        self.core_storage.lock().unwrap().remove(&key);
-        Ok(())
-    }
     async fn read_secret_core_storage(
         &self,
         key: crate::platform::SecretCoreStorageKey,
     ) -> Result<Option<Vec<u8>>, HostRejection> {
         Ok(self
-            .core_storage
+            .secret_storage
             .lock()
             .unwrap()
             .get(&key.storage_key().into_bytes())
@@ -363,7 +350,7 @@ impl HostCallbacks for EventCallbacks {
         key: crate::platform::SecretCoreStorageKey,
         value: Vec<u8>,
     ) -> Result<(), HostRejection> {
-        self.core_storage
+        self.secret_storage
             .lock()
             .unwrap()
             .insert(key.storage_key().into_bytes(), value);
@@ -373,7 +360,7 @@ impl HostCallbacks for EventCallbacks {
         &self,
         key: crate::platform::SecretCoreStorageKey,
     ) -> Result<(), HostRejection> {
-        self.core_storage
+        self.secret_storage
             .lock()
             .unwrap()
             .remove(&key.storage_key().into_bytes());
@@ -442,25 +429,6 @@ impl HostCallbacks for EventCallbacks {
             network: "paseo".to_string(),
             chains: Vec::new(),
         })
-    }
-    async fn local_storage_read(
-        &self,
-        _key: String,
-    ) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
-        Ok(None)
-    }
-    async fn local_storage_write(
-        &self,
-        _key: String,
-        _value: Vec<u8>,
-    ) -> Result<(), v01::HostLocalStorageReadError> {
-        Ok(())
-    }
-    async fn local_storage_clear(
-        &self,
-        _key: String,
-    ) -> Result<(), v01::HostLocalStorageReadError> {
-        Ok(())
     }
     async fn begin_operation(
         &self,
@@ -591,21 +559,47 @@ impl NativeChatCallbacks for EventCallbacks {
     }
 }
 
+async fn callback_platform(
+    callbacks: Arc<dyn HostCallbacks>,
+    events: Arc<NativeEventBus>,
+) -> CallbackPlatform {
+    let secrets = Arc::new(SecretStorageCallback {
+        callbacks: callbacks.clone(),
+    });
+    let database = crate::store::Db::open(crate::store::DbConfig {
+        location: crate::store::DbLocation::Memory,
+        migrations: crate::store::core_migrations,
+        readers: 0,
+    })
+    .await
+    .unwrap();
+    let storage = Arc::new(
+        crate::store::RuntimeStore::open(database, secrets.as_ref())
+            .await
+            .unwrap(),
+    );
+    CallbackPlatform {
+        callbacks,
+        events,
+        storage,
+        secrets,
+    }
+}
+
 pub fn event_platform() -> (Arc<EventCallbacks>, Arc<NativeEventBus>, CallbackPlatform) {
     let callbacks = Arc::new(EventCallbacks::new());
     let events = Arc::new(NativeEventBus::default());
-    let platform = CallbackPlatform {
-        callbacks: callbacks.clone(),
-        events: events.clone(),
-        storage_events: events.clone(),
-    };
+    let platform =
+        futures::executor::block_on(callback_platform(callbacks.clone(), events.clone()));
     (callbacks, events, platform)
 }
 
 #[test]
 fn a_product_write_reaches_a_storage_subscription_on_the_same_key() {
     let (_callbacks, _events, platform) = event_platform();
-    let key = "myapp.dot/progress".to_string();
+    let key = crate::platform::ProductStorageKey::new("myapp.dot", "progress")
+        .unwrap()
+        .encode();
     let mut subscription = platform.subscribe_storage(key.clone());
 
     assert_eq!(
@@ -618,10 +612,10 @@ fn a_product_write_reaches_a_storage_subscription_on_the_same_key() {
         .expect("write");
 
     assert_eq!(
-        futures::FutureExt::now_or_never(futures::StreamExt::next(&mut subscription)),
-        Some(Some(Ok(v01::HostLocalStorageChangeItem {
+        futures::executor::block_on(futures::StreamExt::next(&mut subscription)),
+        Some(Ok(v01::HostLocalStorageChangeItem {
             value: Some(vec![1, 2, 3]),
-        }))),
+        })),
         "a write the product made is a change its own subscribers must see"
     );
 }
@@ -678,11 +672,11 @@ pub fn native_host_runtime(
     callbacks: Arc<dyn HostCallbacks>,
     config: HostRuntimeConfig,
 ) -> Result<Arc<NativeTrUApiHostRuntime>, NativeRuntimeConfigError> {
-    let runtime = NativeTrUApiHostRuntime::with_runtime_config(
+    let runtime = futures::executor::block_on(NativeTrUApiHostRuntime::with_runtime_config(
         callbacks,
         Arc::new(TestWalletSecretProvider),
         config,
-    )?;
+    ))?;
     futures::executor::block_on(
         runtime.activate_wallet("alice".to_string(), Some("alice".to_string())),
     )
@@ -695,11 +689,11 @@ pub fn native_product_execution(
     product_id: &str,
 ) -> Arc<NativeProductExecution> {
     let config = native_host_runtime_config();
-    let host = NativeTrUApiHostRuntime::with_runtime_config(
+    let host = futures::executor::block_on(NativeTrUApiHostRuntime::with_runtime_config(
         callbacks.clone(),
         Arc::new(TestWalletSecretProvider),
         config,
-    )
+    ))
     .expect("host runtime config should be valid");
     host.open_product_execution(
         callbacks,
@@ -2017,22 +2011,6 @@ fn start_ws_bridge_twice_returns_already_running() {
             Ok(PermissionDecision::Deny)
         }
         fn auth_state_changed(&self, _state: AuthState) {}
-        async fn core_storage_read(
-            &self,
-            _key: Vec<u8>,
-        ) -> Result<Option<Vec<u8>>, HostRejection> {
-            Ok(None)
-        }
-        async fn core_storage_write(
-            &self,
-            _key: Vec<u8>,
-            _value: Vec<u8>,
-        ) -> Result<(), HostRejection> {
-            Ok(())
-        }
-        async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
-            Ok(())
-        }
         async fn read_secret_core_storage(
             &self,
             _key: crate::platform::SecretCoreStorageKey,
@@ -2099,25 +2077,6 @@ fn start_ws_bridge_twice_returns_already_running() {
                 network: "paseo".to_string(),
                 chains: Vec::new(),
             })
-        }
-        async fn local_storage_read(
-            &self,
-            _key: String,
-        ) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
-            Ok(None)
-        }
-        async fn local_storage_write(
-            &self,
-            _key: String,
-            _value: Vec<u8>,
-        ) -> Result<(), v01::HostLocalStorageReadError> {
-            Ok(())
-        }
-        async fn local_storage_clear(
-            &self,
-            _key: String,
-        ) -> Result<(), v01::HostLocalStorageReadError> {
-            Ok(())
         }
         async fn begin_operation(
             &self,
@@ -2218,22 +2177,6 @@ fn pending_permission_decision_does_not_stall_bridge() {
             Ok(PermissionDecision::Deny)
         }
         fn auth_state_changed(&self, _state: AuthState) {}
-        async fn core_storage_read(
-            &self,
-            _key: Vec<u8>,
-        ) -> Result<Option<Vec<u8>>, HostRejection> {
-            Ok(None)
-        }
-        async fn core_storage_write(
-            &self,
-            _key: Vec<u8>,
-            _value: Vec<u8>,
-        ) -> Result<(), HostRejection> {
-            Ok(())
-        }
-        async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
-            Ok(())
-        }
         async fn read_secret_core_storage(
             &self,
             _key: crate::platform::SecretCoreStorageKey,
@@ -2300,25 +2243,6 @@ fn pending_permission_decision_does_not_stall_bridge() {
                 network: "paseo".to_string(),
                 chains: Vec::new(),
             })
-        }
-        async fn local_storage_read(
-            &self,
-            _key: String,
-        ) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
-            Ok(None)
-        }
-        async fn local_storage_write(
-            &self,
-            _key: String,
-            _value: Vec<u8>,
-        ) -> Result<(), v01::HostLocalStorageReadError> {
-            Ok(())
-        }
-        async fn local_storage_clear(
-            &self,
-            _key: String,
-        ) -> Result<(), v01::HostLocalStorageReadError> {
-            Ok(())
         }
         async fn begin_operation(
             &self,
@@ -2718,11 +2642,11 @@ fn two_executions_share_one_bridge_through_the_native_api() {
 
 pub fn native_host_runtime_no_session() -> Arc<NativeTrUApiHostRuntime> {
     let config = native_host_runtime_config();
-    NativeTrUApiHostRuntime::with_runtime_config(
+    futures::executor::block_on(NativeTrUApiHostRuntime::with_runtime_config(
         Arc::new(EventCallbacks::new()),
         Arc::new(TestWalletSecretProvider),
         config,
-    )
+    ))
     .expect("host runtime config should be valid")
 }
 
@@ -2983,14 +2907,14 @@ fn native_permission_confirmation_preserves_consent_lifetime() {
             PermissionDecision::AllowAlways,
             PermissionDecision::Deny,
         ] {
-            let platform = CallbackPlatform {
-                callbacks: Arc::new(EventCallbacks {
+            let platform = callback_platform(
+                Arc::new(EventCallbacks {
                     permission_confirmation_result: decision,
                     ..EventCallbacks::new()
                 }),
-                events: Arc::default(),
-                storage_events: Arc::default(),
-            };
+                Arc::default(),
+            )
+            .await;
             let review = UserConfirmationReview::IdentityDisclosure(
                 crate::platform::IdentityDisclosureReview {
                     product_id: "product.dot".to_string(),

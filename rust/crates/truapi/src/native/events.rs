@@ -13,7 +13,6 @@ pub struct NativeEventBus {
     locale_changes:
         Mutex<Vec<mpsc::UnboundedSender<Result<v01::HostLocaleSubscribeItem, v01::GenericError>>>>,
     preimage_changes: Mutex<Vec<PreimageSubscription>>,
-    storage_changes: Mutex<Vec<StorageSubscription>>,
     chain_events: Mutex<NativeChainEvents>,
     chat_room_changes: Mutex<Vec<mpsc::UnboundedSender<v01::HostChatListSubscribeItem>>>,
     pocket_card_changes: Mutex<
@@ -30,11 +29,6 @@ struct NativeChainEvents {
 struct PreimageSubscription {
     key: Vec<u8>,
     tx: mpsc::UnboundedSender<Result<Option<Vec<u8>>, v01::GenericError>>,
-}
-
-struct StorageSubscription {
-    key: String,
-    tx: mpsc::UnboundedSender<Result<v01::HostLocalStorageChangeItem, v01::GenericError>>,
 }
 
 impl NativeEventBus {
@@ -103,33 +97,6 @@ impl NativeEventBus {
                     return true;
                 }
                 sub.tx.unbounded_send(Ok(value.clone())).is_ok()
-            });
-    }
-
-    /// Stream later changes to the product storage value under `key`.
-    pub fn subscribe_storage_changes(
-        &self,
-        key: String,
-    ) -> mpsc::UnboundedReceiver<Result<v01::HostLocalStorageChangeItem, v01::GenericError>> {
-        let (tx, rx) = mpsc::unbounded();
-        self.storage_changes
-            .lock()
-            .expect("native storage subscribers mutex poisoned")
-            .push(StorageSubscription { key, tx });
-        rx
-    }
-
-    /// Deliver a product storage change to the subscribers of `key`.
-    pub fn notify_storage_changed(&self, key: &str, value: Option<Vec<u8>>) {
-        let item = v01::HostLocalStorageChangeItem { value };
-        self.storage_changes
-            .lock()
-            .expect("native storage subscribers mutex poisoned")
-            .retain(|sub| {
-                if sub.key != key {
-                    return true;
-                }
-                sub.tx.unbounded_send(Ok(item.clone())).is_ok()
             });
     }
 

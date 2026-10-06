@@ -11,7 +11,6 @@ import BulletinChain
 /// data is held here.
 struct RustRuntimeEnvironment {
     let runtime: TrUAPIHostRuntime
-    let coreStorage: HostCoreStorageBackend
     let secretStorage: HostSecretStorageBackend
     let chainRegistry: ChainRegistryProtocol
     let notificationScheduler: ProductNotificationScheduling
@@ -119,8 +118,6 @@ private extension RustRuntimeEnvironment {
             navigationRouter: routers.navigationRouter,
             chainRegistry: chainRegistry,
             chainConnections: chainConnections,
-            productStorage: TrUAPILocalStorage.createProductLocalStorage(productId: productId),
-            coreStorage: coreStorage,
             secretStorage: secretStorage,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: routers),
             preimageCache: TrUAPIPreimageCache { [logger, ipfsFetcher] key in

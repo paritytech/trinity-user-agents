@@ -9,10 +9,6 @@ import TrUAPIHost
 
 private let testProduct = ProductExecutionConfig(productId: "host.product", executionKind: .app)
 
-private func makeHostDefaults() -> UserDefaults {
-    UserDefaults(suiteName: "io.polkadotapp.tests.truapi-host-bridge") ?? .standard
-}
-
 private func makeHostBridge(
     chainRegistry: ChainRegistryProtocol = MockChainRegistry(),
     confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter()
@@ -27,10 +23,6 @@ private func makeHostBridge(
     )
     return RustHostRuntimeBridge(
         chainRegistry: chainRegistry,
-        coreStorage: CoreStorageBackend(
-            storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
-            lock: NSLock()
-        ),
         secretStorage: StubSecretStorage(),
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
@@ -115,24 +107,6 @@ struct RustHostRuntimeBridgeTests {
         #expect(result == decision)
         #expect(presenter.receivedReview == review)
         #expect(presenter.receivedRequesterName == "host")
-    }
-
-    /// Core storage is the real host-global backend: writes round-trip.
-    @Test func coreStorageRoundTrips() throws {
-        let bridge = makeHostBridge()
-        let key = Data([0x0A, 0x0B])
-        let value = Data([0x10, 0x20, 0x30])
-
-        try bridge.coreStorage.write(key: key, value: value)
-        #expect(try bridge.coreStorage.read(key: key) == value)
-    }
-
-    /// Product KV has no host-level scope: reads miss and writes are dropped.
-    @Test func productStorageIsEmptyAtHostLevel() throws {
-        let bridge = makeHostBridge()
-
-        try bridge.storage.write(key: "k", value: Data([0x01]))
-        #expect(try bridge.storage.read(key: "k") == nil)
     }
 }
 

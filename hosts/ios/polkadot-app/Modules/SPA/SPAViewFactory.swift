@@ -183,7 +183,6 @@ extension SPAViewFactory {
                 let runtime = try await runtimeProvider.sharedRuntime()
                 return RustRuntimeEnvironment(
                     runtime: runtime,
-                    coreStorage: runtimeProvider.coreStorage,
                     secretStorage: runtimeProvider.secretStorage,
                     chainRegistry: ChainRegistryFacade.sharedRegistry,
                     notificationScheduler: ProductNotificationScheduler.shared,
