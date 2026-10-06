@@ -137,7 +137,6 @@ fn settled_stage(outcome: Outcome) -> Option<FundingStage> {
                 message: "the scripted provider failed the session".into(),
             },
             settled_at_ms,
-            resume: None,
         }),
         Outcome::Dismiss => None,
     }
@@ -189,7 +188,6 @@ impl FundingPlatform for CliFundingHost {
         let (tag, amount) = match status {
             HostFundingStatusSubscribeItem::AwaitingDeposit { .. } => ("AwaitingDeposit", None),
             HostFundingStatusSubscribeItem::AwaitingRelease => ("AwaitingRelease", None),
-            HostFundingStatusSubscribeItem::Converting => ("Converting", None),
             HostFundingStatusSubscribeItem::Delivered { credited } => ("Delivered", Some(credited)),
             HostFundingStatusSubscribeItem::Released { debited } => ("Released", Some(debited)),
             HostFundingStatusSubscribeItem::Failed { .. } => ("Failed", None),

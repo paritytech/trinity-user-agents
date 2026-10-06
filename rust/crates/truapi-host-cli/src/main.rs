@@ -21,7 +21,6 @@ mod chat;
 mod contacts;
 mod dotns_read;
 mod frame_server;
-mod funding_check;
 #[cfg(feature = "test-host")]
 mod funding_host;
 mod network;
@@ -306,48 +305,6 @@ enum Command {
         /// Submit the claim instead of only reporting what it would do.
         #[arg(long)]
         submit: bool,
-    },
-    /// Run a real on-ramp: open a funding session, print the deposit address,
-    /// and follow the session while you pay that address from any funded
-    /// account, until the CASH lands on People.
-    FundingCheck {
-        /// BIP-39 mnemonic of the identity whose funding accounts are used.
-        #[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
-        mnemonic: String,
-        /// Network preset to use.
-        #[arg(long, value_enum, default_value = "paseo-next-v2")]
-        network: Network,
-        /// Asset the deposit is paid in.
-        #[arg(long, value_enum, default_value = "usdt")]
-        asset: funding_check::FundingAsset,
-        /// CASH to credit, in its smallest units; core quotes the deposit
-        /// that covers it.
-        #[arg(long, default_value_t = 2_000_000)]
-        amount: u128,
-        /// Where sessions and account counters persist between runs. Keep it:
-        /// a fresh directory restarts the account numbers.
-        #[arg(long, default_value = ".funding-check")]
-        state_dir: PathBuf,
-        /// Follow an existing session instead of opening a new one.
-        #[arg(long)]
-        intent: Option<String>,
-        /// With `--intent`: convert what arrived of this asset instead of
-        /// what was asked, for a short or wrong-asset deposit, or one that
-        /// came after the session ended.
-        #[arg(long, value_enum, requires = "intent")]
-        accept: Option<funding_check::FundingAsset>,
-        /// With `--intent`: try a failed session again from where its funds
-        /// are, a held conversion or an unclaimed credit.
-        #[arg(long, requires = "intent")]
-        retry: bool,
-        /// With `--intent`: cancel the session while nothing has arrived on
-        /// its deposit account, and stop.
-        #[arg(long, requires = "intent")]
-        cancel: bool,
-        /// With `--intent`: print the session's account seeds for a wallet to
-        /// take the funds back by hand, and stop.
-        #[arg(long, requires = "intent")]
-        export_key: bool,
     },
     /// Install the current stable release over this one.
     ///
@@ -690,44 +647,6 @@ async fn dispatch(
             lookback,
             submit,
         } => run_pgas_check(mnemonic, network.config(), target, lookback, submit).await,
-        Command::FundingCheck {
-            mnemonic,
-            network,
-            asset,
-            amount,
-            state_dir,
-            intent,
-            accept,
-            retry,
-            cancel,
-            export_key,
-        } => {
-            let check = funding_check::FundingCheck {
-                mnemonic,
-                network,
-                asset,
-                amount,
-                state_dir,
-                intent,
-                accept,
-                retry,
-                cancel,
-                export_key,
-            };
-            funding_check::run(check, |config, state_dir| {
-                build_signing_runtime(
-                    config,
-                    state_dir.join("core"),
-                    state_dir.join("products"),
-                    ApprovalPolicy::AutoAccept,
-                    None,
-                    None,
-                    None,
-                )
-                .map(|(runtime, _platform)| runtime)
-            })
-            .await
-        }
     }
 }
 

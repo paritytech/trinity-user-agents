@@ -42,7 +42,6 @@ ratatui = { workspace = true, features = ["crossterm", "unstable-rendered-line-i
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 rqrr = { workspace = true }
 rustls = { workspace = true, features = ["ring"] }
-schnorrkel = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

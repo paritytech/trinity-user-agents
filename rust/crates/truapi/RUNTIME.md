@@ -403,107 +403,22 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   Balance card opens sessions with `open_funding`. The core owns the sessions,
   persists them, expires them, and answers Funding calls `Unsupported` while no
   overlay is installed.
-  Once a provider is chosen, a signing host calls `assign_funding_deposit` to
-  give an inbound session its deposit account under `fund.<network suffix>`;
-  the core then polls that account at finalized Asset Hub blocks and moves the
-  session to `Converting` once the expected balance is there. `quote_funding_deposit` gives the
-  deposit that credits the session's amount, and assignment refuses less.
-  Assignment needs
-  `enable_funding_conversion` with the network's CASH asset id, and fixes the
-  route then: a teleport for CASH, a PSM mint for a stablecoin the PSM serves.
-  The core converts with one Asset Hub transaction signed by the deposit
-  account, paying fees in the deposited asset, after dry-running it on Asset
-  Hub and the message it forwards on People. Once the CASH lands on People,
-  the core credits it through `TopUpPlatform` with the deposit account's key
-  as a `PrivateKey` source, and the session ends `Delivered`. Crediting
-  follows getcash: each of up to three top-ups is sized from the account's
-  CASH on People when it starts and has its own id. A short claim leaves
-  the rest to the next one, and after the last the session is delivered
-  with what was claimed. A conversion the PSM will not serve as quoted (fee
-  too high, amount out of range) is held at once; one it cannot serve now
-  (minting stopped, debt ceiling) is held on the third refusal, as is any
-  other refusal, a conversion included on chain that failed among them. A
-  top-up is kept once sized and before it is registered, so a restart
-  registers the same amount under the same id. A held conversion, a credit
-  that claimed nothing, or one that timed out fails with its funds still on
-  the account, stays out of the history bound, and `retry_funding` picks it
-  up: the conversion again by its route, or the credit from its last
-  attempt. A product sees the retried session by subscribing again.
-  For a withdrawal, `assign_funding_withdrawal` gives an outbound session
-  that names its amount a `wd:eph:<destination>:<n>` account, the next one
-  with no CASH on People, and asks the host's `PaymentPlatform` to have the
-  user pay the amount into it, as the funding product, under getcash's
-  payment ids (the account, then `blake2(account ‖ attempt)`). The watch
-  reads the account's CASH and the host's latest word on the current
-  attempt: CASH there moves the session to `Paid`, a payment under way no
-  longer expires, a failed or refused one ends the session for
-  `retry_funding`, which asks again under the next id while the account is
-  still read, and one never taken expires after 30 minutes. A cancel reads
-  both first and is refused once the payment is taken. The watch starts
-  before the request, which resolves only once the user has decided.
-  A `Paid` session's CASH then moves to Asset Hub as getcash moves it, one
-  transaction per pass decided from the account's balances: a pool swap on
-  People, paid in CASH, buys the PAS the fees need, then one XCM, paid in
-  that PAS, carries all the CASH and PAS to Asset Hub, sells the CASH there
-  for PAS and deposits it on the withdrawal account. The XCM is sized by dry
-  runs on People (fees measured with all the PAS, then an exact allowance
-  that traps nothing) and on Asset Hub (what lands); CASH teleports when
-  Asset Hub trusts People for it and is reserve-withdrawn otherwise. It has
-  landed once the account holds no CASH and Asset Hub shows at least the
-  dry run's landing less 5%, and the session is `Withdrawn`; three rejected
-  transactions, or 15 minutes of refusals, hold it for `retry_funding`.
-  `set_withdrawal_payout` names where the PAS goes from there: a provider's
-  deposit channel with its expiry, checked against the provider's own record
-  by whoever hands it over, or the user's own account. The withdrawal
-  account then pays everything it holds there with `Balances::transfer_all`,
-  which closes it, as getcash's sweep pays a channel; a channel within
-  about 23 minutes of closing (the read, the transaction's 64-block era and
-  ten minutes for the provider) is not paid, and the session waits for a new
-  payout and a retry. Once the account is empty, down to the existential
-  deposit, the session is `Released`. Following the provider's swap to its
-  destination is the provider's; a channel should name the withdrawal
-  account as its refund address, as getcash's do, and a refund that lands
-  there is paid out again once a new payout is set.
-  `cancel_funding` cancels a session while nothing has arrived, as getcash
-  does: it is refused once a deposit was seen or while anything is on the
-  deposit account, which is read first, and nothing is cancelled if that
-  read cannot be confirmed within 8 seconds. A cancelled session's account
-  is still read for 72 hours, so a payment that arrives after all converts.
-  Native hosts reach all of this through `NativeTrUApiHostRuntime`:
+  Native hosts reach this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `set_top_up_callbacks` with
-  `notify_top_up_status` (the top-up engine), `enable_funding_conversion`,
-  `open_funding`, `quote_funding_deposit`, `assign_funding_deposit`,
-  `retry_funding`, `funding_session` and `funding_sessions`.
-  For progress and history, each session carries the time it first reached
-  each in-flight `FundingStep` (awaiting deposit, deposit seen, converting,
-  landed, claiming), between its `opened_at_ms` and the end its stage
-  records, from which a host draws each rail's markers, and the CASH that
-  `landed` on People, so a partial credit shows what stays on the account.
-  `funding_deposit_address` gives the deposit account as an Asset Hub
-  address (SS58 prefix 0) for the deposit screen. `funding_sessions` lists
-  sessions in flight first, a held one among them, then ended ones, each
+  `notify_top_up_status` (the top-up engine), `open_funding`,
+  `funding_session`, `funding_sessions`, `cancel_funding` and
+  `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
+  `funding_sessions` lists sessions in flight first, then ended ones, each
   newest first. An ended session is handed to the host through
   `funding_session_changed` each time funding resumes until the host calls
   `acknowledge_funding_session`, so its history writes every outcome once;
   the core keeps the 50 newest recorded sessions and every unrecorded one
-  within the 200 newest ended. Amounts cross the FFI as decimal strings.
-  Each watched deposit account is read for every deposit asset the host
-  names when it enables conversion, and the native token. A deposit counts
-  as delivered once it reaches the deposit quoted for its asset, or what the
-  provider was asked for without a quote. Below that, a short or wrong-asset
-  deposit shows as a mismatch, and `accept_funding_deposit` converts what
-  arrived instead. An ended session's account is read every five minutes
-  for 72 hours: a full deposit that arrives after expiry converts on its
-  own, and a mismatch can still be accepted. A product stream that already
-  ended on `Failed` does not hear of a reopened session; the product sees
-  the new stage by subscribing again. `funding_account_secret` exports an
-  account's raw seed, as getcash does, for a user to take funds back with a
-  wallet.
+  within the 200 newest ended.
 - `PaymentPlatform`: pay from the user's balance to an account once the user
   approves, and stream each payment's status by its caller-chosen id.
   Installed with `set_payment_platform`; native hosts use
   `set_payment_callbacks` with `notify_payment_status`. The core requires a
-  session and refuses the funding product. Without it, `request` and
+  session. Without it, `request` and
   `statusSubscribe` answer `Unsupported`.
 - `TopUpPlatform`: claim a top-up source's funds into the user's balance and
   stream each top-up's status. Installed with `set_top_up_platform`. The core

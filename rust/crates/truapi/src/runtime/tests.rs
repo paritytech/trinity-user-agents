@@ -2290,6 +2290,39 @@ fn funding_services() -> Arc<RuntimeServices> {
     )
 }
 
+// A host's history writes one row per outcome, so an ended session it has
+// not recorded is announced again each time funding resumes, until the host
+// acknowledges it.
+#[test]
+fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
+    let services = funding_services();
+    let platform = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+    assert!(services.funding().install_platform(platform.clone()));
+    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::Out, None))
+        .expect("opened")
+        .intent;
+    assert!(futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"));
+    let announced_on_resume = || {
+        platform.announced.lock().expect("announced mutex poisoned").clear();
+        services.resume_funding();
+        for _ in 0..200 {
+            let announced = platform.announced.lock().expect("announced mutex poisoned").clone();
+            if !announced.is_empty() {
+                return announced;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Vec::new()
+    };
+
+    let before = announced_on_resume();
+    let acknowledged =
+        futures::executor::block_on(services.acknowledge_funding_session(&intent)).expect("acknowledged");
+    let after = announced_on_resume();
+
+    assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
+}
+
 fn funding_host(
     services: &Arc<RuntimeServices>,
     product_id: &str,
@@ -2496,58 +2529,6 @@ fn a_funding_request_needs_a_host_overlay_then_a_session() {
     );
 }
 
-// A cancel must never strand funds it could not see, so a session with a
-// deposit account is cancelled only after a read confirms the account is
-// empty; one without an account is cancelled at once.
-#[test]
-fn a_funding_cancel_needs_a_confirmed_empty_account() {
-    let services = funding_services();
-    assert!(
-        services
-            .funding()
-            .install_platform(RecordingFundingPlatform::answering(
-                crate::platform::FundingPresentOutcome::Started,
-            ))
-    );
-    let open = |direction| {
-        futures::executor::block_on(services.open_funding(None, direction, None))
-            .expect("opened")
-            .intent
-    };
-    let plain = open(v01::FundingDirection::Out);
-    let with_account = open(v01::FundingDirection::In);
-    futures::executor::block_on(services.funding().commit(
-        services.platform.as_ref(),
-        crate::runtime::current_unix_millis(),
-        |sessions| {
-            if let Some(session) = sessions.get_mut(&with_account) {
-                session.deposit = Some(crate::host_logic::funding::FundingDeposit {
-                    source_id: "usdt-assethub".into(),
-                    number: 1,
-                    asset: crate::host_logic::funding::DepositAsset::Asset(1984),
-                    account: [1; 32],
-                    expected: 50,
-                    route: crate::host_logic::funding::ConversionRoute::Teleport,
-                    target: None,
-                    holdings: Vec::new(),
-                });
-            }
-            ((), Vec::new())
-        },
-    ))
-    .expect("assigned");
-    let cancel = |intent: &str| futures::executor::block_on(services.cancel_funding(intent));
-
-    assert_eq!(
-        (cancel(&plain), cancel(&with_account), cancel("fs_missing")),
-        (
-            Ok(()),
-            Err(super::funding::CancelFundingError::Unconfirmed),
-            Err(super::funding::CancelFundingError::NotFound)
-        )
-    );
-}
-
 // A test host settles a session as though its funds had moved, and the
 // product sees that ending; a session already over, or unknown, is left as
 // it is.
@@ -2583,49 +2564,6 @@ fn a_test_host_settles_a_funding_session_once() {
             Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 900 }),
         )
     );
-}
-
-// A host's history writes one row per outcome, so an ended session it has
-// not recorded is announced again each time funding resumes, until the host
-// acknowledges it.
-#[test]
-fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
-    let services = funding_services();
-    let platform = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
-    assert!(services.funding().install_platform(platform.clone()));
-    let session = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::Out, None))
-        .expect("opened");
-    let intent = session.intent.clone();
-    futures::executor::block_on(services.funding().commit(
-        services.platform.as_ref(),
-        crate::runtime::current_unix_millis(),
-        |sessions| {
-            if let Some(session) = sessions.get_mut(&intent) {
-                session.fail(v01::FundingFailure::Expired, crate::runtime::current_unix_millis());
-            }
-            ((), Vec::new())
-        },
-    ))
-    .expect("ended");
-    let announced_on_resume = || {
-        platform.announced.lock().expect("announced mutex poisoned").clear();
-        services.resume_funding();
-        for _ in 0..200 {
-            let announced = platform.announced.lock().expect("announced mutex poisoned").clone();
-            if !announced.is_empty() {
-                return announced;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        Vec::new()
-    };
-
-    let before = announced_on_resume();
-    let acknowledged =
-        futures::executor::block_on(services.acknowledge_funding_session(&intent)).expect("acknowledged");
-    let after = announced_on_resume();
-
-    assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
 }
 
 #[derive(Default)]
@@ -2817,49 +2755,6 @@ fn a_top_up_with_a_malformed_key_is_refused_before_the_host_sees_it() {
     );
 }
 
-// The core credits funding deposits with top-ups made as the funding
-// product, under ids anyone can work out from the deposit address. A product
-// under that name could otherwise register them first or read their status.
-#[test]
-fn no_product_tops_up_or_follows_top_ups_as_the_funding_product() {
-    let services = funding_services();
-    let engine = Arc::new(RecordingTopUpPlatform::default());
-    assert!(services.install_top_up_platform(engine.clone()));
-    let host = funding_host(&services, "fund.dot", true);
-    let secret = schnorrkel::MiniSecretKey::from_bytes(&[7; 32])
-        .expect("seed")
-        .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519)
-        .secret
-        .to_bytes();
-
-    let started = top_up(
-        &host,
-        v01::PaymentTopUpSource::PrivateKey {
-            sr25519_secret_key: secret,
-        },
-    );
-    let followed = futures::executor::block_on(
-        futures::executor::block_on(truapi::api::Payment::top_up_status_subscribe(
-            &host,
-            &CallContext::default(),
-            truapi::versioned::payment::HostPaymentTopUpStatusSubscribeRequest::V1(
-                v01::HostPaymentTopUpStatusSubscribeRequest { id: [7; 32] },
-            ),
-        ))
-        .collect::<Vec<_>>(),
-    );
-
-    assert_eq!(
-        (
-            started,
-            followed,
-            engine.started.lock().expect("started mutex poisoned").len(),
-            engine.followed.lock().expect("followed mutex poisoned").len(),
-        ),
-        (Err(CallError::Denied), vec![Err(CallError::Denied)], 0, 0)
-    );
-}
-
 #[test]
 fn a_top_up_needs_a_session() {
     let services = funding_services();
@@ -2875,8 +2770,6 @@ fn a_top_up_needs_a_session() {
 struct RecordingPaymentPlatform {
     requested: Mutex<Vec<(String, truapi::latest::HostPaymentRequest)>>,
     followed: Mutex<Vec<(String, [u8; 32])>>,
-    /// Refuses the next request with this, once.
-    refuse: Mutex<Option<truapi::latest::HostPaymentError>>,
 }
 
 #[truapi::async_trait]
@@ -2890,10 +2783,7 @@ impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
             .lock()
             .expect("requested mutex poisoned")
             .push((product.product_id.clone(), request));
-        match self.refuse.lock().expect("refuse mutex poisoned").take() {
-            Some(refusal) => Err(refusal),
-            None => Ok(()),
-        }
+        Ok(())
     }
 
     fn subscribe_payment_status(
@@ -2987,134 +2877,23 @@ fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
     );
 }
 
-// Payments the core makes as the funding product use ids anyone can work
-// out; a product under that name, or one without a session, must not reach
-// the host's payments.
+// Payments move the user's balance, so a product without a session cannot
+// reach the host's payments.
 #[test]
-fn no_product_pays_as_the_funding_product_or_without_a_session() {
+fn no_product_pays_or_follows_payments_without_a_session() {
     let services = funding_services();
     let engine = Arc::new(RecordingPaymentPlatform::default());
     assert!(services.install_payment_platform(engine.clone()));
-    let funding = funding_host(&services, "fund.dot", true);
     let signed_out = funding_host(&services, "wallet.dot", false);
 
     assert_eq!(
         (
-            request_payment(&funding),
-            follow_payment(&funding),
             request_payment(&signed_out),
             follow_payment(&signed_out),
             engine.requested.lock().expect("requested mutex poisoned").len(),
             engine.followed.lock().expect("followed mutex poisoned").len(),
         ),
-        (
-            Err(CallError::Denied),
-            vec![Err(CallError::Denied)],
-            Err(CallError::Denied),
-            vec![Err(CallError::Denied)],
-            0,
-            0
-        )
-    );
-}
-
-/// A signer for the funding product with no keys, enough for core to make
-/// payments as the funding product.
-struct FundingProduct;
-
-impl crate::runtime::FundingSigner for FundingProduct {
-    fn deposit_keypair(
-        &self,
-        _: &str,
-        _: u32,
-    ) -> Result<Option<schnorrkel::Keypair>, truapi::latest::GenericError> {
-        Ok(None)
-    }
-
-    fn withdrawal_keypair(
-        &self,
-        _: &str,
-        _: u32,
-    ) -> Result<Option<schnorrkel::Keypair>, truapi::latest::GenericError> {
-        Ok(None)
-    }
-
-    fn funding_product_id(&self) -> String {
-        "fund.dot".into()
-    }
-}
-
-// The user pays a withdrawal into its account through the host, as the
-// funding product, under getcash's payment ids: the account first, then a
-// new id for each retry, since the host refuses an id it has seen. A refused
-// payment ends the session for that retry, which asks the user again.
-#[test]
-fn a_withdrawal_is_paid_through_the_host_and_a_refusal_is_asked_again() {
-    let services = funding_services();
-    let engine = Arc::new(RecordingPaymentPlatform::default());
-    assert!(services.install_payment_platform(engine.clone()));
-    assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
-        crate::platform::FundingPresentOutcome::Started,
-    )));
-    assert!(services.funding().install_conversion(
-        crate::runtime::FundingNetwork { cash_asset_id: 1 },
-        Vec::new(),
-        Arc::new(FundingProduct),
-    ));
-    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::Out, Some(1_000)))
-        .expect("opened")
-        .intent;
-    let account = [4; 32];
-    futures::executor::block_on(services.funding().commit(
-        services.platform.as_ref(),
-        crate::runtime::current_unix_millis(),
-        |sessions| {
-            if let Some(session) = sessions.get_mut(&intent) {
-                session.assign_withdrawal(crate::host_logic::funding::FundingWithdrawal {
-                    destination_id: "dot-assethub".into(),
-                    number: 1,
-                    account,
-                    attempt: 0,
-                    since_ms: crate::runtime::current_unix_millis(),
-                    taken: false,
-                    payout: None,
-                });
-            }
-            ((), Vec::new())
-        },
-    ))
-    .expect("assigned");
-    *engine.refuse.lock().expect("refuse mutex poisoned") = Some(v01::HostPaymentError::Rejected);
-
-    let refused = futures::executor::block_on(services.request_withdrawal_payment(&intent));
-    let failed = services.funding().get(&intent).map(|session| session.step());
-    let retried = futures::executor::block_on(services.retry_funding(&intent)).is_ok();
-    let paid_to = |id| v01::HostPaymentRequest {
-        from: None,
-        amount: 1_000,
-        destination: account,
-        id,
-    };
-
-    assert_eq!(
-        (
-            refused.is_err(),
-            failed,
-            retried,
-            engine.requested.lock().expect("requested mutex poisoned").clone(),
-        ),
-        (
-            true,
-            Some(crate::host_logic::funding::FundingStep::Failed),
-            true,
-            vec![
-                ("fund.dot".to_string(), paid_to(account)),
-                (
-                    "fund.dot".to_string(),
-                    paid_to(crate::host_logic::funding::funding_attempt_id(&account, 1))
-                ),
-            ],
-        )
+        (Err(CallError::Denied), vec![Err(CallError::Denied)], 0, 0)
     );
 }
 
@@ -3160,35 +2939,6 @@ fn bare_localhost_product_allows_dev_product_accounts() {
         )
         .as_deref(),
         Some("myapp.dot")
-    );
-}
-
-/// The funding product's accounts hold deposits in transit, so no product
-/// signs with them: not one that registers the name, and not a development
-/// product that may otherwise reach any account.
-#[test]
-fn no_product_reaches_the_funding_accounts() {
-    let registered = ProductRuntimeHost::new(stub_platform(), runtime_config("fund.dot"), test_spawner());
-    let localhost =
-        ProductRuntimeHost::new(stub_platform(), runtime_config("localhost"), test_spawner());
-    // The user would allow it, so only the guard can refuse.
-    let platform = StubPlatform {
-        account_access_confirmed: true,
-        ..StubPlatform::default()
-    };
-    assert_eq!(
-        (
-            account_target(&registered, "fund.dot"),
-            account_target(&localhost, "fund.dot"),
-            account_target(&localhost, "app.fund.dot"),
-            futures::executor::block_on(crate::runtime::account_access_authorization(
-                &platform,
-                "wallet.dot",
-                "fund.dot",
-            ))
-            .ok(),
-        ),
-        (None, None, None, Some(PermissionAuthorizationStatus::Denied))
     );
 }
 
@@ -4752,25 +4502,6 @@ fn derive_entropy_matches_dotli_vector() {
     assert_eq!(
         hex::encode(inner.entropy),
         "ab1887248c9de3cf4b8c5a255782796d3d35a98c8eb2d7df61a410db8b14da36"
-    );
-}
-
-// Funding accounts are the funding product's entropy for their getcash
-// labels, so a product under that name deriving entropy would hold their
-// keys; a paired host refuses it as the signing host does.
-#[test]
-fn no_product_derives_entropy_as_the_funding_product() {
-    let host = ProductRuntimeHost::new(stub_platform(), runtime_config("fund.dot"), test_spawner());
-    let mut session = sso_session_info();
-    session.root_entropy_source = session_info().root_entropy_source;
-    install_pairing_session(&host, session);
-    let request = HostDeriveEntropyRequest::V1(v01::HostDeriveEntropyRequest {
-        context: b"onramp:eph:usdt-assethub:1".to_vec(),
-    });
-
-    assert_eq!(
-        futures::executor::block_on(host.derive(&CallContext::default(), request)),
-        Err(CallError::Denied)
     );
 }
 

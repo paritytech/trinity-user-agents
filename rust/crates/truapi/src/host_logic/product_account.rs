@@ -29,10 +29,6 @@ pub const IDENTITY_LABEL: &str = "uid";
 /// domain holds the full and light person keys; the product id is
 /// `peopl.<network suffix>`, see [`personhood_product_id`].
 pub const PERSONHOOD_LABEL: &str = "peopl";
-/// Reserved dotNS label of the funding modality, whose entropy every funding
-/// account is derived from; the product id is `fund.<network suffix>`, see
-/// [`funding_product_id`].
-pub const FUNDING_LABEL: &str = "fund";
 const RING_VRF_ROOT_KEY: &[u8] = b"ring-vrf";
 
 /// The reserved identity product id on the network with `network_suffix`:
@@ -49,12 +45,6 @@ pub fn identity_product_id(network_suffix: &str) -> String {
 /// the RFC-0024 registry.
 pub fn personhood_product_id(network_suffix: &str) -> String {
     format!("{PERSONHOOD_LABEL}.{network_suffix}")
-}
-
-/// The reserved funding product id on the network with `network_suffix`:
-/// `fund.dot` on Polkadot, `fund.paseo` on paseo-next-v2.
-pub fn funding_product_id(network_suffix: &str) -> String {
-    format!("{FUNDING_LABEL}.{network_suffix}")
 }
 
 /// Substrate sr25519 signing-context string. Shared by every sr25519 signature

@@ -99,11 +99,6 @@ impl Entropy for ProductRuntimeHost {
                 },
             )));
         };
-        // The funding accounts are the funding product's entropy for their
-        // labels, so no product under that name may derive it.
-        if crate::runtime::is_funding_product(&self.product_id()) {
-            return Err(CallError::Denied);
-        }
         let entropy = self
             .authority
             .derive_entropy(&session, &self.product_id(), &context)
