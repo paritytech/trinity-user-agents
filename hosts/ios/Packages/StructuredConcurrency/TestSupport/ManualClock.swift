@@ -3,19 +3,19 @@ import os
 import Testing
 
 /// Sleeps finish only when the test resumes them by duration; `now` stays zero, so elapsed-time reads see none.
-final class ManualClock: Clock, Sendable {
-    struct Instant: InstantProtocol {
-        let offset: Duration
+public final class ManualClock: Clock, Sendable {
+    public struct Instant: InstantProtocol {
+        public let offset: Duration
 
-        func advanced(by duration: Duration) -> Self {
+        public func advanced(by duration: Duration) -> Self {
             Self(offset: offset + duration)
         }
 
-        func duration(to other: Self) -> Duration {
+        public func duration(to other: Self) -> Duration {
             other.offset - offset
         }
 
-        static func < (lhs: Self, rhs: Self) -> Bool {
+        public static func < (lhs: Self, rhs: Self) -> Bool {
             lhs.offset < rhs.offset
         }
     }
@@ -38,12 +38,14 @@ final class ManualClock: Clock, Sendable {
         var cancelledIds: Set<UUID> = []
     }
 
-    let now = Instant(offset: .zero)
-    let minimumResolution: Duration = .zero
+    public let now = Instant(offset: .zero)
+    public let minimumResolution: Duration = .zero
 
     private let state = OSAllocatedUnfairLock(initialState: State())
 
-    func sleep(until deadline: Instant, tolerance _: Duration? = nil) async throws {
+    public init() {}
+
+    public func sleep(until deadline: Instant, tolerance _: Duration? = nil) async throws {
         let id = UUID()
         let duration = now.duration(to: deadline)
 
@@ -57,12 +59,12 @@ final class ManualClock: Clock, Sendable {
     }
 
     /// Suspends until a sleep of `duration` is pending, without finishing it.
-    func waitForSleep(for duration: Duration) async {
+    public func waitForSleep(for duration: Duration) async {
         await waitForSleeps(for: duration, count: 1)
     }
 
     /// Suspends until at least `count` sleeps of `duration` are pending, without finishing them.
-    func waitForSleeps(for duration: Duration, count: Int) async {
+    public func waitForSleeps(for duration: Duration, count: Int) async {
         await withCheckedContinuation { continuation in
             let isPending = state.withLock { state in
                 guard state.pendingCount(of: duration) < count else { return true }
@@ -79,7 +81,7 @@ final class ManualClock: Clock, Sendable {
     }
 
     /// Waits for a sleep of `duration` to be pending, then finishes it.
-    func resumeSleep(
+    public func resumeSleep(
         for duration: Duration,
         sourceLocation: SourceLocation = #_sourceLocation
     ) async {
@@ -87,7 +89,7 @@ final class ManualClock: Clock, Sendable {
     }
 
     /// Waits for `count` sleeps of `duration` to be pending, then finishes them together.
-    func resumeSleeps(
+    public func resumeSleeps(
         for duration: Duration,
         count: Int,
         sourceLocation: SourceLocation = #_sourceLocation

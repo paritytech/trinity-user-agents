@@ -3,6 +3,7 @@ import NovaCrypto
 import MessageExchangeKit
 import CryptoKit
 import Testing
+import StructuredConcurrencyTestSupport
 import SubstrateSdk
 import AsyncExtensions
 import os
