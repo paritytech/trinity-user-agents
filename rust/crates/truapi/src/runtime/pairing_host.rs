@@ -2491,39 +2491,6 @@ impl PairingHost {
             .await
     }
 
-    async fn statement_store_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        self.remote_statement_store_allowance_key(cx, &session, product_id)
-            .await
-    }
-
-    async fn bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        self.remote_bulletin_allowance_key(cx, &session, product_id)
-            .await
-    }
-
-    async fn refresh_bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        self.remote_refresh_bulletin_allowance_key(cx, &session, product_id)
-            .await
-    }
-
     async fn sign_statement_store_product_payload(
         &self,
         _cx: &CallContext,
@@ -2680,7 +2647,9 @@ impl ProductAuthority for PairingHost {
         session: &AuthoritySession,
         product_id: String,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        PairingHost::statement_store_allowance_key(self, cx, session, product_id).await
+        let session = self.current_private_session(session)?;
+        self.remote_statement_store_allowance_key(cx, &session, product_id)
+            .await
     }
 
     async fn bulletin_allowance_key(
@@ -2689,7 +2658,9 @@ impl ProductAuthority for PairingHost {
         session: &AuthoritySession,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        PairingHost::bulletin_allowance_key(self, cx, session, product_id).await
+        let session = self.current_private_session(session)?;
+        self.remote_bulletin_allowance_key(cx, &session, product_id)
+            .await
     }
 
     async fn refresh_bulletin_allowance_key(
@@ -2698,7 +2669,9 @@ impl ProductAuthority for PairingHost {
         session: &AuthoritySession,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        PairingHost::refresh_bulletin_allowance_key(self, cx, session, product_id).await
+        let session = self.current_private_session(session)?;
+        self.remote_refresh_bulletin_allowance_key(cx, &session, product_id)
+            .await
     }
 }
 
