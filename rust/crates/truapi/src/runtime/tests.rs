@@ -2496,6 +2496,49 @@ fn a_funding_request_needs_a_host_overlay_then_a_session() {
     );
 }
 
+// A host's history writes one row per outcome, so an ended session it has
+// not recorded is announced again each time funding resumes, until the host
+// acknowledges it.
+#[test]
+fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
+    let services = funding_services();
+    let platform = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+    assert!(services.funding().install_platform(platform.clone()));
+    let session = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::Out, None))
+        .expect("opened");
+    let intent = session.intent.clone();
+    futures::executor::block_on(services.funding().commit(
+        services.platform.as_ref(),
+        crate::runtime::current_unix_millis(),
+        |sessions| {
+            if let Some(session) = sessions.get_mut(&intent) {
+                session.fail(v01::FundingFailure::Expired, crate::runtime::current_unix_millis());
+            }
+            ((), Vec::new())
+        },
+    ))
+    .expect("ended");
+    let announced_on_resume = || {
+        platform.announced.lock().expect("announced mutex poisoned").clear();
+        services.resume_funding();
+        for _ in 0..200 {
+            let announced = platform.announced.lock().expect("announced mutex poisoned").clone();
+            if !announced.is_empty() {
+                return announced;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Vec::new()
+    };
+
+    let before = announced_on_resume();
+    let acknowledged =
+        futures::executor::block_on(services.acknowledge_funding_session(&intent)).expect("acknowledged");
+    let after = announced_on_resume();
+
+    assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
+}
+
 #[derive(Default)]
 struct RecordingTopUpPlatform {
     started: Mutex<Vec<(String, truapi::latest::HostPaymentTopUpRequest)>>,

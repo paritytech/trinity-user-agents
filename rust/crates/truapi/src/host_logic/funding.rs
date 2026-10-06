@@ -19,8 +19,12 @@ use crate::platform::{CoreStorage, CoreStorageKey};
 
 /// How long a session may stay open before it expires.
 const SESSION_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
-/// How many settled sessions the core keeps, most recently settled first.
+/// How many ended sessions the host has recorded the core keeps, most
+/// recently ended first.
 const SETTLED_HISTORY_LIMIT: usize = 50;
+/// How far back, counting every ended session newest first, those the host
+/// has not recorded yet are kept.
+const UNACKNOWLEDGED_LIMIT: usize = 200;
 
 /// What the core knows about one session, independent of any host surface.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -51,6 +55,60 @@ pub struct FundingSession {
     /// The deposit quoted to credit `amount`, frozen so the provider is held
     /// to the figure it was given rather than one re-priced later.
     pub quote: Option<DepositQuote>,
+    /// CASH the conversion landed on People, in payment balance units, once
+    /// it has: what crediting claims from, and what stays stranded on the
+    /// account when less is credited.
+    pub landed: Option<u128>,
+    /// When each step in flight was first reached, in the order reached.
+    /// The session starts at `opened_at_ms` and ends when its stage says.
+    pub stamps: Vec<FundingStamp>,
+    /// Whether the host has recorded the session's outcome in its own
+    /// history. An ended session is handed to the host until it has.
+    pub acknowledged: bool,
+}
+
+/// Where a session is, for the host's progress and history views: the
+/// stage, with an inbound session's deposit account and submission folded
+/// in. Each rail's markers are drawn from these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum FundingStep {
+    /// Opened; nothing chosen yet.
+    Started,
+    /// An inbound session has a deposit account and waits for the payment.
+    AwaitingDeposit,
+    /// The deposit arrived.
+    DepositSeen,
+    /// The conversion to CASH is on its way.
+    Converting,
+    /// The CASH is on People.
+    Landed,
+    /// The host's top-up is claiming the CASH.
+    Claiming,
+    /// The CASH is in the user's balance.
+    Settled,
+    /// The session ran out of time.
+    Expired,
+    /// The session was cancelled.
+    Cancelled,
+    /// The session ended without success.
+    Failed,
+}
+
+/// When a session first reached a step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct FundingStamp {
+    /// The step.
+    pub step: FundingStep,
+    /// When it was first reached, in Unix milliseconds.
+    pub at_ms: u64,
 }
 
 /// The route for a deposit and what it must deliver to credit a session's
@@ -305,10 +363,7 @@ pub enum FundingStage {
     },
     /// Inbound: CASH landed on the deposit account on People and awaits
     /// crediting.
-    Converted {
-        /// CASH on People, in payment balance units.
-        landed: u128,
-    },
+    Converted,
     /// Inbound: the host's top-up is claiming the landed CASH into the
     /// user's balance.
     Crediting {
@@ -405,7 +460,76 @@ impl FundingSession {
             deadline_ms: now_ms.saturating_add(SESSION_WINDOW_MS),
             deposit: None,
             quote: None,
+            landed: None,
+            stamps: Vec::new(),
+            acknowledged: false,
         }
+    }
+
+    /// The step the session is at.
+    pub fn step(&self) -> FundingStep {
+        match &self.stage {
+            FundingStage::Open if self.deposit.is_some() => FundingStep::AwaitingDeposit,
+            FundingStage::Open => FundingStep::Started,
+            FundingStage::Converting {
+                submission: None, ..
+            } => FundingStep::DepositSeen,
+            FundingStage::Converting { .. } => FundingStep::Converting,
+            FundingStage::Converted => FundingStep::Landed,
+            FundingStage::Crediting { .. } => FundingStep::Claiming,
+            FundingStage::Delivered { .. } => FundingStep::Settled,
+            FundingStage::Failed {
+                reason: FundingFailure::Expired,
+                ..
+            } => FundingStep::Expired,
+            FundingStage::Failed {
+                reason: FundingFailure::Cancelled,
+                ..
+            } => FundingStep::Cancelled,
+            FundingStage::Failed { .. } => FundingStep::Failed,
+        }
+    }
+
+    /// Stamp the step in flight the session is at, at `now_ms`, unless it
+    /// was reached before: each keeps the time it was first reached, as
+    /// getcash stamps its stages. The start and end are the session's own
+    /// times, so a retried session that ends again shows its last end.
+    /// Returns whether a stamp was added.
+    pub fn stamp(&mut self, now_ms: u64) -> bool {
+        let step = self.step();
+        let in_flight = !matches!(
+            step,
+            FundingStep::Started
+                | FundingStep::Settled
+                | FundingStep::Expired
+                | FundingStep::Cancelled
+                | FundingStep::Failed
+        );
+        if !in_flight || self.stamps.iter().any(|stamp| stamp.step == step) {
+            return false;
+        }
+        self.stamps.push(FundingStamp { step, at_ms: now_ms });
+        true
+    }
+
+    /// Whether the session is still going, for the host's lists: not ended,
+    /// or failed with its funds where a retry can reach them, which getcash
+    /// shows in progress rather than as an outcome.
+    pub fn in_flight(&self) -> bool {
+        !self.is_terminal() || matches!(self.stage, FundingStage::Failed { resume: Some(_), .. })
+    }
+
+    /// Whether the host still has to hear of the session when funding
+    /// resumes: it is in flight, or it ended and the host has not recorded
+    /// the outcome.
+    pub fn needs_handoff(&self) -> bool {
+        self.in_flight() || !self.acknowledged
+    }
+
+    /// The deposit account as an Asset Hub address, SS58 with prefix 0, the
+    /// form getcash shows and providers such as Chainflip require.
+    pub fn deposit_address(&self) -> Option<String> {
+        self.deposit.as_ref().map(|deposit| asset_hub_address(&deposit.account))
     }
 
     /// Whether the session has ended.
@@ -418,7 +542,7 @@ impl FundingSession {
         match self.stage {
             FundingStage::Open
             | FundingStage::Converting { .. }
-            | FundingStage::Converted { .. }
+            | FundingStage::Converted
             | FundingStage::Crediting { .. } => None,
             FundingStage::Delivered { settled_at_ms, .. } => Some(settled_at_ms),
             FundingStage::Failed { settled_at_ms, .. } => Some(settled_at_ms),
@@ -438,7 +562,7 @@ impl FundingSession {
             }
             (
                 FundingStage::Converting { .. }
-                | FundingStage::Converted { .. }
+                | FundingStage::Converted
                 | FundingStage::Crediting { .. },
                 _,
             ) => HostFundingStatusSubscribeItem::Converting,
@@ -735,7 +859,8 @@ impl FundingSession {
                 );
             }
             ConversionStep::Landed { landed } => {
-                self.stage = FundingStage::Converted { landed };
+                self.stage = FundingStage::Converted;
+                self.landed = Some(landed);
             }
             ConversionStep::Stalled => {
                 return self.fail(
@@ -757,7 +882,7 @@ impl FundingSession {
     pub fn crediting(&self) -> Option<(&FundingDeposit, Option<CreditProgress>)> {
         let deposit = self.deposit.as_ref()?;
         match self.stage {
-            FundingStage::Converted { .. } => Some((deposit, None)),
+            FundingStage::Converted => Some((deposit, None)),
             FundingStage::Crediting { progress } => Some((deposit, Some(progress))),
             _ => None,
         }
@@ -767,7 +892,7 @@ impl FundingSession {
     /// claim. Returns whether it changed.
     pub fn advance_credit(&mut self, step: CreditStep, now_ms: u64) -> bool {
         let progress = match self.stage {
-            FundingStage::Converted { .. } => CreditProgress {
+            FundingStage::Converted => CreditProgress {
                 credited: 0,
                 attempt: 0,
                 claim: None,
@@ -1063,15 +1188,37 @@ pub enum FundingSessionError {
 /// The bound exists because [`CoreStorageKey::FundingSessions`] is one SCALE
 /// blob rewritten on every change; the host keeps the full history.
 pub fn retained(sessions: impl IntoIterator<Item = FundingSession>) -> Vec<FundingSession> {
-    // A failed session whose funds a retry can still reach is kept like an
+    // An ended session whose funds a retry can still reach is kept like an
     // open one, so history cannot push it out.
-    let (mut open, mut settled): (Vec<_>, Vec<_>) = sessions.into_iter().partition(|session| {
-        !session.is_terminal() || matches!(session.stage, FundingStage::Failed { resume: Some(_), .. })
-    });
+    let (mut open, mut settled): (Vec<_>, Vec<_>) = sessions.into_iter().partition(FundingSession::in_flight);
     settled.sort_by_key(|session| core::cmp::Reverse(session.settled_at_ms()));
-    settled.truncate(SETTLED_HISTORY_LIMIT);
-    open.append(&mut settled);
+    // One the host has not recorded yet is kept further back, so a host that
+    // was away still receives it, but not without bound.
+    let mut recorded = 0;
+    let mut kept: Vec<_> = settled
+        .into_iter()
+        .enumerate()
+        .filter(|(newest, session)| {
+            if !session.acknowledged {
+                return *newest < UNACKNOWLEDGED_LIMIT;
+            }
+            recorded += 1;
+            recorded <= SETTLED_HISTORY_LIMIT
+        })
+        .map(|(_, session)| session)
+        .collect();
+    open.append(&mut kept);
     open
+}
+
+/// `account` as an Asset Hub address: SS58 with prefix 0.
+pub fn asset_hub_address(account: &[u8; 32]) -> String {
+    const ASSET_HUB_SS58_PREFIX: u8 = 0;
+    let mut bytes = vec![ASSET_HUB_SS58_PREFIX];
+    bytes.extend_from_slice(account);
+    let checksum = sp_crypto_hashing::blake2_512(&[b"SS58PRE".as_slice(), &bytes].concat());
+    bytes.extend_from_slice(&checksum[..2]);
+    bs58::encode(bytes).into_string()
 }
 
 /// Read every persisted session.
@@ -1225,8 +1372,10 @@ mod tests {
     #[test]
     fn open_sessions_come_first_and_settled_history_keeps_the_newest() {
         let open = session(FundingDirection::Out);
-        let settled = (0..SETTLED_HISTORY_LIMIT + 1)
-            .map(|index| expired(&format!("fs_s{index}"), NOW + index as u64));
+        let settled = (0..SETTLED_HISTORY_LIMIT + 1).map(|index| FundingSession {
+            acknowledged: true,
+            ..expired(&format!("fs_s{index}"), NOW + index as u64)
+        });
 
         let kept: Vec<String> = retained(settled.chain([open]))
             .into_iter()
@@ -1239,6 +1388,46 @@ mod tests {
             std::iter::once("fs_1".to_string())
                 .chain(newest_first)
                 .collect::<Vec<_>>()
+        );
+    }
+
+    // A host that was away must still receive every outcome for its own
+    // history, so one it has not recorded outlives the recorded ones, though
+    // not without bound.
+    #[test]
+    fn history_keeps_what_the_host_has_not_recorded() {
+        let ended = |index: usize, acknowledged| FundingSession {
+            acknowledged,
+            ..expired(&format!("fs_s{index}"), NOW + index as u64)
+        };
+        let oldest_unrecorded = ended(0, false);
+        let recorded = (1..=SETTLED_HISTORY_LIMIT + 1).map(|index| ended(index, true));
+        let unrecorded = (100..100 + UNACKNOWLEDGED_LIMIT).map(|index| ended(index, false));
+
+        let kept = retained(recorded.chain(unrecorded).chain([oldest_unrecorded.clone()]));
+
+        assert_eq!(
+            (
+                kept.iter().filter(|session| session.acknowledged).count(),
+                kept.iter().filter(|session| !session.acknowledged).count(),
+                kept.contains(&oldest_unrecorded),
+            ),
+            (SETTLED_HISTORY_LIMIT, UNACKNOWLEDGED_LIMIT, false)
+        );
+    }
+
+    // A deposit screen and a provider must see the address Asset Hub
+    // wallets and Chainflip accept: prefix 0, as getcash encodes it.
+    #[test]
+    fn a_deposit_address_is_an_asset_hub_address() {
+        let alice = hex::decode("d43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d")
+            .expect("hex")
+            .try_into()
+            .expect("32 bytes");
+
+        assert_eq!(
+            asset_hub_address(&alice),
+            "15oF4uVJwmo4TdGW7VfQxNLavjCXviqxT9S1MgbjMNHr6Sp5"
         );
     }
 
@@ -1861,7 +2050,7 @@ mod tests {
             (submitted, session.stage.clone(), session.wire_item(), session.is_terminal()),
             (
                 Some(SUBMISSION),
-                FundingStage::Converted { landed: 49 },
+                FundingStage::Converted,
                 HostFundingStatusSubscribeItem::Converting,
                 false,
             )

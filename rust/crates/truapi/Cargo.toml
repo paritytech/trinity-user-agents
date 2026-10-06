@@ -46,6 +46,7 @@ runtime = [
     "dep:nanoid",
     "dep:blake2b_simd",
     "dep:sp-crypto-hashing",
+    "dep:bs58",
     "dep:schnorrkel",
     "dep:substrate-bip39",
     "dep:zeroize",
@@ -109,6 +110,7 @@ url = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
 blake2b_simd = { workspace = true, optional = true }
 sp-crypto-hashing = { workspace = true, optional = true }
+bs58 = { workspace = true, optional = true }
 schnorrkel = { workspace = true, features = ["alloc", "getrandom"], optional = true }
 substrate-bip39 = { workspace = true, optional = true }
 zeroize = { workspace = true, features = ["alloc", "derive"], optional = true }

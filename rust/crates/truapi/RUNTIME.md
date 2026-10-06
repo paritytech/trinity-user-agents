@@ -433,7 +433,20 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   `set_funding_callbacks` (the overlay), `set_top_up_callbacks` with
   `notify_top_up_status` (the top-up engine), `enable_funding_conversion`,
   `open_funding`, `quote_funding_deposit`, `assign_funding_deposit`,
-  `retry_funding` and `funding_session`. Amounts cross the FFI as decimal strings.
+  `retry_funding`, `funding_session` and `funding_sessions`.
+  For progress and history, each session carries the time it first reached
+  each in-flight `FundingStep` (awaiting deposit, deposit seen, converting,
+  landed, claiming), between its `opened_at_ms` and the end its stage
+  records, from which a host draws each rail's markers, and the CASH that
+  `landed` on People, so a partial credit shows what stays on the account.
+  `funding_deposit_address` gives the deposit account as an Asset Hub
+  address (SS58 prefix 0) for the deposit screen. `funding_sessions` lists
+  sessions in flight first, a held one among them, then ended ones, each
+  newest first. An ended session is handed to the host through
+  `funding_session_changed` each time funding resumes until the host calls
+  `acknowledge_funding_session`, so its history writes every outcome once;
+  the core keeps the 50 newest recorded sessions and every unrecorded one
+  within the 200 newest ended. Amounts cross the FFI as decimal strings.
   Each watched deposit account is read for every deposit asset the host
   names when it enables conversion, and the native token. A deposit counts
   as delivered once it reaches the deposit quoted for its asset, or what the

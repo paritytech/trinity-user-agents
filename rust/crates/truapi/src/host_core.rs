@@ -819,6 +819,33 @@ impl SigningHostRuntime {
         self.services.funding().get(intent)
     }
 
+    /// Every funding session the core keeps, in flight first, then ended,
+    /// each newest first, with the time each step was first reached.
+    pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
+        self.services.funding().sessions()
+    }
+
+    /// Record that the host wrote ended session `intent` into its own
+    /// history. Until it does, the session is handed over again through
+    /// `funding_session_changed` each time funding resumes; the host reads
+    /// the full record with `funding_session`. Call it outside that
+    /// callback, which runs while the core holds its session lock.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.acknowledge_funding_session"))]
+    pub async fn acknowledge_funding_session(&self, intent: &str) -> Result<bool, v01::GenericError> {
+        self.services
+            .acknowledge_funding_session(intent)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
+    /// Session `intent`'s deposit account as an Asset Hub address, for the
+    /// host's deposit screen and QR code.
+    pub fn funding_deposit_address(&self, intent: &str) -> Option<String> {
+        self.services.funding().get(intent)?.deposit_address()
+    }
+
     /// Convert funding deposits into CASH on People on `network`, signing
     /// with the deposit accounts this host derives. Without it, assigning a
     /// deposit account fails. Set-once; returns whether this call enabled it.

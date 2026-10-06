@@ -356,6 +356,23 @@ impl NativeTrUApiHostRuntime {
     ) -> Option<crate::host_logic::funding::FundingSession> {
         self.runtime.funding_session(&intent)
     }
+
+    /// Every funding session the core keeps, in flight first, then ended,
+    /// each newest first.
+    pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
+        self.runtime.funding_sessions()
+    }
+
+    /// Record that the host wrote ended session `intent` into its own
+    /// history; until then it is handed over again on each resume.
+    pub async fn acknowledge_funding_session(&self, intent: String) -> Result<bool, HostRejection> {
+        Ok(self.runtime.acknowledge_funding_session(&intent).await?)
+    }
+
+    /// Session `intent`'s deposit account as an SS58 address.
+    pub fn funding_deposit_address(&self, intent: String) -> Option<String> {
+        self.runtime.funding_deposit_address(&intent)
+    }
 }
 
 #[uniffi::export]

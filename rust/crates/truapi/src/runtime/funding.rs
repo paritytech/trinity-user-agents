@@ -126,6 +126,41 @@ impl FundingRegistry {
         self.lock_sessions().get(intent).cloned()
     }
 
+    /// Every session the core keeps, for the host's progress and history
+    /// views: those in flight first, a held one among them, then the ended
+    /// ones, each newest first, as getcash lists its requests.
+    pub fn sessions(&self) -> Vec<FundingSession> {
+        let mut sessions: Vec<_> = self.lock_sessions().values().cloned().collect();
+        sessions.sort_by_key(|session| {
+            (
+                !session.in_flight(),
+                core::cmp::Reverse(session.settled_at_ms().unwrap_or(session.opened_at_ms)),
+            )
+        });
+        sessions
+    }
+
+    /// Record that the host has written ended session `intent` into its own
+    /// history, so it is no longer handed over and can age out. Returns
+    /// whether the session was ended and not yet acknowledged.
+    pub async fn acknowledge(
+        &self,
+        storage: &(impl CoreStorage + ?Sized),
+        now_ms: u64,
+        intent: &str,
+    ) -> Result<bool, FundingSessionError> {
+        let intent = intent.to_string();
+        self.commit(storage, now_ms, move |sessions| {
+            let acknowledged = sessions
+                .get_mut(&intent)
+                .filter(|session| !session.in_flight() && !session.acknowledged)
+                .map(|session| session.acknowledged = true)
+                .is_some();
+            (acknowledged, Vec::new())
+        })
+        .await
+    }
+
     /// Watch one session, receiving its current stage immediately. A terminal
     /// session yields that one item and then ends.
     pub fn subscribe(
@@ -189,6 +224,11 @@ impl FundingRegistry {
         for session in working.values_mut() {
             if session.expire_if_due(now_ms) {
                 changed.push(session.intent.clone());
+            }
+            session.stamp(now_ms);
+            // A reopened or held session ends later, with a new outcome.
+            if session.in_flight() {
+                session.acknowledged = false;
             }
         }
         if !*loaded || working != before {
@@ -761,12 +801,14 @@ impl RuntimeServices {
                     services.platform.as_ref(),
                     current_unix_millis(),
                     |sessions| {
-                        let open = sessions
+                        // Ended sessions the host has not recorded are handed
+                        // over again, so its history gets every outcome.
+                        let pending = sessions
                             .values()
-                            .filter(|session| !session.is_terminal())
+                            .filter(|session| session.needs_handoff())
                             .map(|session| session.intent.clone())
                             .collect();
-                        ((), open)
+                        ((), pending)
                     },
                 )
                 .await;
@@ -836,6 +878,14 @@ impl RuntimeServices {
             .await?;
         self.watch_funding_deposits();
         Ok(account)
+    }
+
+    /// Record that the host wrote ended session `intent` into its own
+    /// history. Returns whether it was ended and not yet acknowledged.
+    pub async fn acknowledge_funding_session(&self, intent: &str) -> Result<bool, FundingSessionError> {
+        self.funding()
+            .acknowledge(self.platform.as_ref(), current_unix_millis(), intent)
+            .await
     }
 
     /// Try a failed session `intent` again from where its funds are: its
@@ -1312,7 +1362,7 @@ mod tests {
     use futures::executor::block_on;
     use truapi::latest::FundingFailure;
 
-    use crate::host_logic::funding::FundingStage;
+    use crate::host_logic::funding::{FundingStage, FundingStamp, FundingStep};
     use crate::test_support::stub_platform;
 
     const NOW: u64 = 1_700_000_000_000;
@@ -1399,6 +1449,118 @@ mod tests {
                 settled_at_ms: NOW,
                 resume: None,
             })
+        );
+    }
+
+    // The host's history must get each outcome exactly once: an ended
+    // session is handed over until the host records it, and one whose late
+    // deposit reopens it is handed over again when it ends.
+    #[test]
+    fn an_ended_session_is_handed_over_until_the_host_records_it() {
+        let storage = stub_platform();
+        let registry = FundingRegistry::default();
+        let mut ended = FundingSession {
+            deposit: Some(converting_deposit()),
+            ..session("fs_ended", NOW - DAY_MS)
+        };
+        ended.fail(FundingFailure::Expired, NOW);
+        insert(&registry, storage.as_ref(), ended);
+        insert(&registry, storage.as_ref(), session("fs_live", NOW));
+        let acknowledge = |intent| block_on(registry.acknowledge(storage.as_ref(), NOW, intent)).expect("saved");
+        let handed_over = || {
+            let mut pending: Vec<_> = registry
+                .sessions()
+                .into_iter()
+                .filter(FundingSession::needs_handoff)
+                .map(|session| session.intent)
+                .collect();
+            pending.sort();
+            pending
+        };
+
+        let before = handed_over();
+        let first = (acknowledge("fs_ended"), acknowledge("fs_ended"), acknowledge("fs_live"));
+        let after = handed_over();
+        // The full deposit arrives late, so the session converts after all.
+        let late = AssetBalances(vec![(USDT, converting_deposit().account, 50)]);
+        block_on(registry.observe_deposits(storage.as_ref(), NOW + 1, &late, &[USDT])).expect("reopened");
+
+        assert_eq!(
+            (before, first, after, registry.get("fs_ended").map(|session| session.acknowledged)),
+            (
+                vec!["fs_ended".to_string(), "fs_live".to_string()],
+                (true, false, false),
+                vec!["fs_live".to_string()],
+                Some(false),
+            )
+        );
+    }
+
+    // Progress is drawn from when each step was first reached, recorded as
+    // the session moves, and going back through a step, as a resubmitted
+    // conversion does, keeps its first time.
+    #[test]
+    fn each_step_is_stamped_as_the_session_reaches_it() {
+        let storage = stub_platform();
+        let registry = FundingRegistry::default();
+        insert(
+            &registry,
+            storage.as_ref(),
+            FundingSession {
+                deposit: Some(converting_deposit()),
+                ..session("fs_1", NOW)
+            },
+        );
+        let usdt = AssetBalances(vec![(USDT, converting_deposit().account, 50)]);
+        block_on(registry.observe_deposits(storage.as_ref(), NOW + 1, &usdt, &[USDT])).expect("seen");
+        for (at_ms, step) in [
+            (NOW + 2, ConversionStep::Submitted(SUBMITTED)),
+            (NOW + 3, ConversionStep::Dropped),
+            (NOW + 4, ConversionStep::Submitted(SUBMITTED)),
+            (NOW + 5, ConversionStep::Landed { landed: 49 }),
+        ] {
+            block_on(registry.record_conversion(storage.as_ref(), at_ms, "fs_1", step)).expect("recorded");
+        }
+
+        assert_eq!(
+            registry.get("fs_1").map(|session| (session.stamps, session.landed)),
+            Some((
+                [
+                    (FundingStep::AwaitingDeposit, NOW),
+                    (FundingStep::DepositSeen, NOW + 1),
+                    (FundingStep::Converting, NOW + 2),
+                    (FundingStep::Landed, NOW + 5),
+                ]
+                .map(|(step, at_ms)| FundingStamp { step, at_ms })
+                .to_vec(),
+                Some(49)
+            ))
+        );
+    }
+
+    // The host's list shows what is in flight first, then what ended, each
+    // newest first, as getcash lists its requests.
+    #[test]
+    fn sessions_list_in_flight_first_then_ended_newest_first() {
+        let storage = stub_platform();
+        let registry = FundingRegistry::default();
+        let ended = |intent, settled_at_ms| {
+            let mut session = session(intent, settled_at_ms - 1);
+            session.fail(FundingFailure::Expired, settled_at_ms);
+            session
+        };
+        for session in [
+            ended("fs_old", NOW - 2),
+            session("fs_live_old", NOW - 5),
+            ended("fs_new", NOW - 1),
+            session("fs_live_new", NOW),
+        ] {
+            insert(&registry, storage.as_ref(), session);
+        }
+
+        assert_eq!(
+            registry.sessions().into_iter().map(|session| session.intent).collect::<Vec<_>>(),
+            ["fs_live_new", "fs_live_old", "fs_new", "fs_old"]
         );
     }
 
@@ -1645,8 +1807,8 @@ mod tests {
         block_on(registry.commit(storage.as_ref(), NOW, |_| ((), Vec::new()))).expect("swept");
 
         assert_eq!(
-            (registry.get("fs_1"), registry.next_deadline()),
-            (Some(converting), None)
+            (registry.get("fs_1").map(|session| session.stage), registry.next_deadline()),
+            (Some(converting.stage), None)
         );
     }
 

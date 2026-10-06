@@ -300,7 +300,7 @@ async fn open_and_assign(
     println!("pay      {expected} of {deposit_asset:?} ({source_id}) on Asset Hub to");
     println!(
         "         {}",
-        truapi::host_logic::product_account::product_public_key_to_address(account)
+        truapi::host_logic::funding::asset_hub_address(&account)
     );
     println!("         0x{}", hex::encode(account));
     println!("resume   --intent {intent}");
@@ -364,7 +364,7 @@ async fn follow(runtime: &SigningHostRuntime, intent: &str) -> Result<()> {
             }
             FundingStage::Open
             | FundingStage::Converting { .. }
-            | FundingStage::Converted { .. }
+            | FundingStage::Converted
             | FundingStage::Crediting { .. } => {}
         }
         tokio::time::sleep(POLL).await;
