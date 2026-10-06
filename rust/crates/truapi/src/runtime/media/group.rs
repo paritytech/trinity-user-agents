@@ -565,6 +565,16 @@ impl GroupEngine {
         actions
     }
 
+    /// A failed handshake send is ambiguous: a submit that timed out or lost its
+    /// transport may still have reached the store, and the peer may answer it.
+    /// Invite, Accept and Commit are idempotent at the receiver (known-link,
+    /// winner and started checks), so they are retried while this link would
+    /// still send them instead of ending a link the peer may already be using.
+    pub(super) fn retries_send(&self, recipient: &VerifiedAdvertisement, payload: &[u8]) -> bool {
+        matches!(decode_wire(payload), Some(Wire::Invite { .. } | Wire::Accept { .. } | Wire::Commit { .. }))
+            && self.send_current(recipient, payload)
+    }
+
     pub(super) fn tick(&mut self, now: u64) -> Vec<GroupAction> {
         self.now = self.now.max(now);
         let mut actions = Vec::new();
@@ -1343,5 +1353,68 @@ mod tests {
             matches!(action, GroupAction::Description { participant_id, .. } if *participant_id == [21; 32])));
         assert!(relay(&a, &still_c, &mut right).iter().any(|action|
             matches!(action, GroupAction::Description { participant_id, .. } if *participant_id == [31; 32])));
+    }
+
+    fn sends(actions: &[GroupAction]) -> Vec<(VerifiedAdvertisement, Vec<u8>)> {
+        actions.iter().filter_map(|action| match action {
+            GroupAction::Send { recipient, payload } => Some((recipient.clone(), payload.to_vec())),
+            _ => None,
+        }).collect()
+    }
+
+    // Live Epoca run: the caller's Invite submit outlived its budget while
+    // smoldot stalled, yet the store accepted it. The callee rang and accepted,
+    // but send_failed had already ended the caller's link, so the Accept was
+    // dropped (caller ConnectivityLost, callee Unanswered, no peer connection).
+    #[test]
+    fn an_ambiguous_invite_failure_keeps_the_link_for_a_late_accept() {
+        let a = advertisement(8, 81);
+        let b = advertisement(9, 91);
+        let mut caller = GroupEngine::new(a.clone());
+        let mut callee = GroupEngine::new(b.clone());
+        caller.create_session([10; 32]).unwrap();
+        let invite = caller.invite([10; 32], [11; 32], peer(&b), vec![b.clone()], &tracks(), NOW).unwrap();
+        let (recipient, payload) = sends(&invite).pop().unwrap();
+        assert!(caller.retries_send(&recipient, &payload));
+
+        // The failure is retried, not reported: the link stays open.
+        let offer = incoming(&relay(&a, &invite, &mut callee));
+        let accept = callee.accept(offer, [20; 32], [21; 32], &tracks(), NOW).unwrap();
+        let (accept_to, accept_payload) = sends(&accept).pop().unwrap();
+        assert!(callee.retries_send(&accept_to, &accept_payload));
+        let commit = relay(&b, &accept, &mut caller);
+        assert!(starts(&commit, [10; 32], [11; 32], true));
+        // A retried Invite after the start is fenced, and a duplicate is ignored.
+        assert!(!caller.retries_send(&recipient, &payload));
+        assert!(relay(&a, &invite, &mut callee).is_empty());
+        let (commit_to, commit_payload) = sends(&commit).pop().unwrap();
+        assert!(caller.retries_send(&commit_to, &commit_payload));
+        assert!(starts(&relay(&a, &commit, &mut callee), [20; 32], [21; 32], false));
+        no_start(&relay(&a, &commit, &mut callee));
+
+        // Media messages are not handshakes and keep the existing failure path.
+        let description = caller.local_description([10; 32], [11; 32],
+            MediaDescription { kind: MediaDescriptionKind::Offer, sdp: "private-offer".into() });
+        let (to, description_payload) = sends(&description).pop().unwrap();
+        assert!(!caller.retries_send(&to, &description_payload));
+    }
+
+    #[test]
+    fn the_old_failure_path_drops_a_late_accept_and_retries_stop_after_the_link_ends() {
+        let a = advertisement(10, 101);
+        let b = advertisement(11, 111);
+        let mut caller = GroupEngine::new(a.clone());
+        let mut callee = GroupEngine::new(b.clone());
+        caller.create_session([10; 32]).unwrap();
+        let invite = caller.invite([10; 32], [11; 32], peer(&b), vec![b.clone()], &tracks(), NOW).unwrap();
+        let (recipient, payload) = sends(&invite).pop().unwrap();
+        let offer = incoming(&relay(&a, &invite, &mut callee));
+        let failed = caller.send_failed(&recipient, &payload);
+        assert!(failed.iter().any(|action| matches!(action, GroupAction::EndPeer {
+            outcome: MediaCallOutcome::ConnectivityLost, ..
+        })));
+        assert!(!caller.retries_send(&recipient, &payload));
+        let accept = callee.accept(offer, [20; 32], [21; 32], &tracks(), NOW).unwrap();
+        no_start(&relay(&b, &accept, &mut caller));
     }
 }
