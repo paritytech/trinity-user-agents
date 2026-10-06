@@ -27,6 +27,7 @@ use super::{
 /// The variant order is part of the SCALE wire protocol used inside
 /// statement-store session statements.
 #[allow(clippy::large_enum_variant)]
+#[truapi_macros::sso_response_indices]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum RemoteMessage {
     /// The peer is ending the SSO session.
