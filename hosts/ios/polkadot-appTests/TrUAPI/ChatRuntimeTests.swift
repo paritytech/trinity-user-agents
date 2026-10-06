@@ -207,6 +207,25 @@ struct ChatRuntimeTests {
         await runtime.dispose()
     }
 
+    /// A chat session can close while the worker is still coming up. Giving the
+    /// request back there would reach the core before the ask registered it,
+    /// dropping the count of a worker another holder is drawing from.
+    @Test func rustRuntimeDoesNotGiveBackARequestItHasNotTakenYet() async throws {
+        let workers = StubWorkerManager(startupWindow: .milliseconds(100))
+        workers.holdsTheAsk = true
+        let runtime = makeRustRuntime(workers: workers)
+
+        var asks = workers.asks.makeAsyncIterator()
+        let starting = Task { try await runtime.start(messagingSupport: .init(bot: nil, context: nil)) }
+        await asks.next()
+
+        await runtime.dispose()
+        workers.openTheAsk()
+        _ = try? await starting.value
+
+        #expect(workers.references.log == ["acquire \(chatProduct)", "release \(chatProduct)"])
+    }
+
     /// A worker that never comes up must not leave the session holding a
     /// reference: the core would keep counting it and never stop the worker it
     /// eventually builds.

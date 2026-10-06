@@ -1,5 +1,6 @@
 import Foundation
 import os
+import AsyncExtensions
 import Products
 
 /// The Pocket handlers running right now: one per product holding a card its
@@ -8,12 +9,15 @@ import Products
 /// Separate from ``ProductPocketService`` because what starts and stops a
 /// handler is decided by the collection and the product manifests alone, and by
 /// nothing else the session holds.
-final class PocketHandlers: @unchecked Sendable {
+final class PocketHandlers: PocketFaceStreamsResolving, @unchecked Sendable {
     private let workers: any TrUAPIWorkerManaging
     private let published: any PublishedPocketCardsResolving
     private let logger: LoggerProtocol
 
     private let running = OSAllocatedUnfairLock(initialState: Running())
+    /// Sent on every change so a card already on screen can wait for the
+    /// handler that will draw it, rather than being told there is none.
+    private let announced = AsyncCurrentValueSubject<[ProductId: TrUAPIPocketHandler]>([:])
 
     private struct Running {
         var handlers: [ProductId: TrUAPIPocketHandler] = [:]
@@ -33,6 +37,18 @@ final class PocketHandlers: @unchecked Sendable {
 
     func handler(of productId: ProductId) -> TrUAPIPocketHandler? {
         running.withLock { $0.handlers[productId] }
+    }
+
+    func streams(of productId: ProductId) -> (any PocketFaceStreaming)? {
+        handler(of: productId)
+    }
+
+    func awaitStreams(of productId: ProductId) async -> (any PocketFaceStreaming)? {
+        for await handler in announced.map({ $0[productId] }) {
+            if let handler { return handler }
+        }
+
+        return nil
     }
 
     /// Reconciles beside the collection rather than in front of the next
@@ -73,6 +89,8 @@ final class PocketHandlers: @unchecked Sendable {
             return held
         }
 
+        announced.send([:])
+
         for handler in held {
             handler.dispose()
         }
@@ -86,20 +104,25 @@ final class PocketHandlers: @unchecked Sendable {
     /// Answers whether every card was looked up conclusively.
     func reconcile(_ cards: [PocketCardEntry]) async -> Bool {
         var wanted: Set<ProductId> = []
-        var settled = true
+        var unanswered: Set<ProductId> = []
 
         for card in cards where !wanted.contains(card.key.productId) {
             switch await offer(of: card.key) {
             case .offered: wanted.insert(card.key.productId)
             case .notOffered: break
-            case .unanswered: settled = false
+            case .unanswered: unanswered.insert(card.key.productId)
             }
         }
 
         let (started, stopped) = running.withLock { running -> ([ProductId], [TrUAPIPocketHandler]) in
             guard !running.stopped else { return ([], []) }
 
-            let stopped = running.handlers.filter { !wanted.contains($0.key) }
+            // A read that did not land is not the product saying its card is
+            // gone, so a handler already drawing one keeps running rather than
+            // being stopped and booted again by the retry.
+            let stopped = running.handlers.filter {
+                !wanted.contains($0.key) && !unanswered.contains($0.key)
+            }
             for productId in stopped.keys {
                 running.handlers[productId] = nil
             }
@@ -113,6 +136,7 @@ final class PocketHandlers: @unchecked Sendable {
                 )
             }
 
+            announced.send(running.handlers)
             return (Array(started), Array(stopped.values))
         }
 
@@ -124,7 +148,7 @@ final class PocketHandlers: @unchecked Sendable {
             await start(productId)
         }
 
-        return settled
+        return unanswered.isEmpty
     }
 }
 
@@ -145,7 +169,11 @@ private extension PocketHandlers {
 
             // Dropped rather than left in place, so the next change is free to
             // ask for the worker again.
-            let dropped = running.withLock { $0.handlers.removeValue(forKey: productId) }
+            let dropped = running.withLock { running -> TrUAPIPocketHandler? in
+                let dropped = running.handlers.removeValue(forKey: productId)
+                announced.send(running.handlers)
+                return dropped
+            }
             dropped?.dispose()
         }
     }

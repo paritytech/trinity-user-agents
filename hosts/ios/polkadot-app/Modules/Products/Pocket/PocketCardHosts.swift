@@ -16,8 +16,6 @@ import UIKit
 /// handed to the next session still talking to the last one's core.
 @MainActor
 final class PocketCardHosts {
-    static let shared = PocketCardHosts()
-
     private struct Held {
         let key: PocketCardKey
         let view: SPAViewProtocol

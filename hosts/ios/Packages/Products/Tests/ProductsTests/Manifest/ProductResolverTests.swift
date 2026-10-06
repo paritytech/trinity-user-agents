@@ -156,7 +156,7 @@ struct ProductResolverTests {
 
         let resolved = try await makeResolver(stub).resolve("hackm3.dot")
 
-        #expect(resolved.executables.worker?.includesChat == true)
+        #expect(resolved.executables.worker?.serves(.chat) == true)
         #expect(resolved.executables.worker?.entrypoint == "src/worker.js")
         #expect(resolved.executables.worker?.pocketCards.isEmpty == true)
     }

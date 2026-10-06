@@ -43,9 +43,9 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
     /// one covers the window before there is a worker to ask at all.
     private static let renderRetryInterval = Duration.milliseconds(25)
 
-    /// Whether this session's worker request is out, so dispose gives back
-    /// exactly what start took and never more.
-    private var holdsWorker = false
+    /// What this session holds of the product's worker request, so dispose
+    /// gives back exactly what start asked for and never more.
+    private var request = WorkerRequest.none
     private var roomsForwardingTask: Task<Void, Never>?
     private var started = false
     private var disposed = false
@@ -183,10 +183,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
 
         // A release, not a close. The product's cards may still be asking for
         // the same worker, and the core stops it once the last request goes.
-        if holdsWorker {
-            workers.releaseWorker(for: productId)
-            holdsWorker = false
-        }
+        releaseWorker()
 
         logger.debug("Rust chat runtime disposed for: \(productId)")
     }
@@ -200,19 +197,38 @@ private extension TrUAPIChatHandler {
         // surface with no binding.
         context.chat.bind(messagingSupport, owner: self)
 
-        // Marked before the ask, because the request is ours from that moment:
-        // a dispose landing while the worker comes up has to be the one that
-        // gives it back.
-        holdsWorker = true
+        request = .asking
 
         // Returns once the worker is up, because everything the bot does next,
         // its welcome message first of all, is published through the execution.
-        _ = try await workers.ensureWorker(for: productId)
+        do {
+            _ = try await workers.ensureWorker(for: productId)
+        } catch {
+            settleRequest()
+            throw error
+        }
+        settleRequest()
 
         try checkNotDisposed()
         startRoomsForwarding()
 
         logger.debug("Rust chat runtime started for: \(productId)")
+    }
+
+    /// The ask has returned, so the request is ours either way: it is
+    /// registered before the wait that can fail. A dispose that landed while we
+    /// were asking left the giving back to here.
+    func settleRequest() {
+        request = .held
+
+        if disposed { releaseWorker() }
+    }
+
+    func releaseWorker() {
+        guard request == .held else { return }
+
+        request = .none
+        workers.releaseWorker(for: productId)
     }
 
     func checkNotDisposed() throws {

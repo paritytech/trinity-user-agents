@@ -12,6 +12,8 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
     private let subject = AsyncCurrentValueSubject<[ProductId: TrUAPIProductExecutionProtocol]>([:])
     private let openContexts = OSAllocatedUnfairLock<[ProductId: ProductWorkerContext]>(initialState: [:])
     private let startupWindow: Duration
+    private let entered = AsyncStream<Void>.makeStream()
+    private let gate = AsyncStream<Void>.makeStream()
 
     /// What the handlers asked for, so a test can see a request that was taken
     /// and never given back.
@@ -24,7 +26,22 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
         self.startupWindow = startupWindow
     }
 
+    /// Held open so a test can dispose a handler while its ask is still in
+    /// flight, which is the window the real manager has between the handler
+    /// asking and the core registering the request.
+    var holdsTheAsk = false
+
+    var asks: AsyncStream<Void> { entered.stream }
+
+    func openTheAsk() {
+        gate.continuation.finish()
+    }
+
     func ensureWorker(for productId: ProductId) async throws -> TrUAPIProductExecutionProtocol {
+        entered.continuation.yield(())
+        if holdsTheAsk {
+            for await _ in gate.stream {}
+        }
         references.acquireWorker(productId: productId)
 
         return try await withTimeout(startupWindow) { [self] in
@@ -71,17 +88,33 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
     func shutdown() async {}
 }
 
-/// The references a modality holder takes, recorded rather than counted by the
-/// core.
+/// The requests a handler makes, recorded rather than counted by the core.
+///
+/// Handlers ask and give back from their own tasks while the test reads these
+/// from its own, so the records are locked. Appending to a bare array from two
+/// threads is a data race, and the test that reads it fails at random.
 final class StubWorkerReferences: TrUAPIWorkerReferencing, @unchecked Sendable {
-    private(set) var acquired: [ProductId] = []
-    private(set) var released: [ProductId] = []
+    private let records = OSAllocatedUnfairLock(
+        initialState: (acquired: [ProductId](), released: [ProductId](), log: [String]())
+    )
+
+    var acquired: [ProductId] { records.withLock { $0.acquired } }
+    var released: [ProductId] { records.withLock { $0.released } }
+    /// Both in the order they happened. A release reaching the core before its
+    /// acquire drops the count of a worker another holder is drawing from.
+    var log: [String] { records.withLock { $0.log } }
 
     func acquireWorker(productId: ProductId) {
-        acquired.append(productId)
+        records.withLock {
+            $0.acquired.append(productId)
+            $0.log.append("acquire \(productId)")
+        }
     }
 
     func releaseWorker(productId: ProductId) {
-        released.append(productId)
+        records.withLock {
+            $0.released.append(productId)
+            $0.log.append("release \(productId)")
+        }
     }
 }

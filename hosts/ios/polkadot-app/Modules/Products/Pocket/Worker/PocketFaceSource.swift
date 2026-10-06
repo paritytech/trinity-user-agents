@@ -2,6 +2,17 @@ import Foundation
 import Products
 import TrUAPIHost
 
+/// Which handler is drawing a product's cards.
+protocol PocketFaceStreamsResolving: Sendable {
+    /// The handler running right now, or nil if none is.
+    func streams(of productId: ProductId) -> (any PocketFaceStreaming)?
+
+    /// The same, waited for. A card is on screen before the collection has been
+    /// reconciled and its worker booted, and answering none then would leave it
+    /// on the face it was last drawn with.
+    func awaitStreams(of productId: ProductId) async -> (any PocketFaceStreaming)?
+}
+
 /// Where a card's face comes from: what the host already holds, then everything
 /// the product draws.
 protocol PocketFaceSourcing: Sendable {
@@ -27,14 +38,12 @@ struct RealPocketFaceSource: PocketFaceSourcing {
     /// Resolved per call rather than held: the collection is not readable until
     /// the network's dotNS suffix is, and the cards are drawn before that.
     private let store: @Sendable () async -> (any PocketCardStore)?
-    /// The handler drawing that product's cards, or nil while none is running,
-    /// which is a product the host is not running a worker for.
-    private let streams: @Sendable (ProductId) -> (any PocketFaceStreaming)?
+    private let streams: any PocketFaceStreamsResolving
     private let logger: LoggerProtocol
 
     init(
         store: @escaping @Sendable () async -> (any PocketCardStore)?,
-        streams: @escaping @Sendable (ProductId) -> (any PocketFaceStreaming)?,
+        streams: any PocketFaceStreamsResolving,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.store = store
@@ -51,9 +60,10 @@ struct RealPocketFaceSource: PocketFaceSourcing {
                     continuation.yield(kept)
                 }
 
-                // A card whose product is not running keeps the face it has
-                // rather than going blank.
-                guard let streams = streams(key.productId) else {
+                // Waited for rather than asked once: the card is drawn before
+                // the collection has been reconciled, and the only thing that
+                // would start it again is its own identity changing.
+                guard let streams = await streams.awaitStreams(of: key.productId) else {
                     continuation.finish()
                     return
                 }
@@ -89,6 +99,6 @@ struct RealPocketFaceSource: PocketFaceSourcing {
     }
 
     func send(action: String, payload: Data, for key: PocketCardKey) {
-        streams(key.productId)?.send(action: action, payload: payload, for: key)
+        streams.streams(of: key.productId)?.send(action: action, payload: payload, for: key)
     }
 }

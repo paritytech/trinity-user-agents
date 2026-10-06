@@ -54,6 +54,23 @@ struct PocketHandlersTests {
         #expect(handlers.handler(of: "game.paseo") != nil)
     }
 
+    /// A read that did not land is not the product saying its card is gone.
+    /// Stopping a handler on one would take down a card that is drawing, and
+    /// the retry a moment later would boot the worker all over again.
+    @Test
+    func keepsAHandlerWhoseCardLookupDidNotLand() async throws {
+        let published = StubPublishedCards()
+        let workers = workersRunning("game.paseo")
+        let handlers = makeHandlers(workers: workers, published: published)
+        _ = await handlers.reconcile([loyalty])
+
+        published.failures = [URLError(.notConnectedToInternet)]
+        #expect(await !handlers.reconcile([loyalty]))
+
+        #expect(handlers.handler(of: "game.paseo") != nil)
+        #expect(workers.references.released.isEmpty)
+    }
+
     /// The request is what keeps the worker alive, so a product whose last card
     /// has gone must give it back rather than hold a web view for a Pocket that
     /// no longer draws it.

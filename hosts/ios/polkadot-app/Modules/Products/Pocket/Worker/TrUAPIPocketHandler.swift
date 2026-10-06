@@ -42,9 +42,14 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, @unchecked Sendable {
     private let workers: any TrUAPIWorkerManaging
     private let logger: LoggerProtocol
 
-    /// Whether this handler's worker request is out, so a dispose gives back
-    /// exactly what the start asked for and never more.
-    private let holdsWorker = OSAllocatedUnfairLock(initialState: false)
+    /// What this handler holds of the product's worker request, so a dispose
+    /// gives back exactly what the start asked for and never more.
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    private struct State {
+        var request = WorkerRequest.none
+        var disposed = false
+    }
 
     init(
         productId: ProductId,
@@ -62,21 +67,48 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, @unchecked Sendable {
     /// The request is ours from the moment we ask, including when the ask
     /// fails, so ``dispose()`` gives it back either way.
     func start() async throws {
-        holdsWorker.withLock { $0 = true }
+        state.withLock { $0.request = .asking }
 
-        _ = try await workers.ensureWorker(for: productId)
+        do {
+            _ = try await workers.ensureWorker(for: productId)
+        } catch {
+            settleRequest()
+            throw error
+        }
+        settleRequest()
     }
 
     func dispose() {
-        let held = holdsWorker.withLock { held -> Bool in
-            defer { held = false }
-            return held
+        let release = state.withLock { state -> Bool in
+            state.disposed = true
+            guard state.request == .held else { return false }
+
+            state.request = .none
+            return true
         }
-        guard held else { return }
+        guard release else { return }
 
         // A release, not a close. A chat session with the same product may
         // still be asking for the worker, and the core stops it once the last
         // request goes.
+        workers.releaseWorker(for: productId)
+    }
+
+    /// The ask has returned, so the request is ours either way: it is
+    /// registered before the wait that can fail. A dispose that landed while we
+    /// were asking left the giving back to here.
+    private func settleRequest() {
+        let release = state.withLock { state -> Bool in
+            guard state.disposed else {
+                state.request = .held
+                return false
+            }
+
+            state.request = .none
+            return true
+        }
+        guard release else { return }
+
         workers.releaseWorker(for: productId)
     }
 

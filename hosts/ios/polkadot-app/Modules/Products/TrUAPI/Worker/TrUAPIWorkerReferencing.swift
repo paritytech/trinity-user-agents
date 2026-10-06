@@ -13,3 +13,15 @@ protocol TrUAPIWorkerReferencing: Sendable {
 }
 
 extension TrUAPIHostRuntime: TrUAPIWorkerReferencing {}
+
+/// What a handler holds of its product's worker request.
+///
+/// `asking` is the window between a handler asking and the core registering the
+/// request. A dispose landing in it cannot give the request back, because the
+/// release would reach the core first and drop the count of a worker another
+/// holder is drawing from. The ask gives it back instead, once it returns.
+enum WorkerRequest {
+    case none
+    case asking
+    case held
+}

@@ -66,6 +66,11 @@ final class CoreDataPocketCardStore: PocketCardStore, @unchecked Sendable {
 
                 return placed + Self.added(rows).filter { !placedKeys.contains($0.key) }
             }
+            // A card and its face share a row, so keeping a face writes the row
+            // this is followed through. Every surface that follows the
+            // collection would re-read one that did not change, once per face a
+            // product draws.
+            .removeDuplicates()
             .eraseToAnyAsyncSequence()
     }
 

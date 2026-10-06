@@ -170,7 +170,7 @@ final class ProductPocketService: @unchecked Sendable {
         let drawing = Drawing(
             faces: RealPocketFaceSource(
                 store: { [collection] in collection },
-                streams: { [weak self] productId in self?.handlers?.handler(of: productId) },
+                streams: handlers,
                 logger: logger
             ),
             products: flowState.productResolver,

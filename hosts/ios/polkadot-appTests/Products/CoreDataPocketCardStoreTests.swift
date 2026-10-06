@@ -188,6 +188,31 @@ struct CoreDataPocketCardStoreTests {
 
         #expect(await seen.last?.map(\.key) == [loyalty.key])
     }
+
+    /// A card and its face share a row, so keeping a face writes the very row
+    /// the collection is followed through. A product animating its card writes
+    /// one every couple of seconds, and sending the collection again each time
+    /// would re-run every surface that follows it.
+    @Test
+    func doesNotSendTheCollectionAgainWhenOnlyAFaceChanged() async throws {
+        let store = makeStore()
+        try await store.add(loyalty, face: .nil)
+        let seen = Seen()
+
+        let following = Task {
+            for try await cards in store.observeCards() {
+                await seen.record(cards)
+            }
+        }
+        defer { following.cancel() }
+        try await waitUntil { await seen.all.count == 1 }
+
+        await store.cacheFace(.string(text: "drawn"), for: loyalty.key)
+        try await store.add(streak, face: .nil)
+        try await waitUntil { await seen.last?.count == 2 }
+
+        #expect(await seen.all.map(\.count) == [1, 2])
+    }
 }
 
 // MARK: - Fixtures
@@ -223,10 +248,12 @@ private func makeStore(
 /// CoreData delivers its snapshots on its own queue, so the assertions wait on
 /// what arrived rather than on the clock.
 private actor Seen {
-    private(set) var last: [PocketCardEntry]?
+    private(set) var all: [[PocketCardEntry]] = []
+
+    var last: [PocketCardEntry]? { all.last }
 
     func record(_ cards: [PocketCardEntry]) {
-        last = cards
+        all.append(cards)
     }
 }
 

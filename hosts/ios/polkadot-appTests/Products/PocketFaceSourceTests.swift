@@ -1,4 +1,5 @@
 import Foundation
+import os
 import AsyncExtensions
 import Products
 import Testing
@@ -14,9 +15,9 @@ struct PocketFaceSourceTests {
         let store = RecordingFaceStore()
         let source = RealPocketFaceSource(
             store: { store },
-            streams: { _ in
+            streams: RunningHandler(
                 StubFaceStreams(faces: ["one", "two", "three"].map { RendererNode.string(text: $0) })
-            }
+            )
         )
 
         var drawn: [String] = []
@@ -29,6 +30,27 @@ struct PocketFaceSourceTests {
         // arrive inside one interval, so only the face the card settled on is
         // written down after them.
         #expect(await store.kept.compactMap(\.text) == ["one", "three"])
+    }
+
+    /// The wallet tab draws its cards before the collection has been reconciled
+    /// and a worker booted. Ending the stream there would leave the card on the
+    /// face it was last drawn with and nothing would ever start it again: the
+    /// card only re-runs its task when its own identity changes.
+    @Test
+    func waitsForAHandlerThatIsNotRunningYet() async throws {
+        let handlers = LateHandlers()
+        let source = RealPocketFaceSource(store: { RecordingFaceStore() }, streams: handlers)
+
+        let drawing = Task { () -> [String] in
+            var drawn: [String] = []
+            for await face in source.faces(for: loyalty) {
+                drawn.append(face.text ?? "")
+            }
+            return drawn
+        }
+        handlers.arrive(StubFaceStreams(faces: [.string(text: "live")]))
+
+        #expect(await drawing.value == ["live"])
     }
 }
 
@@ -74,5 +96,38 @@ private actor RecordingFaceStore: PocketCardStore {
 
     func cacheFace(_ face: RendererNode, for _: PocketCardKey) async {
         kept.append(face)
+    }
+}
+
+/// A product whose handler is already drawing its cards.
+private struct RunningHandler: PocketFaceStreamsResolving {
+    let handler: any PocketFaceStreaming
+
+    init(_ handler: any PocketFaceStreaming) {
+        self.handler = handler
+    }
+
+    func streams(of _: ProductId) -> (any PocketFaceStreaming)? { handler }
+
+    func awaitStreams(of _: ProductId) async -> (any PocketFaceStreaming)? { handler }
+}
+
+/// A product with no handler running: it only starts after the card has
+/// already begun drawing, which is what a cold start looks like.
+private final class LateHandlers: PocketFaceStreamsResolving, @unchecked Sendable {
+    private let arrivals = AsyncStream<any PocketFaceStreaming>.makeStream()
+
+    func arrive(_ streams: any PocketFaceStreaming) {
+        arrivals.continuation.yield(streams)
+    }
+
+    func streams(of _: ProductId) -> (any PocketFaceStreaming)? { nil }
+
+    func awaitStreams(of _: ProductId) async -> (any PocketFaceStreaming)? {
+        for await streams in arrivals.stream {
+            return streams
+        }
+
+        return nil
     }
 }
