@@ -1680,8 +1680,9 @@ mod tests {
         let session = signing_host.account_holder().current_session();
         let expected_secret = signing_host
             .wallet
-            .keys(session.as_ref().unwrap())
+            .current_keys()
             .unwrap()
+            .1
             .product_subtree_secret("myapp.dot")
             .unwrap();
         let expected_domain = derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot").unwrap();

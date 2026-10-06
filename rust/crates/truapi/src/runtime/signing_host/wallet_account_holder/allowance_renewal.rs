@@ -357,14 +357,18 @@ impl WalletAccountHolder {
     /// One renewal pass: resolve the ledger against the active session and renew
     /// every target for the current period.
     pub async fn renew_statement_allowances(&self) -> Result<StatementRenewalReport, String> {
-        let (session, keys) = self.current_keys().map_err(|err| err.to_string())?;
+        let session = self
+            .current_session()
+            .ok_or_else(|| AuthorityError::Disconnected.to_string())?;
         let period = statement_allowance::slot::current_period(
             current_unix_secs().map_err(|err| err.to_string())?,
         );
         let (targets, pruned) = self.owned_targets(&session).await?;
         self.require_current_session(&session)
             .map_err(|err| err.to_string())?;
-        let resolved = resolve_targets(&keys, &targets);
+        let resolved = self
+            .with_keys::<_, AuthorityError>(&session, |keys| Ok(resolve_targets(keys, &targets)))
+            .map_err(|error| error.to_string())?;
         if resolved.is_empty() {
             return Ok(StatementRenewalReport {
                 period,
@@ -374,7 +378,10 @@ impl WalletAccountHolder {
             });
         }
 
-        let candidates = keys.reserved_person_collection_candidates();
+        let signer = self
+            .personhood_signer(&session)
+            .await
+            .map_err(|error| error.to_string())?;
         let rpc = statement_allowance::rpc::RpcClient::new(
             self.services
                 .statement_store
@@ -391,9 +398,15 @@ impl WalletAccountHolder {
             .map_err(|err| err.to_string())?;
         // Every ring back to index 0, because a membership that stopped being
         // re-included still proves against the ring that holds it.
-        let memberships = find_including_rings(&rpc, &metadata, &candidates, u32::MAX)
-            .await
-            .map_err(|err| err.to_string())?;
+        let memberships = find_including_rings(
+            &rpc,
+            &metadata,
+            &signer,
+            &super::PersonhoodCollection::ALL,
+            u32::MAX,
+        )
+        .await
+        .map_err(|err| err.to_string())?;
         if memberships.is_empty() {
             return Err(
             "signing account is not a member of any personhood ring; cannot renew statement-store allowances"
@@ -405,7 +418,8 @@ impl WalletAccountHolder {
             metadata: &metadata,
             chain_state: &chain_state,
             network_suffix: &network_suffix,
-            candidates: &candidates,
+            signer: &signer,
+            collections: &super::PersonhoodCollection::ALL,
             memberships: &memberships,
         };
         self.require_current_session(&session)
@@ -416,7 +430,7 @@ impl WalletAccountHolder {
             &resolved,
             self.renewal.registration_lock(),
         )
-        .await;
+        .await.map_err(|error| error.to_string())?;
         self.require_current_session(&session)
             .map_err(|err| err.to_string())?;
         report.pruned = pruned;

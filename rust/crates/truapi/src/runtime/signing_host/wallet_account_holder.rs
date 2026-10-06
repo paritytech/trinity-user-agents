@@ -4,6 +4,8 @@ mod account;
 mod allowance;
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod allowance_renewal;
+#[cfg(test)]
+mod allowance_tests;
 pub use allowance::{
     AccountGrant, AllowanceAllocationError, StatementStoreAllocation, current_unix_secs,
 };
@@ -34,8 +36,10 @@ use crate::platform::normalize_product_identifier;
 use crate::runtime::authority::{
     AuthorityError, AuthoritySession, AutoSigningGrant, authority_session_validation_id,
 };
-use crate::runtime::statement_allowance::CollectionCandidate;
 use crate::runtime::statement_allowance::collection::PersonhoodCollection;
+use crate::runtime::statement_allowance::{PersonhoodSigner, StatementAllowanceError};
+use crate::runtime::statement_allowance::{proof, ring::RingParams};
+use crate::runtime::vrf::{self, Vrf};
 
 /// RFC-0022 domain for the responder's persistent SSO X25519 key.
 pub const SSO_ENCRYPTION_DOMAIN: &[u8] = b"sso";
@@ -89,6 +93,57 @@ impl WalletState {
     }
 }
 
+struct WalletPersonhoodSigner<'a> {
+    wallet: &'a WalletAccountHolder,
+    session: &'a AuthoritySession,
+    vrf: Vrf,
+}
+
+impl PersonhoodSigner for WalletPersonhoodSigner<'_> {
+    fn member(
+        &self,
+        collection: PersonhoodCollection,
+    ) -> Result<[u8; 32], StatementAllowanceError> {
+        self.wallet.with_keys(self.session, |keys| {
+            Ok(self
+                .vrf
+                .member(&keys.personhood_entropy(collection))
+                .map_err(proof::vrf_error)?)
+        })
+    }
+
+    fn alias(
+        &self,
+        collection: PersonhoodCollection,
+        context: &[u8],
+    ) -> Result<[u8; 32], StatementAllowanceError> {
+        self.wallet.with_keys(self.session, |keys| {
+            Ok(self
+                .vrf
+                .alias(&keys.personhood_entropy(collection), context)
+                .map_err(proof::vrf_error)?)
+        })
+    }
+
+    fn prove(
+        &self,
+        ring: &RingParams,
+        context: &[u8],
+        message: &[u8],
+    ) -> Result<Vec<u8>, StatementAllowanceError> {
+        self.wallet.with_keys(self.session, |keys| {
+            proof::ring_vrf_proof(
+                &self.vrf,
+                proof::domain_for_ring_exponent(ring.exponent)?,
+                &keys.personhood_entropy(ring.collection),
+                &ring.members,
+                context,
+                message,
+            )
+        })
+    }
+}
+
 /// Validated activation material, installed only after host grants are invalidated.
 pub struct PreparedWalletActivation {
     keys: WalletKeys,
@@ -137,6 +192,19 @@ impl WalletAccountHolder {
             .expect("wallet lifecycle mutex poisoned");
         state.require_session(self.session_state.current(), session)?;
         use_keys(state.keys.as_ref().ok_or(AuthorityError::Disconnected)?)
+    }
+
+    async fn personhood_signer<'a>(
+        &'a self,
+        session: &'a AuthoritySession,
+    ) -> Result<WalletPersonhoodSigner<'a>, StatementAllowanceError> {
+        let vrf = vrf::load().await.map_err(proof::vrf_error)?;
+        self.require_current_session(session)?;
+        Ok(WalletPersonhoodSigner {
+            wallet: self,
+            session,
+            vrf,
+        })
     }
 
     /// Whether allocation is answered as granted without performing it.
@@ -299,16 +367,6 @@ impl WalletAccountHolder {
         Ok((state.session(&session), keys))
     }
 
-    /// Capture keys only for the selected wallet activation.
-    pub fn keys(&self, session: &AuthoritySession) -> Result<WalletKeys, AuthorityError> {
-        let state = self
-            .lifecycle
-            .lock()
-            .expect("wallet lifecycle mutex poisoned");
-        state.require_session(self.session_state.current(), session)?;
-        state.keys.clone().ok_or(AuthorityError::Disconnected)
-    }
-
     /// Validate and derive activation material without changing the active wallet.
     pub fn prepare_activation(
         &self,
@@ -453,18 +511,15 @@ impl WalletKeys {
         derive_ring_vrf_domain_entropy(&self.entropy, product_id)
     }
 
-    /// Reserved personhood candidates, widest slot budget first; membership is checked on chain.
-    pub fn reserved_person_collection_candidates(&self) -> Vec<CollectionCandidate> {
-        vec![
-            CollectionCandidate {
-                collection: PersonhoodCollection::People,
-                entropy: derive_full_person_ring_vrf_entropy(&self.entropy, &self.network_suffix),
-            },
-            CollectionCandidate {
-                collection: PersonhoodCollection::LitePeople,
-                entropy: derive_lite_person_ring_vrf_entropy(&self.entropy, &self.network_suffix),
-            },
-        ]
+    fn personhood_entropy(&self, collection: PersonhoodCollection) -> Zeroizing<[u8; 32]> {
+        Zeroizing::new(match collection {
+            PersonhoodCollection::People => {
+                derive_full_person_ring_vrf_entropy(&self.entropy, &self.network_suffix)
+            }
+            PersonhoodCollection::LitePeople => {
+                derive_lite_person_ring_vrf_entropy(&self.entropy, &self.network_suffix)
+            }
+        })
     }
 
     /// RFC-0007 product-scoped entropy.

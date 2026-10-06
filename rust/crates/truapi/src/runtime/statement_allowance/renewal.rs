@@ -37,7 +37,7 @@ use super::extension::{ChainState, Metadata};
 use super::rpc::RpcClient;
 use super::slot::{STATEMENT_STORE_PERIOD_SECONDS, SlotError};
 use super::{
-    CollectionCandidate, CollectionMembership, PooledRegistrationParams, RegistrationOutcome,
+    CollectionScanParams, PersonhoodSigner, PooledRegistrationParams, RegistrationOutcome,
     StatementAllowanceError, allocated_in, register_statement_account_pooled, scan_collections,
 };
 
@@ -153,11 +153,13 @@ pub struct RenewalChainContext<'a> {
     pub network_suffix: &'a [u8],
     /// Every collection the host can derive aliases for, so an allowance already
     /// held in a collection whose ring cannot currently be proved is still seen.
-    pub candidates: &'a [CollectionCandidate],
+    pub collections: &'a [PersonhoodCollection],
+    /// Authorizes each synchronous alias and proof in this pass.
+    pub signer: &'a dyn PersonhoodSigner,
     /// Every collection the host can prove membership in, widest budget first.
     /// Renewal pools slots across all of them, so a device with full personhood
     /// renews against the combined budget rather than one collection's share.
-    pub memberships: &'a [CollectionMembership],
+    pub memberships: &'a [super::ring::RingParams],
 }
 
 /// Register every target for `period`, continuing past per-target failures
@@ -179,7 +181,7 @@ pub async fn renew_targets(
     period: u32,
     targets: &[ResolvedRenewalTarget],
     registration_lock: &Mutex<()>,
-) -> StatementRenewalReport {
+) -> Result<StatementRenewalReport, StatementAllowanceError> {
     let mut target_scans = Vec::with_capacity(targets.len());
     for target in targets {
         let scans = {
@@ -187,16 +189,21 @@ pub async fn renew_targets(
             scan_collections(
                 context.rpc,
                 context.metadata,
-                context.candidates,
-                context.network_suffix,
-                period,
-                &target.account_id,
-                true,
+                context.signer,
+                context.collections,
+                CollectionScanParams {
+                    network_suffix: context.network_suffix,
+                    period,
+                    target: &target.account_id,
+                    reuse_existing: true,
+                },
             )
             .await
-            .map_err(RenewalFailure::from)
         };
-        target_scans.push(scans);
+        match scans {
+            Err(error @ StatementAllowanceError::Authority(_)) => return Err(error),
+            other => target_scans.push(other),
+        }
     }
 
     let mut claimed: Vec<(PersonhoodCollection, u32)> = target_scans
@@ -208,7 +215,7 @@ pub async fn renew_targets(
         let scans = match scans {
             Ok(scans) => scans,
             Err(failure) => {
-                results.push(Err(failure));
+                results.push(Err(RenewalFailure::from(failure)));
                 continue;
             }
         };
@@ -220,20 +227,18 @@ pub async fn renew_targets(
                 scan_collections(
                     context.rpc,
                     context.metadata,
-                    context.candidates,
-                    context.network_suffix,
-                    period,
-                    &target.account_id,
-                    true,
+                    context.signer,
+                    context.collections,
+                    CollectionScanParams { network_suffix: context.network_suffix, period, target: &target.account_id, reuse_existing: true },
                 )
                 .await
-                .map_err(RenewalFailure::from)
             };
             match scans {
                 Ok(scans) => register_statement_account_pooled(
                     context.rpc,
                     context.metadata,
                     context.chain_state,
+                    context.signer,
                     &scans,
                     context.memberships,
                     PooledRegistrationParams {
@@ -247,10 +252,13 @@ pub async fn renew_targets(
                         protected: &claimed,
                     },
                 )
-                .await
-                .map_err(RenewalFailure::from),
+                .await,
                 Err(failure) => Err(failure),
             }
+        };
+        let result = match result {
+            Err(error @ StatementAllowanceError::Authority(_)) => return Err(error),
+            other => other.map_err(RenewalFailure::from),
         };
         log_target_result(period, &target.label, &result);
         if let Ok(outcome) = &result {
@@ -272,7 +280,7 @@ pub async fn renew_targets(
             break;
         }
     }
-    fold_outcomes(period, targets, results)
+    Ok(fold_outcomes(period, targets, results))
 }
 
 /// Delay until the next renewal tick: hourly, but always shortly after each
@@ -377,13 +385,13 @@ mod tests {
         use parity_scale_codec::Encode;
         use subxt_rpcs::RpcClient as HostRpcClient;
 
-        use crate::runtime::statement_allowance::CollectionMembership;
         use crate::runtime::statement_allowance::extension::ChainState;
         use crate::runtime::statement_allowance::proof;
         use crate::runtime::statement_allowance::ring::RingParams;
         use crate::runtime::statement_allowance::rpc::RpcClient;
         use crate::runtime::statement_allowance::rpc::testing::ScriptedRpc;
         use crate::runtime::statement_allowance::test_fixtures;
+        use crate::runtime::statement_allowance::{CollectionCandidate, FixedPersonhoodSigner};
 
         const NOW: u64 = 10_000_000;
 
@@ -406,15 +414,12 @@ mod tests {
         let entropy = [0x11; 32];
         // One collection, so this stays a test of cross-target protection rather
         // than of pooling; pooling has its own tests.
-        let memberships = [CollectionMembership {
-            entropy,
-            ring: RingParams {
-                collection: PersonhoodCollection::LitePeople,
-                members: vec![proof::member_key_now(entropy)],
-                exponent: 9,
-                ring_index: 0,
-                block_hash: "0xfinal".to_string(),
-            },
+        let memberships = [RingParams {
+            collection: PersonhoodCollection::LitePeople,
+            members: vec![proof::member_key_now(entropy)],
+            exponent: 9,
+            ring_index: 0,
+            block_hash: "0xfinal".to_string(),
         }];
         let targets = [
             target_with("first", [0xa1; 32]),
@@ -446,16 +451,19 @@ mod tests {
             collection: PersonhoodCollection::LitePeople,
             entropy,
         }];
+        let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
         let context = RenewalChainContext {
             rpc: &rpc,
             metadata,
             chain_state: &chain_state,
             network_suffix: b"paseo",
-            candidates: &candidates,
+            signer: &signer,
+            collections: &[PersonhoodCollection::LitePeople],
             memberships: &memberships,
         };
         let lock = Mutex::new(());
-        let report = futures::executor::block_on(renew_targets(&context, 7, &targets, &lock));
+        let report =
+            futures::executor::block_on(renew_targets(&context, 7, &targets, &lock)).unwrap();
 
         let seqs: Vec<u32> = report
             .outcomes
@@ -479,13 +487,13 @@ mod tests {
         use parity_scale_codec::Encode;
         use subxt_rpcs::RpcClient as HostRpcClient;
 
-        use crate::runtime::statement_allowance::CollectionMembership;
         use crate::runtime::statement_allowance::extension::ChainState;
         use crate::runtime::statement_allowance::proof;
         use crate::runtime::statement_allowance::ring::RingParams;
         use crate::runtime::statement_allowance::rpc::RpcClient;
         use crate::runtime::statement_allowance::rpc::testing::ScriptedRpc;
         use crate::runtime::statement_allowance::test_fixtures;
+        use crate::runtime::statement_allowance::{CollectionCandidate, FixedPersonhoodSigner};
 
         const NOW: u64 = 10_000_000;
 
@@ -502,15 +510,12 @@ mod tests {
             restrict_origins: false,
         };
         let entropy = [0x11; 32];
-        let memberships = [CollectionMembership {
-            entropy,
-            ring: RingParams {
-                collection: PersonhoodCollection::LitePeople,
-                members: vec![proof::member_key_now(entropy)],
-                exponent: 9,
-                ring_index: 0,
-                block_hash: "0xfinal".to_string(),
-            },
+        let memberships = [RingParams {
+            collection: PersonhoodCollection::LitePeople,
+            members: vec![proof::member_key_now(entropy)],
+            exponent: 9,
+            ring_index: 0,
+            block_hash: "0xfinal".to_string(),
         }];
         let targets = [
             target_with("first", [0xa1; 32]),
@@ -534,16 +539,19 @@ mod tests {
             collection: PersonhoodCollection::LitePeople,
             entropy,
         }];
+        let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
         let context = RenewalChainContext {
             rpc: &rpc,
             metadata,
             chain_state: &chain_state,
             network_suffix: b"paseo",
-            candidates: &candidates,
+            signer: &signer,
+            collections: &[PersonhoodCollection::LitePeople],
             memberships: &memberships,
         };
         let report =
-            futures::executor::block_on(renew_targets(&context, 7, &targets, &Mutex::new(())));
+            futures::executor::block_on(renew_targets(&context, 7, &targets, &Mutex::new(())))
+                .unwrap();
 
         assert_eq!(
             report,
@@ -576,13 +584,13 @@ mod tests {
         use parity_scale_codec::Encode;
         use subxt_rpcs::RpcClient as HostRpcClient;
 
-        use crate::runtime::statement_allowance::CollectionMembership;
         use crate::runtime::statement_allowance::extension::ChainState;
         use crate::runtime::statement_allowance::proof;
         use crate::runtime::statement_allowance::ring::RingParams;
         use crate::runtime::statement_allowance::rpc::RpcClient;
         use crate::runtime::statement_allowance::rpc::testing::ScriptedRpc;
         use crate::runtime::statement_allowance::test_fixtures;
+        use crate::runtime::statement_allowance::{CollectionCandidate, FixedPersonhoodSigner};
 
         const NOW: u64 = 10_000_000;
 
@@ -602,15 +610,12 @@ mod tests {
             restrict_origins: false,
         };
         let entropy = [0x11; 32];
-        let memberships = [CollectionMembership {
-            entropy,
-            ring: RingParams {
-                collection: PersonhoodCollection::LitePeople,
-                members: vec![proof::member_key_now(entropy)],
-                exponent: 9,
-                ring_index: 0,
-                block_hash: "0xfinal".to_string(),
-            },
+        let memberships = [RingParams {
+            collection: PersonhoodCollection::LitePeople,
+            members: vec![proof::member_key_now(entropy)],
+            exponent: 9,
+            ring_index: 0,
+            block_hash: "0xfinal".to_string(),
         }];
         let new_target = target_with("new", [0xa1; 32]);
         let existing_target = target_with("existing", [0xa2; 32]);
@@ -632,16 +637,19 @@ mod tests {
             collection: PersonhoodCollection::LitePeople,
             entropy,
         }];
+        let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
         let context = RenewalChainContext {
             rpc: &rpc,
             metadata,
             chain_state: &chain_state,
             network_suffix: b"paseo",
-            candidates: &candidates,
+            signer: &signer,
+            collections: &[PersonhoodCollection::LitePeople],
             memberships: &memberships,
         };
         let lock = Mutex::new(());
-        let report = futures::executor::block_on(renew_targets(&context, 7, &targets, &lock));
+        let report =
+            futures::executor::block_on(renew_targets(&context, 7, &targets, &lock)).unwrap();
 
         let seqs: Vec<u32> = report
             .outcomes

@@ -29,8 +29,7 @@ use super::key_hash::{blake2_128_concat, twox_64_concat};
 use super::ring::{self, RingParams};
 use super::rpc::RpcClient;
 use super::{
-    ChainContext, StatementAllowanceError, duplicate_submit_error, extension, extrinsic, proof,
-    slot,
+    ChainContext, StatementAllowanceError, duplicate_submit_error, extension, extrinsic, slot,
 };
 
 /// How long to wait for Asset Hub to import the ring revision a proof is built
@@ -154,8 +153,8 @@ pub struct PgasClaim<'a> {
     pub people_rpc: &'a RpcClient,
     /// People-chain metadata.
     pub people_metadata: &'a Metadata,
-    /// Our ring-VRF entropy for the collection `ring` names.
-    pub entropy: [u8; 32],
+    /// Authorizes personhood operations for the selected collection.
+    pub signer: &'a dyn super::PersonhoodSigner,
     /// Asset Hub suffix used for the product-scoped alias and proof.
     pub network_suffix: &'a [u8],
     /// Account the claim credits.
@@ -211,7 +210,7 @@ pub async fn claim_pgas(
         asset_hub,
         people_rpc,
         people_metadata,
-        entropy,
+        signer,
         network_suffix,
         target,
         ring,
@@ -244,7 +243,7 @@ pub async fn claim_pgas(
             asset_hub_rpc,
             asset_hub_metadata,
             ring.collection,
-            entropy,
+            signer,
             network_suffix,
             day,
             &skipped_duplicate_slots,
@@ -258,9 +257,8 @@ pub async fn claim_pgas(
             asset_hub_state,
             AS_PGAS,
         )?;
-        let domain = proof::domain_for_ring_exponent(ring.exponent)?;
-        let ring_proof =
-            proof::ring_vrf_proof(domain, entropy, &ring.members, &context, &message).await?;
+        let alias = slot::pgas_alias(signer, ring.collection, network_suffix, day, slot_index)?;
+        let ring_proof = signer.prove(ring, &context, &message)?;
         let extra = extrinsic::build_as_pgas_extra(
             asset_hub_metadata,
             &ring_proof,
@@ -285,10 +283,8 @@ pub async fn claim_pgas(
                 // minted. The pallet marks the alias spent on success; check that.
                 if !slot::pgas_slot_is_claimed_at(
                     asset_hub_rpc,
-                    entropy,
-                    network_suffix,
+                    &alias,
                     day,
-                    slot_index,
                     &block_hash,
                 )
                 .await?

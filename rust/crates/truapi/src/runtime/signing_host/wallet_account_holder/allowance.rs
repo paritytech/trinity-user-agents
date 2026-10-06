@@ -74,7 +74,8 @@ impl AllowanceAllocationError {
     /// Preserve authority failures while reporting unavailable allowance work.
     pub fn into_authority_error(self) -> AuthorityError {
         match self {
-            Self::Authority(err) => err,
+            Self::Authority(err)
+            | Self::StatementAllowance(StatementAllowanceError::Authority(err)) => err,
             other => AuthorityError::Unavailable {
                 reason: other.to_string(),
             },
@@ -189,8 +190,7 @@ impl WalletAccountHolder {
                             AccountGrant::SmartContract
                         }
                         v01::AllocatableResource::AutoSigning => {
-                            let keys = self.keys(invocation.session)?;
-                            match invocation.caller {
+                            self.with_keys::<_, AuthorityError>(invocation.session, |keys| Ok(match invocation.caller {
                                 AccountCaller::Local { .. } => {
                                     let product_id = normalize_product_identifier(product_id)
                                         .map_err(|error| AuthorityError::Unavailable {
@@ -210,7 +210,7 @@ impl WalletAccountHolder {
                                             .map_err(product_authority_error)?,
                                     ))
                                 }
-                            }
+                            }))?
                         }
                     };
                     Ok(grant)
@@ -236,22 +236,29 @@ impl WalletAccountHolder {
         policy: OnExistingAllowancePolicy,
     ) -> Result<StatementStoreAllocation, AllowanceAllocationError> {
         use super::allowance_renewal::StatementRenewalTarget;
+        use crate::runtime::statement_allowance::collection::PersonhoodCollection;
         use crate::runtime::statement_allowance::{
-            self, PooledRegistrationParams, allocated_in, find_including_rings,
-            register_statement_account_pooled, scan_collections,
+            self, CollectionScanParams, PooledRegistrationParams, allocated_in,
+            find_including_rings, register_statement_account_pooled, scan_collections,
         };
 
-        let allowance = self.keys(session)?.statement_allowance_key(product_id)?;
         // Test signatures use real keys without claiming on-chain registration.
         #[cfg(feature = "test-host")]
         if self.grants_allowances_unchecked() {
-            return Ok(StatementStoreAllocation {
-                secret: allowance.secret.to_bytes().to_vec(),
-                period: statement_allowance::slot::current_period(current_unix_secs()?),
+            return self.with_keys(session, |keys| {
+                Ok(StatementStoreAllocation {
+                    secret: keys
+                        .statement_allowance_key(product_id)?
+                        .secret
+                        .to_bytes()
+                        .to_vec(),
+                    period: statement_allowance::slot::current_period(current_unix_secs()?),
+                })
             });
         }
-        let target = allowance.public.to_bytes();
-        let candidates = self.keys(session)?.reserved_person_collection_candidates();
+        let target = self.with_keys::<_, AllowanceAllocationError>(session, |keys| {
+            Ok(keys.statement_allowance_key(product_id)?.public.to_bytes())
+        })?;
         let client = self
             .services
             .statement_store
@@ -267,14 +274,18 @@ impl WalletAccountHolder {
         let _registration = self.renewal.registration_lock().lock().await;
 
         // Existing allocations need no proof or costly ring snapshot.
+        let signer = self.personhood_signer(session).await?;
         let scans = scan_collections(
             rpc,
             &chain.metadata,
-            &candidates,
-            &network_suffix,
-            period,
-            &target,
-            reuse_existing,
+            &signer,
+            &PersonhoodCollection::ALL,
+            CollectionScanParams {
+                network_suffix: &network_suffix,
+                period,
+                target: &target,
+                reuse_existing,
+            },
         )
         .await?;
         if let Some((collection, seq)) = allocated_in(&scans) {
@@ -285,16 +296,28 @@ impl WalletAccountHolder {
                 %collection,
                 "statement-store allowance already allocated"
             );
-            self.require_current_session(session)?;
-            return Ok(StatementStoreAllocation {
-                secret: allowance.secret.to_bytes().to_vec(),
-                period,
+            return self.with_keys(session, |keys| {
+                Ok(StatementStoreAllocation {
+                    secret: keys
+                        .statement_allowance_key(product_id)?
+                        .secret
+                        .to_bytes()
+                        .to_vec(),
+                    period,
+                })
             });
         }
 
         // Every ring back to index 0, because a membership that stopped being
         // re-included still proves against the ring that holds it.
-        let memberships = find_including_rings(rpc, &chain.metadata, &candidates, u32::MAX).await?;
+        let memberships = find_including_rings(
+            rpc,
+            &chain.metadata,
+            &signer,
+            &PersonhoodCollection::ALL,
+            u32::MAX,
+        )
+        .await?;
         if memberships.is_empty() {
             return Err(AllowanceAllocationError::MissingPersonhoodMembership {
                 resource: "statement-store",
@@ -305,6 +328,7 @@ impl WalletAccountHolder {
             rpc,
             &chain.metadata,
             &chain.state,
+            &signer,
             &scans,
             &memberships,
             PooledRegistrationParams {
@@ -355,10 +379,15 @@ impl WalletAccountHolder {
         {
             warn!(%product_id, %reason, "failed to record statement-store renewal target");
         }
-        self.require_current_session(session)?;
-        Ok(StatementStoreAllocation {
-            secret: allowance.secret.to_bytes().to_vec(),
-            period,
+        self.with_keys(session, |keys| {
+            Ok(StatementStoreAllocation {
+                secret: keys
+                    .statement_allowance_key(product_id)?
+                    .secret
+                    .to_bytes()
+                    .to_vec(),
+                period,
+            })
         })
     }
 
@@ -375,12 +404,19 @@ impl WalletAccountHolder {
             wait_bulletin_authorization,
         };
 
-        let allowance = self.keys(session)?.bulletin_allowance_key(product_id)?;
         #[cfg(feature = "test-host")]
         if self.grants_allowances_unchecked() {
-            return Ok(allowance.secret.to_bytes().to_vec());
+            return self.with_keys(session, |keys| {
+                Ok(keys
+                    .bulletin_allowance_key(product_id)?
+                    .secret
+                    .to_bytes()
+                    .to_vec())
+            });
         }
-        let target = allowance.public.to_bytes();
+        let target = self.with_keys::<_, AllowanceAllocationError>(session, |keys| {
+            Ok(keys.bulletin_allowance_key(product_id)?.public.to_bytes())
+        })?;
 
         let bulletin_rpc = statement_allowance::rpc::RpcClient::new(
             self.services
@@ -396,8 +432,7 @@ impl WalletAccountHolder {
         if matches!(policy, OnExistingAllowancePolicy::Ignore)
             && current_allowance.is_some_and(|allowance| allowance.available())
         {
-            self.require_current_session(session)?;
-            return Ok(allowance.secret.to_bytes().to_vec());
+            return self.with_keys(session, |keys| Ok(keys.bulletin_allowance_key(product_id)?.secret.to_bytes().to_vec()));
         }
 
         let people_client = self
@@ -408,13 +443,19 @@ impl WalletAccountHolder {
         let people_rpc = people_client.rpc();
         let chain = self.services.chain_context.get(&people_client).await?;
         let network_suffix = statement_allowance::slot::read_network_suffix(people_rpc).await?;
-        let candidates = self.keys(session)?.reserved_person_collection_candidates();
+        let signer = self.personhood_signer(session).await?;
         // Prefer light membership so switching collections cannot reset the person's budget.
-        let memberships =
-            find_including_rings(people_rpc, &chain.metadata, &candidates, u32::MAX).await?;
+        let memberships = find_including_rings(
+            people_rpc,
+            &chain.metadata,
+            &signer,
+            &PersonhoodCollection::ALL,
+            u32::MAX,
+        )
+        .await?;
         let membership = memberships
             .iter()
-            .find(|membership| membership.collection() == PersonhoodCollection::LitePeople)
+            .find(|membership| membership.collection == PersonhoodCollection::LitePeople)
             .or_else(|| memberships.first())
             .ok_or(AllowanceAllocationError::MissingPersonhoodMembership {
                 resource: "Bulletin",
@@ -430,11 +471,11 @@ impl WalletAccountHolder {
             rpc: people_rpc,
             metadata: &chain.metadata,
             chain_state: &chain.state,
-            entropy: membership.entropy,
+            signer: &signer,
             network_suffix: &network_suffix,
             target: &target,
             period,
-            ring: &membership.ring,
+            ring: membership,
         })
         .await?;
         let statement_allowance::LongTermStorageOutcome::Claimed {
@@ -463,8 +504,13 @@ impl WalletAccountHolder {
             remained_transactions = authorization.remained_transactions,
             "Bulletin authorization visible"
         );
-        self.require_current_session(session)?;
-        Ok(allowance.secret.to_bytes().to_vec())
+        self.with_keys(session, |keys| {
+            Ok(keys
+                .bulletin_allowance_key(product_id)?
+                .secret
+                .to_bytes()
+                .to_vec())
+        })
     }
 
     /// Fund the selected product account on the host's Asset Hub chain.
@@ -478,16 +524,16 @@ impl WalletAccountHolder {
         use truapi::latest::ChainIdentifier;
 
         use crate::host_logic::features;
+        use crate::runtime::statement_allowance::collection::PersonhoodCollection;
         use crate::runtime::statement_allowance::{self, ChainClient, find_including_rings, pgas};
 
-        let target = self
-            .keys(session)?
-            .product_keypair(&v01::ProductAccountId {
+        let target = self.with_keys(session, |keys| {
+            keys.product_keypair(&v01::ProductAccountId {
                 dot_ns_identifier: product_id.to_string(),
                 derivation_index,
-            })?
-            .public
-            .to_bytes();
+            })
+            .map(|key| key.public.to_bytes())
+        })?;
 
         let chains = features::supported_chains(self.services.platform.as_ref())
             .await
@@ -529,9 +575,9 @@ impl WalletAccountHolder {
         let people_rpc = people_client.rpc();
         let people = self.services.chain_context.get(&people_client).await?;
 
-        let candidates = self.keys(session)?.reserved_person_collection_candidates();
+        let signer = self.personhood_signer(session).await?;
         // A PGAS claim uses the strongest available membership.
-        let membership = find_including_rings(people_rpc, &people.metadata, &candidates, u32::MAX)
+        let membership = find_including_rings(people_rpc, &people.metadata, &signer, &PersonhoodCollection::ALL, u32::MAX)
             .await?
             .into_iter()
             .next()
@@ -543,10 +589,10 @@ impl WalletAccountHolder {
             asset_hub: &asset_hub,
             people_rpc,
             people_metadata: &people.metadata,
-            entropy: membership.entropy,
+            signer: &signer,
             network_suffix: &network_suffix,
             target: &target,
-            ring: &membership.ring,
+            ring: &membership,
         })
         .await?;
         debug!(

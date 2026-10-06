@@ -15,12 +15,17 @@ pub mod proof;
 pub mod renewal;
 pub mod ring;
 pub mod rpc;
+mod signer;
 pub mod slot;
 #[cfg(test)]
 mod test_fixtures;
+/// Captured chain metadata for wallet allowance tests.
+#[cfg(test)]
+pub use test_fixtures::{asset_hub as asset_hub_test_metadata, people as people_test_metadata};
 mod view;
 mod view_cache;
 
+pub use signer::{FixedPersonhoodSigner, PersonhoodSigner};
 pub use view::ViewFunctionError;
 
 use std::collections::HashMap;
@@ -48,6 +53,9 @@ use slot::{SlotError, SlotSelection};
 /// for allowance authorization.
 #[derive(Debug, Error)]
 pub enum StatementAllowanceError {
+    /// The selected wallet can no longer authorize this operation.
+    #[error(transparent)]
+    Authority(#[from] crate::runtime::authority::AuthorityError),
     /// JSON-RPC transport, request, subscription, or storage hex failure.
     #[error(transparent)]
     Rpc(#[from] rpc::RpcError),
@@ -457,8 +465,8 @@ pub struct LongTermStorageClaim<'a> {
     pub metadata: &'a Metadata,
     /// People signed-extension state.
     pub chain_state: &'a ChainState,
-    /// Our ring-VRF entropy for the collection `ring` names.
-    pub entropy: [u8; 32],
+    /// Authorizes synchronous personhood operations for the selected wallet.
+    pub signer: &'a dyn PersonhoodSigner,
     /// People suffix used for the product-scoped alias and proof.
     pub network_suffix: &'a [u8],
     /// Account whose Bulletin allowance is authorized.
@@ -496,30 +504,13 @@ impl BulletinAllowanceInfo {
     }
 }
 
-/// A collection this device can derive aliases for, with the entropy backing
-/// them. Each collection has its own entropy, so the pair travels together.
+/// A fixed collection key supplied by standalone CLI operations.
 #[derive(Debug, Clone, Copy)]
 pub struct CollectionCandidate {
     /// Collection to look for membership in.
     pub collection: PersonhoodCollection,
     /// Ring-VRF entropy for this collection.
     pub entropy: [u8; 32],
-}
-
-/// Our provable ring membership in one collection.
-#[derive(Debug)]
-pub struct CollectionMembership {
-    /// Entropy whose member key is included in `ring`.
-    pub entropy: [u8; 32],
-    /// Ring snapshot the membership proof is built against.
-    pub ring: RingParams,
-}
-
-impl CollectionMembership {
-    /// The collection this membership proves.
-    pub fn collection(&self) -> PersonhoodCollection {
-        self.ring.collection
-    }
 }
 
 /// Find the newest ring in `collection` (scanning up to `lookback` back from the
@@ -531,10 +522,10 @@ pub async fn find_including_ring(
     rpc: &RpcClient,
     metadata: &Metadata,
     collection: PersonhoodCollection,
-    entropy: [u8; 32],
+    signer: &dyn PersonhoodSigner,
     lookback: u32,
 ) -> Result<Option<RingParams>, StatementAllowanceError> {
-    let member = proof::member_key(entropy).await?;
+    let member = signer.member(collection)?;
     let at = rpc.finalized_head().await?;
     let exponent = ring::read_ring_exponent(rpc, metadata, collection, &at).await?;
     let current = ring::read_current_ring_index_at(rpc, collection, &at).await?;
@@ -564,14 +555,14 @@ pub async fn find_including_ring(
 pub async fn find_including_rings(
     rpc: &RpcClient,
     metadata: &Metadata,
-    candidates: &[CollectionCandidate],
+    signer: &dyn PersonhoodSigner,
+    collections: &[PersonhoodCollection],
     lookback: u32,
-) -> Result<Vec<CollectionMembership>, StatementAllowanceError> {
+) -> Result<Vec<RingParams>, StatementAllowanceError> {
     let mut memberships = Vec::new();
     let mut first_error = None;
-    for candidate in candidates {
-        let collection = candidate.collection;
-        match find_including_ring(rpc, metadata, collection, candidate.entropy, lookback).await {
+    for &collection in collections {
+        match find_including_ring(rpc, metadata, collection, signer, lookback).await {
             Ok(Some(ring)) => {
                 // A ring whose exponent has no proof domain cannot be proved
                 // against, so it must not enter the set: selecting it would fail
@@ -580,15 +571,13 @@ pub async fn find_including_rings(
                     warn!(%collection, %err, "unusable ring exponent; skipping collection");
                     continue;
                 }
-                memberships.push(CollectionMembership {
-                    entropy: candidate.entropy,
-                    ring,
-                });
+                memberships.push(ring);
             }
             Ok(None) => debug!(%collection, "no ring includes our member key"),
             // One collection's failure must not take down the others. A device
             // that can only prove light personhood should still get its
             // allowance when the full-personhood storage is unreadable.
+            Err(err @ StatementAllowanceError::Authority(_)) => return Err(err),
             Err(err) => {
                 warn!(%collection, %err, "could not resolve this collection");
                 if first_error.is_none() {
@@ -611,7 +600,7 @@ pub async fn register_statement_account(
     rpc: &RpcClient,
     metadata: &Metadata,
     chain_state: &ChainState,
-    entropy: [u8; 32],
+    signer: &dyn PersonhoodSigner,
     params: RegistrationParams<'_>,
 ) -> Result<RegistrationOutcome, StatementAllowanceError> {
     let collection = params.ring.collection;
@@ -641,7 +630,7 @@ pub async fn register_statement_account(
                 metadata,
                 slot::SlotScan {
                     collection,
-                    entropy,
+                    signer,
                     network_suffix: params.network_suffix,
                     period: params.period,
                     target: params.target,
@@ -707,10 +696,14 @@ pub async fn register_statement_account(
             params.target,
         )?;
         let message = extension::build_proof_message(metadata, &call, chain_state)?;
-        let domain = proof::domain_for_ring_exponent(params.ring.exponent)?;
-        let ring_proof =
-            proof::ring_vrf_proof(domain, entropy, &params.ring.members, &context, &message)
-                .await?;
+        let alias = slot::slot_alias(
+            signer,
+            collection,
+            params.network_suffix,
+            params.period,
+            seq,
+        )?;
+        let ring_proof = signer.prove(params.ring, &context, &message)?;
         let as_resources_extra = extrinsic::build_as_resources_extra(
             metadata,
             &ring_proof,
@@ -725,10 +718,8 @@ pub async fn register_statement_account(
             Ok(block_hash) => {
                 if slot::read_slot_account_at(
                     rpc,
-                    entropy,
-                    params.network_suffix,
+                    &alias,
                     params.period,
-                    seq,
                     &block_hash,
                 )
                 .await?
@@ -771,10 +762,20 @@ pub async fn register_statement_account(
 pub struct CollectionScan {
     /// Collection scanned.
     pub collection: PersonhoodCollection,
-    /// Entropy whose aliases were read.
-    pub entropy: [u8; 32],
     /// What the scan found.
     pub selection: SlotSelection,
+}
+
+/// Public target and period shared by a collection scan.
+pub struct CollectionScanParams<'a> {
+    /// Runtime suffix used for product-scoped aliases.
+    pub network_suffix: &'a [u8],
+    /// Statement-store period to scan.
+    pub period: u32,
+    /// Account whose existing slot may be reused.
+    pub target: &'a [u8; 32],
+    /// Whether to accept a slot already held by the target.
+    pub reuse_existing: bool,
 }
 
 /// Scan the period's slot table in every supported candidate collection.
@@ -792,57 +793,49 @@ pub struct CollectionScan {
 pub async fn scan_collections(
     rpc: &RpcClient,
     metadata: &Metadata,
-    candidates: &[CollectionCandidate],
-    network_suffix: &[u8],
-    period: u32,
-    target: &[u8; 32],
-    reuse_existing: bool,
+    signer: &dyn PersonhoodSigner,
+    collections: &[PersonhoodCollection],
+    params: CollectionScanParams<'_>,
 ) -> Result<Vec<CollectionScan>, StatementAllowanceError> {
-    let supported = candidates.iter().filter(|candidate| {
-        let collection = candidate.collection;
+    let supported = collections.iter().copied().filter(|collection| {
         let supported = collection.is_supported(metadata);
         if !supported {
             debug!(%collection, "chain declares no slot budget for this collection");
         }
         supported
     });
-    // Read concurrently, then settled in candidate order, so a lite member does
-    // not wait on the empty People row before its own is read.
-    let selections = futures::future::join_all(supported.map(|candidate| async move {
+    let selections = futures::future::join_all(supported.map(|collection| async move {
         let selection = slot::scan_slot_excluding(
             rpc,
             metadata,
             slot::SlotScan {
-                collection: candidate.collection,
-                entropy: candidate.entropy,
-                network_suffix,
-                period,
-                target,
+                collection,
+                signer,
+                network_suffix: params.network_suffix,
+                period: params.period,
+                target: params.target,
                 excluded: &[],
-                reuse_existing,
+                reuse_existing: params.reuse_existing,
             },
         )
         .await;
-        (candidate, selection)
+        (collection, selection)
     }))
     .await;
     let mut scans = Vec::new();
-    for (candidate, selection) in selections {
-        let collection = candidate.collection;
+    for (collection, selection) in selections {
+        let selection = match selection {
+            Err(err @ StatementAllowanceError::Authority(_)) => return Err(err),
+            other => other,
+        };
+        if allocated_in(&scans).is_some() {
+            continue;
+        }
         match selection {
-            Ok(selection) => {
-                // An allowance already held settles the question, so the
-                // remaining collections' scans are dropped.
-                let settled = matches!(selection, SlotSelection::AlreadyAllocated(_));
-                scans.push(CollectionScan {
-                    collection,
-                    entropy: candidate.entropy,
-                    selection,
-                });
-                if settled {
-                    break;
-                }
-            }
+            Ok(selection) => scans.push(CollectionScan {
+                collection,
+                selection,
+            }),
             Err(err) => warn!(%collection, %err, "could not scan this collection's slots"),
         }
     }
@@ -904,8 +897,9 @@ pub async fn register_statement_account_pooled(
     rpc: &RpcClient,
     metadata: &Metadata,
     chain_state: &ChainState,
+    signer: &dyn PersonhoodSigner,
     scans: &[CollectionScan],
-    memberships: &[CollectionMembership],
+    memberships: &[RingParams],
     params: PooledRegistrationParams<'_>,
 ) -> Result<RegistrationOutcome, StatementAllowanceError> {
     // Answered across every scanned collection before anything is submitted.
@@ -928,7 +922,7 @@ pub async fn register_statement_account_pooled(
     let mut budget: u32 = 0;
     let mut usable = 0;
     for (index, membership) in memberships.iter().enumerate() {
-        let collection = membership.collection();
+        let collection = membership.collection;
         let Some(scan) = scans.iter().find(|scan| scan.collection == collection) else {
             continue;
         };
@@ -978,7 +972,7 @@ pub async fn register_statement_account_pooled(
             let chain_now = slot::read_chain_now_seconds(rpc).await?;
             let mut oldest: Option<(usize, u32, u64)> = None;
             for (index, occupied) in &full {
-                let protected = protected_in(memberships[*index].collection());
+                let protected = protected_in(memberships[*index].collection);
                 let Some(seq) = slot::replaceable_slot(
                     occupied,
                     params.target,
@@ -1009,17 +1003,17 @@ pub async fn register_statement_account_pooled(
     };
 
     let membership = &memberships[index];
-    let protected = protected_in(membership.collection());
+    let protected = protected_in(membership.collection);
     register_statement_account(
         rpc,
         metadata,
         chain_state,
-        membership.entropy,
+        signer,
         RegistrationParams {
             target: params.target,
             period: params.period,
             network_suffix: params.network_suffix,
-            ring: &membership.ring,
+            ring: membership,
             reuse_existing: params.reuse_existing,
             preselected: Some(choice),
             // A duplicate-submit retry rescans within this collection only. It
@@ -1049,7 +1043,7 @@ pub async fn claim_long_term_storage(
         rpc,
         metadata,
         chain_state,
-        entropy,
+        signer,
         network_suffix,
         target,
         period,
@@ -1068,7 +1062,8 @@ pub async fn claim_long_term_storage(
         let counter = slot::scan_long_term_storage_counter_excluding(
             rpc,
             metadata,
-            entropy,
+            signer,
+            ring.collection,
             network_suffix,
             period,
             &skipped_duplicate_counters,
@@ -1079,9 +1074,7 @@ pub async fn claim_long_term_storage(
         let call =
             extrinsic::build_claim_long_term_storage_call(metadata, period, counter, target)?;
         let message = extension::build_proof_message(metadata, &call, chain_state)?;
-        let domain = proof::domain_for_ring_exponent(ring.exponent)?;
-        let ring_proof =
-            proof::ring_vrf_proof(domain, entropy, &ring.members, &context, &message).await?;
+        let ring_proof = signer.prove(ring, &context, &message)?;
         let as_resources_extra = extrinsic::build_long_term_storage_extra(
             metadata,
             &ring_proof,
@@ -1665,6 +1658,11 @@ mod tests {
             restrict_origins: false,
         };
         let entropy = [0x11; 32];
+        let candidates = [CollectionCandidate {
+            collection: PersonhoodCollection::LitePeople,
+            entropy,
+        }];
+        let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
         let ring = RingParams {
             collection: PersonhoodCollection::LitePeople,
             members: vec![proof::member_key_now(entropy)],
@@ -1681,12 +1679,7 @@ mod tests {
         scripted.script_subscription([r#"{"inBlock":"0xb10c"}"#]);
         let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
 
-        let outcome = futures::executor::block_on(register_statement_account(
-            &rpc,
-            metadata,
-            &chain_state,
-            entropy,
-            RegistrationParams {
+        let outcome = futures::executor::block_on(register_statement_account(&rpc, metadata, &chain_state, &signer, RegistrationParams {
                 target: &[0x22; 32],
                 period: 7,
                 network_suffix: b"paseo",
@@ -1694,27 +1687,23 @@ mod tests {
                 reuse_existing: true,
                 preselected,
                 protected: &[],
-            },
-        ));
+            }));
         (outcome, scripted)
     }
 
     /// Both collections, People first, with a distinct entropy each.
-    fn pooled_memberships() -> [CollectionMembership; 2] {
+    fn pooled_memberships() -> [RingParams; 2] {
         PersonhoodCollection::ALL.map(|collection| {
             let entropy = match collection {
                 PersonhoodCollection::People => [0x31; 32],
                 PersonhoodCollection::LitePeople => [0x11; 32],
             };
-            CollectionMembership {
-                entropy,
-                ring: RingParams {
-                    collection,
-                    members: vec![proof::member_key_now(entropy)],
-                    exponent: 9,
-                    ring_index: 0,
-                    block_hash: "0xfinal".to_string(),
-                },
+            RingParams {
+                collection,
+                members: vec![proof::member_key_now(entropy)],
+                exponent: 9,
+                ring_index: 0,
+                block_hash: "0xfinal".to_string(),
             }
         })
     }
@@ -1726,9 +1715,12 @@ mod tests {
 
     /// Candidates matching [`pooled_memberships`], for the scan pass.
     fn pooled_candidates() -> [CollectionCandidate; 2] {
-        pooled_memberships().map(|membership| CollectionCandidate {
-            collection: membership.collection(),
-            entropy: membership.entropy,
+        PersonhoodCollection::ALL.map(|collection| CollectionCandidate {
+            collection,
+            entropy: match collection {
+                PersonhoodCollection::People => [0x31; 32],
+                PersonhoodCollection::LitePeople => [0x11; 32],
+            },
         })
     }
 
@@ -1752,17 +1744,30 @@ mod tests {
         };
         let memberships = pooled_memberships();
         let candidates = pooled_candidates();
+        let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
         let scripted = ScriptedRpc::new(responses.iter().map(String::as_str).collect::<Vec<_>>());
         scripted.script_subscription([r#"{"inBlock":"0xb10c"}"#]);
         let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
 
         let outcome = futures::executor::block_on(async {
-            let scans =
-                scan_collections(&rpc, metadata, &candidates, b"paseo", 7, &target, true).await?;
+            let scans = scan_collections(
+                &rpc,
+                metadata,
+                &signer,
+                &PersonhoodCollection::ALL,
+                CollectionScanParams {
+                    network_suffix: b"paseo",
+                    period: 7,
+                    target: &target,
+                    reuse_existing: true,
+                },
+            )
+            .await?;
             register_statement_account_pooled(
                 &rpc,
                 metadata,
                 &chain_state,
+                &signer,
                 &scans,
                 &memberships,
                 PooledRegistrationParams {
@@ -1795,17 +1800,30 @@ mod tests {
         };
         let memberships = pooled_memberships();
         let candidates = pooled_candidates();
+        let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
         let scripted = ScriptedRpc::new(responses.iter().map(String::as_str).collect::<Vec<_>>());
         scripted.script_subscription_errors(submit_error, 1);
         let rpc = RpcClient::new(HostRpcClient::new(scripted));
 
         futures::executor::block_on(async {
-            let scans =
-                scan_collections(&rpc, metadata, &candidates, b"paseo", 7, &target, true).await?;
+            let scans = scan_collections(
+                &rpc,
+                metadata,
+                &signer,
+                &PersonhoodCollection::ALL,
+                CollectionScanParams {
+                    network_suffix: b"paseo",
+                    period: 7,
+                    target: &target,
+                    reuse_existing: true,
+                },
+            )
+            .await?;
             register_statement_account_pooled(
                 &rpc,
                 metadata,
                 &chain_state,
+                &signer,
                 &scans,
                 &memberships,
                 PooledRegistrationParams {
@@ -2101,10 +2119,8 @@ mod tests {
     #[test]
     fn a_broken_people_collection_does_not_discard_a_lite_people_membership() {
         let metadata = test_fixtures::people();
-        let candidates = pooled_memberships().map(|membership| CollectionCandidate {
-            collection: membership.collection(),
-            entropy: membership.entropy,
-        });
+        let candidates = pooled_candidates();
+        let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
         let lite_entropy = candidates[1].entropy;
         let page = format!(
             r#""0x04{}""#,
@@ -2129,17 +2145,18 @@ mod tests {
         let memberships = futures::executor::block_on(find_including_rings(
             &rpc,
             metadata,
-            &candidates,
+            &signer,
+            &PersonhoodCollection::ALL,
             u32::MAX,
         ))
         .expect("a broken People collection must not fail the whole resolution");
 
         assert_eq!(memberships.len(), 1, "LitePeople should still resolve");
+        assert_eq!(memberships[0].collection, PersonhoodCollection::LitePeople);
         assert_eq!(
-            memberships[0].collection(),
-            PersonhoodCollection::LitePeople
+            memberships[0].members,
+            vec![proof::member_key_now(lite_entropy)]
         );
-        assert_eq!(memberships[0].entropy, lite_entropy);
     }
 
     /// Every candidate failing is an outage, not an answer. Reporting it as "no
@@ -2147,10 +2164,8 @@ mod tests {
     #[test]
     fn every_collection_failing_is_reported_as_an_error() {
         let metadata = test_fixtures::people();
-        let candidates = pooled_memberships().map(|membership| CollectionCandidate {
-            collection: membership.collection(),
-            entropy: membership.entropy,
-        });
+        let candidates = pooled_candidates();
+        let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 
         let responses = [
             r#""0xfinal""#.to_string(),
@@ -2164,7 +2179,8 @@ mod tests {
         let err = futures::executor::block_on(find_including_rings(
             &rpc,
             metadata,
-            &candidates,
+            &signer,
+            &PersonhoodCollection::ALL,
             u32::MAX,
         ))
         .expect_err("no collection resolved, so this is a failure not an empty answer");
@@ -2250,6 +2266,7 @@ mod tests {
     fn a_failed_people_scan_still_finds_the_lite_people_allocation() {
         let metadata = test_fixtures::people();
         let candidates = pooled_candidates();
+        let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
         let target = [0x22; 32];
 
         let null = || "null".to_string();
@@ -2264,11 +2281,14 @@ mod tests {
         let scans = futures::executor::block_on(scan_collections(
             &rpc,
             metadata,
-            &candidates,
-            b"paseo",
-            7,
-            &target,
-            true,
+            &signer,
+            &PersonhoodCollection::ALL,
+            CollectionScanParams {
+                network_suffix: b"paseo",
+                period: 7,
+                target: &target,
+                reuse_existing: true,
+            },
         ))
         .expect("a broken People scan must not fail the pass");
 
@@ -2307,6 +2327,11 @@ mod tests {
             restrict_origins: false,
         };
         let entropy = [0x11; 32];
+        let candidates = [CollectionCandidate {
+            collection: PersonhoodCollection::LitePeople,
+            entropy,
+        }];
+        let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
         let ring = RingParams {
             collection: PersonhoodCollection::LitePeople,
             members: vec![proof::member_key_now(entropy)],
@@ -2329,12 +2354,7 @@ mod tests {
         scripted.script_subscription([r#"{"inBlock":"0xb10c"}"#]);
         let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
 
-        let outcome = futures::executor::block_on(register_statement_account(
-            &rpc,
-            metadata,
-            &chain_state,
-            entropy,
-            RegistrationParams {
+        let outcome = futures::executor::block_on(register_statement_account(&rpc, metadata, &chain_state, &signer, RegistrationParams {
                 target: &[0x22; 32],
                 period: 7,
                 network_suffix: b"paseo",
@@ -2342,8 +2362,7 @@ mod tests {
                 reuse_existing: true,
                 preselected: None,
                 protected: &[],
-            },
-        ));
+            }));
 
         assert!(
             matches!(
@@ -2367,6 +2386,11 @@ mod tests {
             restrict_origins: false,
         };
         let entropy = [0x11; 32];
+        let candidates = [CollectionCandidate {
+            collection: PersonhoodCollection::LitePeople,
+            entropy,
+        }];
+        let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
         let ring = RingParams {
             collection: PersonhoodCollection::LitePeople,
             members: vec![proof::member_key_now(entropy)],
@@ -2389,12 +2413,7 @@ mod tests {
         scripted.script_subscription_errors("already imported", 2);
         let rpc = RpcClient::new(HostRpcClient::new(scripted));
 
-        let err = futures::executor::block_on(register_statement_account(
-            &rpc,
-            metadata,
-            &chain_state,
-            entropy,
-            RegistrationParams {
+        let err = futures::executor::block_on(register_statement_account(&rpc, metadata, &chain_state, &signer, RegistrationParams {
                 target: &[0x22; 32],
                 period: 7,
                 network_suffix: b"paseo",
@@ -2402,8 +2421,7 @@ mod tests {
                 reuse_existing: true,
                 preselected: None,
                 protected: &[],
-            },
-        ))
+            }))
         .unwrap_err();
 
         assert!(
@@ -2425,6 +2443,11 @@ mod tests {
             restrict_origins: false,
         };
         let entropy = [0x11; 32];
+        let candidates = [CollectionCandidate {
+            collection: PersonhoodCollection::LitePeople,
+            entropy,
+        }];
+        let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
         let ring = RingParams {
             collection: PersonhoodCollection::LitePeople,
             members: vec![proof::member_key_now(entropy)],
@@ -2441,12 +2464,7 @@ mod tests {
         scripted.script_subscription_errors("User error: Invalid Transaction (1010)", 1);
         let rpc = RpcClient::new(HostRpcClient::new(scripted));
 
-        let err = futures::executor::block_on(register_statement_account(
-            &rpc,
-            metadata,
-            &chain_state,
-            entropy,
-            RegistrationParams {
+        let err = futures::executor::block_on(register_statement_account(&rpc, metadata, &chain_state, &signer, RegistrationParams {
                 target: &[0x22; 32],
                 period: 7,
                 network_suffix: b"paseo",
@@ -2454,8 +2472,7 @@ mod tests {
                 reuse_existing: true,
                 preselected: None,
                 protected: &[],
-            },
-        ))
+            }))
         .unwrap_err();
 
         assert!(
@@ -2476,6 +2493,11 @@ mod tests {
             restrict_origins: false,
         };
         let entropy = [0x11; 32];
+        let candidates = [CollectionCandidate {
+            collection: PersonhoodCollection::LitePeople,
+            entropy,
+        }];
+        let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
         let ring = RingParams {
             collection: PersonhoodCollection::LitePeople,
             members: vec![proof::member_key_now(entropy)],
@@ -2491,12 +2513,7 @@ mod tests {
         let scripted = ScriptedRpc::new(responses);
         let rpc = RpcClient::new(HostRpcClient::new(scripted));
 
-        let err = futures::executor::block_on(register_statement_account(
-            &rpc,
-            metadata,
-            &chain_state,
-            entropy,
-            RegistrationParams {
+        let err = futures::executor::block_on(register_statement_account(&rpc, metadata, &chain_state, &signer, RegistrationParams {
                 target: &[0x22; 32],
                 period: 7,
                 network_suffix: b"paseo",
@@ -2504,8 +2521,7 @@ mod tests {
                 reuse_existing: true,
                 preselected: None,
                 protected: &[],
-            },
-        ))
+            }))
         .unwrap_err();
 
         assert!(

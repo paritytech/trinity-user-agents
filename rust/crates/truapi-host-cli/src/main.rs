@@ -58,6 +58,7 @@ use truapi::platform::{
     ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind,
 };
 use truapi::statement_allowance as alloc;
+use truapi::statement_allowance::{PersonhoodSigner, collection::PersonhoodCollection};
 use truapi::subscription::Spawner;
 use truapi::{
     AnnouncedPairing, DebugSink, PairedSsoPeer, PairingHostConfig, PairingHostRuntime,
@@ -669,6 +670,7 @@ async fn run_pgas_check(
         .context("invalid BIP-39 mnemonic")?
         .to_entropy();
     let candidates = accounts::collection_candidates(&entropy, network.network_suffix);
+    let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 
     if submit && target.is_none() {
         bail!("--target is required with --submit; a claim has to credit an account");
@@ -713,27 +715,32 @@ async fn run_pgas_check(
         println!(
             "{} member=0x{}",
             candidate.collection,
-            hex::encode(alloc::proof::member_key(candidate.entropy).await?)
+            hex::encode(signer.member(candidate.collection)?)
         );
     }
-    let memberships =
-        alloc::find_including_rings(&people_rpc, &people_metadata, &candidates, lookback)
-            .await
-            .map_err(anyhow::Error::msg)?;
+    let memberships = alloc::find_including_rings(
+        &people_rpc,
+        &people_metadata,
+        &signer,
+        &PersonhoodCollection::ALL,
+        lookback,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
     for membership in &memberships {
         println!(
             "member INCLUDED in {} ring_index={} exponent={} members={}",
-            membership.collection(),
-            membership.ring.ring_index,
-            membership.ring.exponent,
-            membership.ring.members.len()
+            membership.collection,
+            membership.ring_index,
+            membership.exponent,
+            membership.members.len()
         );
     }
     // The widest membership the signer actually holds; a claim needs exactly one.
     let Some(membership) = memberships.first() else {
         bail!("member is not in the last {lookback} rings of any collection (onboarding pending)");
     };
-    let ring = &membership.ring;
+    let ring = membership;
 
     let revision = alloc::ring::read_ring_revision(
         &people_rpc,
@@ -773,7 +780,7 @@ async fn run_pgas_check(
         &asset_hub_rpc,
         &asset_hub_metadata,
         ring.collection,
-        membership.entropy,
+        &signer,
         &network_suffix,
         day,
         &[],
@@ -797,10 +804,10 @@ async fn run_pgas_check(
         asset_hub: &asset_hub,
         people_rpc: &people_rpc,
         people_metadata: &people_metadata,
-        entropy: membership.entropy,
+        signer: &signer,
         network_suffix: &network_suffix,
         target: &target,
-        ring: &membership.ring,
+        ring: membership,
     })
     .await
     .map_err(|err| anyhow::anyhow!("claim failed: {err}"))?;
@@ -832,6 +839,7 @@ async fn run_alloc_check(
         .context("invalid BIP-39 mnemonic")?
         .to_entropy();
     let candidates = accounts::collection_candidates(&entropy, network.network_suffix);
+    let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 
     if submit && target.is_none() {
         bail!("--target is required with --submit; the all-zero default is read-only");
@@ -870,25 +878,31 @@ async fn run_alloc_check(
         println!(
             "{} member=0x{} current_ring_index={}",
             candidate.collection,
-            hex::encode(alloc::proof::member_key(candidate.entropy).await?),
+            hex::encode(signer.member(candidate.collection)?),
             alloc::ring::read_current_ring_index(&rpc, candidate.collection)
                 .await
                 .map_err(anyhow::Error::msg)?,
         );
     }
-    let memberships = alloc::find_including_rings(&rpc, &metadata, &candidates, lookback)
-        .await
-        .map_err(anyhow::Error::msg)?;
+    let memberships = alloc::find_including_rings(
+        &rpc,
+        &metadata,
+        &signer,
+        &PersonhoodCollection::ALL,
+        lookback,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
     if memberships.is_empty() {
         println!("member NOT in the last {lookback} rings of any collection (onboarding pending)");
     }
     for membership in &memberships {
         println!(
             "member INCLUDED in {} ring_index={} exponent={} included_members={}",
-            membership.collection(),
-            membership.ring.ring_index,
-            membership.ring.exponent,
-            membership.ring.members.len(),
+            membership.collection,
+            membership.ring_index,
+            membership.exponent,
+            membership.members.len(),
         );
     }
 
@@ -908,10 +922,15 @@ async fn run_alloc_check(
         report_slot_scan(
             &rpc,
             &metadata,
-            *candidate,
-            &network_suffix,
-            period,
-            &target,
+            alloc::slot::SlotScan {
+                collection: candidate.collection,
+                signer: &signer,
+                network_suffix: &network_suffix,
+                period,
+                target: &target,
+                excluded: &[],
+                reuse_existing: true,
+            },
             now,
         )
         .await?;
@@ -924,11 +943,14 @@ async fn run_alloc_check(
         let scans = alloc::scan_collections(
             &rpc,
             &metadata,
-            &candidates,
-            &network_suffix,
-            period,
-            &target,
-            true,
+            &signer,
+            &PersonhoodCollection::ALL,
+            alloc::CollectionScanParams {
+                network_suffix: &network_suffix,
+                period,
+                target: &target,
+                reuse_existing: true,
+            },
         )
         .await
         .map_err(anyhow::Error::msg)?;
@@ -936,6 +958,7 @@ async fn run_alloc_check(
             &rpc,
             &metadata,
             &chain_state,
+            &signer,
             &scans,
             &memberships,
             alloc::PooledRegistrationParams {
@@ -974,27 +997,11 @@ async fn run_alloc_check(
 async fn report_slot_scan(
     rpc: &alloc::rpc::RpcClient,
     metadata: &alloc::extension::Metadata,
-    candidate: alloc::CollectionCandidate,
-    network_suffix: &[u8],
-    period: u32,
-    target: &[u8; 32],
+    scan: alloc::slot::SlotScan<'_>,
     now: u64,
 ) -> Result<()> {
-    match alloc::slot::scan_slot_excluding(
-        rpc,
-        metadata,
-        alloc::slot::SlotScan {
-            collection: candidate.collection,
-            entropy: candidate.entropy,
-            network_suffix,
-            period,
-            target,
-            excluded: &[],
-            reuse_existing: true,
-        },
-    )
-    .await
-    {
+    let target = scan.target;
+    match alloc::slot::scan_slot_excluding(rpc, metadata, scan).await {
         Ok(alloc::slot::SlotSelection::Free(seq)) => println!("slot scan: free seq={seq}"),
         Ok(alloc::slot::SlotSelection::FreeSlotsExcluded) => {
             println!("slot scan: free slots exist but are awaiting earlier submissions");

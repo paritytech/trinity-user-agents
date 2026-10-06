@@ -657,7 +657,6 @@ mod tests {
     };
     use crate::platform::{HostInfo, Platform, PlatformInfo, ProductContext, SigningHostConfig};
     use crate::runtime::authority::AutoSigningGrant;
-    use crate::runtime::statement_allowance::collection::PersonhoodCollection;
     use crate::test_support::{StubPlatform, test_spawner};
     use truapi::api::{Account, Entropy, ResourceAllocation, Signing};
     use truapi::latest::{
@@ -1947,98 +1946,6 @@ mod tests {
             },
         ))
         .expect("full person key registration succeeds");
-    }
-
-    #[test]
-    fn internal_allowances_offer_both_reserved_person_handles_widest_first() {
-        let (_, authority) = signing_runtime();
-        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-            .expect("activation succeeds");
-        let session = authority
-            .account_holder()
-            .current_session()
-            .expect("active session");
-        let candidates = authority
-            .wallet
-            .keys(&session)
-            .expect("reserved keys derive")
-            .reserved_person_collection_candidates();
-
-        // Index 0 is the full-person handle and index 1 the light-person one, and
-        // People leads so a full person spends its wider slot budget first.
-        let expected = [
-            (PersonhoodCollection::People, 0u32),
-            (PersonhoodCollection::LitePeople, 1),
-        ];
-        assert_eq!(candidates.len(), expected.len());
-        for (candidate, (collection, index)) in candidates.iter().zip(expected) {
-            assert_eq!(candidate.collection, collection);
-            assert_eq!(
-                candidate.entropy,
-                derive_ring_vrf_entropy(&ENTROPY, "peopl.dot", &v01::DerivationIndex::Index(index))
-                    .expect("reserved RFC-0024 handle derives"),
-                "{collection} candidate does not use peopl.dot/{index}",
-            );
-        }
-        assert_ne!(candidates[0].entropy, candidates[1].entropy);
-    }
-
-    #[test]
-    fn reserved_identities_follow_the_configured_network_suffix() {
-        // A wallet on paseo-next-v2 is the `peopl.paseo` person and the
-        // `uid.paseo` account: the ones a `peopl.paseo` product registers and the
-        // ones the identity backend records a lite username for. The `.dot`
-        // derivations of the same seed are a different person.
-        let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform::default());
-        let authority = SigningHostRole::new_with_ring_resolver_on(
-            platform,
-            full_person_ring_resolver(),
-            "paseo",
-        );
-        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-            .expect("activation succeeds");
-        let session = authority
-            .account_holder()
-            .current_session()
-            .expect("active session");
-
-        let candidates = authority
-            .wallet
-            .keys(&session)
-            .expect("reserved keys derive")
-            .reserved_person_collection_candidates();
-        for (candidate, index) in candidates.iter().zip([0u32, 1]) {
-            assert_eq!(
-                candidate.entropy,
-                derive_ring_vrf_entropy(
-                    &ENTROPY,
-                    "peopl.paseo",
-                    &v01::DerivationIndex::Index(index)
-                )
-                .expect("reserved RFC-0024 handle derives"),
-                "{} candidate does not use peopl.paseo/{index}",
-                candidate.collection
-            );
-            assert_ne!(
-                candidate.entropy,
-                derive_ring_vrf_entropy(&ENTROPY, "peopl.dot", &v01::DerivationIndex::Index(index))
-                    .expect("reserved RFC-0024 handle derives"),
-            );
-        }
-
-        let identity = derive_identity_keypair(&ENTROPY, "paseo")
-            .expect("uid.paseo identity derivation")
-            .public
-            .to_bytes();
-        assert_eq!(session.identity_account_id, Some(identity));
-        assert_eq!(
-            authority
-                .wallet.current_keys().unwrap().1.identity_keypair()
-                .expect("identity")
-                .public
-                .to_bytes(),
-            identity
-        );
     }
 
     #[test]
