@@ -242,19 +242,16 @@
         }
 
         /// Injects page-runner.js when the page does not have it, which is after every reload,
-        /// then waits for the playground to render its run buttons.
+        /// and waits for the playground to render its run buttons. Both happen in one evaluation,
+        /// retried, because the product can reload while it settles and drop the runner in between.
         func ensureRunner(in webView: WKWebView, source: String) async throws {
-            let present = try await evaluate(
-                "return typeof window.__hostPlaygroundE2E === 'object';",
-                in: webView
-            ) as? Bool
-            if present != true {
-                _ = try await evaluate(source + "\nreturn true;", in: webView)
-            }
-
             let deadline = ContinuousClock.now + Timing.pageReadyTimeout
             while ContinuousClock.now < deadline {
-                if try await evaluate("return window.__hostPlaygroundE2E.ready();", in: webView) as? Bool == true {
+                let ready = try? await evaluate(
+                    source + "\nreturn window.__hostPlaygroundE2E.ready();",
+                    in: webView
+                ) as? Bool
+                if ready == true {
                     return
                 }
                 try await Task.sleep(for: Timing.poll)
@@ -264,9 +261,12 @@
 
         /// A test that opens an external URL sends the app to the background, where its web
         /// views stop running script; the runner brings it back when `backgrounded` appears.
+        /// Waits out a trip to the background. A system alert, such as the notification prompt the
+        /// simulator cannot pre-grant, leaves the app inactive rather than backgrounded, and the page
+        /// keeps running underneath it, so inactive counts as foreground.
         func waitUntilActive() async throws {
             try await poll(for: Timing.foregroundTimeout, "the app did not return to the foreground") {
-                UIApplication.shared.applicationState == .active
+                UIApplication.shared.applicationState != .background
             }
         }
 

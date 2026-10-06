@@ -119,12 +119,37 @@ export function findApproveButton(dumpXml, packageName) {
   return null;
 }
 
+/** The "Wait" button of a system "isn't responding" dialog, if one is showing. */
+export function findSystemWaitButton(dumpXml) {
+  if (!dumpXml.includes("isn't responding") && !dumpXml.includes("isn&apos;t responding")) return null;
+  for (const match of dumpXml.matchAll(/<node\b([^>]*?)\/?>/g)) {
+    const attributes = Object.fromEntries(
+      [...match[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(([, name, value]) => [name, value]),
+    );
+    if (attributes.package !== "android" || attributes.text?.trim() !== "Wait") continue;
+    const bounds = attributes.bounds?.match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);
+    if (!bounds) continue;
+    const [left, top, right, bottom] = bounds.slice(1).map(Number);
+    return { x: Math.round((left + right) / 2), y: Math.round((top + bottom) / 2) };
+  }
+  return null;
+}
+
 /** Polls the screen for native approval sheets until stopped. */
 function startApprover(adb) {
   let running = true;
   const loop = (async () => {
     while (running) {
       const dump = await adb(["exec-out", "uiautomator", "dump", "/dev/tty"], { allowFailure: true });
+      // The emulator's launcher can stop answering; its dialog then takes the
+      // focus and hides the app's sheet from the dump until it is dismissed.
+      const wait = dump && findSystemWaitButton(dump);
+      if (wait && running) {
+        log("dismissing a system \"isn't responding\" dialog");
+        await adb.shell(`input tap ${wait.x} ${wait.y}`, { allowFailure: true });
+        await sleep(APPROVER_INTERVAL_MS);
+        continue;
+      }
       const button = dump && findApproveButton(dump, PACKAGE);
       if (button && running) {
         log(`tapping "${button.label}"`);
@@ -147,6 +172,9 @@ async function installClean(adb, apk) {
   log(`installing ${apk}`);
   await adb(["uninstall", PACKAGE], { allowFailure: true });
   await adb(["install", apk]);
+  // A slow emulator raises "isn't responding" dialogs for system apps, which
+  // cover the sheets the tests need answered.
+  await adb.shell("settings put global hide_error_dialogs 1", { allowFailure: true });
   for (const permission of RUNTIME_PERMISSIONS) {
     if ((await adb.shell(`pm grant ${PACKAGE} ${permission}`, { allowFailure: true })) === null) {
       log(`could not grant ${permission}`);
