@@ -37,6 +37,7 @@ export function summaryLine(run) {
     .map(([bucket, count]) => `${count} ${bucket}`);
   let line = `E2E (${run.platform}): ${counts.passed ?? 0}/${ran} passed`;
   if (others.length) line += `, ${others.join(", ")}`;
+  if (run.fatal) line += `. Stopped early: ${run.fatal}`;
   if (failed.length) {
     const shown = failed.slice(0, 10);
     line += `. Failed: ${shown.join(", ")}${failed.length > shown.length ? ` and ${failed.length - shown.length} more` : ""}`;

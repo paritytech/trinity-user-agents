@@ -195,9 +195,21 @@ async function waitForDone(timeoutMs) {
       launch({ terminate: false });
     }
 
-    const results = readResults()?.results ?? [];
+    const run = readResults();
+    const results = run?.results ?? [];
     for (const result of results.slice(reported)) {
-      console.log(`  ${classify(result).padEnd(20)} ${result.id}`);
+      const message = result.message ? `  ${String(result.message).replace(/\s+/g, " ").slice(0, 200)}` : "";
+      console.log(`  ${classify(result).padEnd(20)} ${result.id}${message}`);
+      // The first failure's screen, while it is still showing.
+      if (classify(result) === "failed" && !existsSync(join(out, "first-failure.png"))) {
+        spawnSync("xcrun", ["simctl", "io", device.udid, "screenshot", join(out, "first-failure.png")], {
+          stdio: "ignore",
+        });
+      }
+    }
+    if (results.length > reported) {
+      // Kept current so a cancelled job still uploads what ran.
+      writeFileSync(join(out, "results.json"), `${JSON.stringify(run, null, 2)}\n`);
     }
     reported = Math.max(reported, results.length);
 

@@ -301,15 +301,21 @@ async function readyPage(adb, forwards, page) {
     page?.close();
     page = await openProduct(adb, forwards);
   }
-  if (!(await page.evaluate("Boolean(window.__hostPlaygroundE2E)"))) {
-    await page.evaluate(pageRunner);
-    const deadline = Date.now() + READY_TIMEOUT_MS;
-    while (!(await page.evaluate("window.__hostPlaygroundE2E.ready()"))) {
-      if (Date.now() >= deadline) throw new Error(`host-playground rendered no tests within ${READY_TIMEOUT_MS / 1000} s`);
-      await sleep(500);
-    }
+  // The product can reload while it settles, which drops the injected runner
+  // and destroys the context an evaluation was running in, so both are retried
+  // until the playground shows its buttons.
+  const deadline = Date.now() + READY_TIMEOUT_MS;
+  for (;;) {
+    const ready = await page
+      .evaluate(`(() => { ${pageRunner}; return window.__hostPlaygroundE2E.ready(); })()`)
+      .catch((error) => {
+        if (page.closed) throw error;
+        return false;
+      });
+    if (ready) return page;
+    if (Date.now() >= deadline) throw new Error(`host-playground rendered no tests within ${READY_TIMEOUT_MS / 1000} s`);
+    await sleep(500);
   }
-  return page;
 }
 
 async function runTest(page, id) {
@@ -397,7 +403,8 @@ async function main() {
     }
   } catch (error) {
     fatal = error;
-    console.error(`[android e2e] ${error.message}`);
+    run.fatal = error.message;
+    console.error(`[android e2e] ${error.stack ?? error.message}`);
     await screenshot(adb, join(out, "fatal.png"));
   } finally {
     await stopApprover?.();
