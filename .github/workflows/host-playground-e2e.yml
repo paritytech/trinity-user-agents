@@ -11,17 +11,16 @@ name: host-playground e2e
 # workflow asks for. Nothing here reaches a build that testers
 # or the public can download, and the mnemonic only ever travels as a file.
 
+# Runs once a day on main, two hours before the iOS nightly starts at 20:00 UTC
+# so the result is in before either nightly ships. A pull request runs it on
+# demand with the `host-playground-e2e` label, and again on each push while the
+# label stays on.
 on:
+  schedule:
+    - cron: "0 18 * * *"
   pull_request:
-    paths:
-      - "e2e/host-playground/**"
-      - ".github/workflows/host-playground-e2e.yml"
-      - "hosts/ios/polkadot-app/Modules/Products/TrUAPI/HostPlaygroundE2E*.swift"
+    types: [labeled, synchronize]
   workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -29,10 +28,20 @@ permissions:
 jobs:
   android:
     name: Android emulator
-    # A fork gets none of the secrets the build and the account need.
+    # Narrow on purpose: `labeled` fires for every label, so only this label
+    # being added, or a push while it is on, starts a pull request run. A fork
+    # gets none of the secrets the build and the account need.
     if: >-
-      github.event_name == 'workflow_dispatch'
-      || github.event.pull_request.head.repo.full_name == github.repository
+      github.event_name != 'pull_request'
+      || (github.event.pull_request.head.repo.full_name == github.repository
+          && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
+              || (github.event.action == 'synchronize'
+                  && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e'))))
+    # On the job, so a run started by another label never cancels one in
+    # progress: a skipped job never joins the group.
+    concurrency:
+      group: host-playground-e2e-android-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -152,9 +161,20 @@ jobs:
 
   ios:
     name: iOS simulator
+    # Narrow on purpose: `labeled` fires for every label, so only this label
+    # being added, or a push while it is on, starts a pull request run. A fork
+    # gets none of the secrets the build and the account need.
     if: >-
-      github.event_name == 'workflow_dispatch'
-      || github.event.pull_request.head.repo.full_name == github.repository
+      github.event_name != 'pull_request'
+      || (github.event.pull_request.head.repo.full_name == github.repository
+          && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
+              || (github.event.action == 'synchronize'
+                  && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e'))))
+    # On the job, so a run started by another label never cancels one in
+    # progress: a skipped job never joins the group.
+    concurrency:
+      group: host-playground-e2e-ios-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: macos-26
     timeout-minutes: 150
     env:

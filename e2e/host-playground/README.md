@@ -6,7 +6,7 @@ Runs the public `host-playground` product inside the iOS and Android host apps a
 - `page-runner.js` is injected into the product page by each driver and runs one test per call.
 - `report.mjs` turns a run's `results.json` into `report.md` and a one-line summary.
 
-`.github/workflows/host-playground-e2e.yml` runs both platforms in CI, on pull requests that touch this directory and by manual dispatch, signing in with the `E2E_ANDROID_MNEMONIC` and `E2E_IOS_MNEMONIC` test accounts and uploading each run's results and report.
+`.github/workflows/host-playground-e2e.yml` runs both platforms in CI once a day on main at 18:00 UTC, two hours before the nightlies, on a pull request when it carries the `host-playground-e2e` label (and on each push while it does), and by manual dispatch, signing in with the `E2E_ANDROID_MNEMONIC` and `E2E_IOS_MNEMONIC` test accounts and uploading each run's results and report.
 
 ## Android
 
