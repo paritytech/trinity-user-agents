@@ -84,4 +84,5 @@ private class NoOpEditor : Editor {
     override fun putLong(field: String, value: Long) = Unit
     override fun remove(field: String) = Unit
     override fun apply() = Unit
+    override fun commit(): Boolean = true
 }

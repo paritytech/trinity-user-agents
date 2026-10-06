@@ -209,5 +209,7 @@ class RealPreferences @Inject constructor(
         override fun apply() {
             editor.apply()
         }
+
+        override fun commit(): Boolean = editor.commit()
     }
 }
