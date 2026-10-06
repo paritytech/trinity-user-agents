@@ -240,7 +240,7 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
     let remembered_stale = signing_host.retain_statement_store_allowance(
         &operation,
         PRODUCT_ID,
-        super::super::sso_responder::StatementStoreAllocation {
+        super::super::wallet_account_holder::StatementStoreAllocation {
             secret: SECRET.to_vec(),
             period: PERIOD,
         },

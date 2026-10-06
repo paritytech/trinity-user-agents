@@ -993,6 +993,7 @@ fn account_get_authority_error(err: AuthorityError) -> CallError<HostAccountGetE
     let error = match err {
         AuthorityError::Disconnected => v01::HostAccountGetError::NotConnected,
         AuthorityError::Rejected => v01::HostAccountGetError::Rejected,
+        error @ AuthorityError::ConfirmationFailed(_) => v01::HostAccountGetError::Unknown { reason: error.to_string() },
         AuthorityError::Cancelled(err) => v01::HostAccountGetError::Unknown {
             reason: err.to_string(),
         },
@@ -1081,6 +1082,7 @@ fn signing_call_error<E>(
         AuthorityError::Rejected | AuthorityError::Disconnected => {
             v01::HostSignPayloadError::Rejected
         }
+        error @ AuthorityError::ConfirmationFailed(_) => v01::HostSignPayloadError::Unknown { reason: error.to_string() },
         AuthorityError::Cancelled(err) => v01::HostSignPayloadError::Unknown {
             reason: err.to_string(),
         },
@@ -1098,6 +1100,7 @@ fn transaction_call_error<E>(
         AuthorityError::Rejected | AuthorityError::Disconnected => {
             v01::HostCreateTransactionError::Rejected
         }
+        error @ AuthorityError::ConfirmationFailed(_) => v01::HostCreateTransactionError::Unknown { reason: error.to_string() },
         AuthorityError::Cancelled(err) => v01::HostCreateTransactionError::Unknown {
             reason: err.to_string(),
         },

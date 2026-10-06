@@ -6,10 +6,11 @@ use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1};
 use crate::runtime::signing_host::SigningHostSsoService;
 use crate::runtime::sso_service::Dispatch;
 use truapi::versioned::account::HostAccountSignVrfRequest;
+use truapi::versioned::resource_allocation::HostRequestResourceAllocationError;
 use truapi::versioned::signing::HostSignRawWithLegacyAccountRequest;
 
 /// Allocate an AutoSigning grant for the runtime's own product.
-fn grant_auto_signing(runtime: &ProductRuntimeHost) {
+pub fn grant_auto_signing(runtime: &ProductRuntimeHost) {
     let allocation = futures::executor::block_on(ResourceAllocation::request(
         runtime,
         &CallContext::default(),
@@ -235,5 +236,107 @@ fn a_blessed_product_still_confirms_legacy_account_signing() {
     assert_eq!(
         (signed, platform.sign_raw_reviews.lock().unwrap().len()),
         (false, 1),
+    );
+}
+
+#[test]
+fn direct_allocation_cannot_authorize_signing_without_wallet_approval() {
+    let platform = Arc::new(StubPlatform::default());
+    let (_, authority) = signing_runtime_with_platform(platform.clone());
+    futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let operation = authority.current_operation().unwrap();
+    let request = truapi::latest::HostRequestResourceAllocationRequest {
+        resources: vec![truapi::latest::AllocatableResource::AutoSigning],
+    };
+    let result = futures::executor::block_on(authority.allocate_resources(
+        &CallContext::default(),
+        &operation,
+        &ProductContext::new("myapp.dot".to_string()).unwrap(),
+        request.clone(),
+    ));
+    let grant = futures::executor::block_on(authority.auto_signing_status(
+        &operation.session,
+        "myapp.dot",
+        &product_account(0),
+    ));
+    assert_eq!(
+        (
+            result,
+            grant,
+            platform.resource_allocation_reviews.lock().unwrap().clone()
+        ),
+        (
+            Err(AuthorityError::Unknown {
+                reason: "User rejected resource allocation".to_string()
+            }),
+            Ok(crate::runtime::authority::AutoSigningGrant::Absent),
+            vec![crate::platform::ResourceAllocationReview {
+                calling_product_id: "myapp.dot".to_string(),
+                resources: request.resources,
+            }],
+        ),
+    );
+}
+
+#[test]
+fn cancelling_a_later_resource_keeps_the_first_native_authorization() {
+    use std::future::Future;
+    use std::task::{Context, Poll};
+
+    let platform = Arc::new(StubPlatform {
+        resource_allocation_confirmed: true,
+        chain_connect_pending: true,
+        ..StubPlatform::default()
+    });
+    let (services, authority) = signing_runtime_with_platform(platform);
+    futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let runtime = product_runtime(services, authority.clone());
+    let operation = authority.current_operation().unwrap();
+    let cancel = truapi::CancellationToken::default();
+    let cx = CallContext::with_parts("partial-allocation".to_string(), cancel.clone());
+    let mut allocation = Box::pin(ResourceAllocation::request(
+        &runtime,
+        &cx,
+        HostRequestResourceAllocationRequest::V1(
+            truapi::latest::HostRequestResourceAllocationRequest {
+                resources: vec![
+                    truapi::latest::AllocatableResource::AutoSigning,
+                    truapi::latest::AllocatableResource::SmartContractAllowance(
+                        truapi::latest::DerivationIndex::Index(0),
+                    ),
+                ],
+            },
+        ),
+    ));
+    assert_eq!(
+        allocation
+            .as_mut()
+            .poll(&mut Context::from_waker(&futures::task::noop_waker())),
+        Poll::Pending,
+    );
+    let retained_before_cancel = futures::executor::block_on(authority.auto_signing_status(
+        &operation.session,
+        "myapp.dot",
+        &product_account(0),
+    ));
+    cancel.cancel();
+    let result = futures::executor::block_on(allocation);
+    let retained_after_cancel = futures::executor::block_on(authority.auto_signing_status(
+        &operation.session,
+        "myapp.dot",
+        &product_account(0),
+    ));
+    assert_eq!(
+        (result, retained_before_cancel, retained_after_cancel),
+        (
+            Err(CallError::Domain(HostRequestResourceAllocationError::V1(
+                truapi::latest::ResourceAllocationError::Unknown {
+                    reason: "Account authority request cancelled for partial-allocation"
+                        .to_string(),
+                }
+            ))),
+            Ok(crate::runtime::authority::AutoSigningGrant::Active),
+            Ok(crate::runtime::authority::AutoSigningGrant::Active),
+        ),
     );
 }

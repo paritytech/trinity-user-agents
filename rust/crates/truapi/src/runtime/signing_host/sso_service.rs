@@ -1,25 +1,21 @@
-//! Incoming SSO requests and resource consent for a locally activated wallet.
+//! Incoming SSO account requests and wallet grant responses.
 
 use std::sync::Arc;
 
-use crate::platform::{ResourceAllocationReview, UserConfirmationReview};
-use futures::{FutureExt, pin_mut};
+use futures::StreamExt;
 use tracing::warn;
 use truapi::latest as api;
 
 use super::SigningHost;
-use super::sso_responder::{
-    AllowanceAllocationError, allocate_bulletin_allowance, allocate_smart_contract_allowance,
-    allocate_statement_store_allowance,
-};
+use super::wallet_account_holder::{AccountGrant, AllowanceAllocationError};
 use crate::host_internal::sso_messages::{
     CreateAccountProofResponse, CreateTransactionLegacyPayload, CreateTransactionPayload,
     CreateTransactionRequest, CreateTransactionResponse, CreateTransactionWithLegacyAccountRequest,
-    GetAccountAliasResponse, ListRingVrfKeysResponse, OnExistingAllowancePolicy, ProductRequest,
-    ProductSubtreeRequest, ProductSubtreeResponse, RegisterRingVrfKeyResponse, RemoteMessage,
-    ResourceAllocationRequest, ResourceAllocationResponse, RingVrfSignResponse,
-    SignRawWithLegacyAccountRequest, SignRawWithLegacyAccountResponse, SignRequest, SignResponse,
-    SignVrfResponse, SsoAllocatedResource, SsoAllocationOutcome,
+    GetAccountAliasResponse, ListRingVrfKeysResponse, ProductRequest, ProductSubtreeRequest,
+    ProductSubtreeResponse, RegisterRingVrfKeyResponse, RemoteMessage, ResourceAllocationRequest,
+    ResourceAllocationResponse, RingVrfSignResponse, SignRawWithLegacyAccountRequest,
+    SignRawWithLegacyAccountResponse, SignRequest, SignResponse, SignVrfResponse,
+    SsoAllocatedResource, SsoAllocationOutcome,
 };
 use crate::host_internal::sso_wire::ResponseOutcome;
 use crate::host_logic::product_account::product_public_key_to_address;
@@ -28,10 +24,6 @@ use crate::runtime::authority::{
     SignPayloadAuthorityRequest, SignRawAuthorityRequest,
 };
 use crate::runtime::sso_service::{Dispatch, SsoReply, SsoRequestContext};
-
-/// Handler error once the pairing host has withdrawn the request; never
-/// posted, because a withdrawn request has no response.
-const WITHDRAWN: &str = "Withdrawn";
 
 /// SSO handlers served by a locally activated [`SigningHost`].
 pub struct SigningHostSsoService {
@@ -68,26 +60,6 @@ impl SigningHostSsoService {
             }
             Dispatch::Response(_) if request.cancel.is_cancelled() => Dispatch::Withdrawn,
             dispatch => dispatch,
-        }
-    }
-
-    /// The person's answer to `review`, or `None` once the pairing host has
-    /// withdrawn the request, which leaves nothing authorized.
-    async fn prompt(
-        &self,
-        cx: &SsoRequestContext,
-        review: UserConfirmationReview,
-    ) -> Option<Result<bool, api::GenericError>> {
-        let answer = self
-            .signing_host
-            .platform
-            .confirm_user_action(review)
-            .fuse();
-        let withdrawn = cx.call.cancel().cancelled().fuse();
-        pin_mut!(answer, withdrawn);
-        futures::select_biased! {
-            _ = withdrawn => None,
-            answer = answer => Some(answer),
         }
     }
 
@@ -151,77 +123,6 @@ impl SigningHostSsoService {
                 watermarked,
             )
             .await
-    }
-
-    async fn allocate(
-        &self,
-        session: &AuthoritySession,
-        calling_product_id: &str,
-        resource: api::AllocatableResource,
-        on_existing: OnExistingAllowancePolicy,
-    ) -> Result<SsoAllocationOutcome, AllowanceAllocationError> {
-        let signing_host = &self.signing_host;
-        let services = &signing_host.services;
-        match resource {
-            api::AllocatableResource::StatementStoreAllowance => {
-                allocate_statement_store_allowance(
-                    services,
-                    signing_host,
-                    session,
-                    calling_product_id,
-                    on_existing,
-                )
-                .await
-                .map(|allocation| {
-                    SsoAllocationOutcome::Allocated(SsoAllocatedResource::StatementStoreAllowance {
-                        slot_account_key: allocation.secret,
-                    })
-                })
-            }
-            api::AllocatableResource::BulletinAllowance => allocate_bulletin_allowance(
-                services,
-                signing_host,
-                session,
-                calling_product_id,
-                on_existing,
-            )
-            .await
-            .map(|slot_account_key| {
-                SsoAllocationOutcome::Allocated(SsoAllocatedResource::BulletinAllowance {
-                    slot_account_key,
-                })
-            }),
-            api::AllocatableResource::SmartContractAllowance(index) => {
-                allocate_smart_contract_allowance(
-                    services,
-                    signing_host,
-                    session,
-                    calling_product_id,
-                    index,
-                    on_existing,
-                )
-                .await
-                .map(|()| {
-                    SsoAllocationOutcome::Allocated(SsoAllocatedResource::SmartContractAllowance)
-                })
-            }
-            api::AllocatableResource::AutoSigning => {
-                let keys = signing_host.wallet.keys(session)?;
-                let product_root_private_key = keys
-                    .product_subtree_secret(calling_product_id)
-                    .map_err(AllowanceAllocationError::Authority)?;
-                let ring_vrf_domain_entropy = keys
-                    .ring_vrf_domain_entropy(calling_product_id)
-                    .map_err(super::product_authority_error)
-                    .map_err(AllowanceAllocationError::Authority)?;
-                Ok(SsoAllocationOutcome::Allocated(
-                    SsoAllocatedResource::AutoSigning {
-                        product_root_private_key,
-                        ring_vrf_domain_entropy,
-                    },
-                ))
-            }
-        }
     }
 }
 
@@ -339,53 +240,56 @@ impl SigningHostSsoService {
     ) -> ResourceAllocationResponse {
         let mut failures = Vec::new();
         let payload = async {
-            let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
-                calling_product_id: request.calling_product_id.clone(),
-                resources: request.resources.clone(),
-            });
-            match self.prompt(cx, review).await {
-                Some(Ok(true)) => {}
-                Some(Ok(false)) => {
-                    return Ok(vec![
-                        SsoAllocationOutcome::Rejected;
-                        request.resources.len()
-                    ]);
-                }
-                Some(Err(err)) => return Err(format!("confirmation failed: {}", err.reason)),
-                None => return Err(WITHDRAWN.to_string()),
-            }
-
-            self.signing_host
+            let count = request.resources.len();
+            let mut grants = match self
+                .signing_host
                 .wallet
-                .require_current_session(&cx.session)
-                .map_err(|err| err.to_string())?;
-            let mut outcomes = Vec::with_capacity(request.resources.len());
-            for resource in request.resources {
-                self.signing_host
-                    .wallet
-                    .require_current_session(&cx.session)
-                    .map_err(|err| err.to_string())?;
-                if cx.call.cancel().is_cancelled() {
-                    return Err(WITHDRAWN.to_string());
+                .allocate_grants(
+                    cx.account_invocation(Some(&request.calling_product_id)),
+                    api::HostRequestResourceAllocationRequest {
+                        resources: request.resources,
+                    },
+                    request.on_existing,
+                )
+                .await
+            {
+                Ok(grants) => grants,
+                Err(AuthorityError::Rejected) => {
+                    return Ok(vec![SsoAllocationOutcome::Rejected; count]);
                 }
-                let outcome = self
-                    .allocate(
-                        &cx.session,
-                        &request.calling_product_id,
-                        resource,
-                        request.on_existing,
-                    )
-                    .await;
-                self.signing_host
-                    .wallet
-                    .require_current_session(&cx.session)
-                    .map_err(|err| err.to_string())?;
-                outcomes.push(outcome.unwrap_or_else(|err| {
-                    let reason = err.to_string();
-                    warn!(%reason, "resource allocation item failed");
-                    failures.push(reason);
-                    SsoAllocationOutcome::NotAvailable
-                }));
+                Err(error) => return Err(error.to_string()),
+            };
+            let mut outcomes = Vec::with_capacity(count);
+            while let Some(grant) = grants.next().await {
+                outcomes.push(match grant {
+                    Ok(grant) => SsoAllocationOutcome::Allocated(match grant {
+                        AccountGrant::StatementStore(allocation) => {
+                            SsoAllocatedResource::StatementStoreAllowance {
+                                slot_account_key: allocation.secret,
+                            }
+                        }
+                        AccountGrant::Bulletin(key) => SsoAllocatedResource::BulletinAllowance {
+                            slot_account_key: key.as_secret_bytes().to_vec(),
+                        },
+                        AccountGrant::SmartContract => SsoAllocatedResource::SmartContractAllowance,
+                        AccountGrant::AutoSigning(key) => SsoAllocatedResource::AutoSigning {
+                            product_root_private_key: *key.as_secret_bytes(),
+                            ring_vrf_domain_entropy: *key.ring_vrf_domain_entropy(),
+                        },
+                        AccountGrant::WalletAuthorization(_) => {
+                            unreachable!("remote wallet allocation exports a signing key")
+                        }
+                    }),
+                    Err(AllowanceAllocationError::Authority(
+                        error @ (AuthorityError::Disconnected | AuthorityError::Cancelled(_)),
+                    )) => return Err(error.to_string()),
+                    Err(error) => {
+                        let reason = error.to_string();
+                        warn!(%reason, "resource allocation item failed");
+                        failures.push(reason);
+                        SsoAllocationOutcome::NotAvailable
+                    }
+                });
             }
             Ok(outcomes)
         }

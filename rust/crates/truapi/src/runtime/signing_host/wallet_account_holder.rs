@@ -1,6 +1,18 @@
-//! Wallet activation, session validation and derived keys.
+//! Wallet activation, authorization and resource issuance.
 
-use std::sync::{Arc, Mutex};
+mod allowance;
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+mod allowance_renewal;
+pub use allowance::{
+    AccountGrant, AllowanceAllocationError, StatementStoreAllocation, current_unix_secs,
+};
+pub use allowance_renewal::StatementRenewalTarget;
+#[cfg(not(target_arch = "wasm32"))]
+pub use allowance_renewal::TrackedStatementRenewalTarget;
+
+#[cfg(feature = "test-host")]
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex, Weak};
 use truapi::latest::{HostAccountSignVrfRequest, ProductAccountId, VrfSignature};
 use zeroize::Zeroizing;
 
@@ -18,7 +30,7 @@ use crate::host_logic::sso::pairing::{
 };
 use crate::platform::normalize_product_identifier;
 use crate::runtime::authority::{
-    AuthorityError, AuthoritySession, authority_session_validation_id,
+    AuthorityError, AuthoritySession, AutoSigningGrant, authority_session_validation_id,
 };
 use crate::runtime::statement_allowance::CollectionCandidate;
 use crate::runtime::statement_allowance::collection::PersonhoodCollection;
@@ -28,6 +40,12 @@ pub const SSO_ENCRYPTION_DOMAIN: &[u8] = b"sso";
 
 /// Owns the active wallet session and its zeroizable entropy.
 pub struct WalletAccountHolder {
+    services: Arc<crate::runtime::RuntimeServices>,
+    renewal: allowance_renewal::RenewalState,
+    #[cfg(feature = "test-host")]
+    grant_allowances_unchecked: std::sync::atomic::AtomicBool,
+    #[cfg(feature = "test-host")]
+    withheld_resources: Mutex<HashSet<String>>,
     network_suffix: String,
     lifecycle: Mutex<WalletState>,
     session_state: Arc<SessionState>,
@@ -67,6 +85,27 @@ impl WalletState {
     }
 }
 
+/// Wallet-issued permission for one product during one activation.
+#[derive(Clone)]
+pub struct WalletAuthorization {
+    issuer: Weak<SessionState>,
+    validation_id: Vec<u8>,
+    product_id: String,
+}
+
+impl WalletAuthorization {
+    fn matches(
+        &self,
+        wallet: &WalletAccountHolder,
+        session: &AuthoritySession,
+        product_id: &str,
+    ) -> bool {
+        self.issuer.ptr_eq(&Arc::downgrade(&wallet.session_state))
+            && self.validation_id == session.validation_id
+            && self.product_id == product_id
+    }
+}
+
 /// Validated activation material, installed only after host grants are invalidated.
 pub struct PreparedWalletActivation {
     keys: WalletKeys,
@@ -75,12 +114,118 @@ pub struct PreparedWalletActivation {
 
 impl WalletAccountHolder {
     /// Start locked, with no wallet secrets.
-    pub fn new(network_suffix: String) -> Self {
+    pub fn new(services: Arc<crate::runtime::RuntimeServices>, network_suffix: String) -> Self {
         Self {
+            services,
+            renewal: allowance_renewal::RenewalState::default(),
+            #[cfg(feature = "test-host")]
+            grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(feature = "test-host")]
+            withheld_resources: Mutex::new(HashSet::new()),
             network_suffix,
             lifecycle: Mutex::new(WalletState::default()),
             session_state: SessionState::new(),
         }
+    }
+
+    /// Whether allocation is answered as granted without performing it.
+    #[cfg(feature = "test-host")]
+    pub fn grants_allowances_unchecked(&self) -> bool {
+        self.grant_allowances_unchecked
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Answer resource allocation as granted without performing it.
+    #[cfg(feature = "test-host")]
+    pub fn set_grant_allowances_unchecked(&self, granted: bool) {
+        self.grant_allowances_unchecked
+            .store(granted, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Replace refused resource tags; SmartContractAllowance covers every index.
+    #[cfg(feature = "test-host")]
+    pub fn set_withheld_resources(&self, tags: Vec<String>) {
+        *self
+            .withheld_resources
+            .lock()
+            .expect("withheld resource mutex poisoned") = tags.into_iter().collect();
+    }
+
+    /// Whether `resource` is answered as refused.
+    #[cfg(feature = "test-host")]
+    pub fn withholds(&self, resource: &truapi::latest::AllocatableResource) -> bool {
+        let tag = match resource {
+            truapi::latest::AllocatableResource::StatementStoreAllowance => {
+                "StatementStoreAllowance"
+            }
+            truapi::latest::AllocatableResource::BulletinAllowance => "BulletinAllowance",
+            truapi::latest::AllocatableResource::SmartContractAllowance(_) => {
+                "SmartContractAllowance"
+            }
+            truapi::latest::AllocatableResource::AutoSigning => "AutoSigning",
+        };
+        self.withheld_resources
+            .lock()
+            .expect("withheld resource mutex poisoned")
+            .contains(tag)
+    }
+
+    /// Withholding also applies to implicit native allowance access.
+    #[cfg(feature = "test-host")]
+    pub fn refuse_withheld(
+        &self,
+        resource: &truapi::latest::AllocatableResource,
+    ) -> Result<(), AuthorityError> {
+        if self.withholds(resource) {
+            return Err(AuthorityError::Rejected);
+        }
+        Ok(())
+    }
+
+    /// Reject a receipt issued for a different wallet, activation or product.
+    pub fn validate_authorization(
+        &self,
+        session: &AuthoritySession,
+        product_id: &str,
+        authorization: &WalletAuthorization,
+    ) -> Result<(), AuthorityError> {
+        self.require_current_session(session)?;
+        if !authorization.matches(self, session, product_id) {
+            return Err(AuthorityError::Rejected);
+        }
+        Ok(())
+    }
+
+    /// Validate retained permission without accessing the host's grant cache.
+    pub fn auto_signing_status(
+        &self,
+        session: &AuthoritySession,
+        calling_product_id: &str,
+        account: &ProductAccountId,
+        authorization: Option<&WalletAuthorization>,
+    ) -> Result<AutoSigningGrant, AuthorityError> {
+        self.require_current_session(session)?;
+        if crate::runtime::authority::is_blessed_owner(
+            calling_product_id,
+            &account.dot_ns_identifier,
+        ) {
+            return Ok(AutoSigningGrant::Active);
+        }
+        let (Ok(caller), Ok(owner)) = (
+            normalize_product_identifier(calling_product_id),
+            normalize_product_identifier(&account.dot_ns_identifier),
+        ) else {
+            return Ok(AutoSigningGrant::Absent);
+        };
+        Ok(
+            if caller == owner
+                && authorization.is_some_and(|grant| grant.matches(self, session, &caller))
+            {
+                AutoSigningGrant::Active
+            } else {
+                AutoSigningGrant::Absent
+            },
+        )
     }
 
     /// Network suffix used for reserved wallet identities.
@@ -257,26 +402,6 @@ impl WalletKeys {
         derive_product_subtree_keypair(&root, &product_id)
             .map(|keypair| keypair.secret.to_bytes())
             .map_err(product_authority_error)
-    }
-
-    /// Validate the owner before recording a product's AutoSigning grant.
-    pub fn validate_product_owner(
-        &self,
-        owner: [u8; 32],
-        product_id: &str,
-    ) -> Result<String, AuthorityError> {
-        let root =
-            derive_root_keypair_from_entropy(&self.entropy).map_err(product_authority_error)?;
-        if root.public.to_bytes() != owner {
-            return Err(AuthorityError::Disconnected);
-        }
-        let product_id = normalize_product_identifier(product_id).map_err(|err| {
-            AuthorityError::Unavailable {
-                reason: err.to_string(),
-            }
-        })?;
-        derive_product_subtree_keypair(&root, &product_id).map_err(product_authority_error)?;
-        Ok(product_id)
     }
 
     /// Product account used for local signing.

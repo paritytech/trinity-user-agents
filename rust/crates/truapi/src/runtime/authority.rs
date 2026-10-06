@@ -215,6 +215,9 @@ pub enum AuthorityError {
     /// User or authority rejected the request.
     #[display("Rejected")]
     Rejected,
+    /// The platform could not present or complete a wallet review.
+    #[display("confirmation failed: {}", _0.reason)]
+    ConfirmationFailed(#[error(not(source))] crate::latest::GenericError),
     /// The selected authority session is no longer active.
     #[display("Disconnected")]
     Disconnected,
@@ -291,6 +294,7 @@ impl From<AuthorityError> for HostAccountSignVrfError {
         match err {
             AuthorityError::Disconnected => Self::NotConnected,
             AuthorityError::Rejected => Self::Rejected,
+            error @ AuthorityError::ConfirmationFailed(_) => Self::Unknown { reason: error.to_string() },
             AuthorityError::Cancelled(err) => Self::Unknown {
                 reason: err.to_string(),
             },
@@ -546,7 +550,7 @@ pub trait ProductAuthority: AccountHolder {
         &self,
         cx: &CallContext,
         operation: &HostOperation,
-        product_id: String,
+        product: &ProductContext,
         request: HostRequestResourceAllocationRequest,
     ) -> Result<HostRequestResourceAllocationResponse, AuthorityError>;
 

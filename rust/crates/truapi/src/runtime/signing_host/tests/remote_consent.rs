@@ -8,13 +8,14 @@ use truapi::latest::{HostAccountListRingVrfKeysRequest, RingVrfKeyDisclosure};
 
 #[test]
 fn direct_remote_signing_cannot_bypass_wallet_review_with_a_native_grant() {
-    let platform = Arc::new(StubPlatform::default());
-    let (_, authority) = signing_runtime_with_platform(platform.clone());
+    let platform = Arc::new(StubPlatform {
+        resource_allocation_confirmed: true,
+        ..StubPlatform::default()
+    });
+    let (services, authority) = signing_runtime_with_platform(platform.clone());
     futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
     let session = authority.current_session().unwrap();
-    authority
-        .grant_auto_signing(&authority.current_operation().unwrap(), "myapp.dot")
-        .unwrap();
+    auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
     let request = truapi::latest::HostSignRawRequest {
         account: product_account(0),
         payload: truapi::latest::RawPayload::Bytes {
@@ -47,13 +48,14 @@ fn direct_remote_signing_cannot_bypass_wallet_review_with_a_native_grant() {
 
 #[test]
 fn remote_vrf_cannot_reuse_a_native_auto_signing_grant() {
-    let platform = Arc::new(StubPlatform::default());
-    let (_, authority) = signing_runtime_with_platform(platform.clone());
+    let platform = Arc::new(StubPlatform {
+        resource_allocation_confirmed: true,
+        ..StubPlatform::default()
+    });
+    let (services, authority) = signing_runtime_with_platform(platform.clone());
     futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
     let session = authority.current_session().unwrap();
-    authority
-        .grant_auto_signing(&authority.current_operation().unwrap(), "myapp.dot")
-        .unwrap();
+    auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
     let local = futures::executor::block_on(AccountHolder::sign_vrf(
         authority.as_ref(),
         AccountInvocation {

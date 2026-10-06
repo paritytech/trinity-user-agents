@@ -87,11 +87,11 @@ pub mod latest {
         RegisteredRingVrfKey, RemotePermission, RemoteStatementStoreCreateProofError,
         RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
         RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
-        RendererNode, RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps,
-        RuntimeApi, RuntimeSpec, RuntimeType, Shape, SignedStatement, Size, Statement,
-        StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
-        TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
-        VrfSignature,
+        RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
+        RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, Shape,
+        SignedStatement, Size, Statement, StatementProof, StorageQueryItem, StorageQueryType,
+        StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
+        TypographyStyle, VerticalAlignment, VrfSignature,
     };
 
     /// Latest payload type of a versioned envelope.

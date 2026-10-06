@@ -1,0 +1,575 @@
+//! Wallet resource approval and allowance issuance.
+
+use super::{WalletAccountHolder, WalletAuthorization, product_authority_error};
+use crate::chain_runtime::RuntimeFailure;
+use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
+use crate::host_logic::product_account::ProductAccountError;
+use crate::platform::{
+    ResourceAllocationReview, UserConfirmationReview, has_trusted_remote_permissions,
+    normalize_product_identifier,
+};
+use crate::runtime::authority::{
+    AccountCaller, AccountInvocation, AuthorityError, AuthoritySession, AutoSigningKey,
+    BulletinAllowanceKey,
+};
+use crate::runtime::statement_allowance::StatementAllowanceError;
+use crate::runtime::statement_store_rpc::StatementStoreRpcClientError;
+use futures::{
+    StreamExt,
+    stream::{self, BoxStream},
+};
+use std::sync::Arc;
+use tracing::{debug, warn};
+use truapi::latest as v01;
+
+/// Leave the product runtime one minute to receive and process the SSO response
+/// before its 300-second remote-authority deadline expires.
+const BULLETIN_AUTHORIZATION_WAIT: std::time::Duration = std::time::Duration::from_secs(240);
+
+/// Failure while deriving or allocating a Statement Store/Bulletin allowance.
+#[derive(Debug, thiserror::Error)]
+pub enum AllowanceAllocationError {
+    /// Signing host session or authority state was unavailable.
+    #[error("{0}")]
+    Authority(#[from] AuthorityError),
+    /// The host serves no chain for this role, so there is nothing to claim on.
+    #[error("host serves no {chain} chain")]
+    ChainNotServed {
+        /// Role that could not be resolved.
+        chain: &'static str,
+    },
+    /// Reading the host's chain set failed.
+    #[error("supported chains: {0}")]
+    SupportedChains(String),
+    /// Product-account key derivation failed.
+    #[error("{0}")]
+    ProductAccount(#[from] ProductAccountError),
+    /// Chain state, metadata, ring, slot, proof, or extrinsic allocation failed.
+    #[error("{0}")]
+    StatementAllowance(#[from] StatementAllowanceError),
+    /// Runtime service could not open the required Statement Store RPC client.
+    #[error("{0}")]
+    StatementStoreRpcClient(#[from] StatementStoreRpcClientError),
+    /// Runtime service could not open the required Bulletin RPC client.
+    #[error("{context}: {source}")]
+    ChainRpcClient {
+        /// Client context, naming which chain failed.
+        context: &'static str,
+        /// Chain runtime failure.
+        #[source]
+        source: RuntimeFailure,
+    },
+    /// System time cannot be converted into a UNIX timestamp.
+    #[error("system clock before UNIX epoch")]
+    SystemClockBeforeUnixEpoch,
+    /// The signing account is not in any personhood ring.
+    #[error("signing account is not a personhood ring member; cannot grant {resource} allowance")]
+    MissingPersonhoodMembership {
+        /// Resource name.
+        resource: &'static str,
+    },
+}
+
+impl AllowanceAllocationError {
+    /// Preserve authority failures while reporting unavailable allowance work.
+    pub fn into_authority_error(self) -> AuthorityError {
+        match self {
+            Self::Authority(err) => err,
+            other => AuthorityError::Unavailable {
+                reason: other.to_string(),
+            },
+        }
+    }
+}
+
+/// A product's statement-store allowance key, and the period it holds a slot in.
+pub struct StatementStoreAllocation {
+    /// sr25519 secret of the product's allowance account.
+    pub secret: Vec<u8>,
+    /// Allowance period the slot was found or claimed in.
+    pub period: u32,
+}
+
+/// A wallet-issued resource, retained locally or encoded for the paired host.
+pub enum AccountGrant {
+    /// Statement key and its actual allocated period.
+    StatementStore(StatementStoreAllocation),
+    /// Dedicated Bulletin allowance key.
+    Bulletin(BulletinAllowanceKey),
+    /// Funded product account.
+    SmartContract,
+    /// Delegated product signing material for a remote host.
+    AutoSigning(AutoSigningKey),
+    /// Native signing permission without exporting wallet keys.
+    WalletAuthorization(WalletAuthorization),
+}
+
+impl WalletAccountHolder {
+    /// Approve one ordered request before issuing its resources lazily.
+    pub async fn allocate_grants<'a>(
+        &'a self,
+        invocation: AccountInvocation<'a>,
+        request: v01::HostRequestResourceAllocationRequest,
+        policy: OnExistingAllowancePolicy,
+    ) -> Result<BoxStream<'a, Result<AccountGrant, AllowanceAllocationError>>, AuthorityError> {
+        let caller = invocation
+            .caller
+            .product_id()
+            .ok_or(AuthorityError::Rejected)?;
+        let confirmed = crate::runtime::until_cancelled(invocation.call, async {
+            if matches!(invocation.caller, AccountCaller::Local(_))
+                && has_trusted_remote_permissions(caller)
+            {
+                return Ok(true);
+            }
+            self.services
+                .platform
+                .confirm_user_action(UserConfirmationReview::ResourceAllocation(
+                    ResourceAllocationReview {
+                        calling_product_id: caller.to_string(),
+                        resources: request.resources.clone(),
+                    },
+                ))
+                .await
+        })
+        .await?
+        .map_err(AuthorityError::ConfirmationFailed)?;
+        if !confirmed {
+            return Err(AuthorityError::Rejected);
+        }
+        self.require_current_session(invocation.session)?;
+        let product_id = caller.to_string();
+        Ok(stream::unfold(
+            (request.resources.into_iter(), product_id, invocation),
+            move |(mut resources, product_id, invocation)| async move {
+                let resource = resources.next()?;
+                let outcome = async {
+                    self.require_current_session(invocation.session)?;
+                    if let Some(reason) = invocation.call.cancel().reason() {
+                        return Err(crate::runtime::authority_cancellation_error(
+                            invocation.call,
+                            reason,
+                        )
+                        .into());
+                    }
+                    #[cfg(feature = "test-host")]
+                    if matches!(invocation.caller, AccountCaller::Local(_)) {
+                        self.refuse_withheld(&resource)?;
+                    }
+                    let product_id = product_id.as_str();
+                    let grant = match resource {
+                        v01::AllocatableResource::StatementStoreAllowance => {
+                            AccountGrant::StatementStore(
+                                self.allocate_statement_store_allowance(
+                                    invocation.session,
+                                    product_id,
+                                    policy,
+                                )
+                                .await?,
+                            )
+                        }
+                        v01::AllocatableResource::BulletinAllowance => {
+                            AccountGrant::Bulletin(BulletinAllowanceKey::from_secret_bytes(
+                                self.allocate_bulletin_allowance(
+                                    invocation.session,
+                                    product_id,
+                                    policy,
+                                )
+                                .await?,
+                            )?)
+                        }
+                        v01::AllocatableResource::SmartContractAllowance(index) => {
+                            self.allocate_smart_contract_allowance(
+                                invocation.session,
+                                product_id,
+                                index,
+                                policy,
+                            )
+                            .await?;
+                            AccountGrant::SmartContract
+                        }
+                        v01::AllocatableResource::AutoSigning => {
+                            let keys = self.keys(invocation.session)?;
+                            match invocation.caller {
+                                AccountCaller::Local(_) => {
+                                    let product_id = normalize_product_identifier(product_id)
+                                        .map_err(|error| AuthorityError::Unavailable {
+                                            reason: error.to_string(),
+                                        })?;
+                                    keys.product_subtree_public_key(&product_id)?;
+                                    AccountGrant::WalletAuthorization(WalletAuthorization {
+                                        issuer: Arc::downgrade(&self.session_state),
+                                        validation_id: invocation.session.validation_id.clone(),
+                                        product_id,
+                                    })
+                                }
+                                AccountCaller::Remote { .. } => {
+                                    AccountGrant::AutoSigning(AutoSigningKey::from_parts(
+                                        keys.product_subtree_secret(product_id)?,
+                                        keys.ring_vrf_domain_entropy(product_id)
+                                            .map_err(product_authority_error)?,
+                                    ))
+                                }
+                            }
+                        }
+                    };
+                    Ok(grant)
+                }
+                .await;
+                let outcome = self
+                    .require_current_session(invocation.session)
+                    .map_err(AllowanceAllocationError::from)
+                    .and(outcome);
+                Some((outcome, (resources, product_id, invocation)))
+            },
+        )
+        .boxed())
+    }
+}
+
+impl WalletAccountHolder {
+    /// Issue a statement allowance with the period actually found or registered.
+    pub async fn allocate_statement_store_allowance(
+        &self,
+        session: &AuthoritySession,
+        product_id: &str,
+        policy: OnExistingAllowancePolicy,
+    ) -> Result<StatementStoreAllocation, AllowanceAllocationError> {
+        use super::allowance_renewal::StatementRenewalTarget;
+        use crate::runtime::statement_allowance::{
+            self, PooledRegistrationParams, allocated_in, find_including_rings,
+            register_statement_account_pooled, scan_collections,
+        };
+
+        let allowance = self.keys(session)?.statement_allowance_key(product_id)?;
+        // Test signatures use real keys without claiming on-chain registration.
+        #[cfg(feature = "test-host")]
+        if self.grants_allowances_unchecked() {
+            return Ok(StatementStoreAllocation {
+                secret: allowance.secret.to_bytes().to_vec(),
+                period: statement_allowance::slot::current_period(current_unix_secs()?),
+            });
+        }
+        let target = allowance.public.to_bytes();
+        let candidates = self.keys(session)?.reserved_person_collection_candidates();
+        let client = self
+            .services
+            .statement_store
+            .chain_client("statement-store allowance")
+            .await?;
+        let rpc = client.rpc();
+        let chain = self.services.chain_context.get(&client).await?;
+        let network_suffix = statement_allowance::slot::read_network_suffix(rpc).await?;
+        let period = statement_allowance::slot::current_period(current_unix_secs()?);
+        let reuse_existing = matches!(policy, OnExistingAllowancePolicy::Ignore);
+
+        // Hold through scan and submission so renewal cannot select the same slot.
+        let _registration = self.renewal.registration_lock().lock().await;
+
+        // Existing allocations need no proof or costly ring snapshot.
+        let scans = scan_collections(
+            rpc,
+            &chain.metadata,
+            &candidates,
+            &network_suffix,
+            period,
+            &target,
+            reuse_existing,
+        )
+        .await?;
+        if let Some((collection, seq)) = allocated_in(&scans) {
+            debug!(
+                %product_id,
+                period,
+                seq,
+                %collection,
+                "statement-store allowance already allocated"
+            );
+            self.require_current_session(session)?;
+            return Ok(StatementStoreAllocation {
+                secret: allowance.secret.to_bytes().to_vec(),
+                period,
+            });
+        }
+
+        // Every ring back to index 0, because a membership that stopped being
+        // re-included still proves against the ring that holds it.
+        let memberships = find_including_rings(rpc, &chain.metadata, &candidates, u32::MAX).await?;
+        if memberships.is_empty() {
+            return Err(AllowanceAllocationError::MissingPersonhoodMembership {
+                resource: "statement-store",
+            });
+        }
+        self.require_current_session(session)?;
+        let outcome = register_statement_account_pooled(
+            rpc,
+            &chain.metadata,
+            &chain.state,
+            &scans,
+            &memberships,
+            PooledRegistrationParams {
+                target: &target,
+                period,
+                network_suffix: &network_suffix,
+                reuse_existing,
+                // Only renewal may reclaim slots belonging to its own ledger.
+                allow_eviction: false,
+                protected: &[],
+            },
+        )
+        .await?;
+        match outcome {
+            statement_allowance::RegistrationOutcome::Registered {
+                block_hash,
+                seq,
+                ring_index,
+                collection,
+            } => {
+                debug!(
+                    %product_id,
+                    %block_hash,
+                    seq,
+                    ring_index,
+                    %collection,
+                    "registered statement-store allowance"
+                );
+            }
+            statement_allowance::RegistrationOutcome::AlreadyAllocated { seq, collection } => {
+                debug!(
+                    %product_id,
+                    seq,
+                    %collection,
+                    "statement-store allowance already allocated"
+                );
+            }
+        }
+        self.require_current_session(session)?;
+        if let Err(reason) = self
+            .track_statement_renewal_targets(vec![
+                StatementRenewalTarget::ProductStatementAllowance {
+                    product_id: product_id.to_string(),
+                },
+            ])
+            .await
+        {
+            warn!(%product_id, %reason, "failed to record statement-store renewal target");
+        }
+        self.require_current_session(session)?;
+        Ok(StatementStoreAllocation {
+            secret: allowance.secret.to_bytes().to_vec(),
+            period,
+        })
+    }
+
+    /// Issue the product's Bulletin allowance key.
+    pub async fn allocate_bulletin_allowance(
+        &self,
+        session: &AuthoritySession,
+        product_id: &str,
+        policy: OnExistingAllowancePolicy,
+    ) -> Result<Vec<u8>, AllowanceAllocationError> {
+        use crate::runtime::statement_allowance::collection::PersonhoodCollection;
+        use crate::runtime::statement_allowance::{
+            self, claim_long_term_storage, fetch_bulletin_allowance, find_including_rings,
+            wait_bulletin_authorization,
+        };
+
+        let allowance = self.keys(session)?.bulletin_allowance_key(product_id)?;
+        #[cfg(feature = "test-host")]
+        if self.grants_allowances_unchecked() {
+            return Ok(allowance.secret.to_bytes().to_vec());
+        }
+        let target = allowance.public.to_bytes();
+
+        let bulletin_rpc = statement_allowance::rpc::RpcClient::new(
+            self.services
+                .bulletin
+                .client("bulletin allowance")
+                .await
+                .map_err(|source| AllowanceAllocationError::ChainRpcClient {
+                    context: "bulletin allowance client",
+                    source,
+                })?,
+        );
+        let current_allowance = fetch_bulletin_allowance(&bulletin_rpc, &target).await?;
+        if matches!(policy, OnExistingAllowancePolicy::Ignore)
+            && current_allowance.is_some_and(|allowance| allowance.available())
+        {
+            self.require_current_session(session)?;
+            return Ok(allowance.secret.to_bytes().to_vec());
+        }
+
+        let people_client = self
+            .services
+            .statement_store
+            .chain_client("bulletin allowance claim")
+            .await?;
+        let people_rpc = people_client.rpc();
+        let chain = self.services.chain_context.get(&people_client).await?;
+        let network_suffix = statement_allowance::slot::read_network_suffix(people_rpc).await?;
+        let candidates = self.keys(session)?.reserved_person_collection_candidates();
+        // Prefer light membership so switching collections cannot reset the person's budget.
+        let memberships =
+            find_including_rings(people_rpc, &chain.metadata, &candidates, u32::MAX).await?;
+        let membership = memberships
+            .iter()
+            .find(|membership| membership.collection() == PersonhoodCollection::LitePeople)
+            .or_else(|| memberships.first())
+            .ok_or(AllowanceAllocationError::MissingPersonhoodMembership {
+                resource: "Bulletin",
+            })?;
+        let period_duration =
+            statement_allowance::slot::long_term_storage_period_duration(&chain.metadata)?;
+        let period = statement_allowance::slot::current_long_term_storage_period(
+            current_unix_secs()?,
+            period_duration,
+        )?;
+        self.require_current_session(session)?;
+        let outcome = claim_long_term_storage(statement_allowance::LongTermStorageClaim {
+            rpc: people_rpc,
+            metadata: &chain.metadata,
+            chain_state: &chain.state,
+            entropy: membership.entropy,
+            network_suffix: &network_suffix,
+            target: &target,
+            period,
+            ring: &membership.ring,
+        })
+        .await?;
+        let statement_allowance::LongTermStorageOutcome::Claimed {
+            block_hash,
+            counter,
+            ring_index,
+        } = outcome;
+        debug!(
+            %product_id,
+            %block_hash,
+            counter,
+            ring_index,
+            "claimed Bulletin long-term storage allowance"
+        );
+
+        let authorization = wait_bulletin_authorization(
+            &bulletin_rpc,
+            &target,
+            current_allowance,
+            BULLETIN_AUTHORIZATION_WAIT,
+        )
+        .await?;
+        debug!(
+            %product_id,
+            remained_size = authorization.remained_size,
+            remained_transactions = authorization.remained_transactions,
+            "Bulletin authorization visible"
+        );
+        self.require_current_session(session)?;
+        Ok(allowance.secret.to_bytes().to_vec())
+    }
+
+    /// Fund the selected product account on the host's Asset Hub chain.
+    pub async fn allocate_smart_contract_allowance(
+        &self,
+        session: &AuthoritySession,
+        product_id: &str,
+        derivation_index: v01::DerivationIndex,
+        policy: OnExistingAllowancePolicy,
+    ) -> Result<(), AllowanceAllocationError> {
+        use truapi::latest::ChainIdentifier;
+
+        use crate::host_logic::features;
+        use crate::runtime::statement_allowance::{self, ChainClient, find_including_rings, pgas};
+
+        let target = self
+            .keys(session)?
+            .product_keypair(&v01::ProductAccountId {
+                dot_ns_identifier: product_id.to_string(),
+                derivation_index,
+            })?
+            .public
+            .to_bytes();
+
+        let chains = features::supported_chains(self.services.platform.as_ref())
+            .await
+            .map_err(|err| AllowanceAllocationError::SupportedChains(err.reason))?;
+        let asset_hub_genesis = features::genesis_for(&chains, ChainIdentifier::AssetHub)
+            .ok_or(AllowanceAllocationError::ChainNotServed { chain: "Asset Hub" })?;
+        let asset_hub_client = ChainClient::new(
+            statement_allowance::rpc::RpcClient::new(subxt_rpcs::RpcClient::new(
+                self.services
+                    .chain
+                    .rpc_client("PGAS allowance", &asset_hub_genesis)
+                    .await
+                    .map_err(|source| AllowanceAllocationError::ChainRpcClient {
+                        context: "Asset Hub PGAS client",
+                        source,
+                    })?,
+            )),
+            asset_hub_genesis,
+        );
+        let asset_hub = self.services.chain_context.get(&asset_hub_client).await?;
+
+        // Reusing a funded account preserves the person's daily claim slots.
+        if matches!(policy, OnExistingAllowancePolicy::Ignore)
+            && pgas::holds_a_full_claim(asset_hub_client.rpc(), &asset_hub.metadata, &target)
+                .await?
+        {
+            debug!(%product_id, "PGAS allowance already funded; leaving it alone");
+            self.require_current_session(session)?;
+            return Ok(());
+        }
+        let network_suffix =
+            statement_allowance::slot::read_network_suffix(asset_hub_client.rpc()).await?;
+
+        let people_client = self
+            .services
+            .statement_store
+            .chain_client("PGAS allowance ring")
+            .await?;
+        let people_rpc = people_client.rpc();
+        let people = self.services.chain_context.get(&people_client).await?;
+
+        let candidates = self.keys(session)?.reserved_person_collection_candidates();
+        // A PGAS claim uses the strongest available membership.
+        let membership = find_including_rings(people_rpc, &people.metadata, &candidates, u32::MAX)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or(AllowanceAllocationError::MissingPersonhoodMembership { resource: "PGAS" })?;
+
+        self.require_current_session(session)?;
+        let outcome = pgas::claim_pgas(pgas::PgasClaim {
+            asset_hub_rpc: asset_hub_client.rpc(),
+            asset_hub: &asset_hub,
+            people_rpc,
+            people_metadata: &people.metadata,
+            entropy: membership.entropy,
+            network_suffix: &network_suffix,
+            target: &target,
+            ring: &membership.ring,
+        })
+        .await?;
+        debug!(
+            %product_id,
+            day = outcome.day,
+            slot_index = outcome.slot_index,
+            ring_index = outcome.ring_index,
+            block = %outcome.block_hash,
+            "claimed PGAS allowance"
+        );
+        self.require_current_session(session)?;
+        Ok(())
+    }
+}
+
+/// Allowance period clock, using web-time on browsers to avoid SystemTime panics.
+pub fn current_unix_secs() -> Result<u64, AllowanceAllocationError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::time::{SystemTime, UNIX_EPOCH};
+    #[cfg(target_arch = "wasm32")]
+    use web_time::{SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|_| AllowanceAllocationError::SystemClockBeforeUnixEpoch)
+}

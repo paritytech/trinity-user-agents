@@ -2593,18 +2593,53 @@ impl ProductAuthority for PairingHost {
         &self,
         cx: &CallContext,
         operation: &HostOperation,
-        product_id: String,
+        product: &ProductContext,
         request: v01::HostRequestResourceAllocationRequest,
     ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
         let (session, lifecycle_epoch) = self.operation_session(operation)?;
-        let outcomes = self
-            .remote_allocate_resources(cx, &session, product_id.clone(), request)
-            .await?;
-        self.cache_allowance_outcomes(cx, &session, lifecycle_epoch, &product_id, &outcomes)
-            .await?;
-        Ok(v01::HostRequestResourceAllocationResponse {
-            outcomes: outcomes.into_iter().map(Into::into).collect(),
+        let confirmed = super::until_cancelled(cx, async {
+            if crate::platform::has_trusted_remote_permissions(&product.product_id) {
+                return Ok(true);
+            }
+            self.platform
+                .confirm_user_action(UserConfirmationReview::ResourceAllocation(
+                    crate::platform::ResourceAllocationReview {
+                        calling_product_id: product.product_id.clone(),
+                        resources: request.resources.clone(),
+                    },
+                ))
+                .await
         })
+        .await?
+        .map_err(AuthorityError::ConfirmationFailed)?;
+        if !confirmed {
+            return Err(AuthorityError::Unknown {
+                reason: "User rejected resource allocation".to_string(),
+            });
+        }
+        let cx = super::remote_authority_context_with_default(
+            cx,
+            super::RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+        );
+        super::remote_authority_call(&cx, async {
+            self.require_current_operation(operation)?;
+            let outcomes = self
+                .remote_allocate_resources(&cx, &session, product.product_id.clone(), request)
+                .await?;
+            self.cache_allowance_outcomes(
+                &cx,
+                &session,
+                lifecycle_epoch,
+                &product.product_id,
+                &outcomes,
+            )
+            .await?;
+            self.require_current_operation(operation)?;
+            Ok(v01::HostRequestResourceAllocationResponse {
+                outcomes: outcomes.into_iter().map(Into::into).collect(),
+            })
+        })
+        .await
     }
 
     fn session_state(&self) -> Arc<SessionState> {

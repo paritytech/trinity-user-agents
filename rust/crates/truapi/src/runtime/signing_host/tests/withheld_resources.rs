@@ -63,11 +63,21 @@ fn withholding_nothing_leaves_every_resource_granted() {
     futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
         .expect("activation succeeds");
     activation.set_grant_allowances_unchecked(true);
-    let runtime = product_runtime(services, activation);
+    let runtime = product_runtime(services, activation.clone());
 
     assert_eq!(
-        allocate(&runtime, vec![v01::AllocatableResource::AutoSigning]),
-        vec![v01::AllocationOutcome::Allocated],
+        (
+            allocate(&runtime, vec![v01::AllocatableResource::AutoSigning]),
+            futures::executor::block_on(activation.auto_signing_status(
+                &activation.current_session().unwrap(),
+                "myapp.dot",
+                &product_account(0)
+            )),
+        ),
+        (
+            vec![v01::AllocationOutcome::Allocated],
+            Ok(crate::runtime::authority::AutoSigningGrant::Absent)
+        ),
     );
 }
 

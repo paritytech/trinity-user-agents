@@ -4,6 +4,7 @@ use super::*;
 fn invalid_activation_preserves_the_active_wallet_and_its_grants() {
     let platform = Arc::new(StubPlatform {
         sign_raw_confirmed: false,
+        resource_allocation_confirmed: true,
         ..StubPlatform::default()
     });
     let (services, authority) = signing_runtime_with_platform(platform.clone());
@@ -12,10 +13,8 @@ fn invalid_activation_preserves_the_active_wallet_and_its_grants() {
     )
     .expect("initial activation succeeds");
     let session = authority.current_session().expect("active wallet");
-    authority
-        .grant_auto_signing(&authority.current_operation().unwrap(), "myapp.dot")
-        .expect("AutoSigning is granted to the product");
     let runtime = product_runtime(services, authority.clone());
+    auto_signing::grant_auto_signing(&runtime);
 
     let error = futures::executor::block_on(
         authority.activate_local_session_with_identity(vec![0xCD; 17], Some("bob".to_string())),

@@ -1,41 +1,20 @@
-//! Ledger and driver for automatic statement-store allowance renewal.
-//!
-//! The ledger records which accounts this signing host promised to keep
-//! allowed, as derivation recipes where possible so entries stay valid when
-//! the host rotates to a new root entropy. The driver resolves them against
-//! the active session and runs the chain-pure pass in
-//! `statement_allowance::renewal`, either once (`renew_now`) or on a periodic
-//! tick (`start_renewal_loop`).
-
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+//! Wallet-owned allowance renewal ledger and chain operations.
 
 use crate::platform::{CoreStorage, CoreStorageKey, normalize_product_identifier};
 use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode};
 use tracing::{debug, info, warn};
 
-use super::SigningHost;
-use super::sso_responder::current_unix_secs;
-use super::wallet_account_holder::WalletKeys;
-use crate::runtime::RuntimeServices;
+use super::allowance::current_unix_secs;
+use super::{WalletAccountHolder, WalletKeys};
 use crate::runtime::statement_allowance::renewal::{
-    RenewalChainContext, ResolvedRenewalTarget, StatementRenewalReport, next_tick_delay,
-    renew_targets,
+    RenewalChainContext, ResolvedRenewalTarget, StatementRenewalReport, renew_targets,
 };
 use crate::runtime::statement_allowance::{
     self, fetch_chain_state, fetch_metadata, find_including_rings,
 };
 
-/// Fallback tick delay when the system clock is unusable.
-const CLOCK_FAILURE_TICK_DELAY: Duration = Duration::from_secs(3_600);
-
-/// A statement-store account the signing host promised to keep renewed.
-///
-/// Entropy-derived variants are recipes, not raw account ids, so the ledger
-/// survives root-entropy rotation (the CLI rotates auto-managed accounts on
-/// slot exhaustion).
+/// A statement account or derivation recipe the wallet keeps renewed.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum StatementRenewalTarget {
@@ -55,16 +34,7 @@ pub enum StatementRenewalTarget {
     },
 }
 
-/// One persisted ledger entry, which is also what a host reads back.
-///
-/// A derivation recipe resolves under whatever root entropy is active, so it
-/// carries no owner and keeps working across a rotation. A raw account id does
-/// not re-derive, so it records the root public key that promised it and is
-/// ignored under any other identity: without that, a later account would spend
-/// its own slot-table capacity keeping a previous account's peer allowed.
-///
-/// Reading it back does not resolve it: resolution needs root entropy, and a
-/// host inspecting its slots may hold none.
+/// Renewal recipes follow the active wallet; fixed accounts belong to their recorded owner.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct TrackedStatementRenewalTarget {
@@ -76,11 +46,7 @@ pub struct TrackedStatementRenewalTarget {
 }
 
 impl StatementRenewalTarget {
-    /// This target with its product identifier in canonical form.
-    ///
-    /// The renewal account is derived from `product_id`, and a product
-    /// connection derives its own from the normalized form, so an unnormalized
-    /// id renews an account no product uses while the real one lapses.
+    /// Match the product identifier used by account derivation.
     fn normalized(self) -> Result<Self, String> {
         match self {
             Self::ProductStatementAllowance { product_id } => {
@@ -113,7 +79,7 @@ impl TrackedStatementRenewalTarget {
     }
 }
 
-/// Renewal coordination state owned by [`SigningHost`].
+/// Shared wallet coordination for on-demand allowance issuance and renewal.
 #[derive(Default)]
 pub struct RenewalState {
     /// Serializes slot registrations between the renewal pass and on-demand
@@ -122,16 +88,12 @@ pub struct RenewalState {
     /// Serializes read-modify-write cycles on the ledger so a concurrent
     /// allocation cannot drop another's entry.
     ledger_lock: Mutex<()>,
-    loop_started: AtomicBool,
-    /// The most recent pass, so a host that drives the in-process loop can read
-    /// what it achieved. The loop computes a report on every tick and has no
-    /// caller to hand it to, and exhaustion is the outcome a host most needs to
-    /// act on. A blocking lock rather than an async one: every use is a clone or
-    /// a store with no await in between.
+    /// Retain loop results until the host reads them.
     last_report: std::sync::Mutex<Option<StatementRenewalReport>>,
 }
 
 impl RenewalState {
+    /// Serialize registration scans with competing issuers.
     pub fn registration_lock(&self) -> &Mutex<()> {
         &self.registration_lock
     }
@@ -154,12 +116,7 @@ impl RenewalState {
     }
 }
 
-/// Read the renewal ledger; an absent or undecodable slot is an empty ledger.
-///
-/// A ledger this build cannot decode is treated as empty rather than failing
-/// the pass: the entries are recipes and raw account ids that
-/// [`track_targets`] rebuilds on the next allocation or pairing, so refusing to
-/// renew anything is strictly worse than starting over.
+/// Unreadable entries are discarded; later allocations rebuild the ledger.
 async fn read_entries(
     storage: &(impl CoreStorage + ?Sized),
 ) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
@@ -203,10 +160,7 @@ async fn track_targets(
     write_entries(storage, &entries).await
 }
 
-/// Read the ledger without resolving anything.
-///
-/// Takes the ledger lock so a listing taken while a track or a prune is running
-/// reports the settled ledger rather than the state it is replacing.
+/// Read a settled ledger while competing writes hold the same lock.
 async fn list_entries(
     storage: &(impl CoreStorage + ?Sized),
     ledger_lock: &Mutex<()>,
@@ -301,72 +255,53 @@ fn resolve_target(
     }
 }
 
-/// Record `targets` in the ledger under the active identity.
-pub async fn track(
-    signing_host: &SigningHost,
-    targets: Vec<StatementRenewalTarget>,
-) -> Result<(), String> {
-    let targets = targets
-        .into_iter()
-        .map(StatementRenewalTarget::normalized)
-        .collect::<Result<Vec<_>, _>>()?;
-    let (_, keys) = signing_host
-        .wallet
-        .current_keys()
-        .map_err(|err| err.to_string())?;
-    track_targets(
-        signing_host.platform.as_ref(),
-        signing_host.renewal.ledger_lock(),
-        keys.root_public_key().map_err(|err| err.to_string())?,
-        targets,
-    )
-    .await
-}
+impl WalletAccountHolder {
+    /// Record `targets` in the ledger under the active identity.
+    pub async fn track_statement_renewal_targets(
+        &self,
+        targets: Vec<StatementRenewalTarget>,
+    ) -> Result<(), String> {
+        let targets = targets
+            .into_iter()
+            .map(StatementRenewalTarget::normalized)
+            .collect::<Result<Vec<_>, _>>()?;
+        let (_, keys) = self.current_keys().map_err(|err| err.to_string())?;
+        track_targets(
+            self.services.platform.as_ref(),
+            self.renewal.ledger_lock(),
+            keys.root_public_key().map_err(|err| err.to_string())?,
+            targets,
+        )
+        .await
+    }
 
-/// Every entry the ledger holds, in the order it was tracked.
-///
-/// Reads storage alone. A host that has not unlocked an identity still gets
-/// the list, which is the case a scheduled task runs in: it wakes, asks what
-/// its finite slots are spent on, and decides whether to renew at all.
-pub async fn list(
-    signing_host: &SigningHost,
-) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
-    list_entries(
-        signing_host.platform.as_ref(),
-        signing_host.renewal.ledger_lock(),
-    )
-    .await
-}
+    /// List tracked entries without requiring wallet unlock.
+    pub async fn statement_renewal_targets(
+        &self,
+    ) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
+        list_entries(self.services.platform.as_ref(), self.renewal.ledger_lock()).await
+    }
 
-/// Root public key the active identity records its fixed entries under.
-///
-/// Pairs with [`list`], which reports each entry's owner as stored: comparing
-/// the two is how a host tells the entries it will actually renew from the ones
-/// a pass will prune.
-pub fn active_owner_key(signing_host: &SigningHost) -> Result<[u8; 32], String> {
-    let (_, keys) = signing_host
-        .wallet
-        .current_keys()
-        .map_err(|err| err.to_string())?;
-    keys.root_public_key().map_err(|err| err.to_string())
-}
+    /// Identify which fixed ledger entries belong to the active wallet.
+    pub fn statement_renewal_owner_key(&self) -> Result<[u8; 32], String> {
+        let (_, keys) = self.current_keys().map_err(|err| err.to_string())?;
+        keys.root_public_key().map_err(|err| err.to_string())
+    }
 
-/// Stop renewing one fixed statement account for the active identity.
-pub async fn untrack_account_for_signing_host(
-    signing_host: &SigningHost,
-    account_id: &[u8; 32],
-) -> Result<bool, String> {
-    let (_, keys) = signing_host
-        .wallet
-        .current_keys()
-        .map_err(|err| err.to_string())?;
-    untrack_account(
-        signing_host.platform.as_ref(),
-        signing_host.renewal.ledger_lock(),
-        keys.root_public_key().map_err(|err| err.to_string())?,
-        account_id,
-    )
-    .await
+    /// Stop renewing one fixed statement account for the active identity.
+    pub async fn untrack_statement_renewal_account(
+        &self,
+        account_id: &[u8; 32],
+    ) -> Result<bool, String> {
+        let (_, keys) = self.current_keys().map_err(|err| err.to_string())?;
+        untrack_account(
+            self.services.platform.as_ref(),
+            self.renewal.ledger_lock(),
+            keys.root_public_key().map_err(|err| err.to_string())?,
+            account_id,
+        )
+        .await
+    }
 }
 
 /// Skip unusable entries so they cannot prevent renewal of other targets.
@@ -428,140 +363,83 @@ async fn owned_targets(
     ))
 }
 
-/// One renewal pass: resolve the ledger against the active session and renew
-/// every target for the current period.
-pub async fn renew_now(
-    services: &Arc<RuntimeServices>,
-    signing_host: &SigningHost,
-) -> Result<StatementRenewalReport, String> {
-    let (session, keys) = signing_host
-        .wallet
-        .current_keys()
-        .map_err(|err| err.to_string())?;
-    let period = statement_allowance::slot::current_period(
-        current_unix_secs().map_err(|err| err.to_string())?,
-    );
-    let (targets, pruned) = owned_targets(
-        signing_host.platform.as_ref(),
-        signing_host.renewal.ledger_lock(),
-        keys.root_public_key().map_err(|err| err.to_string())?,
-    )
-    .await?;
-    signing_host
-        .wallet
-        .require_current_session(&session)
-        .map_err(|err| err.to_string())?;
-    let resolved = resolve_targets(&keys, &targets);
-    if resolved.is_empty() {
-        return Ok(StatementRenewalReport {
-            period,
-            outcomes: Vec::new(),
-            pruned,
-            slots_exhausted: false,
-        });
-    }
+impl WalletAccountHolder {
+    /// One renewal pass: resolve the ledger against the active session and renew
+    /// every target for the current period.
+    pub async fn renew_statement_allowances(&self) -> Result<StatementRenewalReport, String> {
+        let (session, keys) = self.current_keys().map_err(|err| err.to_string())?;
+        let period = statement_allowance::slot::current_period(
+            current_unix_secs().map_err(|err| err.to_string())?,
+        );
+        let (targets, pruned) = owned_targets(
+            self.services.platform.as_ref(),
+            self.renewal.ledger_lock(),
+            keys.root_public_key().map_err(|err| err.to_string())?,
+        )
+        .await?;
+        self.require_current_session(&session)
+            .map_err(|err| err.to_string())?;
+        let resolved = resolve_targets(&keys, &targets);
+        if resolved.is_empty() {
+            return Ok(StatementRenewalReport {
+                period,
+                outcomes: Vec::new(),
+                pruned,
+                slots_exhausted: false,
+            });
+        }
 
-    let candidates = keys.reserved_person_collection_candidates();
-    let rpc = statement_allowance::rpc::RpcClient::new(
-        services
-            .statement_store
-            .client("statement-allowance renewal")
+        let candidates = keys.reserved_person_collection_candidates();
+        let rpc = statement_allowance::rpc::RpcClient::new(
+            self.services
+                .statement_store
+                .client("statement-allowance renewal")
+                .await
+                .map_err(|err| err.to_string())?,
+        );
+        let metadata = fetch_metadata(&rpc).await.map_err(|err| err.to_string())?;
+        let chain_state = fetch_chain_state(&rpc)
             .await
-            .map_err(|err| err.to_string())?,
-    );
-    let metadata = fetch_metadata(&rpc).await.map_err(|err| err.to_string())?;
-    let chain_state = fetch_chain_state(&rpc)
-        .await
-        .map_err(|err| err.to_string())?;
-    let network_suffix = statement_allowance::slot::read_network_suffix(&rpc)
-        .await
-        .map_err(|err| err.to_string())?;
-    // Every ring back to index 0, because a membership that stopped being
-    // re-included still proves against the ring that holds it.
-    let memberships = find_including_rings(&rpc, &metadata, &candidates, u32::MAX)
-        .await
-        .map_err(|err| err.to_string())?;
-    if memberships.is_empty() {
-        return Err(
+            .map_err(|err| err.to_string())?;
+        let network_suffix = statement_allowance::slot::read_network_suffix(&rpc)
+            .await
+            .map_err(|err| err.to_string())?;
+        // Every ring back to index 0, because a membership that stopped being
+        // re-included still proves against the ring that holds it.
+        let memberships = find_including_rings(&rpc, &metadata, &candidates, u32::MAX)
+            .await
+            .map_err(|err| err.to_string())?;
+        if memberships.is_empty() {
+            return Err(
             "signing account is not a member of any personhood ring; cannot renew statement-store allowances"
                 .to_string(),
         );
-    }
-    let context = RenewalChainContext {
-        rpc: &rpc,
-        metadata: &metadata,
-        chain_state: &chain_state,
-        network_suffix: &network_suffix,
-        candidates: &candidates,
-        memberships: &memberships,
-    };
-    signing_host
-        .wallet
-        .require_current_session(&session)
-        .map_err(|err| err.to_string())?;
-    let mut report = renew_targets(
-        &context,
-        period,
-        &resolved,
-        signing_host.renewal.registration_lock(),
-    )
-    .await;
-    signing_host
-        .wallet
-        .require_current_session(&session)
-        .map_err(|err| err.to_string())?;
-    report.pruned = pruned;
-    Ok(report)
-}
-
-/// Spawn the periodic renewal loop; repeated calls are no-ops. The loop holds
-/// only weak references, so it exits when the owning runtime is dropped.
-pub fn start_renewal_loop(services: &Arc<RuntimeServices>, signing_host: &Arc<SigningHost>) {
-    if signing_host
-        .renewal
-        .loop_started
-        .swap(true, Ordering::SeqCst)
-    {
-        return;
-    }
-    let weak_services = Arc::downgrade(services);
-    let weak_host = Arc::downgrade(signing_host);
-    let spawner = services.spawner.clone();
-    spawner(Box::pin(async move {
-        loop {
-            {
-                let (Some(services), Some(signing_host)) =
-                    (weak_services.upgrade(), weak_host.upgrade())
-                else {
-                    return;
-                };
-                run_tick(&services, &signing_host).await;
-            }
-            let delay = match current_unix_secs() {
-                Ok(now) => next_tick_delay(now),
-                Err(_) => CLOCK_FAILURE_TICK_DELAY,
-            };
-            futures_timer::Delay::new(delay).await;
         }
-    }));
-}
-
-async fn run_tick(services: &Arc<RuntimeServices>, signing_host: &SigningHost) {
-    if signing_host.wallet.current_session().is_none() {
-        debug!("skipping statement-store renewal tick; no active session");
-        return;
+        let context = RenewalChainContext {
+            rpc: &rpc,
+            metadata: &metadata,
+            chain_state: &chain_state,
+            network_suffix: &network_suffix,
+            candidates: &candidates,
+            memberships: &memberships,
+        };
+        self.require_current_session(&session)
+            .map_err(|err| err.to_string())?;
+        let mut report = renew_targets(
+            &context,
+            period,
+            &resolved,
+            self.renewal.registration_lock(),
+        )
+        .await;
+        self.require_current_session(&session)
+            .map_err(|err| err.to_string())?;
+        report.pruned = pruned;
+        Ok(report)
     }
-    absorb_tick(
-        &signing_host.renewal,
-        renew_now(services, signing_host).await,
-    );
 }
 
-/// Record and log what one tick achieved.
-///
-/// Split out from [`run_tick`] so the recording is reachable without a runtime: a
-/// loop that logged but forgot to record would leave a host unable to see
-/// exhaustion, and that is exactly the wiring worth a test.
+/// Preserve the last completed pass when a later tick fails.
 fn absorb_tick(state: &RenewalState, result: Result<StatementRenewalReport, String>) {
     match result {
         Ok(report) => {
@@ -582,6 +460,22 @@ fn absorb_tick(state: &RenewalState, result: Result<StatementRenewalReport, Stri
         // A tick that could not run leaves the previous pass readable rather than
         // replacing it with nothing: "the last thing we know" beats "no idea".
         Err(reason) => warn!(%reason, "statement-store renewal tick failed"),
+    }
+}
+
+impl WalletAccountHolder {
+    /// Renew the active wallet and record the periodic pass result.
+    pub async fn renewal_tick(&self) {
+        if self.current_session().is_none() {
+            debug!("skipping statement-store renewal tick; no active session");
+            return;
+        }
+        absorb_tick(&self.renewal, self.renew_statement_allowances().await);
+    }
+
+    /// Most recent result from the host's periodic renewal loop.
+    pub fn last_statement_renewal_report(&self) -> Option<StatementRenewalReport> {
+        self.renewal.last_report()
     }
 }
 
