@@ -34,7 +34,7 @@ jobs:
     name: Check and Build Release
     runs-on: ubuntu-latest
     # Only run if PR is from a release-* branch (and not closed) OR triggered manually
-    # Held: this configuration ships from host-rust-core.
+    # Held: this configuration ships from trinity-user-agents.
     # The condition this replaces:
     #   if: (startsWith(github.head_ref, 'release-') && github.event.action != 'closed') || github.event_name == 'workflow_dispatch'
     if: false

@@ -246,9 +246,9 @@ impl SigningHostSsoService {
                     on_existing,
                 )
                 .await
-                .map(|slot_account_key| {
+                .map(|allocation| {
                     SsoAllocationOutcome::Allocated(SsoAllocatedResource::StatementStoreAllowance {
-                        slot_account_key,
+                        slot_account_key: allocation.secret,
                     })
                 })
             }

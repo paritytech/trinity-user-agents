@@ -18,6 +18,12 @@ description: >-
 # same thing share one `shared-key`, and all but the one that owns it pass
 # `save: "false"`, because rust-cache saves once per key and the first saver's
 # target directory is what every other job would restore.
+#
+# Only one job on main saves under each `shared-key` or job id. The job-based
+# key ignores the workflow name, so two workflows' jobs of the same id share
+# it, and prune-caches.yml keeps only the newest entry of each key, so two
+# savers with different environments would delete each other's entry on every
+# run.
 
 inputs:
   shared-key:

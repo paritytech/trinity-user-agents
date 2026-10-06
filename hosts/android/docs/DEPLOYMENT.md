@@ -385,7 +385,6 @@ instead. Change them there if your fork needs a different cut.
 | `FAQ_ENABLED` | on | on | on | off | FAQ entries in the Peer and tattoo bots. |
 | `ALLOW_SHORT_EVIDENCE_VIDEO` | on | off | off | off | Accept short evidence videos in Proof-of-Ink. |
 | `PEER_BOT_BY_DEFAULT`, `DIM1_BOT_BY_DEFAULT`, `SAMPLE_BOT` | on | off | off | off | Bot chats pre-created for a new account. |
-| `DIM2_BOT_BY_DEFAULT` | on | on | off | off | Same, for the DIM2 bot. |
 
 ### 6.1 `gp` edition (Google Play)
 

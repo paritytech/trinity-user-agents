@@ -35,7 +35,7 @@ same-account reconnect without the external signer-bot service.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
 truapi-host signing-host
 ```
 
@@ -91,7 +91,7 @@ clears the other: installing removes a `cargo install` copy, and
 install without replacing it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash -s -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash -s -- --uninstall
 ```
 
 `make e2e-cli-update` exercises the whole chain locally: it packages the binary,

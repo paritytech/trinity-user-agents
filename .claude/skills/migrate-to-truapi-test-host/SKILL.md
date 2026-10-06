@@ -70,10 +70,13 @@ an RFC-0009 login flow, and the fixture option only takes `"auto" | "manual"`,
 because this is a signing host and that flow belongs to a pairing host.
 
 The statement-store controls and `injectChatAction` are served, so they are not
-in this grep. `injectStatement` takes a SCALE-encoded signed statement rather
-than a structured one, and `injectChatAction` takes the core's
-`HostChatActionSubscribeItem` rather than `{roomId, peer, payload}`, so those
-call sites change shape even though they keep working.
+in this grep. `injectStatement` takes `{topics, data}` the way the old package
+spells it, or the SCALE wire bytes, and answers the `StatementEntry` it
+retained; `getSubmittedStatements` and `getStatements` answer entries too, so a
+suite reading `0x` hex off them reads `entry.data` instead.
+`injectChatAction` takes the core's `HostChatActionSubscribeItem` rather than
+`{roomId, peer, payload}`, so that call site changes shape even though it keeps
+working.
 
 ## 1. Swap the import
 
@@ -88,6 +91,16 @@ importing `PASEO_ASSET_HUB`, `SigningLogEntry`, `PermissionLogEntry`,
 import path.
 
 `e2e/helpers.ts` usually has one `import type { TestHost }` to change too.
+`HexString` is on that subpath as well, for a file annotating a `genesisHash`.
+
+Swap the dependency, and add `esbuild`: the package takes it as a peer, so a
+suite without it fails to resolve at import rather than at run.
+
+```diff
+-"@parity/host-api-test-sdk": "catalog:",
++"@parity/truapi-host": "catalog:",
++"esbuild": "^0.25.0",
+```
 
 ## 2. Delete the server plumbing
 
@@ -129,9 +142,15 @@ signing fails but reads pass, set this before looking anywhere else.
 ### Allowances are granted without being performed, by default
 
 `allowances` defaults to `"granted"`: every allocation is answered as allocated
-without being carried out, and the statement store is served in-page for the
-People chain. A suite that allocates allowances, signs with the key it gets back
-and submits statements therefore passes with no on-chain identity.
+without being carried out, and the statement store is served in-page. A suite
+that allocates allowances, signs with the key it gets back and submits
+statements therefore passes with no on-chain identity.
+
+The store is served on the People chain when the suite declares one, and on the
+single declared chain when it does not -- that proxy takes every request, so it
+carries the statement traffic too. Declaring several chains with no People among
+them is refused rather than served: there is no request the store could attach
+to, and answering statement reads on a hub would answer what a hub refuses.
 
 What that buys is narrower than it looks. Nothing is registered anywhere, so a
 green run says the product handles a grant, not that a host would have given
@@ -195,8 +214,10 @@ implementation. Read through the control surface instead:
 +const raw = await testHost.findProductStorage("mykey");
 ```
 
-`findProductStorage` matches on key suffix, so the caller does not need to know
-the namespacing. It returns `Uint8Array | undefined`.
+`findProductStorage` reads the product's own key out of the namespaced one, so
+the caller does not need to know the namespacing and a prefixed store stays
+distinct from an unprefixed one. It returns `Uint8Array | undefined`;
+`getProductStorageValue` returns the same value decoded as UTF-8.
 
 **A pinned product account.** `productAccounts: { "demo.dot/0": "bob" }` is
 rejected at construction, and cannot be supported: TrUAPI *derives* a product
@@ -224,9 +245,91 @@ activates from 32 bytes of entropy, not a derivation path. Never hard-code a
 well-known address; read it back.
 
 **A permission revoked mid-run.** The core persists a decided authorization per
-(product, permission) and answers from its own storage, so a second request
-never reaches the host and cannot re-prompt. No test host can make that pass.
-Skip it with the reason in the skip.
+(product, permission) and answers from its own storage, so a product asking
+twice is answered from that record and the host is not called again. Setting the
+answer on the mock is the suite talking to the host, not the product asking
+again: it retracts that record, so the next request is put to the host afresh.
+
+```ts
+await client.permissions.requestDevicePermission("Camera"); // asks the host
+await client.permissions.requestDevicePermission("Camera"); // answered from the record
+
+testHost.revokePermission("Camera");
+await client.permissions.requestDevicePermission("Camera"); // asks again, denied
+```
+
+A spec that revokes and then waits for a host-side entry works. One that expects
+a *product* asking twice to re-prompt does not, and is asserting the old
+package's behaviour.
+
+### A suite that submits extrinsics must fund the product account first
+
+A product account is derived, so it starts with no balance and nothing has ever
+funded it. A suite that submits a real extrinsic fails with
+`Invalid.Payment` -- before inclusion, with the rest of the protocol path
+working, which reads like a host bug and is not one. The old package sidestepped
+this by pinning the product to an already-funded dev key.
+
+Work the address out before the run, not from the failures. This needs no host
+and no browser:
+
+```ts
+import { productAccountAddress } from "@parity/truapi-host/testing/playwright";
+
+const address = await productAccountAddress({
+  account: "bob",            // the dev account the session activates from
+  productId: "tx-demo.dot",  // index defaults to 0
+});
+```
+
+Fund that address once, from a faucet or a transfer. Derivation is
+deterministic, so it holds for every later run. Re-fund only when the suite
+changes its `accounts` or its product id: both feed the derivation, so either
+change is a different account.
+
+That funded address is now the suite's to keep alive, and this is the part worth
+writing down. `@parity/host-api-test-sdk` pinned the product to a dev account
+such as Bob, and a testnet funds Bob as a matter of course, so no suite ever had
+to think about a balance. A derived product account is specific to this suite
+and nobody tops it up. It drains as the suite spends, and a chain reset empties
+it outright -- and either way the next run fails as `Invalid.Payment` before
+inclusion, the same opaque symptom as never having funded it.
+
+Two things make that cheap to live with. Record the derived address somewhere a
+person will find it, next to the suite rather than in a run log, so topping it
+up does not start with re-deriving it. And check the balance in the run's setup
+rather than letting the first extrinsic discover it: a setup that fails with the
+address and the balance it found turns a protocol-looking failure into an
+errand. A setup that funds the account itself removes the chore entirely, which
+is worth doing once a suite runs anywhere unattended.
+
+The address is encoded at the prefix the core mandates, which is **not**
+necessarily the one the product displays -- a product rendering at another
+prefix shows a different string for the same account. Pass this to a faucet or a
+transfer as it stands, and compare against a product's own rendering by decoding
+both.
+
+Inside a running suite the same address is on the fixture, where it also tracks
+`switchAccount`:
+
+```ts
+const address = await testHost.getProductAccountAddress();
+```
+
+### Withholding one resource while the rest stay granted
+
+With allocation granted by default, a product's refusal path is unreachable.
+Name the resources the host should refuse:
+
+```ts
+createTestHostFixture({
+  // ...
+  behaviors: { resourceAllocation: { AutoSigning: false } },
+});
+```
+
+Unlisted resources stay granted. This is a boot option because a product asks
+for its resources on connect, so a later call would land after that.
 
 ## 4. What refuses, and why
 

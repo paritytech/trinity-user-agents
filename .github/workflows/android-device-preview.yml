@@ -1,13 +1,8 @@
-# An installable APK for a pull request.
+# An installable APK, produced on demand rather than on every commit.
 #
-# CI calls this for every change that touches the Android host, so a reviewer
-# has something to install without asking for it. The label still starts it
-# directly, for a branch CI's gate does not consider Android.
-#
-# Its own workflow rather than a job in ci.yml, because the label needs the
+# Its own workflow rather than a job in ci.yml, because starting it needs the
 # `labeled` event and adding that to ci.yml would rerun every gate each time
-# any label changed. CI reaches it through workflow_call instead, which leaves
-# the path gate in one place rather than repeating it here.
+# any label changed.
 #
 # The artifact is attached to the run and nothing else. Unlike the iOS device
 # preview there is no provisioning to do: an Android debug build installs on
@@ -26,30 +21,6 @@ on:
     # so the APK follows the branch rather than pinning to whichever commit was
     # the head when someone asked.
     types: [labeled, synchronize]
-  workflow_call:
-    inputs:
-      always:
-        description: "Build without requiring the label. CI sets this."
-        required: false
-        type: boolean
-        default: false
-    secrets:
-      CI_GITHUB_KEYSTORE_KEY_FILE:
-        required: true
-      CI_KEYSTORE_KEY_ALIAS:
-        required: true
-      CI_KEYSTORE_KEY_PASS:
-        required: true
-      CI_KEYSTORE_PASS:
-        required: true
-      GOOGLE_SERVICES_JSON_BASE64:
-        required: true
-      FIRESTORE_DATABASE_ID:
-        required: true
-      GOOGLE_OAUTH_ID:
-        required: true
-      GOOGLE_PROJECT_ID:
-        required: true
 
 permissions:
   contents: read
@@ -65,16 +36,14 @@ jobs:
     # labeler.yml, start a second run for the same commit that cancels the one
     # already building.
     if: >-
-      inputs.always
-      || (github.event.action == 'labeled'
+      (github.event.action == 'labeled'
        && github.event.label.name == 'android-device-build')
       || (github.event.action == 'synchronize'
           && contains(github.event.pull_request.labels.*.name, 'android-device-build'))
     # On the job rather than the workflow. Adding any label starts a run of this
     # workflow, and a workflow-level group would let that run cancel a build in
     # progress before its own job is skipped. A skipped job never joins the
-    # group. Keyed on the pull request, so CI's call and a label on the same
-    # request do not build the same commit twice.
+    # group.
     concurrency:
       group: android-device-preview-${{ github.event.pull_request.number }}
       cancel-in-progress: true

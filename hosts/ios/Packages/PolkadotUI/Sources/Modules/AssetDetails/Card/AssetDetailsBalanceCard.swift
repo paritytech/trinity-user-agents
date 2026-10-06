@@ -31,6 +31,13 @@ public struct AssetDetailsBalanceCard: View {
             )
     }
 
+    /// The total, which sits at the foot of the card in both of its states.
+    private func total(_ balance: String) -> some View {
+        DSAmount(amount: balance, symbol: viewModel.symbol, typography: .headlineMedium)
+            .shimmering(active: isUpdating)
+            .accessibilityId(AccessibilityID.Wallet.totalBalance)
+    }
+
     private var content: some View {
         ZStack(alignment: .leading) {
             Image(.cashBg)
@@ -55,15 +62,12 @@ public struct AssetDetailsBalanceCard: View {
                             .frame(height: Constants.logoHeight)
                     } else {
                         Image(.iconCashLogo)
-                        Text(viewModel.symbol ?? String(localized: .walletCardTitle))
-                            .textStyle(.title18SemiBold())
                     }
 
                     Spacer()
 
                     if !isExpanded, let balance = viewModel.balance {
-                        Text(balance)
-                            .typography(.titleLarge)
+                        DSAmount(amount: balance, symbol: viewModel.symbol, typography: .titleLarge)
                             .foregroundStyle(Color.fgStaticWhite)
                             .transition(.opacity)
                             .accessibilityId(AccessibilityID.Wallet.cashCardBalance)
@@ -96,17 +100,11 @@ public struct AssetDetailsBalanceCard: View {
                             Text(.walletCardTotalBalance)
                                 .typography(.bodyMedium)
                                 .foregroundStyle(Color.fgSecondary)
-                            Text(balance)
-                                .typography(.headlineMedium)
-                                .shimmering(active: isUpdating)
-                                .accessibilityId(AccessibilityID.Wallet.totalBalance)
+                            total(balance)
                         }
                     }
                 } else if let balance = viewModel.balance {
-                    Text(balance)
-                        .typography(.headlineMedium)
-                        .shimmering(active: isUpdating)
-                        .accessibilityId(AccessibilityID.Wallet.totalBalance)
+                    total(balance)
                 }
             }
             .foregroundStyle(Color.white)
@@ -144,7 +142,7 @@ private extension AssetDetailsBalanceCard {
     ZStack {
         Color.gray
         AssetDetailsBalanceCard(
-            viewModel: AssetDetailsBalanceCard.ViewModel(balance: "123", readyBalance: nil),
+            viewModel: AssetDetailsBalanceCard.ViewModel(balance: "$123", readyBalance: nil, symbol: "CASH"),
             isUpdating: true
         )
     }
@@ -154,7 +152,7 @@ private extension AssetDetailsBalanceCard {
     ZStack {
         Color.gray
         AssetDetailsBalanceCard(
-            viewModel: AssetDetailsBalanceCard.ViewModel(balance: "456", readyBalance: "100"),
+            viewModel: AssetDetailsBalanceCard.ViewModel(balance: "$456", readyBalance: "100", symbol: "CASH"),
             isUpdating: false,
             isExpanded: true
         )

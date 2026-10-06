@@ -68,7 +68,7 @@ overwrite the previous release's explorer snapshot.
 Commit the resulting diff and open a PR using the **release** template:
 
 ```
-https://github.com/paritytech/host-rust-core/compare/main...<your-branch>?template=release.md
+https://github.com/paritytech/trinity-user-agents/compare/main...<your-branch>?template=release.md
 ```
 
 The PR title must start with `release:`. Convention:
@@ -171,7 +171,7 @@ targets from the git checkout with no way to fetch them from an asset, so the
 tag is what a consumer can actually resolve. Apps therefore pin the semver tag:
 
 ```swift
-.package(url: "https://github.com/paritytech/host-rust-core", exact: "0.12.0")
+.package(url: "https://github.com/paritytech/trinity-user-agents", exact: "0.12.0")
 ```
 
 `ios/truapi-host/scripts/tag-release.sh` builds that commit, reading the
@@ -237,7 +237,7 @@ unit-tested under `npm run test:scripts`;
 calls. Authentication is the `truapi-release-notifications` GitHub App, owned by
 `paritytech` and installed on the consumer repositories, which is why the issues
 are opened by an app rather than by a person and why there is no token to rotate.
-It is deliberately not installed on `paritytech/truapi`, which holds only the
+It is deliberately not installed on `paritytech/trinity-user-agents`, which holds only the
 app's id and private key, as `CONSUMER_APP_ID` and `CONSUMER_APP_KEY`, and mints
 an installation token per run.
 

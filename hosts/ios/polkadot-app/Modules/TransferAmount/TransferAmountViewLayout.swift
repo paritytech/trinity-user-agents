@@ -30,19 +30,28 @@ final class TransferAmountViewLayout: UIView, AdaptiveDesignable {
 
     let balanceView = BalanceView()
 
-    let amountInputView: AmountInputView = .create {
-        $0.symbolImage = .cashLogo
-    }
+    let amountInputView = AmountInputView()
 
-    let cashLabel: PolkadotUI.Label = .create {
-        $0.typography = .smallCapsHeadlineMedium
-        $0.textColor = .fgSecondary
-    }
+    private var assetSymbol: String?
+    private var availableBalance: String?
 
     func apply(assetBrand: PaymentAssetBrand) {
-        cashLabel.text = assetBrand.symbol
-        amountInputView.symbolImageRenderingMode = assetBrand.squareIcon == nil ? .alwaysTemplate : .alwaysOriginal
-        amountInputView.symbolImage = assetBrand.squareIcon ?? .cashLogo
+        assetSymbol = assetBrand.symbol
+        amountInputView.bind(unit: assetBrand.symbol)
+        bindAvailableBalance()
+    }
+
+    func bind(availableBalance: String) {
+        self.availableBalance = availableBalance
+        bindAvailableBalance()
+    }
+
+    private func bindAvailableBalance() {
+        guard let availableBalance else {
+            return
+        }
+
+        balanceView.bind(amount: availableBalance, unit: assetSymbol)
     }
 
     var heightScaleMultiplier: CGFloat {
@@ -125,14 +134,8 @@ final class TransferAmountViewLayout: UIView, AdaptiveDesignable {
         addSubview(amountInputView)
         amountInputView.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview().inset(24)
-            make.top.equalTo(balanceView.snp.bottom).offset(DSSpacings.tiny)
+            make.top.equalTo(balanceView.snp.bottom).offset(DSSpacings.small)
             make.height.equalTo(80)
-        }
-
-        addSubview(cashLabel)
-        cashLabel.snp.makeConstraints { make in
-            make.centerX.equalToSuperview()
-            make.top.equalTo(amountInputView.snp.bottom).offset(DSSpacings.tiny)
         }
 
         let bottomView = UIView.vStack(spacing: 12 * heightScaleMultiplier, [feeView, confirmView])
@@ -160,7 +163,7 @@ final class TransferAmountViewLayout: UIView, AdaptiveDesignable {
         addLayoutGuide(amountGroupGuide)
         amountGroupGuide.snp.makeConstraints { make in
             make.top.equalTo(balanceView.snp.top)
-            make.bottom.equalTo(cashLabel.snp.bottom)
+            make.bottom.equalTo(amountInputView.snp.bottom)
             make.leading.trailing.equalToSuperview()
             make.centerY.equalTo(contentGuide.snp.centerY)
             make.top.greaterThanOrEqualTo(contentGuide.snp.top).offset(DSSpacings.small)
@@ -169,7 +172,7 @@ final class TransferAmountViewLayout: UIView, AdaptiveDesignable {
         issueLabel.isHidden = true
         addSubview(issueLabel)
         issueLabel.snp.makeConstraints { make in
-            make.top.equalTo(cashLabel.snp.bottom).offset(DSSpacings.medium)
+            make.top.equalTo(amountInputView.snp.bottom).offset(DSSpacings.small)
             make.centerX.equalToSuperview()
             make.leading.greaterThanOrEqualToSuperview().offset(UIConstants.horizontalInsetWide)
         }

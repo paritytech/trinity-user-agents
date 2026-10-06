@@ -40,6 +40,12 @@ export interface HostPageConfig {
    */
   allowances?: "granted" | "chain";
   /**
+   * Resource tags answered as refused, whatever `allowances` would otherwise
+   * say. Withholding one while the rest stay granted is what makes a product's
+   * refusal path reachable.
+   */
+  withheldResources?: string[];
+  /**
    * Core log level (`off`/`error`/`warn`/`info`/`debug`/`trace`). Raising it
    * is what turns a bare failure outcome into the reason behind it: the core
    * logs why a call failed before mapping it to a protocol answer.
@@ -74,6 +80,9 @@ export function hostPageUrl(base: string, config: HostPageConfig): string {
   if (config.loginBehavior) url.searchParams.set("login", config.loginBehavior);
   if (config.topology) url.searchParams.set("topology", config.topology);
   if (config.allowances) url.searchParams.set("allowances", config.allowances);
+  if (config.withheldResources?.length) {
+    url.searchParams.set("withheld", config.withheldResources.join(","));
+  }
   if (config.logLevel) url.searchParams.set("logLevel", config.logLevel);
   return url.toString();
 }

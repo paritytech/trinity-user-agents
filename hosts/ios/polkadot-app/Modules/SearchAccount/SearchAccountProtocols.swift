@@ -8,8 +8,7 @@ protocol SearchAccountViewProtocol: ControllerBackedProtocol {
     var viewModel: SearchAccountViewModel { get }
     func didReceive(_ viewModel: SearchAccountViewModel)
     func applyData(_ viewModel: SearchAccountViewModel)
-    func didStartLoading()
-    func didStopLoading()
+    func didReceive(status: SearchAccountViewModel.Status)
 }
 
 @MainActor

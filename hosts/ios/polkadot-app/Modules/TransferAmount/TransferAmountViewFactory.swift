@@ -125,7 +125,7 @@ enum TransferAmountViewFactory {
         )
 
         let inputStrategy = AmountInputTokenStrategy(
-            chainAsset: displayInfo.withoutSymbol,
+            chainAsset: displayInfo.withFiatSymbol,
             balanceViewModelFactory: balanceViewModelFactory
         )
 

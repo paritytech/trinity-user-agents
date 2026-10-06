@@ -8,12 +8,13 @@
 #
 # Authentication is federated. The job proves its identity with the run's OIDC
 # token and receives a short lived credential, so no long lived key for this
-# project is stored anywhere.
+# project is stored anywhere. The identity is bound to main, so the run starts
+# from a push to main: a pull request event's token names the pull request
+# rather than the branch, and the binding never accepts it.
 name: Android debug distribution
 
 on:
-  pull_request:
-    types: [closed]
+  push:
     branches: [main]
     # A merge that changes no code still ships an APK to testers otherwise.
     paths-ignore:
@@ -22,10 +23,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # Keyed on the merge commit, not the workflow. One pending run is kept per
-  # group, so a shared key would have each merge cancel the one queued behind
-  # it and that merge would never be distributed, reported only as cancelled.
-  group: ${{ github.workflow }}-${{ github.event.pull_request.merge_commit_sha || github.sha }}
+  # Keyed on the commit, not the workflow. One pending run is kept per group,
+  # so a shared key would have each merge cancel the one queued behind it and
+  # that merge would never be distributed, reported only as cancelled.
+  group: ${{ github.workflow }}-${{ github.sha }}
   cancel-in-progress: false
 
 permissions:
@@ -36,22 +37,13 @@ jobs:
   # Checks what can be checked before an hour of building. It confirms the
   # delivery target is real; it cannot confirm we may write to it, because
   # every read-only call is available to a role that cannot upload.
-  #
-  # Its condition repeats the build job's rather than relying on needs: a
-  # dependency does not stop this job starting, and a merged fork request has
-  # neither secrets nor an identity token, so it would fail here instead.
   preflight:
     name: Check delivery is possible
-    if: >-
-      github.event_name == 'workflow_dispatch'
-      || (github.event.pull_request.merged == true
-          && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
           persist-credentials: false
 
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
@@ -69,25 +61,12 @@ jobs:
   distribute:
     name: Build and distribute
     needs: preflight
-    # A closed pull request is not necessarily a merged one, and building the
-    # ones that were abandoned would ship code that was rejected. A merged fork
-    # pull request gets neither secrets nor an identity token, so admitting it
-    # would turn every accepted external contribution into a failed run.
-    if: >-
-      github.event_name == 'workflow_dispatch'
-      || (github.event.pull_request.merged == true
-          && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      # The merge commit, not the pull request's merge preview. That preview is
-      # computed while the request is open, so with two requests in flight the
-      # second to merge would build a tree that does not contain the first and
-      # ship it as though it were main. Empty on dispatch, which falls back to
-      # the default ref.
+      # The pushed commit, which is what landed on main.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
           persist-credentials: false
 
       - name: Set up the Android build

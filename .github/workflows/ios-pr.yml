@@ -1,7 +1,13 @@
 name: iOS CI
 
+# Adding any label starts a run, and one for a label other than
+# ios-simulator-build has nothing to do. It gets a group of its own, so it
+# cannot cancel the run already in progress for the same branch. Its skipped
+# jobs share names with the real ones, so the checks list can show one of them
+# over an earlier result for the same commit; iOS CI is not a required check,
+# so this affects only what the list shows.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'ios-simulator-build' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 on:
@@ -16,6 +22,8 @@ on:
   # reasoning as the sdk_swift gate in ci.yml, which is the list to keep this in
   # step with.
   pull_request:
+    # `labeled` so adding ios-simulator-build starts the jobs without a push.
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - "hosts/ios/**"
       - "ios/**"
@@ -98,21 +106,56 @@ env:
   DEBUG_CI: false
 
 jobs:
+  # Whether this run builds the app. Every job below is macOS time, so on a
+  # pull request they run only when the ios-simulator-build label asks for
+  # them, the same way ios-device-build and android-device-build ask for their
+  # builds. CI's `iOS package (Swift + WebKit)` job still compiles the
+  # TrUAPIHost package against the core on a pull request touching `ios/` or
+  # the core crates. Nothing compiles the app itself on a pull request without
+  # the label, so a change that breaks it is caught by the push to main, where
+  # these jobs and manual runs build everything.
+  #
+  # The labels are read from the API rather than the event, so re-running a
+  # push's run sees a label added since. A run started by another label stays
+  # skipped on a re-run, because building there would duplicate the run the
+  # ios-simulator-build label starts on its own.
   check-skip-label:
     timeout-minutes: 5
     runs-on: ubuntu-latest
     outputs:
       skip: ${{ steps.check_skip.outputs.skip }}
+      app: ${{ steps.check_skip.outputs.app }}
     steps:
-      - name: Check for skip-ci label
+      - name: Decide which jobs this run needs
         id: check_skip
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
             const pr = context.payload.pull_request;
-            const labels = pr ? pr.labels.map(label => label.name) : [];
-            const skip = pr ? labels.includes('skip-ci') : false;
-            core.setOutput('skip', skip.toString());
+            if (!pr) {
+              core.setOutput('skip', 'false');
+              core.setOutput('app', 'true');
+              return;
+            }
+            const label = 'ios-simulator-build';
+            // Started by some other label being added, which changes nothing
+            // this run would build.
+            if (context.payload.action === 'labeled' && context.payload.label.name !== label) {
+              core.info(`Label ${context.payload.label.name} does not ask for a build.`);
+              core.setOutput('skip', 'false');
+              core.setOutput('app', 'false');
+              return;
+            }
+            const labels = (await github.paginate(github.rest.issues.listLabelsOnIssue, {
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: pr.number, per_page: 100,
+            })).map(l => l.name);
+            const app = labels.includes(label);
+            core.info(app
+              ? `Building the app: the ${label} label is set.`
+              : `No ${label} label; the app jobs are skipped.`);
+            core.setOutput('skip', labels.includes('skip-ci').toString());
+            core.setOutput('app', app.toString());
 
   # The app jobs all need the core generated from this commit, and it is the
   # same output for each of them, so it is built once here and carried across.
@@ -121,7 +164,7 @@ jobs:
   core:
     name: Build the in-tree core
     needs: check-skip-label
-    if: needs.check-skip-label.outputs.skip == 'false' && !startsWith(github.head_ref, 'release/')
+    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
     runs-on: macos-26-xlarge
     timeout-minutes: 45
     steps:
@@ -176,7 +219,7 @@ jobs:
 
   build:
     needs: [check-skip-label, core]
-    if: needs.check-skip-label.outputs.skip == 'false' && !startsWith(github.head_ref, 'release/')
+    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
     timeout-minutes: 30
     runs-on: macos-26-xlarge
     steps:
@@ -287,7 +330,7 @@ jobs:
   preview:
     name: Simulator preview build
     needs: [check-skip-label, core]
-    if: needs.check-skip-label.outputs.skip == 'false' && !startsWith(github.head_ref, 'release/')
+    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
     # This job produces an artifact for someone to install; it validates
     # nothing that build and test do not already cover, so it has nothing to
     # gain from finishing first. It runs alongside them, so a slower job here
@@ -415,7 +458,8 @@ jobs:
 
           An arm64 simulator slice, so it needs an Apple Silicon Mac and does not
           install on a device. Kept for 14 days, after which the link stops
-          resolving and a new push rebuilds it.
+          resolving and a new push rebuilds it while \`ios-simulator-build\` is
+          set.
           EOF
 
       - name: Link the preview build from the pull request
@@ -428,7 +472,7 @@ jobs:
 
   test:
     needs: [check-skip-label, core]
-    if: needs.check-skip-label.outputs.skip == 'false' && !startsWith(github.head_ref, 'release/')
+    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
     timeout-minutes: 30
     runs-on: macos-26-xlarge
     steps:

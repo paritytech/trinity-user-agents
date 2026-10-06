@@ -114,11 +114,11 @@ describe("chain proxy", () => {
     });
   });
 
-  it("a closed connection is not counted as a delivery", async () => {
-    // `injectStatement` returns how many subscriptions it reached, and the
-    // docstring invites a suite to poll until it is non-zero. Counting ids
-    // whose connection is gone makes that poll succeed on a delivery to
-    // nobody, so the suite goes on to wait for a statement that never arrives.
+  it("a closed connection is not delivered to", async () => {
+    // Observed on the connection rather than through a count: a suite waiting
+    // on an injected statement is waiting for the frame, and a delivery
+    // reported to a subscription whose connection is gone would have it wait
+    // for something that never arrives.
     const host = createMockHost(PROXY);
     const connection = await host.callbacks.chain.connect(new Uint8Array(32));
     const socket = FakeSocket.instances[0]!;
@@ -134,11 +134,19 @@ describe("chain proxy", () => {
     socket.deliver(
       JSON.stringify({ jsonrpc: "2.0", id: "sub-request", result: "sub-1" }),
     );
-    expect(host.injectStatement(new Uint8Array([1, 2, 3]))).toBe(1);
+    const reader = connection.responses()[Symbol.asyncIterator]();
+    // The subscribe reply is queued ahead of anything injected.
+    expect((await reader.next()).value).toContain("sub-1");
+
+    host.injectStatement(new Uint8Array([1, 2, 3]));
+    expect((await reader.next()).value).toContain("0x010203");
 
     socket.close();
+    host.injectStatement(new Uint8Array([4, 5, 6]));
 
-    expect(host.injectStatement(new Uint8Array([4, 5, 6]))).toBe(0);
+    // The stream is done rather than carrying the second statement: nothing is
+    // addressed to a connection that is gone.
+    expect((await reader.next()).done).toBe(true);
   });
 
   it("a lease does not observe another lease's inbound frames", async () => {

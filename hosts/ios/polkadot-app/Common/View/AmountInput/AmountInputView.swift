@@ -1,18 +1,18 @@
 import UIKit
+import FoundationExt
 import UIKit_iOS
 import DesignSystem
 import PolkadotUI
 
 class AmountInputView: UIControl {
-    let symbolLabel: Label = .create { label in
-        label.typography = .displayExtraLarge
-        label.textColor = .fgTertiary
+    let symbolLabel: UILabel = .create { label in
+        label.font = UIFont.displayExtraLarge
+        label.textColor = .fgSecondary
     }
 
-    let symbolImageView: UIImageView = .create { view in
-        view.contentMode = .scaleAspectFit
-        view.tintColor = .fgTertiary
-        view.isHidden = true
+    let unitLabel: UILabel = .create { label in
+        label.font = UIFont.app(.smallCapsHeadlineMedium).withSize(UIFont.displayExtraLarge.pointSize)
+        label.textColor = .fgSecondary
     }
 
     let textField: UITextField = .create { textField in
@@ -51,30 +51,6 @@ class AmountInputView: UIControl {
         }
     }
 
-    /// Currency mark drawn in front of the amount, in addition to `symbolLabel`.
-    var symbolImage: UIImage? {
-        didSet {
-            updateSymbolImage()
-        }
-    }
-
-    var symbolImageRenderingMode: UIImage.RenderingMode = .alwaysTemplate {
-        didSet {
-            updateSymbolImage()
-        }
-    }
-
-    private func updateSymbolImage() {
-        symbolImageView.image = symbolImage?.withRenderingMode(symbolImageRenderingMode)
-        symbolImageView.isHidden = symbolImage == nil
-
-        setNeedsLayout()
-    }
-
-    var hasSymbolImage: Bool {
-        !symbolImageView.isHidden
-    }
-
     private(set) var inputViewModel: AmountInputViewModelProtocol?
     private(set) var isSymbolInFront: Bool = false
 
@@ -107,6 +83,12 @@ class AmountInputView: UIControl {
         setNeedsLayout()
     }
 
+    func bind(unit: String?) {
+        unitLabel.text = unit
+
+        setNeedsLayout()
+    }
+
     func bind(inputViewModel: AmountInputViewModelProtocol) {
         self.inputViewModel?.observable.remove(observer: self)
         inputViewModel.observable.add(observer: self)
@@ -126,137 +108,106 @@ class AmountInputView: UIControl {
         layoutContent()
     }
 
-    private func getTextForEstimation() -> String {
-        if isSymbolInFront {
-            (symbolLabel.text ?? "") + (textField.text ?? "0")
-        } else {
-            (textField.text ?? "0") + (symbolLabel.text ?? "")
-        }
+    private var amountText: String {
+        textField.text?.nilIfEmpty ?? "0"
     }
 
-    private func calculateAvailableWidth(for fontName: String) -> CGFloat {
-        var availableWidth = bounds.width
-
-        // The mark scales with the font the estimation is about to pick, so reserve it at the
-        // largest it can get. Reserving the drawn width instead would make the two depend on
-        // each other and the amount jitter as it grows.
-        if hasSymbolImage, let largestFont = UIFont(name: fontName, size: maxFontSize) {
-            let reserved = symbolImageSize(for: largestFont).width + horizontalSpacing
-            availableWidth = max(availableWidth - reserved, 0)
-        }
-
-        if !isSymbolInFront {
-            availableWidth = max(availableWidth - horizontalSpacing, 0)
-        }
-
-        return availableWidth
+    private var symbolText: String {
+        symbolLabel.text ?? ""
     }
 
-    private func calculateLayoutWidth(for font: UIFont) -> CGFloat {
-        var totalWidth = symbolLabel.intrinsicContentSize.width + textField.intrinsicContentSize.width
-
-        totalWidth += leadingContentWidth(for: font)
-
-        if !isSymbolInFront {
-            totalWidth += horizontalSpacing
-        }
-
-        return min(totalWidth, bounds.width)
+    private var unitText: String {
+        unitLabel.text ?? ""
     }
 
-    private func layoutSymbolImageIfNeeded(for totalWidth: CGFloat, font: UIFont) {
-        guard hasSymbolImage else {
-            return
-        }
-
-        let size = symbolImageSize(for: font)
-
-        // The digits are centred on midY, and the design centres the mark on the same line.
-        symbolImageView.frame = CGRect(
-            x: bounds.midX - totalWidth / 2.0,
-            y: bounds.midY - size.height / 2.0,
-            width: size.width,
-            height: size.height
-        )
+    private func unitFont(for size: CGFloat) -> UIFont {
+        UIFont.app(.smallCapsHeadlineMedium).withSize(size)
     }
 
-    private func layoutSymbol(for totalWidth: CGFloat, font: UIFont) {
-        let size = symbolLabel.intrinsicContentSize
-
-        if isSymbolInFront {
-            let leadingWidth = leadingContentWidth(for: font)
-
-            symbolLabel.frame = CGRect(
-                x: bounds.midX - totalWidth / 2.0 + leadingWidth,
-                y: bounds.midY - size.height / 2.0,
-                width: size.width,
-                height: size.height
-            )
-        } else {
-            symbolLabel.frame = CGRect(
-                x: bounds.midX + totalWidth / 2.0 - size.width,
-                y: bounds.midY - size.height / 2.0,
-                width: size.width,
-                height: size.height
-            )
-        }
+    private func unitSpacing(for font: UIFont) -> CGFloat {
+        " ".estimateWidth(for: font, height: bounds.height)
     }
 
-    private func layoutTextField(for totalWidth: CGFloat, font: UIFont) {
-        let size = textField.intrinsicContentSize
+    private func contentWidth(for font: UIFont) -> CGFloat {
+        var width = amountText.estimateWidth(for: font, height: bounds.height)
 
-        if isSymbolInFront {
-            let leadingX = symbolLabel.frame.maxX
-            let trailingX = bounds.midX + totalWidth / 2.0
-            let remainedWidth = max(trailingX - leadingX, 0)
-
-            textField.frame = CGRect(
-                x: leadingX,
-                y: bounds.midY - size.height / 2.0,
-                width: remainedWidth,
-                height: size.height
-            )
-        } else {
-            let leadingX = bounds.midX - totalWidth / 2.0 + leadingContentWidth(for: font)
-            let trailingX = symbolLabel.frame.minX - horizontalSpacing
-
-            let remainedWidth = max(trailingX - leadingX, 0)
-
-            textField.frame = CGRect(
-                x: leadingX,
-                y: bounds.midY - size.height / 2.0,
-                width: remainedWidth,
-                height: size.height
-            )
+        if !symbolText.isEmpty {
+            width += symbolText.estimateWidth(for: font, height: bounds.height) + horizontalSpacing
         }
+
+        if !unitText.isEmpty {
+            width += unitSpacing(for: font)
+                + unitText.estimateWidth(for: unitFont(for: font.pointSize), height: bounds.height)
+        }
+
+        return width
+    }
+
+    private func fittingFont(named fontName: String) -> UIFont? {
+        var fontSize = maxFontSize
+
+        while fontSize > minFontSize {
+            guard let font = UIFont(name: fontName, size: fontSize) else {
+                return nil
+            }
+
+            if contentWidth(for: font) <= bounds.width {
+                return font
+            }
+
+            fontSize -= 1.0
+        }
+
+        return UIFont(name: fontName, size: minFontSize)
     }
 
     private func layoutContent() {
-        let fontName = symbolLabel.typography
-            .map { UIFont.app($0).fontName } ?? symbolLabel.font.fontName
-
-        let availableWidth = calculateAvailableWidth(for: fontName)
-        let estimatedText = getTextForEstimation()
-
-        let fontSize = estimatedText.estimateMaxFontSize(
-            fittingWidthOf: CGSize(width: availableWidth, height: bounds.height),
-            fontFamily: fontName,
-            minSize: minFontSize,
-            maxSize: maxFontSize
-        )
-
-        guard let font = UIFont(name: fontName, size: fontSize) else {
+        guard let font = fittingFont(named: UIFont.displayExtraLarge.fontName) else {
             return
         }
 
         symbolLabel.font = font
         textField.font = font
+        unitLabel.font = unitFont(for: font.pointSize)
 
-        let layoutWidth = calculateLayoutWidth(for: font)
+        let symbolWidth = symbolText.isEmpty ? 0 : symbolLabel.intrinsicContentSize.width
+        let symbolGap = symbolText.isEmpty ? 0 : horizontalSpacing
+        let unitWidth = unitText.isEmpty ? 0 : unitLabel.intrinsicContentSize.width
+        let unitGap = unitText.isEmpty ? 0 : unitSpacing(for: font)
+        let amountWidth = max(
+            min(contentWidth(for: font), bounds.width) - symbolWidth - symbolGap - unitWidth - unitGap,
+            0
+        )
 
-        layoutSymbolImageIfNeeded(for: layoutWidth, font: font)
-        layoutSymbol(for: layoutWidth, font: font)
-        layoutTextField(for: layoutWidth, font: font)
+        let totalWidth = symbolWidth + symbolGap + amountWidth + unitGap + unitWidth
+        var cursorX = bounds.midX - totalWidth / 2.0
+
+        if isSymbolInFront {
+            cursorX = place(symbolLabel, width: symbolWidth, at: cursorX, baselineOf: font) + symbolGap
+            cursorX = place(textField, width: amountWidth, at: cursorX, baselineOf: font)
+        } else {
+            cursorX = place(textField, width: amountWidth, at: cursorX, baselineOf: font) + symbolGap
+            cursorX = place(symbolLabel, width: symbolWidth, at: cursorX, baselineOf: font)
+        }
+
+        place(unitLabel, width: unitWidth, at: cursorX + unitGap, baselineOf: font)
+    }
+
+    @discardableResult
+    private func place(_ view: UIView, width: CGFloat, at originX: CGFloat, baselineOf font: UIFont) -> CGFloat {
+        let height = view.intrinsicContentSize.height
+        let amountTop = bounds.midY - font.lineHeight / 2.0
+        let baselineY = amountTop + font.ascender
+        let viewFont = (view as? UILabel)?.font ?? font
+
+        view.frame = CGRect(
+            x: originX,
+            y: baselineY - viewFont.ascender - (height - viewFont.lineHeight) / 2.0,
+            width: width,
+            height: height
+        )
+
+        return originX + width
     }
 
     // MARK: Configure
@@ -278,40 +229,15 @@ class AmountInputView: UIControl {
     }
 
     private func configureContentViewIfNeeded() {
-        addSubview(symbolImageView)
         addSubview(textField)
         addSubview(symbolLabel)
+        addSubview(unitLabel)
     }
 
     // MARK: Action
 
     @objc private func actionTouchUpInside() {
         textField.becomeFirstResponder()
-    }
-}
-
-private extension AmountInputView {
-    /// The design draws a 35pt mark next to 64pt digits; the ratio keeps that proportion as the
-    /// amount shrinks to fit.
-    static let symbolImageHeightRatio: CGFloat = 35.0 / 64.0
-
-    func symbolImageSize(for font: UIFont) -> CGSize {
-        guard let image = symbolImageView.image, image.size.height > 0 else {
-            return .zero
-        }
-
-        let height = font.pointSize * Self.symbolImageHeightRatio
-
-        return CGSize(width: height * image.size.width / image.size.height, height: height)
-    }
-
-    /// Everything drawn between the leading edge of the content and the digits.
-    func leadingContentWidth(for font: UIFont) -> CGFloat {
-        guard hasSymbolImage else {
-            return 0
-        }
-
-        return symbolImageSize(for: font).width + horizontalSpacing
     }
 }
 

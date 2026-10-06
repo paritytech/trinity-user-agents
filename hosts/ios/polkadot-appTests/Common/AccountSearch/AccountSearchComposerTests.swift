@@ -17,14 +17,14 @@ struct AccountSearchComposerTests {
             query: nil,
             recent: recent,
             contacts: contacts,
-            global: global,
+            global: .loaded(global),
             excluding: [],
             maxRecent: 5
         )
 
         #expect(result.recent.count == 5)
         #expect(result.contacts.isEmpty)
-        #expect(result.global.isEmpty)
+        #expect(result.global.rows.isEmpty)
     }
 
     @Test("Nil query returns recents with default maxRecent of 5")
@@ -37,13 +37,13 @@ struct AccountSearchComposerTests {
             query: nil,
             recent: recent,
             contacts: contacts,
-            global: global,
+            global: .loaded(global),
             excluding: []
         )
 
         #expect(result.recent.count == 5)
         #expect(result.contacts.isEmpty)
-        #expect(result.global.isEmpty)
+        #expect(result.global.rows.isEmpty)
     }
 
     @Test("Empty string query returns recents with maxRecent limit")
@@ -56,14 +56,14 @@ struct AccountSearchComposerTests {
             query: "",
             recent: recent,
             contacts: contacts,
-            global: global,
+            global: .loaded(global),
             excluding: [],
             maxRecent: 3
         )
 
         #expect(result.recent.count == 3)
         #expect(result.contacts.isEmpty)
-        #expect(result.global.isEmpty)
+        #expect(result.global.rows.isEmpty)
     }
 
     // MARK: - Query Matching Tests
@@ -81,7 +81,7 @@ struct AccountSearchComposerTests {
             query: "ali",
             recent: [alice, bob, charlie],
             contacts: [SearchRow<Int>](),
-            global: [SearchRow<Int>](),
+            global: .loaded([]),
             excluding: [],
             maxRecent: 5
         )
@@ -99,7 +99,7 @@ struct AccountSearchComposerTests {
             query: "ALI",
             recent: [alice, bob],
             contacts: [SearchRow<Int>](),
-            global: [SearchRow<Int>](),
+            global: .loaded([]),
             excluding: [],
             maxRecent: 5
         )
@@ -116,7 +116,7 @@ struct AccountSearchComposerTests {
             query: "lice",
             recent: [alice],
             contacts: [SearchRow<Int>](),
-            global: [SearchRow<Int>](),
+            global: .loaded([]),
             excluding: [],
             maxRecent: 5
         )
@@ -145,7 +145,7 @@ struct AccountSearchComposerTests {
             query: "ali",
             recent: [recentRow],
             contacts: [contactRow],
-            global: [SearchRow<Int>](),
+            global: .loaded([]),
             excluding: [],
             maxRecent: 5
         )
@@ -181,13 +181,13 @@ struct AccountSearchComposerTests {
             query: "search",
             recent: [recentRow],
             contacts: [contactRow],
-            global: [globalRow1, globalRow2, globalRow3],
+            global: .loaded([globalRow1, globalRow2, globalRow3]),
             excluding: [],
             maxRecent: 5
         )
 
-        #expect(result.global.count == 1)
-        #expect(result.global[0].username == Username(value: "charlie"))
+        #expect(result.global.rows.count == 1)
+        #expect(result.global.rows[0].username == Username(value: "charlie"))
     }
 
     // MARK: - Excluding Set Tests
@@ -204,14 +204,14 @@ struct AccountSearchComposerTests {
             query: "search",
             recent: [recentRow],
             contacts: [contactRow],
-            global: [globalRow],
+            global: .loaded([globalRow]),
             excluding: [excludedId],
             maxRecent: 5
         )
 
         #expect(result.recent.isEmpty)
         #expect(result.contacts.isEmpty)
-        #expect(result.global.isEmpty)
+        #expect(result.global.rows.isEmpty)
     }
 
     // MARK: - Sorting Tests
@@ -226,7 +226,7 @@ struct AccountSearchComposerTests {
             query: "search",
             recent: [SearchRow<Int>](),
             contacts: [charlie, alice, bob],
-            global: [SearchRow<Int>](),
+            global: .loaded([]),
             excluding: [],
             maxRecent: 5
         )
@@ -248,7 +248,7 @@ struct AccountSearchComposerTests {
             query: "search",
             recent: [SearchRow<Int>](),
             contacts: [alice, noUsername1, bob, noUsername2],
-            global: [SearchRow<Int>](),
+            global: .loaded([]),
             excluding: [],
             maxRecent: 5
         )
@@ -270,15 +270,15 @@ struct AccountSearchComposerTests {
             query: "search",
             recent: [SearchRow<Int>](),
             contacts: [SearchRow<Int>](),
-            global: [charlie, alice, bob],
+            global: .loaded([charlie, alice, bob]),
             excluding: [],
             maxRecent: 5
         )
 
-        #expect(result.global.count == 3)
-        #expect(result.global[0].username == Username(value: "alice"))
-        #expect(result.global[1].username == Username(value: "bob"))
-        #expect(result.global[2].username == Username(value: "charlie"))
+        #expect(result.global.rows.count == 3)
+        #expect(result.global.rows[0].username == Username(value: "alice"))
+        #expect(result.global.rows[1].username == Username(value: "bob"))
+        #expect(result.global.rows[2].username == Username(value: "charlie"))
     }
 
     @Test("Nil usernames sorted last in global")
@@ -291,15 +291,15 @@ struct AccountSearchComposerTests {
             query: "search",
             recent: [SearchRow<Int>](),
             contacts: [SearchRow<Int>](),
-            global: [alice, noUsername, bob],
+            global: .loaded([alice, noUsername, bob]),
             excluding: [],
             maxRecent: 5
         )
 
-        #expect(result.global.count == 3)
-        #expect(result.global[0].username == Username(value: "alice"))
-        #expect(result.global[1].username == Username(value: "bob"))
-        #expect(result.global[2].username == nil)
+        #expect(result.global.rows.count == 3)
+        #expect(result.global.rows[0].username == Username(value: "alice"))
+        #expect(result.global.rows[1].username == Username(value: "bob"))
+        #expect(result.global.rows[2].username == nil)
     }
 
     // MARK: - Global Section Tests
@@ -312,12 +312,12 @@ struct AccountSearchComposerTests {
             query: nil,
             recent: [SearchRow<Int>](),
             contacts: [SearchRow<Int>](),
-            global: [globalRow],
+            global: .loaded([globalRow]),
             excluding: [],
             maxRecent: 5
         )
 
-        #expect(result.global.isEmpty)
+        #expect(result.global.rows.isEmpty)
     }
 
     @Test("Global section empty when query is empty string")
@@ -328,12 +328,12 @@ struct AccountSearchComposerTests {
             query: "",
             recent: [SearchRow<Int>](),
             contacts: [SearchRow<Int>](),
-            global: [globalRow],
+            global: .loaded([globalRow]),
             excluding: [],
             maxRecent: 5
         )
 
-        #expect(result.global.isEmpty)
+        #expect(result.global.rows.isEmpty)
     }
 
     @Test("Global section populated with non-empty query")
@@ -344,12 +344,12 @@ struct AccountSearchComposerTests {
             query: "search",
             recent: [SearchRow<Int>](),
             contacts: [SearchRow<Int>](),
-            global: [globalRow],
+            global: .loaded([globalRow]),
             excluding: [],
             maxRecent: 5
         )
 
-        #expect(result.global.count == 1)
+        #expect(result.global.rows.count == 1)
     }
 
     // MARK: - Complex Integration Tests
@@ -378,14 +378,14 @@ struct AccountSearchComposerTests {
             query: "a",
             recent: recent,
             contacts: contacts,
-            global: global,
+            global: .loaded(global),
             excluding: [],
             maxRecent: 5
         )
 
         #expect(result.recent.count == 1)
         #expect(result.contacts.count == 1)
-        #expect(result.global.count == 1)
+        #expect(result.global.rows.count == 1)
     }
 
     @Test("maxRecent respects custom limit")
@@ -396,12 +396,45 @@ struct AccountSearchComposerTests {
             query: nil,
             recent: recent,
             contacts: [SearchRow<Int>](),
-            global: [SearchRow<Int>](),
+            global: .loaded([]),
             excluding: [],
             maxRecent: 2
         )
 
         #expect(result.recent.count == 2)
+    }
+
+    // MARK: - Global Outcome Tests
+
+    @Test("Global outcome defaults to loaded")
+    func globalOutcomeDefaultsToLoaded() {
+        let result = AccountSearchComposer.compose(
+            query: "search",
+            recent: [SearchRow<Int>](),
+            contacts: [SearchRow<Int>](),
+            excluding: []
+        )
+
+        #expect(result.global.isLoaded)
+        #expect(result.global.rows.isEmpty)
+    }
+
+    @Test(
+        "Global outcome passes through",
+        arguments: [AccountSearchGlobal<SearchRow<Int>>.pending([]), .loaded([]), .failed]
+    )
+    func globalOutcomePassesThrough(outcome: AccountSearchGlobal<SearchRow<Int>>) {
+        let result = AccountSearchComposer.compose(
+            query: "search",
+            recent: [SearchRow<Int>](),
+            contacts: [SearchRow<Int>](),
+            global: outcome,
+            excluding: []
+        )
+
+        #expect(result.global.isPending == outcome.isPending)
+        #expect(result.global.hasFailed == outcome.hasFailed)
+        #expect(result.global.rows.isEmpty)
     }
 }
 
