@@ -70,8 +70,9 @@ use wallet_account_holder::{WalletAccountHolder, product_authority_error};
 const TEST_NETWORK_SUFFIX: &str = "dot";
 
 use crate::platform::{
-    AccountAccessReview, PermissionAuthorizationStatus, Platform, ProductContext, SignVrfReview,
-    UserConfirmationReview, normalize_product_identifier,
+    AccountAccessReview, CreateTransactionReview, PermissionAuthorizationStatus, Platform,
+    ProductContext, SignPayloadReview, SignRawReview, SignVrfReview, UserConfirmationReview,
+    normalize_product_identifier,
 };
 use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse};
 use truapi::{CallContext, CallError, v01};
@@ -594,6 +595,23 @@ impl SigningHost {
         ))
     }
 
+    async fn confirm_wallet_action(
+        &self,
+        cx: &CallContext,
+        review: UserConfirmationReview,
+    ) -> Result<(), AuthorityError> {
+        let confirmed = super::until_cancelled(cx, self.platform.confirm_user_action(review))
+            .await?
+            .map_err(|error| AuthorityError::Unknown {
+                reason: format!("confirmation failed: {}", error.reason),
+            })?;
+        if confirmed {
+            Ok(())
+        } else {
+            Err(AuthorityError::Rejected)
+        }
+    }
+
     async fn require_account_access(
         &self,
         invocation: &AccountInvocation<'_>,
@@ -1076,11 +1094,26 @@ impl AccountHolder for SigningHost {
 
     async fn sign_payload(
         &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        _calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         request: SignPayloadAuthorityRequest,
     ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
+        if let AccountCaller::Remote { product_id } = invocation.caller {
+            let review = match &request {
+                SignPayloadAuthorityRequest::Product(request) => SignPayloadReview::Product {
+                    calling_product_id: product_id.map(str::to_string),
+                    request: request.clone(),
+                },
+                SignPayloadAuthorityRequest::LegacyAccount { request, .. } => {
+                    SignPayloadReview::LegacyAccount(request.clone())
+                }
+            };
+            self.confirm_wallet_action(
+                invocation.call,
+                UserConfirmationReview::SignPayload(review),
+            )
+            .await?;
+        }
+        let session = invocation.session;
         let (keypair, payload) = match request {
             SignPayloadAuthorityRequest::Product(request) => (
                 self.wallet
@@ -1103,12 +1136,28 @@ impl AccountHolder for SigningHost {
 
     async fn sign_raw(
         &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        _calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         request: SignRawAuthorityRequest,
         watermarked: bool,
     ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
+        if let AccountCaller::Remote { product_id } = invocation.caller {
+            let review = match &request {
+                SignRawAuthorityRequest::Product(request) => SignRawReview::Product {
+                    calling_product_id: product_id.map(str::to_string),
+                    request: request.clone(),
+                    watermarked,
+                },
+                SignRawAuthorityRequest::LegacyAccount { request, .. } => {
+                    SignRawReview::LegacyAccount {
+                        request: request.clone(),
+                        watermarked,
+                    }
+                }
+            };
+            self.confirm_wallet_action(invocation.call, UserConfirmationReview::SignRaw(review))
+                .await?;
+        }
+        let session = invocation.session;
         let (keypair, payload) = match request {
             SignRawAuthorityRequest::Product(request) => (
                 self.wallet
@@ -1142,11 +1191,29 @@ impl AccountHolder for SigningHost {
 
     async fn create_transaction(
         &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        _calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         request: CreateTransactionAuthorityRequest,
     ) -> Result<v01::HostCreateTransactionResponse, AuthorityError> {
+        if let AccountCaller::Remote { product_id } = invocation.caller {
+            let review = match &request {
+                CreateTransactionAuthorityRequest::Product(payload) => {
+                    CreateTransactionReview::Product {
+                        calling_product_id: product_id.map(str::to_string),
+                        payload: payload.clone(),
+                    }
+                }
+                CreateTransactionAuthorityRequest::LegacyAccount { request, .. }
+                | CreateTransactionAuthorityRequest::IdentityAccount(request) => {
+                    CreateTransactionReview::LegacyAccount(request.clone())
+                }
+            };
+            self.confirm_wallet_action(
+                invocation.call,
+                UserConfirmationReview::CreateTransaction(review),
+            )
+            .await?;
+        }
+        let session = invocation.session;
         match request {
             CreateTransactionAuthorityRequest::Product(payload) => {
                 // Caller ownership is validated before entering the account holder.
@@ -3445,9 +3512,11 @@ mod tests {
         let preimage = extrinsic_payload_preimage(&payload).expect("preimage builds");
 
         let product_response = futures::executor::block_on(authority.sign_payload(
-            &cx,
-            &session,
-            None,
+            AccountInvocation {
+                call: &cx,
+                session: &session,
+                caller: AccountCaller::Local(&ProductContext::new("myapp.dot".to_string()).unwrap()),
+            },
             SignPayloadAuthorityRequest::Product(v01::HostSignPayloadRequest {
                 account: product_account(0),
                 payload: payload.clone(),
@@ -3486,9 +3555,11 @@ mod tests {
         assert_eq!(tail, expected_tail);
 
         let legacy_response = futures::executor::block_on(authority.sign_payload(
-            &cx,
-            &session,
-            None,
+            AccountInvocation {
+                call: &cx,
+                session: &session,
+                caller: AccountCaller::Local(&ProductContext::new("myapp.dot".to_string()).unwrap()),
+            },
             SignPayloadAuthorityRequest::LegacyAccount {
                 product_account: product_account(0),
                 request: v01::HostSignPayloadWithLegacyAccountRequest {
@@ -3528,9 +3599,11 @@ mod tests {
         };
 
         let response = futures::executor::block_on(authority.sign_raw(
-            &cx,
-            &session,
-            None,
+            AccountInvocation {
+                call: &cx,
+                session: &session,
+                caller: AccountCaller::Local(&ProductContext::new("myapp.dot".to_string()).unwrap()),
+            },
             request(identity.public.to_bytes()),
             true,
         ))
@@ -3544,9 +3617,11 @@ mod tests {
         );
 
         let error = futures::executor::block_on(authority.sign_raw(
-            &cx,
-            &session,
-            None,
+            AccountInvocation {
+                call: &cx,
+                session: &session,
+                caller: AccountCaller::Local(&ProductContext::new("myapp.dot".to_string()).unwrap()),
+            },
             request([0xff; 32]),
             true,
         ))
@@ -3608,9 +3683,13 @@ mod tests {
         let cx = CallContext::default();
 
         let err = futures::executor::block_on(activation.create_transaction(
-            &cx,
-            &session,
-            None,
+            AccountInvocation {
+                call: &cx,
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("myapp.dot".to_string()).unwrap(),
+                ),
+            },
             CreateTransactionAuthorityRequest::Product(tx_payload(0)),
         ))
         .expect_err("fixture cannot resolve metadata");
@@ -3639,9 +3718,16 @@ mod tests {
                 tx_ext_version: 0,
             },
         };
-        let err = futures::executor::block_on(
-            activation.create_transaction(&cx, &session, None, request),
-        )
+        let err = futures::executor::block_on(activation.create_transaction(
+            AccountInvocation {
+                call: &cx,
+                session: &session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("myapp.dot".to_string()).unwrap(),
+                ),
+            },
+            request,
+        ))
         .expect_err("mismatched legacy signer");
         assert!(
             matches!(err, AuthorityError::Unknown { reason } if reason.contains("does not match"))
@@ -3660,9 +3746,13 @@ mod tests {
         let cx = CallContext::default();
 
         let err = futures::executor::block_on(activation.create_transaction(
-            &cx,
-            &stale_session,
-            None,
+            AccountInvocation {
+                call: &cx,
+                session: &stale_session,
+                caller: AccountCaller::Local(
+                    &ProductContext::new("myapp.dot".to_string()).unwrap(),
+                ),
+            },
             CreateTransactionAuthorityRequest::Product(tx_payload(0)),
         ))
         .expect_err("no active session");
@@ -3778,9 +3868,11 @@ mod tests {
             },
         };
         let err = futures::executor::block_on(authority.sign_raw(
-            &cx,
-            &stale,
-            None,
+            AccountInvocation {
+                call: &cx,
+                session: &stale,
+                caller: AccountCaller::Local(&ProductContext::new("myapp.dot".to_string()).unwrap()),
+            },
             SignRawAuthorityRequest::Product(request),
             true,
         ))
@@ -3807,9 +3899,11 @@ mod tests {
             payload: v01::RawPayload::Bytes { bytes: vec![1] },
         };
         let err = futures::executor::block_on(authority.sign_raw(
-            &cx,
-            &session,
-            None,
+            AccountInvocation {
+                call: &cx,
+                session: &session,
+                caller: AccountCaller::Local(&ProductContext::new("myapp.dot".to_string()).unwrap()),
+            },
             SignRawAuthorityRequest::Product(request),
             true,
         ))

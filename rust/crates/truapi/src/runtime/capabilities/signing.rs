@@ -17,8 +17,8 @@ use truapi::versioned::signing::{
 use truapi::{CallContext, CallError, v01};
 
 use crate::runtime::authority::{
-    AuthorityError, AuthoritySession, AutoSigningGrant, CreateTransactionAuthorityRequest,
-    SignPayloadAuthorityRequest, SignRawAuthorityRequest,
+    AccountCaller, AccountInvocation, AuthorityError, AuthoritySession, AutoSigningGrant,
+    CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
 };
 use crate::runtime::{
     ContactResolutionError, LEGACY_ACCOUNT_UNAVAILABLE_REASON,
@@ -91,9 +91,7 @@ impl Signing for ProductRuntimeHost {
             &operation,
             &cx,
             self.authority.sign_payload(
-                &cx,
-                session,
-                Some(self.product_id().as_str()),
+                AccountInvocation { call: &cx, session, caller: AccountCaller::Local(&self.product) },
                 SignPayloadAuthorityRequest::Product(inner),
             ),
         )
@@ -213,9 +211,7 @@ impl Signing for ProductRuntimeHost {
             &operation,
             &cx,
             self.authority.create_transaction(
-                &cx,
-                session,
-                Some(self.product_id().as_str()),
+                AccountInvocation { call: &cx, session, caller: AccountCaller::Local(&self.product) },
                 CreateTransactionAuthorityRequest::Product(inner),
             ),
         )
@@ -281,9 +277,7 @@ impl Signing for ProductRuntimeHost {
             &operation,
             &cx,
             self.authority.sign_payload(
-                &cx,
-                session,
-                Some(self.product_id().as_str()),
+                AccountInvocation { call: &cx, session, caller: AccountCaller::Local(&self.product) },
                 SignPayloadAuthorityRequest::LegacyAccount {
                     product_account: v01::ProductAccountId {
                         dot_ns_identifier: self.product_id(),
@@ -391,9 +385,7 @@ impl Signing for ProductRuntimeHost {
             &operation,
             &cx,
             self.authority.create_transaction(
-                &cx,
-                session,
-                Some(self.product_id().as_str()),
+                AccountInvocation { call: &cx, session, caller: AccountCaller::Local(&self.product) },
                 authority_request,
             ),
         )
@@ -496,9 +488,7 @@ impl ProductRuntimeHost {
             &operation,
             &cx,
             self.authority.sign_raw(
-                &cx,
-                session,
-                Some(self.product_id().as_str()),
+                AccountInvocation { call: &cx, session, caller: AccountCaller::Local(&self.product) },
                 SignRawAuthorityRequest::Product(inner),
                 watermarked,
             ),
@@ -572,9 +562,7 @@ impl ProductRuntimeHost {
             &operation,
             &cx,
             self.authority.sign_raw(
-                &cx,
-                session,
-                Some(self.product_id().as_str()),
+                AccountInvocation { call: &cx, session, caller: AccountCaller::Local(&self.product) },
                 authority_request,
                 watermarked,
             ),

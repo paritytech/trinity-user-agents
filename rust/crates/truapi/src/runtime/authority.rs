@@ -438,38 +438,29 @@ pub trait AccountHolder: Send + Sync {
 
     /// Sign a SCALE transaction payload for a product account.
     ///
-    /// Local signing requires binding `calling_product_id` to account ownership.
-    /// `None` carries no caller identity and cannot authorize local signing.
+    /// Local calls use the product's approval and grants; remote calls require wallet review.
     async fn sign_payload(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         request: SignPayloadAuthorityRequest,
     ) -> Result<HostSignPayloadResponse, AuthorityError>;
 
     /// Sign arbitrary bytes for a product account.
     ///
-    /// `calling_product_id` carries the same binding obligation as
-    /// [`AccountHolder::sign_payload`].
+    /// Uses the same caller and consent boundary as [`AccountHolder::sign_payload`].
     async fn sign_raw(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         request: SignRawAuthorityRequest,
         watermarked: bool,
     ) -> Result<HostSignPayloadResponse, AuthorityError>;
 
     /// Build a transaction for a product account, signed unless the request
     /// supplies its own V5 `VerifyMultiSignature` extension.
-    /// `calling_product_id` carries the same binding obligation as
-    /// [`AccountHolder::sign_payload`].
+    /// Uses the same caller and consent boundary as [`AccountHolder::sign_payload`].
     async fn create_transaction(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         request: CreateTransactionAuthorityRequest,
     ) -> Result<HostCreateTransactionResponse, AuthorityError>;
 

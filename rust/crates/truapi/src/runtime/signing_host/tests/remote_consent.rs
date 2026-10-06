@@ -1,10 +1,49 @@
 use super::*;
 use crate::host_internal::permissions::set_account_access_status;
 use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1};
-use crate::platform::PermissionAuthorizationStatus;
+use crate::platform::{PermissionAuthorizationStatus, SignRawReview};
 use crate::runtime::signing_host::SigningHostSsoService;
 use crate::runtime::sso_service::Dispatch;
 use truapi::latest::{HostAccountListRingVrfKeysRequest, RingVrfKeyDisclosure};
+
+#[test]
+fn direct_remote_signing_cannot_bypass_wallet_review_with_a_native_grant() {
+    let platform = Arc::new(StubPlatform::default());
+    let (_, authority) = signing_runtime_with_platform(platform.clone());
+    futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let session = authority.current_session().unwrap();
+    authority
+        .grant_auto_signing(&authority.current_operation().unwrap(), "myapp.dot")
+        .unwrap();
+    let request = truapi::latest::HostSignRawRequest {
+        account: product_account(0),
+        payload: truapi::latest::RawPayload::Bytes {
+            bytes: b"remote approval".to_vec(),
+        },
+    };
+    let signed = futures::executor::block_on(authority.sign_raw(
+        AccountInvocation {
+            call: &CallContext::default(),
+            session: &session,
+            caller: AccountCaller::Remote {
+                product_id: Some("myapp.dot"),
+            },
+        },
+        SignRawAuthorityRequest::Product(request.clone()),
+        true,
+    ));
+    assert_eq!(
+        (signed, platform.sign_raw_reviews.lock().unwrap().clone()),
+        (
+            Err(AuthorityError::Rejected),
+            vec![SignRawReview::Product {
+                calling_product_id: Some("myapp.dot".to_string()),
+                request,
+                watermarked: true,
+            }],
+        ),
+    );
+}
 
 #[test]
 fn remote_vrf_cannot_reuse_a_native_auto_signing_grant() {

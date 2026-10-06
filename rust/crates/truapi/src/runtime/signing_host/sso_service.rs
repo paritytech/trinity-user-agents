@@ -1,12 +1,8 @@
-//! The signing host's answers to paired hosts: consent prompts, then the
-//! local authority.
+//! Incoming SSO requests and resource consent for a locally activated wallet.
 
 use std::sync::Arc;
 
-use crate::platform::{
-    CreateTransactionReview, ResourceAllocationReview, SignPayloadReview, SignRawReview,
-    UserConfirmationReview,
-};
+use crate::platform::{ResourceAllocationReview, UserConfirmationReview};
 use futures::{FutureExt, pin_mut};
 use tracing::warn;
 use truapi::latest as api;
@@ -28,7 +24,7 @@ use crate::host_internal::sso_messages::{
 use crate::host_internal::sso_wire::ResponseOutcome;
 use crate::host_logic::product_account::product_public_key_to_address;
 use crate::runtime::authority::{
-    AccountHolder, AuthoritySession, CreateTransactionAuthorityRequest,
+    AccountHolder, AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
     SignPayloadAuthorityRequest, SignRawAuthorityRequest,
 };
 use crate::runtime::sso_service::{Dispatch, SsoReply, SsoRequestContext};
@@ -95,21 +91,6 @@ impl SigningHostSsoService {
         }
     }
 
-    /// Run the platform confirmation seam; rejection and failure both refuse
-    /// the operation with an opaque reason (host-spec B.7).
-    async fn confirm(
-        &self,
-        cx: &SsoRequestContext,
-        review: UserConfirmationReview,
-    ) -> Result<(), String> {
-        match self.prompt(cx, review).await {
-            Some(Ok(true)) => Ok(()),
-            Some(Ok(false)) => Err("Rejected".to_string()),
-            Some(Err(err)) => Err(format!("confirmation failed: {}", err.reason)),
-            None => Err(WITHDRAWN.to_string()),
-        }
-    }
-
     async fn serve_sign(
         &self,
         cx: &SsoRequestContext,
@@ -117,64 +98,37 @@ impl SigningHostSsoService {
     ) -> Result<api::HostSignPayloadResponse, String> {
         match request {
             SignRequest::Payload(request) => {
-                let request = *request;
-                self.confirm(
-                    cx,
-                    UserConfirmationReview::SignPayload(SignPayloadReview::Product {
-                        // A relayed request carries no caller identity.
-                        calling_product_id: None,
-                        request: request.clone(),
-                    }),
-                )
-                .await?;
                 self.signing_host
                     .sign_payload(
-                        &cx.call,
-                        &cx.session,
-                        // A relayed request carries no caller identity, and
-                        // this role confirms every one of them anyway.
-                        None,
-                        SignPayloadAuthorityRequest::Product(request),
+                        cx.account_invocation(None),
+                        SignPayloadAuthorityRequest::Product(*request),
                     )
                     .await
-                    .map_err(|err| err.to_string())
             }
-            SignRequest::Raw(request) => self.serve_sign_raw(cx, request, true).await,
+            SignRequest::Raw(request) => {
+                self.signing_host
+                    .sign_raw(
+                        cx.account_invocation(None),
+                        SignRawAuthorityRequest::Product(request),
+                        true,
+                    )
+                    .await
+            }
             SignRequest::RawUnwatermarkedDeprecated(request) => {
-                self.serve_sign_raw(cx, request, false).await
+                self.signing_host
+                    .sign_raw(
+                        cx.account_invocation(None),
+                        SignRawAuthorityRequest::Product(request),
+                        false,
+                    )
+                    .await
             }
             SignRequest::RawWithLegacyAccountUnwatermarkedDeprecated(request) => {
                 self.serve_sign_raw_with_legacy_account(cx, request, false)
                     .await
             }
         }
-    }
-
-    async fn serve_sign_raw(
-        &self,
-        cx: &SsoRequestContext,
-        request: api::HostSignRawRequest,
-        watermarked: bool,
-    ) -> Result<api::HostSignPayloadResponse, String> {
-        self.confirm(
-            cx,
-            UserConfirmationReview::SignRaw(SignRawReview::Product {
-                calling_product_id: None,
-                request: request.clone(),
-                watermarked,
-            }),
-        )
-        .await?;
-        self.signing_host
-            .sign_raw(
-                &cx.call,
-                &cx.session,
-                None,
-                SignRawAuthorityRequest::Product(request),
-                watermarked,
-            )
-            .await
-            .map_err(|err| err.to_string())
+        .map_err(|error| error.to_string())
     }
 
     async fn serve_sign_raw_with_legacy_account(
@@ -182,24 +136,14 @@ impl SigningHostSsoService {
         cx: &SsoRequestContext,
         request: SignRawWithLegacyAccountRequest,
         watermarked: bool,
-    ) -> Result<api::HostSignPayloadResponse, String> {
+    ) -> Result<api::HostSignPayloadResponse, AuthorityError> {
         let public_request = api::HostSignRawWithLegacyAccountRequest {
             signer: product_public_key_to_address(request.account),
             payload: request.data,
         };
-        self.confirm(
-            cx,
-            UserConfirmationReview::SignRaw(SignRawReview::LegacyAccount {
-                request: public_request.clone(),
-                watermarked,
-            }),
-        )
-        .await?;
         self.signing_host
             .sign_raw(
-                &cx.call,
-                &cx.session,
-                None,
+                cx.account_invocation(None),
                 SignRawAuthorityRequest::LegacyAccount {
                     account: request.account,
                     request: public_request,
@@ -207,22 +151,6 @@ impl SigningHostSsoService {
                 watermarked,
             )
             .await
-            .map_err(|err| err.to_string())
-    }
-
-    async fn serve_create_transaction(
-        &self,
-        cx: &SsoRequestContext,
-        review: CreateTransactionReview,
-        request: CreateTransactionAuthorityRequest,
-    ) -> Result<Vec<u8>, String> {
-        self.confirm(cx, UserConfirmationReview::CreateTransaction(review))
-            .await?;
-        self.signing_host
-            .create_transaction(&cx.call, &cx.session, None, request)
-            .await
-            .map(|response| response.transaction)
-            .map_err(|err| err.to_string())
     }
 
     async fn allocate(
@@ -476,15 +404,14 @@ impl SigningHostSsoService {
     ) -> CreateTransactionResponse {
         let CreateTransactionPayload::V1(payload) = request.payload;
         let payload = payload.into_product_payload();
-        self.serve_create_transaction(
-            cx,
-            CreateTransactionReview::Product {
-                calling_product_id: None,
-                payload: payload.clone(),
-            },
-            CreateTransactionAuthorityRequest::Product(payload),
-        )
-        .await
+        self.signing_host
+            .create_transaction(
+                cx.account_invocation(None),
+                CreateTransactionAuthorityRequest::Product(payload),
+            )
+            .await
+            .map(|response| response.transaction)
+            .map_err(|error| error.to_string())
     }
 
     /// Build a signed transaction for the wallet's identity account.
@@ -494,12 +421,14 @@ impl SigningHostSsoService {
         request: CreateTransactionWithLegacyAccountRequest,
     ) -> CreateTransactionResponse {
         let CreateTransactionLegacyPayload::V1(payload) = request.payload;
-        self.serve_create_transaction(
-            cx,
-            CreateTransactionReview::LegacyAccount(payload.clone()),
-            CreateTransactionAuthorityRequest::IdentityAccount(payload),
-        )
-        .await
+        self.signing_host
+            .create_transaction(
+                cx.account_invocation(None),
+                CreateTransactionAuthorityRequest::IdentityAccount(payload),
+            )
+            .await
+            .map(|response| response.transaction)
+            .map_err(|error| error.to_string())
     }
 
     /// Sign raw data with a legacy account.
@@ -511,6 +440,7 @@ impl SigningHostSsoService {
         self.serve_sign_raw_with_legacy_account(cx, request, true)
             .await
             .map(|response| response.signature)
+            .map_err(|error| error.to_string())
     }
 
     /// Create a ring-VRF proof bound to a context and message.

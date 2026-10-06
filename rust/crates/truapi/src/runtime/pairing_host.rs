@@ -2193,96 +2193,6 @@ impl PairingHost {
             .await
     }
 
-    async fn sign_payload(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
-        request: SignPayloadAuthorityRequest,
-    ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        if let SignPayloadAuthorityRequest::Product(payload) = &request
-            && let Some(keypair) = self
-                .local_product_signing_key(&session, calling_product_id, &payload.account)
-                .await?
-        {
-            return Ok(sign_extrinsic_payload(&keypair, payload.payload.clone())?);
-        }
-        self.remote_sign_payload(cx, &session, request).await
-    }
-
-    async fn sign_raw(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
-        request: SignRawAuthorityRequest,
-        watermarked: bool,
-    ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        // The unwatermarked API is never grant-covered, so a local signature
-        // here would skip a prompt the gate deliberately raised.
-        if watermarked
-            && let SignRawAuthorityRequest::Product(payload) = &request
-            && let Some(keypair) = self
-                .local_product_signing_key(&session, calling_product_id, &payload.account)
-                .await?
-        {
-            let message = raw_payload_bytes(payload.payload.clone(), watermarked)?;
-            let signature = keypair
-                .secret
-                .sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
-                .to_bytes();
-            return Ok(v01::HostSignPayloadResponse {
-                signature: signature.to_vec(),
-                signed_transaction: None,
-            });
-        }
-        self.remote_sign_raw(cx, &session, request, watermarked)
-            .await
-    }
-
-    async fn create_transaction(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
-        request: CreateTransactionAuthorityRequest,
-    ) -> Result<v01::HostCreateTransactionResponse, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        if let CreateTransactionAuthorityRequest::Product(payload) = &request
-            && let Some(keypair) = self
-                .local_product_signing_key(&session, calling_product_id, &payload.signer)
-                .await?
-        {
-            // A payload this host cannot assemble is an error, not a
-            // fall-through to the relay: the gate already told the caller no
-            // prompt was coming, and relaying would raise one on the signing
-            // host after a chain timeout.
-            //
-            // Assembling needs runtime metadata, which a granted product
-            // moves from the signing host to this one. A pairing host is
-            // assumed to reach any genesis a product it has granted signs
-            // against; where it cannot, the call fails rather than producing
-            // the prompt-and-signature an ungranted product would have got.
-            //
-            // The failure is not prompt. An unreachable genesis leaves the
-            // metadata read waiting on the chain, so the caller can sit on the
-            // authority request timeout before it sees anything — the cost of
-            // assembling locally is paid before the grant can be found wanting.
-            return Ok(build_local_transaction(
-                &self.chain,
-                &keypair,
-                payload.genesis_hash,
-                &payload.call_data,
-                &payload.extensions,
-                payload.tx_ext_version,
-            )
-            .await?);
-        }
-        self.remote_create_transaction(cx, &session, request).await
-    }
-
     async fn account_alias(
         &self,
         invocation: AccountInvocation<'_>,
@@ -2809,33 +2719,103 @@ impl AccountHolder for PairingHost {
 
     async fn sign_payload(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         request: SignPayloadAuthorityRequest,
     ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
-        PairingHost::sign_payload(self, cx, session, calling_product_id, request).await
+        let session = self.current_private_session(invocation.session)?;
+        if let AccountCaller::Local(product) = invocation.caller
+            && let SignPayloadAuthorityRequest::Product(payload) = &request
+            && let Some(keypair) = self
+                .local_product_signing_key(
+                    &session,
+                    Some(product.product_id.as_str()),
+                    &payload.account,
+                )
+                .await?
+        {
+            return Ok(sign_extrinsic_payload(&keypair, payload.payload.clone())?);
+        }
+        self.remote_sign_payload(invocation.call, &session, request)
+            .await
     }
 
     async fn sign_raw(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         request: SignRawAuthorityRequest,
         watermarked: bool,
     ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
-        PairingHost::sign_raw(self, cx, session, calling_product_id, request, watermarked).await
+        let session = self.current_private_session(invocation.session)?;
+        // The unwatermarked API is never grant-covered, so a local signature
+        // here would skip a prompt the gate deliberately raised.
+        if let AccountCaller::Local(product) = invocation.caller
+            && watermarked
+            && let SignRawAuthorityRequest::Product(payload) = &request
+            && let Some(keypair) = self
+                .local_product_signing_key(
+                    &session,
+                    Some(product.product_id.as_str()),
+                    &payload.account,
+                )
+                .await?
+        {
+            let message = raw_payload_bytes(payload.payload.clone(), watermarked)?;
+            let signature = keypair
+                .secret
+                .sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
+                .to_bytes();
+            return Ok(v01::HostSignPayloadResponse {
+                signature: signature.to_vec(),
+                signed_transaction: None,
+            });
+        }
+        self.remote_sign_raw(invocation.call, &session, request, watermarked)
+            .await
     }
 
     async fn create_transaction(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         request: CreateTransactionAuthorityRequest,
     ) -> Result<v01::HostCreateTransactionResponse, AuthorityError> {
-        PairingHost::create_transaction(self, cx, session, calling_product_id, request).await
+        let session = self.current_private_session(invocation.session)?;
+        if let AccountCaller::Local(product) = invocation.caller
+            && let CreateTransactionAuthorityRequest::Product(payload) = &request
+            && let Some(keypair) = self
+                .local_product_signing_key(
+                    &session,
+                    Some(product.product_id.as_str()),
+                    &payload.signer,
+                )
+                .await?
+        {
+            // A payload this host cannot assemble is an error, not a
+            // fall-through to the relay: the gate already told the caller no
+            // prompt was coming, and relaying would raise one on the signing
+            // host after a chain timeout.
+            //
+            // Assembling needs runtime metadata, which a granted product
+            // moves from the signing host to this one. A pairing host is
+            // assumed to reach any genesis a product it has granted signs
+            // against; where it cannot, the call fails rather than producing
+            // the prompt-and-signature an ungranted product would have got.
+            //
+            // The failure is not prompt. An unreachable genesis leaves the
+            // metadata read waiting on the chain, so the caller can sit on the
+            // authority request timeout before it sees anything — the cost of
+            // assembling locally is paid before the grant can be found wanting.
+            return Ok(build_local_transaction(
+                &self.chain,
+                &keypair,
+                payload.genesis_hash,
+                &payload.call_data,
+                &payload.extensions,
+                payload.tx_ext_version,
+            )
+            .await?);
+        }
+        self.remote_create_transaction(invocation.call, &session, request)
+            .await
     }
 
     async fn account_alias(

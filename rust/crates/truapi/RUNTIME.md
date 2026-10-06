@@ -225,7 +225,7 @@ path. Web hosts do not compile the store.
 
 Both roles implement **`AccountHolder`** for account derivation, signing and proofs, and **`ProductAuthority: AccountHolder`** for connection lifecycle, resource acquisition, grant checks and cached allowance keys. Product runtimes hold `Arc<dyn ProductAuthority>` and call account operations through its supertrait. Each role retains its own approval policy, key custody and caching behavior.
 
-`AccountInvocation` binds VRF signing, aliases, proofs, key listings and ring signing to a call, an `AuthoritySession` and `AccountCaller`. `Local(&ProductContext)` identifies a product connection on either host role; `Remote { product_id }` carries only the caller reported through SSO. Local calls retain this host's permissions and signing shortcuts. Incoming SSO cannot use the wallet host's AutoSigning grants or trusted-product shortcut; cross-product access uses published manifest grants without consulting local refusals. Remote alias fallback and foreign key listings require an AccountAccess confirmation for each call without reading or writing local permission records. SSO message payloads and envelopes are unchanged.
+`AccountInvocation` binds payload and raw signing, transaction creation, VRF signing, aliases, proofs, key listings and ring signing to a call, an `AuthoritySession` and `AccountCaller`. `Local(&ProductContext)` identifies a product connection on either host role; `Remote { product_id }` carries only the caller reported through SSO. Local calls retain this host's permissions and signing shortcuts. Incoming SSO cannot use the wallet host's AutoSigning grants or trusted-product shortcut; cross-product access uses published manifest grants without consulting local refusals. Remote alias fallback and foreign key listings require an AccountAccess confirmation for each call without reading or writing local permission records. Remote payload signing, raw signing and transaction creation receive wallet review inside `SigningHost`'s account implementation before access to the selected wallet's keys. Local product reviews remain in the product adapter before the remote response timeout starts. The pairing host uses cached signing keys only for local product calls to these three operations. SSO message payloads and envelopes are unchanged.
 
 `WalletAccountHolder` owns the canonical `SessionState`, wallet activation and validation, active root entropy and derivation. `SigningHost` owns host grants and coordinates approval and SSO dispatch. Activation is prepared before taking the host grant lock; installation and clearing then update wallet state and invalidate host grants under that lock. Wallet validation changes on activation and lock, including same-wallet reactivation. Product reset changes only the host grant revision. Opaque `WalletKeys` snapshots keep related SSO and renewal derivations on one wallet across asynchronous work without exposing raw entropy. SignVrf validates and signs under the wallet lifecycle lock after approval.
 
@@ -270,11 +270,7 @@ the page.
 ### Inter-host SSO
 
 `PairingHost::call(request)` sends typed requests to
-[`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs). Handlers own
-consent and business logic; `sso_responder.rs` owns the transport loop and shared
-allowance helpers. Resource consent is bound to the request's signing session:
-account changes, disconnects, and reactivation invalidate pending approval before
-allocation or key return. Allocation failure details stay in local transcripts.
+[`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs). Signing handlers forward remote account invocations; the account implementation owns signing consent. Resource allocation handlers own allocation consent; `sso_responder.rs` owns the transport loop and shared allowance helpers. Consent is bound to the request's signing session: account changes, disconnects, and reactivation invalidate pending approval before allocation or key return. Allocation failure details stay in local transcripts.
 Allocation requests use the canonical `truapi::latest::AllocatableResource` type.
 Signing uses canonical request and result types. Product-scoped VRF requests use
 `ProductRequest<P>` to attach the caller to a canonical payload. Both product and
