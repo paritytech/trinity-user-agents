@@ -287,7 +287,10 @@ rest.
 - Do not alias primitive types. `type Counter = u64` adds another name to
   remember without preventing a counter from being confused with any other
   `u64`. Use the primitive directly, or a newtype when distinguishing values
-  or enforcing construction rules provides actual type safety.
+  or enforcing construction rules provides actual type safety. In the host
+  apps, use a value type for an identifier whose construction is validated;
+  a typealias is acceptable for an opaque identifier passed through
+  unchanged, such as `ProductId`.
 - Reuse canonical types, constants, and helpers. Do not introduce a second
   representation or a new dependency just to convert to and from the type the
   surrounding code already uses.
@@ -328,6 +331,87 @@ belongs to an existing type rather than adding another free-standing export.
 - In the Android host (`hosts/android`), build test doubles with `mockk` where
   possible, rather than hand-written fakes or Mockito. Instrumentation tests
   get it through `mockk-android`.
+
+## Host apps (`hosts/ios`, `hosts/android`)
+
+These hold for both apps. Platform rules live in each host's `CLAUDE.md` and
+`.claude/docs/`. Where a rule can be checked by SwiftLint, detekt or CI, check
+it there rather than in review.
+
+- Search before writing. Reuse the existing helper, SDK call, design-system
+  component or domain type, and put a new generic helper in the shared
+  package, not the feature.
+- Style UI only with design-system tokens and components: no raw colours,
+  hex values, alpha copies, system fonts, or raw spacing and shape values.
+- Name things by what they mean where they are used, and rename them when
+  that meaning or scope changes. Give every magic number a named constant.
+- Delete in the same change whatever it orphans: parameters, fields, cases,
+  strings, resources, DI bindings, flags, commented-out code and debug logs.
+- Keep a function at one level of abstraction and extract dense conditions
+  into named functions. One top-level type per file.
+- Never turn a failure into null, empty, false or a default. Return a result
+  or throw; where a failure is dropped on purpose, log it there. A timeout is
+  a failure.
+- Views, composables, presenters and wireframes only render and navigate.
+  Decisions, derived flags, validation and async work belong in the view
+  model, interactor or service.
+- Model mutually exclusive states as one enum or sealed type, never as
+  parallel booleans or sentinel values.
+- Inject collaborators through the constructor. No new singletons or mutable
+  global state, and no setters or `configure` calls that finish construction.
+- Make check-then-act atomic, and give every long-lived task or coroutine one
+  owner that cancels it.
+- Push filtering, sorting and lookups by id into the query, batch writes into
+  one transaction, and batch chain calls from one origin into one extrinsic.
+- Read network, chain, brand and remote-config values from their provider.
+  Never hardcode them.
+- A persisted model change ships a new version and migration in the same
+  change. Never edit an old schema, model version or fixture.
+- Wire payloads follow the shared spec exactly, and a spec change lands on
+  both apps in the same release.
+- Localize every user-visible string, and ship `en` and `es-ES` together.
+- Treat product, chain and backend input as untrusted. Derive the caller's
+  identity from injected context, never from request parameters.
+- Commit local state only after the action it records succeeds, and keep
+  side effects out of getters, mappers and stream transforms.
+- Debug and test behaviour sits behind one build type or flag per purpose,
+  checked at the lowest point that differs. No test branches in production
+  logic.
+- Keep secrets and internal infrastructure, such as room ids, invite links
+  and runner labels, out of source and workflows. Inject them through CI.
+- Comment why where the code cannot say it: invariants, ordering,
+  algorithms, wire effects. Never narrate, and keep the comment that explains
+  an algorithm.
+- Fix the root cause. A workaround states its reason and links a follow-up
+  issue.
+
+### Tests in the host apps
+
+- Unit test non-trivial pure logic at its boundaries. Give stateful engines,
+  sessions and queues behaviour tests on their failure, ordering and
+  reconnect paths.
+- Assert the spec, not the current behaviour, and test through the public
+  interface.
+- Encoding tests assert fixed vectors, and only for custom-encoded types,
+  persisted schemas and wire formats shared with the other app. No
+  encode-then-decode round trips, and no tests that restate a byte layout or
+  configuration.
+- No sleeps, polling or wall-clock deadlines. Inject a clock, advance it and
+  await explicit state. Bound every wait.
+- Do not mock what is cheap to build for real, such as keys and in-memory
+  stores. Doubles are for network, time, chain and the OS. Reuse the shared
+  doubles.
+- Never merge with failing or non-compiling tests.
+
+### Pull requests for the host apps
+
+- One task per pull request, branched from the base it targets. Explain every
+  behaviour or configuration change in the description.
+- Say how the change was verified, and attach a screen recording of every
+  changed UI state.
+- Review generated code yourself before asking anyone else to.
+- Never add an AI `Co-Authored-By` trailer. The CLA check rejects it, and the
+  pull request has to be recreated.
 
 ## Editing existing Rust
 
