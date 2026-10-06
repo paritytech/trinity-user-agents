@@ -40,7 +40,9 @@ use super::sso_remote::{
 use super::statement_store_rpc::StatementStoreRpc;
 use crate::chain_runtime::ChainRuntime;
 use crate::host_internal::extrinsic::build_local_transaction;
-use crate::host_internal::sso_messages::{ProductRequest, RingVrfError};
+use crate::host_internal::sso_messages::{
+    ProductRequest, RingVrfError, SsoAllocatedResource, SsoAllocationOutcome,
+};
 use crate::host_internal::transaction::sign_extrinsic_payload;
 use crate::host_logic::entropy::derive_product_entropy_from_source;
 use crate::host_logic::product_account::{
@@ -2487,8 +2489,68 @@ impl PairingHost {
         request: v01::HostRequestResourceAllocationRequest,
     ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
         let session = self.current_private_session(session)?;
-        self.remote_allocate_resources(cx, &session, product_id, request)
-            .await
+        let lifecycle_epoch = self.current_session_lifecycle_epoch();
+        let outcomes = self
+            .remote_allocate_resources(cx, &session, product_id.clone(), request)
+            .await?;
+        self.cache_allowance_outcomes(cx, &session, lifecycle_epoch, &product_id, &outcomes)
+            .await?;
+        Ok(v01::HostRequestResourceAllocationResponse {
+            outcomes: outcomes.into_iter().map(Into::into).collect(),
+        })
+    }
+
+    async fn cache_allowance_outcomes(
+        &self,
+        cx: &CallContext,
+        session: &SessionInfo,
+        lifecycle_epoch: u64,
+        product_id: &str,
+        outcomes: &[SsoAllocationOutcome],
+    ) -> Result<(), AuthorityError> {
+        for outcome in outcomes {
+            if let SsoAllocationOutcome::Allocated(resource) = outcome {
+                match resource {
+                    SsoAllocatedResource::StatementStoreAllowance { slot_account_key } => {
+                        self.cache_statement_store_allowance_key(
+                            session,
+                            lifecycle_epoch,
+                            product_id,
+                            slot_account_key.clone(),
+                        )
+                        .await?;
+                    }
+                    SsoAllocatedResource::BulletinAllowance { slot_account_key } => {
+                        self.cache_bulletin_allowance_key(
+                            session,
+                            lifecycle_epoch,
+                            product_id,
+                            slot_account_key.clone(),
+                        )
+                        .await?;
+                    }
+                    SsoAllocatedResource::SmartContractAllowance => {}
+                    SsoAllocatedResource::AutoSigning {
+                        product_root_private_key,
+                        ring_vrf_domain_entropy,
+                    } => {
+                        let expected_product_subtree_public_key = self
+                            .remote_product_subtree_public_key(cx, session, product_id.to_string())
+                            .await?;
+                        self.remember_auto_signing_key(
+                            session,
+                            lifecycle_epoch,
+                            product_id,
+                            expected_product_subtree_public_key,
+                            *product_root_private_key,
+                            *ring_vrf_domain_entropy,
+                        )
+                        .await?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn sign_statement_store_product_payload(

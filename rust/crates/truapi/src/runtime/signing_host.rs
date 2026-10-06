@@ -359,22 +359,14 @@ impl SigningHost {
         Ok(())
     }
 
-    async fn allocate_statement_store_allowance_key(
+    fn retain_statement_store_allowance(
         &self,
         session: &AuthoritySession,
         product_id: &str,
-        policy: OnExistingAllowancePolicy,
-    ) -> Result<StatementStoreAllowanceKey, sso_responder::AllowanceAllocationError> {
-        let (_, activation_generation) = self.require_current_session(session)?;
-        let allocation = sso_responder::allocate_statement_store_allowance(
-            &self.services,
-            self,
-            session,
-            product_id,
-            policy,
-        )
-        .await?;
+        allocation: sso_responder::StatementStoreAllocation,
+    ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
         let key = StatementStoreAllowanceKey::from_secret_bytes(allocation.secret)?;
+        let (_, activation_generation) = self.require_current_session(session)?;
         self.local_grants
             .lock()
             .expect("local AutoSigning grant mutex poisoned")
@@ -893,13 +885,16 @@ impl ProductAuthority for SigningHost {
         {
             return Ok(key.clone());
         }
-        self.allocate_statement_store_allowance_key(
+        let allocation = sso_responder::allocate_statement_store_allowance(
+            &self.services,
+            self,
             session,
             &product_id,
             OnExistingAllowancePolicy::Ignore,
         )
         .await
-        .map_err(sso_responder::AllowanceAllocationError::into_authority_error)
+        .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?;
+        self.retain_statement_store_allowance(session, &product_id, allocation)
     }
 
     fn forget_statement_store_allowance_key(&self, product_id: &str, public_key: [u8; 32]) {
@@ -1369,14 +1364,20 @@ impl AccountHolder for SigningHost {
                 continue;
             }
             let outcome = match resource {
-                v01::AllocatableResource::StatementStoreAllowance => self
-                    .allocate_statement_store_allowance_key(
+                v01::AllocatableResource::StatementStoreAllowance =>
+                    sso_responder::allocate_statement_store_allowance(
+                        &self.services,
+                        self,
                         session,
                         &product_id,
                         OnExistingAllowancePolicy::Increase,
                     )
                     .await
-                    .map(|_| v01::AllocationOutcome::Allocated),
+                    .and_then(|allocation| {
+                        self.retain_statement_store_allowance(session, &product_id, allocation)
+                            .map(|_| v01::AllocationOutcome::Allocated)
+                            .map_err(sso_responder::AllowanceAllocationError::Authority)
+                    }),
                 v01::AllocatableResource::BulletinAllowance => {
                     sso_responder::allocate_bulletin_allowance(
                         &self.services,

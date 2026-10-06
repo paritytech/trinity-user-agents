@@ -227,6 +227,8 @@ Both roles implement **`AccountHolder`** for account derivation, signing, proofs
 
 `SigningHost` owns host grants, session state and validation, and coordinates activation, approval and SSO dispatch. Its `WalletAccountHolder` owns active root entropy and derivation. Activation is prepared before taking the host grant lock; installation and clearing use that lock to keep wallet state and grant invalidation together. Opaque `WalletKeys` snapshots let SSO and renewal derive related keys from one wallet across asynchronous work without exposing raw entropy.
 
+Native statement allowance issuance returns the key and the period of its allocated slot; `SigningHost` validates the session and retains that result. SSO batch allocation returns wire outcomes to `PairingHost`, which validates and persists returned keys before reporting public outcomes. Native allocations retain each completed item before starting the next; paired retention uses the session epoch captured before the request.
+
 - **`PairingHost`** (seedless): the user's keys live in an external wallet, so
   signing/aliases/entropy relay over an encrypted SSO channel (statement store
   on the People chain; the channel lives in `pairing_host/sso_channel.rs`). The
