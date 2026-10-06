@@ -25,8 +25,8 @@ use super::allowances::{self, AllowanceCacheKey, AllowanceResource};
 use super::auth_state::AuthStateMachine;
 use super::authority::{
     AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
-    AutoSigningGrant, AutoSigningKey, BulletinAllowanceKey, CreateTransactionAuthorityRequest,
-    HostOperation, ProductAuthority, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
+    AutoSigningKey, BulletinAllowanceKey, CreateTransactionAuthorityRequest, HostOperation,
+    ProductAuthority, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
     StatementStoreAllowanceKey, authority_session, require_current_session,
 };
 use super::connected_session_ui_info;
@@ -39,7 +39,9 @@ use super::sso_remote::{
 };
 use super::statement_store_rpc::StatementStoreRpc;
 use crate::chain_runtime::ChainRuntime;
-use crate::host_internal::extrinsic::build_local_transaction;
+use crate::host_internal::extrinsic::{
+    Sr25519Signer, build_signed_transaction, local_transaction_metadata,
+};
 use crate::host_internal::sso_messages::{
     ProductRequest, RingVrfError, SsoAllocatedResource, SsoAllocationOutcome,
 };
@@ -2111,30 +2113,6 @@ impl PairingHost {
         })
     }
 
-    /// Whether an AutoSigning capability lets this host serve `account`
-    /// locally for `calling_product_id`.
-    ///
-    /// A capability this host cannot trust is an error, not a fall-through:
-    /// the lookup erases the slot as it rejects it, and prompting afterwards
-    /// would ask the user to approve a signature the host just refused to make.
-    async fn auto_signing_status(
-        &self,
-        session: &AuthoritySession,
-        calling_product_id: &str,
-        account: &v01::ProductAccountId,
-    ) -> Result<AutoSigningGrant, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        Ok(
-            match self
-                .local_product_signing_key(&session, Some(calling_product_id), account)
-                .await?
-            {
-                Some(_) => AutoSigningGrant::Active,
-                None => AutoSigningGrant::Absent,
-            },
-        )
-    }
-
     async fn sign_vrf(
         &self,
         invocation: AccountInvocation<'_>,
@@ -2481,31 +2459,52 @@ impl PairingHost {
 
     async fn sign_statement_store_product_payload(
         &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         account: v01::ProductAccountId,
         payload: Vec<u8>,
     ) -> Result<[u8; 64], AuthorityError> {
-        let session = self.current_private_session(session)?;
-        // The SSO raw-signing protocol cannot carry an exact, unwatermarked
-        // payload, so the capability's own key is the only way this role signs
-        // one. Statement proofs raise no confirmation on either role, so this
-        // unlocks the operation rather than waiving a prompt.
-        let Some(keypair) = self
-            .local_product_signing_key(&session, calling_product_id, &account)
-            .await?
-        else {
-            return Err(AuthorityError::Unavailable {
-                reason: "pairing host: exact statement proof signing needs an AutoSigning \
-                         capability; the current SSO raw-signing protocol cannot carry it"
-                    .to_string(),
-            });
+        let (session, operation) = {
+            let lifecycle = self
+                .session_lifecycle
+                .lock()
+                .expect("session lifecycle mutex poisoned");
+            (
+                self.current_private_session(invocation.session)?,
+                HostOperation::new(invocation.session.clone(), lifecycle.epoch),
+            )
         };
-        Ok(keypair
-            .secret
-            .sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)
-            .to_bytes())
+        if !matches!(invocation.caller, AccountCaller::Local { product, .. } if product.product_id == account.dot_ns_identifier)
+        {
+            invocation
+                .confirm(
+                    self.platform.as_ref(),
+                    UserConfirmationReview::StatementStoreProductSign(
+                        crate::platform::StatementStoreProductSignReview {
+                            calling_product_id: invocation.caller.product_id().map(str::to_string),
+                            account: account.clone(),
+                            payload: payload.clone(),
+                        },
+                    ),
+                )
+                .await?;
+        }
+        let cx = match invocation.caller {
+            AccountCaller::Local { .. } => super::remote_authority_context(invocation.call),
+            AccountCaller::Remote { .. } => invocation.call.clone(),
+        };
+        super::remote_authority_call(&cx, async {
+            let keypair = match invocation.caller {
+                AccountCaller::Local { product, .. } => self.local_product_signing_key(&session, Some(&product.product_id), &account).await?,
+                AccountCaller::Remote { .. } => None,
+            };
+            let Some(keypair) = keypair else {
+                return Err(AuthorityError::Unavailable { reason: "pairing host: exact statement proof signing needs an AutoSigning capability; the current SSO raw-signing protocol cannot carry it".to_string() });
+            };
+            let lifecycle = self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
+            operation.require_revision(lifecycle.epoch)?;
+            self.current_private_session(invocation.session)?;
+            Ok(keypair.secret.sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public).to_bytes())
+        }).await
     }
 
     fn derive_entropy(
@@ -2576,6 +2575,10 @@ fn login_error_reason(err: &CallError<HostRequestLoginError>) -> String {
 
 #[async_trait::async_trait]
 impl ProductAuthority for PairingHost {
+    fn account_holder(&self) -> &dyn AccountHolder {
+        self
+    }
+
     fn current_operation(&self) -> Option<HostOperation> {
         let lifecycle = self
             .session_lifecycle
@@ -2686,13 +2689,13 @@ impl ProductAuthority for PairingHost {
         PairingHost::subtree_reaches_account_holder(self, session, product_id).await
     }
 
-    async fn auto_signing_status(
+    fn wallet_authorization(
         &self,
-        session: &AuthoritySession,
-        calling_product_id: &str,
-        account: &v01::ProductAccountId,
-    ) -> Result<AutoSigningGrant, AuthorityError> {
-        PairingHost::auto_signing_status(self, session, calling_product_id, account).await
+        operation: &HostOperation,
+        _product: &ProductContext,
+    ) -> Result<Option<super::WalletAuthorization>, AuthorityError> {
+        self.require_current_operation(operation)?;
+        Ok(None)
     }
 
     async fn statement_store_allowance_key(
@@ -2757,21 +2760,49 @@ impl AccountHolder for PairingHost {
         invocation: AccountInvocation<'_>,
         request: SignPayloadAuthorityRequest,
     ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
-        let session = self.current_private_session(invocation.session)?;
-        if let AccountCaller::Local(product) = invocation.caller
+        let (session, operation) = {
+            let lifecycle = self
+                .session_lifecycle
+                .lock()
+                .expect("session lifecycle mutex poisoned");
+            (
+                self.current_private_session(invocation.session)?,
+                HostOperation::new(invocation.session.clone(), lifecycle.epoch),
+            )
+        };
+        let keypair = if let AccountCaller::Local { product, .. } = invocation.caller
             && let SignPayloadAuthorityRequest::Product(payload) = &request
-            && let Some(keypair) = self
-                .local_product_signing_key(
-                    &session,
-                    Some(product.product_id.as_str()),
-                    &payload.account,
-                )
-                .await?
         {
-            return Ok(sign_extrinsic_payload(&keypair, payload.payload.clone())?);
+            self.local_product_signing_key(&session, Some(&product.product_id), &payload.account)
+                .await?
+        } else {
+            None
+        };
+        if keypair.is_none() && matches!(invocation.caller, AccountCaller::Local { .. }) {
+            invocation
+                .confirm(self.platform.as_ref(), request.review(invocation.caller))
+                .await?;
         }
-        self.remote_sign_payload(invocation.call, &session, request)
-            .await
+        let cx = match invocation.caller {
+            AccountCaller::Local { .. } => super::remote_authority_context(invocation.call),
+            AccountCaller::Remote { .. } => invocation.call.clone(),
+        };
+        super::remote_authority_call(&cx, async {
+            self.require_current_operation(&operation)?;
+            if let Some(keypair) = keypair
+                && let SignPayloadAuthorityRequest::Product(payload) = request
+            {
+                let lifecycle = self
+                    .session_lifecycle
+                    .lock()
+                    .expect("session lifecycle mutex poisoned");
+                operation.require_revision(lifecycle.epoch)?;
+                self.current_private_session(invocation.session)?;
+                return Ok(sign_extrinsic_payload(&keypair, payload.payload)?);
+            }
+            self.remote_sign_payload(&cx, &session, request).await
+        })
+        .await
     }
 
     async fn sign_raw(
@@ -2780,32 +2811,88 @@ impl AccountHolder for PairingHost {
         request: SignRawAuthorityRequest,
         watermarked: bool,
     ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
-        let session = self.current_private_session(invocation.session)?;
-        // The unwatermarked API is never grant-covered, so a local signature
-        // here would skip a prompt the gate deliberately raised.
-        if let AccountCaller::Local(product) = invocation.caller
-            && watermarked
-            && let SignRawAuthorityRequest::Product(payload) = &request
-            && let Some(keypair) = self
-                .local_product_signing_key(
-                    &session,
-                    Some(product.product_id.as_str()),
-                    &payload.account,
-                )
-                .await?
+        let (session, operation) = {
+            let lifecycle = self
+                .session_lifecycle
+                .lock()
+                .expect("session lifecycle mutex poisoned");
+            (
+                self.current_private_session(invocation.session)?,
+                HostOperation::new(invocation.session.clone(), lifecycle.epoch),
+            )
+        };
+        if !matches!(request, SignRawAuthorityRequest::Product(_))
+            && matches!(invocation.caller, AccountCaller::Local { .. })
         {
-            let message = raw_payload_bytes(payload.payload.clone(), watermarked)?;
-            let signature = keypair
-                .secret
-                .sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
-                .to_bytes();
-            return Ok(v01::HostSignPayloadResponse {
-                signature: signature.to_vec(),
-                signed_transaction: None,
-            });
+            invocation
+                .confirm(
+                    self.platform.as_ref(),
+                    request.review(invocation.caller, watermarked),
+                )
+                .await?;
         }
-        self.remote_sign_raw(invocation.call, &session, request, watermarked)
-            .await
+        let keypair = if let AccountCaller::Local { product, .. } = invocation.caller
+            && watermarked
+        {
+            let account = match &request {
+                SignRawAuthorityRequest::Product(payload) => Some(&payload.account),
+                SignRawAuthorityRequest::LegacyAccount {
+                    product_account, ..
+                } => Some(product_account),
+                SignRawAuthorityRequest::IdentityAccount { .. } => None,
+            };
+            if let Some(account) = account {
+                self.local_product_signing_key(&session, Some(&product.product_id), account)
+                    .await?
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if keypair.is_none()
+            && matches!(request, SignRawAuthorityRequest::Product(_))
+            && matches!(invocation.caller, AccountCaller::Local { .. })
+        {
+            invocation
+                .confirm(
+                    self.platform.as_ref(),
+                    request.review(invocation.caller, watermarked),
+                )
+                .await?;
+        }
+        let cx = match invocation.caller {
+            AccountCaller::Local { .. } => super::remote_authority_context(invocation.call),
+            AccountCaller::Remote { .. } => invocation.call.clone(),
+        };
+        super::remote_authority_call(&cx, async {
+            self.require_current_operation(&operation)?;
+            if let Some(keypair) = keypair {
+                let payload = match request {
+                    SignRawAuthorityRequest::Product(request) => request.payload,
+                    SignRawAuthorityRequest::LegacyAccount { request, .. }
+                    | SignRawAuthorityRequest::IdentityAccount { request, .. } => request.payload,
+                };
+                let message = raw_payload_bytes(payload, watermarked)?;
+                let lifecycle = self
+                    .session_lifecycle
+                    .lock()
+                    .expect("session lifecycle mutex poisoned");
+                operation.require_revision(lifecycle.epoch)?;
+                self.current_private_session(invocation.session)?;
+                let signature = keypair
+                    .secret
+                    .sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
+                    .to_bytes();
+                return Ok(v01::HostSignPayloadResponse {
+                    signature: signature.to_vec(),
+                    signed_transaction: None,
+                });
+            }
+            self.remote_sign_raw(&cx, &session, request, watermarked)
+                .await
+        })
+        .await
     }
 
     async fn create_transaction(
@@ -2813,44 +2900,63 @@ impl AccountHolder for PairingHost {
         invocation: AccountInvocation<'_>,
         request: CreateTransactionAuthorityRequest,
     ) -> Result<v01::HostCreateTransactionResponse, AuthorityError> {
-        let session = self.current_private_session(invocation.session)?;
-        if let AccountCaller::Local(product) = invocation.caller
-            && let CreateTransactionAuthorityRequest::Product(payload) = &request
-            && let Some(keypair) = self
-                .local_product_signing_key(
-                    &session,
-                    Some(product.product_id.as_str()),
-                    &payload.signer,
-                )
-                .await?
-        {
-            // A payload this host cannot assemble is an error, not a
-            // fall-through to the relay: the gate already told the caller no
-            // prompt was coming, and relaying would raise one on the signing
-            // host after a chain timeout.
-            //
-            // Assembling needs runtime metadata, which a granted product
-            // moves from the signing host to this one. A pairing host is
-            // assumed to reach any genesis a product it has granted signs
-            // against; where it cannot, the call fails rather than producing
-            // the prompt-and-signature an ungranted product would have got.
-            //
-            // The failure is not prompt. An unreachable genesis leaves the
-            // metadata read waiting on the chain, so the caller can sit on the
-            // authority request timeout before it sees anything — the cost of
-            // assembling locally is paid before the grant can be found wanting.
-            return Ok(build_local_transaction(
-                &self.chain,
-                &keypair,
-                payload.genesis_hash,
-                &payload.call_data,
-                &payload.extensions,
-                payload.tx_ext_version,
+        let (session, operation) = {
+            let lifecycle = self
+                .session_lifecycle
+                .lock()
+                .expect("session lifecycle mutex poisoned");
+            (
+                self.current_private_session(invocation.session)?,
+                HostOperation::new(invocation.session.clone(), lifecycle.epoch),
             )
-            .await?);
+        };
+        let keypair = if let AccountCaller::Local { product, .. } = invocation.caller
+            && let CreateTransactionAuthorityRequest::Product(payload) = &request
+        {
+            self.local_product_signing_key(&session, Some(&product.product_id), &payload.signer)
+                .await?
+        } else {
+            None
+        };
+        let names_contacts = matches!(&request, CreateTransactionAuthorityRequest::Product(payload) if !payload.contacts.is_empty());
+        if (keypair.is_none() || names_contacts)
+            && matches!(invocation.caller, AccountCaller::Local { .. })
+        {
+            invocation
+                .confirm(self.platform.as_ref(), request.review(invocation.caller))
+                .await?;
         }
-        self.remote_create_transaction(invocation.call, &session, request)
-            .await
+        let cx = match invocation.caller {
+            AccountCaller::Local { .. } => super::remote_authority_context(invocation.call),
+            AccountCaller::Remote { .. } => invocation.call.clone(),
+        };
+        super::remote_authority_call(&cx, async {
+            self.require_current_operation(&operation)?;
+            if let Some(keypair) = keypair
+                && let CreateTransactionAuthorityRequest::Product(payload) = request
+            {
+                let metadata =
+                    local_transaction_metadata(&self.chain, payload.genesis_hash).await?;
+                let lifecycle = self
+                    .session_lifecycle
+                    .lock()
+                    .expect("session lifecycle mutex poisoned");
+                operation.require_revision(lifecycle.epoch)?;
+                self.current_private_session(invocation.session)?;
+                return Ok(v01::HostCreateTransactionResponse {
+                    transaction: build_signed_transaction(
+                        &Sr25519Signer::from_keypair(&keypair),
+                        payload.genesis_hash,
+                        &payload.call_data,
+                        &payload.extensions,
+                        payload.tx_ext_version,
+                        metadata,
+                    )?,
+                });
+            }
+            self.remote_create_transaction(&cx, &session, request).await
+        })
+        .await
     }
 
     async fn account_alias(
@@ -2871,11 +2977,23 @@ impl AccountHolder for PairingHost {
 
     async fn register_ring_vrf_key(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountRegisterRingVrfKeyRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountRegisterRingVrfKeyRequest,
     ) -> Result<[u8; 32], RingVrfError> {
-        PairingHost::register_ring_vrf_key(self, cx, session, request).await
+        PairingHost::register_ring_vrf_key(
+            self,
+            invocation.call,
+            invocation.session,
+            ProductRequest {
+                calling_product_id: invocation
+                    .caller
+                    .product_id()
+                    .ok_or(RingVrfError::NotAllowlisted)?
+                    .to_string(),
+                payload: request,
+            },
+        )
+        .await
     }
 
     async fn list_ring_vrf_keys(
@@ -2896,21 +3014,11 @@ impl AccountHolder for PairingHost {
 
     async fn sign_statement_store_product_payload(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         account: v01::ProductAccountId,
         payload: Vec<u8>,
     ) -> Result<[u8; 64], AuthorityError> {
-        PairingHost::sign_statement_store_product_payload(
-            self,
-            cx,
-            session,
-            calling_product_id,
-            account,
-            payload,
-        )
-        .await
+        PairingHost::sign_statement_store_product_payload(self, invocation, account, payload).await
     }
 
     fn derive_entropy(

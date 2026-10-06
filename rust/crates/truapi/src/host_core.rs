@@ -582,6 +582,7 @@ impl SigningHostRuntime {
         product_id: &str,
     ) -> Result<Option<[u8; 32]>, v01::GenericError> {
         self.signing_host
+            .account_holder()
             .derive_subtree_public_key(product_id)
             .map_err(|err| v01::GenericError {
                 reason: err.to_string(),
@@ -830,6 +831,7 @@ impl SigningHostRuntime {
         ring: &v01::RingLocation,
     ) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
         self.signing_host
+            .account_holder()
             .ring_vrf_providers(ring)
             .await
             .map_err(ring_vrf_admin_error)
@@ -841,6 +843,7 @@ impl SigningHostRuntime {
         ring: &v01::RingLocation,
     ) -> Result<Option<v01::ProductAccountId>, v01::GenericError> {
         self.signing_host
+            .account_holder()
             .selected_ring_vrf_provider(ring)
             .await
             .map_err(ring_vrf_admin_error)
@@ -853,6 +856,7 @@ impl SigningHostRuntime {
         handle: v01::ProductAccountId,
     ) -> Result<(), v01::GenericError> {
         self.signing_host
+            .account_holder()
             .select_ring_vrf_provider(ring, handle)
             .await
             .map_err(ring_vrf_admin_error)
@@ -1308,7 +1312,7 @@ async fn product_subtree_public_key(
         normalize_product_identifier(product_id).map_err(|reason| v01::GenericError {
             reason: reason.to_string(),
         })?;
-    let Some(session) = authority.current_session() else {
+    let Some(session) = authority.account_holder().current_session() else {
         return Ok(None);
     };
     let timeout = timeout_ms
@@ -1318,6 +1322,7 @@ async fn product_subtree_public_key(
     cx.set_timeout(timeout);
 
     let call = authority
+        .account_holder()
         .product_subtree_public_key(&cx, &session, product_id)
         .fuse();
     let deadline = futures_timer::Delay::new(timeout).fuse();

@@ -891,7 +891,7 @@ mod tests {
     }
     use crate::host_logic::statement_store::decode_verified_statement_data;
     use crate::platform::{HostInfo, Platform, PlatformInfo, SigningHostConfig};
-    use crate::runtime::authority::{AccountHolder, ProductAuthority};
+    use crate::runtime::authority::ProductAuthority;
     use crate::runtime::services::RuntimeServices;
     use crate::test_support::{StubPlatform, test_spawner};
     use std::sync::Arc;
@@ -1024,7 +1024,7 @@ mod tests {
         // unbounded test would hang instead of reporting. The bound is generous
         // because it is catching a hang, not asserting latency.
         let allocation = futures::executor::block_on(async {
-            let session = signing_host.current_session().unwrap();
+            let session = signing_host.account_holder().current_session().unwrap();
             futures::select! {
                 result = signing_host.wallet.allocate_statement_store_allowance(
                     &session,
@@ -1072,6 +1072,7 @@ mod tests {
     fn responder_advertises_and_signs_with_the_local_uid_identity() {
         let (_services, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
         let local_identity = signing_host
+            .account_holder()
             .current_session()
             .unwrap()
             .identity_account_id
@@ -1676,7 +1677,7 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform.clone());
-        let session = signing_host.current_session();
+        let session = signing_host.account_holder().current_session();
         let expected_secret = signing_host
             .wallet
             .keys(session.as_ref().unwrap())
@@ -1701,7 +1702,7 @@ mod tests {
         assert_eq!(
             (
                 response.payload,
-                signing_host.current_session(),
+                signing_host.account_holder().current_session(),
                 platform.resource_allocation_reviews.lock().unwrap().len()
             ),
             (

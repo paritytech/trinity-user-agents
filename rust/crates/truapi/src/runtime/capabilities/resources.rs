@@ -71,7 +71,7 @@ impl Entropy for ProductRuntimeHost {
             .require_current_operation(&operation)
             .and_then(|()| {
                 self.authority
-                    .derive_entropy(session, &self.product_id(), &context)
+                    .account_holder().derive_entropy(session, &self.product_id(), &context)
             })
             .map_err(|err| {
                 CallError::Domain(HostDeriveEntropyError::V1(

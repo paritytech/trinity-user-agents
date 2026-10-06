@@ -12,7 +12,10 @@ fn invalid_activation_preserves_the_active_wallet_and_its_grants() {
         authority.activate_local_session_with_identity(ENTROPY.to_vec(), Some("alice".to_string())),
     )
     .expect("initial activation succeeds");
-    let session = authority.current_session().expect("active wallet");
+    let session = authority
+        .account_holder()
+        .current_session()
+        .expect("active wallet");
     let runtime = product_runtime(services, authority.clone());
     auto_signing::grant_auto_signing(&runtime);
 
@@ -43,7 +46,7 @@ fn invalid_activation_preserves_the_active_wallet_and_its_grants() {
 
     assert_eq!(
         (
-            authority.current_session(),
+            authority.account_holder().current_session(),
             keypair
                 .public
                 .verify_simple(b"substrate", b"<Bytes>still active</Bytes>", &signature)
@@ -78,7 +81,7 @@ fn pending_vrf_approval_distinguishes_wallet_and_host_reset() {
             let (services, authority) = signing_runtime_with_platform(platform.clone());
             futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
                 .unwrap();
-            let session = authority.current_session().unwrap();
+            let session = authority.account_holder().current_session().unwrap();
             let runtime = product_runtime(services, authority.clone());
             let service = SigningHostSsoService::new(authority.clone());
             let answer = async {
@@ -135,7 +138,7 @@ fn pending_vrf_approval_distinguishes_wallet_and_host_reset() {
             assert_eq!(
                 (
                     futures::executor::block_on(answer),
-                    authority.current_session() == Some(session),
+                    authority.account_holder().current_session() == Some(session),
                     platform.sign_vrf_reviews.lock().unwrap().len()
                 ),
                 (expected, change == "reset", 1),
@@ -171,12 +174,19 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
     authority.clear_product_state("myapp.dot").unwrap();
     release.send(()).unwrap();
     let result = futures::executor::block_on(allocation);
-    let session = authority.current_session().unwrap();
-    let status = futures::executor::block_on(authority.auto_signing_status(
+    let session = authority.account_holder().current_session().unwrap();
+    let status = authority.account_holder().auto_signing_status(
         &session,
         "myapp.dot",
         &vrf_request("myapp.dot").account,
-    ));
+        authority
+            .wallet_authorization(
+                &authority.current_operation().unwrap(),
+                &ProductContext::new("myapp.dot".to_string()).unwrap(),
+            )
+            .unwrap()
+            .as_ref(),
+    );
     assert_eq!(
         (
             result.map(|_| ()),
@@ -195,4 +205,54 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
             1
         ),
     );
+}
+
+#[test]
+fn wallet_change_during_ring_preparation_rejects_the_alias() {
+    use futures::FutureExt;
+
+    for lock in [false, true] {
+        let resolver = full_person_ring_resolver();
+        let (_, authority) =
+            signing_runtime_with_ring_resolver(Arc::new(StubPlatform::default()), resolver.clone());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+        let session = authority.account_holder().current_session().unwrap();
+        let ring = full_person_ring_location();
+        register_full_person_key(&authority, &session, &ring);
+        let (release, gate) = futures::channel::oneshot::channel();
+        *resolver.validation_gate.lock().unwrap() = Some(gate);
+        let product = ProductContext::new("peopl.dot".to_string()).unwrap();
+        let cx = CallContext::default();
+        let alias = authority.account_holder().account_alias(
+            AccountInvocation {
+                call: &cx,
+                session: &session,
+                caller: AccountCaller::Local {
+                    product: &product,
+                    authorization: None,
+                },
+            },
+            HostAccountGetAliasRequest {
+                key_handle: full_person_key_handle(),
+                context: v01::ProductProofContext {
+                    product_id: "peopl.dot".to_string(),
+                    suffix: v01::DerivationIndex::Index(0),
+                },
+                ring_location: ring,
+            },
+        );
+        futures::pin_mut!(alias);
+        assert!(alias.as_mut().now_or_never().is_none());
+        if lock {
+            futures::executor::block_on(authority.disconnect());
+        } else {
+            futures::executor::block_on(authority.activate_local_session([0xCD; 16].to_vec()))
+                .unwrap();
+        }
+        release.send(()).unwrap();
+        assert_eq!(
+            futures::executor::block_on(alias),
+            Err(RingVrfError::from(AuthorityError::Disconnected))
+        );
+    }
 }

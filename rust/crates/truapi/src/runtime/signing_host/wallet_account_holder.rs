@@ -1,5 +1,6 @@
 //! Wallet activation, authorization and resource issuance.
 
+mod account;
 mod allowance;
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod allowance_renewal;
@@ -10,10 +11,11 @@ pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
 
+use crate::runtime::WalletAuthorization;
 #[cfg(feature = "test-host")]
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex, Weak};
-use truapi::latest::{HostAccountSignVrfRequest, ProductAccountId, VrfSignature};
+use std::sync::{Arc, Mutex};
+use truapi::latest::ProductAccountId;
 use zeroize::Zeroizing;
 
 use crate::host_internal::sso_messages::RingVrfError;
@@ -41,6 +43,8 @@ pub const SSO_ENCRYPTION_DOMAIN: &[u8] = b"sso";
 /// Owns the active wallet session and its zeroizable entropy.
 pub struct WalletAccountHolder {
     services: Arc<crate::runtime::RuntimeServices>,
+    ring_resolver: Arc<dyn super::ring_vrf::RingResolver>,
+    ring_vrf_registry: Arc<crate::runtime::ring_vrf_registry::RingVrfRegistryStore>,
     renewal: allowance_renewal::RenewalState,
     #[cfg(feature = "test-host")]
     grant_allowances_unchecked: std::sync::atomic::AtomicBool,
@@ -85,27 +89,6 @@ impl WalletState {
     }
 }
 
-/// Wallet-issued permission for one product during one activation.
-#[derive(Clone)]
-pub struct WalletAuthorization {
-    issuer: Weak<SessionState>,
-    validation_id: Vec<u8>,
-    product_id: String,
-}
-
-impl WalletAuthorization {
-    fn matches(
-        &self,
-        wallet: &WalletAccountHolder,
-        session: &AuthoritySession,
-        product_id: &str,
-    ) -> bool {
-        self.issuer.ptr_eq(&Arc::downgrade(&wallet.session_state))
-            && self.validation_id == session.validation_id
-            && self.product_id == product_id
-    }
-}
-
 /// Validated activation material, installed only after host grants are invalidated.
 pub struct PreparedWalletActivation {
     keys: WalletKeys,
@@ -116,6 +99,8 @@ impl WalletAccountHolder {
     /// Start locked, with no wallet secrets.
     pub fn new(services: Arc<crate::runtime::RuntimeServices>, network_suffix: String) -> Self {
         Self {
+            ring_resolver: super::ring_vrf::ChainRingResolver::new(services.chain.clone()),
+            ring_vrf_registry: crate::runtime::ring_vrf_registry::RingVrfRegistryStore::new(services.platform.clone()),
             services,
             renewal: allowance_renewal::RenewalState::default(),
             #[cfg(feature = "test-host")]
@@ -126,6 +111,32 @@ impl WalletAccountHolder {
             lifecycle: Mutex::new(WalletState::default()),
             session_state: SessionState::new(),
         }
+    }
+
+    /// Inject a ring resolver for account-operation tests.
+    #[cfg(test)]
+    pub fn new_with_ring_resolver(
+        services: Arc<crate::runtime::RuntimeServices>,
+        network_suffix: String,
+        ring_resolver: Arc<dyn super::ring_vrf::RingResolver>,
+    ) -> Self {
+        Self {
+            ring_resolver,
+            ..Self::new(services, network_suffix)
+        }
+    }
+
+    fn with_keys<T, E: From<AuthorityError>>(
+        &self,
+        session: &AuthoritySession,
+        use_keys: impl FnOnce(&WalletKeys) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let state = self
+            .lifecycle
+            .lock()
+            .expect("wallet lifecycle mutex poisoned");
+        state.require_session(self.session_state.current(), session)?;
+        use_keys(state.keys.as_ref().ok_or(AuthorityError::Disconnected)?)
     }
 
     /// Whether allocation is answered as granted without performing it.
@@ -182,6 +193,19 @@ impl WalletAccountHolder {
         Ok(())
     }
 
+    fn authorization_matches(
+        &self,
+        authorization: &WalletAuthorization,
+        session: &AuthoritySession,
+        product_id: &str,
+    ) -> bool {
+        authorization
+            .issuer
+            .ptr_eq(&Arc::downgrade(&self.session_state))
+            && authorization.validation_id == session.validation_id
+            && authorization.product_id == product_id
+    }
+
     /// Reject a receipt issued for a different wallet, activation or product.
     pub fn validate_authorization(
         &self,
@@ -190,7 +214,7 @@ impl WalletAccountHolder {
         authorization: &WalletAuthorization,
     ) -> Result<(), AuthorityError> {
         self.require_current_session(session)?;
-        if !authorization.matches(self, session, product_id) {
+        if !self.authorization_matches(authorization, session, product_id) {
             return Err(AuthorityError::Rejected);
         }
         Ok(())
@@ -219,7 +243,8 @@ impl WalletAccountHolder {
         };
         Ok(
             if caller == owner
-                && authorization.is_some_and(|grant| grant.matches(self, session, &caller))
+                && authorization
+                    .is_some_and(|grant| self.authorization_matches(grant, session, &caller))
             {
                 AutoSigningGrant::Active
             } else {
@@ -282,33 +307,6 @@ impl WalletAccountHolder {
             .expect("wallet lifecycle mutex poisoned");
         state.require_session(self.session_state.current(), session)?;
         state.keys.clone().ok_or(AuthorityError::Disconnected)
-    }
-
-    /// Sign only while the approved wallet activation remains installed.
-    pub fn sign_vrf(
-        &self,
-        session: &AuthoritySession,
-        request: &HostAccountSignVrfRequest,
-    ) -> Result<VrfSignature, AuthorityError> {
-        let state = self
-            .lifecycle
-            .lock()
-            .expect("wallet lifecycle mutex poisoned");
-        state.require_session(self.session_state.current(), session)?;
-        let keypair = state
-            .keys
-            .as_ref()
-            .ok_or(AuthorityError::Disconnected)?
-            .product_keypair(&request.account)?;
-        let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
-            &keypair,
-            &request.transcript_label,
-            request
-                .items
-                .iter()
-                .map(|item| (item.label.as_slice(), item.value.as_slice())),
-        );
-        Ok(VrfSignature { pre_output, proof })
     }
 
     /// Validate and derive activation material without changing the active wallet.

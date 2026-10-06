@@ -515,7 +515,7 @@ pub async fn ring_vrf_key_access_granted(
         return Ok(AuthorizedAccess { caller, owner });
     }
     let decision = match invocation_caller {
-        AccountCaller::Local(_) => {
+        AccountCaller::Local { .. } => {
             scope_grant(services, platform, &caller, &owner, Granted::Context).await
         }
         AccountCaller::Remote { .. } => {

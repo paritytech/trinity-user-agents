@@ -5265,6 +5265,52 @@ fn auto_signing_serves_sign_raw_locally_without_prompt_or_sso() {
     );
 }
 
+#[test]
+fn legacy_raw_review_preserves_cached_product_signing() {
+    let session = sso_session_info();
+    let mut platform = auto_signing_test_platform(&session, "auto-1");
+    Arc::get_mut(&mut platform).unwrap().sign_raw_confirmed = true;
+    let host = ProductRuntimeHost::new(
+        platform.clone(),
+        runtime_config("myapp.dot"),
+        test_spawner(),
+    );
+    install_pairing_session(&host, session);
+    request_auto_signing(&host, "auto-1");
+    let keypair = granted_keypair();
+    let request = v01::HostSignRawWithLegacyAccountRequest {
+        signer: subxt::utils::AccountId32(keypair.public.to_bytes()).to_string(),
+        payload: v01::RawPayload::Bytes {
+            bytes: b"legacy cached".to_vec(),
+        },
+    };
+    let HostSignRawWithLegacyAccountResponse::V1(response) =
+        futures::executor::block_on(host.sign_raw_with_legacy_account(
+            &CallContext::default(),
+            HostSignRawWithLegacyAccountRequest::V1(request.clone()),
+        ))
+        .expect("the reviewed legacy request uses the cached key without another SSO response");
+    let signature = schnorrkel::Signature::from_bytes(&response.signature).unwrap();
+    assert_eq!(
+        (
+            keypair
+                .public
+                .verify_simple(b"substrate", b"<Bytes>legacy cached</Bytes>", &signature)
+                .is_ok(),
+            response.signed_transaction,
+            platform.sign_raw_reviews.lock().unwrap().clone()
+        ),
+        (
+            true,
+            None,
+            vec![crate::platform::SignRawReview::LegacyAccount {
+                request,
+                watermarked: true
+            }]
+        ),
+    );
+}
+
 /// The account a picked contact resolves to, and the handle a product holds
 /// for them. Minted through the real picker so the handle is keyed the way a
 /// product's would be.
@@ -7200,7 +7246,7 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
         AccountInvocation {
             call: &CallContext::default(),
             session: &session,
-            caller: AccountCaller::Local(&ProductContext::new("dim2.dot".to_string()).unwrap()),
+            caller: AccountCaller::Local { product: &ProductContext::new("dim2.dot".to_string()).unwrap(), authorization: None },
         },
         v01::HostAccountCreateProofRequest {
             key_handle: v01::ProductAccountId {
@@ -7226,7 +7272,7 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
         AccountInvocation {
             call: &CallContext::default(),
             session: &session,
-            caller: AccountCaller::Local(&ProductContext::new("dim2.dot".to_string()).unwrap()),
+            caller: AccountCaller::Local { product: &ProductContext::new("dim2.dot".to_string()).unwrap(), authorization: None },
         },
         v01::HostAccountRingVrfSignRequest {
             key_handle: v01::ProductAccountId {

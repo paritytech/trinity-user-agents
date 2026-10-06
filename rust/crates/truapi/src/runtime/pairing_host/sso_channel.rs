@@ -401,7 +401,7 @@ impl PairingHost {
     /// Forward a raw-signing request to the paired signing host.
     #[instrument(skip_all, fields(account_kind = match &request {
         SignRawAuthorityRequest::Product(_) => "product",
-        SignRawAuthorityRequest::LegacyAccount { .. } => "legacy",
+        SignRawAuthorityRequest::LegacyAccount { .. } | SignRawAuthorityRequest::IdentityAccount { .. } => "legacy",
     }))]
     pub async fn remote_sign_raw(
         &self,
@@ -410,21 +410,16 @@ impl PairingHost {
         request: SignRawAuthorityRequest,
         watermarked: bool,
     ) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
-        match request {
-            SignRawAuthorityRequest::Product(request) => self
-                .call(
-                    cx,
-                    session,
-                    if watermarked {
-                        SignRequest::Raw(request)
-                    } else {
-                        SignRequest::RawUnwatermarkedDeprecated(request)
-                    },
-                )
-                .await
-                .map_err(remote_authority_error)?
-                .map_err(remote_authority_error),
-            SignRawAuthorityRequest::LegacyAccount { account, request } => {
+        let request = match request {
+            SignRawAuthorityRequest::Product(request) => request,
+            SignRawAuthorityRequest::LegacyAccount {
+                product_account,
+                request,
+            } => latest::HostSignRawRequest {
+                account: product_account,
+                payload: request.payload,
+            },
+            SignRawAuthorityRequest::IdentityAccount { account, request } => {
                 let request = SignRawWithLegacyAccountRequest {
                     account,
                     data: request.payload,
@@ -445,12 +440,24 @@ impl PairingHost {
                     .await
                     .map_err(remote_authority_error)?
                     .map_err(remote_authority_error)?;
-                Ok(latest::HostSignPayloadResponse {
+                return Ok(latest::HostSignPayloadResponse {
                     signature,
                     signed_transaction: None,
-                })
+                });
             }
-        }
+        };
+        self.call(
+            cx,
+            session,
+            if watermarked {
+                SignRequest::Raw(request)
+            } else {
+                SignRequest::RawUnwatermarkedDeprecated(request)
+            },
+        )
+        .await
+        .map_err(remote_authority_error)?
+        .map_err(remote_authority_error)
     }
 
     /// Forward a transaction-creation request to the paired signing host.

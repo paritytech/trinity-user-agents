@@ -15,7 +15,6 @@ use crate::host_logic::statement_store::{
     statement_fields_from_v01, statement_proof_to_v01, unsigned_statement_signing_payload,
 };
 
-use crate::platform::{StatementStoreProductSignReview, UserConfirmationReview};
 use serde_json::Value;
 use subxt_rpcs::client::RpcSubscription;
 use tracing::instrument;
@@ -357,30 +356,10 @@ impl ProductRuntimeHost {
             .map_err(StatementProofFailure::InvalidStatement)?;
         let payload = unsigned_statement_signing_payload(fields)
             .map_err(StatementProofFailure::UnableToSign)?;
-        // A publisher's grant does not replace an ordinary caller's signature approval.
-        if product_account_id.dot_ns_identifier != self.product_id() {
-            let confirmed = self
-                .confirm_product_action(UserConfirmationReview::StatementStoreProductSign(
-                    StatementStoreProductSignReview {
-                        calling_product_id: Some(self.product_id()),
-                        account: product_account_id.clone(),
-                        payload: payload.clone(),
-                    },
-                ))
-                .await
-                .map_err(|err| StatementProofFailure::UnableToSign(err.reason))?;
-            if !confirmed {
-                return Err(StatementProofFailure::Refused);
-            }
-        }
-        let cx = remote_authority_context(cx);
-        let signature = self.account_operation(
+        let signature = self.account_call(
             operation,
-            &cx,
-            self.authority.sign_statement_store_product_payload(
-                &cx,
-                session,
-                Some(self.product_id().as_str()),
+            self.authority.account_holder().sign_statement_store_product_payload(
+                crate::runtime::authority::AccountInvocation { call: cx, session, caller: crate::runtime::authority::AccountCaller::Local { product: &self.product, authorization: None } },
                 product_account_id,
                 payload,
             ),
@@ -443,6 +422,10 @@ enum StatementProofFailure {
 fn statement_authority_failure(err: AuthorityError) -> StatementProofFailure {
     match err {
         AuthorityError::Disconnected => StatementProofFailure::NoSession,
+        AuthorityError::Rejected => StatementProofFailure::Refused,
+        AuthorityError::ConfirmationFailed(error) => {
+            StatementProofFailure::UnableToSign(error.reason)
+        }
         err => StatementProofFailure::UnableToSign(err.to_string()),
     }
 }

@@ -117,7 +117,7 @@ impl WalletAccountHolder {
             .product_id()
             .ok_or(AuthorityError::Rejected)?;
         let confirmed = crate::runtime::until_cancelled(invocation.call, async {
-            if matches!(invocation.caller, AccountCaller::Local(_))
+            if matches!(invocation.caller, AccountCaller::Local { .. })
                 && has_trusted_remote_permissions(caller)
             {
                 return Ok(true);
@@ -153,7 +153,7 @@ impl WalletAccountHolder {
                         .into());
                     }
                     #[cfg(feature = "test-host")]
-                    if matches!(invocation.caller, AccountCaller::Local(_)) {
+                    if matches!(invocation.caller, AccountCaller::Local { .. }) {
                         self.refuse_withheld(&resource)?;
                     }
                     let product_id = product_id.as_str();
@@ -191,7 +191,7 @@ impl WalletAccountHolder {
                         v01::AllocatableResource::AutoSigning => {
                             let keys = self.keys(invocation.session)?;
                             match invocation.caller {
-                                AccountCaller::Local(_) => {
+                                AccountCaller::Local { .. } => {
                                     let product_id = normalize_product_identifier(product_id)
                                         .map_err(|error| AuthorityError::Unavailable {
                                             reason: error.to_string(),

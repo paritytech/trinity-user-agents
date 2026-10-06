@@ -31,6 +31,87 @@ pub struct RingVrfRegistryStore {
     storage_guard: futures::lock::Mutex<()>,
 }
 
+/// Prepared registry mutation bound to one root and storage lock.
+pub struct RegistryUpdate<'a> {
+    store: &'a RingVrfRegistryStore,
+    root_public_key: [u8; 32],
+    snapshot: RegistrySnapshot,
+    _guard: futures::lock::MutexGuard<'a, ()>,
+}
+
+impl RegistryUpdate<'_> {
+    /// Add a registration without replacing an existing key.
+    pub fn register(
+        &mut self,
+        handle: ProductAccountId,
+        ring: RingLocation,
+        public_key: [u8; 32],
+    ) -> Result<(), RingVrfError> {
+        if let Some(entry) = self
+            .snapshot
+            .entries
+            .iter_mut()
+            .find(|entry| entry.handle == handle)
+        {
+            if entry.public_key != Some(public_key) {
+                return Err(invalid_registry(
+                    "registered key handle has a conflicting public key",
+                ));
+            }
+            if !entry.rings.contains(&ring) {
+                entry.rings.push(ring.clone());
+            }
+        } else {
+            self.snapshot.entries.push(RegisteredRingVrfKey {
+                handle: handle.clone(),
+                rings: vec![ring.clone()],
+                public_key: Some(public_key),
+            });
+        }
+        if !self
+            .snapshot
+            .selected_providers
+            .iter()
+            .any(|provider| provider.ring == ring)
+        {
+            self.snapshot
+                .selected_providers
+                .push(SelectedProvider { ring, handle });
+        }
+        Ok(())
+    }
+
+    /// Select a provider already registered for this ring.
+    pub fn select_provider(
+        &mut self,
+        ring: RingLocation,
+        handle: ProductAccountId,
+    ) -> Result<(), RingVrfError> {
+        let registered = self
+            .snapshot
+            .entries
+            .iter()
+            .any(|entry| entry.handle == handle && entry.rings.contains(&ring));
+        if !registered {
+            return Err(RingVrfError::KeyNotInRing);
+        }
+        self.snapshot
+            .selected_providers
+            .retain(|provider| provider.ring != ring);
+        self.snapshot
+            .selected_providers
+            .push(SelectedProvider { ring, handle });
+        Ok(())
+    }
+
+    /// Persist only to the root captured during preparation.
+    pub async fn persist(self) -> Result<(), RingVrfError> {
+        self.store
+            .persist_under_guard(self.root_public_key, self.snapshot)
+            .await
+    }
+}
+
 impl RingVrfRegistryStore {
     pub fn new(platform: Arc<dyn Platform>) -> Arc<Self> {
         Arc::new(Self {
@@ -85,6 +166,7 @@ impl RingVrfRegistryStore {
             .collect())
     }
 
+    /// Persist a registration without replacing an existing key.
     pub async fn register(
         &self,
         root_public_key: [u8; 32],
@@ -92,41 +174,27 @@ impl RingVrfRegistryStore {
         ring: RingLocation,
         public_key: [u8; 32],
     ) -> Result<(), RingVrfError> {
-        let _guard = self.storage_guard.lock().await;
-        let mut snapshot = self.load_under_guard(root_public_key).await?;
-        if let Some(entry) = snapshot
-            .entries
-            .iter_mut()
-            .find(|entry| entry.handle == handle)
-        {
-            if entry.public_key != Some(public_key) {
-                return Err(invalid_registry(
-                    "registered key handle has a conflicting public key",
-                ));
-            }
-            if !entry.rings.contains(&ring) {
-                entry.rings.push(ring.clone());
-            }
-        } else {
-            snapshot.entries.push(RegisteredRingVrfKey {
-                handle: handle.clone(),
-                rings: vec![ring.clone()],
-                public_key: Some(public_key),
-            });
-        }
-        if !snapshot
-            .selected_providers
-            .iter()
-            .any(|provider| provider.ring == ring)
-        {
-            snapshot
-                .selected_providers
-                .push(SelectedProvider { ring, handle });
-        }
-        self.persist_under_guard(root_public_key, snapshot).await
+        let mut update = self.prepare_update(root_public_key).await?;
+        update.register(handle, ring, public_key)?;
+        update.persist().await
     }
 
-    /// Reconcile one owner's complete response with locally registered keys.
+    /// Load one root's registry while retaining storage serialization.
+    pub async fn prepare_update(
+        &self,
+        root_public_key: [u8; 32],
+    ) -> Result<RegistryUpdate<'_>, RingVrfError> {
+        let guard = self.storage_guard.lock().await;
+        let snapshot = self.load_under_guard(root_public_key).await?;
+        Ok(RegistryUpdate {
+            store: self,
+            root_public_key,
+            snapshot,
+            _guard: guard,
+        })
+    }
+
+/// Reconcile one owner's complete response with locally registered keys.
     ///
     /// RFC-0024 has no revocation operation, so a remote response cannot
     /// invalidate an entry already accepted by this host. This also prevents a
@@ -232,22 +300,9 @@ impl RingVrfRegistryStore {
         ring: RingLocation,
         handle: ProductAccountId,
     ) -> Result<(), RingVrfError> {
-        let _guard = self.storage_guard.lock().await;
-        let mut snapshot = self.load_under_guard(root_public_key).await?;
-        let registered = snapshot
-            .entries
-            .iter()
-            .any(|entry| entry.handle == handle && entry.rings.contains(&ring));
-        if !registered {
-            return Err(RingVrfError::KeyNotInRing);
-        }
-        snapshot
-            .selected_providers
-            .retain(|provider| provider.ring != ring);
-        snapshot
-            .selected_providers
-            .push(SelectedProvider { ring, handle });
-        self.persist_under_guard(root_public_key, snapshot).await
+        let mut update = self.prepare_update(root_public_key).await?;
+        update.select_provider(ring, handle)?;
+        update.persist().await
     }
 
     async fn snapshot(&self, root_public_key: [u8; 32]) -> Result<RegistrySnapshot, RingVrfError> {

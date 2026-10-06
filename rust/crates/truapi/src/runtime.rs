@@ -54,6 +54,14 @@ pub use authority::{
     AccountCaller, AccountHolder, AccountInvocation, AuthorityError, BulletinAllowanceKey,
     HostOperation, ProductAuthority,
 };
+/// Wallet-issued permission for one product during one activation.
+#[derive(Clone)]
+pub struct WalletAuthorization {
+    issuer: std::sync::Weak<crate::host_logic::session::SessionState>,
+    validation_id: Vec<u8>,
+    product_id: String,
+}
+
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
 
@@ -74,9 +82,9 @@ pub use signing_host::{
     PairingProposal, PairingProposalMetadata, ResponderExit,
 };
 pub use signing_host::{
-    LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService, disconnect_paired_host,
-    establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
-    respond_to_pairing, resume_pairing,
+    LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService,
+    disconnect_paired_host, establish_pairing, notify_pairing_allowance_allocation,
+    notify_pairing_failed, respond_to_pairing, resume_pairing,
 };
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
@@ -638,13 +646,18 @@ impl ProductRuntimeHost {
         F: Future<Output = Result<T, E>>,
         E: From<AuthorityError>,
     {
-        remote_authority_call(cx, async {
-            self.authority.require_current_operation(operation)?;
-            let result = call.await?;
-            self.authority.require_current_operation(operation)?;
-            Ok(result)
-        })
-        .await
+        remote_authority_call(cx, self.account_call(operation, call)).await
+    }
+
+    async fn account_call<T, E, F>(&self, operation: &HostOperation, call: F) -> Result<T, E>
+    where
+        F: Future<Output = Result<T, E>>,
+        E: From<AuthorityError>,
+    {
+        self.authority.require_current_operation(operation)?;
+        let result = call.await?;
+        self.authority.require_current_operation(operation)?;
+        Ok(result)
     }
 
     async fn product_account_public_key(
@@ -658,7 +671,7 @@ impl ProductRuntimeHost {
             .account_operation(
                 operation,
                 &cx,
-                self.authority.product_subtree_public_key(
+                self.authority.account_holder().product_subtree_public_key(
                     &cx,
                     &operation.session,
                     product_account_id.dot_ns_identifier.clone(),
@@ -1082,7 +1095,7 @@ fn signing_call_error<E>(
         AuthorityError::Rejected | AuthorityError::Disconnected => {
             v01::HostSignPayloadError::Rejected
         }
-        error @ AuthorityError::ConfirmationFailed(_) => v01::HostSignPayloadError::Unknown { reason: error.to_string() },
+        AuthorityError::ConfirmationFailed(error) => return CallError::HostFailure { reason: format!("sign payload confirmation failed: {error:?}") },
         AuthorityError::Cancelled(err) => v01::HostSignPayloadError::Unknown {
             reason: err.to_string(),
         },
@@ -1100,7 +1113,7 @@ fn transaction_call_error<E>(
         AuthorityError::Rejected | AuthorityError::Disconnected => {
             v01::HostCreateTransactionError::Rejected
         }
-        error @ AuthorityError::ConfirmationFailed(_) => v01::HostCreateTransactionError::Unknown { reason: error.to_string() },
+        AuthorityError::ConfirmationFailed(error) => return CallError::HostFailure { reason: format!("create transaction confirmation failed: {error:?}") },
         AuthorityError::Cancelled(err) => v01::HostCreateTransactionError::Unknown {
             reason: err.to_string(),
         },
@@ -1378,19 +1391,21 @@ impl ProductRuntimeHost {
             .ok_or(CallError::Unsupported)?;
         let session = self
             .authority
+            .account_holder()
             .current_session()
             .ok_or(CallError::Domain(v01::HostContactsPickError::NotConnected))?;
-        let handle_key =
-            self.authority
-                .contacts_handle_key(&session)
-                .map_err(|error| match error {
-                    AuthorityError::Disconnected => {
-                        CallError::Domain(v01::HostContactsPickError::NotConnected)
-                    }
-                    other => CallError::Domain(v01::HostContactsPickError::Unknown {
-                        reason: other.to_string(),
-                    }),
-                })?;
+        let handle_key = self
+            .authority
+            .account_holder()
+            .contacts_handle_key(&session)
+            .map_err(|error| match error {
+                AuthorityError::Disconnected => {
+                    CallError::Domain(v01::HostContactsPickError::NotConnected)
+                }
+                other => CallError::Domain(v01::HostContactsPickError::Unknown {
+                    reason: other.to_string(),
+                }),
+            })?;
         Ok((
             platform,
             crate::runtime::contacts::ContactHandles::from_handle_key(handle_key),

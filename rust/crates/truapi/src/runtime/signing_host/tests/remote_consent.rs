@@ -7,6 +7,44 @@ use crate::runtime::sso_service::Dispatch;
 use truapi::latest::{HostAccountListRingVrfKeysRequest, RingVrfKeyDisclosure};
 
 #[test]
+fn direct_local_signing_without_authorization_requires_wallet_review() {
+    let platform = Arc::new(StubPlatform::default());
+    let (_, authority) = signing_runtime_with_platform(platform.clone());
+    futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let session = authority.account_holder().current_session().unwrap();
+    let product = ProductContext::new("myapp.dot".to_string()).unwrap();
+    let request = truapi::latest::HostSignRawRequest {
+        account: product_account(0),
+        payload: truapi::latest::RawPayload::Bytes {
+            bytes: b"local approval".to_vec(),
+        },
+    };
+    let signed = futures::executor::block_on(authority.account_holder().sign_raw(
+        AccountInvocation {
+            call: &CallContext::default(),
+            session: &session,
+            caller: AccountCaller::Local {
+                product: &product,
+                authorization: None,
+            },
+        },
+        SignRawAuthorityRequest::Product(request.clone()),
+        true,
+    ));
+    assert_eq!(
+        (signed, platform.sign_raw_reviews.lock().unwrap().clone()),
+        (
+            Err(AuthorityError::Rejected),
+            vec![SignRawReview::Product {
+                calling_product_id: Some("myapp.dot".to_string()),
+                request,
+                watermarked: true,
+            }],
+        ),
+    );
+}
+
+#[test]
 fn direct_remote_signing_cannot_bypass_wallet_review_with_a_native_grant() {
     let platform = Arc::new(StubPlatform {
         resource_allocation_confirmed: true,
@@ -14,7 +52,7 @@ fn direct_remote_signing_cannot_bypass_wallet_review_with_a_native_grant() {
     });
     let (services, authority) = signing_runtime_with_platform(platform.clone());
     futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-    let session = authority.current_session().unwrap();
+    let session = authority.account_holder().current_session().unwrap();
     auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
     let request = truapi::latest::HostSignRawRequest {
         account: product_account(0),
@@ -22,7 +60,7 @@ fn direct_remote_signing_cannot_bypass_wallet_review_with_a_native_grant() {
             bytes: b"remote approval".to_vec(),
         },
     };
-    let signed = futures::executor::block_on(authority.sign_raw(
+    let signed = futures::executor::block_on(authority.account_holder().sign_raw(
         AccountInvocation {
             call: &CallContext::default(),
             session: &session,
@@ -33,6 +71,39 @@ fn direct_remote_signing_cannot_bypass_wallet_review_with_a_native_grant() {
         SignRawAuthorityRequest::Product(request.clone()),
         true,
     ));
+    let statement = futures::executor::block_on(
+        authority
+            .account_holder()
+            .sign_statement_store_product_payload(
+                AccountInvocation {
+                    call: &CallContext::default(),
+                    session: &session,
+                    caller: AccountCaller::Remote {
+                        product_id: Some("myapp.dot"),
+                    },
+                },
+                product_account(0),
+                b"remote statement".to_vec(),
+            ),
+    );
+    assert_eq!(
+        (
+            statement,
+            platform
+                .statement_store_product_sign_reviews
+                .lock()
+                .unwrap()
+                .clone()
+        ),
+        (
+            Err(AuthorityError::Rejected),
+            vec![crate::platform::StatementStoreProductSignReview {
+                calling_product_id: Some("myapp.dot".to_string()),
+                account: product_account(0),
+                payload: b"remote statement".to_vec()
+            }]
+        ),
+    );
     assert_eq!(
         (signed, platform.sign_raw_reviews.lock().unwrap().clone()),
         (
@@ -54,14 +125,23 @@ fn remote_vrf_cannot_reuse_a_native_auto_signing_grant() {
     });
     let (services, authority) = signing_runtime_with_platform(platform.clone());
     futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-    let session = authority.current_session().unwrap();
+    let session = authority.account_holder().current_session().unwrap();
     auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
+    let authorization = authority
+        .wallet_authorization(
+            &authority.current_operation().unwrap(),
+            &ProductContext::new("myapp.dot".to_string()).unwrap(),
+        )
+        .unwrap();
     let local = futures::executor::block_on(AccountHolder::sign_vrf(
-        authority.as_ref(),
+        authority.account_holder(),
         AccountInvocation {
             call: &CallContext::default(),
             session: &session,
-            caller: AccountCaller::Local(&ProductContext::new("myapp.dot".to_string()).unwrap()),
+            caller: AccountCaller::Local {
+                product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
+                authorization: authorization.as_ref(),
+            },
         },
         vrf_request("myapp.dot"),
     ));
@@ -109,7 +189,7 @@ fn remote_account_access_neither_reuses_nor_changes_native_permissions() {
                 signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
             futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
                 .unwrap();
-            let session = authority.current_session().unwrap();
+            let session = authority.account_holder().current_session().unwrap();
             register_full_person_key(&authority, &session, &full_person_ring_location());
             let owner = if operation == "alias" {
                 "peopl"
@@ -201,7 +281,7 @@ fn remote_published_access_is_independent_of_native_refusals() {
         let (_, authority) =
             signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-        let session = authority.current_session().unwrap();
+        let session = authority.account_holder().current_session().unwrap();
         register_full_person_key(&authority, &session, &full_person_ring_location());
         let request = ProductRequest {
             calling_product_id: "myapp.dot".to_string(),
@@ -210,13 +290,11 @@ fn remote_published_access_is_independent_of_native_refusals() {
                 message: b"published access".to_vec(),
             },
         };
-        let local = futures::executor::block_on(authority.ring_vrf_sign(
+        let local = futures::executor::block_on(authority.account_holder().ring_vrf_sign(
             AccountInvocation {
                 call: &CallContext::default(),
                 session: &session,
-                caller: AccountCaller::Local(
-                    &ProductContext::new(request.calling_product_id.clone()).unwrap(),
-                ),
+                caller: AccountCaller::Local { product: &ProductContext::new(request.calling_product_id.clone()).unwrap(), authorization: None },
             },
             request.payload.clone(),
         ));

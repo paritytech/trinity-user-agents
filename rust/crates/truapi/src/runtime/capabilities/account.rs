@@ -28,7 +28,6 @@ use truapi::versioned::account::{
 use truapi::{CallContext, CallError, Subscription, latest, v01};
 
 use crate::host_internal::product_manifest::Granted;
-use crate::host_internal::sso_messages::ProductRequest;
 use crate::runtime::{
     AccountCaller, AccountInvocation, ProductRuntimeHost, account_access_authorization,
     account_get_authority_error, remote_authority_context, ring_vrf_alias_error,
@@ -149,11 +148,11 @@ impl Account for ProductRuntimeHost {
         self.account_operation(
             &operation,
             &cx,
-            self.authority.account_alias(
+            self.authority.account_holder().account_alias(
                 AccountInvocation {
                     call: &cx,
                     session,
-                    caller: AccountCaller::Local(&self.product),
+                    caller: AccountCaller::Local { product: &self.product, authorization: None },
                 },
                 request,
             ),
@@ -232,11 +231,11 @@ impl Account for ProductRuntimeHost {
         self.account_operation(
             &operation,
             &cx,
-            self.authority.create_proof(
+            self.authority.account_holder().create_proof(
                 AccountInvocation {
                     call: &cx,
                     session,
-                    caller: AccountCaller::Local(&self.product),
+                    caller: AccountCaller::Local { product: &self.product, authorization: None },
                 },
                 request,
             ),
@@ -262,18 +261,13 @@ impl Account for ProductRuntimeHost {
             )));
         };
         let session = &operation.session;
-        let calling_product_id = self.product_id();
         let cx = remote_authority_context(cx);
         self.account_operation(
             &operation,
             &cx,
-            self.authority.register_ring_vrf_key(
-                &cx,
-                session,
-                ProductRequest {
-                    calling_product_id,
-                    payload: request,
-                },
+            self.authority.account_holder().register_ring_vrf_key(
+                AccountInvocation { call: &cx, session, caller: AccountCaller::Local { product: &self.product, authorization: None } },
+                request,
             ),
         )
         .await
@@ -310,11 +304,11 @@ impl Account for ProductRuntimeHost {
         self.account_operation(
             &operation,
             &cx,
-            self.authority.list_ring_vrf_keys(
+            self.authority.account_holder().list_ring_vrf_keys(
                 AccountInvocation {
                     call: &cx,
                     session,
-                    caller: AccountCaller::Local(&self.product),
+                    caller: AccountCaller::Local { product: &self.product, authorization: None },
                 },
                 request,
             ),
@@ -380,11 +374,11 @@ impl Account for ProductRuntimeHost {
         self.account_operation(
             &operation,
             &cx,
-            self.authority.ring_vrf_sign(
+            self.authority.account_holder().ring_vrf_sign(
                 AccountInvocation {
                     call: &cx,
                     session,
-                    caller: AccountCaller::Local(&self.product),
+                    caller: AccountCaller::Local { product: &self.product, authorization: None },
                 },
                 request,
             ),
@@ -419,15 +413,19 @@ impl Account for ProductRuntimeHost {
             )));
         };
         let session = &operation.session;
+        let authorization = self
+            .authority
+            .wallet_authorization(&operation, &self.product)
+            .map_err(|error| CallError::Domain(HostAccountSignVrfError::V1(error.into())))?;
         let cx = remote_authority_context(cx);
         self.account_operation(
             &operation,
             &cx,
-            self.authority.sign_vrf(
+            self.authority.account_holder().sign_vrf(
                 AccountInvocation {
                     call: &cx,
                     session,
-                    caller: AccountCaller::Local(&self.product),
+                    caller: AccountCaller::Local { product: &self.product, authorization: authorization.as_ref() },
                 },
                 request,
             ),
@@ -456,7 +454,7 @@ impl Account for ProductRuntimeHost {
         _cx: &CallContext,
         _request: HostGetUserIdRequest,
     ) -> Result<HostGetUserIdResponse, CallError<HostGetUserIdError>> {
-        let Some(session) = self.authority.current_session() else {
+        let Some(session) = self.authority.account_holder().current_session() else {
             return Err(CallError::Domain(HostGetUserIdError::V1(
                 v01::HostGetUserIdError::NotConnected,
             )));

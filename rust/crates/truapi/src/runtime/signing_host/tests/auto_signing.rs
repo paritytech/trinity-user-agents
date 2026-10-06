@@ -254,11 +254,18 @@ fn direct_allocation_cannot_authorize_signing_without_wallet_approval() {
         &ProductContext::new("myapp.dot".to_string()).unwrap(),
         request.clone(),
     ));
-    let grant = futures::executor::block_on(authority.auto_signing_status(
+    let grant = authority.account_holder().auto_signing_status(
         &operation.session,
         "myapp.dot",
         &product_account(0),
-    ));
+        authority
+            .wallet_authorization(
+                &authority.current_operation().unwrap(),
+                &ProductContext::new("myapp.dot".to_string()).unwrap(),
+            )
+            .unwrap()
+            .as_ref(),
+    );
     assert_eq!(
         (
             result,
@@ -314,18 +321,32 @@ fn cancelling_a_later_resource_keeps_the_first_native_authorization() {
             .poll(&mut Context::from_waker(&futures::task::noop_waker())),
         Poll::Pending,
     );
-    let retained_before_cancel = futures::executor::block_on(authority.auto_signing_status(
+    let retained_before_cancel = authority.account_holder().auto_signing_status(
         &operation.session,
         "myapp.dot",
         &product_account(0),
-    ));
+        authority
+            .wallet_authorization(
+                &authority.current_operation().unwrap(),
+                &ProductContext::new("myapp.dot".to_string()).unwrap(),
+            )
+            .unwrap()
+            .as_ref(),
+    );
     cancel.cancel();
     let result = futures::executor::block_on(allocation);
-    let retained_after_cancel = futures::executor::block_on(authority.auto_signing_status(
+    let retained_after_cancel = authority.account_holder().auto_signing_status(
         &operation.session,
         "myapp.dot",
         &product_account(0),
-    ));
+        authority
+            .wallet_authorization(
+                &authority.current_operation().unwrap(),
+                &ProductContext::new("myapp.dot".to_string()).unwrap(),
+            )
+            .unwrap()
+            .as_ref(),
+    );
     assert_eq!(
         (result, retained_before_cancel, retained_after_cancel),
         (

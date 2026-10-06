@@ -38,7 +38,7 @@ impl SigningHostSsoService {
 
     /// The signing session captured before dispatching one request.
     pub fn current_session(&self) -> Option<AuthoritySession> {
-        self.signing_host.current_session()
+        self.signing_host.account_holder().current_session()
     }
 
     /// Answer `message`, unless the pairing host withdraws it first.
@@ -71,7 +71,7 @@ impl SigningHostSsoService {
         match request {
             SignRequest::Payload(request) => {
                 self.signing_host
-                    .sign_payload(
+                    .account_holder().sign_payload(
                         cx.account_invocation(None),
                         SignPayloadAuthorityRequest::Product(*request),
                     )
@@ -79,7 +79,7 @@ impl SigningHostSsoService {
             }
             SignRequest::Raw(request) => {
                 self.signing_host
-                    .sign_raw(
+                    .account_holder().sign_raw(
                         cx.account_invocation(None),
                         SignRawAuthorityRequest::Product(request),
                         true,
@@ -88,7 +88,7 @@ impl SigningHostSsoService {
             }
             SignRequest::RawUnwatermarkedDeprecated(request) => {
                 self.signing_host
-                    .sign_raw(
+                    .account_holder().sign_raw(
                         cx.account_invocation(None),
                         SignRawAuthorityRequest::Product(request),
                         false,
@@ -114,9 +114,9 @@ impl SigningHostSsoService {
             payload: request.data,
         };
         self.signing_host
-            .sign_raw(
+            .account_holder().sign_raw(
                 cx.account_invocation(None),
-                SignRawAuthorityRequest::LegacyAccount {
+                SignRawAuthorityRequest::IdentityAccount {
                     account: request.account,
                     request: public_request,
                 },
@@ -225,6 +225,7 @@ impl SigningHostSsoService {
         request: ProductRequest<api::HostAccountGetAliasRequest>,
     ) -> GetAccountAliasResponse {
         self.signing_host
+            .account_holder()
             .account_alias(
                 cx.account_invocation(Some(&request.calling_product_id)),
                 request.payload,
@@ -309,7 +310,7 @@ impl SigningHostSsoService {
         let CreateTransactionPayload::V1(payload) = request.payload;
         let payload = payload.into_product_payload();
         self.signing_host
-            .create_transaction(
+            .account_holder().create_transaction(
                 cx.account_invocation(None),
                 CreateTransactionAuthorityRequest::Product(payload),
             )
@@ -326,7 +327,7 @@ impl SigningHostSsoService {
     ) -> CreateTransactionResponse {
         let CreateTransactionLegacyPayload::V1(payload) = request.payload;
         self.signing_host
-            .create_transaction(
+            .account_holder().create_transaction(
                 cx.account_invocation(None),
                 CreateTransactionAuthorityRequest::IdentityAccount(payload),
             )
@@ -354,6 +355,7 @@ impl SigningHostSsoService {
         request: ProductRequest<api::HostAccountCreateProofRequest>,
     ) -> CreateAccountProofResponse {
         self.signing_host
+            .account_holder()
             .create_proof(
                 cx.account_invocation(Some(&request.calling_product_id)),
                 request.payload,
@@ -368,7 +370,7 @@ impl SigningHostSsoService {
         request: ProductRequest<api::HostAccountSignVrfRequest>,
     ) -> SignVrfResponse {
         self.signing_host
-            .sign_vrf(
+            .account_holder().sign_vrf(
                 cx.account_invocation(Some(&request.calling_product_id)),
                 request.payload,
             )
@@ -383,6 +385,7 @@ impl SigningHostSsoService {
         request: ProductSubtreeRequest,
     ) -> ProductSubtreeResponse {
         self.signing_host
+            .account_holder()
             .product_subtree_public_key(&cx.call, &cx.session, request.product_id)
             .await
             .map_err(|err| err.to_string())
@@ -395,7 +398,11 @@ impl SigningHostSsoService {
         request: ProductRequest<api::HostAccountRegisterRingVrfKeyRequest>,
     ) -> RegisterRingVrfKeyResponse {
         self.signing_host
-            .register_ring_vrf_key(&cx.call, &cx.session, request)
+            .account_holder()
+            .register_ring_vrf_key(
+                cx.account_invocation(Some(&request.calling_product_id)),
+                request.payload,
+            )
             .await
     }
 
@@ -406,6 +413,7 @@ impl SigningHostSsoService {
         request: ProductRequest<api::HostAccountListRingVrfKeysRequest>,
     ) -> ListRingVrfKeysResponse {
         self.signing_host
+            .account_holder()
             .list_ring_vrf_keys(
                 cx.account_invocation(Some(&request.calling_product_id)),
                 request.payload,
@@ -420,6 +428,7 @@ impl SigningHostSsoService {
         request: ProductRequest<api::HostAccountRingVrfSignRequest>,
     ) -> RingVrfSignResponse {
         self.signing_host
+            .account_holder()
             .ring_vrf_sign(
                 cx.account_invocation(Some(&request.calling_product_id)),
                 request.payload,
