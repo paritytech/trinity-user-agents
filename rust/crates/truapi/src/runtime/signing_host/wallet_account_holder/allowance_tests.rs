@@ -20,7 +20,9 @@ fn wallet(suffix: &str) -> WalletAccountHolder {
     );
     let registry = crate::runtime::RingVrfRegistryStore::new(services.platform.clone());
     let wallet = WalletAccountHolder::new(services, suffix.to_string(), registry);
-    wallet.install(wallet.prepare_activation(vec![7; 32], None).unwrap());
+    wallet
+        .install(wallet.prepare_activation(vec![7; 32], None).unwrap())
+        .unwrap();
     wallet
 }
 
@@ -132,7 +134,9 @@ fn wallet_replacement_during_revision_read_prevents_allowance_submission() {
     );
     futures::pin_mut!(registration);
     assert!(registration.as_mut().now_or_never().is_none());
-    wallet.install(wallet.prepare_activation(vec![7; 32], None).unwrap());
+    wallet
+        .install(wallet.prepare_activation(vec![7; 32], None).unwrap())
+        .unwrap();
     release.send(()).unwrap();
     let result = futures::executor::block_on(registration)
         .map(|_| ())
@@ -262,7 +266,9 @@ fn wallet_replacement_after_the_first_renewal_submission_stops_the_pass() {
     let renewal = renew_targets(&context, 7, &targets, &lock);
     futures::pin_mut!(renewal);
     assert!(renewal.as_mut().now_or_never().is_none());
-    wallet.install(wallet.prepare_activation(vec![8; 32], None).unwrap());
+    wallet
+        .install(wallet.prepare_activation(vec![8; 32], None).unwrap())
+        .unwrap();
     release.send(()).unwrap();
     let result = futures::executor::block_on(renewal)
         .map_err(|error| AllowanceAllocationError::from(error).into_authority_error());

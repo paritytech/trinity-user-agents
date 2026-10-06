@@ -154,6 +154,7 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
 
 let runtime = try TrUAPIHostRuntime(
     bridge: bridge,
+    walletSecrets: walletSecrets,
     runtimeConfig: HostRuntimeConfig(
         hostName: "My Chat Host",
         peopleChainGenesisHash: peopleChainGenesisHash,   // exactly 32 bytes
@@ -163,7 +164,7 @@ let runtime = try TrUAPIHostRuntime(
     )
 )
 // Chat needs an active session; without one every Chat call answers denied.
-try runtime.activateLocalSession(secret: secret)
+try await runtime.activateWallet(walletId: selectedWalletId)
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
@@ -214,7 +215,7 @@ let execution = try runtime.openProductExecution(
     pocket: MyPocketBridge(store: pocketStore)
 )
 
-// Pocket needs an active session too: without `activateLocalSession` every
+// Pocket needs an active session too: without `activateWallet` every
 // Pocket call answers denied, whatever this bridge holds.
 
 // Republish after the host's own collection changes.
@@ -351,7 +352,7 @@ Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission
 
 Statement-store allowances are granted per period, so a host has to re-register the accounts it wants to keep writing. They are not revoked the moment the period ends: `Resources.StmtStoreGraceWindow` keeps an ended period's allowances active until cleanup catches up, 48 hours on `paseo-next-v2`. The runtime owns the ledger and the registration; the app owns only the schedule.
 
-Record the accounts to keep allowed. This needs an active session, so call it after `activateLocalSession` or after pairing, not at construction:
+Record the accounts to keep allowed. This needs an active session, so call it after `activateWallet` or after pairing, not at construction:
 
 ```swift
 try runtime.trackStatementRenewalTargets([
@@ -422,7 +423,7 @@ An account id must be exactly 32 bytes. Anything else is rejected where the bind
 > `cancelNotification`) run inline on the dispatcher thread and must return
 > promptly without blocking.
 
-The example receives `secretStorage` from the embedding app's shared durable secret backend.
+The example receives `secretStorage` from the embedding app's shared durable secret backend and `walletSecrets`, a separate `NativeWalletSecretProvider` whose async `readWalletRootEntropy(walletId:)` reads the exact selected protected root or throws `HostRejection`. Construction starts locked and does not read entropy. Await `activateWallet` before opening wallet-backed product or SSO operations; call `lockWallet` immediately when the native wallet selection becomes invalid. A failed explicit replacement preserves the active wallet unless the host locked it first.
 
 ```swift
 import Foundation
@@ -491,7 +492,7 @@ final class MyBridge: HostBridge, @unchecked Sendable {
     // is `.noFreeAllowanceSlots`, which is unlikely to succeed before the
     // period rolls over, so retry should not be the primary action. This native
     // runtime is a signing host, so `.pairing` and `.authenticating` are not
-    // emitted. Activate the session with `runtime.activateLocalSession(...)`.
+    // emitted. Activate the session with `runtime.activateWallet(...)`.
     func authStateChanged(state: AuthState) {
         DispatchQueue.main.async { /* render the state */ }
     }
@@ -542,8 +543,8 @@ let runtimeConfig = HostRuntimeConfig(
     assetHubChainGenesisHash: Data(repeating: 1, count: 32),
     networkSuffix: "dot"
 )
-let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
-try runtime.activateLocalSession(secret: entropyBytes, liteUsername: nil)
+let runtime = try TrUAPIHostRuntime(bridge: bridge, walletSecrets: walletSecrets, runtimeConfig: runtimeConfig)
+try await runtime.activateWallet(walletId: selectedWalletId, liteUsername: nil)
 let execution = try runtime.openProductExecution(
     bridge: bridge,
     configuration: ProductExecutionConfig(
@@ -586,7 +587,7 @@ webView.stopLoading()
 execution.close()
 
 // On logout:
-runtime.disconnect()
+runtime.lockWallet()
 ```
 
 The updated `@parity/truapi` SDK keeps the same client across connection loss. The SDK replaces the socket; interrupted operations fail with `ConnectionResetError` and are never replayed. Recreate read/watch subscriptions in the provider that owns them. SDKs 0.16.0 and 0.18.0 can still start through the minimal `__HOST_API_PORT__` adapter, but require a page reload after a disconnect. Remove that adapter once deployed products adopt the injected client.

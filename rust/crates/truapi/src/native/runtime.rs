@@ -21,6 +21,8 @@ use crate::store::{Db, core_db_config};
 use crate::subscription::Spawner;
 use crate::{PairedSsoPeer, ResponderExit, SigningHostRuntime};
 
+use super::wallet_secrets::{NativeWalletSecretProvider, WalletSecretCallback};
+
 use super::callbacks::{
     HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativePocketCallbacks,
 };
@@ -43,6 +45,7 @@ use super::parse_pairing_deeplink;
 #[derive(uniffi::Object)]
 pub struct NativeTrUApiHostRuntime {
     runtime: Arc<SigningHostRuntime>,
+    wallet_secrets: WalletSecretCallback,
     events: Arc<NativeEventBus>,
     spawner: Spawner,
     ws_bridge: Arc<SharedWsBridge>,
@@ -53,6 +56,7 @@ pub struct NativeTrUApiHostRuntime {
 impl NativeTrUApiHostRuntime {
     fn from_resolved(
         callbacks: Arc<dyn HostCallbacks>,
+        wallet_secrets: Arc<dyn NativeWalletSecretProvider>,
         runtime_config: NativeResolvedHostRuntimeConfig,
         log_marker: &str,
         log_detail: &str,
@@ -97,17 +101,11 @@ impl NativeTrUApiHostRuntime {
             runtime.set_core_db(core_db),
             "a freshly built runtime installs its core database once"
         );
-        if let Some(secret) = runtime_config.local_session_secret {
-            futures::executor::block_on(runtime.activate_local_session_with_identity(
-                secret,
-                runtime_config.local_session_lite_username,
-            ))
-            .map_err(|err| NativeRuntimeConfigError::LocalSessionActivation {
-                reason: err.reason,
-            })?;
-        }
         Ok(Arc::new(Self {
             runtime,
+            wallet_secrets: WalletSecretCallback {
+                provider: wallet_secrets,
+            },
             events,
             spawner,
             ws_bridge: Arc::new(SharedWsBridge::new(Arc::new(move |marker, detail| {
@@ -237,15 +235,17 @@ pub struct NativeAnnouncedPairing {
 
 #[uniffi::export]
 impl NativeTrUApiHostRuntime {
-    /// Construct one host-level runtime and optionally activate its local session.
+    /// Construct a locked host runtime without reading wallet secrets.
     #[uniffi::constructor]
     pub fn with_runtime_config(
         callbacks: Arc<dyn HostCallbacks>,
+        wallet_secrets: Arc<dyn NativeWalletSecretProvider>,
         runtime_config: HostRuntimeConfig,
     ) -> Result<Arc<Self>, NativeRuntimeConfigError> {
         let runtime_config: NativeResolvedHostRuntimeConfig = runtime_config.try_into()?;
         Self::from_resolved(
             callbacks,
+            wallet_secrets,
             runtime_config,
             "truapi.native.host_runtime.boot",
             "host runtime ready",
@@ -409,9 +409,9 @@ impl NativeTrUApiHostRuntime {
             .map_err(NativePairingError::from)
     }
 
-    /// Core-owned logout for the process-wide authentication session.
-    pub fn disconnect(&self) {
-        futures::executor::block_on(self.runtime.disconnect_session());
+    /// Invalidate active wallet work and release in-memory secrets.
+    pub fn lock_wallet(&self) {
+        self.runtime.lock_wallet();
     }
 
     /// Record the accounts a renewal pass should keep allowed. The ledger
@@ -517,17 +517,16 @@ impl NativeTrUApiHostRuntime {
         self.runtime.last_statement_renewal_report()
     }
 
-    /// Activate or replace the process-wide local signing session.
-    pub fn activate_local_session(
+    /// Activate the selected wallet after protected loading and validation.
+    pub async fn activate_wallet(
         &self,
-        secret: Vec<u8>,
+        wallet_id: String,
         lite_username: Option<String>,
     ) -> Result<(), HostRejection> {
-        futures::executor::block_on(
-            self.runtime
-                .activate_local_session_with_identity(secret, lite_username),
-        )
-        .map_err(Into::into)
+        self.runtime
+            .activate_wallet(&self.wallet_secrets, wallet_id, lite_username)
+            .await
+            .map_err(Into::into)
     }
 
     /// Reports the core database's SQLite version, schema version and file
@@ -949,13 +948,55 @@ mod tests {
     use truapi::v01;
 
     #[test]
+    fn native_construction_stays_locked_until_explicit_protected_activation() {
+        struct Unavailable(std::sync::atomic::AtomicUsize);
+        #[async_trait::async_trait]
+        impl NativeWalletSecretProvider for Unavailable {
+            async fn read_wallet_root_entropy(
+                &self,
+                _wallet_id: String,
+            ) -> Result<Vec<u8>, HostRejection> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Err(HostRejection::Rejected {
+                    reason: "protected wallet unavailable".to_string(),
+                })
+            }
+        }
+        let provider = Arc::new(Unavailable(std::sync::atomic::AtomicUsize::new(0)));
+        let runtime = NativeTrUApiHostRuntime::with_runtime_config(
+            Arc::new(EventCallbacks::new()),
+            provider.clone(),
+            native_host_runtime_config(),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                runtime.runtime.has_active_session(),
+                provider.0.load(Ordering::SeqCst)
+            ),
+            (false, 0)
+        );
+        assert_eq!(
+            (
+                futures::executor::block_on(runtime.activate_wallet("selected".to_string(), None))
+                    .map_err(|error| error.to_string()),
+                runtime.runtime.has_active_session(),
+                provider.0.load(Ordering::SeqCst),
+            ),
+            (Err("protected wallet unavailable".to_string()), false, 1),
+        );
+    }
+
+    #[test]
     fn a_worker_write_reaches_a_storage_subscription_in_the_products_other_execution() {
         let callbacks = Arc::new(EventCallbacks::new());
-        let mut config = native_host_runtime_config();
-        config.local_session_secret = None;
-        config.local_session_lite_username = None;
-        let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
-            .expect("host runtime config should be valid");
+        let config = native_host_runtime_config();
+        let host = NativeTrUApiHostRuntime::with_runtime_config(
+            callbacks.clone(),
+            Arc::new(TestWalletSecretProvider),
+            config,
+        )
+        .expect("host runtime config should be valid");
         let screen = host
             .open_product_execution(
                 callbacks.clone(),
@@ -996,11 +1037,13 @@ mod tests {
     #[test]
     fn a_host_pushed_storage_change_reaches_the_products_subscription() {
         let callbacks = Arc::new(EventCallbacks::new());
-        let mut config = native_host_runtime_config();
-        config.local_session_secret = None;
-        config.local_session_lite_username = None;
-        let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
-            .expect("host runtime config should be valid");
+        let config = native_host_runtime_config();
+        let host = NativeTrUApiHostRuntime::with_runtime_config(
+            callbacks.clone(),
+            Arc::new(TestWalletSecretProvider),
+            config,
+        )
+        .expect("host runtime config should be valid");
         let execution = host
             .open_product_execution(
                 callbacks.clone(),
@@ -1038,7 +1081,7 @@ mod tests {
             fn device_paired(&self, _device: PairedSsoPeer) {}
         }
 
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
+        let host = native_host_runtime(
             Arc::new(EventCallbacks::new()),
             native_host_runtime_config(),
         )
@@ -1049,7 +1092,7 @@ mod tests {
 
     #[test]
     fn process_runtime_shares_authority_and_replaces_one_chat_execution_per_product() {
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
+        let host = native_host_runtime(
             Arc::new(EventCallbacks::new()),
             native_host_runtime_config(),
         )
@@ -1102,7 +1145,7 @@ mod tests {
     fn a_renderer_action_reaches_the_product_that_rendered_it() {
         // The channel is execution-scoped, so the admin handle built from this
         // execution reads what the execution published.
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
+        let host = native_host_runtime(
             Arc::new(EventCallbacks::new()),
             native_host_runtime_config(),
         )
@@ -1151,7 +1194,7 @@ mod tests {
 
     #[test]
     fn product_execution_routes_chain_events_to_shared_and_scoped_services() {
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
+        let host = native_host_runtime(
             Arc::new(EventCallbacks::new()),
             native_host_runtime_config(),
         )
@@ -1192,11 +1235,7 @@ mod tests {
             remote_permission_result: Ok(PermissionDecision::AllowOnce),
             ..EventCallbacks::new()
         });
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
-            callbacks.clone(),
-            native_host_runtime_config(),
-        )
-        .unwrap();
+        let host = native_host_runtime(callbacks.clone(), native_host_runtime_config()).unwrap();
         let open = || {
             host.open_product_execution(
                 callbacks.clone(),
@@ -1286,7 +1325,7 @@ mod tests {
         // Durable work resumes as soon as the runtime exists, so the database
         // has to be open before the first call reaches it.
         let dir = tempfile::tempdir().unwrap();
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
+        let host = native_host_runtime(
             Arc::new(EventCallbacks::new()),
             HostRuntimeConfig {
                 database_directory: dir.path().to_string_lossy().into_owned(),
@@ -1317,7 +1356,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("absent");
 
-        let result = NativeTrUApiHostRuntime::with_runtime_config(
+        let result = native_host_runtime(
             Arc::new(EventCallbacks::new()),
             HostRuntimeConfig {
                 database_directory: missing.to_string_lossy().into_owned(),

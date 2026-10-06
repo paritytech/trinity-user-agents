@@ -43,6 +43,9 @@ pub mod statement_allowance;
 pub mod statement_store;
 mod statement_store_rpc;
 mod vrf;
+mod wallet_secret_provider;
+
+pub use wallet_secret_provider::WalletSecretProvider;
 
 use core::future::Future;
 use core::time::Duration;
@@ -83,14 +86,15 @@ pub use host_grants::HostGrantStore;
 pub use host_session::HostSession;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
+#[cfg(any(test, feature = "test-host"))]
+pub use signing_host::LocalActivation;
 pub use signing_host::{
     AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
     PairingProposal, PairingProposalMetadata, ResponderExit,
 };
 pub use signing_host::{
-    LocalActivation, SigningHost as SigningHostRole, WalletAccountHolder, disconnect_paired_host,
-    establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
-    respond_to_pairing, resume_pairing,
+    SigningHost as SigningHostRole, WalletAccountHolder, disconnect_paired_host, establish_pairing,
+    notify_pairing_allowance_allocation, notify_pairing_failed, respond_to_pairing, resume_pairing,
 };
 pub use sso_account_holder_client::SsoAccountHolderClient;
 pub use sso_account_holder_service::SsoAccountHolderService;

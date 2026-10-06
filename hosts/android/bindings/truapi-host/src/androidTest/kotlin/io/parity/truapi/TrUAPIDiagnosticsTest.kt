@@ -7,6 +7,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -18,6 +19,7 @@ import uniffi.truapi.RemotePermission
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.HostRuntimeConfig
+import uniffi.truapi.NativeWalletSecretProvider
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ProductExecutionKind
 import java.util.concurrent.TimeUnit
@@ -114,13 +116,14 @@ class TrUAPIDiagnosticsTest {
             assetHubChainGenesisHash = ByteArray(32),
             networkSuffix = "paseo",
             databaseDirectory = createTempDirectory("truapi").toString(),
-            // 32 bytes of BIP-39 entropy → a deterministic local signing session
-            // (no SSO pairing, fully offline).
-            localSessionSecret = ByteArray(32) { (it + 1).toByte() },
-            localSessionLiteUsername = "android-diag",
         )
 
-        val runtime = TrUAPIHostRuntime(bridge, config)
+        val walletSecrets = object : NativeWalletSecretProvider {
+            override suspend fun readWalletRootEntropy(walletId: String): ByteArray =
+                ByteArray(32) { (it + 1).toByte() }
+        }
+        val runtime = TrUAPIHostRuntime(bridge, walletSecrets, config)
+        runBlocking { runtime.activateWallet("diagnostics", "android-diag") }
         val execution = runtime.openProductExecution(
             bridge = bridge,
             configuration = ProductExecutionConfig("dotli.dot", ProductExecutionKind.APP),

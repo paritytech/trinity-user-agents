@@ -11,6 +11,7 @@ private final class MockEntropyManager: RootEntropyManaging {
         self.entropy = entropy
     }
 
+    func fetchRootEntropy(installationKeyId _: String) throws -> Data { try fetchRootEntropy() }
     func fetchRootEntropy() throws -> Data { entropy }
     func createRootEntropy(_: Data) throws {}
     func hasRootEntropy() throws -> Bool { true }

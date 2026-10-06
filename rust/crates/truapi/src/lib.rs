@@ -612,7 +612,7 @@ runtime_items! {
     pub use runtime::statement_allowance;
     pub use runtime::{
         AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-        PairingProposal, PairingProposalMetadata, ResponderExit,
+        PairingProposal, PairingProposalMetadata, ResponderExit, WalletSecretProvider,
     };
 
     #[cfg(not(target_arch = "wasm32"))]

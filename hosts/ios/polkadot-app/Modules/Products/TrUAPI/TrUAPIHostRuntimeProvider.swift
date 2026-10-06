@@ -11,6 +11,8 @@ import Keystore_iOS
 /// Runtime configuration error raised while assembling the shared host config.
 enum TrUAPIRuntimeConfigError: Error {
     case missingGenesisHash(chain: String)
+    case walletLocked
+    case walletSelectionChanged
 }
 
 /// Vends the process-wide ``TrUAPIHostRuntime``. Product executions open off
@@ -20,31 +22,34 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     var coreStorage: HostCoreStorageBackend { get }
     var secretStorage: HostSecretStorageBackend { get }
 
-    /// Return the shared runtime, building and activating its local session on
-    /// first use. Subsequent calls return the cached instance.
-    func sharedRuntime() throws -> TrUAPIHostRuntime
+    /// Join the selected wallet activation without owning its cancellation.
+    func sharedRuntime() async throws -> TrUAPIHostRuntime
+    func lockWallet()
 
     /// Anchor the host's core confirmations (signing, permission prompts) to
     /// the given view. Until it is attached, host-level prompts deny.
     @MainActor func setPresentationView(_ view: ControllerBackedProtocol)
 }
 
-/// Lazily builds one ``TrUAPIHostRuntime`` from host identity + people/bulletin
-/// genesis hashes + the local session secret, activates the local session
-/// once, and caches it. Lazy so startup is not blocked and the runtime is only
-/// assembled once chains are synced and a session secret exists.
+/// Shares one runtime and one readiness task across every product and SSO caller.
 final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Sendable {
     private let chainRegistry: ChainRegistryProtocol
-    private let entropyManager: RootEntropyManaging
+    private let walletSecrets: NativeWalletSecretProvider
+    private let installationKeyIdStore: InstallationKeyIdStoring
     private let settingsManager: SettingsManagerProtocol
     let coreStorage: HostCoreStorageBackend
     let secretStorage: HostSecretStorageBackend
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
+    private let databaseDirectory: () throws -> String
+    private let contactDataProviderFactory: ChatContactDataProviderMaking
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
+    private var readiness: (walletId: String, task: Task<TrUAPIHostRuntime, Error>)?
+    private var isLocked = false
+    private var selectionObservers: [NSObjectProtocol] = []
     private var contactsChangeNotifier: ContactsChangeNotifier?
 
     init(
@@ -53,18 +58,48 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         settingsManager: SettingsManagerProtocol,
         coreStorage: HostCoreStorageBackend,
         secretStorage: HostSecretStorageBackend,
+        installationKeyIdStore: InstallationKeyIdStoring = InstallationKeyIdStore(),
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
+        databaseDirectory: @escaping () throws -> String = { try TrUAPIHostRuntimeProvider.coreDatabaseDirectory() },
+        contactDataProviderFactory: ChatContactDataProviderMaking = ChatContactDataProviderFactory(),
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
-        self.entropyManager = entropyManager
+        self.installationKeyIdStore = installationKeyIdStore
+        walletSecrets = TrUAPIWalletSecretProvider(
+            entropyManager: entropyManager,
+            installationKeyIdStore: installationKeyIdStore
+        )
         self.settingsManager = settingsManager
         self.coreStorage = coreStorage
         self.secretStorage = secretStorage
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
         self.logger = logger
+        self.databaseDirectory = databaseDirectory
+        self.contactDataProviderFactory = contactDataProviderFactory
+        selectionObservers = [
+            NotificationCenter.default.addObserver(
+                forName: InstallationKeyIdStore.willChangeNotification,
+                object: nil,
+                queue: nil
+            ) { [weak self] _ in
+                self?.lockWallet()
+            },
+            NotificationCenter.default.addObserver(
+                forName: InstallationKeyIdStore.didChangeNotification,
+                object: nil,
+                queue: nil
+            ) { [weak self] _ in
+                self?.lock.withLock { self?.isLocked = false }
+            }
+        ]
+    }
+
+    deinit {
+        selectionObservers.forEach(NotificationCenter.default.removeObserver)
+        readiness?.task.cancel()
     }
 
     @MainActor
@@ -72,22 +107,62 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         confirmationRouterFacade.setPresentationView(view)
     }
 
-    func sharedRuntime() throws -> TrUAPIHostRuntime {
-        lock.lock()
-        defer { lock.unlock() }
-
-        if let cachedRuntime {
-            return cachedRuntime
+    func lockWallet() {
+        lock.withLock {
+            isLocked = true
+            readiness?.task.cancel()
+            readiness = nil
+            cachedRuntime?.lockWallet()
         }
+    }
 
-        let secret = try entropyManager.fetchRootEntropy()
-        let networkSuffix = try tldProvider.currentTldOrError()
+    func sharedRuntime() async throws -> TrUAPIHostRuntime {
+        let pending = try lock.withLock { () throws -> Task<TrUAPIHostRuntime, Error> in
+            try Task.checkCancellation()
+            guard !isLocked else { throw TrUAPIRuntimeConfigError.walletLocked }
+            guard let walletId = installationKeyIdStore.getInstallationKeyId() else {
+                throw RootEntropyManagerError.noEntropyFound
+            }
+            if let readiness, readiness.walletId == walletId {
+                return readiness.task
+            }
+            readiness?.task.cancel()
+            cachedRuntime?.lockWallet()
+            let runtime = try cachedRuntime ?? makeRuntime()
+            cachedRuntime = runtime
+            let liteUsername = settingsManager.string(for: .username)
+            let task = Task { [weak self] in
+                do {
+                    try Task.checkCancellation()
+                    try await runtime.activateWallet(walletId: walletId, liteUsername: liteUsername)
+                    try Task.checkCancellation()
+                    return runtime
+                } catch {
+                    self?.lock.withLock {
+                        if !Task.isCancelled { self?.readiness = nil }
+                    }
+                    throw error
+                }
+            }
+            readiness = (walletId, task)
+            return task
+        }
+        let runtime = try await pending.value
+        try Task.checkCancellation()
+        try lock.withLock {
+            guard !isLocked, !pending.isCancelled,
+                  readiness?.walletId == installationKeyIdStore.getInstallationKeyId() else {
+                throw TrUAPIRuntimeConfigError.walletSelectionChanged
+            }
+        }
+        return runtime
+    }
+
+    private func makeRuntime() throws -> TrUAPIHostRuntime {
         let runtimeConfig = try Self.makeRuntimeConfig(
             chainRegistry: chainRegistry,
-            secret: secret,
-            liteUsername: settingsManager.string(for: .username),
-            networkSuffix: networkSuffix,
-            databaseDirectory: Self.coreDatabaseDirectory()
+            networkSuffix: tldProvider.currentTldOrError(),
+            databaseDirectory: databaseDirectory()
         )
 
         let chainConnections = TrUAPIChainConnectionPool(
@@ -108,7 +183,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             logger: logger
         )
 
-        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
+        let runtime = try TrUAPIHostRuntime(bridge: bridge, walletSecrets: walletSecrets, runtimeConfig: runtimeConfig)
         bridge.attach(runtime)
         // Before any product execution opens, so a product never sees the
         // window where the host lists no contacts.
@@ -119,7 +194,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         )
         runtime.setContacts(contactsBridge)
         contactsChangeNotifier = ContactsChangeNotifier(
-            dataProviderFactory: ChatContactDataProviderFactory(),
+            dataProviderFactory: contactDataProviderFactory,
             logger: logger,
             onSnapshot: { [weak contactsBridge] contacts in
                 contactsBridge?.update(contacts: contacts)
@@ -128,9 +203,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
                 runtime?.notifyContactsChanged()
             }
         )
-        try runtime.activateLocalSession(secret: secret, liteUsername: settingsManager.string(for: .username))
-
-        cachedRuntime = runtime
         return runtime
     }
 }
@@ -144,8 +216,6 @@ extension TrUAPIHostRuntimeProvider {
     /// seam.
     static func makeRuntimeConfig(
         chainRegistry: ChainRegistryProtocol,
-        secret: Data,
-        liteUsername: String?,
         networkSuffix: String,
         databaseDirectory: String
     ) throws -> HostRuntimeConfig {
@@ -178,9 +248,7 @@ extension TrUAPIHostRuntimeProvider {
             bulletinChainGenesisHash: Data(hexString: bulletinGenesisHex),
             assetHubChainGenesisHash: Data(hexString: assetHubGenesisHex),
             networkSuffix: networkSuffix,
-            databaseDirectory: databaseDirectory,
-            localSessionSecret: secret,
-            localSessionLiteUsername: liteUsername
+            databaseDirectory: databaseDirectory
         )
     }
 

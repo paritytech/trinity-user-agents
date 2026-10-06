@@ -1,8 +1,10 @@
 use super::SigningHost;
+use super::wallet_account_holder::PreparedWalletActivation;
 use crate::runtime::authority::AuthorityError;
-use crate::runtime::connected_session_ui_info;
+use crate::runtime::{WalletSecretProvider, connected_session_ui_info};
 
-/// Activate the wallet from entropy supplied by the embedding host.
+/// Raw entropy activation available only to test hosts.
+#[cfg(any(test, feature = "test-host"))]
 #[async_trait::async_trait]
 pub trait LocalActivation: Send + Sync {
     /// Activate a local session from raw BIP-39 entropy, deriving the root
@@ -18,6 +20,7 @@ pub trait LocalActivation: Send + Sync {
     ) -> Result<(), AuthorityError>;
 }
 
+#[cfg(any(test, feature = "test-host"))]
 #[async_trait::async_trait]
 impl LocalActivation for SigningHost {
     async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), AuthorityError> {
@@ -31,10 +34,31 @@ impl LocalActivation for SigningHost {
         lite_username: Option<String>,
     ) -> Result<(), AuthorityError> {
         let activation = self.wallet.prepare_activation(secret, lite_username)?;
+        self.install_wallet(activation)
+    }
+}
+
+impl SigningHost {
+    /// Activate one selected wallet without granting product access to its provider.
+    pub async fn activate_wallet(
+        &self,
+        provider: &dyn WalletSecretProvider,
+        wallet_id: String,
+        lite_username: Option<String>,
+    ) -> Result<(), AuthorityError> {
+        let activation = self
+            .wallet
+            .prepare_wallet_activation(provider, wallet_id, lite_username)
+            .await?;
+        self.install_wallet(activation)
+    }
+
+    fn install_wallet(&self, activation: PreparedWalletActivation) -> Result<(), AuthorityError> {
         let session = {
             let mut state = self.grants.lifecycle();
+            let session = self.wallet.install(activation)?;
             state.clear_memory();
-            self.wallet.install(activation)
+            session
         };
         self.auth_state
             .connected(&connected_session_ui_info(&session));

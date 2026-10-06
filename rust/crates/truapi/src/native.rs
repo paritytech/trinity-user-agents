@@ -25,7 +25,9 @@ mod platform;
 mod renderer;
 mod runtime;
 mod sso;
+mod wallet_secrets;
 mod ws_bridge;
+pub use wallet_secrets::NativeWalletSecretProvider;
 
 pub use crate::host_logic::dotns::{NavigateDecision, PocketDeeplinkAction};
 pub use callbacks::{

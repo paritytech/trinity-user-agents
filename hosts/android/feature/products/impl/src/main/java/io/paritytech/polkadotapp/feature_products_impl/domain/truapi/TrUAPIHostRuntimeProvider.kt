@@ -17,6 +17,7 @@ import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
@@ -25,6 +26,7 @@ import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerDemand
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -32,7 +34,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.dropWhile
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -66,6 +70,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val knownChains: KnownChains,
     private val chainDirectory: TrUAPIChainDirectory,
     private val localSessionSource: TrUAPILocalSessionSource,
+    private val walletSecrets: TrUAPIWalletSecretProvider,
     private val accountRepository: AccountRepository,
     private val dotNsTldProvider: DotNsTldProvider,
     private val coreStorage: EncryptedHostCoreStorage,
@@ -105,20 +110,32 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
      */
     suspend fun runtime(): Result<TrUAPIHostRuntime> {
         val pending = bootMutex.withLock {
-            boot ?: scope.async { build().onSuccess(::wire) }.also { boot = it }
+            boot ?: scope.async { build() }.also { boot = it }
         }
         return pending.await().onFailure {
             bootMutex.withLock { if (boot === pending) boot = null }
         }
     }
 
-    private suspend fun build(): Result<TrUAPIHostRuntime> = runCatching {
+    private suspend fun build(): Result<TrUAPIHostRuntime> = runCancellableCatching {
         val config = buildRuntimeConfig()
         cachedChains.set(chainDirectory.resolve())
-        TrUAPIHostRuntime(HostRuntimeBridge(), config)
+        val runtime = TrUAPIHostRuntime(HostRuntimeBridge(), walletSecrets, config)
+        try {
+            val walletId = accountRepository.getWalletAccount().id
+            val session = localSessionSource.resolve(walletId).getOrThrow()
+            runtime.activateWallet(session.walletId, session.liteUsername)
+            require(accountRepository.getWalletAccount().id == walletId) { "Wallet selection changed during startup" }
+            wire(runtime, session.walletId)
+            runtime
+        } catch (error: Throwable) {
+            runtime.lockWallet()
+            runtime.close()
+            throw error
+        }
     }
 
-    private fun wire(runtime: TrUAPIHostRuntime) {
+    private fun wire(runtime: TrUAPIHostRuntime, walletId: String) {
         // Before any product execution opens, so a product never sees the
         // window where the host lists no contacts.
         runtime.setContacts(contactsBridge)
@@ -128,19 +145,13 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             onClosed = runtime::notifyChainClosed,
         )
         observeAppLifecycle()
-        observeWalletAccount(runtime)
+        observeWalletAccount(runtime, walletId)
     }
 
     private suspend fun buildRuntimeConfig(): HostRuntimeConfig {
         val peopleGenesis = chainRegistry.getChain(knownChains.people).genesisHash.value
         val bulletinGenesis = chainRegistry.getChain(knownChains.bulletIn).genesisHash.value
         val assetHubGenesis = chainRegistry.getChain(knownChains.assetHub).genesisHash.value
-        // Booting without a session is the pre-session behaviour: products load
-        // and every signing call fails. Worth degrading to rather than refusing
-        // every product outright.
-        val localSession = localSessionSource.resolve()
-            .logFailure("TrUAPI local session unavailable; booting the host runtime without one")
-            .getOrNull()
         // The core derives the wallet's reserved identities under this TLD, so it has
         // to be the one the app's own built-in accounts derive from. A wrong suffix
         // mints key material that belongs to no network, so this resolves the value
@@ -156,8 +167,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             bulletinChainGenesisHash = bulletinGenesis,
             assetHubChainGenesisHash = assetHubGenesis,
             networkSuffix = networkSuffix,
-            localSessionSecret = localSession?.secret,
-            localSessionLiteUsername = localSession?.liteUsername,
             databaseDirectory = context.noBackupFilesDir.resolve(DATABASE_DIRECTORY).apply { mkdirs() }.absolutePath,
         )
     }
@@ -172,16 +181,18 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
     // The session is derived from the wallet's entropy, so a wallet switch
     // would otherwise leave every product signing for the previous wallet.
-    private fun observeWalletAccount(runtime: TrUAPIHostRuntime) {
-        scope.launch {
+    private fun observeWalletAccount(runtime: TrUAPIHostRuntime, activatedWalletId: String) {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
             accountRepository.walletAccountFlow()
                 .map { it.id }
                 .distinctUntilChanged()
-                .drop(1)
-                .collect {
-                    localSessionSource.resolve()
-                        .mapCatching { session -> runtime.activateLocalSession(session.secret, session.liteUsername) }
-                        .logFailure("TrUAPI local session could not follow the wallet switch")
+                .dropWhile { it.toString() == activatedWalletId }
+                .onEach { runtime.lockWallet() }
+                .collectLatest { walletId ->
+                    runCancellableCatching {
+                        val session = localSessionSource.resolve(walletId).getOrThrow()
+                        runtime.activateWallet(session.walletId, session.liteUsername)
+                    }.logFailure("TrUAPI selected wallet activation failed")
                 }
         }
     }

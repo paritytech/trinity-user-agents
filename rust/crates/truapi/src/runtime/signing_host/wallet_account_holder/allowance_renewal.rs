@@ -509,7 +509,9 @@ mod tests {
         );
         let registry = crate::runtime::RingVrfRegistryStore::new(services.platform.clone());
         let wallet = WalletAccountHolder::new(services, "paseo".to_string(), registry);
-        wallet.install(wallet.prepare_activation(vec![entropy; 32], None).unwrap());
+        wallet
+            .install(wallet.prepare_activation(vec![entropy; 32], None).unwrap())
+            .unwrap();
         wallet
     }
 
@@ -529,14 +531,18 @@ mod tests {
             )
             .unwrap();
             let owner = wallet.current_session().unwrap().public_key;
-            wallet.install(wallet.prepare_activation(vec![7; 32], None).unwrap());
+            wallet
+                .install(wallet.prepare_activation(vec![7; 32], None).unwrap())
+                .unwrap();
             let selected = wallet.current_session().unwrap();
             let guard = waiting_on_lock
                 .then(|| futures::executor::block_on(wallet.renewal.ledger_lock().lock()));
             let renewal = wallet.renew_statement_allowances();
             futures::pin_mut!(renewal);
             assert!(renewal.as_mut().now_or_never().is_none());
-            wallet.install(wallet.prepare_activation(vec![8; 32], None).unwrap());
+            wallet
+                .install(wallet.prepare_activation(vec![8; 32], None).unwrap())
+                .unwrap();
             drop(guard);
             if waiting_on_lock {
                 futures::executor::block_on(
@@ -895,7 +901,7 @@ mod tests {
         // An all-digit product id past `u64::MAX` fails junction derivation with
         // `NumericJunctionOutOfRange`.
         let unresolvable = product(&"9".repeat(25));
-        let keys = WalletKeys::new(vec![7; 32], "paseo".to_string());
+        let keys = WalletKeys::new(vec![7; 32].into(), "paseo".to_string());
 
         assert!(resolve_target(&keys, &unresolvable).is_err());
         let targets = [unresolvable, product("a.dot")];
@@ -1165,7 +1171,7 @@ mod tests {
                 .to_bytes();
 
         let resolved = resolve_target(
-            &WalletKeys::new(entropy.to_vec(), "paseo".to_string()),
+            &WalletKeys::new(entropy.to_vec().into(), "paseo".to_string()),
             &product("a.dot"),
         )
         .unwrap();
@@ -1188,7 +1194,7 @@ mod tests {
                 .to_bytes();
 
         let resolved = resolve_target(
-            &WalletKeys::new(entropy.to_vec(), "paseo".to_string()),
+            &WalletKeys::new(entropy.to_vec().into(), "paseo".to_string()),
             &StatementRenewalTarget::WalletSso,
         )
         .unwrap();
@@ -1374,10 +1380,10 @@ mod tests {
     #[test]
     fn owner_key_follows_the_root_entropy() {
         assert_ne!(
-            WalletKeys::new(vec![7; 32], "paseo".to_string())
+            WalletKeys::new(vec![7; 32].into(), "paseo".to_string())
                 .root_public_key()
                 .unwrap(),
-            WalletKeys::new(vec![8; 32], "paseo".to_string())
+            WalletKeys::new(vec![8; 32].into(), "paseo".to_string())
                 .root_public_key()
                 .unwrap()
         );

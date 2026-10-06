@@ -8,6 +8,7 @@ final class MockEntropyManager: RootEntropyManaging {
         self.entropy = entropy
     }
 
+    func fetchRootEntropy(installationKeyId _: String) throws -> Data { try fetchRootEntropy() }
     func fetchRootEntropy() throws -> Data {
         guard let entropy else {
             throw RootEntropyManagerError.noEntropyFound

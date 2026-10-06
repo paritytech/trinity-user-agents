@@ -148,8 +148,9 @@ pub struct PairingMaterial {
     pub product_entropy_source: Zeroizing<[u8; 32]>,
 }
 
-/// Validated activation material, installed only after host grants are invalidated.
+/// Validated material bound to the wallet revision before its protected read.
 pub struct PreparedWalletActivation {
+    expected_activation: u64,
     keys: WalletKeys,
     session: SessionInfo,
 }
@@ -365,17 +366,53 @@ impl WalletAccountHolder {
         })
     }
 
-    /// Validate and derive activation material without changing the active wallet.
+    /// Prepare a replacement without changing the active wallet or its grants.
+    pub async fn prepare_wallet_activation(
+        &self,
+        provider: &dyn crate::runtime::WalletSecretProvider,
+        wallet_id: String,
+        lite_username: Option<String>,
+    ) -> Result<PreparedWalletActivation, AuthorityError> {
+        let expected_activation = self
+            .lifecycle
+            .lock()
+            .expect("wallet lifecycle mutex poisoned")
+            .activation;
+        let entropy = Zeroizing::new(provider.read_wallet_root_entropy(wallet_id).await.map_err(
+            |error| AuthorityError::Unavailable {
+                reason: error.reason,
+            },
+        )?);
+        self.prepare_activation_at(entropy, lite_username, expected_activation)
+    }
+
+    /// Prepare raw material only for test-host activation.
+    #[cfg(any(test, feature = "test-host"))]
     pub fn prepare_activation(
         &self,
         secret: Vec<u8>,
         lite_username: Option<String>,
     ) -> Result<PreparedWalletActivation, AuthorityError> {
-        let keys = WalletKeys::new(secret, self.network_suffix.clone());
+        let expected_activation = self
+            .lifecycle
+            .lock()
+            .expect("wallet lifecycle mutex poisoned")
+            .activation;
+        self.prepare_activation_at(Zeroizing::new(secret), lite_username, expected_activation)
+    }
+
+    fn prepare_activation_at(
+        &self,
+        entropy: Zeroizing<Vec<u8>>,
+        lite_username: Option<String>,
+        expected_activation: u64,
+    ) -> Result<PreparedWalletActivation, AuthorityError> {
+        let keys = WalletKeys::new(entropy, self.network_suffix.clone());
         let public_key = keys.root_public_key().map_err(product_authority_error)?;
         let identity_account_id = keys.identity_keypair()?.public.to_bytes();
         let identity_chat_private_key = derive_identity_chat_private_key(&keys.entropy);
         Ok(PreparedWalletActivation {
+            expected_activation,
             keys,
             session: SessionInfo {
                 public_key,
@@ -391,15 +428,21 @@ impl WalletAccountHolder {
     }
 
     /// Install under the host's grant lock so session and grant changes are atomic.
-    pub fn install(&self, activation: PreparedWalletActivation) -> SessionInfo {
+    pub fn install(
+        &self,
+        activation: PreparedWalletActivation,
+    ) -> Result<SessionInfo, AuthorityError> {
         let mut state = self
             .lifecycle
             .lock()
             .expect("wallet lifecycle mutex poisoned");
+        if state.activation != activation.expected_activation {
+            return Err(AuthorityError::Disconnected);
+        }
         state.advance();
         state.keys = Some(activation.keys);
         self.session_state.set_session(activation.session.clone());
-        activation.session
+        Ok(activation.session)
     }
 
     /// Clear under the host's grant lock, dropping the active wallet secrets.
@@ -422,9 +465,9 @@ pub struct WalletKeys {
 
 impl WalletKeys {
     /// Keep entropy zeroizable without caching expanded secret keys.
-    pub fn new(entropy: Vec<u8>, network_suffix: String) -> Self {
+    pub fn new(entropy: Zeroizing<Vec<u8>>, network_suffix: String) -> Self {
         Self {
-            entropy: Zeroizing::new(entropy),
+            entropy,
             network_suffix,
         }
     }

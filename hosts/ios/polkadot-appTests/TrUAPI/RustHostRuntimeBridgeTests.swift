@@ -145,8 +145,6 @@ struct TrUAPIHostRuntimeProviderConfigTests {
         #expect(throws: (any Error).self) {
             _ = try TrUAPIHostRuntimeProvider.makeRuntimeConfig(
                 chainRegistry: MockChainRegistry(),
-                secret: Data([0x01]),
-                liteUsername: nil,
                 networkSuffix: "paseo",
                 databaseDirectory: NSTemporaryDirectory()
             )

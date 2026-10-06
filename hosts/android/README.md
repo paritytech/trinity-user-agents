@@ -191,6 +191,10 @@ If you build and distribute an app from this code, you are responsible for:
 
 Report vulnerabilities responsibly following [Parity's security policy](https://github.com/paritytech/.github/blob/main/SECURITY.md) — do not open public issues for security reports. For Parity's disclosure process and Bug Bounty programme, see [parity.io/bug-bounty](https://parity.io/bug-bounty). This proof-of-concept is maintained on a best-effort basis: reports are welcome, but there is no commitment to a fix or a timeline.
 
+## TrUAPI wallet activation
+
+The shared Rust host starts locked and receives public configuration only. Its separate wallet provider reads the existing protected root for the captured WALLET `MetaAccount.id`, encoded as a decimal string, and verifies that selection before and after the read. The provider-owned startup coroutine awaits activation before publishing the runtime; a product closing during startup does not cancel it. Root-read failures fail startup and remain retryable. Wallet selection changes immediately lock the active Rust wallet before replacement, so a failed replacement cannot leave products signing for the previous wallet. Device lock and app backgrounding retain the existing application policy.
+
 ## License
 
 Licensed under the **GNU General Public License v3.0** — see [LICENSE](./LICENSE).

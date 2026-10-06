@@ -1,4 +1,25 @@
 use super::*;
+use crate::runtime::WalletSecretProvider;
+
+struct WalletRoot {
+    entropy: Result<Vec<u8>, truapi::latest::GenericError>,
+    gate: std::sync::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+}
+
+#[async_trait::async_trait]
+impl WalletSecretProvider for WalletRoot {
+    async fn read_wallet_root_entropy(
+        &self,
+        wallet_id: String,
+    ) -> Result<Vec<u8>, truapi::latest::GenericError> {
+        assert_eq!(wallet_id, "selected-wallet");
+        let gate = self.gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            gate.await.unwrap();
+        }
+        self.entropy.clone()
+    }
+}
 
 #[test]
 fn invalid_activation_preserves_the_active_wallet_and_its_grants() {
@@ -8,9 +29,15 @@ fn invalid_activation_preserves_the_active_wallet_and_its_grants() {
         ..StubPlatform::default()
     });
     let (services, authority) = signing_runtime_with_platform(platform.clone());
-    futures::executor::block_on(
-        authority.activate_local_session_with_identity(ENTROPY.to_vec(), Some("alice".to_string())),
-    )
+    let provider = WalletRoot {
+        entropy: Ok(ENTROPY.to_vec()),
+        gate: Default::default(),
+    };
+    futures::executor::block_on(authority.activate_wallet(
+        &provider,
+        "selected-wallet".to_string(),
+        Some("alice".to_string()),
+    ))
     .expect("initial activation succeeds");
     let session = authority
         .account_holder()
@@ -19,11 +46,24 @@ fn invalid_activation_preserves_the_active_wallet_and_its_grants() {
     let runtime = product_runtime(services, authority.clone());
     auto_signing::grant_auto_signing(&runtime);
 
-    let error = futures::executor::block_on(
-        authority.activate_local_session_with_identity(vec![0xCD; 17], Some("bob".to_string())),
-    )
-    .expect_err("invalid BIP-39 entropy cannot replace the wallet");
-    assert!(matches!(error, AuthorityError::Unavailable { .. }));
+    for entropy in [
+        Err(truapi::latest::GenericError {
+            reason: "protected wallet unavailable".to_string(),
+        }),
+        Ok(vec![0xCD; 17]),
+    ] {
+        let provider = WalletRoot {
+            entropy,
+            gate: Default::default(),
+        };
+        let error = futures::executor::block_on(authority.activate_wallet(
+            &provider,
+            "selected-wallet".to_string(),
+            Some("bob".to_string()),
+        ))
+        .expect_err("failed protected reads and invalid entropy cannot replace the wallet");
+        assert!(matches!(error, AuthorityError::Unavailable { .. }));
+    }
 
     let HostSignRawResponse::V1(response) = futures::executor::block_on(runtime.sign_raw(
         &CallContext::default(),
@@ -60,6 +100,45 @@ fn invalid_activation_preserves_the_active_wallet_and_its_grants() {
         (Some(session), true, true),
         "a failed activation must preserve the session token, signing key and grant",
     );
+}
+
+#[test]
+fn a_late_protected_read_cannot_restore_a_locked_or_reactivated_wallet() {
+    use futures::FutureExt;
+
+    for reactivate in [false, true] {
+        let (_, authority) = signing_runtime();
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+        let (release, gate) = futures::channel::oneshot::channel();
+        let provider = WalletRoot {
+            entropy: Ok(vec![0xCD; 16]),
+            gate: std::sync::Mutex::new(Some(gate)),
+        };
+        let activation = authority.activate_wallet(
+            &provider,
+            "selected-wallet".to_string(),
+            Some("late".to_string()),
+        );
+        futures::pin_mut!(activation);
+        assert!(activation.as_mut().now_or_never().is_none());
+        if reactivate {
+            futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+                .unwrap();
+        } else {
+            authority.lock_wallet();
+        }
+        let expected = authority.account_holder().current_session();
+        let revision = authority.grants.lifecycle().revision();
+        release.send(()).unwrap();
+        assert_eq!(
+            (
+                futures::executor::block_on(activation),
+                authority.account_holder().current_session(),
+                authority.grants.lifecycle().revision()
+            ),
+            (Err(AuthorityError::Disconnected), expected, revision),
+        );
+    }
 }
 
 #[test]

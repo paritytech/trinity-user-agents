@@ -125,7 +125,17 @@ private extension ProductBotProvider {
             }
         }
 
-        return resolved.compactMap { botFactory.create(resolved: $0) }
+        var bots: [ProductBot] = []
+        for product in resolved {
+            guard !Task.isCancelled else { return bots }
+            do {
+                if let bot = try await botFactory.create(resolved: product) { bots.append(bot) }
+            } catch {
+                guard !Task.isCancelled else { return bots }
+                logger.error("Bot creation failed for \(product.id): \(error)")
+            }
+        }
+        return bots
     }
 
     /// Nil for a product whose published manifest is broken. That is the product's bug, and

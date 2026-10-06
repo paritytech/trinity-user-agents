@@ -895,7 +895,7 @@ mod tests {
         const CHAT_ENTROPY: [u8; 16] = [0xAB; 16];
         const SUFFIX: &str = "paseo";
 
-        let (_, served) = WalletKeys::new(CHAT_ENTROPY.to_vec(), SUFFIX.to_string())
+        let (_, served) = WalletKeys::new(CHAT_ENTROPY.to_vec().into(), SUFFIX.to_string())
             .responder_identity()
             .expect("responder identity derives");
         let registration = crate::host_logic::attestation::build_lite_registration(
@@ -1102,7 +1102,7 @@ mod tests {
             .unwrap()
             .identity_account_id
             .unwrap();
-        let (identity, _) = WalletKeys::new(ENTROPY.to_vec(), NETWORK_SUFFIX.to_string())
+        let (identity, _) = WalletKeys::new(ENTROPY.to_vec().into(), NETWORK_SUFFIX.to_string())
             .responder_identity()
             .unwrap();
         assert_eq!(identity.statement_public_key, local_identity);
@@ -1110,7 +1110,8 @@ mod tests {
         // one the pairing host resolves a username for; a `.dot` account has
         // no lite record on a test network.
         assert_ne!(
-            WalletKeys::new(ENTROPY.to_vec(), "dot".to_string()).responder_identity()
+            WalletKeys::new(ENTROPY.to_vec().into(), "dot".to_string())
+                .responder_identity()
                 .unwrap()
                 .0
                 .statement_public_key,
@@ -1418,7 +1419,7 @@ mod tests {
             statement_account_id: [0x53; 32],
             encryption_public_key: x25519_public_key([0x64; 32]),
         };
-        let (identity, _) = WalletKeys::new(ENTROPY.to_vec(), NETWORK_SUFFIX.to_string())
+        let (identity, _) = WalletKeys::new(ENTROPY.to_vec().into(), NETWORK_SUFFIX.to_string())
             .responder_identity()
             .unwrap();
         let mut expected = establish_responder_session_info(
@@ -1703,7 +1704,7 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform);
-        let expected_secret = WalletKeys::new(ENTROPY.to_vec(), NETWORK_SUFFIX.to_string())
+        let expected_secret = WalletKeys::new(ENTROPY.to_vec().into(), NETWORK_SUFFIX.to_string())
             .product_subtree_secret("myapp.dot")
             .expect("product subtree secret derives");
         let expected_ring_vrf_domain_entropy =
@@ -1744,7 +1745,7 @@ mod tests {
         });
         let (_, signing_host) = signing_fixture(platform.clone());
         let session = signing_host.account_holder().current_session();
-        let expected_secret = WalletKeys::new(ENTROPY.to_vec(), NETWORK_SUFFIX.to_string())
+        let expected_secret = WalletKeys::new(ENTROPY.to_vec().into(), NETWORK_SUFFIX.to_string())
             .product_subtree_secret("myapp.dot")
             .unwrap();
         let expected_domain = derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot").unwrap();

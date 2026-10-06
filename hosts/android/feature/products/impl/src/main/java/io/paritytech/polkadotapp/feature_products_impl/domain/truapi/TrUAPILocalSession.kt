@@ -1,44 +1,32 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
-import io.paritytech.polkadotapp.feature_account_api.data.storage.accountSecrets.AccountSecretsStorage
-import io.paritytech.polkadotapp.feature_account_api.data.storage.accountSecrets.requireMetaAccountPassphrase
+import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_usernames_api.domain.usecase.UsernameOfAccountUseCase
 import javax.inject.Inject
 
-/** Secret material and display identity for the core's wallet-local session. */
-class TrUAPILocalSession(
-    val secret: ByteArray,
+/** Public selection and display metadata for wallet activation. */
+data class TrUAPILocalSession(
+    val walletId: String,
     val liteUsername: String?,
 )
 
-/**
- * Resolves the wallet-local signing session the Rust core runs on.
- *
- * Until SSO pairing moves into the core (truapi#334) the core has no session of
- * its own, and without one it can hold no keys — so every account and signing
- * call fails regardless of what the user approves. iOS activates the same local
- * session, which is why signing works there.
- *
- * The secret is raw BIP-39 entropy because the core derives the session's root
- * and identity keypairs from it directly; handing it anything derived would give
- * the same recovery phrase different product accounts than iOS derives.
- */
 class TrUAPILocalSessionSource @Inject constructor(
     private val accountRepository: AccountRepository,
-    private val accountSecretsStorage: AccountSecretsStorage,
     private val usernameOfAccountUseCase: UsernameOfAccountUseCase,
 ) {
-    suspend fun resolve(): Result<TrUAPILocalSession> = runCatching {
-        val account = accountRepository.getWalletAccount()
+    suspend fun resolve(walletId: Long): Result<TrUAPILocalSession> = runCancellableCatching {
+        requireSelectedWallet(walletId)
+        val username = usernameOfAccountUseCase.getUsername().getOrNull()?.liteUsername?.getDisplayUsername()
+        requireSelectedWallet(walletId)
+        TrUAPILocalSession(walletId.toString(), username)
+    }
 
-        TrUAPILocalSession(
-            secret = accountSecretsStorage.requireMetaAccountPassphrase(account.id).entropy,
-            // Display metadata only, so a missing username still yields a session.
-            liteUsername = usernameOfAccountUseCase.getUsername()
-                .getOrNull()
-                ?.liteUsername
-                ?.getDisplayUsername(),
-        )
+    private suspend fun requireSelectedWallet(walletId: Long) {
+        val selected = accountRepository.getWalletAccount()
+        require(selected.id == walletId && selected.purpose == MetaAccount.Purpose.WALLET) {
+            "Wallet selection changed during activation"
+        }
     }
 }

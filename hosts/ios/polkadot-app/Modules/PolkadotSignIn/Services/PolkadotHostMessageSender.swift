@@ -105,6 +105,7 @@ private extension PolkadotHostMessageSender {
 
 extension PolkadotHostMessageSender: PolkadotHostMessageSending {
     func setExchangeService(_ service: AnyMessageExchangeService<OpaqueMessageWrapper<Message>>) async {
+        guard !Task.isCancelled else { return }
         exchangeService = service
     }
 

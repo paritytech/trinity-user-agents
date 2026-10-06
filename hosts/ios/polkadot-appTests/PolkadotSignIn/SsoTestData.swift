@@ -26,9 +26,9 @@ enum SsoTestData {
         PolkadotSigningRequester(name: name, iconUrl: nil)
     }
 
-    static func makeChain(genesisHash: String) -> ChainModel {
+    static func makeChain(genesisHash: String, chainId: String = ChainMock.randomChainId()) -> ChainModel {
         let remote = RemoteChainModel(
-            chainId: ChainMock.randomChainId(),
+            chainId: chainId,
             parentId: nil,
             name: "TestChain",
             assets: [ChainMock.makeRemoteAsset()],

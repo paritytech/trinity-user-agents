@@ -117,6 +117,8 @@ With the Rust runtime enabled, the SSO coordinator binds its transport keys to o
 
 The Rust host shares one public core storage backend and one installation-scoped Keychain secret backend across its runtime and product bridges. Both use the same cancellation-aware operation lock. The device encryption key remains owned by `DeviceEncryptionKeyManager`.
 
+The Rust runtime starts locked and activates the selected installation ID through a separate wallet secret provider. Root entropy stays in the existing Keychain root store and never enters runtime configuration. SPA, bot and SSO startup share one activation task; selection changes invalidate Rust before publishing the new ID, and enabled Rust startup errors remain visible.
+
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time
 configuration, signing, the required secrets, and the pipeline itself are

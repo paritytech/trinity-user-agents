@@ -178,27 +178,20 @@ extension SPAViewFactory {
             return nil
         }
 
-        let runtime: TrUAPIHostRuntime
-        do {
-            runtime = try runtimeProvider.sharedRuntime()
-        } catch {
-            Logger.shared.error("Rust SPA unavailable: \(error)")
-            return nil
-        }
-
-        let rustEnvironment = RustRuntimeEnvironment(
-            runtime: runtime,
-            coreStorage: runtimeProvider.coreStorage,
-            secretStorage: runtimeProvider.secretStorage,
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            notificationScheduler: ProductNotificationScheduler.shared,
-            ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
-            hostProvider: flowState.hostProvider,
-            logger: Logger.shared
-        )
-
         let runtimeFactory = SPARustRuntimeFactory(environment: .init(
-            rust: rustEnvironment,
+            rust: {
+                let runtime = try await runtimeProvider.sharedRuntime()
+                return RustRuntimeEnvironment(
+                    runtime: runtime,
+                    coreStorage: runtimeProvider.coreStorage,
+                    secretStorage: runtimeProvider.secretStorage,
+                    chainRegistry: ChainRegistryFacade.sharedRegistry,
+                    notificationScheduler: ProductNotificationScheduler.shared,
+                    ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
+                    hostProvider: flowState.hostProvider,
+                    logger: Logger.shared
+                )
+            },
             configuration: configuration,
             dotNsResolver: flowState.dotNsResolver,
             productResolver: flowState.productResolver,

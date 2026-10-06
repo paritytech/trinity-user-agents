@@ -95,6 +95,7 @@ struct KeyedHashChainDeriverTests {
 private struct StubEntropyManager: RootEntropyManaging {
     let entropy: Data
 
+    func fetchRootEntropy(installationKeyId _: String) throws -> Data { try fetchRootEntropy() }
     func fetchRootEntropy() throws -> Data { entropy }
     func createRootEntropy(_: Data) throws {}
     func hasRootEntropy() throws -> Bool { true }

@@ -10,6 +10,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.parity.truapi.HostSecretStorage
 import uniffi.truapi.SecretCoreStorageKey
+import io.mockk.mockk
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import uniffi.truapi.HostRuntimeConfig
@@ -72,7 +73,7 @@ class MediaPermissionIntegrationTest {
             networkSuffix = "paseo",
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
-        TrUAPIHostRuntime(bridge, config).use { runtime ->
+        TrUAPIHostRuntime(bridge, mockk(), config).use { runtime ->
             runtime.openProductExecution(bridge, ProductExecutionConfig("media.paseo", ProductExecutionKind.APP)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 lateinit var webView: WebView

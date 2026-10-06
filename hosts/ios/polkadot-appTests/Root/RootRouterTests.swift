@@ -87,6 +87,7 @@ private struct FakeThemeStorage: ThemeSelectionStoring {
 
 private struct FakeEntropyManager: RootEntropyManaging {
     let hasWallets: Bool
+    func fetchRootEntropy(installationKeyId _: String) throws -> Data { try fetchRootEntropy() }
     func fetchRootEntropy() throws -> Data { Data() }
     func createRootEntropy(_: Data) throws {}
     func hasRootEntropy() throws -> Bool { hasWallets }
@@ -94,6 +95,7 @@ private struct FakeEntropyManager: RootEntropyManaging {
 
 private struct ThrowingEntropyManager: RootEntropyManaging {
     private struct Failure: Error {}
+    func fetchRootEntropy(installationKeyId _: String) throws -> Data { try fetchRootEntropy() }
     func fetchRootEntropy() throws -> Data { throw Failure() }
     func createRootEntropy(_: Data) throws { throw Failure() }
     func hasRootEntropy() throws -> Bool { throw Failure() }

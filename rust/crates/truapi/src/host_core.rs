@@ -9,6 +9,8 @@
 //! Target-specific shells such as wasm-bindgen, iOS FFI, or desktop IPC should
 //! keep their conversion code outside this module.
 
+#[cfg(any(test, feature = "test-host"))]
+use crate::runtime::LocalActivation;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -33,8 +35,8 @@ use crate::host_logic::worker::WorkerLedger;
 use crate::runtime::{
     AccountCaller, AccountHolder, ActionChannel, AuthorityError, AuthoritySession,
     DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver, HostAccounts, HostGrantStore,
-    HostSession, LocalActivation, PairedSsoPeer, ProductConnection, ProductRuntimeHost,
-    ResponderExit, RingVrfRegistryStore, RuntimeServices, SigningHostRole, SsoAccountHolderClient,
+    HostSession, PairedSsoPeer, ProductConnection, ProductRuntimeHost, ResponderExit,
+    RingVrfRegistryStore, RuntimeServices, SigningHostRole, SsoAccountHolderClient,
     SsoRequestService, WalletAccountHolder, disconnect_paired_host, establish_pairing,
     notify_pairing_allowance_allocation, notify_pairing_failed, respond_to_pairing, resume_pairing,
 };
@@ -880,8 +882,29 @@ impl SigningHostRuntime {
             .map_err(ring_vrf_admin_error)
     }
 
+    /// Invalidate active wallet work without deleting its durable records.
+    pub fn lock_wallet(&self) {
+        self.signing_host.lock_wallet();
+    }
+
+    /// Read and activate the selected wallet through its protected provider.
+    pub async fn activate_wallet(
+        &self,
+        provider: &dyn crate::runtime::WalletSecretProvider,
+        wallet_id: String,
+        lite_username: Option<String>,
+    ) -> Result<(), crate::latest::GenericError> {
+        self.signing_host
+            .activate_wallet(provider, wallet_id, lite_username)
+            .await
+            .map_err(|error| crate::latest::GenericError {
+                reason: error.to_string(),
+            })
+    }
+
     /// Activate a wallet-local session from host-held secret material (raw
     /// BIP-39 entropy).
+    #[cfg(any(test, feature = "test-host"))]
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session"))]
     pub async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), v01::GenericError> {
         self.signing_host
@@ -894,6 +917,7 @@ impl SigningHostRuntime {
 
     /// Activate a wallet-local session from host-held secret material and
     /// attach known identity metadata.
+    #[cfg(any(test, feature = "test-host"))]
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session_with_identity"))]
     pub async fn activate_local_session_with_identity(
         &self,

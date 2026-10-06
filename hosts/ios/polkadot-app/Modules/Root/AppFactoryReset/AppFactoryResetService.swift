@@ -32,6 +32,8 @@
         }
 
         func resetAllData() async {
+            let runtimeProvider: TrUAPIHostRuntimeProviding? = RootDependencyLocator.getDependency()
+            runtimeProvider?.lockWallet()
             if #available(iOS 26.0, *) {
                 clearAlarmKitAlarms()
             }

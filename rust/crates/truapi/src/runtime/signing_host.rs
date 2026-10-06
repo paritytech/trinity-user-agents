@@ -13,6 +13,7 @@ mod wallet_account_holder;
 
 use std::sync::Arc;
 
+#[cfg(any(test, feature = "test-host"))]
 pub use local_activation::LocalActivation;
 pub use sso_responder::{
     AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
@@ -200,10 +201,14 @@ impl SigningHost {
         Ok(())
     }
 
-    fn clear_local_session(&self) {
-        let mut state = self.grants.lifecycle();
-        state.clear_memory();
-        self.wallet.clear();
+    /// Invalidate wallet work and drop secrets without deleting durable records.
+    pub fn lock_wallet(&self) {
+        {
+            let mut state = self.grants.lifecycle();
+            state.clear_memory();
+            self.wallet.clear();
+        }
+        self.auth_state.store_disconnected();
     }
 }
 
@@ -307,8 +312,7 @@ impl HostSession for SigningHost {
     }
 
     async fn disconnect(&self) {
-        self.clear_local_session();
-        self.auth_state.store_disconnected();
+        self.lock_wallet();
     }
 
     async fn primary_username(&self) -> Option<String> {

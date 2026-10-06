@@ -68,6 +68,7 @@ private struct ApplierTestHarness {
             hostRepositoryFactory: hostRepositoryFactory,
             localDeviceRepositoryFactory: localDeviceRepositoryFactory,
             deviceMessageBroadcaster: broadcaster,
+            tldProvider: StubDotNsTldProvider(tld: "paseo"),
             logger: MockLogger()
         )
     }

@@ -3,6 +3,7 @@ import Keystore_iOS
 
 public protocol RootEntropyManaging {
     func fetchRootEntropy() throws -> Data
+    func fetchRootEntropy(installationKeyId: String) throws -> Data
     func createRootEntropy(_ entropy: Data) throws
     func hasRootEntropy() throws -> Bool
 }
@@ -46,12 +47,16 @@ extension RootEntropyManager: RootEntropyManaging {
             throw RootEntropyManagerError.noEntropyFound
         }
 
-        return try keychain.fetchKey(for: KeystoreTag.rootEntropyTag(for: installationKeyId))
+        return try fetchRootEntropy(installationKeyId: installationKeyId)
+    }
+
+    public func fetchRootEntropy(installationKeyId: String) throws -> Data {
+        try keychain.fetchKey(for: KeystoreTag.rootEntropyTag(for: installationKeyId))
     }
 
     public func createRootEntropy(_ entropy: Data) throws {
         let newInstallationKeyId = UUID().uuidString
-        installationKeyIdStore.saveInstallationKeyId(newInstallationKeyId)
         try keychain.saveKey(entropy, with: KeystoreTag.rootEntropyTag(for: newInstallationKeyId))
+        installationKeyIdStore.saveInstallationKeyId(newInstallationKeyId)
     }
 }

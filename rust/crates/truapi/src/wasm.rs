@@ -1291,6 +1291,7 @@ impl WasmSigningHostRuntime {
     }
 
     /// Activate a wallet-local session from raw BIP-39 entropy.
+    #[cfg(feature = "test-host")]
     #[wasm_bindgen(js_name = activateLocalSession)]
     pub async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), JsValue> {
         self.runtime
@@ -1300,6 +1301,7 @@ impl WasmSigningHostRuntime {
     }
 
     /// Activate a wallet-local session and attach known identity metadata.
+    #[cfg(feature = "test-host")]
     #[wasm_bindgen(js_name = activateLocalSessionWithIdentity)]
     pub async fn activate_local_session_with_identity(
         &self,

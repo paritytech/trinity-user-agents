@@ -644,8 +644,6 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
             .keep()
             .to_string_lossy()
             .into_owned(),
-        local_session_secret: Some(vec![7; 32]),
-        local_session_lite_username: Some("alice".to_string()),
     }
 }
 
@@ -659,15 +657,50 @@ pub fn native_execution_config(
     }
 }
 
+/// Deterministic protected roots for native runtime fixtures.
+pub struct TestWalletSecretProvider;
+
+#[async_trait::async_trait]
+impl NativeWalletSecretProvider for TestWalletSecretProvider {
+    async fn read_wallet_root_entropy(&self, wallet_id: String) -> Result<Vec<u8>, HostRejection> {
+        match wallet_id.as_str() {
+            "alice" => Ok(vec![7; 32]),
+            "bob" => Ok(vec![8; 32]),
+            _ => Err(HostRejection::Rejected {
+                reason: "wallet is unavailable".to_string(),
+            }),
+        }
+    }
+}
+
+/// Construct and activate a native fixture exactly once.
+pub fn native_host_runtime(
+    callbacks: Arc<dyn HostCallbacks>,
+    config: HostRuntimeConfig,
+) -> Result<Arc<NativeTrUApiHostRuntime>, NativeRuntimeConfigError> {
+    let runtime = NativeTrUApiHostRuntime::with_runtime_config(
+        callbacks,
+        Arc::new(TestWalletSecretProvider),
+        config,
+    )?;
+    futures::executor::block_on(
+        runtime.activate_wallet("alice".to_string(), Some("alice".to_string())),
+    )
+    .unwrap();
+    Ok(runtime)
+}
+
 pub fn native_product_execution(
     callbacks: Arc<dyn HostCallbacks>,
     product_id: &str,
 ) -> Arc<NativeProductExecution> {
-    let mut config = native_host_runtime_config();
-    config.local_session_secret = None;
-    config.local_session_lite_username = None;
-    let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
-        .expect("host runtime config should be valid");
+    let config = native_host_runtime_config();
+    let host = NativeTrUApiHostRuntime::with_runtime_config(
+        callbacks.clone(),
+        Arc::new(TestWalletSecretProvider),
+        config,
+    )
+    .expect("host runtime config should be valid");
     host.open_product_execution(
         callbacks,
         None,
@@ -885,11 +918,8 @@ fn a_paired_device_reaches_the_host_callbacks() {
 #[test]
 fn process_runtime_counts_worker_references_per_product() {
     let callbacks = Arc::new(EventCallbacks::new());
-    let host = NativeTrUApiHostRuntime::with_runtime_config(
-        callbacks.clone(),
-        native_host_runtime_config(),
-    )
-    .expect("host runtime config should be valid");
+    let host = native_host_runtime(callbacks.clone(), native_host_runtime_config())
+        .expect("host runtime config should be valid");
     let product = || "shared.dot".to_string();
 
     host.acquire_worker(product());
@@ -1023,11 +1053,9 @@ fn native_pocket_removal_outcomes_are_decided_by_the_host() {
 
 #[test]
 fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
-    let mut config = native_host_runtime_config();
-    config.local_session_secret = Some(vec![7; 32]);
-    let host =
-        NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
-            .expect("host runtime config should be valid");
+    let config = native_host_runtime_config();
+    let host = native_host_runtime(Arc::new(EventCallbacks::new()), config)
+        .expect("host runtime config should be valid");
     let execution = host
         .open_product_execution(
             Arc::new(EventCallbacks::new()),
@@ -2488,11 +2516,8 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
         Arc::new(EventCallbacks::new()),
         Arc::new(EventCallbacks::new()),
     ];
-    let host = NativeTrUApiHostRuntime::with_runtime_config(
-        callbacks[0].clone(),
-        native_host_runtime_config(),
-    )
-    .expect("create host");
+    let host = native_host_runtime(callbacks[0].clone(), native_host_runtime_config())
+        .expect("create host");
     let executions = [(1, "first.dot"), (2, "second.dot")].map(|(index, product_id)| {
         host.open_product_execution(
             callbacks[index].clone(),
@@ -2567,7 +2592,7 @@ fn two_executions_share_one_bridge_through_the_native_api() {
 
     use crate::frame::{Payload, ProtocolMessage, request_ids};
 
-    let host = NativeTrUApiHostRuntime::with_runtime_config(
+    let host = native_host_runtime(
         Arc::new(EventCallbacks::new()),
         native_host_runtime_config(),
     )
@@ -2692,11 +2717,13 @@ fn two_executions_share_one_bridge_through_the_native_api() {
 }
 
 pub fn native_host_runtime_no_session() -> Arc<NativeTrUApiHostRuntime> {
-    let mut config = native_host_runtime_config();
-    config.local_session_secret = None;
-    config.local_session_lite_username = None;
-    NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
-        .expect("host runtime config should be valid")
+    let config = native_host_runtime_config();
+    NativeTrUApiHostRuntime::with_runtime_config(
+        Arc::new(EventCallbacks::new()),
+        Arc::new(TestWalletSecretProvider),
+        config,
+    )
+    .expect("host runtime config should be valid")
 }
 
 #[test]
@@ -2722,7 +2749,7 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
             .is_err()
     );
     for replacement in [vec![8; 32], entropy.to_vec()] {
-        let runtime = NativeTrUApiHostRuntime::with_runtime_config(
+        let runtime = native_host_runtime(
             Arc::new(EventCallbacks::new()),
             native_host_runtime_config(),
         )
@@ -2811,7 +2838,18 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
             futures::executor::block_on(service.handle_sso_request(disconnected)).unwrap(),
             SsoRequestOutcome::Disconnected
         );
-        runtime.activate_local_session(replacement, None).unwrap();
+        futures::executor::block_on(
+            runtime.activate_wallet(
+                if replacement == vec![7; 32] {
+                    "alice"
+                } else {
+                    "bob"
+                }
+                .to_string(),
+                None,
+            ),
+        )
+        .unwrap();
         assert_eq!(
             (
                 binding.open_service().is_err(),
@@ -2899,7 +2937,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
             false,
         ),
     ] {
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
+        let host = native_host_runtime(
             Arc::new(EventCallbacks::new()),
             native_host_runtime_config(),
         )
@@ -2979,11 +3017,7 @@ fn native_remote_authorization_reuses_stored_product_decisions() {
             remote_permission_result: Ok(decision),
             ..EventCallbacks::new()
         });
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
-            callbacks.clone(),
-            native_host_runtime_config(),
-        )
-        .unwrap();
+        let host = native_host_runtime(callbacks.clone(), native_host_runtime_config()).unwrap();
         let open = |product_id| {
             host.open_product_execution(
                 callbacks.clone(),
@@ -3037,11 +3071,7 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
             remote_permission_reply: Mutex::new(Some(response)),
             ..EventCallbacks::new()
         });
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
-            callbacks.clone(),
-            native_host_runtime_config(),
-        )
-        .unwrap();
+        let host = native_host_runtime(callbacks.clone(), native_host_runtime_config()).unwrap();
         let execution = host
             .open_product_execution(
                 callbacks.clone(),
@@ -3085,7 +3115,7 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
 /// would silently answer from the wrong object.
 #[test]
 fn a_native_status_read_follows_the_os_gate() {
-    let host = NativeTrUApiHostRuntime::with_runtime_config(
+    let host = native_host_runtime(
         Arc::new(EventCallbacks::new()),
         native_host_runtime_config(),
     )

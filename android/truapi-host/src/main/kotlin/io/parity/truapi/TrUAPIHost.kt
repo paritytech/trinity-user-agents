@@ -68,6 +68,7 @@ import uniffi.truapi.NativeRendererObserver
 import uniffi.truapi.DevicePermissionStatus
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
+import uniffi.truapi.NativeWalletSecretProvider
 import uniffi.truapi.NativeAnnouncedPairing
 import uniffi.truapi.NativeSsoAccountHolderSession
 import uniffi.truapi.PairedSsoPeer
@@ -697,13 +698,14 @@ object LocalhostBridgeBootstrap {
  */
 class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor(
     bridge: HostBridge,
+    private val walletSecrets: NativeWalletSecretProvider,
     runtimeConfig: HostRuntimeConfig,
 ) : AutoCloseable {
     // Co-owns the adapter alongside the generated FfiConverter handle map,
     // which is what actually keeps the callback object alive for the runtime.
     private val callbackRetainer: HostCallbacks = HostCallbackAdapter(bridge)
     private val inner: NativeTrUApiHostRuntime =
-        NativeTrUApiHostRuntime.withRuntimeConfig(callbackRetainer, runtimeConfig)
+        NativeTrUApiHostRuntime.withRuntimeConfig(callbackRetainer, walletSecrets, runtimeConfig)
 
     // Co-owns the contacts adapter for as long as the runtime holds it.
     private var contactsRetainer: NativeContactsCallbacks? = null
@@ -848,19 +850,19 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         inner.disconnectPairedHost(peer)
     }
 
-    /** Core-owned logout for the process-wide authentication session. */
-    fun disconnect() {
-        inner.disconnect()
+    /** Immediately invalidate the active wallet and pending activations. */
+    fun lockWallet() {
+        inner.lockWallet()
     }
 
     /** Report the core database's SQLite version, schema version and file path. */
     @Throws(NativeCoreDatabaseException::class)
     suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
 
-    /** Activate or replace the process-wide local signing session. */
+    /** Read and activate the selected protected wallet, preserving the active wallet on failure. */
     @Throws(HostRejection::class)
-    fun activateLocalSession(secret: ByteArray, liteUsername: String? = null) {
-        inner.activateLocalSession(secret, liteUsername)
+    suspend fun activateWallet(walletId: String, liteUsername: String? = null) {
+        inner.activateWallet(walletId, liteUsername)
     }
 
     /**
@@ -888,7 +890,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
 
     /**
      * Record the accounts renewal should keep allowed on the Statement Store.
-     * Needs an active session, so call it after [activateLocalSession] or after
+     * Needs an active session, so call it after [activateWallet] or after
      * pairing, not at construction.
      *
      * Recipe-shaped targets survive a change of root entropy; a raw

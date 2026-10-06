@@ -69,9 +69,12 @@ The public surface lives in [`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](s
 - `HostSecretStorage` - required typed async read/write/clear for protected host secrets. Use `secretCoreStorageKeyIdentifier(key)` for record names, share one backend across bridges, and return null only for missing records. Serialize complete storage effects and cleanup, check cancellation inside the shared gate, and propagate commit/decryption failures.
 - `LocalhostBridgeBootstrap` - supplies the private WebSocket endpoint to the container.
 - `ContainerScriptBundle` - loads the bundled browser container for installation at document start.
+- `NativeWalletSecretProvider` - separate required wallet callback, retained by the runtime. Its suspending `readWalletRootEntropy(walletId)` reads the exact selected protected wallet and throws `HostRejection` for missing, inaccessible or mismatched records. It is absent from product and host callback groups.
 - `TrUAPIHostRuntime` - process-owned runtime whose product executions share one authentication session. Open a connection per executable with `openProductExecution`, which returns a `TrUAPIProductExecution` holding its own token on the runtime's shared WS bridge, permission authorization, theme/preimage/chain notifications, and the Chat controls below.
 - `ChatHostBridge` - native Chat storage and UI, implemented by hosts that serve the Chat modality and passed to `openProductExecution`. Hosts without it pass nothing and Chat calls answer unsupported.
-- `PocketHostBridge` - the host's Pocket card collection, implemented by hosts with a Pocket surface and passed as `pocket` to `openProductExecution`. The execution then offers `notifyPocketCardsChanged`. `removeCard` suspends, and decides and removes together, returning `NativePocketRemoval.Removed`, `Absent` or `Privileged`, so a card cannot be pinned between the check and the removal. Like Chat, Pocket is reachable only from a Worker execution with an active session, so without `activateLocalSession` every Pocket call answers `Denied`. Hosts without the bridge pass nothing and Pocket calls answer unsupported.
+- `PocketHostBridge` - the host's Pocket card collection, implemented by hosts with a Pocket surface and passed as `pocket` to `openProductExecution`. The execution then offers `notifyPocketCardsChanged`. `removeCard` suspends, and decides and removes together, returning `NativePocketRemoval.Removed`, `Absent` or `Privileged`, so a card cannot be pinned between the check and the removal. Like Chat, Pocket is reachable only from a Worker execution with an active session, so without `activateWallet` every Pocket call answers `Denied`. Hosts without the bridge pass nothing and Pocket calls answer unsupported.
+
+The runtime constructor accepts public configuration and starts locked without reading wallet entropy. Await `activateWallet(walletId, liteUsername)` from a host-owned coroutine before exposing a ready signing runtime. A failed replacement preserves the active wallet. Call synchronous `lockWallet()` when the selected wallet changes or an explicit wallet lock occurs, before awaiting any replacement; a failed replacement then leaves it locked. The provider must bind reads to the requested identifier and reject a changed selection. `walletSecrets` in the examples is the host's implementation of that callback, backed by its existing protected wallet store.
 
 ## Chat
 
@@ -110,6 +113,7 @@ class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
 
 val runtime = TrUAPIHostRuntime(
     bridge = bridge,
+    walletSecrets = walletSecrets,
     runtimeConfig = HostRuntimeConfig(
         hostName = "My Chat Host",
         peopleChainGenesisHash = peopleChainGenesisHash,   // exactly 32 bytes
@@ -119,7 +123,7 @@ val runtime = TrUAPIHostRuntime(
     ),
 )
 // Chat needs an active session; without one every Chat call answers `Denied`.
-runtime.activateLocalSession(secret)
+runtime.activateWallet(selectedWalletId)
 
 val execution = runtime.openProductExecution(
     bridge = bridge,
@@ -133,7 +137,7 @@ val bootstrap = LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token)
 Install `bootstrap` and `ContainerScriptBundle` at document start before loading the product, as in the example below.
 
 Chat requires an active session: `openProductExecution` succeeds without one,
-but every Chat call then answers `Denied` until `activateLocalSession` or SSO
+but every Chat call then answers `Denied` until `activateWallet` or SSO
 pairing completes.
 
 The core bounds and screens the product-supplied fields it forwards — ids,
@@ -205,7 +209,7 @@ Identity and account access reviews use `confirmPermission(review)`, which also 
 
 Statement-store allowances are granted per period, so a host has to re-register the accounts it wants to keep writing. They are not revoked the moment the period ends: `Resources.StmtStoreGraceWindow` keeps an ended period's allowances active until cleanup catches up, 48 hours on `paseo-next-v2`. The core owns the ledger and the registration; the app owns only the schedule.
 
-Record the accounts to keep allowed. This needs an active session, so call it after `activateLocalSession` or after pairing, not at construction:
+Record the accounts to keep allowed. This needs an active session, so call it after `activateWallet` or after pairing, not at construction:
 
 ```kotlin
 runtime.trackStatementRenewalTargets(
@@ -408,11 +412,10 @@ val runtimeConfig = HostRuntimeConfig(
     // `trustedProducts` grant.
     assetHubChainGenesisHash = ByteArray(32) { 1.toByte() },
     networkSuffix = "dot",
-    // Optional: activate a local signing session from host-held BIP-39 entropy
-    // (no SSO pairing). Omit for the QR pairing flow.
-    localSessionSecret = null,
 )
-val runtime = TrUAPIHostRuntime(bridge, runtimeConfig)
+val runtime = TrUAPIHostRuntime(bridge, walletSecrets, runtimeConfig)
+// Run from the host's shared startup coroutine before publishing the runtime.
+runtime.activateWallet(selectedWalletId)
 check(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
     "WebView lacks DOCUMENT_START_SCRIPT"
 }
@@ -445,8 +448,8 @@ main.post {
     webView.loadUrl(productUrl)
 }
 
-// On logout:
-runtime.disconnect()
+// On wallet lock or selection change:
+runtime.lockWallet()
 ```
 
 ## The cdylib

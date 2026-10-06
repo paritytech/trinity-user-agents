@@ -157,7 +157,7 @@ The embedder builds a role handle, `PairingHostRuntime::new(...)` or
 each product connection. Role-specific operations live only on the matching handle:
 `cancel_pairing`, `notify_session_store_changed`, `activate_stored_session`,
 `activate_external_session`, and `reset_session_state` on the pairing handle,
-`activate_local_session` on the signing handle. Both handles expose
+`activate_wallet` and synchronous `lock_wallet` on the signing handle. Both handles expose
 `clear_product_state` to revoke one product's capability material without
 touching the session or other products, and `notify_contacts_changed` to drop
 the contact handles the core cached once a contact is removed or blocked. Calling the wrong operation is
@@ -192,7 +192,7 @@ path. Web hosts do not compile the store.
 
 `AccountInvocation` binds the holder call to its selected session and caller. Local calls may carry wallet-issued authorization and host review metadata prepared before SSO conversion; remote callers cannot carry local authorization. The wallet validates its activation, product and requested account independently. Legacy review, unwatermarked signing and contact disclosure retain their specific consent rules. Allocation and cold subtree review finish before their execution budget starts; the budget includes grant or subtree retention.
 
-`WalletAccountHolder` owns wallet activation, entropy, account execution, resource issuance and renewal. `SigningHost` installs or clears that wallet while holding the shared grant lifecycle guard. Same-wallet reactivation changes wallet validation; product reset changes the host grant revision. Final wallet key use holds the wallet lifecycle lock. Shared-host retained-key derivation and signing hold the grant guard and validate the original holder session after asynchronous preparation. Registry writes keep their captured root; already-dispatched storage or network operations cannot be recalled.
+`WalletAccountHolder` owns wallet activation, entropy, account execution, resource issuance and renewal. Production runtime configuration contains no entropy. Explicit activation reads the selected root through `WalletSecretProvider`, derives a replacement without mutation and checks the original activation revision before installing it. Failed preparation preserves the active wallet; explicit native selection invalidates it first. `SigningHost` installs or clears that wallet while holding the shared grant lifecycle guard. Same-wallet reactivation changes wallet validation; product reset changes the host grant revision. Final wallet key use holds the wallet lifecycle lock. Shared-host retained-key derivation and signing hold the grant guard and validate the original holder session after asynchronous preparation. Registry writes keep their captured root; already-dispatched storage or network operations cannot be recalled.
 
 `HostOperation` binds the originally selected account session and host grant revision. The shared runner checks it before each future poll; allocation also checks before starting each resource. `AccountHolder::allocate_grants` returns a lazy fallible stream with explicit allocated, rejected and unavailable item outcomes. Whole-operation failures remain distinct from recoverable item failures. Statement grants carry a validated key and an optional known period; native AutoSigning retains an opaque wallet authorization, while paired grants contain exported keys. Incoming SSO calls the wallet directly and never populates native host grants.
 
@@ -205,7 +205,7 @@ path. Web hosts do not compile the store.
   ChaCha20-Poly1305. `SsoRequestService` owns pairing/login state, persisted auth-session reload and remote signing-host liveness monitoring.
 - **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
-  from host-held secret material. Its public identity is the RFC-0022
+  through the separate wallet provider. Raw entropy activation is limited to test hosts. Its public identity is the RFC-0022
   `uid.<tld>` index-0 product account of the configured network. RFC-0024 ring-VRF keys are explicit,
   product-owned registry entries; aliases, proofs, direct signatures, and
   internal personhood flows use the requested or user-selected registered key

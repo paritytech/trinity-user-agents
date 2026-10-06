@@ -69,7 +69,7 @@ class ContainerHttpAuthorizationTest {
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
 
-        TrUAPIHostRuntime(bridge, config).use { runtime ->
+        TrUAPIHostRuntime(bridge, UnavailableWalletSecrets, config).use { runtime ->
             runtime.openProductExecution(bridge, ProductExecutionConfig("http-policy.paseo", kind)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 BridgeProxy(endpoint.port.toInt()).use { proxy ->

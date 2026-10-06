@@ -1723,8 +1723,9 @@ async fn start_signing_host(
         .flatten();
     if let Some(cached_signer) = &signer {
         runtime
-            .activate_local_session_with_identity(
-                cached_signer.entropy.clone(),
+            .activate_wallet(
+                cached_signer,
+                cached_signer.wallet_id().to_string(),
                 cached_signer.lite_username.clone(),
             )
             .await
@@ -2317,7 +2318,11 @@ async fn activate_current_signer(session: &mut SigningHostSession) -> Result<()>
         .context("signer has not been resolved")?;
     session
         .runtime
-        .activate_local_session_with_identity(signer.entropy.clone(), signer.lite_username.clone())
+        .activate_wallet(
+            signer,
+            signer.wallet_id().to_string(),
+            signer.lite_username.clone(),
+        )
         .await
         .map_err(|err| anyhow::anyhow!("failed to activate local session: {}", err.reason))?;
     if let (Some(profile), Some(user_id)) = (&session.profile, &signer.lite_username) {
@@ -3184,7 +3189,11 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
     let available_sessions = session.catalog.list()?;
 
     if let Err(error) = runtime
-        .activate_local_session_with_identity(signer.entropy.clone(), signer.lite_username.clone())
+        .activate_wallet(
+            &signer,
+            signer.wallet_id().to_string(),
+            signer.lite_username.clone(),
+        )
         .await
     {
         bail!("failed to activate session {name:?}: {}", error.reason);
@@ -3274,7 +3283,11 @@ async fn import_mnemonic_session(
         session.pocket.clone(),
     )?;
     runtime
-        .activate_local_session_with_identity(imported.entropy().to_vec(), username.clone())
+        .activate_wallet(
+            &imported,
+            imported.session_name().to_string(),
+            username.clone(),
+        )
         .await
         .map_err(|error| {
             anyhow::anyhow!(

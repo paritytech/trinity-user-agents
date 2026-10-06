@@ -702,23 +702,36 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
 public final class TrUAPIHostRuntime: @unchecked Sendable {
     private let inner: NativeTrUApiHostRuntime
     private let callbackRetainer: HostCallbacks
+    private let walletSecretsRetainer: NativeWalletSecretProvider
     private let notificationCenter: NotificationCenter
     private let foregroundObserver: NSObjectProtocol
     private var contactsRetainer: NativeContactsCallbacks?
 
-    public convenience init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
-        try self.init(bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default)
+    public convenience init(
+        bridge: HostBridge,
+        walletSecrets: NativeWalletSecretProvider,
+        runtimeConfig: HostRuntimeConfig
+    ) throws {
+        try self.init(
+            bridge: bridge,
+            walletSecrets: walletSecrets,
+            runtimeConfig: runtimeConfig,
+            notificationCenter: .default
+        )
     }
 
     init(
         bridge: HostBridge,
+        walletSecrets: NativeWalletSecretProvider,
         runtimeConfig: HostRuntimeConfig,
         notificationCenter: NotificationCenter
     ) throws {
         let adapter = HostCallbackAdapter(bridge: bridge)
         callbackRetainer = adapter
+        walletSecretsRetainer = walletSecrets
         let inner = try NativeTrUApiHostRuntime.withRuntimeConfig(
             callbacks: adapter,
+            walletSecrets: walletSecrets,
             runtimeConfig: runtimeConfig
         )
         self.inner = inner
@@ -787,8 +800,9 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         )
     }
 
-    public func disconnect() {
-        inner.disconnect()
+    /// Invalidate the active wallet and any pending activation.
+    public func lockWallet() {
+        inner.lockWallet()
     }
 
     /// Take one reference on the product's worker for a modality holder that
@@ -883,8 +897,9 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.coreDatabaseStatus()
     }
 
-    public func activateLocalSession(secret: Data, liteUsername: String? = nil) throws {
-        try inner.activateLocalSession(secret: secret, liteUsername: liteUsername)
+    /// Read and activate the selected wallet through its protected secret provider.
+    public func activateWallet(walletId: String, liteUsername: String? = nil) async throws {
+        try await inner.activateWallet(walletId: walletId, liteUsername: liteUsername)
     }
 
     /// Bind an external SSO transport to the active wallet after verifying
@@ -917,12 +932,12 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// Record the accounts renewal should keep allowed on the Statement Store.
     ///
     /// Needs an active session, so call it after
-    /// ``activateLocalSession(secret:liteUsername:)`` or after pairing, not at
+    /// ``activateWallet(walletId:liteUsername:)`` or after pairing, not at
     /// construction.
     ///
     /// Recipe-shaped targets survive a change of root entropy; a raw
     /// ``StatementRenewalTarget/account(accountId:label:)`` does not, and is
-    /// dropped by the next pass after ``activateLocalSession(secret:liteUsername:)``
+    /// dropped by the next pass after ``activateWallet(walletId:liteUsername:)``
     /// installs a different identity. Re-track those whenever the identity changes.
     public func trackStatementRenewalTargets(_ targets: [StatementRenewalTarget]) throws {
         try inner.trackStatementRenewalTargets(targets: targets)

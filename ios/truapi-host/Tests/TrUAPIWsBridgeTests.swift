@@ -9,6 +9,7 @@ struct TrUAPIWsBridgeTests {
         let bridge = StubHostBridge()
         let runtime = try TrUAPIHostRuntime(
             bridge: bridge,
+            walletSecrets: StubWalletSecrets(),
             runtimeConfig: Self.makeHostRuntimeConfig()
         )
         let execution = try runtime.openProductExecution(
@@ -46,6 +47,7 @@ struct TrUAPIWsBridgeTests {
         let bridge = StubHostBridge()
         let runtime = try TrUAPIHostRuntime(
             bridge: bridge,
+            walletSecrets: StubWalletSecrets(),
             runtimeConfig: Self.makeHostRuntimeConfig()
         )
         let execution = try runtime.openProductExecution(
@@ -83,6 +85,7 @@ struct TrUAPIWsBridgeTests {
         let notifications = NotificationCenter()
         let runtime = try TrUAPIHostRuntime(
             bridge: bridge,
+            walletSecrets: StubWalletSecrets(),
             runtimeConfig: Self.makeHostRuntimeConfig(),
             notificationCenter: notifications
         )
@@ -318,4 +321,10 @@ final class StubPocketHostBridge: PocketHostBridge {
     func listCards() throws -> [PocketCard] { [] }
 
     func removeCard(cardId _: String) throws -> NativePocketRemoval { .absent }
+}
+
+final class StubWalletSecrets: NativeWalletSecretProvider, @unchecked Sendable {
+    func readWalletRootEntropy(walletId _: String) async throws -> Data {
+        throw HostRejection.Rejected(reason: "No wallet selected")
+    }
 }

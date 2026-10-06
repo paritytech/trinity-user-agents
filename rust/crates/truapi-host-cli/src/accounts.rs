@@ -48,6 +48,30 @@ pub struct ResolvedSigner {
     pub auto_managed: bool,
 }
 
+impl ResolvedSigner {
+    /// Local selector for the already-resolved signer, including explicit mnemonics.
+    pub fn wallet_id(&self) -> &str {
+        self.account_name
+            .as_deref()
+            .unwrap_or(IMPORTED_ACCOUNT_NAME)
+    }
+}
+
+#[async_trait::async_trait]
+impl truapi::WalletSecretProvider for ResolvedSigner {
+    async fn read_wallet_root_entropy(
+        &self,
+        wallet_id: String,
+    ) -> Result<Vec<u8>, truapi::latest::GenericError> {
+        if wallet_id != self.wallet_id() {
+            return Err(truapi::latest::GenericError {
+                reason: "requested signer is not selected".to_string(),
+            });
+        }
+        Ok(self.entropy.clone())
+    }
+}
+
 /// A mnemonic whose existing on-chain identity and personhood membership have
 /// been verified, but which has not yet been persisted into a session.
 #[derive(derive_more::Debug, ZeroizeOnDrop)]
@@ -78,10 +102,20 @@ impl ImportedSigner {
     pub fn session_name(&self) -> &str {
         &self.session_name
     }
+}
 
-    /// Borrow the already-derived entropy for off-side runtime activation.
-    pub fn entropy(&self) -> &[u8] {
-        &self.entropy
+#[async_trait::async_trait]
+impl truapi::WalletSecretProvider for ImportedSigner {
+    async fn read_wallet_root_entropy(
+        &self,
+        wallet_id: String,
+    ) -> Result<Vec<u8>, truapi::latest::GenericError> {
+        if wallet_id != self.session_name {
+            return Err(truapi::latest::GenericError {
+                reason: "requested imported signer is not selected".to_string(),
+            });
+        }
+        Ok(self.entropy.clone())
     }
 }
 

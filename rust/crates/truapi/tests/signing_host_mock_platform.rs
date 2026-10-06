@@ -34,7 +34,7 @@ use truapi::host_logic::product_account::{
 use truapi::platform::mock::{ConfirmKind, MockConfig, MockPlatform};
 use truapi::platform::{HostInfo, PlatformInfo, ProductContext, SigningHostConfig};
 use truapi::v01;
-use truapi::{FrameSink, SigningHostRuntime};
+use truapi::{FrameSink, SigningHostRuntime, WalletSecretProvider};
 
 // Shared harness; this binary uses only the spawner.
 #[allow(dead_code)]
@@ -43,6 +43,19 @@ use common::test_spawner;
 
 /// BIP-39 entropy the local session is activated from.
 const ENTROPY: [u8; 32] = [0xab; 32];
+struct ProtectedWallet;
+
+#[async_trait::async_trait]
+impl WalletSecretProvider for ProtectedWallet {
+    async fn read_wallet_root_entropy(
+        &self,
+        wallet_id: String,
+    ) -> Result<Vec<u8>, truapi::latest::GenericError> {
+        assert_eq!(wallet_id, "test-wallet");
+        Ok(ENTROPY.to_vec())
+    }
+}
+
 /// dotNS identifier of the product doing the signing.
 const PRODUCT_ID: &str = "myapp.dot";
 /// Message the product asks to have signed.
@@ -113,8 +126,12 @@ fn account() -> v01::ProductAccountId {
 fn a_signing_host_on_the_mock_platform_returns_a_verifiable_signature() {
     let platform = Arc::new(MockPlatform::new());
     let runtime = SigningHostRuntime::new(platform.clone(), signing_config(), test_spawner());
-    futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
-        .expect("a signing host activates a local session from raw entropy");
+    futures::executor::block_on(runtime.activate_wallet(
+        &ProtectedWallet,
+        "test-wallet".to_string(),
+        None,
+    ))
+    .expect("a signing host activates the selected protected wallet");
 
     let product = ProductContext::new(PRODUCT_ID.to_string()).expect("product context is valid");
     let sink = Arc::new(RecordingSink::default());
@@ -195,8 +212,12 @@ fn the_mock_platform_never_reaches_the_chain_to_sign_raw() {
     // is local" from "signing got lucky".
     let platform = Arc::new(MockPlatform::new());
     let runtime = SigningHostRuntime::new(platform.clone(), signing_config(), test_spawner());
-    futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
-        .expect("local activation succeeds");
+    futures::executor::block_on(runtime.activate_wallet(
+        &ProtectedWallet,
+        "test-wallet".to_string(),
+        None,
+    ))
+    .expect("local activation succeeds");
 
     let product = ProductContext::new(PRODUCT_ID.to_string()).expect("product context is valid");
     let sink = Arc::new(RecordingSink::default());
@@ -240,8 +261,12 @@ fn a_declined_confirmation_withholds_the_signature() {
         ..MockConfig::default()
     }));
     let runtime = SigningHostRuntime::new(platform.clone(), signing_config(), test_spawner());
-    futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
-        .expect("local activation succeeds");
+    futures::executor::block_on(runtime.activate_wallet(
+        &ProtectedWallet,
+        "test-wallet".to_string(),
+        None,
+    ))
+    .expect("local activation succeeds");
 
     let product = ProductContext::new(PRODUCT_ID.to_string()).expect("product context is valid");
     let sink = Arc::new(RecordingSink::default());
