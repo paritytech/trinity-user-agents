@@ -11,26 +11,14 @@ import androidx.activity.result.ActivityResult
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
-import androidx.lifecycle.Lifecycle
 import dagger.hilt.android.qualifiers.ApplicationContext
-import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
-import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
-import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.utils.ActivityResultExecutor
 import io.paritytech.polkadotapp.common.utils.canScheduleExactAlarms
+import io.paritytech.polkadotapp.common.utils.permissions.ForegroundPrompt
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionAsker
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionResult
-import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameOsAccess
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.cancelChildren
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.selects.select
-import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 private const val KEY_EXACT_ALARM_REFUSED = "product_exact_alarm_access_refused"
@@ -39,8 +27,7 @@ private const val KEY_EXACT_ALARM_REFUSED = "product_exact_alarm_access_refused"
 class RealProductGameOsAccess @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val permissionAsker: PermissionAsker,
-    private val contextManager: ContextManager,
-    private val appLifecycleObserver: AppLifecycleObserver,
+    private val foregroundPrompt: ForegroundPrompt,
     private val preferences: Preferences,
 ) : ProductGameOsAccess {
     override suspend fun requestNotifications(): Result<Unit> {
@@ -53,7 +40,7 @@ class RealProductGameOsAccess @Inject constructor(
     override suspend fun requestExactAlarms(): Boolean {
         if (context.canScheduleExactAlarms()) return true
         if (preferences.getBoolean(KEY_EXACT_ALARM_REFUSED, false)) return false
-        val allowed = prompt { activity -> ExactAlarmAccessExecutor(activity).execute().getOrNull() } ?: return false
+        val allowed = foregroundPrompt.ask { activity -> ExactAlarmAccessExecutor(activity).execute().getOrNull() } ?: return false
         preferences.putBoolean(KEY_EXACT_ALARM_REFUSED, !allowed)
         return allowed
     }
@@ -65,26 +52,7 @@ class RealProductGameOsAccess @Inject constructor(
         if (permissions.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) {
             return true
         }
-        return prompt { permissionAsker.askPermission(*permissions) == PermissionResult.GRANTED } == true
-    }
-
-    // A backgrounded app may still hold an activity, but a prompt there is never answered. A destroyed
-    // activity drops the result as well, so the wait ends with it, unanswered.
-    private suspend fun <T> prompt(ask: suspend (ComponentActivity) -> T?): T? {
-        if (appLifecycleObserver.getCurrentState() != AppLifecycleState.FOREGROUND) return null
-        return withContext(Dispatchers.Main.immediate) {
-            val activity = contextManager.getActivity() ?: return@withContext null
-            runCancellableCatching {
-                coroutineScope {
-                    val answer = async { ask(activity) }
-                    val destroyed = launch { activity.lifecycle.currentStateFlow.first { it == Lifecycle.State.DESTROYED } }
-                    select<T?> {
-                        answer.onAwait { it }
-                        destroyed.onJoin { null }
-                    }.also { coroutineContext.cancelChildren() }
-                }
-            }.getOrNull()
-        }
+        return foregroundPrompt.ask { permissionAsker.askPermission(*permissions) == PermissionResult.GRANTED } == true
     }
 }
 
