@@ -26,6 +26,10 @@ use crate::host_logic::funding::{ConversionRoute, DepositAsset, DepositQuote, Fu
 use crate::runtime::statement_allowance::ChainContext;
 use crate::runtime::statement_allowance::extension::{ChainState, Metadata as ExtensionMetadata};
 
+mod withdraw;
+
+pub use withdraw::{PreparedWithdrawal, WithdrawCall, WithdrawChains, landing_floor};
+
 /// XCM version every program and dry run uses.
 const XCM_VERSION: u32 = 5;
 /// Margin added to every fee estimate, in percent.
@@ -66,6 +70,14 @@ pub trait FundingSigner: Send + Sync {
         number: u32,
     ) -> Result<Option<schnorrkel::Keypair>, GenericError>;
 
+    /// The keypair of the `number`th withdrawal account for
+    /// `destination_id`, or `None` while no signing session is active.
+    fn withdrawal_keypair(
+        &self,
+        destination_id: &str,
+        number: u32,
+    ) -> Result<Option<schnorrkel::Keypair>, GenericError>;
+
     /// The reserved funding product the deposit accounts sit under, which
     /// the top-ups crediting them are made as.
     fn funding_product_id(&self) -> String;
@@ -77,8 +89,21 @@ pub struct Chains {
     asset_hub: OnlineClientAtBlock<SubstrateConfig>,
     people: OnlineClientAtBlock<SubstrateConfig>,
     places: Places,
-    /// Signed-extension metadata, loaded only when a conversion is signed.
+    /// Asset Hub's signed-extension metadata, loaded only when a conversion
+    /// is signed.
     extensions: Option<Arc<ExtensionMetadata>>,
+    /// People's signed-extension metadata, loaded only when a withdrawal is
+    /// signed.
+    people_extensions: Option<Arc<ExtensionMetadata>>,
+}
+
+/// The chain a set of reads will sign on, with its signed-extension
+/// metadata.
+pub enum SigningChain {
+    /// A conversion on Asset Hub.
+    AssetHub(ChainContext),
+    /// A withdrawal on People.
+    People(ChainContext),
 }
 
 /// A signed conversion, with what tells later whether it worked.
@@ -177,19 +202,22 @@ impl Chains {
         asset_hub: &subxt::OnlineClient<SubstrateConfig>,
         people: &subxt::OnlineClient<SubstrateConfig>,
         network: FundingNetwork,
-        signing: Option<ChainContext>,
+        signing: Option<SigningChain>,
     ) -> Result<Self, ConversionError> {
         let asset_hub = asset_hub.at_current_block().await.map_err(chain)?;
+        let people = people.at_current_block().await.map_err(chain)?;
         // The cache is checked against the best block; signing at the
         // finalized one needs the same runtime's extensions.
-        let extensions = match signing {
-            Some(context) if context.state.spec_version == asset_hub.spec_version() => {
-                Some(context.metadata)
-            }
-            Some(_) => return Err(chain("Asset Hub is between runtime versions")),
-            None => None,
+        let same_runtime = |context: ChainContext, at: &OnlineClientAtBlock<SubstrateConfig>, name: &str| {
+            (context.state.spec_version == at.spec_version())
+                .then_some(context.metadata)
+                .ok_or_else(|| chain(format!("{name} is between runtime versions")))
         };
-        let people = people.at_current_block().await.map_err(chain)?;
+        let (extensions, people_extensions) = match signing {
+            Some(SigningChain::AssetHub(context)) => (Some(same_runtime(context, &asset_hub, "Asset Hub")?), None),
+            Some(SigningChain::People(context)) => (None, Some(same_runtime(context, &people, "People")?)),
+            None => (None, None),
+        };
         let asset_hub_para = parachain_id(&asset_hub).await?;
         let people_para = parachain_id(&people).await?;
         let assets_pallet = asset_hub
@@ -207,6 +235,7 @@ impl Chains {
                 assets_pallet,
             },
             extensions,
+            people_extensions,
         })
     }
 
@@ -906,41 +935,50 @@ impl Chains {
         fee_asset: &Value,
         nonce: u32,
     ) -> Result<Vec<u8>, ConversionError> {
-        let call_data = call.runtime_call().encode(self.asset_hub.metadata_ref())?;
-        let genesis: [u8; 32] = self
-            .asset_hub
-            .genesis_hash()
-            .ok_or_else(|| chain("Asset Hub genesis unknown"))?
-            .0;
-        let state = ChainState {
-            spec_version: self.asset_hub.spec_version(),
-            transaction_version: self.asset_hub.transaction_version(),
-            genesis_hash: genesis,
-            nonce,
-            restrict_origins: false,
-        };
-        let payment = self.charge_asset_tx_payment(fee_asset)?;
-        let block_hash = self.asset_hub.block_hash().0;
-        let era = Era::mortal(MORTAL_PERIOD_BLOCKS, self.asset_hub.block_number()).encode();
-        let extensions: Vec<TxPayloadExtension> = extensions
-            .extension_ids()
-            .into_iter()
-            .zip(extensions.encode_signed_extensions(&state))
-            .map(|(id, encoded)| {
-                let (extra, additional_signed) = match id {
-                    "CheckMortality" => (era.clone(), block_hash.to_vec()),
-                    "ChargeAssetTxPayment" => (payment.clone(), encoded.additional_signed),
-                    _ => (encoded.extra, encoded.additional_signed),
-                };
-                TxPayloadExtension {
-                    id: id.to_string(),
-                    extra,
-                    additional_signed,
-                }
-            })
-            .collect();
-        Ok(build_signed_extrinsic_v4(signer, &call_data, &extensions))
+        sign_on(&self.asset_hub, extensions, signer, &call.runtime_call(), fee_asset, nonce)
     }
+}
+
+/// Sign `call` on the chain `at` is pinned to, with `signer` at `nonce`,
+/// mortal from that block, paying fees in `fee_asset`.
+fn sign_on(
+    at: &OnlineClientAtBlock<SubstrateConfig>,
+    extensions: &ExtensionMetadata,
+    signer: &Sr25519Signer,
+    call: &RuntimeCall,
+    fee_asset: &Value,
+    nonce: u32,
+) -> Result<Vec<u8>, ConversionError> {
+    let call_data = call.encode(at.metadata_ref())?;
+    let genesis: [u8; 32] = at.genesis_hash().ok_or_else(|| chain("genesis unknown"))?.0;
+    let state = ChainState {
+        spec_version: at.spec_version(),
+        transaction_version: at.transaction_version(),
+        genesis_hash: genesis,
+        nonce,
+        restrict_origins: false,
+    };
+    let payment = charge_asset_tx_payment(at, fee_asset)?;
+    let block_hash = at.block_hash().0;
+    let era = Era::mortal(MORTAL_PERIOD_BLOCKS, at.block_number()).encode();
+    let extensions: Vec<TxPayloadExtension> = extensions
+        .extension_ids()
+        .into_iter()
+        .zip(extensions.encode_signed_extensions(&state))
+        .map(|(id, encoded)| {
+            let (extra, additional_signed) = match id {
+                "CheckMortality" => (era.clone(), block_hash.to_vec()),
+                "ChargeAssetTxPayment" => (payment.clone(), encoded.additional_signed),
+                _ => (encoded.extra, encoded.additional_signed),
+            };
+            TxPayloadExtension {
+                id: id.to_string(),
+                extra,
+                additional_signed,
+            }
+        })
+        .collect();
+    Ok(build_signed_extrinsic_v4(signer, &call_data, &extensions))
 }
 
 impl Places {
@@ -1458,27 +1496,28 @@ fn with_margin(fee: u128) -> u128 {
     fee.saturating_add((fee * FEE_MARGIN_PERCENT).div_ceil(100))
 }
 
-impl Chains {
-    /// `ChargeAssetTxPayment`'s bytes for no tip and fees in `fee_asset`,
-    /// encoded against the type the runtime declares for it.
-    fn charge_asset_tx_payment(&self, fee_asset: &Value) -> Result<Vec<u8>, ConversionError> {
-        use subxt::ext::scale_encode::EncodeAsType;
-        let metadata = self.asset_hub.metadata_ref();
-        let extension = metadata
-            .extrinsic()
-            .transaction_extensions_to_use_for_encoding()
-            .find(|extension| extension.identifier() == "ChargeAssetTxPayment")
-            .ok_or_else(|| chain("Asset Hub does not charge fees in assets"))?;
-        // Fees in the native token are the default and name no asset.
-        let asset_id = if fee_asset == &native() {
-            Value::unnamed_variant("None", [])
-        } else {
-            Value::unnamed_variant("Some", [fee_asset.clone()])
-        };
-        Value::named_composite([("tip", Value::u128(0)), ("asset_id", asset_id)])
-        .encode_as_type(extension.extra_ty(), metadata.types())
-        .map_err(chain)
-    }
+/// `ChargeAssetTxPayment`'s bytes for no tip and fees in `fee_asset`, encoded
+/// against the type the chain `at` is pinned to declares for it.
+fn charge_asset_tx_payment(
+    at: &OnlineClientAtBlock<SubstrateConfig>,
+    fee_asset: &Value,
+) -> Result<Vec<u8>, ConversionError> {
+    use subxt::ext::scale_encode::EncodeAsType;
+    let metadata = at.metadata_ref();
+    let extension = metadata
+        .extrinsic()
+        .transaction_extensions_to_use_for_encoding()
+        .find(|extension| extension.identifier() == "ChargeAssetTxPayment")
+        .ok_or_else(|| chain("the chain does not charge fees in assets"))?;
+    // Fees in the native token are the default and name no asset.
+    let asset_id = if fee_asset == &native() {
+        Value::unnamed_variant("None", [])
+    } else {
+        Value::unnamed_variant("Some", [fee_asset.clone()])
+    };
+    Value::named_composite([("tip", Value::u128(0)), ("asset_id", asset_id)])
+    .encode_as_type(extension.extra_ty(), metadata.types())
+    .map_err(chain)
 }
 
 /// A conversion: the XCM program it executes, the PSM mint ahead of it if
@@ -2080,7 +2119,7 @@ mod live {
             ))
             .await
             .expect("metadata");
-        Chains::at_finalized(&asset_hub, &client(PEOPLE).await, NETWORK, Some(context))
+        Chains::at_finalized(&asset_hub, &client(PEOPLE).await, NETWORK, Some(SigningChain::AssetHub(context)))
             .await
             .expect("chains pinned")
     }

@@ -29,7 +29,7 @@ mod conversion;
 mod credit;
 mod withdraw;
 
-use conversion::{Chains, ConversionChains, ConversionError};
+use conversion::{Chains, ConversionChains, ConversionError, SigningChain};
 #[cfg(test)]
 use conversion::Prepared;
 pub use conversion::{FundingNetwork, FundingSigner};
@@ -65,6 +65,17 @@ const STALL_AFTER_MS: u64 = 30 * 60 * 1_000;
 /// Longest a cancel waits to confirm the deposit account is empty, as
 /// getcash waits.
 const CANCEL_CONFIRM: Duration = Duration::from_secs(8);
+/// The chain a pass signs on, whose signed-extension metadata it loads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SignOn {
+    /// It only reads.
+    Nowhere,
+    /// It signs a conversion on Asset Hub.
+    AssetHub,
+    /// It signs a withdrawal on People.
+    People,
+}
+
 /// Numbered accounts skipped for already holding funds before assignment
 /// gives up.
 const MAX_USED_ACCOUNTS: usize = 16;
@@ -490,6 +501,7 @@ impl FundingRegistry {
             .any(|session| {
                 session.watched_deposit(current_unix_millis()).is_some()
                     || session.watched_withdrawal(current_unix_millis()).is_some()
+                    || session.withdrawing().is_some()
                     || session.converting().is_some()
                     || session.crediting().is_some()
             })
@@ -926,7 +938,7 @@ impl RuntimeServices {
         let network = self.funding_network()?;
         let quoting = session.amount.is_some() && session.quote.is_none();
         let chains = self
-            .funding_chains(network, quoting)
+            .funding_chains(network, if quoting { SignOn::AssetHub } else { SignOn::Nowhere })
             .await
             .map_err(AssignDepositError::from_conversion)?;
         // A session that names its amount must be paid enough to credit it,
@@ -988,7 +1000,7 @@ impl RuntimeServices {
             (Some(deposit), Some(conversion)) => {
                 let read = within_timeout(CANCEL_CONFIRM, async {
                     let chains = self
-                        .funding_chains(conversion.network, false)
+                        .funding_chains(conversion.network, SignOn::Nowhere)
                         .await
                         .map_err(|error| GenericError {
                             reason: error.to_string(),
@@ -1082,7 +1094,7 @@ impl RuntimeServices {
             None => return Err(AssignDepositError::Refused(AcceptRefusal::NothingArrived.to_string())),
         };
         let chains = self
-            .funding_chains(self.funding_network()?, false)
+            .funding_chains(self.funding_network()?, SignOn::Nowhere)
             .await
             .map_err(AssignDepositError::from_conversion)?;
         let route = within_chain_timeout(chains.choose_route(asset, arrived))
@@ -1122,7 +1134,7 @@ impl RuntimeServices {
             .ok_or(AssignDepositError::NotFound)?;
         let target = session.amount.ok_or(AssignDepositError::NoAmount)?;
         let chains = self
-            .funding_chains(self.funding_network()?, true)
+            .funding_chains(self.funding_network()?, SignOn::AssetHub)
             .await
             .map_err(AssignDepositError::from_conversion)?;
         self.record_quote(intent, &chains, asset, target)
@@ -1186,6 +1198,9 @@ impl RuntimeServices {
                     tracing::warn!(%reason, "funding credit pass failed");
                 }
                 services.advance_withdrawals().await;
+                if let Err(reason) = services.advance_withdrawal_moves().await {
+                    tracing::warn!(%reason, "funding withdrawal move failed");
+                }
             }
         }));
     }
@@ -1195,7 +1210,7 @@ impl RuntimeServices {
     async fn funding_chains(
         &self,
         network: FundingNetwork,
-        signing: bool,
+        signing: SignOn,
     ) -> Result<Chains, ConversionError> {
         within_chain_timeout(async {
             let failed = |error: &dyn core::fmt::Display| ConversionError::Chain(error.to_string());
@@ -1218,31 +1233,29 @@ impl RuntimeServices {
                 .online_client(&people_genesis)
                 .await
                 .map_err(|error| failed(&error))?;
-            let extensions = match signing {
-                true => Some(self.signing_metadata(asset_hub_genesis).await?),
-                false => None,
+            let signing = match signing {
+                SignOn::Nowhere => None,
+                SignOn::AssetHub => Some(SigningChain::AssetHub(self.signing_metadata(asset_hub_genesis).await?)),
+                SignOn::People => Some(SigningChain::People(self.signing_metadata(people_genesis).await?)),
             };
-            Chains::at_finalized(&asset_hub, &people, network, extensions).await
+            Chains::at_finalized(&asset_hub, &people, network, signing).await
         })
         .await
         .map_err(|error| ConversionError::Chain(error.reason))?
     }
 
-    /// Asset Hub's signed-extension metadata from the per-chain cache the
+    /// A chain's signed-extension metadata from the per-chain cache the
     /// allowance path keeps, so signing never downloads it again.
-    async fn signing_metadata(
-        &self,
-        asset_hub_genesis: [u8; 32],
-    ) -> Result<ChainContext, ConversionError> {
+    async fn signing_metadata(&self, genesis: [u8; 32]) -> Result<ChainContext, ConversionError> {
         let failed = |error: &dyn core::fmt::Display| ConversionError::Chain(error.to_string());
         let rpc = RpcClient::new(subxt_rpcs::RpcClient::new(
             self.chain
-                .rpc_client("funding conversion", &asset_hub_genesis)
+                .rpc_client("funding conversion", &genesis)
                 .await
                 .map_err(|error| failed(&error))?,
         ));
         self.chain_context
-            .get(&ChainClient::new(rpc, asset_hub_genesis))
+            .get(&ChainClient::new(rpc, genesis))
             .await
             .map_err(|error| failed(&error))
     }
@@ -1271,7 +1284,7 @@ impl RuntimeServices {
         // Each top-up is sized from what the account holds on People when
         // it starts, as getcash sizes its claims.
         let chains = if crediting.iter().any(CreditingSession::sizing) {
-            match self.funding_chains(conversion.network, false).await {
+            match self.funding_chains(conversion.network, SignOn::Nowhere).await {
                 Ok(chains) => Some(chains),
                 Err(error) => {
                     tracing::warn!(%error, "reading funding accounts on People failed");
@@ -1341,7 +1354,7 @@ impl RuntimeServices {
             return Ok(());
         }
         let chains = self
-            .funding_chains(conversion.network, signing)
+            .funding_chains(conversion.network, if signing { SignOn::AssetHub } else { SignOn::Nowhere })
             .await
             .map_err(|error| error.to_string())?;
         let observed = registry
@@ -2120,6 +2133,14 @@ mod tests {
 
     impl FundingSigner for Keys {
         fn deposit_keypair(
+            &self,
+            _: &str,
+            _: u32,
+        ) -> Result<Option<schnorrkel::Keypair>, GenericError> {
+            Ok(self.0.clone())
+        }
+
+        fn withdrawal_keypair(
             &self,
             _: &str,
             _: u32,

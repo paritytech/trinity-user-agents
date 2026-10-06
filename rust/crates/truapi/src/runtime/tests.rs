@@ -2994,6 +2994,14 @@ impl crate::runtime::FundingSigner for FundingProduct {
         Ok(None)
     }
 
+    fn withdrawal_keypair(
+        &self,
+        _: &str,
+        _: u32,
+    ) -> Result<Option<schnorrkel::Keypair>, truapi::latest::GenericError> {
+        Ok(None)
+    }
+
     fn funding_product_id(&self) -> String {
         "fund.dot".into()
     }

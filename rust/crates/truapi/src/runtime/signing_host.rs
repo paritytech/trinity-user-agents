@@ -1768,6 +1768,17 @@ impl super::FundingSigner for SigningHost {
             })
     }
 
+    fn withdrawal_keypair(
+        &self,
+        destination_id: &str,
+        number: u32,
+    ) -> Result<Option<schnorrkel::Keypair>, GenericError> {
+        self.funding_keypair(FundingAccountKind::Withdrawal, destination_id, number)
+            .map_err(|err| GenericError {
+                reason: err.to_string(),
+            })
+    }
+
     fn funding_product_id(&self) -> String {
         funding_product_id(&self.network_suffix)
     }

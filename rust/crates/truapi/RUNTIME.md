@@ -441,6 +441,17 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   still read, and one never taken expires after 30 minutes. A cancel reads
   both first and is refused once the payment is taken. The watch starts
   before the request, which resolves only once the user has decided.
+  A `Paid` session's CASH then moves to Asset Hub as getcash moves it, one
+  transaction per pass decided from the account's balances: a pool swap on
+  People, paid in CASH, buys the PAS the fees need, then one XCM, paid in
+  that PAS, carries all the CASH and PAS to Asset Hub, sells the CASH there
+  for PAS and deposits it on the withdrawal account. The XCM is sized by dry
+  runs on People (fees measured with all the PAS, then an exact allowance
+  that traps nothing) and on Asset Hub (what lands); CASH teleports when
+  Asset Hub trusts People for it and is reserve-withdrawn otherwise. It has
+  landed once the account holds no CASH and Asset Hub shows at least the
+  dry run's landing less 5%, and the session is `Withdrawn`; three rejected
+  transactions hold it for `retry_funding`.
   `cancel_funding` cancels a session while nothing has arrived, as getcash
   does: it is refused once a deposit was seen or while anything is on the
   deposit account, which is read first, and nothing is cancelled if that

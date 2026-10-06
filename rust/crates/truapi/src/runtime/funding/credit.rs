@@ -241,6 +241,14 @@ mod tests {
             Ok(Some(self.0.clone()))
         }
 
+        fn withdrawal_keypair(
+            &self,
+            _: &str,
+            _: u32,
+        ) -> Result<Option<schnorrkel::Keypair>, GenericError> {
+            Ok(Some(self.0.clone()))
+        }
+
         fn funding_product_id(&self) -> String {
             "fund.dot".into()
         }

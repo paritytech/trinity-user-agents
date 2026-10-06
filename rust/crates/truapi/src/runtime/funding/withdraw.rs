@@ -14,13 +14,17 @@ use truapi::latest::{
     GenericError, HostPaymentError, HostPaymentRequest, HostPaymentStatusSubscribeError,
 };
 
-use super::conversion::ConversionChains;
+use super::conversion::{
+    ConversionChains, ConversionError, PreparedWithdrawal, WithdrawCall, WithdrawChains,
+    landing_floor,
+};
 use super::{
-    CANCEL_CONFIRM, CancelFundingError, FundingRegistry, MAX_USED_ACCOUNTS, within_chain_timeout,
+    FundingSigner, STALL_AFTER_MS, SignOn, CANCEL_CONFIRM, CancelFundingError, FundingRegistry, MAX_USED_ACCOUNTS, within_chain_timeout,
     within_timeout,
 };
 use crate::host_logic::funding::{
-    FundingSessionError, FundingWithdrawal, PaymentReading, PaymentWord, funding_attempt_id,
+    FundingSessionError, FundingWithdrawal, PaymentReading, PaymentWord, WithdrawStep,
+    WithdrawSubmission, funding_attempt_id,
 };
 use crate::platform::{CoreStorage, ProductContext};
 use crate::runtime::services::RuntimeServices;
@@ -71,7 +75,156 @@ impl From<FundingSessionError> for WithdrawError {
     }
 }
 
+/// What a pass decided for one withdrawal being moved to Asset Hub.
+#[derive(Debug, PartialEq, Eq)]
+enum PlannedWithdrawal {
+    /// Record a step.
+    Record(WithdrawStep),
+    /// Record the submission, then submit `extrinsic` on People.
+    Submit {
+        submission: WithdrawSubmission,
+        extrinsic: Vec<u8>,
+    },
+}
+
+/// Decide the next step for `withdrawal`, given the transaction on its way,
+/// as getcash's withdrawal tick does, from balances alone. A submitted XCM
+/// has landed once the account holds no CASH and Asset Hub shows the PAS;
+/// one included that left the CASH failed; one whose era passed unincluded
+/// is dropped; one that took the CASH but landed nothing in time stalled. A
+/// swap went through once it left PAS on the account. With nothing on its
+/// way, the account's next transaction is prepared: the XCM when it holds
+/// the PAS its fees need, the swap otherwise.
+async fn plan_withdrawal(
+    chains: &dyn WithdrawChains,
+    signer: &dyn FundingSigner,
+    withdrawal: &FundingWithdrawal,
+    submission: Option<WithdrawSubmission>,
+    now_ms: u64,
+) -> Result<Option<PlannedWithdrawal>, ConversionError> {
+    let account = &withdrawal.account;
+    let (cash, pas) = chains.people_holdings(account).await?;
+    let record = |step| Ok(Some(PlannedWithdrawal::Record(step)));
+    match submission {
+        Some(WithdrawSubmission::Transfer {
+            nonce,
+            valid_until_block,
+            submitted_at_ms,
+            landing_before,
+            expected_landing,
+        }) => {
+            let landed = chains.asset_hub_native(account).await?.saturating_sub(landing_before);
+            if cash == 0 && landed >= landing_floor(expected_landing) {
+                return record(WithdrawStep::Landed { landed });
+            }
+            if chains.people_nonce(account).await? > nonce {
+                if cash > 0 {
+                    return record(WithdrawStep::Rejected {
+                        reason: "the withdrawal was included and failed".into(),
+                    });
+                }
+                if now_ms.saturating_sub(submitted_at_ms) > STALL_AFTER_MS {
+                    // What did land is the user's: pay it out rather than
+                    // fail, where getcash holds the run until its bound.
+                    return record(match landed {
+                        0 => WithdrawStep::Stalled,
+                        landed => WithdrawStep::Landed { landed },
+                    });
+                }
+                return Ok(None);
+            }
+            if chains.people_block() > valid_until_block {
+                return record(WithdrawStep::Dropped);
+            }
+            return Ok(None);
+        }
+        Some(WithdrawSubmission::Swap {
+            nonce,
+            valid_until_block,
+            pas_before,
+        }) => {
+            if chains.people_nonce(account).await? > nonce {
+                return record(if pas > pas_before {
+                    WithdrawStep::Swapped
+                } else {
+                    WithdrawStep::Rejected {
+                        reason: "the swap for the withdrawal's fees was included and failed".into(),
+                    }
+                });
+            }
+            if chains.people_block() > valid_until_block {
+                return record(WithdrawStep::Dropped);
+            }
+            return Ok(None);
+        }
+        None => {}
+    }
+    if cash == 0 {
+        return Ok(None);
+    }
+    let keypair = signer
+        .withdrawal_keypair(&withdrawal.destination_id, withdrawal.number)
+        .map_err(|error| ConversionError::Chain(error.reason))?;
+    let Some(keypair) = keypair.filter(|keypair| keypair.public.to_bytes() == *account) else {
+        return Ok(None);
+    };
+    let nonce = chains.people_nonce(account).await?;
+    let PreparedWithdrawal {
+        extrinsic,
+        valid_until_block,
+        call,
+    } = chains.prepare_withdrawal(&keypair, nonce, *account).await?;
+    let submission = match call {
+        WithdrawCall::Swap => WithdrawSubmission::Swap {
+            nonce,
+            valid_until_block,
+            pas_before: pas,
+        },
+        WithdrawCall::Transfer { expected_landing } => WithdrawSubmission::Transfer {
+            nonce,
+            valid_until_block,
+            submitted_at_ms: now_ms,
+            landing_before: chains.asset_hub_native(account).await?,
+            expected_landing,
+        },
+    };
+    Ok(Some(PlannedWithdrawal::Submit {
+        submission,
+        extrinsic,
+    }))
+}
+
 impl FundingRegistry {
+    /// Every session whose CASH is being moved to Asset Hub, with its
+    /// withdrawal account and the transaction on its way.
+    fn moving_withdrawals(&self) -> Vec<(String, FundingWithdrawal, Option<WithdrawSubmission>)> {
+        self.lock_sessions()
+            .values()
+            .filter_map(|session| {
+                let (withdrawal, submission) = session.withdrawing()?;
+                Some((session.intent.clone(), withdrawal.clone(), submission))
+            })
+            .collect()
+    }
+
+    /// Apply one step of a withdrawal's move to session `intent`.
+    async fn record_withdraw_step(
+        &self,
+        storage: &(impl CoreStorage + ?Sized),
+        now_ms: u64,
+        intent: &str,
+        step: WithdrawStep,
+    ) -> Result<(), FundingSessionError> {
+        let intent = intent.to_string();
+        self.commit(storage, now_ms, move |sessions| {
+            let changed = sessions
+                .get_mut(&intent)
+                .is_some_and(|session| session.advance_withdrawal(step, now_ms));
+            ((), if changed { vec![intent] } else { Vec::new() })
+        })
+        .await
+    }
+
     /// Every session whose withdrawal account is still read, with it.
     fn withdrawing_sessions(&self, now_ms: u64) -> Vec<(String, FundingWithdrawal)> {
         self.lock_sessions()
@@ -127,7 +280,7 @@ impl RuntimeServices {
             return Err(WithdrawError::PaymentsUnavailable);
         }
         let chains = self
-            .funding_chains(conversion.network, false)
+            .funding_chains(conversion.network, SignOn::Nowhere)
             .await
             .map_err(|error| WithdrawError::Chain(GenericError {
                 reason: error.to_string(),
@@ -242,7 +395,7 @@ impl RuntimeServices {
         let platform = self.payment_platform();
         within_timeout(limit, async {
             let chains = self
-                .funding_chains(conversion.network, false)
+                .funding_chains(conversion.network, SignOn::Nowhere)
                 .await
                 .map_err(|error| error.to_string())?;
             let cash = chains.landed(&withdrawal.account).await.map_err(|error| error.to_string())?;
@@ -322,5 +475,312 @@ impl RuntimeServices {
                 tracing::warn!(%intent, %reason, "reading a withdrawal account failed");
             }
         }
+    }
+
+    /// One pass over the withdrawals being moved to Asset Hub: record what
+    /// landed, was swapped, dropped or rejected, and submit what is ready.
+    pub async fn advance_withdrawal_moves(self: &Arc<Self>) -> Result<(), String> {
+        let registry = self.funding();
+        let moving = registry.moving_withdrawals();
+        let Some(conversion) = registry.conversion.get() else {
+            return Ok(());
+        };
+        if moving.is_empty() {
+            return Ok(());
+        }
+        let signing = moving.iter().any(|(_, _, submission)| submission.is_none());
+        let chains = self
+            .funding_chains(conversion.network, if signing { SignOn::People } else { SignOn::Nowhere })
+            .await
+            .map_err(|error| error.to_string())?;
+        let storage = self.platform.as_ref();
+        for (intent, withdrawal, submission) in moving {
+            let now_ms = current_unix_millis();
+            let planned = within_chain_timeout(plan_withdrawal(
+                &chains,
+                conversion.signer.as_ref(),
+                &withdrawal,
+                submission,
+                now_ms,
+            ))
+            .await;
+            let planned = match planned {
+                Ok(Ok(planned)) => planned,
+                Ok(Err(ConversionError::Refused(reason) | ConversionError::PsmRefused { reason, .. })) => {
+                    Some(PlannedWithdrawal::Record(WithdrawStep::Refused { reason }))
+                }
+                Ok(Err(ConversionError::Chain(reason))) | Err(GenericError { reason }) => {
+                    tracing::warn!(%intent, %reason, "funding withdrawal pass failed");
+                    continue;
+                }
+            };
+            match planned {
+                None => {}
+                Some(PlannedWithdrawal::Record(step)) => {
+                    if let Err(error) = registry.record_withdraw_step(storage, now_ms, &intent, step).await {
+                        tracing::warn!(%intent, %error, "recording a funding withdrawal failed");
+                    }
+                }
+                Some(PlannedWithdrawal::Submit {
+                    submission,
+                    extrinsic,
+                }) => {
+                    let submitted = WithdrawStep::Submitted(submission);
+                    // Never submitted unless recorded, so a lost answer is
+                    // still judged by its nonce.
+                    if let Err(error) = registry.record_withdraw_step(storage, now_ms, &intent, submitted).await {
+                        tracing::warn!(%intent, %error, "recording a funding withdrawal failed");
+                        continue;
+                    }
+                    match chains.submit_on_people(extrinsic).await {
+                        Ok(()) => {}
+                        Err(ConversionError::Refused(reason) | ConversionError::PsmRefused { reason, .. }) => {
+                            let refused = WithdrawStep::Refused { reason };
+                            if let Err(error) = registry
+                                .record_withdraw_step(storage, current_unix_millis(), &intent, refused)
+                                .await
+                            {
+                                tracing::warn!(%intent, %error, "recording a funding withdrawal failed");
+                            }
+                        }
+                        // It may have reached the chain anyway; its era or
+                        // the nonce decides.
+                        Err(ConversionError::Chain(reason)) => {
+                            tracing::warn!(%intent, %reason, "submitting a funding withdrawal failed");
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::executor::block_on;
+    use futures::future::BoxFuture;
+
+    use super::*;
+
+    const NOW: u64 = 1_700_000_000_000;
+
+    /// Chains answering fixed reads and preparing a fixed transaction.
+    struct Scripted {
+        cash: u128,
+        pas: u128,
+        nonce: u32,
+        block: u64,
+        landing: u128,
+        prepares: WithdrawCall,
+    }
+
+    impl WithdrawChains for Scripted {
+        fn people_holdings<'a>(&'a self, _: &'a [u8; 32]) -> BoxFuture<'a, Result<(u128, u128), ConversionError>> {
+            Box::pin(async { Ok((self.cash, self.pas)) })
+        }
+
+        fn people_nonce<'a>(&'a self, _: &'a [u8; 32]) -> BoxFuture<'a, Result<u32, ConversionError>> {
+            Box::pin(async { Ok(self.nonce) })
+        }
+
+        fn people_block(&self) -> u64 {
+            self.block
+        }
+
+        fn asset_hub_native<'a>(&'a self, _: &'a [u8; 32]) -> BoxFuture<'a, Result<u128, ConversionError>> {
+            Box::pin(async { Ok(self.landing) })
+        }
+
+        fn prepare_withdrawal<'a>(
+            &'a self,
+            _: &'a schnorrkel::Keypair,
+            _: u32,
+            _: [u8; 32],
+        ) -> BoxFuture<'a, Result<PreparedWithdrawal, ConversionError>> {
+            Box::pin(async {
+                Ok(PreparedWithdrawal {
+                    extrinsic: vec![1, 2, 3],
+                    valid_until_block: 164,
+                    call: self.prepares,
+                })
+            })
+        }
+    }
+
+    struct Keys(schnorrkel::Keypair);
+
+    impl FundingSigner for Keys {
+        fn deposit_keypair(&self, _: &str, _: u32) -> Result<Option<schnorrkel::Keypair>, GenericError> {
+            Ok(None)
+        }
+
+        fn withdrawal_keypair(&self, _: &str, _: u32) -> Result<Option<schnorrkel::Keypair>, GenericError> {
+            Ok(Some(self.0.clone()))
+        }
+
+        fn funding_product_id(&self) -> String {
+            "fund.dot".into()
+        }
+    }
+
+    fn keypair(seed: u8) -> schnorrkel::Keypair {
+        schnorrkel::MiniSecretKey::from_bytes(&[seed; 32])
+            .expect("seed")
+            .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519)
+    }
+
+    fn withdrawal() -> FundingWithdrawal {
+        FundingWithdrawal {
+            destination_id: "dot-assethub".into(),
+            number: 1,
+            account: keypair(1).public.to_bytes(),
+            attempt: 0,
+            since_ms: NOW,
+            taken: true,
+        }
+    }
+
+    fn chains(cash: u128, pas: u128, nonce: u32, block: u64, landing: u128) -> Scripted {
+        Scripted {
+            cash,
+            pas,
+            nonce,
+            block,
+            landing,
+            prepares: WithdrawCall::Swap,
+        }
+    }
+
+    fn plan(chains: &Scripted, submission: Option<WithdrawSubmission>, now_ms: u64) -> Option<PlannedWithdrawal> {
+        block_on(plan_withdrawal(chains, &Keys(keypair(1)), &withdrawal(), submission, now_ms)).expect("planned")
+    }
+
+    const SWAP: WithdrawSubmission = WithdrawSubmission::Swap {
+        nonce: 4,
+        valid_until_block: 164,
+        pas_before: 30,
+    };
+    const TRANSFER: WithdrawSubmission = WithdrawSubmission::Transfer {
+        nonce: 5,
+        valid_until_block: 164,
+        submitted_at_ms: NOW,
+        landing_before: 10,
+        expected_landing: 1_000,
+    };
+
+    fn record(step: WithdrawStep) -> Option<PlannedWithdrawal> {
+        Some(PlannedWithdrawal::Record(step))
+    }
+
+    // With nothing on its way, the account's next transaction goes out, as
+    // getcash's tick acts once per reading: the XCM is measured from where
+    // the landing account stood just before, so its arrival can be told.
+    #[test]
+    fn the_next_withdrawal_transaction_is_prepared_from_what_the_account_holds() {
+        let transfer = Scripted {
+            prepares: WithdrawCall::Transfer { expected_landing: 900 },
+            ..chains(500, 30, 6, 100, 7)
+        };
+
+        assert_eq!(
+            [
+                plan(&chains(0, 0, 4, 100, 0), None, NOW),
+                plan(&chains(500, 0, 4, 100, 0), None, NOW),
+                plan(&transfer, None, NOW),
+            ],
+            [
+                None,
+                Some(PlannedWithdrawal::Submit {
+                    submission: WithdrawSubmission::Swap {
+                        nonce: 4,
+                        valid_until_block: 164,
+                        pas_before: 0,
+                    },
+                    extrinsic: vec![1, 2, 3],
+                }),
+                Some(PlannedWithdrawal::Submit {
+                    submission: WithdrawSubmission::Transfer {
+                        nonce: 6,
+                        valid_until_block: 164,
+                        submitted_at_ms: NOW,
+                        landing_before: 7,
+                        expected_landing: 900,
+                    },
+                    extrinsic: vec![1, 2, 3],
+                }),
+            ]
+        );
+    }
+
+    // A swap is judged by what it added: more PAS on the account than
+    // before means it went through, the same after inclusion means it failed
+    // and cost a fee, even when PAS from an earlier swap is there; one whose
+    // era passed unincluded is dropped; until then it is waited for.
+    #[test]
+    fn a_swap_is_judged_by_the_pas_it_added() {
+        let failed = || {
+            record(WithdrawStep::Rejected {
+                reason: "the swap for the withdrawal's fees was included and failed".into(),
+            })
+        };
+
+        assert_eq!(
+            [
+                plan(&chains(400, 60, 5, 100, 0), Some(SWAP), NOW),
+                plan(&chains(500, 30, 5, 100, 0), Some(SWAP), NOW),
+                plan(&chains(500, 0, 5, 100, 0), Some(SWAP), NOW),
+                plan(&chains(500, 30, 4, 165, 0), Some(SWAP), NOW),
+                plan(&chains(500, 30, 4, 164, 0), Some(SWAP), NOW),
+            ],
+            [record(WithdrawStep::Swapped), failed(), failed(), record(WithdrawStep::Dropped), None]
+        );
+    }
+
+    // getcash counts an arrival only on both signals: the account holds no
+    // CASH, which only the XCM takes in full, and the landing account gained
+    // at least what a sale within the slippage lands. An XCM included with
+    // the CASH still there failed; one that took it and landed nothing in
+    // time stalled, and what did land is paid out rather than lost.
+    #[test]
+    fn a_transfer_lands_on_both_signals() {
+        let late = NOW + STALL_AFTER_MS + 1;
+
+        assert_eq!(
+            [
+                plan(&chains(0, 0, 6, 100, 960), Some(TRANSFER), NOW),
+                plan(&chains(0, 0, 6, 100, 950), Some(TRANSFER), NOW),
+                plan(&chains(500, 0, 6, 100, 0), Some(TRANSFER), NOW),
+                plan(&chains(0, 0, 6, 100, 10), Some(TRANSFER), late),
+                plan(&chains(0, 0, 6, 100, 410), Some(TRANSFER), late),
+                plan(&chains(500, 30, 5, 165, 0), Some(TRANSFER), NOW),
+            ],
+            [
+                record(WithdrawStep::Landed { landed: 950 }),
+                None,
+                record(WithdrawStep::Rejected {
+                    reason: "the withdrawal was included and failed".into(),
+                }),
+                record(WithdrawStep::Stalled),
+                record(WithdrawStep::Landed { landed: 400 }),
+                record(WithdrawStep::Dropped),
+            ]
+        );
+    }
+
+    // A withdrawal outlives a sign-out; another identity's key must not
+    // sign for this account.
+    #[test]
+    fn only_the_withdrawal_accounts_key_signs() {
+        let wrong = block_on(plan_withdrawal(
+            &chains(500, 0, 4, 100, 0),
+            &Keys(keypair(2)),
+            &withdrawal(),
+            None,
+            NOW,
+        ))
+        .expect("planned");
+
+        assert_eq!(wrong, None);
     }
 }

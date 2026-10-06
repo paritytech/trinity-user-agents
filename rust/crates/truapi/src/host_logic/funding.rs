@@ -154,7 +154,8 @@ pub enum FundingStep {
     DepositSeen,
     /// The conversion to CASH is on its way.
     Converting,
-    /// The CASH is on People.
+    /// The converted funds reached the other chain: an on-ramp's CASH on
+    /// People, a withdrawal's PAS on Asset Hub.
     Landed,
     /// The host's top-up is claiming the CASH.
     Claiming,
@@ -453,10 +454,23 @@ pub enum FundingStage {
         progress: CreditProgress,
     },
     /// Outbound: the user's CASH is on the withdrawal account on People,
-    /// to be converted and sent on.
+    /// being moved to Asset Hub.
     Paid {
-        /// CASH on the account, in payment balance units.
+        /// CASH the account received, in payment balance units.
         paid: u128,
+        /// Withdrawal transactions included on People that failed so far.
+        rejections: u8,
+        /// When sizing or People's transaction pool started refusing the
+        /// next transaction, if they still do, in Unix milliseconds.
+        refused_since_ms: Option<u64>,
+        /// The withdrawal transaction on its way, if one is.
+        submission: Option<WithdrawSubmission>,
+    },
+    /// Outbound: the withdrawal's PAS is on the withdrawal account on Asset
+    /// Hub, to be paid out.
+    Withdrawn {
+        /// PAS that landed, in planck.
+        landed: u128,
     },
     /// Inbound terminal success: the CASH is in the user's balance.
     Delivered {
@@ -490,6 +504,12 @@ pub enum FundingResume {
     /// The payment into the withdrawal account did not go through: ask for
     /// it again, under the next attempt's id.
     Payment,
+    /// The CASH or PAS is on the withdrawal account on People: move it to
+    /// Asset Hub again.
+    Withdrawal {
+        /// CASH the account received, in payment balance units.
+        paid: u128,
+    },
     /// The CASH is on People: credit it from `progress`.
     Credit {
         /// What the top-ups claimed, and the attempt to go on with.
@@ -563,7 +583,12 @@ impl FundingSession {
         match &self.stage {
             FundingStage::Open if self.deposit.is_some() => FundingStep::AwaitingDeposit,
             FundingStage::Open if self.withdrawal.is_some() => FundingStep::AwaitingPayment,
+            FundingStage::Paid {
+                submission: Some(WithdrawSubmission::Transfer { .. }),
+                ..
+            } => FundingStep::Converting,
             FundingStage::Paid { .. } => FundingStep::Paid,
+            FundingStage::Withdrawn { .. } => FundingStep::Landed,
             FundingStage::Open => FundingStep::Started,
             FundingStage::Converting {
                 submission: None, ..
@@ -638,7 +663,8 @@ impl FundingSession {
             | FundingStage::Converting { .. }
             | FundingStage::Converted
             | FundingStage::Crediting { .. }
-            | FundingStage::Paid { .. } => None,
+            | FundingStage::Paid { .. }
+            | FundingStage::Withdrawn { .. } => None,
             FundingStage::Delivered { settled_at_ms, .. } => Some(settled_at_ms),
             FundingStage::Failed { settled_at_ms, .. } => Some(settled_at_ms),
         }
@@ -659,7 +685,8 @@ impl FundingSession {
                 FundingStage::Converting { .. }
                 | FundingStage::Converted
                 | FundingStage::Crediting { .. }
-                | FundingStage::Paid { .. },
+                | FundingStage::Paid { .. }
+                | FundingStage::Withdrawn { .. },
                 _,
             ) => HostFundingStatusSubscribeItem::Converting,
             (FundingStage::Delivered { credited, .. }, _) => {
@@ -835,6 +862,12 @@ impl FundingSession {
                 withdrawal.taken = false;
                 FundingStage::Open
             }
+            FundingResume::Withdrawal { paid } => FundingStage::Paid {
+                paid,
+                rejections: 0,
+                refused_since_ms: None,
+                submission: None,
+            },
             FundingResume::Credit { progress } => FundingStage::Crediting {
                 progress: CreditProgress {
                     claim: progress.claim.map(|claim| Claim {
@@ -1008,7 +1041,12 @@ impl FundingSession {
             return false;
         }
         if cash > 0 {
-            self.stage = FundingStage::Paid { paid: cash };
+            self.stage = FundingStage::Paid {
+                paid: cash,
+                rejections: 0,
+                refused_since_ms: None,
+                submission: None,
+            };
             return true;
         }
         if self.stage != FundingStage::Open {
@@ -1321,6 +1359,151 @@ impl PsmRefusal {
             }
             _ => None,
         }
+    }
+}
+
+/// A withdrawal transaction on its way on People.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum WithdrawSubmission {
+    /// The pool swap buying the PAS the XCM's fees need.
+    Swap {
+        /// The account's nonce it was signed with.
+        nonce: u32,
+        /// Last People block it can be included in.
+        valid_until_block: u64,
+        /// The account's PAS on People just before, which a swap that went
+        /// through adds to.
+        pas_before: u128,
+    },
+    /// The XCM moving everything to Asset Hub.
+    Transfer {
+        /// The account's nonce it was signed with.
+        nonce: u32,
+        /// Last People block it can be included in.
+        valid_until_block: u64,
+        /// When it was submitted, in Unix milliseconds.
+        submitted_at_ms: u64,
+        /// The landing account's PAS on Asset Hub just before.
+        landing_before: u128,
+        /// PAS the Asset Hub dry run credited to the landing account.
+        expected_landing: u128,
+    },
+}
+
+/// What one pass of a withdrawal's move to Asset Hub found or did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WithdrawStep {
+    /// A transaction is about to be submitted.
+    Submitted(WithdrawSubmission),
+    /// The swap went through; the XCM is next.
+    Swapped,
+    /// The submitted transaction's era ended unincluded; the next pass
+    /// submits again.
+    Dropped,
+    /// It was included and failed, which costs a fee.
+    Rejected {
+        /// Why.
+        reason: String,
+    },
+    /// Sizing it, or People's transaction pool, refused it; nothing was
+    /// spent, and the next pass tries again.
+    Refused {
+        /// Why.
+        reason: String,
+    },
+    /// The PAS reached the landing account on Asset Hub.
+    Landed {
+        /// PAS that landed, in planck.
+        landed: u128,
+    },
+    /// The XCM left People but nothing reached Asset Hub in time; the
+    /// assets wait in Asset Hub's trap for the account to claim.
+    Stalled,
+}
+
+/// Rejections at inclusion, after a passing dry run, before a withdrawal is
+/// held, as getcash gives up on a transaction rejected three times.
+const MAX_WITHDRAW_REJECTIONS: u8 = 3;
+/// How long sizing or the pool may keep refusing a withdrawal's next
+/// transaction before it is held, as getcash bounds a run's worked time.
+const WITHDRAW_REFUSAL_WINDOW_MS: u64 = 15 * 60 * 1_000;
+
+impl FundingSession {
+    /// The withdrawal account and the transaction on its way, of a session
+    /// whose CASH is being moved to Asset Hub.
+    pub fn withdrawing(&self) -> Option<(&FundingWithdrawal, Option<WithdrawSubmission>)> {
+        match (&self.stage, &self.withdrawal) {
+            (FundingStage::Paid { submission, .. }, Some(withdrawal)) => Some((withdrawal, *submission)),
+            _ => None,
+        }
+    }
+
+    /// Advance a withdrawal being moved to Asset Hub by one step. Returns
+    /// whether the session changed.
+    pub fn advance_withdrawal(&mut self, step: WithdrawStep, now_ms: u64) -> bool {
+        let FundingStage::Paid {
+            paid,
+            rejections,
+            refused_since_ms,
+            submission,
+        } = &mut self.stage
+        else {
+            return false;
+        };
+        match step {
+            WithdrawStep::Submitted(submitted) => {
+                *submission = Some(submitted);
+                *refused_since_ms = None;
+            }
+            WithdrawStep::Refused { reason } => {
+                *submission = None;
+                let since = *refused_since_ms.get_or_insert(now_ms);
+                if now_ms.saturating_sub(since) > WITHDRAW_REFUSAL_WINDOW_MS {
+                    let paid = *paid;
+                    return self.fail_resumable(
+                        FundingFailure::Other {
+                            code: "withdraw_refused".into(),
+                            message: reason,
+                        },
+                        Some(FundingResume::Withdrawal { paid }),
+                        now_ms,
+                    );
+                }
+            }
+            WithdrawStep::Swapped | WithdrawStep::Dropped => *submission = None,
+            WithdrawStep::Rejected { reason } => {
+                *submission = None;
+                *rejections = rejections.saturating_add(1);
+                if *rejections >= MAX_WITHDRAW_REJECTIONS {
+                    let paid = *paid;
+                    return self.fail_resumable(
+                        FundingFailure::Other {
+                            code: "withdraw_rejected".into(),
+                            message: format!(
+                                "the withdrawal was rejected {MAX_WITHDRAW_REJECTIONS} times, last: {reason}"
+                            ),
+                        },
+                        Some(FundingResume::Withdrawal { paid }),
+                        now_ms,
+                    );
+                }
+            }
+            WithdrawStep::Landed { landed } => self.stage = FundingStage::Withdrawn { landed },
+            WithdrawStep::Stalled => {
+                return self.fail(
+                    FundingFailure::Other {
+                        code: "withdraw_stalled".into(),
+                        message: "the withdrawal left People but never reached Asset Hub; its assets wait in Asset Hub's trap for the withdrawal account".into(),
+                    },
+                    now_ms,
+                );
+            }
+        }
+        true
     }
 }
 
@@ -1857,6 +2040,97 @@ mod tests {
                 Err(CancelRefusal::Underway),
                 Ok(()),
                 false
+            )
+        );
+    }
+
+    fn paid() -> FundingSession {
+        let mut session = withdrawing(true);
+        session.observe_withdrawal(
+            1_000,
+            PaymentReading {
+                attempt: 0,
+                word: PaymentWord::Unanswered,
+            },
+            NOW,
+        );
+        session
+    }
+
+    // getcash gives a withdrawal up after a transaction is rejected three
+    // times at inclusion, with the funds still on the account for a retry,
+    // which starts the count again; landing on Asset Hub ends the move.
+    #[test]
+    fn a_withdrawal_move_is_held_after_three_rejections_and_lands_on_asset_hub() {
+        let rejected = || WithdrawStep::Rejected { reason: "no".into() };
+        let mut held = paid();
+        for _ in 0..3 {
+            held.advance_withdrawal(rejected(), NOW);
+        }
+        let held_stage = held.stage.clone();
+        held.retry(NOW + 1).expect("retried");
+        let mut landed = paid();
+        landed.advance_withdrawal(WithdrawStep::Landed { landed: 950 }, NOW);
+
+        assert_eq!(
+            (held_stage, held.stage, landed.step(), landed.stage),
+            (
+                FundingStage::Failed {
+                    reason: FundingFailure::Other {
+                        code: "withdraw_rejected".into(),
+                        message: "the withdrawal was rejected 3 times, last: no".into(),
+                    },
+                    settled_at_ms: NOW,
+                    resume: Some(FundingResume::Withdrawal { paid: 1_000 }),
+                },
+                FundingStage::Paid {
+                    paid: 1_000,
+                    rejections: 0,
+                    refused_since_ms: None,
+                    submission: None,
+                },
+                FundingStep::Landed,
+                FundingStage::Withdrawn { landed: 950 },
+            )
+        );
+    }
+
+    // A refusal costs nothing and may pass, so it is tried again, as getcash
+    // retries a tick that throws, until refusing has gone on longer than a
+    // run may take; a transaction that goes out clears it.
+    #[test]
+    fn refusals_hold_a_withdrawal_only_after_the_window() {
+        let refused = || WithdrawStep::Refused { reason: "no quote".into() };
+        let mut kept = paid();
+        kept.advance_withdrawal(refused(), NOW);
+        kept.advance_withdrawal(refused(), NOW + WITHDRAW_REFUSAL_WINDOW_MS);
+        let mut held = kept.clone();
+        held.advance_withdrawal(refused(), NOW + WITHDRAW_REFUSAL_WINDOW_MS + 1);
+        let mut cleared = kept.clone();
+        cleared.advance_withdrawal(
+            WithdrawStep::Submitted(WithdrawSubmission::Swap {
+                nonce: 1,
+                valid_until_block: 10,
+                pas_before: 0,
+            }),
+            NOW + 1,
+        );
+
+        assert_eq!(
+            (kept.step(), held.step(), cleared.stage),
+            (
+                FundingStep::Paid,
+                FundingStep::Failed,
+                FundingStage::Paid {
+                    paid: 1_000,
+                    rejections: 0,
+                    refused_since_ms: None,
+                    submission: Some(WithdrawSubmission::Swap {
+                        nonce: 1,
+                        valid_until_block: 10,
+                        pas_before: 0,
+                    }),
+                },
             )
         );
     }
