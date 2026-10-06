@@ -44,24 +44,23 @@ impl Drop for SsoDisconnectMonitor {
 }
 
 impl PairingHost {
-    fn stop_disconnect_monitor(&self) {
-        self.disconnect_monitor
-            .lock()
-            .expect("SSO disconnect monitor mutex poisoned")
-            .take();
-    }
-
     /// Watch the session's topics for a peer disconnect statement, replacing
     /// any monitor for a different session. No-op when one is already running
     /// for this session.
     pub fn start_disconnect_monitor(&self, session: &SessionInfo) {
         let Some(sso) = session.sso.clone() else {
-            self.stop_disconnect_monitor();
             return;
         };
         let key = SsoSessionKey::from_session(&sso);
 
-        let (registration, spawner) = {
+        let (registration, spawner, previous) = {
+            let _lifecycle = self
+                .session_lifecycle
+                .lock()
+                .expect("session lifecycle mutex poisoned");
+            if !self.current_sso_session_matches(key) {
+                return;
+            }
             let mut current = self
                 .disconnect_monitor
                 .lock()
@@ -70,9 +69,10 @@ impl PairingHost {
                 return;
             }
             let (abort, registration) = AbortHandle::new_pair();
-            *current = Some(SsoDisconnectMonitor { key, abort });
-            (registration, self.spawner.clone())
+            let previous = current.replace(SsoDisconnectMonitor { key, abort });
+            (registration, self.spawner.clone(), previous)
         };
+        drop(previous);
 
         let statement_store = self.statement_store.clone();
         let pairing_host = self.weak_self.clone();
@@ -102,21 +102,35 @@ impl PairingHost {
         spawner(Box::pin(Abortable::new(future, registration).map(|_| ())));
     }
 
-    /// Stop channel work for a cleared session: wake its in-flight waiters
-    /// with a local disconnect, then drop the peer-disconnect monitor.
-    pub fn stop_session_channel(&self, session: Option<&SessionInfo>) {
-        if let Some(sso) = session.and_then(|session| session.sso.as_ref()) {
-            self.session_disconnects
-                .notify(sso, SSO_LOCAL_DISCONNECT_REASON);
-        }
+    /// Detach channel state while the session lifecycle is locked.
+    pub fn detach_session_channel(
+        &self,
+        session: Option<&SessionInfo>,
+    ) -> Option<SsoDisconnectMonitor> {
         *self
             .newest_request
             .lock()
             .expect("newest request mutex poisoned") = None;
         self.clear_statement_store_allowance_keys(session);
         self.clear_bulletin_allowance_keys(session);
-        self.stop_disconnect_monitor();
         self.clear_product_subtrees(session);
+        self.disconnect_monitor
+            .lock()
+            .expect("SSO disconnect monitor mutex poisoned")
+            .take()
+    }
+
+    /// Wake detached channel work after releasing the lifecycle lock.
+    pub fn stop_session_channel(
+        &self,
+        session: Option<&SessionInfo>,
+        monitor: Option<SsoDisconnectMonitor>,
+    ) {
+        drop(monitor);
+        if let Some(sso) = session.and_then(|session| session.sso.as_ref()) {
+            self.session_disconnects
+                .notify(sso, SSO_LOCAL_DISCONNECT_REASON);
+        }
     }
 
     /// Best-effort `Disconnected` notification to the SSO peer.

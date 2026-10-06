@@ -6712,6 +6712,13 @@ fn activating_an_untagged_stored_session_restores_it_and_rewrites_the_slot() {
     let (host, pairing_host) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
+    let notify_host = Arc::downgrade(&pairing_host);
+    *platform.on_auth_session_write.lock().unwrap() = Some(Arc::new(move || {
+        if let Some(host) = notify_host.upgrade() {
+            host.notify_session_store_changed();
+        }
+    }));
+
     futures::executor::block_on(pairing_host.activate_stored_session())
         .expect("an untagged stored session activates");
 

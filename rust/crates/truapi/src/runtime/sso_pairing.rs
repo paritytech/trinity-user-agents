@@ -18,7 +18,7 @@ use super::auth_state::AuthStateMachine;
 use super::identity::resolve_session_identity_with_chain;
 use super::pairing_host::PairingHost;
 use super::statement_store_rpc;
-use crate::host_logic::session::{SessionInfo, encode_persisted_session};
+use crate::host_logic::session::SessionInfo;
 use crate::host_logic::sso::pairing::{
     PairingBootstrap, PairingDeviceIdentity, VersionedHandshakeResponse,
     create_pairing_bootstrap_from_identity, decode_app_handshake_data,
@@ -79,11 +79,10 @@ fn pairing_deadline_reason() -> String {
 
 /// Terminal outcome of [`SsoPairingFlow::request_session`].
 pub enum SsoPairingOutcome {
-    /// The login was cancelled (host `cancel_login`, `disconnect`, or a
-    /// cross-tab session win).
+    /// Pairing was cancelled or another activation won.
     Cancelled,
-    /// Wallet handshake completed; the session is resolved and persisted.
-    Success(Box<SessionInfo>),
+    /// The resolved wallet session is persisted and installed.
+    Success,
 }
 
 /// Resets a `Pairing` state left behind by a dropped login future (e.g. the
@@ -112,12 +111,16 @@ impl Drop for AbandonedPairingGuard {
 /// One pairing (login) attempt driven on behalf of a pairing host.
 pub struct SsoPairingFlow<'a> {
     host: &'a PairingHost,
+    login_generation: u64,
 }
 
 impl<'a> SsoPairingFlow<'a> {
     /// Bind a pairing attempt to its host.
-    pub fn new(host: &'a PairingHost) -> Self {
-        Self { host }
+    pub fn new(host: &'a PairingHost, login_generation: u64) -> Self {
+        Self {
+            host,
+            login_generation,
+        }
     }
 
     /// `request_session` pairing flow: emits `AuthState::Pairing` for the host
@@ -193,7 +196,7 @@ impl<'a> SsoPairingFlow<'a> {
                 reset_guard.disarm();
                 Ok(outcome)
             }
-            Ok(outcome @ SsoPairingOutcome::Success(_)) => {
+            Ok(outcome @ SsoPairingOutcome::Success) => {
                 reset_guard.disarm();
                 Ok(outcome)
             }
@@ -296,31 +299,22 @@ impl<'a> SsoPairingFlow<'a> {
             _ = cancel => return Ok(SsoPairingOutcome::Cancelled),
             session = resolve_session => session,
         };
-        let persist_session = self
-            .host
-            .platform
-            .write_core_storage(
-                CoreStorageKey::AuthSession,
-                encode_persisted_session(&session),
-            )
-            .fuse();
-        pin_mut!(persist_session);
-        futures::select! {
-            _ = cancel => {
-                clear_auth_session(self.host.platform.as_ref()).await;
-                return Ok(SsoPairingOutcome::Cancelled);
-            },
-            persist_result = persist_session => persist_result
-                .map_err(|err| format!("session persist failed: {err:?}"))?,
+        let persisted = {
+            let persist_session = self
+                .host
+                .commit_login_session(&session, self.login_generation)
+                .fuse();
+            pin_mut!(persist_session);
+            futures::select! {
+                _ = cancel => false,
+                result = persist_session => result.map_err(|err| format!("session persist failed: {err:?}"))?,
+            }
         };
-        futures::select! {
-            _ = cancel => {
-                clear_auth_session(self.host.platform.as_ref()).await;
-                return Ok(SsoPairingOutcome::Cancelled);
-            },
-            default => {}
-        };
-        Ok(SsoPairingOutcome::Success(Box::new(session)))
+        if !persisted {
+            self.host.discard_login_session().await;
+            return Ok(SsoPairingOutcome::Cancelled);
+        }
+        Ok(SsoPairingOutcome::Success)
     }
 }
 
@@ -382,16 +376,6 @@ async fn write_last_processed_pairing_statement(
         .await
     {
         debug!("last processed pairing statement write failed: {err:?}");
-    }
-}
-
-#[instrument(skip_all, fields(runtime.method = "sso.auth_session.clear"))]
-async fn clear_auth_session(storage: &(impl CoreStorage + ?Sized)) {
-    if let Err(err) = storage
-        .clear_core_storage(CoreStorageKey::AuthSession)
-        .await
-    {
-        debug!("auth session clear failed: {err:?}");
     }
 }
 
