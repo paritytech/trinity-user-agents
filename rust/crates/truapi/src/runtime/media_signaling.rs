@@ -52,6 +52,15 @@ const LOOKUP_STATEMENT_CAPACITY: usize = 4096;
 // The four outer fields are proof, expiry, the full topic, and opaque data.
 const STATEMENT_OVERHEAD: usize = 512;
 
+/// Request-id prefix of advertisement lookups. Each lookup opens its own
+/// People-chain connection and every request on it carries this prefix, so a
+/// host whose statement backend serves no stored statements (a light client
+/// that only relays future gossip) can route exactly these snapshots to a
+/// statement store that keeps them. The core still verifies every returned
+/// statement and advertisement signature; a host that does nothing forwards
+/// them like any other request.
+pub(crate) const ADVERTISEMENT_LOOKUP_REQUEST_ID_PREFIX: &str = "truapi:media-advertisement-lookup:";
+
 type Result<T, E = MediaSignalingError> = std::result::Result<T, E>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -220,20 +229,19 @@ impl MediaSignaling {
             return Err(MediaSignalingError::InvalidPeer);
         }
         let topic = advertisement_topic(peer).map_err(|_| MediaSignalingError::InvalidPeer)?;
-            let (connection, own_endpoint) = self.inner.with_live(|live, _| {
-                Ok((
-                    live.connection.clone().ok_or(MediaSignalingError::NotConnected)?,
-                    live.advertisement.as_ref().ok_or(MediaSignalingError::NotConnected)?
-                        .advertisement().fields.endpoint_id,
-                ))
+            let own_endpoint = self.inner.with_live(|live, _| {
+                Ok(live.advertisement.as_ref().ok_or(MediaSignalingError::NotConnected)?
+                    .advertisement().fields.endpoint_id)
             })?;
-            // If cancellation wins before the subscription ID arrives, its
-            // remote subscription cannot be individually stopped. Retire this
-            // RPC epoch instead of leaking unknown lookup subscriptions.
-            let mut opening = FailConnectionOnDrop(Some(connection.failed.clone()));
-            let mut subscription = statement_store_rpc::subscribe_match_all(&connection.rpc, &[topic])
+            // A lookup connection of its own: dropping it on cancellation,
+            // overflow or timeout also ends a subscription whose ID never
+            // arrived, without retiring the inbox connection.
+            let rpc = self.inner.services.statement_store
+                .client_with_request_id_prefix("media-advertisement-lookup", ADVERTISEMENT_LOOKUP_REQUEST_ID_PREFIX)
                 .await.map_err(|_| MediaSignalingError::Unavailable)?;
-            opening.0.take();
+            self.inner.ensure_current()?;
+            let mut subscription = statement_store_rpc::subscribe_match_all(&rpc, &[topic])
+                .await.map_err(|_| MediaSignalingError::Unavailable)?;
             let mut endpoints: BTreeMap<[u8; 32], VerifiedAdvertisement> = BTreeMap::new();
             let mut count = 0usize;
             for _ in 0..LOOKUP_PAGE_CAPACITY {
@@ -805,7 +813,9 @@ mod tests {
     use schnorrkel::{ExpansionMode, MiniSecretKey};
     use crate::host_logic::media_protocol::ACCOUNT_SIGNING_CONTEXT;
     use crate::runtime::pairing_host::PairingHost;
-    use crate::test_support::{StubPlatform, runtime_config, sso_session_info, test_spawner};
+    use crate::test_support::{
+        StubPlatform, new_statements_frame, runtime_config, sso_session_info, subscribe_ack_frame, test_spawner,
+    };
 
     const NETWORK: [u8; 32] = [7; 32];
 
@@ -870,5 +880,59 @@ mod tests {
         inner.receive(page(&extra)).unwrap();
         assert_eq!(drain(&inner), 8);
         assert!(inner.ensure_current().is_ok());
+    }
+
+    // dot.li's light client returns no stored statements, so it routes the
+    // requests carrying this prefix, and only those, to a trusted RPC node.
+    #[test]
+    fn an_advertisement_lookup_runs_on_its_own_marked_connection() {
+        let (config, _) = runtime_config("vox.dot");
+        let now = current_unix_secs();
+        let (_, local) = endpoint(1, now);
+        let (_, remote) = endpoint(2, now);
+        let peer = remote.identity();
+        let topic = advertisement_topic(&peer).unwrap();
+        let signer_services = RuntimeServices::new(Arc::new(StubPlatform::default()), config.host.host_info.clone(),
+            config.people_chain_genesis_hash, config.bulletin_chain_genesis_hash,
+            config.asset_hub_chain_genesis_hash, test_spawner());
+        let signer = PairingHost::new(signer_services, config.clone());
+        futures::executor::block_on(signer.set_connected_session_for_tests(sso_session_info()));
+        let statement = signer.sign_media_statement(&signer.current_session().unwrap(),
+            remote.advertisement().encode(), vec![topic], remote.advertisement().fields.expires_at).unwrap();
+
+        // Only a request carrying the lookup prefix is ever answered.
+        let platform = StubPlatform {
+            rpc_responses: vec![
+                subscribe_ack_frame(&format!("{ADVERTISEMENT_LOOKUP_REQUEST_ID_PREFIX}1"), "lookup"),
+                new_statements_frame("lookup", vec![statement]),
+            ],
+            ..StubPlatform::default()
+        };
+        let sent = platform.sent_rpc.clone();
+        let services = RuntimeServices::new(Arc::new(platform), config.host.host_info.clone(),
+            config.people_chain_genesis_hash, config.bulletin_chain_genesis_hash,
+            config.asset_hub_chain_genesis_hash, test_spawner());
+        let authority = PairingHost::new(services.clone(), config);
+        futures::executor::block_on(authority.set_connected_session_for_tests(sso_session_info()));
+        let session = authority.current_session().unwrap();
+        let identity = MediaIdentity { network: NETWORK, product_id: "vox.dot".into(), account: local.advertisement().fields.account };
+        let (signaling, _events) = MediaSignaling::connected_for_test(services, authority, session, identity, local);
+
+        let found = futures::executor::block_on(signaling.lookup(&peer, &CallContext::default())).unwrap();
+
+        assert_eq!(found.len(), 1);
+        assert!(same_endpoint(&found[0], &remote));
+        // The session's own statement traffic shares this fixture's request log.
+        let topic = hex::encode(topic);
+        let lookups: Vec<(String, String)> = sent.lock().expect("rpc list mutex poisoned").iter().filter_map(|request| {
+            let request = serde_json::from_str::<Value>(request).unwrap();
+            let method = request["method"].as_str()?;
+            (request["params"].to_string().contains(&topic) || method == "statement_unsubscribeStatement")
+                .then(|| (method.to_owned(), request["id"].as_str().unwrap().to_owned()))
+        }).collect();
+        assert_eq!(lookups, [
+            ("statement_subscribeStatement".to_owned(), format!("{ADVERTISEMENT_LOOKUP_REQUEST_ID_PREFIX}1")),
+            ("statement_unsubscribeStatement".to_owned(), format!("{ADVERTISEMENT_LOOKUP_REQUEST_ID_PREFIX}2")),
+        ]);
     }
 }
