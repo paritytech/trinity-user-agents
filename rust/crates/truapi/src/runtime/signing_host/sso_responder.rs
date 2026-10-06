@@ -685,7 +685,6 @@ fn withdrawn_targets(incoming: &IncomingSsoRequest) -> Option<Vec<&str>> {
         .collect()
 }
 
-/// Serve one inbound request statement exactly once across redeliveries.
 async fn serve_statement(
     services: &RuntimeServices,
     signing_host: &SigningHost,
@@ -694,125 +693,140 @@ async fn serve_statement(
     replay_scope: SsoReplayScope,
     incoming: IncomingSsoRequest,
 ) -> Result<Option<ResponderExit>, String> {
-    let request_id = incoming.request_id.clone();
-    let expires_at_unix_secs = incoming.expires_at_unix_secs;
-    let duplicate_exit = duplicate_request_exit(&incoming);
-    let execution = execute_once(
-        services.platform.as_ref(),
-        signing_host.sso_replay_locks(),
-        replay_scope,
-        &request_id,
-        expires_at_unix_secs,
-        statement_current_unix_secs(),
-        || serve_request(services, service, session, incoming),
-    )
-    .await?;
-    Ok(match execution {
-        ReplayExecution::Duplicate => {
-            acknowledge_request(services, session, &request_id).await?;
-            duplicate_exit
+    let mut acknowledged = false;
+    for message in incoming.messages {
+        let message_id = message.message_id.clone();
+        let duplicate_exit = matches!(
+            &message.data,
+            RemoteMessageData::V1(v1::RemoteMessage::Disconnected)
+        )
+        .then_some(ResponderExit::PeerDisconnected);
+        let execution = execute_once(
+            services.platform.as_ref(),
+            signing_host.sso_replay_locks(),
+            replay_scope,
+            &message_id,
+            incoming.expires_at_unix_secs,
+            statement_current_unix_secs(),
+            || async {
+                acknowledge_request(services, session, &incoming.request_id, &mut acknowledged)
+                    .await?;
+                serve_message(services, service, session, &incoming.request_id, message).await
+            },
+        )
+        .await?;
+        acknowledge_request(services, session, &incoming.request_id, &mut acknowledged).await?;
+        let exit = match execution {
+            ReplayExecution::Duplicate => duplicate_exit,
+            ReplayExecution::Executed(exit) => exit,
+        };
+        if exit.is_some() {
+            return Ok(exit);
         }
-        ReplayExecution::Executed(exit) => exit,
-    })
+    }
+    acknowledge_request(services, session, &incoming.request_id, &mut acknowledged).await?;
+    Ok(None)
 }
 
-/// Ack one inbound request statement and answer its batched messages.
-async fn serve_request(
+async fn serve_message(
     services: &RuntimeServices,
     service: &SsoAccountHolderService,
     session: &SsoSessionInfo,
-    incoming: IncomingSsoRequest,
+    request_id: &str,
+    message: RemoteMessage,
 ) -> Result<Option<ResponderExit>, String> {
-    acknowledge_request(services, session, &incoming.request_id).await?;
-
-    for message in incoming.messages {
-        let request_name = message.name();
-        let responding_to = message.message_id.clone();
-        let started = Instant::now();
-        let (response, outcome) = match service.answer(message).await.map_err(|error| error.to_string())? {
-            Dispatch::Response(answer) => (answer.message, answer.outcome),
-            Dispatch::Disconnected => {
-                debug!("pairing host disconnected the SSO session");
-                return Ok(Some(ResponderExit::PeerDisconnected));
-            }
-            Dispatch::NotARequest(name) => {
-                warn!(name, "peer sent a response variant as a request");
-                continue;
-            }
-            Dispatch::Withdraw(_) => continue,
-            Dispatch::Withdrawn => {
-                debug!(%responding_to, "pairing host withdrew the SSO request");
-                continue;
-            }
-        };
-        let response_message_id = response.message_id.clone();
-        let statement_request_id = format!("resp:{response_message_id}");
-        let statement = build_outgoing_request_statement(
-            session,
-            statement_request_id,
-            vec![response],
-            fresh_statement_expiry(),
-        )?;
-        service.require_current_session().map_err(|error| error.to_string())?;
-        let publish_result = services
-            .statement_store
-            .submit_sso(statement, "sso-responder response")
-            .await;
-        let elapsed_ms = started.elapsed().as_millis();
-        match publish_result {
-            Ok(()) => {
-                let cli_summary = response_cli_summary(
-                    "SSO response sent",
-                    request_name,
-                    &incoming.request_id,
-                    &responding_to,
-                    &response_message_id,
-                    &outcome,
-                    elapsed_ms,
-                );
-                tracing::event!(
-                    target: "truapi::sso_transcript",
-                    tracing::Level::DEBUG,
-                    cli_summary = cli_summary.as_str(),
-                    cli_event = "response_sent",
-                    request = request_name,
-                    statement_request_id = %incoming.request_id,
-                    responding_to = %responding_to,
-                    %response_message_id,
-                    outcome = outcome.outcome,
-                    reason = outcome.reason.as_deref().unwrap_or_default(),
-                    elapsed_ms = elapsed_ms as u64,
-                );
-            }
-            Err(reason) => {
-                let failure = ResponseOutcome {
-                    outcome: "publish_failed",
-                    reason: Some(reason.clone()),
-                };
-                let cli_summary = response_cli_summary(
-                    "SSO response failed",
-                    request_name,
-                    &incoming.request_id,
-                    &responding_to,
-                    &response_message_id,
-                    &failure,
-                    elapsed_ms,
-                );
-                tracing::event!(
-                    target: "truapi::sso_transcript",
-                    tracing::Level::WARN,
-                    cli_summary = cli_summary.as_str(),
-                    cli_event = "response_failed",
-                    request = request_name,
-                    statement_request_id = %incoming.request_id,
-                    responding_to = %responding_to,
-                    %response_message_id,
-                    outcome = failure.outcome,
-                    reason = %reason,
-                    elapsed_ms = elapsed_ms as u64,
-                );
-                return Err(reason);
-            }
+    let request_name = message.name();
+    let responding_to = message.message_id.clone();
+    let started = Instant::now();
+    let (response, outcome) = match service
+        .answer(message)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        Dispatch::Response(answer) => (answer.message, answer.outcome),
+        Dispatch::Disconnected => {
+            debug!("pairing host disconnected the SSO session");
+            return Ok(Some(ResponderExit::PeerDisconnected));
+        }
+        Dispatch::NotARequest(name) => {
+            warn!(name, "peer sent a response variant as a request");
+            return Ok(None);
+        }
+        Dispatch::Withdraw(_) => return Ok(None),
+        Dispatch::Withdrawn => {
+            debug!(%responding_to, "pairing host withdrew the SSO request");
+            return Ok(None);
+        }
+    };
+    let response_message_id = response.message_id.clone();
+    let statement_request_id = format!("resp:{response_message_id}");
+    let statement = build_outgoing_request_statement(
+        session,
+        statement_request_id,
+        vec![response],
+        fresh_statement_expiry(),
+    )?;
+    service
+        .require_current_session()
+        .map_err(|error| error.to_string())?;
+    let publish_result = services
+        .statement_store
+        .submit_sso(statement, "sso-responder response")
+        .await;
+    let elapsed_ms = started.elapsed().as_millis();
+    match publish_result {
+        Ok(()) => {
+            let cli_summary = response_cli_summary(
+                "SSO response sent",
+                request_name,
+                request_id,
+                &responding_to,
+                &response_message_id,
+                &outcome,
+                elapsed_ms,
+            );
+            tracing::event!(
+                target: "truapi::sso_transcript",
+                tracing::Level::DEBUG,
+                cli_summary = cli_summary.as_str(),
+                cli_event = "response_sent",
+                request = request_name,
+                statement_request_id = %request_id,
+                responding_to = %responding_to,
+                %response_message_id,
+                outcome = outcome.outcome,
+                reason = outcome.reason.as_deref().unwrap_or_default(),
+                elapsed_ms = elapsed_ms as u64,
+            );
+        }
+        Err(reason) => {
+            let failure = ResponseOutcome {
+                outcome: "publish_failed",
+                reason: Some(reason.clone()),
+            };
+            let cli_summary = response_cli_summary(
+                "SSO response failed",
+                request_name,
+                request_id,
+                &responding_to,
+                &response_message_id,
+                &failure,
+                elapsed_ms,
+            );
+            tracing::event!(
+                target: "truapi::sso_transcript",
+                tracing::Level::WARN,
+                cli_summary = cli_summary.as_str(),
+                cli_event = "response_failed",
+                request = request_name,
+                statement_request_id = %request_id,
+                responding_to = %responding_to,
+                %response_message_id,
+                outcome = failure.outcome,
+                reason = %reason,
+                elapsed_ms = elapsed_ms as u64,
+            );
+            return Err(reason);
         }
     }
     Ok(None)
@@ -822,7 +836,11 @@ async fn acknowledge_request(
     services: &RuntimeServices,
     session: &SsoSessionInfo,
     request_id: &str,
+    acknowledged: &mut bool,
 ) -> Result<(), String> {
+    if *acknowledged {
+        return Ok(());
+    }
     let ack = build_signed_session_response_statement(
         session,
         request_id.to_string(),
@@ -832,20 +850,9 @@ async fn acknowledge_request(
     services
         .statement_store
         .submit_sso(ack, "sso-responder ack")
-        .await
-}
-
-fn duplicate_request_exit(incoming: &IncomingSsoRequest) -> Option<ResponderExit> {
-    incoming
-        .messages
-        .iter()
-        .any(|message| {
-            matches!(
-                &message.data,
-                RemoteMessageData::V1(v1::RemoteMessage::Disconnected)
-            )
-        })
-        .then_some(ResponderExit::PeerDisconnected)
+        .await?;
+    *acknowledged = true;
+    Ok(())
 }
 
 fn response_cli_summary(
@@ -1499,27 +1506,158 @@ mod tests {
     }
 
     #[test]
-    fn replayed_disconnect_still_terminates_the_peer() {
-        let disconnect = IncomingSsoRequest {
-            request_id: "disconnect-1".to_string(),
-            expires_at_unix_secs: Some(200),
-            messages: vec![RemoteMessage {
-                message_id: "message-1".to_string(),
-                data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
-            }],
-        };
-        let ordinary = IncomingSsoRequest {
-            request_id: "empty-1".to_string(),
-            expires_at_unix_secs: Some(200),
-            messages: Vec::new(),
-        };
+    fn rebatching_messages_preserves_acks_without_repeating_wallet_approvals() {
+        use crate::host_logic::sso::pairing::{SsoStatementData, decrypt_session_statement_data};
+        use parity_scale_codec::Decode;
 
+        let platform = Arc::new(StubPlatform {
+            resource_allocation_confirmed: true,
+            rpc_method_responses: vec![("statement_submit", r#"{"status":"new"}"#.to_string()); 9],
+            ..StubPlatform::default()
+        });
+        let (services, signing_host) = signing_fixture(platform.clone());
+        let wallet_session = signing_host.wallet.current_session().unwrap();
+        let peer = PairedSsoPeer {
+            statement_account_id: [0x53; 32],
+            encryption_public_key: x25519_public_key([0x64; 32]),
+        };
+        let session = responder_session_from_identity(
+            &signing_host
+                .wallet
+                .responder_identity(&wallet_session)
+                .unwrap(),
+            peer,
+        )
+        .unwrap();
+        let scope = SsoReplayScope {
+            root_public_key: wallet_session.public_key,
+            peer_statement_account_id: peer.statement_account_id,
+            peer_encryption_public_key: peer.encryption_public_key,
+        };
+        let service = SsoAccountHolderService::new(signing_host.wallet.clone(), wallet_session);
+        for (request_id, message_ids) in [
+            ("envelope-1", ["allocation-1", "allocation-1"]),
+            ("envelope-2", ["allocation-1", "allocation-2"]),
+            ("envelope-2", ["allocation-1", "allocation-2"]),
+        ] {
+            assert_eq!(
+                futures::executor::block_on(serve_statement(
+                    &services,
+                    &signing_host,
+                    &service,
+                    &session,
+                    scope,
+                    IncomingSsoRequest {
+                        request_id: request_id.to_string(),
+                        expires_at_unix_secs: None,
+                        messages: message_ids.into_iter().map(allocation_request).collect(),
+                    },
+                )),
+                Ok(None)
+            );
+        }
+        for request_id in ["disconnect-1", "disconnect-2"] {
+            assert_eq!(
+                futures::executor::block_on(serve_statement(
+                    &services,
+                    &signing_host,
+                    &service,
+                    &session,
+                    scope,
+                    IncomingSsoRequest {
+                        request_id: request_id.to_string(),
+                        expires_at_unix_secs: None,
+                        messages: vec![RemoteMessage {
+                            message_id: "disconnected".to_string(),
+                            data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
+                        }],
+                    },
+                )),
+                Ok(Some(ResponderExit::PeerDisconnected))
+            );
+        }
+        futures::executor::block_on(crate::platform::CoreStorage::write_core_storage(
+            platform.as_ref(),
+            crate::platform::CoreStorageKey::SsoResponderRequestLedger {
+                root_public_key: scope.root_public_key,
+                peer_statement_account_id: scope.peer_statement_account_id,
+                peer_encryption_public_key: scope.peer_encryption_public_key,
+            },
+            vec![255],
+        ))
+        .unwrap();
+        let rejected = futures::executor::block_on(serve_statement(
+            &services,
+            &signing_host,
+            &service,
+            &session,
+            scope,
+            IncomingSsoRequest {
+                request_id: "invalid-ledger".to_string(),
+                expires_at_unix_secs: None,
+                messages: vec![allocation_request("allocation-3")],
+            },
+        ))
+        .unwrap_err();
+        assert!(
+            rejected.starts_with("invalid SSO replay ledger:"),
+            "{rejected}"
+        );
+        let mut acknowledged = Vec::new();
+        let mut answered = Vec::new();
+        for request in platform.sent_rpc.lock().unwrap().iter() {
+            let request: serde_json::Value = serde_json::from_str(request).unwrap();
+            if request["method"] != "statement_submit" {
+                continue;
+            }
+            let statement = hex::decode(
+                request["params"][0]
+                    .as_str()
+                    .unwrap()
+                    .trim_start_matches("0x"),
+            )
+            .unwrap();
+            let encrypted =
+                crate::host_logic::statement_store::decode_statement_data(&statement).unwrap();
+            match decrypt_session_statement_data(&session, &encrypted).unwrap() {
+                SsoStatementData::Response {
+                    request_id,
+                    response_code,
+                } => {
+                    acknowledged.push((request_id, response_code));
+                }
+                SsoStatementData::Request { data, .. } => {
+                    for bytes in data {
+                        let message = RemoteMessage::decode(&mut bytes.as_slice()).unwrap();
+                        let RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(
+                            response,
+                        )) = message.data
+                        else {
+                            panic!("expected allocation response");
+                        };
+                        assert!(response.payload.is_ok());
+                        answered.push(response.responding_to);
+                    }
+                }
+            }
+        }
         assert_eq!(
             (
-                duplicate_request_exit(&disconnect),
-                duplicate_request_exit(&ordinary)
+                acknowledged,
+                answered,
+                platform.resource_allocation_reviews.lock().unwrap().len()
             ),
-            (Some(ResponderExit::PeerDisconnected), None)
+            (
+                vec![
+                    ("envelope-1".to_string(), 0),
+                    ("envelope-2".to_string(), 0),
+                    ("envelope-2".to_string(), 0),
+                    ("disconnect-1".to_string(), 0),
+                    ("disconnect-2".to_string(), 0)
+                ],
+                vec!["allocation-1".to_string(), "allocation-2".to_string()],
+                2,
+            ),
         );
     }
 

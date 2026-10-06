@@ -479,6 +479,95 @@ mod tests {
         });
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_dropped_ledger_write_cannot_be_overtaken_by_a_retry() {
+        use crate::store::{Db, RuntimeStore, core_db_config};
+
+        futures::executor::block_on(async {
+            let directory = tempfile::tempdir().unwrap();
+            let mut config = core_db_config(directory.path());
+            config.readers = 1;
+            let database = Db::open(config).await.unwrap();
+            let store = RuntimeStore::open(database.clone(), &StubPlatform::default())
+                .await
+                .unwrap();
+            let locks = SsoReplayLocks::default();
+            let request_scope = scope(1, 2, 3);
+            let (started, entered) = futures::channel::oneshot::channel();
+            let (release, finish) = std::sync::mpsc::channel();
+            database
+                .read_after_writes(move |connection| {
+                    let mut started = Some(started);
+                    connection.commit_hook(Some(move || {
+                        if let Some(started) = started.take() {
+                            started.send(()).unwrap();
+                            finish.recv().unwrap();
+                        }
+                        false
+                    }))?;
+                    Ok(())
+                })
+                .await
+                .unwrap();
+            let executions = AtomicUsize::new(0);
+            let mut first = Box::pin(execute_once(
+                &store,
+                &locks,
+                request_scope,
+                "allocation-1",
+                Some(200),
+                100,
+                || async {
+                    executions.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                },
+            ));
+            assert!(matches!(
+                futures::future::select(entered, &mut first).await,
+                futures::future::Either::Left((Ok(()), _))
+            ));
+            drop(first);
+            let mut retry = Box::pin(execute_once(
+                &store,
+                &locks,
+                request_scope,
+                "allocation-1",
+                Some(200),
+                101,
+                || async {
+                    executions.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                },
+            ));
+            let initial = futures::poll!(&mut retry);
+            database
+                .read(|connection| {
+                    Ok(
+                        connection.query_row("SELECT COUNT(*) FROM core_state", [], |row| {
+                            row.get::<_, i64>(0)
+                        })?,
+                    )
+                })
+                .await
+                .unwrap();
+            let before_commit = match initial {
+                core::task::Poll::Pending => futures::poll!(&mut retry),
+                ready => ready,
+            };
+            release.send(()).unwrap();
+            let outcome = match before_commit {
+                core::task::Poll::Ready(result) => result,
+                core::task::Poll::Pending => retry.await,
+            }
+            .unwrap();
+            assert_eq!(
+                (outcome, executions.load(Ordering::SeqCst)),
+                (ReplayExecution::Duplicate, 0)
+            );
+        });
+    }
+
     #[test]
     fn request_ids_are_isolated_by_root_and_peer() {
         futures::executor::block_on(async {

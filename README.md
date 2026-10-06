@@ -180,7 +180,7 @@ operations and the built-ins that remain mutable for product compatibility.
 Native bindings expose the canonical Rust domain and protocol value types;
 native-only adapter types are limited to lifecycle and callback behavior.
 
-V2 pairing proposals accept the mobile location metadata key; approval prompts show the host name, version, icon and platform.
+V2 pairing proposals accept the mobile location metadata key; approval prompts show the host name, version, icon and platform. The resident Rust SSO responder deduplicates inner message IDs across transport envelopes, scoped to the wallet and peer keys. Replay checks wait for started SQLite writes even if their original callers are cancelled.
 
 Native wallets managing their own SSO transport call `openSsoSession` with their statement and encryption public keys, then retain one service per peer. The core binds those handles to the authenticated wallet activation. `handleSsoControl` applies Cancel before ordinary requests enter the transport queue; `handleSsoRequest` answers them. The transport checks `requireCurrentSession` before posting responses. `prepareDisconnectRequest` builds wallet-initiated disconnect bytes. Transport posting, replay and peer cleanup remain with the native wallet.
 `HostAccounts<H>` owns product account policy and retained grants for both native and paired hosts. Its account holder is `WalletAccountHolder` locally or `SsoAccountHolderClient` over SSO. `SigningHost` and `SsoRequestService` own their respective session lifecycles; incoming SSO uses the wallet directly and requires independent consent. See [runtime ownership and lifecycle](rust/crates/truapi/RUNTIME.md#the-two-roles).

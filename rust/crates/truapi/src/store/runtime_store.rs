@@ -322,7 +322,6 @@ impl CoreStorage for RuntimeStore {
         &self,
         key: CoreStorageKey,
     ) -> Result<Option<Vec<u8>>, GenericError> {
-        let permission = matches!(key, CoreStorageKey::PermissionAuthorization { .. });
         let key = key.encode();
         let identity = core_identity(&key);
         let read = move |connection: &rusqlite::Connection| {
@@ -334,12 +333,11 @@ impl CoreStorage for RuntimeStore {
                 )
                 .optional()?)
         };
-        let value = if permission {
-            self.database.read_after_writes(read).await
-        } else {
-            self.database.read(read).await
-        }
-        .map_err(core_error)?;
+        let value = self
+            .database
+            .read_after_writes(read)
+            .await
+            .map_err(core_error)?;
         value
             .map(|value| self.decrypt(&identity, &value))
             .transpose()
