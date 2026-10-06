@@ -533,18 +533,24 @@ impl SigningHost {
 
     /// Raw seed of the `number`th funding account of `kind` for `source_id`,
     /// which a wallet imports to move the account's funds by hand. `None`
-    /// while no signing session is active.
+    /// while no signing session is active, or while the active one does not
+    /// derive `deposit_account` as that number's deposit account.
     pub fn funding_account_secret(
         &self,
         kind: FundingAccountKind,
         source_id: &str,
         number: u32,
+        deposit_account: &[u8; 32],
     ) -> Result<Option<[u8; 32]>, AuthorityError> {
         let entropy = match self.root_entropy() {
             Ok(entropy) => entropy,
             Err(AuthorityError::Disconnected) => return Ok(None),
             Err(err) => return Err(err),
         };
+        let deposit = self.funding_keypair(FundingAccountKind::Deposit, source_id, number)?;
+        if deposit.is_none_or(|keypair| keypair.public.to_bytes() != *deposit_account) {
+            return Ok(None);
+        }
         funding_mini_secret(
             &entropy,
             &funding_product_id(&self.network_suffix),

@@ -331,10 +331,7 @@ async fn follow(runtime: &SigningHostRuntime, intent: &str) -> Result<()> {
             println!("stage    {:?}", session.stage);
             last = Some(session.stage.clone());
         }
-        let mismatch = session
-            .deposit
-            .as_ref()
-            .and_then(|deposit| deposit.mismatch());
+        let mismatch = session.deposit_mismatch();
         if mismatch != last_mismatch {
             if let Some(mismatch) = mismatch {
                 println!(

@@ -300,8 +300,7 @@ impl NativeTrUApiHostRuntime {
     ) -> Option<crate::host_logic::funding::DepositMismatch> {
         self.runtime
             .funding_session(&intent)?
-            .deposit?
-            .mismatch()
+            .deposit_mismatch()
     }
 
     /// Raw seed of session `intent`'s `kind` account, for a wallet to import

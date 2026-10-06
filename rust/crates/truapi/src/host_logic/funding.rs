@@ -170,13 +170,13 @@ impl FundingDeposit {
     }
 
     /// What arrived that does not match the request, as getcash judges it:
-    /// nothing once the requested asset covers the deposit; otherwise another
+    /// nothing once the requested asset reaches `gate`; otherwise another
     /// asset that arrived, the native token only if nothing else did, since a
     /// little of it sent to pay fees must not stand in for the stablecoin;
     /// otherwise less of the requested asset than asked.
-    pub fn mismatch(&self) -> Option<DepositMismatch> {
+    fn mismatch_against(&self, gate: u128) -> Option<DepositMismatch> {
         let held = self.held(self.asset);
-        if held >= self.expected {
+        if held >= gate {
             return None;
         }
         let stray = self
@@ -255,9 +255,15 @@ pub enum AcceptRefusal {
     /// The session is converting or done, or ended for good.
     #[display("the session is not awaiting or holding a deposit")]
     NotAcceptable,
-    /// Nothing of the asset is on the deposit account.
-    #[display("none of that asset is on the deposit account")]
+    /// Nothing that differs from the request is on the deposit account.
+    #[display("nothing other than the requested deposit is on the account")]
     NothingArrived,
+    /// The asset is not the one that arrived in place of the request.
+    #[display("that asset is not what arrived in place of the request")]
+    NotMismatched,
+    /// The deposit account changed while the route was being chosen.
+    #[display("the deposit account changed; read it again")]
+    Changed,
 }
 
 /// Stage of a session, as the core persists it.
@@ -454,23 +460,71 @@ impl FundingSession {
         }
     }
 
-    /// Record what the deposit account holds. Returns whether it changed.
-    pub fn record_holdings(&mut self, holdings: Vec<DepositHolding>) -> bool {
-        match &mut self.deposit {
-            Some(deposit) if deposit.holdings != holdings => {
-                deposit.holdings = holdings;
-                true
-            }
-            _ => false,
-        }
+    /// Balance of the deposit's asset at which it counts as delivered, as
+    /// getcash gates a payment: the deposit quoted for that asset, else what
+    /// the provider was asked for.
+    pub fn deposit_gate(&self) -> Option<u128> {
+        let deposit = self.deposit.as_ref()?;
+        let quoted = self.quote.filter(|quote| quote.asset == deposit.asset);
+        Some(quoted.map_or(deposit.expected, |quote| quote.deposit))
     }
 
-    /// Convert what arrived of `asset` by `route` instead of what was asked:
-    /// getcash's "continue with what arrived". An open session waits for it
-    /// again; one that ended recoverably reopens for a fresh window.
+    /// What arrived on the deposit account that does not match the request.
+    pub fn deposit_mismatch(&self) -> Option<DepositMismatch> {
+        self.deposit.as_ref()?.mismatch_against(self.deposit_gate()?)
+    }
+
+    /// Record a finalized reading of what the deposit account holds, taken at
+    /// `now_ms`. An open session converts once its asset reaches the gate and
+    /// expires if it has not by the deadline; one that expired converts too
+    /// when its deposit arrives within the late watch window. Returns whether
+    /// the host should hear of it: a stage change, or new holdings on a
+    /// session still in flight.
+    pub fn observe_holdings(&mut self, holdings: Vec<DepositHolding>, now_ms: u64) -> bool {
+        let Some(deposit) = self.deposit.as_mut() else {
+            return false;
+        };
+        let recorded = deposit.holdings != holdings;
+        deposit.holdings = holdings;
+        let held = deposit.held(deposit.asset);
+        let Some(gate) = self.deposit_gate() else {
+            return false;
+        };
+        let arrived_late = matches!(
+            self.stage,
+            FundingStage::Failed {
+                reason: FundingFailure::Expired,
+                ..
+            }
+        ) && self.recoverable_since(now_ms)
+            && held >= gate;
+        if arrived_late {
+            self.stage = FundingStage::Open;
+        }
+        if self.awaited_deposit().is_none() {
+            return recorded && !self.is_terminal();
+        }
+        if held >= gate {
+            self.stage = FundingStage::Converting {
+                deposited: held,
+                refusals: 0,
+                submission: None,
+            };
+            return true;
+        }
+        let expired = now_ms >= self.deadline_ms && self.fail(FundingFailure::Expired, now_ms);
+        expired || recorded
+    }
+
+    /// Convert what arrived of the mismatched `asset` by `route` instead of
+    /// what was asked: getcash's "continue with what arrived". `arrived` is
+    /// the balance the route was chosen for, refused if the account has
+    /// changed since. An open session waits for it again; one that ended
+    /// recoverably reopens for a fresh window.
     pub fn accept_arrival(
         &mut self,
         asset: DepositAsset,
+        arrived: u128,
         route: ConversionRoute,
         now_ms: u64,
     ) -> Result<(), AcceptRefusal> {
@@ -478,15 +532,25 @@ impl FundingSession {
         if self.stage != FundingStage::Open && !reopens {
             return Err(AcceptRefusal::NotAcceptable);
         }
-        let deposit = self.deposit.as_mut().ok_or(AcceptRefusal::NotAcceptable)?;
-        let arrived = deposit.held(asset);
-        if arrived == 0 {
-            return Err(AcceptRefusal::NothingArrived);
+        let mismatched = match self.deposit_mismatch() {
+            Some(DepositMismatch::Short { asset, amount } | DepositMismatch::WrongAsset { asset, amount }) => {
+                Some((asset, amount))
+            }
+            None => None,
+        };
+        match mismatched {
+            None => return Err(AcceptRefusal::NothingArrived),
+            Some((mismatched, _)) if mismatched != asset => return Err(AcceptRefusal::NotMismatched),
+            Some((_, amount)) if amount != arrived => return Err(AcceptRefusal::Changed),
+            Some(_) => {}
         }
+        let deposit = self.deposit.as_mut().ok_or(AcceptRefusal::NotAcceptable)?;
         deposit.asset = asset;
         deposit.expected = arrived;
         deposit.route = route;
         deposit.target = None;
+        // The quoted terms are for what was asked, not for what arrived.
+        self.quote = None;
         if reopens {
             self.stage = FundingStage::Open;
             self.deadline_ms = now_ms.saturating_add(SESSION_WINDOW_MS);
@@ -499,24 +563,6 @@ impl FundingSession {
         (self.stage == FundingStage::Open)
             .then_some(self.deposit.as_ref())
             .flatten()
-    }
-
-    /// Record a finalized reading of the deposit account's balance, taken at
-    /// `now_ms`: converting once it covers the expected amount, expired if it
-    /// does not by the deadline. Returns whether the session changed.
-    pub fn observe_deposit(&mut self, balance: u128, now_ms: u64) -> bool {
-        let Some(deposit) = self.awaited_deposit() else {
-            return false;
-        };
-        if balance >= deposit.expected {
-            self.stage = FundingStage::Converting {
-                deposited: balance,
-                refusals: 0,
-                submission: None,
-            };
-            return true;
-        }
-        now_ms >= self.deadline_ms && self.fail(FundingFailure::Expired, now_ms)
     }
 
     /// The deposit of a session being converted, with its submission so far.
@@ -1136,11 +1182,11 @@ mod tests {
 
         assert_eq!(
             [
-                with_holdings(&[(usdt, 50), (usdc, 9)]).mismatch(),
-                with_holdings(&[(usdt, 10), (usdc, 9), (native, 3)]).mismatch(),
-                with_holdings(&[(usdt, 10), (native, 3)]).mismatch(),
-                with_holdings(&[(usdt, 10)]).mismatch(),
-                with_holdings(&[]).mismatch(),
+                with_holdings(&[(usdt, 50), (usdc, 9)]).mismatch_against(50),
+                with_holdings(&[(usdt, 10), (usdc, 9), (native, 3)]).mismatch_against(50),
+                with_holdings(&[(usdt, 10), (native, 3)]).mismatch_against(50),
+                with_holdings(&[(usdt, 10)]).mismatch_against(50),
+                with_holdings(&[]).mismatch_against(50),
             ],
             [
                 None,
@@ -1178,29 +1224,89 @@ mod tests {
             },
             ..open.clone()
         };
-        let accept = |mut session: FundingSession, asset, now_ms| {
-            let accepted = session.accept_arrival(asset, ConversionRoute::Pool, now_ms);
+        let delivered = FundingSession {
+            deposit: Some(with_holdings(&[(DepositAsset::Asset(1984), 50)])),
+            ..session(FundingDirection::In)
+        };
+        let accept = |mut session: FundingSession, asset, arrived, now_ms| {
+            let accepted = session.accept_arrival(asset, arrived, ConversionRoute::Pool, now_ms);
             (accepted, session.stage.clone(), session.deposit.map(|deposit| (deposit.asset, deposit.expected, deposit.target)))
         };
         let late = NOW + LATE_WATCH_MS;
 
         assert_eq!(
             [
-                accept(open.clone(), usdc, NOW).0,
-                accept(open.clone(), DepositAsset::Native, NOW).0,
-                accept(expired(NOW), usdc, late).0,
-                accept(expired(NOW), usdc, late + 1).0,
+                accept(open.clone(), usdc, 9, NOW).0,
+                accept(open.clone(), DepositAsset::Asset(1984), 10, NOW).0,
+                accept(open.clone(), usdc, 8, NOW).0,
+                accept(delivered, DepositAsset::Asset(1984), 50, NOW).0,
+                accept(expired(NOW), usdc, 9, late).0,
+                accept(expired(NOW), usdc, 9, late + 1).0,
             ],
             [
                 Ok(()),
+                Err(AcceptRefusal::NotMismatched),
+                Err(AcceptRefusal::Changed),
                 Err(AcceptRefusal::NothingArrived),
                 Ok(()),
                 Err(AcceptRefusal::NotAcceptable),
             ]
         );
         assert_eq!(
-            accept(expired(NOW), usdc, late),
+            accept(expired(NOW), usdc, 9, late),
             (Ok(()), FundingStage::Open, Some((usdc, 9, None)))
+        );
+    }
+
+    // getcash gates a payment on its quoted deposit, so a provider asked for
+    // more than the quote has delivered once the quote is covered; and a
+    // full deposit that arrives after the session expired still converts,
+    // within the late watch window, with no one having to accept it.
+    #[test]
+    fn a_deposit_converts_at_its_quote_and_also_when_it_arrives_late() {
+        let usdt = DepositAsset::Asset(1984);
+        let holding = |balance| vec![DepositHolding { asset: usdt, balance }];
+        let quoted = FundingSession {
+            deposit: Some(with_holdings(&[])),
+            quote: Some(DepositQuote {
+                asset: usdt,
+                route: ConversionRoute::Psm { fee_ppm: 5_000 },
+                deposit: 45,
+            }),
+            ..session(FundingDirection::In)
+        };
+        let expired = FundingSession {
+            stage: FundingStage::Failed {
+                reason: FundingFailure::Expired,
+                settled_at_ms: NOW,
+            },
+            ..quoted.clone()
+        };
+        let observe = |mut session: FundingSession, balance, now_ms| {
+            let heard = session.observe_holdings(holding(balance), now_ms);
+            (heard, session.stage)
+        };
+        let converting = FundingStage::Converting {
+            deposited: 45,
+            refusals: 0,
+            submission: None,
+        };
+
+        assert_eq!(
+            [
+                observe(quoted.clone(), 44, NOW),
+                observe(quoted, 45, NOW),
+                observe(expired.clone(), 44, NOW + 1),
+                observe(expired.clone(), 45, NOW + LATE_WATCH_MS),
+                observe(expired.clone(), 45, NOW + LATE_WATCH_MS + 1),
+            ],
+            [
+                (true, FundingStage::Open),
+                (true, converting.clone()),
+                (false, expired.stage.clone()),
+                (true, converting),
+                (false, expired.stage),
+            ]
         );
     }
 

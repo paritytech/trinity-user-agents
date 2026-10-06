@@ -822,11 +822,11 @@ impl SigningHostRuntime {
     /// Convert funding deposits into CASH on People on `network`, signing
     /// with the deposit accounts this host derives. Without it, assigning a
     /// deposit account fails. Set-once; returns whether this call enabled it.
-    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.enable_funding_conversion"))]
     ///
     /// Every watched deposit account is read for the `deposit_asset_ids`
     /// (`Assets` pallet ids) and the native token, so a wrong or short
     /// deposit is seen.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.enable_funding_conversion"))]
     pub fn enable_funding_conversion(
         &self,
         network: crate::runtime::FundingNetwork,
@@ -844,9 +844,10 @@ impl SigningHostRuntime {
     }
 
     /// Convert what arrived of `asset` on session `intent`'s deposit account
-    /// instead of what was asked: a short deposit, another asset, or funds
-    /// that came after the session expired or stayed after a refused
-    /// conversion.
+    /// instead of what was asked: the short deposit or other asset its
+    /// mismatch names, also after the session expired or its conversion was
+    /// refused.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.accept_funding_deposit"))]
     pub async fn accept_funding_deposit(
         &self,
         intent: &str,
@@ -861,7 +862,9 @@ impl SigningHostRuntime {
     }
 
     /// Raw seed of session `intent`'s `kind` account, for a wallet to import
-    /// and move its funds by hand. `None` while no signing session is active.
+    /// and move its funds by hand. `None` while no signing session is active,
+    /// or while it is another account's than the one the session recorded.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.funding_account_secret"))]
     pub fn funding_account_secret(
         &self,
         intent: &str,
@@ -876,7 +879,7 @@ impl SigningHostRuntime {
                 reason: "the session has no deposit account".into(),
             })?;
         self.signing_host
-            .funding_account_secret(kind, &deposit.source_id, deposit.number)
+            .funding_account_secret(kind, &deposit.source_id, deposit.number, &deposit.account)
             .map_err(|err| v01::GenericError {
                 reason: err.to_string(),
             })

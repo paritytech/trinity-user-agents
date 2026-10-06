@@ -10,7 +10,7 @@
 //! the change, and then notifies subscribers and the host.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use core::time::Duration;
@@ -40,7 +40,7 @@ use super::statement_allowance::rpc::RpcClient;
 use crate::host_logic::features;
 use crate::host_logic::funding::{
     AcceptRefusal, ConversionRoute, ConversionStep, ConversionSubmission, CreditAttempt, CreditStep,
-    DepositAsset, DepositHolding, DepositQuote, DepositRequest,
+    DepositAsset, DepositHolding, DepositMismatch, DepositQuote, DepositRequest,
     FundingDeposit, FundingSession, FundingSessionError, FundingStage,
     load_sessions, next_account_number, retained, store_sessions,
 };
@@ -54,6 +54,8 @@ use crate::unix_time::current_unix_millis;
 const SWEEP_RETRY: Duration = Duration::from_secs(30);
 /// Wait between reads of the awaited deposits: two Asset Hub blocks.
 const DEPOSIT_POLL: Duration = Duration::from_secs(12);
+/// How often the deposit accounts of sessions that already ended are read.
+const LATE_READ_MS: u64 = 5 * 60 * 1_000;
 /// Longest a chain read may take before the pass gives up on it.
 const CHAIN_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a conversion that took the deposit on Asset Hub may take to
@@ -77,6 +79,8 @@ pub struct FundingRegistry {
     sweeping: AtomicBool,
     /// Whether a task is polling the awaited deposits.
     watching: AtomicBool,
+    /// When sessions that already ended were last read, in Unix milliseconds.
+    late_read_ms: AtomicU64,
     /// What converts deposits, once a signing host provides it.
     conversion: OnceLock<Conversion>,
     platform: OnceLock<Arc<dyn FundingPlatform>>,
@@ -327,10 +331,11 @@ impl FundingRegistry {
     }
 
     /// Read every watched deposit account once, for its requested asset and
-    /// every asset in `deposit_assets`: an open session whose deposit arrived
-    /// moves to converting, one past its deadline without it expires, and
-    /// every watched session records what it holds, so a wrong, short or late
-    /// deposit is seen. A failed read leaves its session for the next pass.
+    /// every asset in `deposit_assets`, and record what each holds, so a
+    /// wrong, short or late deposit is seen. Sessions that already ended are
+    /// read once per [`LATE_READ_MS`]. A failed read of the requested asset
+    /// leaves its session for the next pass; a failed read of another asset
+    /// keeps that asset's last reading.
     pub async fn observe_deposits(
         &self,
         storage: &(impl CoreStorage + ?Sized),
@@ -338,48 +343,49 @@ impl FundingRegistry {
         balances: &dyn DepositBalances,
         deposit_assets: &[DepositAsset],
     ) -> Result<(), FundingSessionError> {
+        let read_late = now_ms.saturating_sub(self.late_read_ms.load(Ordering::Acquire)) >= LATE_READ_MS;
         let watched: Vec<_> = self
             .lock_sessions()
             .values()
-            .filter_map(|session| {
-                let deposit = session.watched_deposit(now_ms)?;
-                Some((session.intent.clone(), deposit.asset, deposit.account))
-            })
+            .filter(|session| read_late || !session.is_terminal())
+            .filter_map(|session| Some((session.intent.clone(), session.watched_deposit(now_ms)?.clone())))
             .collect();
+        if read_late {
+            self.late_read_ms.store(now_ms, Ordering::Release);
+        }
         let mut readings = Vec::new();
-        'sessions: for (intent, asset, account) in watched {
-            let mut assets = vec![asset];
-            assets.extend(deposit_assets.iter().filter(|other| **other != asset));
+        'sessions: for (intent, deposit) in watched {
+            let mut assets = vec![deposit.asset];
+            assets.extend(deposit_assets.iter().filter(|other| **other != deposit.asset));
             // The native token goes last, so it is the stray of last resort.
             assets.sort_by_key(|asset| *asset == DepositAsset::Native);
             let mut holdings = Vec::new();
             for asset in assets {
-                match balances.balance(asset, &account).await {
-                    Ok(0) => {}
-                    Ok(balance) => holdings.push(DepositHolding { asset, balance }),
+                let balance = match balances.balance(asset, &deposit.account).await {
+                    Ok(balance) => balance,
+                    Err(error) if asset != deposit.asset => {
+                        tracing::warn!(%intent, reason = %error.reason, "reading a funding deposit failed");
+                        deposit.held(asset)
+                    }
                     Err(error) => {
                         tracing::warn!(%intent, reason = %error.reason, "reading a funding deposit failed");
                         continue 'sessions;
                     }
+                };
+                if balance > 0 {
+                    holdings.push(DepositHolding { asset, balance });
                 }
             }
             readings.push((intent, holdings));
         }
         self.commit(storage, now_ms, move |sessions| {
-            let mut changed = Vec::new();
-            for (intent, holdings) in readings {
-                let Some(session) = sessions.get_mut(&intent) else {
-                    continue;
-                };
-                let recorded = session.record_holdings(holdings);
-                let held = session
-                    .awaited_deposit()
-                    .map(|deposit| deposit.held(deposit.asset));
-                let advanced = held.is_some_and(|held| session.observe_deposit(held, now_ms));
-                if recorded || advanced {
-                    changed.push(intent);
-                }
-            }
+            let changed = readings
+                .into_iter()
+                .filter_map(|(intent, holdings)| {
+                    let session = sessions.get_mut(&intent)?;
+                    session.observe_holdings(holdings, now_ms).then_some(intent)
+                })
+                .collect();
             ((), changed)
         })
         .await
@@ -825,14 +831,20 @@ impl RuntimeServices {
         intent: &str,
         asset: DepositAsset,
     ) -> Result<(), AssignDepositError> {
-        let arrived = self
+        let arrived = match self
             .funding()
             .get(intent)
             .ok_or(AssignDepositError::NotFound)?
-            .deposit
-            .map(|deposit| deposit.held(asset))
-            .filter(|arrived| *arrived > 0)
-            .ok_or_else(|| AssignDepositError::Refused(AcceptRefusal::NothingArrived.to_string()))?;
+            .deposit_mismatch()
+        {
+            Some(DepositMismatch::Short { asset: arrived, amount } | DepositMismatch::WrongAsset { asset: arrived, amount })
+                if arrived == asset =>
+            {
+                amount
+            }
+            Some(_) => return Err(AssignDepositError::Refused(AcceptRefusal::NotMismatched.to_string())),
+            None => return Err(AssignDepositError::Refused(AcceptRefusal::NothingArrived.to_string())),
+        };
         let chains = self
             .funding_chains(self.funding_network()?, false)
             .await
@@ -850,7 +862,7 @@ impl RuntimeServices {
                     .ok_or(AssignDepositError::NotFound)
                     .and_then(|session| {
                         session
-                            .accept_arrival(asset, route, current_unix_millis())
+                            .accept_arrival(asset, arrived, route, current_unix_millis())
                             .map_err(|refusal| AssignDepositError::Refused(refusal.to_string()))
                     });
                 let changed = if accepted.is_ok() { vec![intent] } else { Vec::new() };
@@ -1771,7 +1783,7 @@ mod tests {
             storage.as_ref(),
             now,
             &balances,
-            &[usdc, DepositAsset::Native],
+            &[DepositAsset::Native, usdc],
         ))
         .expect("observed");
         let holdings = |intent| {
@@ -1796,6 +1808,40 @@ mod tests {
                 ]),
                 Some(Vec::new())
             )
+        );
+    }
+
+    // An ended session is only read for a late deposit, which can wait, so
+    // its account is read at the slower cadence rather than every pass.
+    #[test]
+    fn an_ended_session_is_read_at_the_slower_cadence() {
+        let storage = stub_platform();
+        let registry = FundingRegistry::default();
+        let usdc = DepositAsset::Asset(1337);
+        insert(
+            &registry,
+            storage.as_ref(),
+            FundingSession {
+                stage: FundingStage::Failed {
+                    reason: FundingFailure::Expired,
+                    settled_at_ms: NOW,
+                },
+                deposit: Some(converting_deposit()),
+                ..session("fs_ended", NOW - DAY_MS)
+            },
+        );
+        let read = |at, balance| {
+            let balances = AssetBalances(vec![(usdc, converting_deposit().account, balance)]);
+            block_on(registry.observe_deposits(storage.as_ref(), at, &balances, &[usdc])).expect("observed");
+            registry
+                .get("fs_ended")
+                .and_then(|session| session.deposit)
+                .map(|deposit| deposit.held(usdc))
+        };
+
+        assert_eq!(
+            [read(NOW + 1, 9), read(NOW + 2, 7), read(NOW + 1 + LATE_READ_MS, 7)],
+            [Some(9), Some(9), Some(7)]
         );
     }
 
