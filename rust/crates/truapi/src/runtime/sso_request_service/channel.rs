@@ -35,6 +35,27 @@ impl Drop for SsoDisconnectMonitor {
     }
 }
 
+struct RequestWithdrawal<'a> {
+    service: &'a SsoRequestService,
+    session: &'a SsoSessionInfo,
+    message_id: &'a str,
+    call: &'a CallContext,
+    submitting: &'a AtomicBool,
+    armed: bool,
+}
+
+impl Drop for RequestWithdrawal<'_> {
+    fn drop(&mut self) {
+        if self.armed
+            && self.call.cancel().reason() == Some(CancellationReason::Cancelled)
+            && self.submitting.load(Ordering::Acquire)
+            && SsoSessionKey::from_session(self.session).matches(&self.service.session_state)
+        {
+            self.service.withdraw_request(self.session, self.message_id);
+        }
+    }
+}
+
 impl SsoRequestService {
     /// Watch the session's topics for a peer disconnect statement, replacing
     /// any monitor for a different session. No-op when one is already running
@@ -280,6 +301,14 @@ impl SsoRequestService {
         .boxed();
         let action = R::NAME;
         debug!(action, %message_id, "submitted SSO remote message, awaiting response");
+        let mut withdrawal = RequestWithdrawal {
+            service: self,
+            session: sso,
+            message_id: &message_id,
+            call: cx,
+            submitting: &submitting,
+            armed: true,
+        };
         let result = wait_for_sso_remote_response(
             RemoteResponseWait {
                 own_statements: statement_subscription_stream(own_subscription, "own"),
@@ -294,6 +323,11 @@ impl SsoRequestService {
             reply_matcher::<R>(&message_id),
         )
         .await;
+        withdrawal.armed = matches!(
+            &result,
+            Err(SsoRemoteResponseError::Cancelled(error))
+                if error.reason() == CancellationReason::Cancelled
+        );
         let result = result.map_err(|reason| match reason {
             SsoRemoteResponseError::Cancelled(err) if !cx.request_id().is_empty() => {
                 SsoRemoteResponseError::Cancelled(err.with_remote_message_id(cx.request_id()))
@@ -303,15 +337,6 @@ impl SsoRequestService {
         match &result {
             Ok(_) => debug!(action, %message_id, "SSO remote response received"),
             Err(reason) => warn!(action, %message_id, %reason, "SSO remote message failed"),
-        }
-        // A request whose submit never started is not on the channel, and a
-        // `Cancel` for it would replace whatever older request is.
-        if let Err(SsoRemoteResponseError::Cancelled(err)) = &result
-            && err.reason() == CancellationReason::Cancelled
-            && submitting.load(Ordering::Acquire)
-            && key.matches(&self.session_state)
-        {
-            self.withdraw_request(sso, &message_id);
         }
         if matches!(&result, Err(SsoRemoteResponseError::PeerDisconnected)) {
             self.handle_signing_host_disconnected(key).await;
