@@ -7,7 +7,6 @@ import ChainRegistry
 final class MockRemoteConfigManager: RemoteConfigManaging {
     var chainsToReturn: [RemoteChainModel] = []
     var errorToThrow: Error?
-    var collectiblesEnabled = false
     var txExtensionVersions: [ChainModel.Id: UInt8] = [:]
     var hangs = false
     var remoteConfig = RemoteAppConfig(
@@ -33,10 +32,6 @@ final class MockRemoteConfigManager: RemoteConfigManaging {
             throw error
         }
         return remoteConfig
-    }
-
-    func syncedCollectiblesEnabled() -> Bool {
-        collectiblesEnabled
     }
 
     func syncedTxExtensionVersions() -> [ChainModel.Id: UInt8] {
