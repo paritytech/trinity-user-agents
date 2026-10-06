@@ -1,4 +1,4 @@
-#if targetEnvironment(simulator) && E2E_TEST
+#if targetEnvironment(simulator) && HOST_PLAYGROUND_E2E
     import PolkadotUI
     import UIKit
 

@@ -28,7 +28,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             return
         }
 
-        #if targetEnvironment(simulator) && E2E_TEST
+        #if targetEnvironment(simulator) && HOST_PLAYGROUND_E2E
             HostPlaygroundE2E.install()
         #endif
 

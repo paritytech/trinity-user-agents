@@ -37,8 +37,8 @@ The runner reinstalls the app, grants its runtime permissions, copies the mnemon
 
 ## iOS
 
-The iOS host runs the list itself. A simulator build with the `E2E_TEST`
-compilation condition carries `HostPlaygroundE2E` (in
+The iOS host runs the list itself. A simulator build with the
+`HOST_PLAYGROUND_E2E` compilation condition carries `HostPlaygroundE2E` (in
 `hosts/ios/polkadot-app/Modules/Products/TrUAPI/`), which stays inert unless
 the app is launched with `TRUAPI_IOS_E2E_HOST_PLAYGROUND=1`. `ios/run.mjs`
 installs the app fresh, places the seed phrase, `tests.json` and
@@ -66,13 +66,13 @@ log lines (`io.parity.polkadotapp.e2e`), which carry no account data.
 The account must already have an on-chain username on the network the build
 targets: an account without one stops at the username claim screen.
 
-Build the app with the simulator lane, which is the only place `E2E_TEST` is
-set. It needs the in-tree core bootstrapped first (`make ios-bootstrap`), a
+Build the app with the simulator lane and `HOST_PLAYGROUND_E2E=1`, which adds
+the condition; the nightly's published simulator build leaves it out. It needs the in-tree core bootstrapped first (`make ios-bootstrap`), a
 `GoogleService-Info.plist` for the app's bundle id and the generated secrets
 file, as in `.github/workflows/ios-nightly-simulator-release.yml`:
 
 ```bash
-( cd hosts/ios && bundle exec fastlane build_app_simulator )
+( cd hosts/ios && HOST_PLAYGROUND_E2E=1 bundle exec fastlane build_app_simulator )
 ```
 
 Then run the list. The seed phrase is read from a file and never printed:
@@ -87,7 +87,7 @@ node e2e/host-playground/ios/run.mjs \
   [--device <udid>] [--timeout-minutes 120]
 ```
 
-`--app` also takes the `polkadot-app-simulator.app.zip` the nightly publishes.
+`--app` also takes a zipped `.app`.
 Without `--device` the runner picks a simulator the way the other iOS scripts
 do: `TRUAPI_IOS_E2E_DEVICE`, then a device named for TrUAPI E2E, then a booted
 iPhone. It exits non-zero when the run did not finish or any test failed.

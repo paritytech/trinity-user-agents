@@ -1,4 +1,4 @@
-#if targetEnvironment(simulator) && E2E_TEST
+#if targetEnvironment(simulator) && HOST_PLAYGROUND_E2E
     import Foundation
     import KeyDerivation
     import NovaCrypto
@@ -34,7 +34,10 @@
                 try restoreWallet()
                 ThemeSelectionStorage().setSelected()
             } catch {
-                setupFailure = "wallet setup failed: \(error)"
+                // Only the error's type and code: its description could quote a word of the
+                // mnemonic.
+                let nsError = error as NSError
+                setupFailure = "wallet setup failed: \(type(of: error)) \(nsError.domain) \(nsError.code)"
             }
 
             Task { @MainActor in

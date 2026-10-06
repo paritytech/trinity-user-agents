@@ -7,7 +7,8 @@ name: host-playground e2e
 # Each platform signs in as its own registered Paseo test account. The app is
 # seeded from that account's mnemonic by hooks that exist only in these builds:
 # on Android a library added by a Gradle init script, on iOS code compiled only
-# into the E2E_TEST simulator build. Nothing here reaches a build that testers
+# into a simulator build with the HOST_PLAYGROUND_E2E condition, which only this
+# workflow asks for. Nothing here reaches a build that testers
 # or the public can download, and the mnemonic only ever travels as a file.
 
 on:
@@ -117,6 +118,8 @@ jobs:
       # Google APIs image, so Firebase Remote Config, where the app reads its
       # chain list, works. x86_64 matches the runner and the APK's slices.
       - name: Run host-playground on the emulator
+        env:
+          APPLICATION_ID: ${{ vars.APPLICATION_ID }}
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 34
@@ -159,7 +162,7 @@ jobs:
       RUN_IN_CI: "true"
       OUT: ${{ github.workspace }}/target/e2e-host-playground/ios
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -185,17 +188,26 @@ jobs:
           sentry_dsn: ${{ secrets.SENTRY_DSN }}
           meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
-      # The Nightly configuration with the E2E_TEST compilation condition, the
-      # only build that carries the e2e hooks.
+      # The simulator lane's build, plus the HOST_PLAYGROUND_E2E condition that
+      # compiles in the driver. The nightly's published simulator build never
+      # sets it.
       - name: Build the E2E simulator app
         working-directory: hosts/ios
+        env:
+          HOST_PLAYGROUND_E2E: "1"
         run: bundle exec fastlane build_app_simulator
 
-      # Grants the notification and camera permissions simctl cannot.
+      # Grants the notification and camera permissions simctl cannot. The tap is
+      # third party, so it is pinned to a reviewed commit and Homebrew is kept
+      # from updating it.
       - name: Install applesimutils
-        continue-on-error: true
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          WIX_TAP_COMMIT: 8f636f84541e08e850f455d7cffdfbd7ba305d3f
         run: |
+          set -euo pipefail
           brew tap wix/brew
+          git -C "$(brew --repo wix/brew)" checkout --quiet "${WIX_TAP_COMMIT}"
           brew trust wix/brew
           brew install wix/brew/applesimutils
           applesimutils --version
@@ -243,7 +255,8 @@ jobs:
             exit 1
           fi
           node e2e/host-playground/ios/run.mjs --app "${apps[0]}" \
-            --mnemonic-file "${RUNNER_TEMP}/ios.mnemonic" --out "${OUT}" --device "${UDID}"
+            --mnemonic-file "${RUNNER_TEMP}/ios.mnemonic" --out "${OUT}" --device "${UDID}" \
+            --timeout-minutes 90
 
       - name: Summary
         if: always()

@@ -4,8 +4,8 @@
 //   node e2e/host-playground/ios/run.mjs --app <polkadot-app.app | .app.zip> \
 //     --mnemonic-file <path> --out <dir> [--device <udid>] [--timeout-minutes <n>]
 //
-// The app must be a simulator build with the E2E_TEST compilation condition
-// (the `build_app_simulator` fastlane lane). The runner installs it fresh,
+// The app must be a simulator build with the HOST_PLAYGROUND_E2E compilation
+// condition (the `build_app_simulator` fastlane lane with HOST_PLAYGROUND_E2E=1). The runner installs it fresh,
 // places the seed phrase, tests.json and page-runner.js in the app's
 // `tmp/truapi-e2e/`, and launches it with TRUAPI_IOS_E2E_HOST_PLAYGROUND=1.
 // The app does the rest (see HostPlaygroundE2E.swift) and writes results.json
@@ -215,12 +215,22 @@ async function waitForDone(timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   const seedDeadline = Date.now() + 60_000;
   let reported = 0;
+  let nextLivenessCheck = Date.now() + 30_000;
+  let missedChecks = 0;
 
   while (Date.now() < deadline) {
     if (existsSync(join(exchange, "done"))) return "done";
 
+    // A crashed app never writes the done marker, so stop rather than wait out
+    // the whole timeout. Two misses in a row, since a relaunch briefly drops it.
+    if (Date.now() >= nextLivenessCheck) {
+      nextLivenessCheck = Date.now() + 10_000;
+      missedChecks = appRunning() ? 0 : missedChecks + 1;
+      if (missedChecks >= 2) return "the app stopped running before the run finished";
+    }
+
     if (existsSync(seed) && Date.now() > seedDeadline) {
-      return "the app never read the seed; is this an E2E_TEST simulator build?";
+      return "the app never read the seed; is this a HOST_PLAYGROUND_E2E simulator build?";
     }
 
     // A test that opens an external URL leaves Safari in front.
@@ -253,6 +263,14 @@ async function waitForDone(timeoutMs) {
   return `no done marker within ${args["timeout-minutes"]} minutes`;
 }
 
+/** Whether the app has a running process on the simulator. */
+function appRunning() {
+  const list = spawnSync("xcrun", ["simctl", "spawn", device.udid, "launchctl", "list"], { encoding: "utf8" });
+  // Unknown counts as running, so a flaky simctl call cannot end the run.
+  if (list.status !== 0) return true;
+  return list.stdout.includes(`UIKitApplication:${bundle}[`);
+}
+
 function finish(outcome) {
   const failure = existsSync(join(exchange, "failure"))
     ? readFileSync(join(exchange, "failure"), "utf8")
@@ -283,7 +301,6 @@ function captureDiagnostics() {
   spawnSync("xcrun", ["simctl", "io", device.udid, "screenshot", join(out, "failure.png")], {
     stdio: "ignore",
   });
-
 
   const reports = join(process.env.HOME, "Library/Logs/DiagnosticReports");
   const crashes = existsSync(reports)

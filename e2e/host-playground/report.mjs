@@ -56,7 +56,7 @@ export function markdown(run) {
     "",
     summaryLine(run),
     "",
-    `App: ${run.app ?? "unknown"}. host-playground: \`${run.product}\` at \`${run.hostPlaygroundCommit?.slice(0, 9)}\`. Started ${run.startedAt}.`,
+    `App: ${run.app ?? "unknown"}. host-playground: \`${run.product}\` as deployed, test list from \`${run.hostPlaygroundCommit?.slice(0, 9)}\`. Started ${run.startedAt}.`,
     "",
     "| Test | Result | Outcome | Time | Message |",
     "| --- | --- | --- | --- | --- |",

@@ -646,7 +646,7 @@ make ios-chat-host-playground-run
 Run both integrations with one iOS build using `make ios-chat-all`.
 
 The public `host-playground` test list runs inside the in-tree `hosts/ios` app
-instead, from its `E2E_TEST` simulator build, with
+instead, from a simulator build with the `HOST_PLAYGROUND_E2E` condition, with
 `make e2e-host-playground-ios`. [e2e/host-playground/README.md](e2e/host-playground/README.md#ios)
 covers the build, the seed file and what the app does during the run.
 

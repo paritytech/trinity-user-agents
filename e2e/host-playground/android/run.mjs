@@ -306,7 +306,8 @@ async function openProduct(adb, forwards) {
     const pid = (await adb.shell(`pidof ${PACKAGE}`, { allowFailure: true }))?.trim().split(/\s+/)[0];
     if (!pid) continue;
     const socket = `webview_devtools_remote_${pid}`;
-    if (!(await adb.shell("cat /proc/net/unix")).includes(`@${socket}`)) continue;
+    const sockets = (await adb.shell("cat /proc/net/unix", { allowFailure: true })) ?? "";
+    if (!sockets.includes(`@${socket}`)) continue;
 
     if (!forwards.has(socket)) {
       const port = Number((await adb(["forward", "tcp:0", `localabstract:${socket}`])).trim());
@@ -342,12 +343,13 @@ async function readyPage(adb, forwards, page) {
       await adb.shell(`am start -a android.intent.action.VIEW -d ${PRODUCT_DEEP_LINK} ${PACKAGE}`, { allowFailure: true });
       nextDeepLink = Date.now() + DEEP_LINK_RETRY_MS;
     }
-    const ready = await page
-      .evaluate(`(() => { ${pageRunner}; return window.__hostPlaygroundE2E.ready(); })()`)
-      .catch((error) => {
-        if (page.closed) throw error;
-        return false;
-      });
+    let ready = false;
+    try {
+      ready = await page.evaluate(`(() => { ${pageRunner}; return window.__hostPlaygroundE2E.ready(); })()`);
+    } catch {
+      // A closed target is gone for good; attach to the product's new page.
+      if (page.closed) page = await openProduct(adb, forwards);
+    }
     if (ready) return page;
     if (Date.now() >= deadline) throw new Error(`host-playground rendered no tests within ${READY_TIMEOUT_MS / 1000} s`);
     await sleep(500);
@@ -461,6 +463,11 @@ async function main() {
   } catch (error) {
     fatal = error;
     run.fatal = error.message;
+    // Listed rather than dropped, so the pass count keeps the whole suite as its total.
+    const ran = new Set(run.results.map((result) => result.id));
+    for (const id of suite.tests.filter((test) => !ran.has(test))) {
+      run.results.push({ id, status: "error", message: `not run: ${error.message}`, durationMs: 0 });
+    }
     console.error(`[android e2e] ${error.stack ?? error.message}`);
     await screenshot(adb, join(out, "fatal.png"));
   } finally {
