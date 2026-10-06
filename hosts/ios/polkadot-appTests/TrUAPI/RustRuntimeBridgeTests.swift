@@ -5,6 +5,8 @@ import Products
 import SubstrateSdk
 import Keystore_iOS
 import TrUAPIHost
+import DesignSystem
+import UIKit
 
 // Scoped import: the TrUAPIHost module also declares a *type* named TrUAPIHost,
 // so `TrUAPIHost.ProductAccountId` cannot disambiguate from Products'.
@@ -71,6 +73,54 @@ private struct StubHostProvider: ProductHostProviding {
     }
 }
 
+@MainActor
+private final class MockThemeManager: ThemeManagerProtocol {
+    private(set) var theme: Theme
+    private(set) var mode: ThemeMode
+    private var observers: [UUID: AsyncStream<Theme>.Continuation] = [:]
+    private var terminationWaiter: CheckedContinuation<Void, Never>?
+
+    init(selection: ThemeSelection = .berlinNight) {
+        mode = .app(selection)
+        theme = ThemesRegistry.makeTheme(selection)
+    }
+
+    func observeTheme() -> AsyncStream<Theme> {
+        AsyncStream { continuation in
+            let id = UUID()
+            observers[id] = continuation
+            continuation.yield(theme)
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.observers[id] = nil
+                    if self.observers.isEmpty {
+                        self.terminationWaiter?.resume()
+                        self.terminationWaiter = nil
+                    }
+                }
+            }
+        }
+    }
+
+    func select(_ mode: ThemeMode) {
+        guard mode != self.mode else { return }
+        self.mode = mode
+        switch mode {
+        case let .app(selection):
+            theme = ThemesRegistry.makeTheme(selection)
+        }
+        observers.values.forEach { $0.yield(theme) }
+    }
+
+    func setup(scene _: UIWindowScene) {}
+
+    func waitForObservationToEnd() async {
+        guard !observers.isEmpty else { return }
+        await withCheckedContinuation { terminationWaiter = $0 }
+    }
+}
+
 // MARK: - Bridge factory
 
 @MainActor
@@ -83,7 +133,9 @@ private func makeBridge(
     confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter(),
     preimageCache: TrUAPIPreimageCache = TrUAPIPreimageCache { _ in nil },
     productStorageFails: Bool = false,
-    hostProvider: ProductHostProviding = StubHostProvider()
+    hostProvider: ProductHostProviding = StubHostProvider(),
+    themeManager: ThemeManagerProtocol? = nil,
+    chainConnections: TrUAPIChainConnecting? = nil
 ) -> RustProductExecutionBridge {
     let router = MockNavigationRouter()
     let pool = makeRegistryPool(chainRegistry: chainRegistry)
@@ -100,13 +152,14 @@ private func makeBridge(
         notificationScheduler: notificationScheduler,
         navigationRouter: router,
         chainRegistry: chainRegistry,
-        chainConnections: pool,
+        chainConnections: chainConnections ?? pool,
         productStorage: productStorage,
         coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults(), storageDomain: UUID().uuidString),
         confirmationPresenter: confirmationPresenter,
         chatFiles: UnavailableNativeChatFiles(),
         preimageCache: preimageCache,
         hostProvider: hostProvider,
+        themeManager: themeManager ?? MockThemeManager(),
         logger: Logger.shared
     ))
 }
@@ -215,6 +268,16 @@ struct RustRuntimeBridgeTests {
 
         #expect(result == .allowAlways)
         #expect(guard_.requestedBatchedPermissions == [.webRtcAccess])
+    }
+
+    @Test func remotePermissionCallingNeverUsesLegacyGuard() async throws {
+        let guard_ = MockPermissionGuard()
+        let bridge = makeBridge(permissionGuard: guard_)
+
+        let result = try await bridge.remotePermission(product: testProduct, request: .calling)
+
+        #expect(result == .deny)
+        #expect(guard_.requestedBatchedPermissions == nil)
     }
 
     /// `remotePermission`: JamPeers asks for access keyed by its genesis as
@@ -509,20 +572,116 @@ struct RustRuntimeBridgeTests {
         )
 
         for review in [
-            UserConfirmationReview.preimageSubmit(PreimageSubmitReview(size: 1_024)),
+            UserConfirmationReview.preimageSubmit(PreimageSubmitReview(
+                size: 1_024,
+                productId: "test.product",
+                rootPublicKey: Data(repeating: 1, count: 32),
+                genesisHash: Data(repeating: 2, count: 32),
+                automaticMaxBytes: 262_144,
+                automaticMaxUploads: 4,
+                automaticWindowSeconds: 3_600
+            )),
             .productSubtree(ProductSubtreeReview(productId: "test.product"))
         ] {
             #expect(await presenter.confirm(review: review, from: "test.product") == false)
+            #expect(await presenter.confirmPermission(review: review, from: "test.product") == .deny)
         }
     }
 
     // MARK: currentTheme
 
-    @Test func currentThemeReturnsDark() throws {
-        let bridge = makeBridge()
+    @Test(arguments: [ThemeSelection.berlinDay, .berlinNight, .lisbon])
+    func currentThemeReadsSelectedThemeSynchronously(selection: ThemeSelection) throws {
+        let manager = MockThemeManager(selection: selection)
+        let bridge = makeBridge(themeManager: manager)
+        defer { bridge.detach() }
+
+        // No task suspension or execution attachment is needed for the core's
+        // first synchronous read. Lisbon is light despite its light status bar.
         let theme = try bridge.currentTheme()
-        #expect(theme.name == .default)
-        #expect(theme.variant == .dark)
+        #expect(theme.name == .custom(selection.rawValue))
+        #expect(theme.variant == (selection == .berlinNight ? .dark : .light))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func themeTransitionsPreserveOrderIncludingNameOnlyChanges() async throws {
+        let manager = MockThemeManager()
+        let bridge = makeBridge(themeManager: manager)
+        let execution = MockProductExecution()
+        bridge.attach(execution)
+        defer { bridge.detach() }
+
+        let expected = [
+            HostThemeSubscribeItem(name: .custom("berlinDay"), variant: .light),
+            HostThemeSubscribeItem(name: .custom("lisbon"), variant: .light),
+            HostThemeSubscribeItem(name: .custom("berlinNight"), variant: .dark)
+        ]
+        await withCheckedContinuation { continuation in
+            execution.onThemeChanged = { _ in
+                if execution.themeChanges.count == expected.count {
+                    continuation.resume()
+                }
+            }
+            // Queue all changes before the observation task runs.
+            manager.select(.app(.berlinDay))
+            manager.select(.app(.lisbon))
+            manager.select(.app(.berlinNight))
+        }
+        execution.onThemeChanged = nil
+
+        #expect(execution.themeChanges == expected)
+        #expect(try bridge.currentTheme() == expected.last)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func closingExecutionDetachesBeforeCloseAndDiscardsBufferedThemes() async throws {
+        let manager = MockThemeManager()
+        let pool = MockChainConnections()
+        let bridge = makeBridge(themeManager: manager, chainConnections: pool)
+        let execution = MockProductExecution()
+        bridge.attach(execution)
+        let model = RustRuntimeEnvironment.ExecutionModel(
+            execution: execution,
+            chainConnections: pool,
+            media: bridge.media,
+            osPermissionAsker: MockOSPermissionAsker(),
+            bridge: bridge
+        )
+
+        await withCheckedContinuation { continuation in
+            execution.onThemeChanged = { _ in continuation.resume() }
+            manager.select(.app(.berlinDay))
+        }
+        execution.onThemeChanged = nil
+        let delivered = execution.themeChanges
+        let cached = try bridge.currentTheme()
+
+        execution.onClose = {
+            #expect(pool.eventHandler == nil)
+            manager.select(.app(.berlinNight))
+        }
+        manager.select(.app(.lisbon))
+        model.close()
+        manager.select(.app(.berlinDay))
+        await manager.waitForObservationToEnd()
+
+        #expect(execution.themeChanges == delivered)
+        #expect(try bridge.currentTheme() == cached)
+        #expect(execution.stopWsBridgeCallCount == 1)
+        #expect(execution.closeCallCount == 1)
+        #expect(pool.closeAllCallCount == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func releasingUnattachedBridgeCancelsThemeObservation() async {
+        let manager = MockThemeManager()
+        var bridge: RustProductExecutionBridge? = makeBridge(themeManager: manager)
+        weak var releasedBridge = bridge
+
+        bridge = nil
+        await manager.waitForObservationToEnd()
+
+        #expect(releasedBridge == nil)
     }
 
     // MARK: attach

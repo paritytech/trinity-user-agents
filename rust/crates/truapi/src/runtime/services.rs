@@ -102,6 +102,8 @@ pub struct RuntimeServices {
     pub statement_store: StatementStoreRpc,
     /// In-core Bulletin submission over the configured Bulletin chain.
     pub bulletin: BulletinRpc,
+    /// Serializes persisted upload quota and revocation across product executions.
+    pub(crate) automatic_preimage_gate: futures::lock::Mutex<()>,
     /// Runtime metadata and chain state shared by allowance paths, per chain.
     pub chain_context: crate::runtime::statement_allowance::ChainContextCache,
     /// Values from confirmed in-core submissions, served to `lookup_subscribe`
@@ -198,6 +200,7 @@ impl RuntimeServices {
             people_chain_genesis_hash,
             statement_store,
             bulletin,
+            automatic_preimage_gate: futures::lock::Mutex::new(()),
             chain_context: crate::runtime::statement_allowance::ChainContextCache::default(),
             preimage_cache: Mutex::new(PreimageCache::default()),
             statement_cache: Mutex::new(StatementCache::default()),

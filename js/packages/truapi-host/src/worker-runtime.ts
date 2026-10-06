@@ -978,7 +978,13 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
             : buildRawCallbacks(msg.capabilities, msg.coreId),
         );
         cores.set(msg.coreId, core);
-        postToMain({ kind: "coreReady", coreId: msg.coreId });
+        postToMain({
+          kind: "coreReady",
+          coreId: msg.coreId,
+          trustedRemotePermissions: wasm!.hasTrustedRemotePermissions(
+            msg.product.productId,
+          ),
+        });
       } catch (err) {
         postToMain({
           kind: "coreError",

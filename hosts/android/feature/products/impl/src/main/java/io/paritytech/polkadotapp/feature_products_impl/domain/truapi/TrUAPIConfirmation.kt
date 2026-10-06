@@ -66,7 +66,12 @@ sealed interface TrUAPIConfirmation {
     /** Submit a preimage to the host-selected backend. */
     class PreimageSubmit(
         override val requesterProductId: String,
-        val sizeBytes: Long,
+        val sizeBytes: ULong,
+        val rootPublicKey: String,
+        val genesisHash: String,
+        val automaticMaxBytes: ULong,
+        val automaticMaxUploads: UInt,
+        val automaticWindowSeconds: UInt,
     ) : TrUAPIConfirmation.Prompt
 
     /** Approve one exact payment from the user's main purse. */
@@ -95,17 +100,5 @@ sealed interface TrUAPIConfirmation {
         override val requesterProductId: String,
         val network: String,
         val account: String,
-    ) : TrUAPIConfirmation.Prompt
-
-    class ChatAuthority(override val requesterProductId: String) : TrUAPIConfirmation.Prompt
-
-    class MainPurseChatPayment(
-        override val requesterProductId: String,
-        val recipient: String,
-        val amountCents: ULong,
-        val maxDebitCents: ULong,
-        val chain: String,
-        val assetInstance: String,
-        val operationId: String,
     ) : TrUAPIConfirmation.Prompt
 }

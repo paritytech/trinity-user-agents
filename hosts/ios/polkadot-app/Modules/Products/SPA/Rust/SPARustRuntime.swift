@@ -84,8 +84,11 @@ extension SPARustRuntime: SPARuntimeProtocol {
         await MainActor.run {
             if let spaEngine = engine as? SPAJSEngine {
                 executionModel.media.attach(spaEngine.webView)
-                spaEngine.onProcessTerminated = { [weak media = executionModel.media, weak execution = executionModel.execution] in
+                spaEngine.onProcessTerminated = { [weak media = executionModel.media,
+                                                  weak bridge = executionModel.bridge,
+                                                  weak execution = executionModel.execution] in
                     media?.authorityLost()
+                    bridge?.detach()
                     execution?.close()
                 }
             }
@@ -125,9 +128,7 @@ extension SPARustRuntime: SPARuntimeProtocol {
         self.engine = nil
         await engine?.destroy()
 
-        executionModel.execution.stopWsBridge()
-        executionModel.execution.close()
-        executionModel.chainConnections.closeAll()
+        await executionModel.close()
 
         logger.debug("SPA(rust): runtime disposed for \(configuration.page.host.name)")
     }

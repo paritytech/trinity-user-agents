@@ -371,9 +371,12 @@ struct PairingHostArgs {
     /// Network preset that supplies all RPC/backend/genesis config.
     #[arg(long, value_enum, default_value = "paseo-next-v2")]
     network: Network,
-    /// Automatically approve non-payment confirmations. Main-purse payments still require review.
+    /// Approve routine confirmations. Payments and upload consent still require review.
     #[arg(long)]
     auto_accept: bool,
+    /// Revoke automatic uploads for this product in the saved paired account, then exit.
+    #[arg(long, value_name = "PRODUCT", conflicts_with = "script")]
+    revoke_automatic_uploads: Option<String>,
 }
 
 /// Default loopback port for the frame socket and the bridge script.
@@ -434,6 +437,9 @@ struct SigningHostArgs {
     /// Product id used by scripts and product-scoped operations.
     #[arg(long = "product-id", default_value = DEFAULT_PRODUCT_ID)]
     product_id: String,
+    /// Revoke automatic uploads for this product in the selected saved account, then exit.
+    #[arg(long, value_name = "PRODUCT", conflicts_with_all = ["script", "serve", "deeplink"])]
+    revoke_automatic_uploads: Option<String>,
     /// Pairing deeplink to add. Managed interactive and serve sessions also
     /// restore responders for every previously paired host.
     #[arg(long)]
@@ -468,7 +474,7 @@ struct SigningHostArgs {
     /// private per-process Unix-domain socket.
     #[arg(long)]
     frame_listen: Option<SocketAddr>,
-    /// Automatically approve non-payment confirmations. Main-purse payments still require review.
+    /// Approve routine confirmations. Payments and upload consent still require review.
     #[arg(long)]
     auto_accept: bool,
     /// Serve product frames without a terminal UI and stay up until stopped.
@@ -1212,7 +1218,7 @@ async fn run_pairing_host(
     debugger: Option<DebuggerSwitch>,
 ) -> Result<()> {
     let script_projects = script_project_directory(args.base_path.clone());
-    let interactive = args.script.is_none();
+    let interactive = args.script.is_none() && args.revoke_automatic_uploads.is_none();
     if interactive && !terminal_ui::is_interactive_terminal() {
         invalid_invocation(
             "interactive pairing-host requires a TTY; use pairing-host --script <path>",
@@ -1275,6 +1281,21 @@ async fn run_pairing_host(
                 .await
         },
     );
+    if let Some(product_id) = args.revoke_automatic_uploads {
+        pairing_runtime
+            .activate_stored_session()
+            .await
+            .map_err(|error| anyhow::anyhow!("{}", error.reason))?;
+        let root_public_key = pairing_runtime
+            .current_session_public_key()
+            .context("No saved paired account; no upload permission changed")?;
+        let product = truapi::platform::ProductContext::new_with_execution(
+            product_id,
+            ProductExecutionKind::App,
+        )?;
+        revoke_automatic_uploads(pairing_runtime.product_admin(product), root_public_key).await?;
+        return Ok(());
+    }
 
     // Resolved before the port is bound, so a bad URL still fails on the argument
     // rather than half-way through startup - but reported below, once the UI
@@ -1328,6 +1349,25 @@ async fn run_pairing_host(
     .await
 }
 
+async fn revoke_automatic_uploads(
+    admin: truapi::HostAdmin,
+    root_public_key: [u8; 32],
+) -> Result<()> {
+    admin
+        .set_permission_authorization_status(
+            truapi::platform::PermissionAuthorizationRequest::AutomaticPreimageSubmit {
+                root_public_key,
+            },
+            truapi::platform::PermissionAuthorizationStatus::NotDetermined,
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{}", error.reason))?;
+    println!(
+        "Automatic upload consent revoked for the selected product and account; rolling usage retained."
+    );
+    Ok(())
+}
+
 async fn run_signing_host(
     args: SigningHostArgs,
     initial_log_filter: String,
@@ -1342,7 +1382,10 @@ async fn run_signing_host(
         .action
         .as_ref()
         .map(|SigningHostAction::Exec { command }| command.clone());
-    let interactive = args.script.is_none() && exec_input.is_none() && !args.serve;
+    let interactive = args.script.is_none()
+        && exec_input.is_none()
+        && !args.serve
+        && args.revoke_automatic_uploads.is_none();
     if interactive && !terminal_ui::is_interactive_terminal() {
         invalid_invocation(
             "interactive signing-host requires a TTY; use --serve to run headless, or `signing-host exec '/script path.ts'`, or --script",
@@ -1381,6 +1424,18 @@ async fn run_signing_host(
         ui_handle.clone(),
     )
     .await?;
+    if let Some(product_id) = args.revoke_automatic_uploads {
+        let root_public_key = session
+            .runtime
+            .current_session_public_key()
+            .context("No active saved account; no upload permission changed")?;
+        let product = truapi::platform::ProductContext::new_with_execution(
+            product_id,
+            ProductExecutionKind::App,
+        )?;
+        revoke_automatic_uploads(session.runtime.product_admin(product), root_public_key).await?;
+        return Ok(());
+    }
     // Resolved before the port is bound, so a bad URL still fails on the argument
     // rather than half-way through startup - but reported below, once the UI
     // exists. A `tracing` line here goes to a stderr that the alternate screen
@@ -1914,6 +1969,9 @@ fn validate_signing_args(args: &SigningHostArgs) -> Result<()> {
     }
     if args.serve && args.action.is_some() {
         bail!("--serve cannot be combined with the exec subcommand");
+    }
+    if args.revoke_automatic_uploads.is_some() && args.action.is_some() {
+        bail!("--revoke-automatic-uploads cannot be combined with the exec subcommand");
     }
     if mnemonic.is_some() && account.is_some() {
         bail!("--account cannot be used when --mnemonic or HOST_CLI_SIGNER_MNEMONIC is set");

@@ -11,6 +11,11 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.ProductSettingsPayload
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
 import io.paritytech.polkadotapp.feature_products_impl.domain.productPermissions.ProductPermissionsInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.productPermissions.AutomaticPreimagePermission
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.catch
+import uniffi.truapi.PermissionAuthorizationStatus
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productPermissions.models.ProductPermissionsUiModel
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.NativeMediaPermissionStatus
@@ -30,16 +35,21 @@ class ProductPermissionsViewModel @Inject constructor(
     private val productId = ProductId.fromStoredValue(payload.productId)
 
     private val productFlow = flowOf { interactor.getProduct(productId) }
+    private val automaticUploadsBusy = MutableStateFlow(false)
 
     val state: StateFlow<LoadingState<ProductPermissionsUiModel>> = combine(
         productFlow,
         interactor.observePermissions(productId),
         interactor.observeMediaPermissions(productId),
-    ) { product, permissions, mediaPermissions ->
+        interactor.observeAutomaticUploads(productId).catch { emit(null) },
+        automaticUploadsBusy,
+    ) { product, permissions, mediaPermissions, automaticUploads, busy ->
         ProductPermissionsUiModel(
             productName = product?.name.orEmpty(),
             permissions = permissions,
             mediaPermissions = mediaPermissions,
+            automaticUploads = automaticUploads,
+            automaticUploadsBusy = busy,
         )
     }
         .withLoading()
@@ -55,5 +65,22 @@ class ProductPermissionsViewModel @Inject constructor(
 
     fun onMediaPermissionToggle(permissionStatus: NativeMediaPermissionStatus) = launchUnit {
         interactor.toggleMediaPermission(productId, permissionStatus)
+    }
+
+    fun onAutomaticUploadsChanged(
+        rendered: AutomaticPreimagePermission,
+        status: PermissionAuthorizationStatus,
+    ) = launchUnit {
+        if (automaticUploadsBusy.value) return@launchUnit
+        automaticUploadsBusy.value = true
+        try {
+            interactor.setAutomaticUploads(productId, rendered, status)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            showError(error)
+        } finally {
+            automaticUploadsBusy.value = false
+        }
     }
 }

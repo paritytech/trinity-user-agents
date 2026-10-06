@@ -711,6 +711,23 @@ offers the same choices when stdin is a TTY; non-TTY stdin rejects instead of ha
 not prompt, matching the iOS signing host. Pass `--auto-accept` for unattended runs; every auto-approved decision is
 still printed. Main-purse Chat payments are excluded from automatic approval. Each exact payment still prompts,
 including its Host-selected asset, recipient, amount and debit ceiling; without an interactive terminal it is rejected.
+Upload consent is also excluded: `--auto-accept` and `/approval automatic` cannot
+grant it. An upload review offers one attempt or an explicit bounded grant for
+the displayed product, root account and Bulletin network: at most 256 KiB and
+four attempts per rolling hour. Larger uploads or an exhausted budget still
+require review. A previously granted automatic budget can be used headlessly;
+an upload that needs review fails closed without a terminal.
+
+Revoke the selected account's automatic upload grant without resetting its
+rolling usage:
+
+```sh
+truapi-host signing-host --session alice.01 --revoke-automatic-uploads myapp.paseo
+truapi-host pairing-host --revoke-automatic-uploads myapp.paseo
+```
+
+Revocation fences pending consent and allowance work, but cannot withdraw an
+upload already handed to the chain backend.
 
 The interactive signing host can inspect or change its running policy with `/approval`, `/approval manual`, and
 `/approval automatic`. A change applies to future confirmations and survives session switches within that process. It is

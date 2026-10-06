@@ -371,7 +371,10 @@ interface HostBridge : NativeChatFilesHost {
     /** Preserve the selected lifetime for identity and account access consent. */
     @Throws(HostRejection::class)
     suspend fun confirmPermission(review: UserConfirmationReview): PermissionDecision =
-        if (confirmUserAction(review)) PermissionDecision.ALLOW_ALWAYS else PermissionDecision.DENY
+        if (confirmUserAction(review)) {
+            if (review is UserConfirmationReview.PreimageSubmit) PermissionDecision.ALLOW_ONCE
+            else PermissionDecision.ALLOW_ALWAYS
+        } else PermissionDecision.DENY
 
     /** Return the current preimage value for [key], or null for a miss. */
     @Throws(HostRejection::class)
@@ -1000,6 +1003,22 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     fun notifyContactsChanged() {
         inner.notifyContactsChanged()
     }
+
+    /** Current root account; retain this snapshot in account-scoped permission requests. */
+    fun currentSessionPublicKey(): ByteArray? = inner.currentSessionPublicKey()
+
+    @Throws(HostRejection::class)
+    suspend fun permissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+    ): PermissionAuthorizationStatus = inner.permissionAuthorizationStatus(productId, request)
+
+    @Throws(HostRejection::class)
+    suspend fun setPermissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) = inner.setPermissionAuthorizationStatus(productId, request, status)
 
     /**
      * Open one executable connection with a host-assigned immutable context.

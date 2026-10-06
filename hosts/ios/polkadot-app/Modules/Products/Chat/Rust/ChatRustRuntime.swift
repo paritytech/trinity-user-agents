@@ -28,7 +28,7 @@ actor ChatRustRuntime: ChatRuntimeProtocol {
     /// Opened in `start`, not in `init`: the core's worker registry is keyed by
     /// product id and evicts the previous entry, so a bot rebuilt before it
     /// starts would close the execution the live one is about to use.
-    private let makeExecutionModel: @Sendable (any ProductChatMessaging) throws
+    private let makeExecutionModel: @MainActor @Sendable (any ProductChatMessaging) throws
         -> RustRuntimeEnvironment.ExecutionModel
     private var executionModel: RustRuntimeEnvironment.ExecutionModel?
     /// Bound for as long as the chat surface is alive, like the shared worker's
@@ -50,7 +50,7 @@ actor ChatRustRuntime: ChatRuntimeProtocol {
 
     init(
         productUrl: URL,
-        makeExecutionModel: @Sendable @escaping (any ProductChatMessaging) throws
+        makeExecutionModel: @MainActor @Sendable @escaping (any ProductChatMessaging) throws
             -> RustRuntimeEnvironment.ExecutionModel,
         routers: ProductRoutersFacadeProtocol,
         engineFactory: @Sendable @escaping () -> JSEngineProtocol,
@@ -186,9 +186,7 @@ actor ChatRustRuntime: ChatRuntimeProtocol {
         await destroyEngineResources()
 
         if let executionModel {
-            executionModel.execution.stopWsBridge()
-            executionModel.execution.close()
-            executionModel.chainConnections.closeAll()
+            await executionModel.close()
         }
 
         logger.debug("Rust chat runtime disposed for: \(productUrl)")
@@ -203,7 +201,11 @@ private extension ChatRustRuntime {
         // with no binding.
         chatSurface.bind(messagingSupport)
 
-        let model = try makeExecutionModel(chatSurface)
+        let model = try await makeExecutionModel(chatSurface)
+        guard !disposed else {
+            await model.close()
+            throw CancellationError()
+        }
         executionModel = model
         startRoomsForwarding(chatMessaging: chatSurface, execution: model.execution)
 

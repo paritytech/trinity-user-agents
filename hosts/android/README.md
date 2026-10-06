@@ -34,6 +34,26 @@
 - **Manual backups** — Keep your account stored only in the secure enclave storage locally.
 - **Customization** — Fully customizable UI design system with 5 default themes.
 
+### Bulletin upload consent
+
+Native TrUAPI uploads ask for **Upload once**, **bounded automatic uploads**, or
+**Reject**. The review displays the product, root account, Bulletin genesis,
+upload size, and host-owned limits. Automatic consent applies only to that
+product/account/network: at most 262144 bytes per upload and four automatic
+uploads per rolling hour. Larger uploads and exhausted budgets still prompt;
+AutoSigning and trusted-product status do not grant upload consent.
+
+App permissions includes a separate **Automatic Bulletin uploads** setting backed
+by CoreAdmin. Revoking or resetting it removes only automatic approval: individual
+uploads can still ask, and usage is not reset. The setting follows the active
+account and rejects actions from an earlier account's row; it is unavailable
+without an authenticated account snapshot.
+
+These settings coexist with the core-owned camera, microphone, and scoped Calling
+permissions. Automatic-upload consent does not authorize Media, and Media
+revocation still refreshes live executions. Wallet changes invalidate the settings
+snapshot while the shared runtime disconnects and activates the next account.
+
 ## Getting started
 
 <details>

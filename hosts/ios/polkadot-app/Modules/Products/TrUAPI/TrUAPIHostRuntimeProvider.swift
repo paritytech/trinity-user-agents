@@ -22,11 +22,22 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     /// first use. Subsequent calls return the cached instance.
     func sharedRuntime() throws -> TrUAPIHostRuntime
 
+    /// Settings must bind reads and writes to the account that rendered the row.
+    func automaticUploadScope() throws -> TrUAPIAutomaticUploadScope?
+    func observeAuthorizationScope() -> AsyncStream<UUID>
+    func setAuthorizationAvailable(_ available: Bool)
+
     func setCoinageAvailable(_ available: Bool)
 
     /// Anchor the host's core confirmations (signing, permission prompts) to
     /// the given view. Until it is attached, host-level prompts deny.
     @MainActor func setPresentationView(_ view: ControllerBackedProtocol)
+}
+
+struct TrUAPIAutomaticUploadScope: Equatable, Sendable {
+    let generation: UUID
+    let rootPublicKey: Data
+    let bulletinGenesis: Data
 }
 
 /// Lazily builds one ``TrUAPIHostRuntime`` from host identity + people/bulletin
@@ -45,7 +56,11 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
+    private var cachedBulletinGenesis: Data?
     private var contactsChangeNotifier: ContactsChangeNotifier?
+    private var authorizationAvailable = false
+    private var authorizationGeneration = UUID()
+    private var authorizationObservers: [UUID: AsyncStream<UUID>.Continuation] = [:]
 
     init(
         chainRegistry: ChainRegistryProtocol,
@@ -90,6 +105,9 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     deinit {
         // The runtime can outlive its provider. It retains the adapter, not an authorization lease.
         coinageAdapter.setAvailable(false)
+        for observer in authorizationObservers.values {
+            observer.finish()
+        }
     }
 
     @MainActor
@@ -99,6 +117,17 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
     func setCoinageAvailable(_ available: Bool) {
         coinageAdapter.setAvailable(available)
+    }
+
+    func setAuthorizationAvailable(_ available: Bool) {
+        lock.withLock {
+            guard authorizationAvailable != available else { return }
+            authorizationAvailable = available
+            authorizationGeneration = UUID()
+            for observer in authorizationObservers.values {
+                observer.yield(authorizationGeneration)
+            }
+        }
     }
 
     func sharedRuntime() throws -> TrUAPIHostRuntime {
@@ -159,7 +188,39 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         try runtime.activateLocalSession(secret: secret, liteUsername: settingsManager.string(for: .username))
 
         cachedRuntime = runtime
+        cachedBulletinGenesis = runtimeConfig.bulletinChainGenesisHash
         return runtime
+    }
+
+    func observeAuthorizationScope() -> AsyncStream<UUID> {
+        let id = UUID()
+        let (stream, continuation) = AsyncStream<UUID>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        continuation.onTermination = { [weak self] _ in
+            _ = self?.lock.withLock { self?.authorizationObservers.removeValue(forKey: id) }
+        }
+        lock.withLock {
+            authorizationObservers[id] = continuation
+            continuation.yield(authorizationGeneration)
+        }
+        return stream
+    }
+
+    func automaticUploadScope() throws -> TrUAPIAutomaticUploadScope? {
+        guard lock.withLock({ authorizationAvailable }) else { return nil }
+        let runtime = try sharedRuntime()
+        return try lock.withLock {
+            guard authorizationAvailable,
+                  let bulletinGenesis = cachedBulletinGenesis,
+                  let rootPublicKey = runtime.currentSessionPublicKey() else { return nil }
+            // A retained provider must never label its old runtime as a newly selected wallet.
+            let wallet = DynamicDerivedWallet(derivationPath: nil, entropyManager: entropyManager)
+            guard try wallet.getRawPublicKey() == rootPublicKey else { return nil }
+            return TrUAPIAutomaticUploadScope(
+                generation: authorizationGeneration,
+                rootPublicKey: rootPublicKey,
+                bulletinGenesis: bulletinGenesis
+            )
+        }
     }
 }
 

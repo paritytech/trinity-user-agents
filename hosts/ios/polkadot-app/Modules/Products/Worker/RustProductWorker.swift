@@ -69,9 +69,7 @@ actor RustProductWorker: ProductWorkerRunning {
         await moduleBridge?.dispose()
         let engine = engine; self.engine = nil
         await engine?.destroy()
-        execution.execution.stopWsBridge()
-        execution.execution.close()
-        execution.chainConnections.closeAll()
+        await execution.close()
     }
 
     private func checkActive() throws {

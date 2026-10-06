@@ -3,6 +3,7 @@ import Keystore_iOS
 import KeyDerivation
 import Products
 import ChainRegistry
+import DesignSystem
 
 enum DefaultProductWorkerFactoryError: Error {
     case noWorker(ProductId)
@@ -83,17 +84,21 @@ final class DefaultProductWorkerFactory: ProductWorkerFactory, @unchecked Sendab
             guard let runtimeProvider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() else {
                 throw DefaultProductWorkerFactoryError.dependenciesUnavailable
             }
-            let environment = RustRuntimeEnvironment(
-                runtime: try runtimeProvider.sharedRuntime(),
-                chainRegistry: chainRegistry,
-                notificationScheduler: ProductNotificationScheduler.shared,
-                ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
-                hostProvider: hostProvider,
-                logger: logger
-            )
-            let execution = try environment.makeWorkerExecution(
-                productId: productId, routers: ProductRoutersFacade.worker()
-            )
+            let runtime = try runtimeProvider.sharedRuntime()
+            let execution = try await MainActor.run {
+                let environment = RustRuntimeEnvironment(
+                    runtime: runtime,
+                    chainRegistry: chainRegistry,
+                    notificationScheduler: ProductNotificationScheduler.shared,
+                    ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
+                    hostProvider: hostProvider,
+                    themeManager: ThemeManager.shared,
+                    logger: logger
+                )
+                return try environment.makeWorkerExecution(
+                    productId: productId, routers: ProductRoutersFacade.worker()
+                )
+            }
             let worker = RustProductWorker(
                 productUrl: engineContext.productUrl,
                 execution: execution,

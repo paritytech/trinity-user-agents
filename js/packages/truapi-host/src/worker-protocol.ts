@@ -30,6 +30,7 @@
 // safe choice.
 
 import type { OptionalCapabilities } from "./generated/worker-callbacks.js";
+import type { ProductContext } from "./generated/host-callbacks.js";
 import type {
   LogLevel,
   NativeChatContactsSnapshot,
@@ -111,7 +112,8 @@ export type MainToWorker =
   | {
       kind: "createCore";
       coreId: number;
-      product: unknown;
+      product: Pick<ProductContext, "productId"> &
+        Partial<Pick<ProductContext, "executionKind">>;
       capabilities?: OptionalCapabilities;
     }
   | { kind: "disposeCore"; coreId: number }
@@ -254,7 +256,7 @@ export type WorkerToMain =
        */
       schema?: string;
     }
-  | { kind: "coreReady"; coreId: number }
+  | { kind: "coreReady"; coreId: number; trustedRemotePermissions: boolean }
   | { kind: "coreError"; coreId: number; error: string }
   | { kind: "fatalError"; error: string }
   | { kind: "frameError"; coreId: number; error: string }

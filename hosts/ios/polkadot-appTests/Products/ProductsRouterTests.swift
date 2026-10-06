@@ -2,6 +2,8 @@ import Testing
 import UIKit
 import UIKitExt
 import Products
+import TrUAPIHost
+import SubstrateSdk
 @testable import struct PolkadotUI.MessageSheetAction
 @testable import struct PolkadotUI.TitleDetailsSheetViewModel
 @testable import polkadot_app
@@ -41,8 +43,7 @@ struct ProductsRouterTests {
     @Test
     func actionReviewsOfferOnlyConfirmationAndRejection() async throws {
         for request in [
-            TrUAPIActionConfirmationRequest.preimageSubmit(productId: "test.product", size: 1_024),
-            .productSubtree(productId: "test.product")
+            TrUAPIActionConfirmationRequest.productSubtree(productId: "test.product")
         ] {
             for approved in [true, false] {
                 let context = TrUAPIActionConfirmationContext(request: request)
@@ -60,9 +61,6 @@ struct ProductsRouterTests {
                 }
                 #expect(body.contains("test.product"))
                 #expect(!body.contains(String(localized: .Products.permissionBodyManageInSettingsHint)))
-                if case let .preimageSubmit(_, size) = request {
-                    #expect(body.contains(size.formatted()))
-                }
 
                 let decision = await withCheckedContinuation { continuation in
                     context.setContinuation(continuation)
@@ -77,5 +75,64 @@ struct ProductsRouterTests {
                 #expect(decision == approved)
             }
         }
+    }
+
+    @Test
+    func uploadConsentPreservesLifetimeAndIgnoresLateDecisions() async throws {
+        let review = PreimageSubmitReview(
+            size: 1_024,
+            productId: "upload.product",
+            rootPublicKey: Data(repeating: 0x12, count: 32),
+            genesisHash: Data(repeating: 0x34, count: 32),
+            automaticMaxBytes: 262_144,
+            automaticMaxUploads: 4,
+            automaticWindowSeconds: 3_600
+        )
+        for expected in [TrUAPIPermissionDecision.allowOnce, .allowAlways, .deny] {
+            let context = TrUAPIPreimageConfirmationContext(review: review)
+            let model = TrUAPIActionPromptViewFactory.makePreimageViewModel(for: context)
+            let once = try #require(model.mainAction)
+            let automatic = try #require(model.secondaryAction)
+            let deny = try #require(model.tertiaryAction)
+            let body = switch model.message.value(for: .current) {
+            case let .normal(text): text
+            case let .attributed(text): text.string
+            }
+            #expect(body.contains(review.productId))
+            #expect(body.contains(review.size.formatted()))
+            #expect(body.contains(review.rootPublicKey.toHex(includePrefix: true)))
+            #expect(body.contains(review.genesisHash.toHex(includePrefix: true)))
+            #expect(body.contains(review.automaticMaxBytes.formatted()))
+            #expect(body.contains(review.automaticWindowSeconds.formatted()))
+            let decision = await withCheckedContinuation { continuation in
+                context.setContinuation(continuation)
+                switch expected {
+                case .allowOnce: once.handler()
+                case .allowAlways: automatic.handler()
+                case .deny: deny.handler()
+                }
+                // Dismissal or a second tap may never upgrade the first decision.
+                automatic.handler()
+                deny.handler()
+            }
+            #expect(decision == expected)
+        }
+    }
+
+    @Test
+    func dismissedUploadConsentDenies() async {
+        let decision = await withCheckedContinuation { continuation in
+            let context = TrUAPIPreimageConfirmationContext(review: PreimageSubmitReview(
+                size: 1,
+                productId: "upload.product",
+                rootPublicKey: Data(repeating: 1, count: 32),
+                genesisHash: Data(repeating: 2, count: 32),
+                automaticMaxBytes: 262_144,
+                automaticMaxUploads: 4,
+                automaticWindowSeconds: 3_600
+            ))
+            context.setContinuation(continuation)
+        }
+        #expect(decision == .deny)
     }
 }

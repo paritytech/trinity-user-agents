@@ -43,9 +43,6 @@ use std::sync::Arc;
 use parity_scale_codec::{Decode, Encode};
 use rand_core::{OsRng, RngCore};
 
-use truapi::latest::{
-    GenericError, HostDevicePermissionRequest, RemotePermission, RemotePermissionRequest,
-};
 use crate::platform::{
     BLESSED_REMOTE_DOMAINS, CallingReview, ChatAuthorityReview, CoreStorage, CoreStorageKey,
     DevicePermissionStatus, IdentityDisclosureReview, PermissionAuthorizationRequest,
@@ -53,6 +50,9 @@ use crate::platform::{
     ProductContext, ProfileDisclosureReview, UserConfirmation, UserConfirmationReview,
     has_trusted_remote_permissions, is_valid_remote_domain_pattern, normalize_remote_domain,
     remote_domain_candidates,
+};
+use truapi::latest::{
+    GenericError, HostDevicePermissionRequest, RemotePermission, RemotePermissionRequest,
 };
 
 /// Persisted answer for a single permission request. Keep `Authorized` at
@@ -521,6 +521,9 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
                 )
                 .await
             }
+            PermissionAuthorizationRequest::AutomaticPreimageSubmit { .. } => Err(GenericError {
+                reason: "Upload consent requires an active account scope".into(),
+            }),
         }
     }
 
@@ -628,19 +631,6 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         Err(authorization_contention())
     }
 
-    /// Returns the stored authorization statuses for permission requests
-    /// without prompting. Results follow the same order as `requests`.
-    pub async fn authorization_statuses(
-        &self,
-        requests: &[PermissionAuthorizationRequest],
-    ) -> Result<Vec<PermissionAuthorizationStatus>, GenericError> {
-        let mut statuses = Vec::with_capacity(requests.len());
-        for request in requests {
-            statuses.push(self.authorization_status(request).await?);
-        }
-        Ok(statuses)
-    }
-
     /// Update the stored authorization status for a permission request.
     ///
     /// Setting `NotDetermined` stamps a fresh Ask for Calling/Device, or clears
@@ -704,6 +694,11 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
             PermissionAuthorizationRequest::Calling { network, account } => {
                 CoreStorageKey::calling_authorization(self.product_id(), *network, *account)
             }
+            PermissionAuthorizationRequest::AutomaticPreimageSubmit { .. } => {
+                return Err(GenericError {
+                    reason: "Upload consent requires an active account scope".into(),
+                });
+            }
         };
         self.temporary_permissions.revoke(&key);
         if matches!(request, PermissionAuthorizationRequest::Calling { .. } | PermissionAuthorizationRequest::Device(_)) {
@@ -763,7 +758,9 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
     {
         let request = PermissionAuthorizationRequest::ChatAuthority;
         match self.authorization_status(&request).await? {
-            PermissionAuthorizationStatus::Authorized => return Ok(ChatAuthorityConsent::Persisted),
+            PermissionAuthorizationStatus::Authorized => {
+                return Ok(ChatAuthorityConsent::Persisted);
+            }
             PermissionAuthorizationStatus::Denied => return Ok(ChatAuthorityConsent::Refused),
             PermissionAuthorizationStatus::NotDetermined => {}
         }

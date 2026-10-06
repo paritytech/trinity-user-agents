@@ -919,6 +919,7 @@ async fn wait_for_sso_peer_disconnect(
                 &session,
                 &statement,
                 "truapi:sso-peer-disconnect-monitor",
+                None,
             )?
             else {
                 continue;
