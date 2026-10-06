@@ -62,7 +62,7 @@ stage in the frame path; the host's `Platform` impl is the syscall floor.
    │ PairingHost | SigningHost   │   │ platform · chain · RPC │
    └─────────────────────────────┘   └────────────────────────┘
               │
-              │  PairingHost only : encrypted SSO channel
+              │  PairingHost → SsoRequestService → encrypted SSO
               ▼
        ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐
        ╎ remote signing host   ( external wallet ) ╎
@@ -231,14 +231,13 @@ path. Web hosts do not compile the store.
 
 Product runtimes capture `HostOperation` before permission checks or approval. It contains the selected account session and a private host grant revision. Host execution rejects stale results, and retaining allowance methods validate the original revision under their grant or storage locks. Pure signing and transaction construction may finish after a host-only reset, but their results are discarded; wallet lock or replacement prevents final private-key use. Native allowance acquisition also checks before resuming chain preparation after each suspension. Paired calls retain their explicit SSO cancellation and withdrawal flow. `WalletAccountHolder::allocate_grants` approves the ordered request and returns a lazy stream of typed receipts or item failures. Native statement receipts include the actual allocated period; local AutoSigning receipts carry an opaque authorization bound to the wallet instance, activation and product. `SigningHost` selects retained authorization under the original host revision; the wallet validates it when used. The host retains statement keys and native authorizations before starting the next resource. Bulletin and SmartContract success adds no native cache. Recoverable allocation failures do not stop later resources; cancellation preserves earlier receipts. Resource execution deadlines start after review. Implicit native statement and Bulletin acquisition call the same wallet issuers without an additional allocation review. The host schedules renewal using a weak host reference; the wallet owns its ledger and registration locks. `PairingHost` validates and persists SSO results using the epoch captured before product approval. Incoming SSO carries the wallet session alone, so native product reset cannot invalidate remote wallet work.
 
-`HostGrantStore` owns paired retained keys and public subtrees, their validation and persistence, the host revision and unfinished deletion keys. `PairingHost` retains canonical session selection, login state, auth notifications and transport. Disconnect invalidates the session immediately and keeps unfinished storage deletions in memory. Replacement activation and login persistence share the deletion lock and cannot publish while required cleanup fails. Cancelled login writes leave cleanup pending until it succeeds; successful login persistence and installation form one guarded operation. A write notification causes login to recheck the stored blob before publication; a different observed session is preserved. This ordering applies to Rust-owned storage calls, not writes made independently by embedding apps. Pending deletion records are not persisted across restart.
+`HostGrantStore` owns paired retained keys and public subtrees, their validation and persistence, the host revision and unfinished deletion keys. `SsoRequestService` owns canonical session selection, login state, auth notifications and typed request transport. Runtime administration calls that service directly; `PairingHost` keeps account policy and shares the same service and store. Disconnect invalidates the session immediately and keeps unfinished storage deletions in memory. Replacement activation and login persistence share the deletion lock and cannot publish while required cleanup fails. Cancelled login writes leave cleanup pending until it succeeds; successful login persistence and installation form one guarded operation. A write notification causes login to recheck the stored blob before publication; a different observed session is preserved. This ordering applies to Rust-owned storage calls, not writes made independently by embedding apps. Pending deletion records are not persisted across restart.
 
 - **`PairingHost`** (seedless): the user's keys live in an external wallet, so
   signing/aliases/entropy relay over an encrypted SSO channel (statement store
-  on the People chain; the channel lives in `pairing_host/sso_channel.rs`). The
+  on the People chain; transport lives in `sso_request_service/channel.rs`). The
   v2 wire protocol uses raw X25519 keys, HKDF-SHA256, and
-  ChaCha20-Poly1305. It owns pairing/login state, persisted auth-session reload,
-  and remote signing-host liveness monitoring.
+  ChaCha20-Poly1305. `SsoRequestService` owns pairing/login state, persisted auth-session reload and remote signing-host liveness monitoring.
 - **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
   from host-held secret material. Its public identity is the RFC-0022

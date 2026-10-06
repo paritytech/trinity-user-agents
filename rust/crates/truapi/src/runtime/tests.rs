@@ -788,7 +788,9 @@ fn contacts_host(
     if let Some(contacts) = contacts {
         services.install_contacts_platform(contacts);
     }
-    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+    let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
     if connected {
@@ -854,7 +856,9 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
         None,
     );
     services.install_contacts_platform(Arc::new(LookupOnlyContactsPlatform));
-    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+    let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
     install_pairing_session(&host, session_info());
@@ -1198,7 +1202,9 @@ fn host_with_contacts(contacts: Arc<dyn crate::platform::ContactsPlatform>) -> P
         None,
     );
     services.install_contacts_platform(contacts);
-    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+    let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
     install_pairing_session(&host, session_info());
@@ -1430,7 +1436,9 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+    let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host.clone(), product);
     install_pairing_session(&host, session.clone());
@@ -1445,7 +1453,13 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
     });
     let published = submitted_remote_message(&platform, &session).message_id;
     wait_until(
-        || pairing_host.newest_request_for_tests().as_deref() == Some(&published),
+        || {
+            pairing_host
+                .sso_for_tests()
+                .newest_request_for_tests()
+                .as_deref()
+                == Some(&published)
+        },
         "the request was not published",
     );
 
@@ -1518,7 +1532,9 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+    let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host.clone(), product);
     install_pairing_session(&host, session.clone());
@@ -1532,7 +1548,10 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
     futures::executor::block_on(host.sign_raw(&cx, request)).unwrap_err();
 
     let published = submitted_remote_message(&platform, &session).message_id;
-    assert_eq!(pairing_host.newest_request_for_tests(), Some(published));
+    assert_eq!(
+        pairing_host.sso_for_tests().newest_request_for_tests(),
+        Some(published)
+    );
 }
 
 /// `message_id`s every `Cancel` this host has published names, oldest first.
@@ -1575,7 +1594,9 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+    let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = Arc::new(ProductRuntimeHost::from_services(
         services,
@@ -1602,7 +1623,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
             || {
                 let published = submitted_remote_messages(&platform, &session);
                 published.len() == count
-                    && pairing_host.newest_request_for_tests().as_deref()
+                    && pairing_host.sso_for_tests().newest_request_for_tests().as_deref()
                         == published.last().map(|message| message.message_id.as_str())
             },
             "the request was not published",
@@ -1647,7 +1668,9 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+    let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.chat_platform = Some(chat_platform.clone());
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
@@ -1791,7 +1814,9 @@ fn chat_room_ids_agree_across_create_and_post() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+    let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.chat_platform = Some(chat_platform.clone());
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
@@ -1876,7 +1901,9 @@ fn chat_register_bot_rejects_unsafe_product_fields() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+    let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.chat_platform = Some(chat_platform.clone());
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product.clone());
@@ -1961,7 +1988,9 @@ fn chat_register_bot_reaches_the_installed_adapter() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+    let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.chat_platform = Some(chat_platform.clone());
     let host = ProductRuntimeHost::from_services(
@@ -2072,7 +2101,9 @@ fn pocket_host(
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+    let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.pocket_platform =
         pocket.map(|pocket| pocket as Arc<dyn crate::platform::PocketPlatform>);
@@ -2250,7 +2281,9 @@ fn chain_follow_ids_are_scoped_per_product_core() {
         host_config.asset_hub_chain_genesis_hash,
         spawner.clone(),
     );
-    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+    let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let first = ProductRuntimeHost::from_services(
         services.clone(),
         crate::host_core::ConnectionAdapters::from_services(&services),
@@ -2372,7 +2405,9 @@ fn permission_prompts_name_the_requesting_product_and_execution_kind() {
         spawner,
     );
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+    let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product.clone());
     let cx = CallContext::default();
 
@@ -4687,7 +4722,9 @@ fn idle_peer_disconnect_monitor_clears_session_store_and_broadcasts() {
         )
     );
 
-    pairing_host.start_session_supervision_for_current_session();
+    pairing_host
+        .sso_for_tests()
+        .start_session_supervision_for_current_session();
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     let disconnected = loop {
@@ -5990,7 +6027,7 @@ fn auto_signing_logout_reset_clears_cached_and_persisted_capability() {
             .contains_key(&core_storage_test_key(CoreStorageKey::AutoSigningKeys))
     );
 
-    futures::executor::block_on(pairing_host.logout_and_reset_pairing()).unwrap();
+    futures::executor::block_on(pairing_host.sso_for_tests().logout_and_reset_pairing()).unwrap();
 
     assert!(
         !platform
@@ -6030,8 +6067,12 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
         crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
             .unwrap();
 
-    futures::executor::block_on(pairing_host.logout_and_reset_pairing()).unwrap();
-    futures::executor::block_on(pairing_host.set_connected_session_for_tests(session.clone()));
+    futures::executor::block_on(pairing_host.sso_for_tests().logout_and_reset_pairing()).unwrap();
+    futures::executor::block_on(
+        pairing_host
+            .sso_for_tests()
+            .set_connected_session_for_tests(session.clone()),
+    );
     let auto_signing_error =
         futures::executor::block_on(pairing_host.grants_for_tests().remember_auto_signing_key(
             &pairing_host.session_state(),
@@ -6348,7 +6389,7 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
         (1, 1, 1, 1)
     );
 
-    futures::executor::block_on(pairing_host.reset_session_state());
+    futures::executor::block_on(pairing_host.sso_for_tests().reset_session_state());
 
     assert!(pairing_host.session_state().current().is_none());
     assert_eq!(
@@ -6425,7 +6466,11 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
         .as_mut()
         .expect("fixture has SSO identity")
         .identity_account_id = [0x55; 32];
-    futures::executor::block_on(pairing_host.set_connected_session_for_tests(replacement.clone()));
+    futures::executor::block_on(
+        pairing_host
+            .sso_for_tests()
+            .set_connected_session_for_tests(replacement.clone()),
+    );
 
     assert_eq!(
         host.test_session_state().current(),
@@ -6560,8 +6605,12 @@ fn external_session_activation_is_memory_only_and_rejects_trailing_bytes() {
     let session = sso_session_info();
     let blob = crate::host_logic::session::encode_persisted_session(&session);
 
-    futures::executor::block_on(pairing_host.activate_external_session(&blob))
-        .expect("valid external session activates");
+    futures::executor::block_on(
+        pairing_host
+            .sso_for_tests()
+            .activate_external_session(&blob),
+    )
+    .expect("valid external session activates");
 
     assert_eq!(host.test_session_state().current(), Some(session.clone()));
     assert!(
@@ -6573,14 +6622,22 @@ fn external_session_activation_is_memory_only_and_rejects_trailing_bytes() {
         "external activation must not copy the blob into core storage"
     );
 
-    let invalid = futures::executor::block_on(pairing_host.activate_external_session(&[0xff]))
-        .expect_err("invalid bytes are rejected");
+    let invalid = futures::executor::block_on(
+        pairing_host
+            .sso_for_tests()
+            .activate_external_session(&[0xff]),
+    )
+    .expect_err("invalid bytes are rejected");
     assert!(invalid.starts_with("invalid session blob:"));
 
     let mut trailing = blob;
     trailing.push(0);
-    let error = futures::executor::block_on(pairing_host.activate_external_session(&trailing))
-        .expect_err("trailing bytes are rejected");
+    let error = futures::executor::block_on(
+        pairing_host
+            .sso_for_tests()
+            .activate_external_session(&trailing),
+    )
+    .expect_err("trailing bytes are rejected");
     assert_eq!(error, "invalid session blob: trailing bytes");
     assert_eq!(
         host.test_session_state().current(),
@@ -6595,8 +6652,12 @@ fn external_session_activation_reports_its_outcome_when_the_blob_is_corrupt() {
     let (_host, pairing_host) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-    futures::executor::block_on(pairing_host.activate_external_session(&[0xff]))
-        .expect_err("invalid bytes are rejected");
+    futures::executor::block_on(
+        pairing_host
+            .sso_for_tests()
+            .activate_external_session(&[0xff]),
+    )
+    .expect_err("invalid bytes are rejected");
 
     // The decode fails before any transition can run, so without an
     // explicit announcement a host that holds its own session and boots on
@@ -6617,7 +6678,7 @@ fn resetting_session_state_reports_its_outcome_when_nothing_was_active() {
     let (_host, pairing_host) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-    futures::executor::block_on(pairing_host.reset_session_state());
+    futures::executor::block_on(pairing_host.sso_for_tests().reset_session_state());
 
     // Clearing an already-signed-out state changes nothing, so without an
     // explicit announcement this is the silent case a host cannot tell
@@ -6648,11 +6709,11 @@ fn external_session_activation_replaces_and_fences_the_previous_session() {
         .expect("fixture has SSO")
         .identity_account_id = [0x55; 32];
 
-    futures::executor::block_on(pairing_host.activate_external_session(
+    futures::executor::block_on(pairing_host.sso_for_tests().activate_external_session(
         &crate::host_logic::session::encode_persisted_session(&first),
     ))
     .expect("first external session activates");
-    futures::executor::block_on(pairing_host.activate_external_session(
+    futures::executor::block_on(pairing_host.sso_for_tests().activate_external_session(
         &crate::host_logic::session::encode_persisted_session(&replacement),
     ))
     .expect("replacement external session activates");
@@ -6672,6 +6733,7 @@ fn store_notification_during_external_activation_restores_persisted_session() {
     let (host, pairing_host) =
         ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
     pairing_host
+        .sso_for_tests()
         .clone()
         .start_session_store_sync_for_tests(test_spawner());
     wait_until(
@@ -6682,16 +6744,23 @@ fn store_notification_during_external_activation_restores_persisted_session() {
     let mut stale_external = persisted.clone();
     stale_external.public_key = [0x44; 32];
     let stale_blob = crate::host_logic::session::encode_persisted_session(&stale_external);
-    let (activation_entered, resume_activation) =
-        pairing_host.pause_external_session_activation_for_tests();
+    let (activation_entered, resume_activation) = pairing_host
+        .sso_for_tests()
+        .pause_external_session_activation_for_tests();
     let activation = std::thread::spawn({
         let pairing_host = pairing_host.clone();
-        move || futures::executor::block_on(pairing_host.activate_external_session(&stale_blob))
+        move || {
+            futures::executor::block_on(
+                pairing_host
+                    .sso_for_tests()
+                    .activate_external_session(&stale_blob),
+            )
+        }
     });
     futures::executor::block_on(activation_entered)
         .expect("external activation reached the installation fence");
 
-    pairing_host.notify_session_store_changed();
+    pairing_host.sso_for_tests().notify_session_store_changed();
     resume_activation
         .send(())
         .expect("external activation remains in flight");
@@ -6714,11 +6783,18 @@ fn disconnect_during_external_activation_prevents_stale_reinstallation() {
         test_spawner(),
     );
     let stale_blob = crate::host_logic::session::encode_persisted_session(&sso_session_info());
-    let (activation_entered, resume_activation) =
-        pairing_host.pause_external_session_activation_for_tests();
+    let (activation_entered, resume_activation) = pairing_host
+        .sso_for_tests()
+        .pause_external_session_activation_for_tests();
     let activation = std::thread::spawn({
         let pairing_host = pairing_host.clone();
-        move || futures::executor::block_on(pairing_host.activate_external_session(&stale_blob))
+        move || {
+            futures::executor::block_on(
+                pairing_host
+                    .sso_for_tests()
+                    .activate_external_session(&stale_blob),
+            )
+        }
     });
     futures::executor::block_on(activation_entered)
         .expect("external activation reached the installation fence");
@@ -6750,7 +6826,7 @@ fn stored_session_activation_resolves_after_connected_installation() {
     let (host, pairing_host) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-    futures::executor::block_on(pairing_host.activate_stored_session())
+    futures::executor::block_on(pairing_host.sso_for_tests().activate_stored_session())
         .expect("valid stored session activates");
 
     assert_eq!(host.test_session_state().current(), Some(stored.clone()));
@@ -6775,7 +6851,7 @@ fn stored_session_activation_rejects_invalid_blob_and_disconnects() {
         ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
     install_pairing_session(&host, sso_session_info());
 
-    let error = futures::executor::block_on(pairing_host.activate_stored_session())
+    let error = futures::executor::block_on(pairing_host.sso_for_tests().activate_stored_session())
         .expect_err("invalid stored session is rejected");
 
     assert!(error.starts_with("invalid stored auth session:"));
@@ -6806,11 +6882,11 @@ fn activating_an_untagged_stored_session_restores_it_and_rewrites_the_slot() {
     let notify_host = Arc::downgrade(&pairing_host);
     *platform.on_auth_session_write.lock().unwrap() = Some(Arc::new(move || {
         if let Some(host) = notify_host.upgrade() {
-            host.notify_session_store_changed();
+            host.sso_for_tests().notify_session_store_changed();
         }
     }));
 
-    futures::executor::block_on(pairing_host.activate_stored_session())
+    futures::executor::block_on(pairing_host.sso_for_tests().activate_stored_session())
         .expect("an untagged stored session activates");
 
     assert_eq!(host.test_session_state().current(), Some(stored.clone()));
@@ -6843,6 +6919,7 @@ fn session_store_sync_restores_valid_blob_from_tick() {
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
     pairing_host
+        .sso_for_tests()
         .clone()
         .start_session_store_sync_for_tests(test_spawner());
     wait_until(
@@ -6878,6 +6955,7 @@ fn session_store_sync_announces_a_signed_out_boot() {
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
     pairing_host
+        .sso_for_tests()
         .clone()
         .start_session_store_sync_for_tests(test_spawner());
 
@@ -6913,6 +6991,7 @@ fn session_store_sync_announces_a_restored_boot_once() {
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
     pairing_host
+        .sso_for_tests()
         .clone()
         .start_session_store_sync_for_tests(test_spawner());
 
@@ -6926,7 +7005,7 @@ fn session_store_sync_announces_a_restored_boot_once() {
         },
         "boot reconcile did not report the restored session",
     );
-    futures::executor::block_on(pairing_host.activate_stored_session())
+    futures::executor::block_on(pairing_host.sso_for_tests().activate_stored_session())
         .expect("valid stored session activates");
     assert_eq!(
         *platform
@@ -6950,6 +7029,7 @@ fn session_store_sync_stays_silent_on_an_unchanged_tick() {
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
     pairing_host
+        .sso_for_tests()
         .clone()
         .start_session_store_sync_for_tests(test_spawner());
     wait_until(
@@ -6963,9 +7043,14 @@ fn session_store_sync_stays_silent_on_an_unchanged_tick() {
         "boot reconcile did not report the restored session",
     );
 
-    pairing_host.notify_session_store_changed();
+    pairing_host.sso_for_tests().notify_session_store_changed();
     wait_until(
-        || pairing_host.session_store_change_ticks_for_tests() == 1,
+        || {
+            pairing_host
+                .sso_for_tests()
+                .session_store_change_ticks_for_tests()
+                == 1
+        },
         "session store sync did not process the change tick",
     );
 
@@ -6998,6 +7083,7 @@ fn session_store_sync_replaces_valid_blob_and_broadcasts_connected() {
     let _ = futures::executor::block_on(statuses.next());
 
     pairing_host
+        .sso_for_tests()
         .clone()
         .start_session_store_sync_for_tests(test_spawner());
 
@@ -7021,6 +7107,7 @@ fn session_store_sync_clears_invalid_blob() {
     install_pairing_session(&host, sso_session_info());
 
     pairing_host
+        .sso_for_tests()
         .clone()
         .start_session_store_sync_for_tests(test_spawner());
     wait_until(
@@ -7064,6 +7151,7 @@ fn session_store_sync_clears_unreadable_blob() {
     install_pairing_session(&host, sso_session_info());
 
     pairing_host
+        .sso_for_tests()
         .clone()
         .start_session_store_sync_for_tests(test_spawner());
     wait_until(
@@ -7091,6 +7179,7 @@ fn session_store_sync_clears_once_on_initial_persistent_read_error() {
     install_pairing_session(&host, sso_session_info());
 
     pairing_host
+        .sso_for_tests()
         .clone()
         .start_session_store_sync_for_tests(test_spawner());
 
@@ -7148,7 +7237,7 @@ fn pairing_logout_clears_session_and_bootstrap_identity() {
         );
     }
 
-    futures::executor::block_on(pairing_host.logout_and_reset_pairing()).unwrap();
+    futures::executor::block_on(pairing_host.sso_for_tests().logout_and_reset_pairing()).unwrap();
 
     assert!(host.test_session_state().current().is_none());
     let storage = platform
@@ -7234,6 +7323,7 @@ fn disconnect_emits_disconnected_auth_state_after_store_sync_connected() {
     let (host, pairing_host) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
     pairing_host
+        .sso_for_tests()
         .clone()
         .start_session_store_sync_for_tests(test_spawner());
     wait_until(
@@ -7331,7 +7421,9 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+    let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host.clone(), product);
     install_pairing_session(&host, session_info());
@@ -7408,7 +7500,9 @@ fn a_grant_lookup_obeys_the_callers_deadline() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+    let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
     install_pairing_session(&host, session_info());

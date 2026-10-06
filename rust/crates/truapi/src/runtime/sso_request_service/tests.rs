@@ -2,6 +2,7 @@ use super::*;
 use crate::platform::CoreStorage;
 use crate::runtime::ProductRuntimeHost;
 use crate::runtime::allowances;
+use crate::runtime::authority::AutoSigningKey;
 use crate::test_support::{StubPlatform, sso_session_info, test_spawner};
 use futures::FutureExt;
 use futures::executor::block_on;
@@ -75,6 +76,7 @@ fn replacement_waits_for_old_session_cleanup() {
         ..Default::default()
     });
     let (_, host) = ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    let host = host.sso_for_tests();
     let session = sso_session_info();
     block_on(host.set_connected_session_for_tests(session.clone()));
     let root =
@@ -82,8 +84,8 @@ fn replacement_waits_for_old_session_cleanup() {
     let subtree =
         crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
             .unwrap();
-    let revision = host.grants_for_tests().lifecycle().revision();
-    block_on(host.grants_for_tests().remember_auto_signing_key(
+    let revision = host.grants.lifecycle().revision();
+    block_on(host.grants.remember_auto_signing_key(
         &host.session_state(),
         &session,
         revision,
@@ -110,15 +112,12 @@ fn replacement_waits_for_old_session_cleanup() {
     block_on(cleanup);
     block_on(activation).unwrap();
     assert!(
-        !block_on(
-            host.grants_for_tests()
-                .auto_signing_key(&session, "myapp.dot")
-        )
-        .unwrap()
-        .is_some()
+        !block_on(host.grants.auto_signing_key(&session, "myapp.dot"))
+            .unwrap()
+            .is_some()
     );
-    let revision = host.grants_for_tests().lifecycle().revision();
-    block_on(host.grants_for_tests().remember_auto_signing_key(
+    let revision = host.grants.lifecycle().revision();
+    block_on(host.grants.remember_auto_signing_key(
         &host.session_state(),
         &session,
         revision,
@@ -154,12 +153,9 @@ fn replacement_waits_for_old_session_cleanup() {
             ]
         ),
     );
-    let key = block_on(
-        host.grants_for_tests()
-            .auto_signing_key(&session, "myapp.dot"),
-    )
-    .unwrap()
-    .unwrap();
+    let key = block_on(host.grants.auto_signing_key(&session, "myapp.dot"))
+        .unwrap()
+        .unwrap();
     assert_eq!(
         (*key.as_secret_bytes(), *key.ring_vrf_domain_entropy()),
         (subtree.secret.to_bytes(), [0x55; 32])
@@ -175,6 +171,7 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
             ..Default::default()
         });
         let (_, host) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
+        let host = host.sso_for_tests();
         let session = sso_session_info();
         block_on(host.set_connected_session_for_tests(session.clone()));
         let blob = encode_persisted_session(&session);
@@ -192,16 +189,14 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
             SsoSessionKey::from_session(session.sso.as_ref().unwrap()),
             "myapp.dot".to_string(),
         );
-        let revision = host.grants_for_tests().lifecycle().revision();
-        assert!(block_on(
-            host.grants_for_tests().persist_product_subtree_if_current(
-                &host.session_state(),
-                &session,
-                revision,
-                cache_key,
-                [0xAB; 32],
-            )
-        ));
+        let revision = host.grants.lifecycle().revision();
+        assert!(block_on(host.grants.persist_product_subtree_if_current(
+            &host.session_state(),
+            &session,
+            revision,
+            cache_key,
+            [0xAB; 32],
+        )));
         let (release, pause) = oneshot::channel();
         *storage.pause.lock().unwrap() = Some((CoreStorageKey::AutoSigningKeys, pause));
         *storage.failure.lock().unwrap() = Some(CoreStorageKey::AutoSigningKeys);
@@ -250,6 +245,7 @@ fn superseded_login_cannot_leave_its_session_in_storage() {
             ..Default::default()
         });
         let (_, host) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
+        let host = host.sso_for_tests();
         let session = sso_session_info();
         let generation = host.begin_login_attempt();
         let (release, pause) = oneshot::channel();
@@ -302,6 +298,7 @@ fn login_store_notifications_follow_the_persisted_value() {
             ..Default::default()
         });
         let (_, host) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
+        let host = host.sso_for_tests();
         let session = sso_session_info();
         let generation = host.begin_login_attempt();
         let (release, pause) = oneshot::channel();

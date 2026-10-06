@@ -32,10 +32,10 @@ use crate::frame::ProtocolMessage;
 use crate::host_logic::worker::WorkerLedger;
 use crate::runtime::{
     ActionChannel, AuthorityError, AuthoritySession, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-    DevicePairingObserver, LocalActivation, PairedSsoPeer, PairingHostRole, ProductAuthority,
-    ProductRuntimeHost, ResponderExit, RuntimeServices, SigningHostRole, WalletAccountHolder,
-    disconnect_paired_host, establish_pairing, notify_pairing_allowance_allocation,
-    notify_pairing_failed, respond_to_pairing, resume_pairing,
+    DevicePairingObserver, HostGrantStore, LocalActivation, PairedSsoPeer, PairingHostRole,
+    ProductAuthority, ProductRuntimeHost, ResponderExit, RuntimeServices, SigningHostRole,
+    SsoRequestService, WalletAccountHolder, disconnect_paired_host, establish_pairing,
+    notify_pairing_allowance_allocation, notify_pairing_failed, respond_to_pairing, resume_pairing,
 };
 use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
 use crate::transport::Transport;
@@ -179,6 +179,7 @@ fn product_context(product_id: &str) -> Result<ProductContext, v01::GenericError
 pub struct PairingHostRuntime {
     services: Arc<RuntimeServices>,
     pairing_host: Arc<PairingHostRole>,
+    sso: Arc<SsoRequestService>,
 }
 
 impl PairingHostRuntime {
@@ -234,11 +235,14 @@ impl PairingHostRuntime {
         if let Some(contacts_platform) = contacts_platform {
             services.install_contacts_platform(contacts_platform);
         }
-        let pairing_host = PairingHostRole::new(services.clone(), config);
-        pairing_host.clone().start_session_store_sync(spawner);
+        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+        let sso = SsoRequestService::new(services.clone(), config, grants.clone());
+        let pairing_host = PairingHostRole::new(services.clone(), sso.clone(), grants);
+        sso.clone().start_session_store_sync(spawner);
         Self {
             services,
             pairing_host,
+            sso,
         }
     }
 
@@ -312,7 +316,7 @@ impl PairingHostRuntime {
     /// Disconnect the active account-authority session.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.disconnect_session"))]
     pub async fn disconnect_session(&self) {
-        self.pairing_host.disconnect().await;
+        self.sso.disconnect().await;
     }
 
     /// Log out and discard the old pairing keypair.
@@ -321,7 +325,7 @@ impl PairingHostRuntime {
     /// presents a new deeplink suitable for another signing host.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
     pub async fn logout(&self) -> Result<(), v01::GenericError> {
-        self.pairing_host
+        self.sso
             .logout_and_reset_pairing()
             .await
             .map_err(|reason| v01::GenericError { reason })
@@ -381,7 +385,7 @@ impl PairingHostRuntime {
     /// running their own P2P chat channel for the paired identity.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.session_chat_identity_key"))]
     pub fn session_chat_identity_key(&self) -> Option<[u8; 32]> {
-        self.pairing_host
+        self.sso
             .session_state()
             .current()?
             .identity_chat_private_key
@@ -391,7 +395,7 @@ impl PairingHostRuntime {
     /// running their own statement-store traffic against the advertised account.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_statement_key"))]
     pub fn device_statement_key(&self) -> Option<[u8; 64]> {
-        Some(self.pairing_host.session_state().current()?.sso?.ss_secret)
+        Some(self.sso.session_state().current()?.sso?.ss_secret)
     }
 
     /// Read this device's X25519 encryption secret, for hosts running device
@@ -419,7 +423,7 @@ impl PairingHostRuntime {
     /// without sending a peer-disconnect notice.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.reset_session_state"))]
     pub async fn reset_session_state(&self) {
-        self.pairing_host.reset_session_state().await;
+        self.sso.reset_session_state().await;
     }
 
     /// Start or join the pairing-host login flow for one product.
@@ -429,7 +433,7 @@ impl PairingHostRuntime {
         product_id: &str,
     ) -> Result<v01::HostRequestLoginResponse, v01::GenericError> {
         let product = product_context(product_id)?;
-        match self.pairing_host.request_login(&product).await {
+        match self.sso.request_login(&product).await {
             Ok(truapi::versioned::account::HostRequestLoginResponse::V1(response)) => Ok(response),
             Err(error) => Err(v01::GenericError {
                 reason: pairing_login_error_reason(error),
@@ -441,7 +445,7 @@ impl PairingHostRuntime {
     /// active.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.cancel_pairing"))]
     pub fn cancel_pairing(&self) {
-        self.pairing_host.cancel_login();
+        self.sso.cancel_login();
     }
 
     /// Activate a canonical session blob supplied by an external encrypted
@@ -451,7 +455,7 @@ impl PairingHostRuntime {
     /// connected-session installation have completed.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_external_session"))]
     pub async fn activate_external_session(&self, blob: &[u8]) -> Result<(), v01::GenericError> {
-        self.pairing_host
+        self.sso
             .activate_external_session(blob)
             .await
             .map_err(|reason| v01::GenericError { reason })
@@ -464,7 +468,7 @@ impl PairingHostRuntime {
     /// immediately use the restored authority session.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_stored_session"))]
     pub async fn activate_stored_session(&self) -> Result<(), v01::GenericError> {
-        self.pairing_host
+        self.sso
             .activate_stored_session()
             .await
             .map_err(|reason| v01::GenericError { reason })
@@ -474,7 +478,7 @@ impl PairingHostRuntime {
     /// have changed and should be re-read.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.notify_session_store_changed"))]
     pub fn notify_session_store_changed(&self) {
-        self.pairing_host.notify_session_store_changed();
+        self.sso.notify_session_store_changed();
     }
 
     /// Read a stored permission authorization status for a product without prompting.
@@ -1921,7 +1925,7 @@ mod tests {
             },
             "the boot reconcile did not report the empty session store",
         );
-        runtime.pairing_host.session_state().set_session(session);
+        runtime.sso.session_state().set_session(session);
     }
 
     fn assert_send<T: Send>(_: T) {}

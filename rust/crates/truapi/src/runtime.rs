@@ -31,10 +31,9 @@ mod ring_vrf_registry;
 pub mod services;
 mod signing_host;
 mod sso_account_holder_service;
-/// SSO pairing (login) flow over the statement store bootstrap topic.
-pub mod sso_pairing;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
+mod sso_request_service;
 pub mod sso_service;
 /// Statement Store and Bulletin allowance allocation.
 pub mod statement_allowance;
@@ -74,6 +73,7 @@ type ContactsPicker = (
     crate::runtime::contacts::ContactHandles,
 );
 use futures::{FutureExt, StreamExt, pin_mut};
+pub use host_grants::HostGrantStore;
 #[cfg(test)]
 use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
@@ -89,6 +89,7 @@ pub use signing_host::{
     respond_to_pairing, resume_pairing,
 };
 pub use sso_account_holder_service::SsoAccountHolderService;
+pub use sso_request_service::SsoRequestService;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
@@ -480,7 +481,9 @@ impl ProductRuntimeHost {
             host_config.asset_hub_chain_genesis_hash,
             spawner.clone(),
         );
-        let pairing_host = PairingHost::new(services.clone(), host_config);
+        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+        let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+        let pairing_host = PairingHost::new(services.clone(), sso, grants);
         let core_instance = services.next_core_instance();
         let chat = Arc::new(ActionChannel::chat());
         let renderer = Arc::new(ActionChannel::renderer());

@@ -190,6 +190,11 @@ pub mod latest {
     /// Push notification scheduling result.
     pub type HostPushNotificationResponse =
         LatestOf<versioned::notifications::HostPushNotificationResponse>;
+    /// Login request.
+    pub type HostRequestLoginRequest = LatestOf<versioned::account::HostRequestLoginRequest>;
+    /// Connection state reported to account subscribers.
+    pub type HostAccountConnectionStatusSubscribeItem =
+        LatestOf<versioned::account::HostAccountConnectionStatusSubscribeItem>;
     /// Login request error.
     pub type HostRequestLoginError = LatestOf<versioned::account::HostRequestLoginError>;
     /// Login request result.
