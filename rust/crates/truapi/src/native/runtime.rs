@@ -292,6 +292,12 @@ impl NativeTrUApiHostRuntime {
         Ok(self.runtime.accept_funding_deposit(&intent, asset).await?)
     }
 
+    /// Cancel session `intent` while nothing has arrived on its deposit
+    /// account.
+    pub async fn cancel_funding(&self, intent: String) -> Result<(), HostRejection> {
+        Ok(self.runtime.cancel_funding(&intent).await?)
+    }
+
     /// Try failed session `intent` again from where its funds are.
     pub async fn retry_funding(&self, intent: String) -> Result<(), HostRejection> {
         Ok(self.runtime.retry_funding(&intent).await?)

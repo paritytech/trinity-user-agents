@@ -338,6 +338,10 @@ enum Command {
         /// are, a held conversion or an unclaimed credit.
         #[arg(long, requires = "intent")]
         retry: bool,
+        /// With `--intent`: cancel the session while nothing has arrived on
+        /// its deposit account, and stop.
+        #[arg(long, requires = "intent")]
+        cancel: bool,
         /// With `--intent`: print the session's account seeds for a wallet to
         /// take the funds back by hand, and stop.
         #[arg(long, requires = "intent")]
@@ -693,6 +697,7 @@ async fn dispatch(
             intent,
             accept,
             retry,
+            cancel,
             export_key,
         } => {
             let check = funding_check::FundingCheck {
@@ -704,6 +709,7 @@ async fn dispatch(
                 intent,
                 accept,
                 retry,
+                cancel,
                 export_key,
             };
             funding_check::run(check, |config, state_dir| {

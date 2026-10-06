@@ -429,6 +429,11 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   the account, stays out of the history bound, and `retry_funding` picks it
   up: the conversion again by its route, or the credit from its last
   attempt. A product sees the retried session by subscribing again.
+  `cancel_funding` cancels a session while nothing has arrived, as getcash
+  does: it is refused once a deposit was seen or while anything is on the
+  deposit account, which is read first, and nothing is cancelled if that
+  read cannot be confirmed within 8 seconds. A cancelled session's account
+  is still read for 72 hours, so a payment that arrives after all converts.
   Native hosts reach all of this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `set_top_up_callbacks` with
   `notify_top_up_status` (the top-up engine), `enable_funding_conversion`,

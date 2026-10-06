@@ -314,6 +314,18 @@ const CONVERSION_HELD: &str = "conversion_held";
 /// Code a session fails with when its top-ups claimed nothing.
 const CREDIT_UNCLAIMED: &str = "credit_unclaimed";
 
+/// Why a session cannot be cancelled, as getcash refuses a cancel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+pub enum CancelRefusal {
+    /// The deposit arrived or the session went further, or it already ended
+    /// other than by expiring.
+    #[display("the session is already under way or over")]
+    Underway,
+    /// Something is on the deposit account, which a cancel would strand.
+    #[display("funds are on the deposit account")]
+    FundsArrived,
+}
+
 /// Why a failed session cannot be retried.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub enum RetryRefusal {
@@ -643,8 +655,8 @@ impl FundingSession {
     }
 
     /// Whether the session ended in a way its deposit can come back from,
-    /// within the late watch window: it expired, or its conversion was
-    /// refused or held while the funds stayed on the account.
+    /// within the late watch window: it expired or was cancelled, or its
+    /// conversion was refused or held while the funds stayed on the account.
     fn recoverable_since(&self, now_ms: u64) -> bool {
         match &self.stage {
             FundingStage::Failed {
@@ -652,12 +664,42 @@ impl FundingSession {
                 settled_at_ms,
                 resume,
             } => {
-                let recoverable = *reason == FundingFailure::Expired
+                let recoverable = matches!(reason, FundingFailure::Expired | FundingFailure::Cancelled)
                     || *resume == Some(FundingResume::Conversion);
                 recoverable && now_ms.saturating_sub(*settled_at_ms) <= LATE_WATCH_MS
             }
             _ => false,
         }
+    }
+
+    /// Cancel the session while nothing has arrived, as getcash cancels a
+    /// request: one still open, or one that expired, and only while its
+    /// deposit account, as last read, holds nothing. A cancelled session's
+    /// account is still read for the late watch window, so a payment that
+    /// arrives after all is converted.
+    pub fn cancel(&mut self, now_ms: u64) -> Result<(), CancelRefusal> {
+        let cancellable = matches!(
+            self.stage,
+            FundingStage::Open
+                | FundingStage::Failed {
+                    reason: FundingFailure::Expired,
+                    ..
+                }
+        );
+        if !cancellable {
+            return Err(CancelRefusal::Underway);
+        }
+        if self.deposit.as_ref().is_some_and(|deposit| !deposit.holdings.is_empty()) {
+            return Err(CancelRefusal::FundsArrived);
+        }
+        self.stage = FundingStage::Failed {
+            reason: FundingFailure::Cancelled,
+            settled_at_ms: now_ms,
+            resume: None,
+        };
+        // An expired session's outcome changes, so the host hears it again.
+        self.acknowledged = false;
+        Ok(())
     }
 
     /// Pick a failed session up where its funds are, as getcash's "try
@@ -734,7 +776,7 @@ impl FundingSession {
         let arrived_late = matches!(
             self.stage,
             FundingStage::Failed {
-                reason: FundingFailure::Expired,
+                reason: FundingFailure::Expired | FundingFailure::Cancelled,
                 ..
             }
         ) && self.recoverable_since(now_ms)
@@ -743,7 +785,9 @@ impl FundingSession {
             self.stage = FundingStage::Open;
         }
         if self.awaited_deposit().is_none() {
-            return recorded && !self.is_terminal();
+            // An ended session still watched is announced too, so a short or
+            // stray payment after a cancel or expiry can be accepted.
+            return recorded && (!self.is_terminal() || self.recoverable_since(now_ms));
         }
         if held >= gate {
             self.stage = FundingStage::Converting {
@@ -1416,6 +1460,85 @@ mod tests {
         );
     }
 
+    // getcash cancels only while nothing has happened: not once the deposit
+    // was seen, not while anything is on the account, which a cancel would
+    // strand; an expired request can still be cancelled to hide it.
+    #[test]
+    fn a_session_is_cancelled_only_while_nothing_arrived() {
+        let usdt = DepositAsset::Asset(1984);
+        let cancel = |mut session: FundingSession| {
+            session.cancel(NOW + 1).map(|()| (session.stage, session.acknowledged))
+        };
+        let cancelled = FundingStage::Failed {
+            reason: FundingFailure::Cancelled,
+            settled_at_ms: NOW + 1,
+            resume: None,
+        };
+        let awaiting = FundingSession {
+            deposit: Some(with_holdings(&[])),
+            ..session(FundingDirection::In)
+        };
+
+        assert_eq!(
+            [
+                cancel(session(FundingDirection::Out)),
+                cancel(awaiting.clone()),
+                cancel(FundingSession {
+                    acknowledged: true,
+                    ..expired("fs_1", NOW)
+                }),
+                cancel(FundingSession {
+                    deposit: Some(with_holdings(&[(usdt, 1)])),
+                    ..awaiting
+                }),
+                cancel(converting()),
+                cancel(landed()),
+            ],
+            [
+                Ok((cancelled.clone(), false)),
+                Ok((cancelled.clone(), false)),
+                Ok((cancelled, false)),
+                Err(CancelRefusal::FundsArrived),
+                Err(CancelRefusal::Underway),
+                Err(CancelRefusal::Underway),
+            ]
+        );
+    }
+
+    // A buyer who paid after cancelling is still owed the CASH, so a full
+    // deposit on a cancelled session converts within the late watch window,
+    // as getcash revives a cancelled request when money is seen.
+    #[test]
+    fn a_payment_after_a_cancel_is_still_converted() {
+        let mut cancelled = FundingSession {
+            deposit: Some(with_holdings(&[])),
+            ..session(FundingDirection::In)
+        };
+        cancelled.cancel(NOW).expect("cancelled");
+        let paid = vec![DepositHolding {
+            asset: DepositAsset::Asset(1984),
+            balance: 50,
+        }];
+        let mut too_late = cancelled.clone();
+
+        assert_eq!(
+            (
+                cancelled.observe_holdings(paid.clone(), NOW + 1),
+                cancelled.stage,
+                too_late.observe_holdings(paid, NOW + LATE_WATCH_MS + 1),
+            ),
+            (
+                true,
+                FundingStage::Converting {
+                    deposited: 50,
+                    refusals: 0,
+                    submission: None,
+                },
+                false
+            )
+        );
+    }
+
     // A deposit screen and a provider must see the address Asset Hub
     // wallets and Chainflip accept: prefix 0, as getcash encodes it.
     #[test]
@@ -1740,9 +1863,10 @@ mod tests {
     }
 
     // getcash gates a payment on its quoted deposit, so a provider asked for
-    // more than the quote has delivered once the quote is covered; and a
-    // full deposit that arrives after the session expired still converts,
-    // within the late watch window, with no one having to accept it.
+    // more than the quote has delivered once the quote is covered; a full
+    // deposit that arrives after the session expired still converts within
+    // the late watch window, with no one having to accept it, and a short one
+    // is announced so it can be accepted.
     #[test]
     fn a_deposit_converts_at_its_quote_and_also_when_it_arrives_late() {
         let usdt = DepositAsset::Asset(1984);
@@ -1785,7 +1909,7 @@ mod tests {
             [
                 (true, FundingStage::Open),
                 (true, converting.clone()),
-                (false, expired.stage.clone()),
+                (true, expired.stage.clone()),
                 (true, converting),
                 (false, expired.stage),
             ]

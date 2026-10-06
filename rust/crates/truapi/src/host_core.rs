@@ -888,6 +888,21 @@ impl SigningHostRuntime {
             })
     }
 
+    /// Cancel session `intent` while nothing has arrived, as getcash does:
+    /// refused once a deposit was seen or while anything is on the deposit
+    /// account, which is read first, and not done when that read cannot be
+    /// confirmed. A payment that arrives after all is still converted within
+    /// the late watch window.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.cancel_funding"))]
+    pub async fn cancel_funding(&self, intent: &str) -> Result<(), v01::GenericError> {
+        self.services
+            .cancel_funding(intent)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
     /// Try failed session `intent` again from where its funds are, as
     /// getcash's "try again": a refused or held conversion converts again by
     /// its route, an unclaimed or timed-out credit goes on claiming.

@@ -212,6 +212,8 @@ pub struct FundingCheck {
     pub accept: Option<FundingAsset>,
     /// Try a failed session again from where its funds are.
     pub retry: bool,
+    /// Cancel the session while nothing has arrived, and stop.
+    pub cancel: bool,
     /// Print the session's account seeds for a wallet, and stop.
     pub export_key: bool,
 }
@@ -257,6 +259,14 @@ pub async fn run(
             .await
             .map_err(|error| anyhow::anyhow!("accepting the deposit failed: {}", error.reason))?;
         println!("accepted what arrived of {deposit_asset:?}");
+    }
+    if check.cancel {
+        runtime
+            .cancel_funding(&intent)
+            .await
+            .map_err(|error| anyhow::anyhow!("cancelling the session failed: {}", error.reason))?;
+        println!("cancelled; a payment that arrives within 72 hours is still converted");
+        return Ok(());
     }
     if check.retry {
         runtime

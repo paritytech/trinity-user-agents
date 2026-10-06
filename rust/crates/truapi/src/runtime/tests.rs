@@ -2496,6 +2496,58 @@ fn a_funding_request_needs_a_host_overlay_then_a_session() {
     );
 }
 
+// A cancel must never strand funds it could not see, so a session with a
+// deposit account is cancelled only after a read confirms the account is
+// empty; one without an account is cancelled at once.
+#[test]
+fn a_funding_cancel_needs_a_confirmed_empty_account() {
+    let services = funding_services();
+    assert!(
+        services
+            .funding()
+            .install_platform(RecordingFundingPlatform::answering(
+                crate::platform::FundingPresentOutcome::Started,
+            ))
+    );
+    let open = |direction| {
+        futures::executor::block_on(services.open_funding(None, direction, None))
+            .expect("opened")
+            .intent
+    };
+    let plain = open(v01::FundingDirection::Out);
+    let with_account = open(v01::FundingDirection::In);
+    futures::executor::block_on(services.funding().commit(
+        services.platform.as_ref(),
+        crate::runtime::current_unix_millis(),
+        |sessions| {
+            if let Some(session) = sessions.get_mut(&with_account) {
+                session.deposit = Some(crate::host_logic::funding::FundingDeposit {
+                    source_id: "usdt-assethub".into(),
+                    number: 1,
+                    asset: crate::host_logic::funding::DepositAsset::Asset(1984),
+                    account: [1; 32],
+                    expected: 50,
+                    route: crate::host_logic::funding::ConversionRoute::Teleport,
+                    target: None,
+                    holdings: Vec::new(),
+                });
+            }
+            ((), Vec::new())
+        },
+    ))
+    .expect("assigned");
+    let cancel = |intent: &str| futures::executor::block_on(services.cancel_funding(intent));
+
+    assert_eq!(
+        (cancel(&plain), cancel(&with_account), cancel("fs_missing")),
+        (
+            Ok(()),
+            Err(super::funding::CancelFundingError::Unconfirmed),
+            Err(super::funding::CancelFundingError::NotFound)
+        )
+    );
+}
+
 // A host's history writes one row per outcome, so an ended session it has
 // not recorded is announced again each time funding resumes, until the host
 // acknowledges it.

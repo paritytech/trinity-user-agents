@@ -39,7 +39,7 @@ use super::statement_allowance::{ChainClient, ChainContext};
 use super::statement_allowance::rpc::RpcClient;
 use crate::host_logic::features;
 use crate::host_logic::funding::{
-    AcceptRefusal, ConversionRoute, ConversionStep, ConversionSubmission, CreditProgress, CreditStep,
+    AcceptRefusal, CancelRefusal, ConversionRoute, ConversionStep, ConversionSubmission, CreditProgress, CreditStep,
     DepositAsset, DepositHolding, DepositMismatch, DepositQuote, DepositRequest,
     FundingDeposit, FundingSession, FundingSessionError, FundingStage,
     load_sessions, next_account_number, retained, store_sessions,
@@ -61,6 +61,9 @@ const CHAIN_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a conversion that took the deposit on Asset Hub may take to
 /// reach People before it counts as stalled.
 const STALL_AFTER_MS: u64 = 30 * 60 * 1_000;
+/// Longest a cancel waits to confirm the deposit account is empty, as
+/// getcash waits.
+const CANCEL_CONFIRM: Duration = Duration::from_secs(8);
 /// Numbered accounts skipped for already holding funds before assignment
 /// gives up.
 const MAX_USED_ACCOUNTS: usize = 16;
@@ -138,6 +141,36 @@ impl FundingRegistry {
             )
         });
         sessions
+    }
+
+    /// Cancel session `intent`, first recording `holdings`, a fresh reading
+    /// of its deposit account when it has one.
+    pub async fn cancel(
+        &self,
+        storage: &(impl CoreStorage + ?Sized),
+        now_ms: u64,
+        intent: &str,
+        holdings: Option<Vec<DepositHolding>>,
+    ) -> Result<(), CancelFundingError> {
+        let intent = intent.to_string();
+        self.commit(storage, now_ms, move |sessions| {
+            let Some(session) = sessions.get_mut(&intent) else {
+                return (Err(CancelFundingError::NotFound), Vec::new());
+            };
+            // An account assigned since the read, or funds a watch pass
+            // recorded since, are not covered by it.
+            if holdings.is_none() && session.deposit.is_some() {
+                return (Err(CancelFundingError::Unconfirmed), Vec::new());
+            }
+            if session.deposit.as_ref().is_some_and(|deposit| !deposit.holdings.is_empty()) {
+                return (Err(CancelFundingError::Refused(CancelRefusal::FundsArrived)), Vec::new());
+            }
+            let observed = holdings.is_some_and(|holdings| session.observe_holdings(holdings, now_ms));
+            let cancelled = session.cancel(now_ms).map_err(CancelFundingError::Refused);
+            let changed = if observed || cancelled.is_ok() { vec![intent] } else { Vec::new() };
+            (cancelled, changed)
+        })
+        .await?
     }
 
     /// Record that the host has written ended session `intent` into its own
@@ -395,12 +428,8 @@ impl FundingRegistry {
         }
         let mut readings = Vec::new();
         'sessions: for (intent, deposit) in watched {
-            let mut assets = vec![deposit.asset];
-            assets.extend(deposit_assets.iter().filter(|other| **other != deposit.asset));
-            // The native token goes last, so it is the stray of last resort.
-            assets.sort_by_key(|asset| *asset == DepositAsset::Native);
             let mut holdings = Vec::new();
-            for asset in assets {
+            for asset in assets_to_read(&deposit, deposit_assets) {
                 let balance = match balances.balance(asset, &deposit.account).await {
                     Ok(balance) => balance,
                     Err(error) if asset != deposit.asset => {
@@ -689,6 +718,57 @@ async fn within_chain_timeout<T>(read: impl Future<Output = T>) -> Result<T, Gen
     within_timeout(CHAIN_TIMEOUT, read).await
 }
 
+/// The assets `deposit`'s account is read for: its own, then the others in
+/// `deposit_assets`, the native token last, so it is the stray of last
+/// resort.
+fn assets_to_read(deposit: &FundingDeposit, deposit_assets: &[DepositAsset]) -> Vec<DepositAsset> {
+    let mut assets = vec![deposit.asset];
+    assets.extend(deposit_assets.iter().filter(|other| **other != deposit.asset));
+    assets.sort_by_key(|asset| *asset == DepositAsset::Native);
+    assets
+}
+
+/// Everything `deposit`'s account holds of `deposit_assets`, failing if any
+/// read fails.
+async fn read_holdings(
+    balances: &dyn DepositBalances,
+    deposit: &FundingDeposit,
+    deposit_assets: &[DepositAsset],
+) -> Result<Vec<DepositHolding>, GenericError> {
+    let mut holdings = Vec::new();
+    for asset in assets_to_read(deposit, deposit_assets) {
+        let balance = balances.balance(asset, &deposit.account).await?;
+        if balance > 0 {
+            holdings.push(DepositHolding { asset, balance });
+        }
+    }
+    Ok(holdings)
+}
+
+/// Why a funding session could not be cancelled.
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+pub enum CancelFundingError {
+    /// No such session.
+    #[display("no such funding session")]
+    NotFound,
+    /// The session cannot be cancelled now.
+    #[display("{_0}")]
+    Refused(CancelRefusal),
+    /// The deposit account could not be read in time, so nothing was
+    /// cancelled.
+    #[display("could not confirm the deposit account is empty; try again")]
+    Unconfirmed,
+    /// The cancel could not be saved.
+    #[display("{_0}")]
+    Storage(FundingSessionError),
+}
+
+impl From<FundingSessionError> for CancelFundingError {
+    fn from(error: FundingSessionError) -> Self {
+        Self::Storage(error)
+    }
+}
+
 /// Run `work`, giving up after `limit`.
 async fn within_timeout<T>(limit: Duration, work: impl Future<Output = T>) -> Result<T, GenericError> {
     let work = work.fuse();
@@ -878,6 +958,44 @@ impl RuntimeServices {
             .await?;
         self.watch_funding_deposits();
         Ok(account)
+    }
+
+    /// Cancel session `intent` while nothing has arrived, as getcash does:
+    /// a session with a deposit account has it read first, and is not
+    /// cancelled unless the read confirms it holds nothing. The read is at
+    /// finalized blocks, as every funding read is; a payment still short of
+    /// finality when the cancel goes through is converted by the late watch
+    /// once it reaches the gate, and shown for accepting if it does not.
+    pub async fn cancel_funding(self: &Arc<Self>, intent: &str) -> Result<(), CancelFundingError> {
+        let registry = self.funding();
+        let session = registry.get(intent).ok_or(CancelFundingError::NotFound)?;
+        let holdings = match (&session.deposit, registry.conversion.get()) {
+            (None, _) => None,
+            (Some(_), None) => return Err(CancelFundingError::Unconfirmed),
+            (Some(deposit), Some(conversion)) => {
+                let read = within_timeout(CANCEL_CONFIRM, async {
+                    let chains = self
+                        .funding_chains(conversion.network, false)
+                        .await
+                        .map_err(|error| GenericError {
+                            reason: error.to_string(),
+                        })?;
+                    read_holdings(&chains, deposit, &conversion.deposit_assets).await
+                })
+                .await
+                .and_then(|read| read);
+                match read {
+                    Ok(holdings) => Some(holdings),
+                    Err(GenericError { reason }) => {
+                        tracing::warn!(%intent, %reason, "confirming a funding cancel failed");
+                        return Err(CancelFundingError::Unconfirmed);
+                    }
+                }
+            }
+        };
+        registry
+            .cancel(self.platform.as_ref(), current_unix_millis(), intent, holdings)
+            .await
     }
 
     /// Record that the host wrote ended session `intent` into its own
@@ -1535,6 +1653,83 @@ mod tests {
                 .to_vec(),
                 Some(49)
             ))
+        );
+    }
+
+    // The fresh read a cancel takes is recorded first, so funds that arrived
+    // since the last pass refuse the cancel and show on the session.
+    #[test]
+    fn a_cancel_is_refused_by_what_the_fresh_read_finds() {
+        let storage = stub_platform();
+        let registry = FundingRegistry::default();
+        insert(
+            &registry,
+            storage.as_ref(),
+            FundingSession {
+                deposit: Some(converting_deposit()),
+                ..session("fs_1", NOW)
+            },
+        );
+        let stray = DepositHolding {
+            asset: DepositAsset::Asset(1337),
+            balance: 3,
+        };
+
+        let refused = block_on(registry.cancel(storage.as_ref(), NOW, "fs_1", Some(vec![stray])));
+        let holdings = || registry.get("fs_1").and_then(|session| session.deposit).map(|deposit| deposit.holdings);
+        let after_fresh_read = holdings();
+        // A read taken before the watch recorded the stray must not erase it.
+        let stale = block_on(registry.cancel(storage.as_ref(), NOW, "fs_1", Some(Vec::new())));
+
+        assert_eq!(
+            (refused, after_fresh_read, stale, holdings()),
+            (
+                Err(CancelFundingError::Refused(CancelRefusal::FundsArrived)),
+                Some(vec![stray]),
+                Err(CancelFundingError::Refused(CancelRefusal::FundsArrived)),
+                Some(vec![stray]),
+            )
+        );
+    }
+
+    // A full deposit the cancel's read finds is converted, not cancelled,
+    // and an account assigned after the read is not cancelled unread.
+    #[test]
+    fn a_cancel_converts_a_deposit_it_finds_and_never_cancels_unread() {
+        let storage = stub_platform();
+        let registry = FundingRegistry::default();
+        insert(
+            &registry,
+            storage.as_ref(),
+            FundingSession {
+                deposit: Some(converting_deposit()),
+                ..session("fs_1", NOW)
+            },
+        );
+        insert(
+            &registry,
+            storage.as_ref(),
+            FundingSession {
+                deposit: Some(converting_deposit()),
+                ..session("fs_2", NOW)
+            },
+        );
+        let paid = DepositHolding {
+            asset: USDT,
+            balance: 50,
+        };
+
+        assert_eq!(
+            (
+                block_on(registry.cancel(storage.as_ref(), NOW, "fs_1", Some(vec![paid]))),
+                registry.get("fs_1").map(|session| session.step()),
+                block_on(registry.cancel(storage.as_ref(), NOW, "fs_2", None)),
+            ),
+            (
+                Err(CancelFundingError::Refused(CancelRefusal::Underway)),
+                Some(FundingStep::DepositSeen),
+                Err(CancelFundingError::Unconfirmed),
+            )
         );
     }
 
