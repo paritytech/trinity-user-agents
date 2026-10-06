@@ -127,19 +127,24 @@ pub struct BulletinAllowanceKey {
 impl BulletinAllowanceKey {
     /// Reject invalid sr25519 material before it can be retained.
     pub fn from_secret_bytes(secret: Vec<u8>) -> Result<Self, AuthorityError> {
-        let secret: [u8; 64] =
+        let secret = zeroize::Zeroizing::new(secret);
+        let bytes: [u8; 64] =
             secret
+                .as_slice()
                 .try_into()
-                .map_err(|secret: Vec<u8>| AuthorityError::Unavailable {
+                .map_err(|_| AuthorityError::Unavailable {
                     reason: format!(
                         "bulletin allowance key must be 64 bytes, got {}",
                         secret.len()
                     ),
                 })?;
-        schnorrkel::SecretKey::from_bytes(&secret).map_err(|_| AuthorityError::Unavailable {
-            reason: "invalid bulletin allowance key".to_string(),
+        let secret = zeroize::Zeroizing::new(bytes);
+        schnorrkel::SecretKey::from_bytes(&secret[..]).map_err(|_| {
+            AuthorityError::Unavailable {
+                reason: "invalid bulletin allowance key".to_string(),
+            }
         })?;
-        Ok(Self { secret })
+        Ok(Self { secret: *secret })
     }
 
     /// Raw secret for the in-core Bulletin signer.
@@ -523,18 +528,24 @@ impl StatementStoreAllowanceKey {
     /// Wrap a 64-byte sr25519 secret and derive its public key; other lengths
     /// are `Unavailable`.
     pub fn from_secret_bytes(secret: Vec<u8>) -> Result<Self, AuthorityError> {
-        let secret: [u8; 64] =
+        let secret = zeroize::Zeroizing::new(secret);
+        let bytes: [u8; 64] =
             secret
+                .as_slice()
                 .try_into()
-                .map_err(|secret: Vec<u8>| AuthorityError::Unavailable {
+                .map_err(|_| AuthorityError::Unavailable {
                     reason: format!(
                         "statement-store allowance key must be 64 bytes, got {}",
                         secret.len()
                     ),
                 })?;
-        let public_key = statement_public_key_from_secret(secret)
+        let secret = zeroize::Zeroizing::new(bytes);
+        let public_key = statement_public_key_from_secret(*secret)
             .map_err(|reason| AuthorityError::Unavailable { reason })?;
-        Ok(Self { secret, public_key })
+        Ok(Self {
+            secret: *secret,
+            public_key,
+        })
     }
 }
 

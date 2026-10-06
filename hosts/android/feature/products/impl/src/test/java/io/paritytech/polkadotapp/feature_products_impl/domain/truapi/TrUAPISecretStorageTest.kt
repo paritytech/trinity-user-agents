@@ -57,19 +57,25 @@ class TrUAPISecretStorageTest {
     }
 
     @Test
-    fun `paired sessions and public core records have distinct storage names`() = runTest {
+    fun `native allowances and paired sessions survive adapter recreation in separate namespaces`() = runTest {
         val values = mutableMapOf<String, String>()
         every { preferences.putEncryptedStringCommitted(any(), any()) } answers { values[firstArg()] = secondArg() }
         every { preferences.getDecryptedStringOrThrow(any()) } answers { values[firstArg()] }
         val first = SecretCoreStorageKey.AllowanceKeys("first")
         val second = SecretCoreStorageKey.AllowanceKeys("second")
+        val native = SecretCoreStorageKey.NativeAllowanceKeys
         storage.write(first, byteArrayOf(1))
         storage.write(second, byteArrayOf(2))
         EncryptedHostCoreStorage(preferences, gate).write(byteArrayOf(0), byteArrayOf(3))
-        assertEquals(3, values.size)
-        assertArrayEquals(byteArrayOf(1), storage.read(first))
-        assertArrayEquals(byteArrayOf(2), storage.read(second))
-        assertArrayEquals(byteArrayOf(3), EncryptedHostCoreStorage(preferences, gate).read(byteArrayOf(0)))
+        storage.write(native, byteArrayOf(4))
+
+        val recreatedGate = TrUAPIStorageGate(backing)
+        val recreatedStorage = TrUAPISecretStorage(preferences, recreatedGate, deviceKeys)
+        assertEquals(4, values.size)
+        assertArrayEquals(byteArrayOf(1), recreatedStorage.read(first))
+        assertArrayEquals(byteArrayOf(2), recreatedStorage.read(second))
+        assertArrayEquals(byteArrayOf(3), EncryptedHostCoreStorage(preferences, recreatedGate).read(byteArrayOf(0)))
+        assertArrayEquals(byteArrayOf(4), recreatedStorage.read(native))
     }
 
     @Test

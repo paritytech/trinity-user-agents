@@ -205,7 +205,9 @@ fn pending_vrf_approval_distinguishes_wallet_and_host_reset() {
                     futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
                         .unwrap();
                 }
-                "reset" => authority.clear_product_state("myapp.dot").unwrap(),
+                "reset" => {
+                    futures::executor::block_on(authority.clear_product_state("myapp.dot")).unwrap()
+                }
                 _ => unreachable!(),
             }
             release.send(()).unwrap();
@@ -250,7 +252,7 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
     );
     futures::pin_mut!(allocation);
     assert!(allocation.as_mut().now_or_never().is_none());
-    authority.clear_product_state("myapp.dot").unwrap();
+    futures::executor::block_on(authority.clear_product_state("myapp.dot")).unwrap();
     release.send(()).unwrap();
     let result = futures::executor::block_on(allocation);
     let session = authority.account_holder().current_session().unwrap();

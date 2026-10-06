@@ -207,6 +207,8 @@ pub struct StubPlatform {
     pub secret_core_storage_override: Option<Arc<dyn crate::platform::SecretCoreStorage>>,
     /// Delay protected reads before their effect.
     pub secret_core_storage_read_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+    /// Delay completion after a protected write has taken effect.
+    pub secret_core_storage_write_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Keep protected reads pending for cancellation fixtures.
     pub secret_core_storage_pending: bool,
     /// When true, `connect` stays pending forever.
@@ -1199,6 +1201,10 @@ impl crate::platform::SecretCoreStorage for StubPlatform {
             .lock()
             .expect("local storage mutex poisoned")
             .insert(secret_core_storage_test_key(key), value);
+        let gate = self.secret_core_storage_write_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
         Ok(())
     }
 

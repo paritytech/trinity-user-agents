@@ -27,6 +27,9 @@ pub enum SecretCoreStorageKey {
     /// Wallet-bound delegated product signing capabilities.
     #[codec(index = 4)]
     AutoSigningKeys,
+    /// Native resource grants bound to stable wallet ownership.
+    #[codec(index = 5)]
+    NativeAllowanceKeys,
 }
 
 impl SecretCoreStorageKey {

@@ -469,7 +469,11 @@ export type SecretCoreStorageKey =
   /**
    * Wallet-bound delegated product signing capabilities.
    */
-  | { tag: "AutoSigningKeys"; value?: undefined };
+  | { tag: "AutoSigningKeys"; value?: undefined }
+  /**
+   * Native resource grants bound to stable wallet ownership.
+   */
+  | { tag: "NativeAllowanceKeys"; value?: undefined };
 
 /**
  * Decoded session fields a host shell needs to render account UI without
@@ -990,6 +994,7 @@ export const SecretCoreStorageKey: S.Codec<SecretCoreStorageKey> = S.lazy(
         sessionId: string;
       }>,
       AutoSigningKeys: S._void,
+      NativeAllowanceKeys: S._void,
     }),
 );
 

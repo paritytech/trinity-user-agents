@@ -7,16 +7,20 @@ import TrUAPIHost
 @testable import polkadot_app
 
 struct TrUAPISecretStorageTests {
-    @Test func installationNamespacesDoNotShareSecrets() async throws {
+    @Test func recreatedStorageKeepsNativeAllowancesIsolated() async throws {
         let keychain = MemoryKeychain()
         let first = storage(keychain: keychain, installation: "first")
         let second = storage(keychain: keychain, installation: "second")
-        try await first.write(key: .authSession, value: Data([1]))
-        #expect(try await second.read(key: .authSession) == nil)
-        try await second.write(key: .authSession, value: Data([2]))
-        try await first.clear(key: .authSession)
-        #expect(try await first.read(key: .authSession) == nil)
-        #expect(try await second.read(key: .authSession) == Data([2]))
+        try await first.write(key: .nativeAllowanceKeys, value: Data([1]))
+        try await first.write(key: .allowanceKeys(sessionId: "paired"), value: Data([3]))
+        #expect(try await second.read(key: .nativeAllowanceKeys) == nil)
+        try await second.write(key: .nativeAllowanceKeys, value: Data([2]))
+        let recreated = storage(keychain: keychain, installation: "first")
+        #expect(try await recreated.read(key: .nativeAllowanceKeys) == Data([1]))
+        try await recreated.clear(key: .nativeAllowanceKeys)
+        #expect(try await first.read(key: .nativeAllowanceKeys) == nil)
+        #expect(try await first.read(key: .allowanceKeys(sessionId: "paired")) == Data([3]))
+        #expect(try await second.read(key: .nativeAllowanceKeys) == Data([2]))
     }
 
     @Test func onlyMissingKeysReturnNil() async throws {

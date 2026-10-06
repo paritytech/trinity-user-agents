@@ -186,6 +186,8 @@ Host secrets use required typed `SecretCoreStorage` callbacks, separate from pub
 
 Native runtimes start locked. Explicit `activateWallet` reads the selected protected root through a separate `WalletSecretProvider`, which is unavailable to product callbacks and account operations. Failed replacement preserves the active wallet; native selection changes call `lockWallet` first, invalidating pending reads and in-memory authorization.
 
+Native StatementStore and Bulletin allowance keys persist through `SecretCoreStorage`, scoped to the wallet and product. Locking preserves them; product reset removes only that product. StatementStore retains its allocation period so expiry and delayed rejection cannot erase a newer grant.
+
 `ProductRuntimeHost<H>` combines account policy with `HostSession` for login, disconnect and identity lookup, and `ProductConnection` for adapters, permissions, action streams and open operation demand. `SsoRequestService` and `SigningHost` implement `HostSession` directly. Product dispatch, control handles and renderer references share the connection and canonical session state. Rust runtime constructors take the session dependency explicitly.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.
