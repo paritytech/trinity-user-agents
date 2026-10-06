@@ -345,11 +345,12 @@ impl WalletAccountHolder {
         }
         self.require_current_session(session)?;
         if let Err(reason) = self
-            .track_statement_renewal_targets(vec![
-                StatementRenewalTarget::ProductStatementAllowance {
+            .track_statement_renewal_targets_for(
+                session,
+                vec![StatementRenewalTarget::ProductStatementAllowance {
                     product_id: product_id.to_string(),
-                },
-            ])
+                }],
+            )
             .await
         {
             warn!(%product_id, %reason, "failed to record statement-store renewal target");
