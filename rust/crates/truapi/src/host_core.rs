@@ -823,15 +823,63 @@ impl SigningHostRuntime {
     /// with the deposit accounts this host derives. Without it, assigning a
     /// deposit account fails. Set-once; returns whether this call enabled it.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.enable_funding_conversion"))]
-    pub fn enable_funding_conversion(&self, network: crate::runtime::FundingNetwork) -> bool {
-        let enabled = self
-            .services
-            .funding()
-            .install_conversion(network, self.signing_host.clone());
+    ///
+    /// Every watched deposit account is read for the `deposit_asset_ids`
+    /// (`Assets` pallet ids) and the native token, so a wrong or short
+    /// deposit is seen.
+    pub fn enable_funding_conversion(
+        &self,
+        network: crate::runtime::FundingNetwork,
+        deposit_asset_ids: Vec<u32>,
+    ) -> bool {
+        let enabled = self.services.funding().install_conversion(
+            network,
+            deposit_asset_ids,
+            self.signing_host.clone(),
+        );
         if enabled {
             self.services.watch_funding_deposits();
         }
         enabled
+    }
+
+    /// Convert what arrived of `asset` on session `intent`'s deposit account
+    /// instead of what was asked: a short deposit, another asset, or funds
+    /// that came after the session expired or stayed after a refused
+    /// conversion.
+    pub async fn accept_funding_deposit(
+        &self,
+        intent: &str,
+        asset: crate::host_logic::funding::DepositAsset,
+    ) -> Result<(), v01::GenericError> {
+        self.services
+            .accept_funding_deposit(intent, asset)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
+    /// Raw seed of session `intent`'s `kind` account, for a wallet to import
+    /// and move its funds by hand. `None` while no signing session is active.
+    pub fn funding_account_secret(
+        &self,
+        intent: &str,
+        kind: crate::host_logic::funding::FundingAccountKind,
+    ) -> Result<Option<[u8; 32]>, v01::GenericError> {
+        let deposit = self
+            .services
+            .funding()
+            .get(intent)
+            .and_then(|session| session.deposit)
+            .ok_or_else(|| v01::GenericError {
+                reason: "the session has no deposit account".into(),
+            })?;
+        self.signing_host
+            .funding_account_secret(kind, &deposit.source_id, deposit.number)
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
     }
 
     /// Open a funding session on the host's own behalf, as the Balance card's

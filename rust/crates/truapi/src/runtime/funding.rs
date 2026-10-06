@@ -39,8 +39,8 @@ use super::statement_allowance::{ChainClient, ChainContext};
 use super::statement_allowance::rpc::RpcClient;
 use crate::host_logic::features;
 use crate::host_logic::funding::{
-    ConversionRoute, ConversionStep, ConversionSubmission, CreditAttempt, CreditStep, DepositAsset,
-    DepositQuote, DepositRequest,
+    AcceptRefusal, ConversionRoute, ConversionStep, ConversionSubmission, CreditAttempt, CreditStep,
+    DepositAsset, DepositHolding, DepositQuote, DepositRequest,
     FundingDeposit, FundingSession, FundingSessionError, FundingStage,
     load_sessions, next_account_number, retained, store_sessions,
 };
@@ -96,8 +96,25 @@ impl FundingRegistry {
 
     /// Let deposits be converted on `network`, signed by `signer`. Set-once;
     /// returns whether this call installed it.
-    pub fn install_conversion(&self, network: FundingNetwork, signer: Arc<dyn FundingSigner>) -> bool {
-        self.conversion.set(Conversion { network, signer }).is_ok()
+    ///
+    /// The assets a deposit can arrive in, `deposit_asset_ids` from the
+    /// network's `Assets` pallet with the native token, are read on every
+    /// watched deposit account, so a wrong or short deposit is seen.
+    pub fn install_conversion(
+        &self,
+        network: FundingNetwork,
+        deposit_asset_ids: Vec<u32>,
+        signer: Arc<dyn FundingSigner>,
+    ) -> bool {
+        let mut deposit_assets: Vec<_> = deposit_asset_ids.into_iter().map(DepositAsset::Asset).collect();
+        deposit_assets.push(DepositAsset::Native);
+        self.conversion
+            .set(Conversion {
+                network,
+                deposit_assets,
+                signer,
+            })
+            .is_ok()
     }
 
     /// Snapshot one session.
@@ -125,7 +142,21 @@ impl FundingRegistry {
             .entry(intent.to_string())
             .or_default()
             .push(sender);
-        Some(current.chain(receiver).boxed())
+        // The host also hears when only a deposit account's holdings change;
+        // a subscriber sees each status once.
+        let mut shown = None;
+        Some(
+            current
+                .chain(receiver)
+                .filter(move |item| {
+                    let fresh = shown.as_ref() != Some(item);
+                    if fresh {
+                        shown = Some(item.clone());
+                    }
+                    futures::future::ready(fresh)
+                })
+                .boxed(),
+        )
     }
 
     /// Apply `edit` to a copy of the sessions, persist the result, then make it
@@ -276,6 +307,7 @@ impl FundingRegistry {
                 expected: request.expected,
                 route,
                 target,
+                holdings: Vec::new(),
             };
             let intent = intent.to_string();
             return self
@@ -294,43 +326,61 @@ impl FundingRegistry {
         Err(AssignDepositError::AccountsInUse)
     }
 
-    /// Read every awaited deposit once: a session whose deposit arrived
-    /// moves to converting, one past its deadline without it expires. A
-    /// failed read leaves its session for the next pass.
+    /// Read every watched deposit account once, for its requested asset and
+    /// every asset in `deposit_assets`: an open session whose deposit arrived
+    /// moves to converting, one past its deadline without it expires, and
+    /// every watched session records what it holds, so a wrong, short or late
+    /// deposit is seen. A failed read leaves its session for the next pass.
     pub async fn observe_deposits(
         &self,
         storage: &(impl CoreStorage + ?Sized),
         now_ms: u64,
         balances: &dyn DepositBalances,
+        deposit_assets: &[DepositAsset],
     ) -> Result<(), FundingSessionError> {
-        let awaited: Vec<_> = self
+        let watched: Vec<_> = self
             .lock_sessions()
             .values()
             .filter_map(|session| {
-                let deposit = session.awaited_deposit()?;
+                let deposit = session.watched_deposit(now_ms)?;
                 Some((session.intent.clone(), deposit.asset, deposit.account))
             })
             .collect();
         let mut readings = Vec::new();
-        for (intent, asset, account) in awaited {
-            match balances.balance(asset, &account).await {
-                Ok(balance) => readings.push((intent, balance)),
-                Err(error) => {
-                    tracing::warn!(%intent, reason = %error.reason, "reading a funding deposit failed")
+        'sessions: for (intent, asset, account) in watched {
+            let mut assets = vec![asset];
+            assets.extend(deposit_assets.iter().filter(|other| **other != asset));
+            // The native token goes last, so it is the stray of last resort.
+            assets.sort_by_key(|asset| *asset == DepositAsset::Native);
+            let mut holdings = Vec::new();
+            for asset in assets {
+                match balances.balance(asset, &account).await {
+                    Ok(0) => {}
+                    Ok(balance) => holdings.push(DepositHolding { asset, balance }),
+                    Err(error) => {
+                        tracing::warn!(%intent, reason = %error.reason, "reading a funding deposit failed");
+                        continue 'sessions;
+                    }
                 }
             }
+            readings.push((intent, holdings));
         }
         self.commit(storage, now_ms, move |sessions| {
-            let arrived = readings
-                .into_iter()
-                .filter(|(intent, balance)| {
-                    sessions
-                        .get_mut(intent)
-                        .is_some_and(|session| session.observe_deposit(*balance, now_ms))
-                })
-                .map(|(intent, _)| intent)
-                .collect();
-            ((), arrived)
+            let mut changed = Vec::new();
+            for (intent, holdings) in readings {
+                let Some(session) = sessions.get_mut(&intent) else {
+                    continue;
+                };
+                let recorded = session.record_holdings(holdings);
+                let held = session
+                    .awaited_deposit()
+                    .map(|deposit| deposit.held(deposit.asset));
+                let advanced = held.is_some_and(|held| session.observe_deposit(held, now_ms));
+                if recorded || advanced {
+                    changed.push(intent);
+                }
+            }
+            ((), changed)
         })
         .await
     }
@@ -358,7 +408,7 @@ impl FundingRegistry {
         self.lock_sessions()
             .values()
             .any(|session| {
-                session.awaited_deposit().is_some()
+                session.watched_deposit(current_unix_millis()).is_some()
                     || session.converting().is_some()
                     || session.crediting().is_some()
             })
@@ -479,6 +529,8 @@ pub struct DepositPlan {
 /// What converts deposits: the network's constants and the deposit keys.
 struct Conversion {
     network: FundingNetwork,
+    /// What a deposit account is read for, the native token last.
+    deposit_assets: Vec<DepositAsset>,
     signer: Arc<dyn FundingSigner>,
 }
 
@@ -525,7 +577,12 @@ async fn plan_conversion(
             if held >= submission.spent {
                 Some(ConversionStep::Dropped)
             } else if now_ms.saturating_sub(submission.submitted_at_ms) > STALL_AFTER_MS {
-                Some(ConversionStep::Stalled)
+                // What did land on People is the user's: credit it rather
+                // than fail, where getcash fails the job as a shortfall.
+                Some(match landed {
+                    0 => ConversionStep::Stalled,
+                    landed => ConversionStep::Landed { landed },
+                })
             } else {
                 None
             }
@@ -761,6 +818,49 @@ impl RuntimeServices {
         Ok(account)
     }
 
+    /// Convert what arrived of `asset` on session `intent`'s deposit account,
+    /// by the route that serves that much of it.
+    pub async fn accept_funding_deposit(
+        self: &Arc<Self>,
+        intent: &str,
+        asset: DepositAsset,
+    ) -> Result<(), AssignDepositError> {
+        let arrived = self
+            .funding()
+            .get(intent)
+            .ok_or(AssignDepositError::NotFound)?
+            .deposit
+            .map(|deposit| deposit.held(asset))
+            .filter(|arrived| *arrived > 0)
+            .ok_or_else(|| AssignDepositError::Refused(AcceptRefusal::NothingArrived.to_string()))?;
+        let chains = self
+            .funding_chains(self.funding_network()?, false)
+            .await
+            .map_err(AssignDepositError::from_conversion)?;
+        let route = within_chain_timeout(chains.choose_route(asset, arrived))
+            .await
+            .map_err(AssignDepositError::Chain)?
+            .map_err(AssignDepositError::from_conversion)?
+            .ok_or(AssignDepositError::NoRoute)?;
+        let intent = intent.to_string();
+        self.funding()
+            .commit(self.platform.as_ref(), current_unix_millis(), move |sessions| {
+                let accepted = sessions
+                    .get_mut(&intent)
+                    .ok_or(AssignDepositError::NotFound)
+                    .and_then(|session| {
+                        session
+                            .accept_arrival(asset, route, current_unix_millis())
+                            .map_err(|refusal| AssignDepositError::Refused(refusal.to_string()))
+                    });
+                let changed = if accepted.is_ok() { vec![intent] } else { Vec::new() };
+                (accepted, changed)
+            })
+            .await??;
+        self.watch_funding_deposits();
+        Ok(())
+    }
+
     /// The deposit of `asset` a provider must deliver to credit the amount
     /// session `intent` names.
     pub async fn quote_funding_deposit(
@@ -951,8 +1051,9 @@ impl RuntimeServices {
         };
         let (pending, signing) = {
             let sessions = registry.lock_sessions();
+            let now_ms = current_unix_millis();
             let pending = sessions.values().any(|session| {
-                session.awaited_deposit().is_some() || session.converting().is_some()
+                session.watched_deposit(now_ms).is_some() || session.converting().is_some()
             });
             let signing = sessions
                 .values()
@@ -967,7 +1068,12 @@ impl RuntimeServices {
             .await
             .map_err(|error| error.to_string())?;
         let observed = registry
-            .observe_deposits(self.platform.as_ref(), current_unix_millis(), &chains)
+            .observe_deposits(
+                self.platform.as_ref(),
+                current_unix_millis(),
+                &chains,
+                &conversion.deposit_assets,
+            )
             .await;
         if let Err(error) = observed {
             tracing::warn!(%error, "recording funding deposits failed");
@@ -1303,6 +1409,7 @@ mod tests {
                     expected: 50,
                     route: ConversionRoute::Teleport,
                     target: Some(100),
+                    holdings: Vec::new(),
                 })
             )
         );
@@ -1360,7 +1467,7 @@ mod tests {
 
         for held in [49, 50] {
             let balances = Balances(HashMap::from([(account(1), held)]));
-            block_on(registry.observe_deposits(storage.as_ref(), NOW, &balances))
+            block_on(registry.observe_deposits(storage.as_ref(), NOW, &balances, &[]))
                 .expect("observed");
         }
         let restarted = FundingRegistry::default();
@@ -1407,7 +1514,7 @@ mod tests {
         let after_sweep = [registry.get("fs_late"), registry.get("fs_never")]
             .map(|session| session.map(|session| session.stage));
         let late_payment = Balances(HashMap::from([(account(1), 50)]));
-        block_on(registry.observe_deposits(storage.as_ref(), past_deadline, &late_payment))
+        block_on(registry.observe_deposits(storage.as_ref(), past_deadline, &late_payment, &[]))
             .expect("observed");
 
         assert_eq!(
@@ -1536,6 +1643,7 @@ mod tests {
             expected: 50,
             route: ConversionRoute::Teleport,
             target: None,
+            holdings: Vec::new(),
         }
     }
 
@@ -1608,6 +1716,109 @@ mod tests {
                 Some(PlannedStep::Record(ConversionStep::Dropped)),
                 Some(PlannedStep::Record(ConversionStep::Dropped)),
                 None,
+                Some(PlannedStep::Record(ConversionStep::Stalled)),
+            ]
+        );
+    }
+
+    /// Balances per asset and account; anything else is empty.
+    struct AssetBalances(Vec<(DepositAsset, [u8; 32], u128)>);
+
+    impl DepositBalances for AssetBalances {
+        fn balance<'a>(
+            &'a self,
+            asset: DepositAsset,
+            account: &'a [u8; 32],
+        ) -> BoxFuture<'a, Result<u128, GenericError>> {
+            let balance = self
+                .0
+                .iter()
+                .find(|(held, holder, _)| *held == asset && holder == account)
+                .map_or(0, |(_, _, balance)| *balance);
+            Box::pin(async move { Ok(balance) })
+        }
+    }
+
+    // A wrong or short deposit is only seen if every asset a deposit can
+    // arrive in is read, and a late one only if an expired session keeps
+    // being read; past the watch window it is left alone.
+    #[test]
+    fn the_watch_reads_every_deposit_asset_and_late_sessions_within_the_window() {
+        let storage = stub_platform();
+        let registry = FundingRegistry::default();
+        let usdc = DepositAsset::Asset(1337);
+        let now = NOW + crate::host_logic::funding::LATE_WATCH_MS;
+        let expired = |intent: &str, settled_at_ms, holder| FundingSession {
+            stage: FundingStage::Failed {
+                reason: FundingFailure::Expired,
+                settled_at_ms,
+            },
+            deposit: Some(FundingDeposit {
+                account: holder,
+                ..converting_deposit()
+            }),
+            ..session(intent, settled_at_ms - DAY_MS)
+        };
+        insert(&registry, storage.as_ref(), expired("fs_recent", NOW, account(1)));
+        insert(&registry, storage.as_ref(), expired("fs_old", NOW - 1, account(2)));
+        let balances = AssetBalances(vec![
+            (DepositAsset::Native, account(1), 3),
+            (usdc, account(1), 9),
+            (usdc, account(2), 9),
+        ]);
+
+        block_on(registry.observe_deposits(
+            storage.as_ref(),
+            now,
+            &balances,
+            &[usdc, DepositAsset::Native],
+        ))
+        .expect("observed");
+        let holdings = |intent| {
+            registry
+                .get(intent)
+                .and_then(|session| session.deposit)
+                .map(|deposit| deposit.holdings)
+        };
+
+        assert_eq!(
+            (holdings("fs_recent"), holdings("fs_old")),
+            (
+                Some(vec![
+                    DepositHolding {
+                        asset: usdc,
+                        balance: 9
+                    },
+                    DepositHolding {
+                        asset: DepositAsset::Native,
+                        balance: 3
+                    },
+                ]),
+                Some(Vec::new())
+            )
+        );
+    }
+
+    // What did land on People is the user's even when the conversion took
+    // the deposit and less arrived than it should have: it is credited
+    // rather than the session failing, as getcash fails it.
+    #[test]
+    fn a_stalled_conversion_credits_what_did_land() {
+        let late = NOW + STALL_AFTER_MS + 1;
+        let chains = |landed| Scripted {
+            landed,
+            nonce: 5,
+            balance: 1,
+            block: 100,
+        };
+
+        assert_eq!(
+            [
+                next_step(chains(30), Some(SUBMITTED), late),
+                next_step(chains(10), Some(SUBMITTED), late),
+            ],
+            [
+                Some(PlannedStep::Record(ConversionStep::Landed { landed: 20 })),
                 Some(PlannedStep::Record(ConversionStep::Stalled)),
             ]
         );

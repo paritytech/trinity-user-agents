@@ -329,6 +329,15 @@ enum Command {
         /// Follow an existing session instead of opening a new one.
         #[arg(long)]
         intent: Option<String>,
+        /// With `--intent`: convert what arrived of this asset instead of
+        /// what was asked, for a short or wrong-asset deposit, or one that
+        /// came after the session ended.
+        #[arg(long, value_enum, requires = "intent")]
+        accept: Option<funding_check::FundingAsset>,
+        /// With `--intent`: print the session's account seeds for a wallet to
+        /// take the funds back by hand, and stop.
+        #[arg(long, requires = "intent")]
+        export_key: bool,
     },
     /// Install the current stable release over this one.
     ///
@@ -678,6 +687,8 @@ async fn dispatch(
             amount,
             state_dir,
             intent,
+            accept,
+            export_key,
         } => {
             let check = funding_check::FundingCheck {
                 mnemonic,
@@ -686,6 +697,8 @@ async fn dispatch(
                 amount,
                 state_dir,
                 intent,
+                accept,
+                export_key,
             };
             funding_check::run(check, |config, state_dir| {
                 build_signing_runtime(

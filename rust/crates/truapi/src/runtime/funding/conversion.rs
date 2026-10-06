@@ -2095,6 +2095,7 @@ mod live {
             expected: 0,
             route,
             target: None,
+            holdings: Vec::new(),
         }
     }
 

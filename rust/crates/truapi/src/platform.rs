@@ -3330,8 +3330,9 @@ pub trait FundingPlatform: Send + Sync {
         session: FundingPresentation,
     ) -> Result<FundingPresentOutcome, GenericError>;
 
-    /// Observe a session's status change, for host UI such as the in-flight
-    /// pill.
+    /// Observe a session's status change, or a change in what its deposit
+    /// account holds, for host UI such as the in-flight pill or a mismatch
+    /// prompt.
     fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
         let _ = (intent, status);
     }

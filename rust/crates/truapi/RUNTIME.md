@@ -421,6 +421,13 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   `notify_top_up_status` (the top-up engine), `enable_funding_conversion`,
   `open_funding`, `quote_funding_deposit`, `assign_funding_deposit` and
   `funding_session`. Amounts cross the FFI as decimal strings.
+  Each watched deposit account is read for every deposit asset the host
+  names when it enables conversion, and the native token, so a short or
+  wrong-asset deposit shows as a mismatch; `accept_funding_deposit` converts
+  what arrived instead, and also reopens a session that expired or whose
+  conversion was refused, for 72 hours after. `funding_account_secret`
+  exports an account's raw seed, as getcash does, for a user to take funds
+  back with a wallet.
 - `TopUpPlatform`: claim a top-up source's funds into the user's balance and
   stream each top-up's status. Installed with `set_top_up_platform`. The core
   requires a session and checks the source keys; the host owns claiming,

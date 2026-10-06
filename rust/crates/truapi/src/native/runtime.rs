@@ -274,11 +274,44 @@ impl NativeTrUApiHostRuntime {
     }
 
     /// Convert funding deposits into CASH on People, where CASH is Asset
-    /// Hub asset `cash_asset_id`. Set-once; answers whether this call
-    /// enabled it.
-    pub fn enable_funding_conversion(&self, cash_asset_id: u32) -> bool {
+    /// Hub asset `cash_asset_id`, reading every deposit account for the
+    /// `deposit_asset_ids` and the native token. Set-once; answers whether
+    /// this call enabled it.
+    pub fn enable_funding_conversion(&self, cash_asset_id: u32, deposit_asset_ids: Vec<u32>) -> bool {
         self.runtime
-            .enable_funding_conversion(crate::FundingNetwork { cash_asset_id })
+            .enable_funding_conversion(crate::FundingNetwork { cash_asset_id }, deposit_asset_ids)
+    }
+
+    /// Convert what arrived of `asset` on session `intent`'s deposit account
+    /// instead of what was asked.
+    pub async fn accept_funding_deposit(
+        &self,
+        intent: String,
+        asset: crate::host_logic::funding::DepositAsset,
+    ) -> Result<(), HostRejection> {
+        Ok(self.runtime.accept_funding_deposit(&intent, asset).await?)
+    }
+
+    /// What arrived on session `intent`'s deposit account that does not
+    /// match what was asked, if anything.
+    pub fn funding_deposit_mismatch(
+        &self,
+        intent: String,
+    ) -> Option<crate::host_logic::funding::DepositMismatch> {
+        self.runtime
+            .funding_session(&intent)?
+            .deposit?
+            .mismatch()
+    }
+
+    /// Raw seed of session `intent`'s `kind` account, for a wallet to import
+    /// and move its funds by hand. `None` while no signing session is active.
+    pub fn funding_account_secret(
+        &self,
+        intent: String,
+        kind: crate::host_logic::funding::FundingAccountKind,
+    ) -> Result<Option<crate::Bytes32>, HostRejection> {
+        Ok(self.runtime.funding_account_secret(&intent, kind)?)
     }
 
     /// Open a funding session on the host's own behalf, as the Balance

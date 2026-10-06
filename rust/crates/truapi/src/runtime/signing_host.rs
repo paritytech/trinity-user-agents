@@ -56,7 +56,7 @@ use crate::host_internal::sso_messages::{OnExistingAllowancePolicy, ProductReque
 use crate::host_internal::transaction::sign_extrinsic_payload;
 use crate::host_logic::entropy::derive_product_entropy;
 use crate::host_logic::features::genesis_for;
-use crate::host_logic::funding::{FundingAccountKind, funding_keypair};
+use crate::host_logic::funding::{FundingAccountKind, funding_keypair, funding_mini_secret};
 use crate::host_logic::product_account::{
     ProductAccountError, SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_identity_keypair,
     derive_product_keypair, derive_product_subtree_keypair,
@@ -529,6 +529,33 @@ impl SigningHost {
     ) -> Result<Option<[u8; 32]>, AuthorityError> {
         self.funding_keypair(kind, source_id, number)
             .map(|keypair| keypair.map(|keypair| keypair.public.to_bytes()))
+    }
+
+    /// Raw seed of the `number`th funding account of `kind` for `source_id`,
+    /// which a wallet imports to move the account's funds by hand. `None`
+    /// while no signing session is active.
+    pub fn funding_account_secret(
+        &self,
+        kind: FundingAccountKind,
+        source_id: &str,
+        number: u32,
+    ) -> Result<Option<[u8; 32]>, AuthorityError> {
+        let entropy = match self.root_entropy() {
+            Ok(entropy) => entropy,
+            Err(AuthorityError::Disconnected) => return Ok(None),
+            Err(err) => return Err(err),
+        };
+        funding_mini_secret(
+            &entropy,
+            &funding_product_id(&self.network_suffix),
+            kind,
+            source_id,
+            number,
+        )
+        .map(Some)
+        .map_err(|err| AuthorityError::Unavailable {
+            reason: err.to_string(),
+        })
     }
 
     /// Keypair of a funding account, for the core's own conversion and

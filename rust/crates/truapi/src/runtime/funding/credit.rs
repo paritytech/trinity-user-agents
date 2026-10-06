@@ -274,6 +274,7 @@ mod tests {
             expected: 2_000_000,
             route: ConversionRoute::Psm { fee_ppm: 5_000 },
             target: None,
+            holdings: Vec::new(),
         }
     }
 

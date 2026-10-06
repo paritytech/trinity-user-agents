@@ -18,7 +18,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::ValueEnum;
 use futures::stream::{self, BoxStream, StreamExt};
-use truapi::host_logic::funding::{DepositAsset, DepositRequest, FundingStage};
+use truapi::host_logic::funding::{DepositAsset, DepositRequest, FundingAccountKind, FundingStage};
 use truapi::latest::{
     FundingDirection, GenericError, HostFundingStatusSubscribeItem, HostPaymentTopUpError,
     HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
@@ -208,6 +208,10 @@ pub struct FundingCheck {
     pub state_dir: PathBuf,
     /// A session to follow instead of opening a new one.
     pub intent: Option<String>,
+    /// Convert what arrived of this asset instead of what was asked.
+    pub accept: Option<FundingAsset>,
+    /// Print the session's account seeds for a wallet, and stop.
+    pub export_key: bool,
 }
 
 /// Run `check` until its session lands CASH on People or fails.
@@ -229,15 +233,29 @@ pub async fn run(
     let top_up = Arc::new(StandInTopUp::new());
     let _ = top_up.runtime.set(Arc::downgrade(&runtime));
     runtime.set_top_up_platform(top_up.clone());
-    runtime.enable_funding_conversion(FundingNetwork {
-        cash_asset_id: assets.cash,
-    });
+    runtime.enable_funding_conversion(
+        FundingNetwork {
+            cash_asset_id: assets.cash,
+        },
+        vec![assets.cash, assets.usdt, assets.usdc],
+    );
 
     let intent = match check.intent {
         Some(intent) => intent,
         None => open_and_assign(&runtime, &assets, check.asset, check.amount).await?,
     };
     let _ = top_up.intent.set(intent.clone());
+    if check.export_key {
+        return export_keys(&runtime, &intent);
+    }
+    if let Some(asset) = check.accept {
+        let (deposit_asset, _) = assets.source(asset);
+        runtime
+            .accept_funding_deposit(&intent, deposit_asset)
+            .await
+            .map_err(|error| anyhow::anyhow!("accepting the deposit failed: {}", error.reason))?;
+        println!("accepted what arrived of {deposit_asset:?}");
+    }
     follow(&runtime, &intent).await
 }
 
@@ -280,9 +298,23 @@ async fn open_and_assign(
     Ok(intent)
 }
 
+/// Print the raw seeds of the session's deposit and refund accounts, in the
+/// form a wallet imports and getcash exports: `0x` and the mini secret's hex.
+fn export_keys(runtime: &SigningHostRuntime, intent: &str) -> Result<()> {
+    for kind in [FundingAccountKind::Deposit, FundingAccountKind::Refund] {
+        let secret = runtime
+            .funding_account_secret(intent, kind)
+            .map_err(|error| anyhow::anyhow!("exporting the key failed: {}", error.reason))?
+            .context("no signing session is active")?;
+        println!("{kind:?} seed 0x{}", hex::encode(secret));
+    }
+    Ok(())
+}
+
 /// Print the session's stage whenever it changes, until it settles.
 async fn follow(runtime: &SigningHostRuntime, intent: &str) -> Result<()> {
     let mut last = None;
+    let mut last_mismatch = None;
     let mut missing_polls = 0;
     loop {
         // Persisted sessions load in the background after the funding host
@@ -298,6 +330,18 @@ async fn follow(runtime: &SigningHostRuntime, intent: &str) -> Result<()> {
         if last.as_ref() != Some(&session.stage) {
             println!("stage    {:?}", session.stage);
             last = Some(session.stage.clone());
+        }
+        let mismatch = session
+            .deposit
+            .as_ref()
+            .and_then(|deposit| deposit.mismatch());
+        if mismatch != last_mismatch {
+            if let Some(mismatch) = mismatch {
+                println!(
+                    "mismatch {mismatch:?}; accept with --accept or take it back with --export-key"
+                );
+            }
+            last_mismatch = mismatch;
         }
         match session.stage {
             FundingStage::Failed { reason, .. } => bail!("the session failed: {reason:?}"),

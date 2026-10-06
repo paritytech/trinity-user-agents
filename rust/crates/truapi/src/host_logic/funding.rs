@@ -119,6 +119,81 @@ pub struct FundingDeposit {
     pub route: ConversionRoute,
     /// CASH the session asks to credit, which a swap must not land below.
     pub target: Option<u128>,
+    /// What the deposit account held at the last reading, each asset with a
+    /// balance, the native token last.
+    pub holdings: Vec<DepositHolding>,
+}
+
+/// One asset on a deposit account and its balance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct DepositHolding {
+    /// The asset.
+    pub asset: DepositAsset,
+    /// Its balance, in the asset's units.
+    pub balance: u128,
+}
+
+/// What arrived on a deposit account that does not match what was asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum DepositMismatch {
+    /// Less of the requested asset than the deposit was quoted at.
+    Short {
+        /// The requested asset.
+        asset: DepositAsset,
+        /// What arrived of it.
+        amount: u128,
+    },
+    /// Another asset arrived while the requested one falls short.
+    WrongAsset {
+        /// The asset that arrived.
+        asset: DepositAsset,
+        /// How much.
+        amount: u128,
+    },
+}
+
+impl FundingDeposit {
+    /// The balance of `asset` at the last reading.
+    pub fn held(&self, asset: DepositAsset) -> u128 {
+        self.holdings
+            .iter()
+            .find(|holding| holding.asset == asset)
+            .map_or(0, |holding| holding.balance)
+    }
+
+    /// What arrived that does not match the request, as getcash judges it:
+    /// nothing once the requested asset covers the deposit; otherwise another
+    /// asset that arrived, the native token only if nothing else did, since a
+    /// little of it sent to pay fees must not stand in for the stablecoin;
+    /// otherwise less of the requested asset than asked.
+    pub fn mismatch(&self) -> Option<DepositMismatch> {
+        let held = self.held(self.asset);
+        if held >= self.expected {
+            return None;
+        }
+        let stray = self
+            .holdings
+            .iter()
+            .find(|holding| holding.asset != self.asset && holding.balance > 0);
+        match stray {
+            Some(holding) => Some(DepositMismatch::WrongAsset {
+                asset: holding.asset,
+                amount: holding.balance,
+            }),
+            None => (held > 0).then_some(DepositMismatch::Short {
+                asset: self.asset,
+                amount: held,
+            }),
+        }
+    }
 }
 
 /// How a deposit becomes CASH on People, fixed when its account is assigned
@@ -167,6 +242,23 @@ pub struct ConversionSubmission {
 
 /// Dry runs refused before a conversion gives up.
 const MAX_CONVERSION_REFUSALS: u8 = 3;
+/// How long a session that ended with its deposit recoverable keeps being
+/// read, as getcash watches a payment: funds that arrive late, or stay after
+/// a refused conversion, can still be converted.
+pub const LATE_WATCH_MS: u64 = 72 * 60 * 60 * 1_000;
+/// Code a session fails with when its conversion was refused.
+const CONVERSION_REFUSED: &str = "conversion_refused";
+
+/// Why a deposit could not be accepted as it arrived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+pub enum AcceptRefusal {
+    /// The session is converting or done, or ended for good.
+    #[display("the session is not awaiting or holding a deposit")]
+    NotAcceptable,
+    /// Nothing of the asset is on the deposit account.
+    #[display("none of that asset is on the deposit account")]
+    NothingArrived,
+}
 
 /// Stage of a session, as the core persists it.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -334,6 +426,74 @@ impl FundingSession {
         })
     }
 
+    /// The deposit account a session still reads: an open session's, or one
+    /// that ended with the deposit recoverable, for [`LATE_WATCH_MS`] after.
+    pub fn watched_deposit(&self, now_ms: u64) -> Option<&FundingDeposit> {
+        self.deposit
+            .as_ref()
+            .filter(|_| self.stage == FundingStage::Open || self.recoverable_since(now_ms))
+    }
+
+    /// Whether the session ended in a way its deposit can come back from,
+    /// within the late watch window: it expired, or its conversion was
+    /// refused while the funds stayed on the account.
+    fn recoverable_since(&self, now_ms: u64) -> bool {
+        match &self.stage {
+            FundingStage::Failed {
+                reason,
+                settled_at_ms,
+            } => {
+                let recoverable = match reason {
+                    FundingFailure::Expired => true,
+                    FundingFailure::Other { code, .. } => code == CONVERSION_REFUSED,
+                    _ => false,
+                };
+                recoverable && now_ms.saturating_sub(*settled_at_ms) <= LATE_WATCH_MS
+            }
+            _ => false,
+        }
+    }
+
+    /// Record what the deposit account holds. Returns whether it changed.
+    pub fn record_holdings(&mut self, holdings: Vec<DepositHolding>) -> bool {
+        match &mut self.deposit {
+            Some(deposit) if deposit.holdings != holdings => {
+                deposit.holdings = holdings;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Convert what arrived of `asset` by `route` instead of what was asked:
+    /// getcash's "continue with what arrived". An open session waits for it
+    /// again; one that ended recoverably reopens for a fresh window.
+    pub fn accept_arrival(
+        &mut self,
+        asset: DepositAsset,
+        route: ConversionRoute,
+        now_ms: u64,
+    ) -> Result<(), AcceptRefusal> {
+        let reopens = self.recoverable_since(now_ms);
+        if self.stage != FundingStage::Open && !reopens {
+            return Err(AcceptRefusal::NotAcceptable);
+        }
+        let deposit = self.deposit.as_mut().ok_or(AcceptRefusal::NotAcceptable)?;
+        let arrived = deposit.held(asset);
+        if arrived == 0 {
+            return Err(AcceptRefusal::NothingArrived);
+        }
+        deposit.asset = asset;
+        deposit.expected = arrived;
+        deposit.route = route;
+        deposit.target = None;
+        if reopens {
+            self.stage = FundingStage::Open;
+            self.deadline_ms = now_ms.saturating_add(SESSION_WINDOW_MS);
+        }
+        Ok(())
+    }
+
     /// The deposit an open inbound session is waiting on, if one is assigned.
     pub fn awaited_deposit(&self) -> Option<&FundingDeposit> {
         (self.stage == FundingStage::Open)
@@ -389,7 +549,7 @@ impl FundingSession {
                 if *refusals >= MAX_CONVERSION_REFUSALS {
                     return self.fail(
                         FundingFailure::Other {
-                            code: "conversion_refused".into(),
+                            code: CONVERSION_REFUSED.into(),
                             message: reason,
                         },
                         now_ms,
@@ -533,6 +693,10 @@ pub enum ConversionStep {
 
 /// Which of a session's accounts under the reserved funding product.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum FundingAccountKind {
     /// Where an inbound provider delivers.
     Deposit,
@@ -591,6 +755,24 @@ pub fn funding_keypair(
     let entropy = derive_product_entropy(root_entropy, funding_product_id, label.as_bytes())
         .map_err(FundingAccountError::Entropy)?;
     derive_root_keypair_from_entropy(&entropy).map_err(FundingAccountError::Key)
+}
+
+/// The mini secret of the same account as [`funding_keypair`], the raw seed
+/// a wallet imports it from: what getcash's `burnerSecretOf` hands a user
+/// taking funds back by hand.
+pub fn funding_mini_secret(
+    root_entropy: &[u8],
+    funding_product_id: &str,
+    kind: FundingAccountKind,
+    source_id: &str,
+    number: u32,
+) -> Result<[u8; 32], FundingAccountError> {
+    let label = funding_account_label(kind, source_id, number)?;
+    let entropy = derive_product_entropy(root_entropy, funding_product_id, label.as_bytes())
+        .map_err(FundingAccountError::Entropy)?;
+    substrate_bip39::mini_secret_from_entropy(&entropy, "")
+        .map(|mini| mini.to_bytes())
+        .map_err(|err| FundingAccountError::Key(ProductAccountError::InvalidEntropy(format!("{err:?}"))))
 }
 
 /// Why a session operation failed.
@@ -851,6 +1033,7 @@ mod tests {
                 expected: 50,
                 route: ConversionRoute::Teleport,
                 target: None,
+                holdings: Vec::new(),
             }),
             ..session(FundingDirection::In)
         }
@@ -919,6 +1102,135 @@ mod tests {
                 session.quoted_route(DepositAsset::Asset(1337), 9_000_000),
             ],
             [Some(Ok(ConversionRoute::Psm { fee_ppm: 5_000 })), Some(Err(2_136_987)), None]
+        );
+    }
+
+    fn with_holdings(holdings: &[(DepositAsset, u128)]) -> FundingDeposit {
+        FundingDeposit {
+            source_id: "usdt-assethub".into(),
+            number: 1,
+            asset: DepositAsset::Asset(1984),
+            account: [1; 32],
+            expected: 50,
+            route: ConversionRoute::Psm { fee_ppm: 5_000 },
+            target: Some(40),
+            holdings: holdings
+                .iter()
+                .map(|(asset, balance)| DepositHolding {
+                    asset: *asset,
+                    balance: *balance,
+                })
+                .collect(),
+        }
+    }
+
+    // getcash's rules: once the requested asset covers the deposit nothing
+    // is wrong; otherwise another asset that arrived comes first, the native
+    // token only when nothing else did, since a little of it sent to pay
+    // fees must not stand in for the stablecoin; then a short amount.
+    #[test]
+    fn a_mismatch_is_judged_as_getcash_judges_it() {
+        let usdt = DepositAsset::Asset(1984);
+        let usdc = DepositAsset::Asset(1337);
+        let native = DepositAsset::Native;
+
+        assert_eq!(
+            [
+                with_holdings(&[(usdt, 50), (usdc, 9)]).mismatch(),
+                with_holdings(&[(usdt, 10), (usdc, 9), (native, 3)]).mismatch(),
+                with_holdings(&[(usdt, 10), (native, 3)]).mismatch(),
+                with_holdings(&[(usdt, 10)]).mismatch(),
+                with_holdings(&[]).mismatch(),
+            ],
+            [
+                None,
+                Some(DepositMismatch::WrongAsset {
+                    asset: usdc,
+                    amount: 9
+                }),
+                Some(DepositMismatch::WrongAsset {
+                    asset: native,
+                    amount: 3
+                }),
+                Some(DepositMismatch::Short {
+                    asset: usdt,
+                    amount: 10
+                }),
+                None,
+            ]
+        );
+    }
+
+    // Accepting converts what is there instead of what was asked; an expired
+    // or refused session reopens for a fresh window while its funds are
+    // still watched, and stays ended after.
+    #[test]
+    fn accepting_what_arrived_reroutes_and_reopens_within_the_watch_window() {
+        let usdc = DepositAsset::Asset(1337);
+        let open = FundingSession {
+            deposit: Some(with_holdings(&[(DepositAsset::Asset(1984), 10), (usdc, 9)])),
+            ..session(FundingDirection::In)
+        };
+        let expired = |settled_at_ms| FundingSession {
+            stage: FundingStage::Failed {
+                reason: FundingFailure::Expired,
+                settled_at_ms,
+            },
+            ..open.clone()
+        };
+        let accept = |mut session: FundingSession, asset, now_ms| {
+            let accepted = session.accept_arrival(asset, ConversionRoute::Pool, now_ms);
+            (accepted, session.stage.clone(), session.deposit.map(|deposit| (deposit.asset, deposit.expected, deposit.target)))
+        };
+        let late = NOW + LATE_WATCH_MS;
+
+        assert_eq!(
+            [
+                accept(open.clone(), usdc, NOW).0,
+                accept(open.clone(), DepositAsset::Native, NOW).0,
+                accept(expired(NOW), usdc, late).0,
+                accept(expired(NOW), usdc, late + 1).0,
+            ],
+            [
+                Ok(()),
+                Err(AcceptRefusal::NothingArrived),
+                Ok(()),
+                Err(AcceptRefusal::NotAcceptable),
+            ]
+        );
+        assert_eq!(
+            accept(expired(NOW), usdc, late),
+            (Ok(()), FundingStage::Open, Some((usdc, 9, None)))
+        );
+    }
+
+    // A user taking funds back by hand imports this seed into a wallet, so it
+    // must be what getcash's `burnerSecretOf` hands out: `entropyToMiniSecret`
+    // of the label's entropy (the vector is from that library), and the
+    // account it opens must be the one the core signs with.
+    #[test]
+    fn the_exported_seed_is_getcashs_and_opens_the_same_account() {
+        let root = [9u8; 32];
+        let seed = funding_mini_secret(&root, "fund.dot", FundingAccountKind::Deposit, "usdt-assethub", 1)
+            .expect("seed");
+        let opened = schnorrkel::MiniSecretKey::from_bytes(&seed)
+            .expect("mini secret")
+            .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519)
+            .public;
+
+        assert_eq!(
+            (
+                substrate_bip39::mini_secret_from_entropy(&[7; 32], "")
+                    .map(|mini| hex::encode(mini.to_bytes()))
+                    .ok(),
+                Some(opened),
+            ),
+            (
+                Some("12c532afaa1c0ffe4d0eae23c7038d9e866e4335a00eaa3f0dbb01661295325d".to_string()),
+                funding_keypair(&root, "fund.dot", FundingAccountKind::Deposit, "usdt-assethub", 1)
+                    .ok()
+                    .map(|keypair| keypair.public),
+            )
         );
     }
 
