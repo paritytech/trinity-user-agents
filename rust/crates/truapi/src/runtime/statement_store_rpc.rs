@@ -97,6 +97,22 @@ impl StatementStoreRpc {
         )))
     }
 
+    /// Open a statement-store RPC client on its own connection whose request
+    /// ids all start with `request_id_prefix`, so the host can tell this
+    /// traffic apart (see `media_signaling::ADVERTISEMENT_LOOKUP_REQUEST_ID_PREFIX`).
+    pub(crate) async fn client_with_request_id_prefix(
+        &self,
+        label: &'static str,
+        request_id_prefix: &'static str,
+    ) -> Result<RpcClient, StatementStoreRpcClientError> {
+        let connection = self.connect(label).await?;
+        Ok(RpcClient::new(HostRpcClient::with_request_id_prefix(
+            connection,
+            self.spawner.clone(),
+            request_id_prefix,
+        )))
+    }
+
     /// Submit a SCALE-encoded statement and wait for the JSON-RPC ack.
     pub async fn submit(
         &self,
