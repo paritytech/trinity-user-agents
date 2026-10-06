@@ -76,6 +76,25 @@ test("an initially receive-only answerer connects and resumes camera after stopp
     });
 });
 
+test("a picture placed for an admitted participant before its peer exists shows once media arrives", async ({
+  page,
+}) => {
+  expect(
+    await page.evaluate("mediaFixture.startPairWithEarlyPicture()"),
+  ).toEqual({ tag: "Done" });
+  await expect
+    .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 15_000 })
+    .toEqual({
+      failures: [],
+      captureRequests: 1,
+      peers: ["Connected", "Connected"],
+      remoteCameras: ["Off", "Live"],
+    });
+  await expect
+    .poll(() => page.evaluate("mediaFixture.decodedFrames()"))
+    .toBeGreaterThan(0);
+});
+
 test("cancellation stops a genuine capture delivered after cancellation", async ({
   page,
 }) => {

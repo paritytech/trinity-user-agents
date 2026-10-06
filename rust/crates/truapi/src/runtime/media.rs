@@ -567,6 +567,7 @@ mod tests {
         async fn media_backend_command(&self, _: &ProductContext, _: u64, command: MediaBackendCommand) -> std::result::Result<MediaBackendResponse, v::GenericError> {
             Ok(match command {
                 MediaBackendCommand::RequestConsent { .. } => MediaBackendResponse::Consent { granted: true },
+                MediaBackendCommand::CommitOperation { .. } => MediaBackendResponse::LocalState { state: state::off_local() },
                 _ => MediaBackendResponse::Done,
             })
         }
@@ -742,6 +743,46 @@ mod tests {
         let result = create.join().unwrap();
         assert!(started.elapsed() < OPERATION_TIMEOUT, "creation proceeds once signaling binds");
         assert!(matches!(result, Ok(wire::HostMediaCreateSessionResponse::V1(_))), "{result:?}");
+        host.close_media();
+    }
+
+    #[test]
+    fn surfaces_accept_admitted_participants_before_their_peer_starts() {
+        let host = host(released(Arc::new(AtomicBool::new(true)), Arc::new(AtomicUsize::new(0)), advertisement(1, 11),
+            Arc::new(Mutex::new(None))), Backoff { min: Duration::from_millis(10), max: Duration::from_millis(40) });
+        let mut subscription = subscribe(&host);
+        assert!(matches!(event(next_within(&mut subscription, Duration::from_secs(1))), v::MediaEvent::Snapshot { .. }));
+        let created = futures::executor::block_on(host.create_session(&CallContext::default(),
+            wire::HostMediaCreateSessionRequest::V1(v::HostMediaCreateSessionRequest { operation_id: [9; 32], tracks: state::off_tracks() })));
+        assert!(created.is_ok(), "{created:?}");
+        let admitted = [12; 32];
+        let session_id = {
+            let mut state = host.media.get().unwrap().lock();
+            state.viewport = Some(v::MediaViewport { revision: 1, width: 800, height: 600, device_scale_numerator: 1, device_scale_denominator: 1 });
+            let session_id = *state.sessions.keys().next().unwrap();
+            let peer = v::MediaPeer { network: v::MediaNetwork { genesis_hash: NETWORK }, product_id: PRODUCT.into(),
+                account: v::MediaAccount::Sr25519(advertisement(2, 21).advertisement().fields.account) };
+            // Visible to the product while the call handshake has not yet
+            // asked the backend to create this participant's peer.
+            let mut participant = state::Participant::new(admitted, peer);
+            participant.visible = true;
+            state.sessions.get_mut(&session_id).unwrap().participants.insert(admitted, participant);
+            session_id
+        };
+        let place = |layout_revision, participant_id| futures::executor::block_on(host.set_surfaces(&CallContext::default(),
+            wire::HostMediaSetSurfacesRequest::V1(v::HostMediaSetSurfacesRequest { session_id, viewport_revision: 1, layout_revision,
+                surfaces: vec![v::MediaSurface {
+                    surface_id: 0, source: v::MediaPictureSource::Remote { participant_id, picture: v::MediaPictureKind::Camera },
+                    rect: v::MediaRect { x: 0, y: 0, width: 320, height: 200 }, clip: v::MediaRect { x: 0, y: 0, width: 800, height: 600 },
+                    corner_radius: 0, placement: v::MediaPlacement::AboveProduct, depth: 0, fit: v::MediaFit::Contain,
+                    mirrored: false, visible: true,
+                }] })));
+        let accepted = place(1, admitted);
+        assert!(matches!(accepted, Ok(wire::HostMediaSetSurfacesResponse::V1(v::HostMediaSetSurfacesResponse { layout_revision: 1 }))),
+            "{accepted:?}");
+        let unknown = place(2, [13; 32]);
+        assert!(matches!(unknown, Err(CallError::Domain(wire::HostMediaSetSurfacesError::V1(v::HostMediaError::InvalidHandle)))),
+            "{unknown:?}");
         host.close_media();
     }
 }
