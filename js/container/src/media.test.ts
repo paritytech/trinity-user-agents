@@ -10,6 +10,9 @@ function realm() {
     getDisplayMedia() {
       return Promise.resolve('native-screen');
     }
+    enumerateDevices() {
+      return Promise.resolve([{ deviceId: 'camera-1', kind: 'videoinput', label: 'Native Camera' }]);
+    }
   }
   class Navigator {
     mediaDevices = new MediaDevices();
@@ -42,6 +45,16 @@ it('denies instance and recovered prototype capture, including screen capture', 
   Reflect.set(win.navigator.mediaDevices, 'getUserMedia', () => Promise.resolve('replacement'));
   Reflect.defineProperty(win.MediaDevices.prototype, 'getUserMedia', { value: () => Promise.resolve('replacement') });
   await expect(win.navigator.mediaDevices.getUserMedia({ video: true })).rejects.toMatchObject({ name: 'NotAllowedError' });
+});
+
+it('denies instance and recovered prototype device enumeration', async () => {
+  const win = realm();
+  installMediaPolicy(win);
+  await expect(win.navigator.mediaDevices.enumerateDevices()).rejects.toMatchObject({ name: 'NotAllowedError' });
+  await expect(win.MediaDevices.prototype.enumerateDevices.call(win.navigator.mediaDevices))
+    .rejects.toMatchObject({ name: 'NotAllowedError' });
+  Reflect.set(win.navigator.mediaDevices, 'enumerateDevices', () => Promise.resolve([]));
+  await expect(win.navigator.mediaDevices.enumerateDevices()).rejects.toMatchObject({ name: 'NotAllowedError' });
 });
 
 it('denies legacy callback capture even without MediaDevices', async () => {
