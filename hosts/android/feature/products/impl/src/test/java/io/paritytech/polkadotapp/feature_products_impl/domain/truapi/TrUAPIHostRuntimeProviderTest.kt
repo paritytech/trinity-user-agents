@@ -38,10 +38,8 @@ class TrUAPIHostRuntimeProviderTest {
     @After
     fun restoreRuntimeFactory() = unmockkObject(NativeTrUApiHostRuntime.Companion)
 
-    // Products attach the host version to their telemetry, so a build that reports none
-    // cannot be told apart from any other release.
     @Test
-    fun `reports the installed version and build to products`() = runTest {
+    fun `reports the installed version and build so products can tell host builds apart`() = runTest {
         provider().runtime().getOrThrow()
 
         assertEquals("1.0.0 (1022)", runtimeConfig.captured.hostVersion)
