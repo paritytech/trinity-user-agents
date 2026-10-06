@@ -411,9 +411,12 @@ struct PairingHostArgs {
     /// Network preset that supplies all RPC/backend/genesis config.
     #[arg(long, value_enum, default_value = "paseo-next-v2")]
     network: Network,
-    /// Automatically approve non-payment confirmations. Main-purse payments still require review.
+    /// Approve routine confirmations. Payments and upload consent still require review.
     #[arg(long)]
     auto_accept: bool,
+    /// Revoke automatic uploads for this product in the saved paired account, then exit.
+    #[arg(long, value_name = "PRODUCT", conflicts_with = "script")]
+    revoke_automatic_uploads: Option<String>,
 }
 
 /// Default loopback port for the frame socket and the bridge script.
@@ -474,6 +477,9 @@ struct SigningHostArgs {
     /// Product id used by scripts and product-scoped operations.
     #[arg(long = "product-id", default_value = DEFAULT_PRODUCT_ID)]
     product_id: String,
+    /// Revoke automatic uploads for this product in the selected saved account, then exit.
+    #[arg(long, value_name = "PRODUCT", conflicts_with_all = ["script", "serve", "deeplink"])]
+    revoke_automatic_uploads: Option<String>,
     /// Pairing deeplink to add. Managed interactive and serve sessions also
     /// restore responders for every previously paired host.
     #[arg(long)]
@@ -510,7 +516,7 @@ struct SigningHostArgs {
     /// private per-process Unix-domain socket.
     #[arg(long)]
     frame_listen: Option<SocketAddr>,
-    /// Automatically approve non-payment confirmations. Main-purse payments still require review.
+    /// Approve routine confirmations. Payments and upload consent still require review.
     #[arg(long)]
     auto_accept: bool,
     /// Serve product frames without a terminal UI and stay up until stopped.
@@ -1249,7 +1255,7 @@ async fn run_pairing_host(
 	debugger: Option<DebuggerSwitch>,
 ) -> Result<()> {
     let script_projects = script_project_directory(args.base_path.clone());
-    let interactive = args.script.is_none();
+    let interactive = args.script.is_none() && args.revoke_automatic_uploads.is_none();
     if interactive && !terminal_ui::is_interactive_terminal() {
         invalid_invocation(
             "interactive pairing-host requires a TTY; use pairing-host --script <path>",
@@ -1302,13 +1308,69 @@ async fn run_pairing_host(
     pairing_runtime.set_contacts_platform(contacts::CliContactsHost::from_env(
         storage_platform.clone(),
     ));
-    observe_permission_changes(
-        &storage_platform,
-        &pairing_runtime,
-        |runtime, product_id, request| async move {
-            runtime
-                .refresh_permission_authorization(&product_id, request)
-                .await
+    if let Some(product_id) = args.revoke_automatic_uploads {
+        pairing_runtime
+            .activate_stored_session()
+            .await
+            .map_err(|error| anyhow::anyhow!("{}", error.reason))?;
+        let root_public_key = pairing_runtime
+            .current_session_public_key()
+            .context("No saved paired account; no upload permission changed")?;
+        let product = truapi::platform::ProductContext::new_with_execution(
+            product_id,
+            ProductExecutionKind::App,
+        )?;
+        revoke_automatic_uploads(pairing_runtime.product_admin(product), root_public_key).await?;
+        return Ok(());
+    }
+
+    // Resolved before the port is bound, so a bad URL still fails on the argument
+    // rather than half-way through startup - but reported below, once the UI
+    // exists. A `tracing` line here goes to a stderr that the alternate screen
+    // covers for the rest of the run, so in interactive mode nobody ever sees it.
+    let debugger = debugger.map(connect_debugger).transpose()?;
+    let frame_server = frame_server::bind(args.frame_listen).await?;
+    let frame_url = frame_server.endpoint().to_string();
+    terminal_ui::output_event(SystemEvent::FramesListening {
+        url: frame_url.clone(),
+    });
+    report_debugger(debugger.as_ref());
+    let runtime_for_frames = tap_for_debugger(pairing_runtime.clone(), debugger.map(|d| d.sink));
+
+    if let Some(script) = args.script {
+        let script_product_id = product_id.clone();
+        let script_frame_url = frame_url.clone();
+        let status = with_frame_server(runtime_for_frames, product, frame_server, async move {
+            script_runner::run(
+                &script_frame_url,
+                &script_product_id,
+                &script,
+                script_runner::ScriptHostRole::PairingHost,
+            )
+            .await
+        })
+        .await?;
+        let code = status.code().unwrap_or(1);
+        terminal_ui::output_event(SystemEvent::ScriptExit { code });
+        std::process::exit(code);
+    }
+
+    let terminal_ui = terminal_ui.context("interactive terminal was not initialized")?;
+    with_frame_server(
+        runtime_for_frames,
+        product.clone(),
+        frame_server,
+        async move {
+            pairing_interactive_loop(
+                frame_url,
+                product,
+                pairing_runtime,
+                storage_platform,
+                script_projects,
+                terminal_ui,
+                log_controller,
+            )
+            .await
         },
     );
 
@@ -1357,6 +1419,25 @@ async fn run_pairing_host(
 	.await
 }
 
+async fn revoke_automatic_uploads(
+    admin: truapi::HostAdmin,
+    root_public_key: [u8; 32],
+) -> Result<()> {
+    admin
+        .set_permission_authorization_status(
+            truapi::platform::PermissionAuthorizationRequest::AutomaticPreimageSubmit {
+                root_public_key,
+            },
+            truapi::platform::PermissionAuthorizationStatus::NotDetermined,
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{}", error.reason))?;
+    println!(
+        "Automatic upload consent revoked for the selected product and account; rolling usage retained."
+    );
+    Ok(())
+}
+
 async fn run_signing_host(
 	args: SigningHostArgs,
 	initial_log_filter: String,
@@ -1364,64 +1445,83 @@ async fn run_signing_host(
 	dev_command: Option<Vec<String>>,
 	debugger: Option<DebuggerSwitch>,
 ) -> Result<()> {
-	if let Err(error) = validate_signing_args(&args) {
-		invalid_invocation(error);
-	}
-	let exec_input =
-		args.action.as_ref().map(|SigningHostAction::Exec { command }| command.clone());
-	let interactive = args.script.is_none() && exec_input.is_none() && !args.serve;
-	if interactive && !terminal_ui::is_interactive_terminal() {
-		invalid_invocation(
-			"interactive signing-host requires a TTY; use --serve to run headless, or `signing-host exec '/script path.ts'`, or --script",
-		);
-	}
-	let exec_command = exec_input
-		.as_deref()
-		.map(|input| parse_command(input).unwrap_or_else(|error| invalid_invocation(error)));
-	let product = frame_server::ProductSelection::new(
-		args.product_id.clone(),
-		args.execution_kind.context(),
-	)?;
-	let product_id = product.current();
-	let network = args.network.cli_config()?;
-	let base_path = state_base_path(args.base_path.clone());
-	let session_catalog = SessionCatalog::new(base_path.clone(), network.id)?;
-	let initial_session_name = initial_session_name(&args, &session_catalog)?;
-	let initial_session_names = session_catalog.list()?;
-	let (terminal_ui, ui_handle) = if interactive {
-		let (ui, handle) = TerminalUi::new(
-			network.id,
-			product_id,
-			initial_session_name.clone(),
-			initial_session_names,
-			initial_log_filter,
-		);
-		(Some(ui.enter()?), Some(handle))
-	} else {
-		(None, None)
-	};
-	let mut session = start_signing_host(
-		&args,
-		session_catalog,
-		initial_session_name,
-		network,
-		ui_handle.clone(),
-	)
-	.await?;
-	// Resolved before the port is bound, so a bad URL still fails on the argument
-	// rather than half-way through startup - but reported below, once the UI
-	// exists. A `tracing` line here goes to a stderr that the alternate screen
-	// covers for the rest of the run, so in interactive mode nobody ever sees it.
-	let debugger = debugger.map(connect_debugger).transpose()?;
-	let frame_server = frame_server::bind(args.frame_listen).await?;
-	let frame_url = frame_server.endpoint().to_string();
-	terminal_ui::output_event(SystemEvent::FramesListening { url: frame_url.clone() });
-	if let Some(url) = bootstrap::bridge_url(&frame_url) {
-		terminal_ui::output_event(SystemEvent::BridgeReady { url });
-	}
-	report_debugger(debugger.as_ref());
-	let runtime_for_frames =
-		tap_for_debugger(session.runtime_factory.clone(), debugger.map(|d| d.sink));
+    if let Err(error) = validate_signing_args(&args) {
+        invalid_invocation(error);
+    }
+    let exec_input = args
+        .action
+        .as_ref()
+        .map(|SigningHostAction::Exec { command }| command.clone());
+    let interactive = args.script.is_none()
+        && exec_input.is_none()
+        && !args.serve
+        && args.revoke_automatic_uploads.is_none();
+    if interactive && !terminal_ui::is_interactive_terminal() {
+        invalid_invocation(
+            "interactive signing-host requires a TTY; use --serve to run headless, or `signing-host exec '/script path.ts'`, or --script",
+        );
+    }
+    let exec_command = exec_input
+        .as_deref()
+        .map(|input| parse_command(input).unwrap_or_else(|error| invalid_invocation(error)));
+    let product = frame_server::ProductSelection::new(
+        args.product_id.clone(),
+        args.execution_kind.context(),
+    )?;
+    let product_id = product.current();
+    let network = args.network.config();
+    let base_path = state_base_path(args.base_path.clone());
+    let session_catalog = SessionCatalog::new(base_path.clone(), network.id)?;
+    let initial_session_name = initial_session_name(&args, &session_catalog)?;
+    let initial_session_names = session_catalog.list()?;
+    let (terminal_ui, ui_handle) = if interactive {
+        let (ui, handle) = TerminalUi::new(
+            network.id,
+            product_id,
+            initial_session_name.clone(),
+            initial_session_names,
+            initial_log_filter,
+        );
+        (Some(ui.enter()?), Some(handle))
+    } else {
+        (None, None)
+    };
+    let mut session = start_signing_host(
+        &args,
+        session_catalog,
+        initial_session_name,
+        network,
+        ui_handle.clone(),
+    )
+    .await?;
+    if let Some(product_id) = args.revoke_automatic_uploads {
+        let root_public_key = session
+            .runtime
+            .current_session_public_key()
+            .context("No active saved account; no upload permission changed")?;
+        let product = truapi::platform::ProductContext::new_with_execution(
+            product_id,
+            ProductExecutionKind::App,
+        )?;
+        revoke_automatic_uploads(session.runtime.product_admin(product), root_public_key).await?;
+        return Ok(());
+    }
+    // Resolved before the port is bound, so a bad URL still fails on the argument
+    // rather than half-way through startup - but reported below, once the UI
+    // exists. A `tracing` line here goes to a stderr that the alternate screen
+    // covers for the rest of the run, so in interactive mode nobody ever sees it.
+    let debugger = debugger.map(connect_debugger).transpose()?;
+    let frame_server = frame_server::bind(args.frame_listen).await?;
+    let frame_url = frame_server.endpoint().to_string();
+    terminal_ui::output_event(SystemEvent::FramesListening {
+        url: frame_url.clone(),
+    });
+    if let Some(url) = bootstrap::bridge_url(&frame_url) {
+        terminal_ui::output_event(SystemEvent::BridgeReady { url });
+    }
+    report_debugger(debugger.as_ref());
+    let runtime_for_frames =
+        tap_for_debugger(session.runtime_factory.clone(), debugger.map(|d| d.sink));
 
 	if let Some(script) = args.script {
 		let product_id = product.current();
@@ -1904,51 +2004,55 @@ impl Drop for SigningHostSession {
 }
 
 fn validate_signing_args(args: &SigningHostArgs) -> Result<()> {
-	let mnemonic = normalized(args.mnemonic.clone());
-	let account = normalized(args.account.clone());
-	let session = normalized(args.session.clone());
-	if args.script.is_some() && args.action.is_some() {
-		bail!("--script cannot be combined with the exec subcommand");
-	}
-	if args.serve && args.script.is_some() {
-		bail!("--serve cannot be combined with --script");
-	}
-	if args.serve && args.action.is_some() {
-		bail!("--serve cannot be combined with the exec subcommand");
-	}
-	if mnemonic.is_some() && account.is_some() {
-		bail!("--account cannot be used when --mnemonic or HOST_CLI_SIGNER_MNEMONIC is set");
-	}
-	if mnemonic.is_some() && session.is_some() {
-		bail!("--session cannot be used when --mnemonic or HOST_CLI_SIGNER_MNEMONIC is set");
-	}
-	if mnemonic.is_some() &&
-		args.action.as_ref().is_some_and(|action| {
-			let SigningHostAction::Exec { command } = action;
-			matches!(parse_command(command), Ok(ShellCommand::Devices(_)))
-		}) {
-		bail!("paired-device management is unavailable when launched with --mnemonic");
-	}
-	if account.is_some() && session.is_some() {
-		bail!("--session cannot be combined with --account");
-	}
-	if let Some(session) = session {
-		sessions::validate_selectable_name(&session).map_err(anyhow::Error::msg)?;
-	}
-	let reserved = normalized(args.reserved_username.clone());
-	if mnemonic.is_some() && reserved.is_some() {
-		bail!(
-			"--reserved-username cannot be used when --mnemonic or HOST_CLI_SIGNER_MNEMONIC is set"
-		);
-	}
-	if account.is_some() && reserved.is_some() {
-		bail!("--reserved-username only applies when --account is omitted");
-	}
-	if let Some(reserved) = &reserved &&
-		!is_registrable_full_label(reserved)
-	{
-		bail!(
-			"--reserved-username {reserved:?} is not a reservable base label: lowercase ASCII \
+    let mnemonic = normalized(args.mnemonic.clone());
+    let account = normalized(args.account.clone());
+    let session = normalized(args.session.clone());
+    if args.script.is_some() && args.action.is_some() {
+        bail!("--script cannot be combined with the exec subcommand");
+    }
+    if args.serve && args.script.is_some() {
+        bail!("--serve cannot be combined with --script");
+    }
+    if args.serve && args.action.is_some() {
+        bail!("--serve cannot be combined with the exec subcommand");
+    }
+    if args.revoke_automatic_uploads.is_some() && args.action.is_some() {
+        bail!("--revoke-automatic-uploads cannot be combined with the exec subcommand");
+    }
+    if mnemonic.is_some() && account.is_some() {
+        bail!("--account cannot be used when --mnemonic or HOST_CLI_SIGNER_MNEMONIC is set");
+    }
+    if mnemonic.is_some() && session.is_some() {
+        bail!("--session cannot be used when --mnemonic or HOST_CLI_SIGNER_MNEMONIC is set");
+    }
+    if mnemonic.is_some()
+        && args.action.as_ref().is_some_and(|action| {
+            let SigningHostAction::Exec { command } = action;
+            matches!(parse_command(command), Ok(ShellCommand::Devices(_)))
+        })
+    {
+        bail!("paired-device management is unavailable when launched with --mnemonic");
+    }
+    if account.is_some() && session.is_some() {
+        bail!("--session cannot be combined with --account");
+    }
+    if let Some(session) = session {
+        sessions::validate_selectable_name(&session).map_err(anyhow::Error::msg)?;
+    }
+    let reserved = normalized(args.reserved_username.clone());
+    if mnemonic.is_some() && reserved.is_some() {
+        bail!(
+            "--reserved-username cannot be used when --mnemonic or HOST_CLI_SIGNER_MNEMONIC is set"
+        );
+    }
+    if account.is_some() && reserved.is_some() {
+        bail!("--reserved-username only applies when --account is omitted");
+    }
+    if let Some(reserved) = &reserved
+        && !is_registrable_full_label(reserved)
+    {
+        bail!(
+            "--reserved-username {reserved:?} is not a reservable base label: lowercase ASCII \
              letters only, {MIN_PERSON_LABEL_LEN} to {MAX_BASE_LABEL_LEN} bytes"
 		);
 	}

@@ -93,8 +93,11 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
     private val authState = MutableStateFlow<AuthState>(AuthState.Disconnected)
 
-    /** Core-owned session state. Nothing consumes it yet; see [HostBridge.authStateChanged]. */
+    /** Core-owned session state, also invalidated while the wallet account changes. */
     val sessionState: StateFlow<AuthState> = authState.asStateFlow()
+
+    var bulletinGenesisHash: ByteArray? = null
+        private set
 
     // Resolved once when the runtime boots: the core asks for chains on its
     // dispatcher thread, where a suspending registry lookup is not allowed.
@@ -124,6 +127,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private suspend fun build(): Result<TrUAPIHostRuntime> = runCatching {
         val owner = accountRepository.getWalletAccount().id
         val config = buildRuntimeConfig()
+        bulletinGenesisHash = config.bulletinChainGenesisHash
         cachedChains.set(chainDirectory.resolve())
         check(accountRepository.getWalletAccount().id == owner) { "Wallet changed while booting runtime" }
         sessionOwner = owner
@@ -197,20 +201,12 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             accountRepository.walletAccountFlow()
                 .map { it.id }
                 .distinctUntilChanged()
-                .collect { owner ->
-                    sessionMutation.withLock {
-                        if (sessionOwner == owner) return@withLock
-                        revision.value += 1
-                        sessionOwner = null
-                        runtime.disconnect()
-                        localSessionSource.resolve()
-                            .mapCatching { session ->
-                                check(accountRepository.getWalletAccount().id == owner) { "Wallet changed" }
-                                runtime.activateLocalSession(session.secret, session.liteUsername)
-                                sessionOwner = owner
-                            }
-                            .logFailure("TrUAPI local session could not follow the wallet switch")
-                    }
+                .drop(1)
+                .collect {
+                    authState.value = AuthState.Disconnected
+                    localSessionSource.resolve()
+                        .mapCatching { session -> runtime.activateLocalSession(session.secret, session.liteUsername) }
+                        .logFailure("TrUAPI local session could not follow the wallet switch")
                 }
         }
     }
@@ -271,6 +267,9 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             PermissionDecision.DENY
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
+            confirmationLauncher.decide(review, requesterFallback = HOST_REQUESTER) != PermissionDecision.DENY
+
+        override suspend fun confirmPermission(review: UserConfirmationReview): PermissionDecision =
             confirmationLauncher.decide(review, requesterFallback = HOST_REQUESTER)
 
         override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
@@ -287,14 +286,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
 
-        /**
-         * Observed, not acted on. Rendering [AuthState.Pairing] as a pairing
-         * sheet needs a core-driven session, and `PairingHostRuntime` is not
-         * reachable from a native host yet (truapi#334, "Move SSO to the shared
-         * Rust core"), so the core never reaches a state worth showing. iOS
-         * stubs this the same way. Surfaced as state rather than a log line so
-         * wiring the UI later is a subscription, not a rewrite.
-         */
+        /** Settings observe these account transitions; no app-supplied scope is used. */
         override fun authStateChanged(state: AuthState) {
             authState.value = state
             Timber.tag("truapi.auth").d("%s", state.marker())

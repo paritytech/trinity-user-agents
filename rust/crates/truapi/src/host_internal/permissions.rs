@@ -52,6 +52,9 @@ use crate::platform::{
     ProductContext, UserConfirmation, UserConfirmationReview, has_trusted_remote_permissions,
     is_valid_remote_domain_pattern, normalize_remote_domain, remote_domain_candidates,
 };
+use truapi::latest::{
+    GenericError, HostDevicePermissionRequest, RemotePermission, RemotePermissionRequest,
+};
 
 /// Persisted answer for a single permission request. Keep `Authorized` at
 /// discriminant 0 and `Denied` at 1 to preserve the existing two-variant cache
@@ -574,124 +577,10 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
                 )
                 .await
             }
-        }
-    }
-
-    /// Read the persisted product decision, without the live OS overlay or any
-    /// snapshot initialization. Host notifications use this to refresh peers.
-    pub(crate) async fn stored_authorization_status(
-        &self,
-        request: PermissionAuthorizationRequest,
-    ) -> Result<PermissionAuthorizationStatus, GenericError> {
-        match request {
-            PermissionAuthorizationRequest::Device(permission) => authorization_status(
-                self.storage,
-                CoreStorageKey::device_permission_authorization(self.product_id(), &permission),
-            ).await,
-            request => self.authorization_status(&request).await,
-        }
-    }
-
-    fn snapshot_key(&self, request: &PermissionAuthorizationRequest) -> Result<CoreStorageKey, GenericError> {
-        match request {
-            PermissionAuthorizationRequest::Device(permission) => Ok(
-                CoreStorageKey::device_permission_authorization(self.product_id(), permission),
-            ),
-            PermissionAuthorizationRequest::Calling { network, account } => Ok(
-                CoreStorageKey::calling_authorization(self.product_id(), *network, *account),
-            ),
-            _ => Err(GenericError {
-                reason: "Authorization snapshots require Calling or Device scope".into(),
+            PermissionAuthorizationRequest::AutomaticPreimageSubmit { .. } => Err(GenericError {
+                reason: "Upload consent requires an active account scope".into(),
             }),
         }
-    }
-
-    /// Capture a consent generation before showing UI. Initial Ask stamping is
-    /// not a policy decision and must not notify or revoke receive-only calls.
-    pub(crate) async fn authorization_snapshot(
-        &self,
-        request: &PermissionAuthorizationRequest,
-    ) -> Result<PermissionAuthorizationSnapshot, GenericError> {
-        let key = self.snapshot_key(request)?;
-        for _ in 0..AUTHORIZATION_CAS_ATTEMPTS {
-            let expected = match self.storage.read_core_storage(key.clone()).await? {
-                Some(raw) => raw,
-                None => {
-                    let initial = stamped_authorization(PermissionAuthorizationStatus::NotDetermined)?;
-                    if !self.storage.compare_exchange_core_storage(key.clone(), None, initial.clone(), false).await? {
-                        continue;
-                    }
-                    initial
-                }
-            };
-            let mut status = decode_authorization(&expected)
-                .unwrap_or(PermissionAuthorizationStatus::NotDetermined);
-            if let PermissionAuthorizationRequest::Device(permission) = request
-                && self.os_refuses(*permission).await {
-                    status = PermissionAuthorizationStatus::Denied;
-                }
-            return Ok(PermissionAuthorizationSnapshot {
-                status,
-                key,
-                request: request.clone(),
-                expected,
-            });
-        }
-        Err(authorization_contention())
-    }
-
-    /// Commit one genuine answer against exactly the generation shown to the
-    /// user. A stale answer is discarded, never rebased onto newer policy.
-    /// Callers finish synchronous cancellation/authority/revision checks just
-    /// before dispatch. Dispatch accepts this policy decision independently of
-    /// later Media work: cancelling that work does not undo accepted consent.
-    /// The host CAS job owns successful-policy notification, even if this
-    /// requester disappears before the persisted result can be returned.
-    pub(crate) async fn set_authorization_status_if_unchanged(
-        &self,
-        request: &PermissionAuthorizationRequest,
-        snapshot: &PermissionAuthorizationSnapshot,
-        status: PermissionAuthorizationStatus,
-    ) -> Result<bool, GenericError> {
-        let key = self.snapshot_key(request)?;
-        if snapshot.key != key || snapshot.request != *request {
-            return Ok(false);
-        }
-        self.storage.compare_exchange_core_storage(
-            key,
-            Some(snapshot.expected.clone()),
-            stamped_authorization(status)?,
-            true,
-        ).await
-    }
-
-    async fn set_stamped_authorization(
-        &self,
-        key: CoreStorageKey,
-        status: PermissionAuthorizationStatus,
-    ) -> Result<(), GenericError> {
-        for _ in 0..AUTHORIZATION_CAS_ATTEMPTS {
-            let expected = self.storage.read_core_storage(key.clone()).await?;
-            if self.storage.compare_exchange_core_storage(
-                key.clone(), expected, stamped_authorization(status)?, true,
-            ).await? {
-                return Ok(());
-            }
-        }
-        Err(authorization_contention())
-    }
-
-    /// Returns the stored authorization statuses for permission requests
-    /// without prompting. Results follow the same order as `requests`.
-    pub async fn authorization_statuses(
-        &self,
-        requests: &[PermissionAuthorizationRequest],
-    ) -> Result<Vec<PermissionAuthorizationStatus>, GenericError> {
-        let mut statuses = Vec::with_capacity(requests.len());
-        for request in requests {
-            statuses.push(self.authorization_status(request).await?);
-        }
-        Ok(statuses)
     }
 
     /// Update the stored authorization status for a permission request.
@@ -754,6 +643,11 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
             PermissionAuthorizationRequest::Calling { network, account } => {
                 CoreStorageKey::calling_authorization(self.product_id(), *network, *account)
             }
+            PermissionAuthorizationRequest::AutomaticPreimageSubmit { .. } => {
+                return Err(GenericError {
+                    reason: "Upload consent requires an active account scope".into(),
+                });
+            }
         };
         self.temporary_permissions.revoke(&key);
         if matches!(request, PermissionAuthorizationRequest::Calling { .. } | PermissionAuthorizationRequest::Device(_)) {
@@ -798,7 +692,9 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
     {
         let request = PermissionAuthorizationRequest::ChatAuthority;
         match self.authorization_status(&request).await? {
-            PermissionAuthorizationStatus::Authorized => return Ok(ChatAuthorityConsent::Persisted),
+            PermissionAuthorizationStatus::Authorized => {
+                return Ok(ChatAuthorityConsent::Persisted);
+            }
             PermissionAuthorizationStatus::Denied => return Ok(ChatAuthorityConsent::Refused),
             PermissionAuthorizationStatus::NotDetermined => {}
         }

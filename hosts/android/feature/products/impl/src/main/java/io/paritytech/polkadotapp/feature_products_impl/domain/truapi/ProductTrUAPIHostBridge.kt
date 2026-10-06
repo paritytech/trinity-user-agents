@@ -220,22 +220,10 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         }
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
-            if (review is UserConfirmationReview.Calling) {
-                review.v1.productId == callingProductId.value &&
-                    NativeMediaConsent.calling(context, review.v1.productId, review.v1.network, review.v1.account)
-            } else {
-                confirmationLauncher.decide(review, requesterFallback = callingProductId.value)
-            }
+            confirmationLauncher.decide(review, requesterFallback = callingProductId.value) != TrUAPIPermissionDecision.DENY
 
-        override suspend fun devicePermissionStatus(request: HostDevicePermissionRequest): DevicePermissionStatus {
-            val permission = when (request) {
-                HostDevicePermissionRequest.CAMERA -> Manifest.permission.CAMERA
-                HostDevicePermissionRequest.MICROPHONE -> Manifest.permission.RECORD_AUDIO
-                else -> return DevicePermissionStatus.NOT_APPLICABLE
-            }
-            return if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED)
-                DevicePermissionStatus.GRANTED else DevicePermissionStatus.NOT_DETERMINED
-        }
+        override suspend fun confirmPermission(review: UserConfirmationReview): TrUAPIPermissionDecision =
+            confirmationLauncher.decide(review, requesterFallback = callingProductId.value)
 
         override suspend fun devicePermission(
             product: ProductExecutionConfig,
@@ -452,20 +440,18 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 }
 
 /**
- * Confirm-only: the core owns the key and signs after approval, so this
- * answers yes/no and never produces a signature. A review the app cannot
- * describe fails closed, but that is a mapping bug rather than the normal
- * path. [requesterFallback] names the requester for the one review that does
- * not carry a product id itself.
+ * The core owns the key and acts after approval. Preserve the user's decision
+ * lifetime rather than promoting a one-time approval to a durable grant.
+ * A review the app cannot describe fails closed.
  */
 internal suspend fun TrUAPIConfirmationLauncher.decide(
     review: UserConfirmationReview,
     requesterFallback: String,
-): Boolean {
+): TrUAPIPermissionDecision {
     val confirmation = runCatching { review.toConfirmation(requesterFallback) }
         .getOrElse {
             Timber.w(it, "truapi.confirm: could not describe review, rejecting")
-            return false
+            return TrUAPIPermissionDecision.DENY
         }
 
     return awaitDecision(confirmation)

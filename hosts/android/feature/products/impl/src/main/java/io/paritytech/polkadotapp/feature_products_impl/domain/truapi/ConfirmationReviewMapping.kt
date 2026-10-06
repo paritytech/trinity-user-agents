@@ -78,8 +78,13 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
 
     is UserConfirmationReview.PreimageSubmit ->
         TrUAPIConfirmation.PreimageSubmit(
-            requesterProductId = callingProductId,
-            sizeBytes = v1.size.toLong(),
+            requesterProductId = v1.productId,
+            sizeBytes = v1.size,
+            rootPublicKey = v1.rootPublicKey.hex(),
+            genesisHash = v1.genesisHash.hex(),
+            automaticMaxBytes = v1.automaticMaxBytes,
+            automaticMaxUploads = v1.automaticMaxUploads,
+            automaticWindowSeconds = v1.automaticWindowSeconds,
         )
 
     is UserConfirmationReview.MainPurseChatPayment ->

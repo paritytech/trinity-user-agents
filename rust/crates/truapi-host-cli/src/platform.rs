@@ -1101,6 +1101,21 @@ fn storage_user_id(info: &SessionUiInfo) -> Option<&str> {
 
 #[async_trait]
 impl UserConfirmation for CliPlatform {
+    async fn confirm_permission(
+        &self,
+        review: UserConfirmationReview,
+    ) -> Result<PermissionDecision, api::GenericError> {
+        let (action, detail) = approval_summary(&review);
+        let policy = if matches!(review, UserConfirmationReview::PreimageSubmit(_)) {
+            ApprovalPolicy::Prompt
+        } else {
+            self.approval_policy()
+        };
+        Ok(self
+            .decide_with_policy(action, detail, ApprovalKind::Permission, policy)
+            .await)
+    }
+
     async fn confirm_user_action(
         &self,
         review: UserConfirmationReview,
@@ -1213,6 +1228,17 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
         UserConfirmationReview::ResourceAllocation(_) => (
             "allocate resources",
             "A product requested host-managed resources.".to_string(),
+        ),
+        UserConfirmationReview::PreimageSubmit(review) => (
+            "submit preimage",
+            format!(
+                "Product {} requested a {}-byte upload for root 0x{} on Bulletin 0x{}. \
+                 Allow once, or explicitly allow automatic uploads of at most {} bytes, \
+                 {} times per rolling {} seconds. Revoke with --revoke-automatic-uploads {}.",
+                review.product_id, review.size, hex::encode(review.root_public_key),
+                hex::encode(review.genesis_hash), review.automatic_max_bytes,
+                review.automatic_max_uploads, review.automatic_window_seconds, review.product_id
+            ),
         ),
         UserConfirmationReview::AccountAccess(review) => (
             "access another product account",
@@ -1893,6 +1919,125 @@ mod tests {
                 ApprovalPolicy::AutoAccept,
                 None,
             )
+            .expect("read device key as bob"),
+            Some(vec![7; 32])
+        );
+
+        // A user-scoped slot stays isolated, so the routing is not simply
+        // making every slot global.
+        futures::executor::block_on(
+            platform.write_core_storage(CoreStorageKey::AutoSigningKeys, vec![1, 2, 3]),
+        )
+        .expect("write bob auto-signing keys");
+        platform
+            .switch_pairing_user_storage("alice.dot")
+            .expect("restore alice");
+        assert_eq!(
+            futures::executor::block_on(
+                platform.read_core_storage(CoreStorageKey::AutoSigningKeys)
+            )
+            .expect("read alice auto-signing keys"),
+            None
+        );
+
+        // It also survives a fresh process reading the same directories.
+        let restarted = CliPlatform::new(
+            test_network(),
+            Some(CliStoragePaths::pairing(network_dir)),
+            ApprovalPolicy::AutoAccept,
+            None,
+        );
+        assert_eq!(
+            futures::executor::block_on(
+                restarted.read_core_storage(CoreStorageKey::DeviceEncryptionKey)
+            )
+            .expect("read device key after restart"),
+            Some(vec![7; 32])
+        );
+    }
+
+    /// A pairing login writes product KV before its username is known, so the
+    /// bootstrap directory's products must follow the first resolved user
+    /// instead of being stranded outside every identity namespace.
+    #[test]
+    fn product_storage_written_before_the_username_carries_into_the_resolved_user() {
+        let temporary = tempdir().expect("create pairing storage root");
+        let network_dir = temporary.path().join("testnet");
+        let product_key =
+            ProductStorageKey::new("product.dot", "theme").expect("product storage key");
+        save_product_storage(
+            &network_dir.join("pairing-host/storage"),
+            "product.dot",
+            &HashMap::from([("theme".to_string(), b"dark".to_vec())]),
+        )
+        .expect("write bootstrap pairing product storage");
+        let platform = CliPlatform::new(
+            test_network(),
+            Some(CliStoragePaths::pairing(network_dir.clone())),
+            ApprovalPolicy::AutoAccept,
+            None,
+        );
+
+        platform
+            .switch_pairing_user_storage("alice.dot")
+            .expect("resolve the bootstrap storage owner");
+
+        assert_eq!(
+            futures::executor::block_on(platform.read(product_key.encode()))
+                .expect("read carried product value"),
+            Some(b"dark".to_vec())
+        );
+        // Persisted, not merely carried in memory: a restart must find it too.
+        assert_eq!(
+            load_product_storage(&network_dir.join("alice.dot_pairing_host/storage")),
+            HashMap::from([(
+                "product.dot".to_string(),
+                HashMap::from([("theme".to_string(), b"dark".to_vec())]),
+            )])
+        );
+    }
+
+    /// Both products by name, because a signature made with an account the
+    /// caller does not own is the thing the user has to be able to see.
+    #[test]
+    fn statement_proof_approval_names_both_products_without_dumping_payload() {
+        let review = UserConfirmationReview::StatementStoreProductSign(
+            truapi::platform::StatementStoreProductSignReview {
+                calling_product_id: Some("dim2next.paseo".to_string()),
+                account: api::ProductAccountId {
+                    dot_ns_identifier: "dim2.paseo".to_string(),
+                    derivation_index: api::DerivationIndex::Index(0),
+                },
+                payload: vec![0x42; 128],
+            },
+        );
+
+        let (action, detail) = approval_summary(&review);
+
+        assert_eq!(action, "sign statement proof");
+        assert_eq!(
+            detail,
+            "Product dim2next.paseo requested a Statement Store proof signature for the \
+             dim2.paseo account over a 128-byte payload."
+        );
+        assert!(!detail.contains("[66"));
+    }
+
+    #[test]
+    fn vrf_approval_names_both_products_without_dumping_transcript_values() {
+        let review = UserConfirmationReview::SignVrf(truapi::platform::SignVrfReview {
+            calling_product_id: "caller.dot".to_string(),
+            request: truapi::v01::HostAccountSignVrfRequest {
+                account: truapi::v01::ProductAccountId {
+                    dot_ns_identifier: "target.dot".to_string(),
+                    derivation_index: truapi::v01::DerivationIndex::Raw([7; 32]),
+                },
+                transcript_label: b"lottery".to_vec(),
+                items: vec![truapi::v01::VrfTranscriptItem {
+                    label: b"round".to_vec(),
+                    value: vec![0x42; 128],
+                }],
+            },
         });
         let mut changes = platforms
             .each_ref()

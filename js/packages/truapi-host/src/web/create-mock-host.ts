@@ -1183,6 +1183,18 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         const entry = pushedNotifications.find((n) => n.id === id);
         if (entry) entry.cancelled = true;
       },
+      async receiverAuthority() {
+        return undefined;
+      },
+      async receiverConsent() {
+        throw new Error("background receiving unsupported");
+      },
+      async receiverChanged() {
+        throw new Error("background receiving unsupported");
+      },
+      async receiverCommand() {
+        return undefined;
+      },
       async activationEvents() {
         throw new Error("notification activation is unsupported");
       },
@@ -1326,7 +1338,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async confirmPermission(review) {
         reviews.push(review);
         if (faults.confirmationError) throw new Error(faults.confirmationError);
-        return decision(confirmUserActions);
+        return review.tag === "PreimageSubmit" && confirmUserActions
+          ? "AllowOnce"
+          : decision(confirmUserActions);
       },
     },
 

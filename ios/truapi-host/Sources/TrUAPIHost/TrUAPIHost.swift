@@ -707,7 +707,9 @@ public extension HostBridge {
     func chainClose(connectionId: UInt32) throws {}
     func confirmUserAction(review: UserConfirmationReview) async throws -> Bool { false }
     func confirmPermission(review: UserConfirmationReview) async throws -> PermissionDecision {
-        try await confirmUserAction(review: review) ? .allowAlways : .deny
+        guard try await confirmUserAction(review: review) else { return .deny }
+        if case .preimageSubmit = review { return .allowOnce }
+        return .allowAlways
     }
     func lookupPreimage(key: Data) async throws -> Data? { nil }
     func identityUsernameCandidates(username: String, peopleChainGenesisHash: Data) async throws -> [Data] {
@@ -1443,52 +1445,24 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.notifyContactsChanged()
     }
 
-    /// Install the host's top-up engine. Set-once; answers whether this call
-    /// installed it. Call it before opening any product execution.
-    @discardableResult
-    public func setTopUp(_ topUp: TopUpHostBridge) -> Bool {
-        let adapter = TopUpCallbackAdapter(bridge: topUp)
-        guard inner.setTopUpCallbacks(callbacks: adapter) else { return false }
-        topUpRetainer = adapter
-        return true
+    /// Current root account; use this snapshot in account-scoped permission requests.
+    public func currentSessionPublicKey() -> Data? {
+        inner.currentSessionPublicKey()
     }
 
-    /// Report a later status of `productId`'s top-up `id` to the products
-    /// following it. A terminal status ends their streams.
-    public func notifyTopUpStatus(productId: String, id: Data, status: HostPaymentTopUpStatusSubscribeItem) throws {
-        try inner.notifyTopUpStatus(productId: productId, id: id, status: status)
+    public func permissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest
+    ) async throws -> PermissionAuthorizationStatus {
+        try await inner.permissionAuthorizationStatus(productId: productId, request: request)
     }
 
-    /// Install the host's payment engine. Set-once; answers whether this call
-    /// installed it. Call it before opening any product execution.
-    @discardableResult
-    public func setPayments(_ payments: PaymentHostBridge) -> Bool {
-        let adapter = PaymentCallbackAdapter(bridge: payments)
-        guard inner.setPaymentCallbacks(callbacks: adapter) else { return false }
-        paymentsRetainer = adapter
-        return true
-    }
-
-    /// Report a later status of `productId`'s payment `id` to the products
-    /// following it. A terminal status ends their streams.
-    public func notifyPaymentStatus(productId: String, id: Data, status: HostPaymentStatusSubscribeItem) throws {
-        try inner.notifyPaymentStatus(productId: productId, id: id, status: status)
-    }
-
-    /// Install the host's balance view. Set-once; answers whether this call
-    /// installed it. Call it before opening any product execution.
-    @discardableResult
-    public func setBalance(_ balance: BalanceHostBridge) -> Bool {
-        let adapter = BalanceCallbackAdapter(bridge: balance)
-        guard inner.setBalanceCallbacks(callbacks: adapter) else { return false }
-        balanceRetainer = adapter
-        return true
-    }
-
-    /// Report the new balance of `purse` (`nil` for the main purse), a decimal
-    /// string of CASH units, to the products following it.
-    public func notifyBalance(purse: UInt32?, available: U128) {
-        inner.notifyBalance(purse: purse, available: available)
+    public func setPermissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus
+    ) async throws {
+        try await inner.setPermissionAuthorizationStatus(productId: productId, request: request, status: status)
     }
 
     /// Open one executable connection with a host-assigned immutable context.

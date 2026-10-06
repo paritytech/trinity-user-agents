@@ -47,6 +47,34 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
     ) async -> Bool {
         await confirmMainPursePayment(review, requiresPrivacyConfirmation: requiresPrivacyConfirmation)
     }
+
+    func confirmPermission(
+        review: UserConfirmationReview,
+        from _: String
+    ) async -> TrUAPIPermissionDecision {
+        switch review {
+        case let .preimageSubmit(preimageReview):
+            await presentPreimagePermission(preimageReview)
+        case let .identityDisclosure(identityReview):
+            await presentPermission(
+                promptMapper.makePermissionRequest(from: identityReview)
+            )
+        case let .accountAccess(accessReview):
+            await presentPermission(
+                promptMapper.makePermissionRequest(from: accessReview)
+            )
+        case let .accountAlias(aliasReview):
+            await presentPermission(
+                promptMapper.makePermissionRequest(from: aliasReview)
+            )
+        case let .chatAuthority(chatReview):
+            await presentPermission(
+                promptMapper.makePermissionRequest(from: chatReview)
+            )
+        default:
+            .deny
+        }
+    }
 }
 
 private extension TrUAPIConfirmationPresenter {
@@ -64,10 +92,9 @@ private extension TrUAPIConfirmationPresenter {
             await confirmStatementSign(
                 promptMapper.makeStatementSignRequest(from: statementReview)
             )
-        case let .preimageSubmit(preimageReview):
-            await confirmAction(
-                promptMapper.makeActionRequest(from: preimageReview, requester: requesterName)
-            )
+        case .preimageSubmit:
+            // A boolean caller cannot express durable upload consent.
+            false
         case let .productSubtree(subtreeReview):
             await confirmAction(promptMapper.makeActionRequest(from: subtreeReview))
         // No prompt exists for profile disclosure yet, so `confirmPermission`
@@ -163,31 +190,22 @@ private extension TrUAPIConfirmationPresenter {
         }
     }
 
-
-    func confirmPermissionReview(_ review: UserConfirmationReview) async throws -> Bool {
-        let request: TrUAPIPermissionRequest
-        switch review {
-        case let .identityDisclosure(value):
-            request = promptMapper.makePermissionRequest(from: value)
-        case let .chatAuthority(value):
-            request = promptMapper.makePermissionRequest(from: value)
-        case let .preimageSubmit(value):
-            request = promptMapper.makePermissionRequest(from: value)
-        case let .accountAccess(value):
-            request = promptMapper.makePermissionRequest(from: value)
-        case let .productSubtree(value):
-            request = promptMapper.makePermissionRequest(from: value)
-        case let .accountAlias(value):
-            request = promptMapper.makePermissionRequest(from: value)
-        default:
-            throw TrUAPIReviewMappingError.notAPermissionReview
+    func presentPreimagePermission(_ review: PreimageSubmitReview) async -> TrUAPIPermissionDecision {
+        await awaitDecision(cancelled: .deny) { [routerFacade] in
+            await withCheckedContinuation { continuation in
+                let context = TrUAPIPreimageConfirmationContext(review: review)
+                context.setContinuation(continuation)
+                let prompt = TrUAPIActionPromptViewFactory.createPreimageView(context: context)
+                if !routerFacade.productsRouter.present(view: prompt) {
+                    context.deliver(.deny)
+                }
+            }
         }
-        return await confirmPermission(request)
     }
 
-    func confirmPermission(_ request: TrUAPIPermissionRequest) async -> Bool {
-        await awaitDecision { [routerFacade] in
-            let decision: PermissionDecision = await withCheckedContinuation { continuation in
+    func presentPermission(_ request: TrUAPIPermissionRequest) async -> TrUAPIPermissionDecision {
+        await awaitDecision(cancelled: .deny) { [routerFacade] in
+            let decision: Products.PermissionDecision = await withCheckedContinuation { continuation in
                 let context = ProductPermissionContext(
                     productId: request.productId,
                     permissions: request.permissions

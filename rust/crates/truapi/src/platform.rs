@@ -1153,6 +1153,54 @@ pub trait Notifications: Send + Sync {
         Ok(())
     }
 
+    /// Resolve trusted authority without prompting or consulting transport.
+    /// The resident platform returns current host scope, even with product UI closed.
+    /// A product execution's platform returns the immutable scope captured when
+    /// that verified execution opened, never a replacement artifact/account's scope.
+    /// Returning `None` explicitly advertises unsupported receiving.
+    async fn receiver_authority(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<ReceivingAuthority>, GenericError> {
+        let _ = product_id;
+        Ok(None)
+    }
+
+    /// Request distinct consent for this authority and full watch scope.
+    async fn receiver_consent(
+        &self,
+        authority: ReceivingAuthority,
+        watches: Vec<crate::latest::ReceivingWatch>,
+    ) -> Result<bool, GenericError> {
+        let _ = (authority, watches);
+        Err(GenericError {
+            reason: "background receiving unsupported".into(),
+        })
+    }
+
+    /// Wake the host's asynchronous synchronization loop, never await network I/O.
+    async fn receiver_changed(&self) -> Result<(), GenericError> {
+        Err(GenericError {
+            reason: "background receiving unsupported".into(),
+        })
+    }
+
+    /// Forward receiving actions to the single host-owned receiver, if external.
+    /// The host must bind `product_id` to the trusted execution, not page input.
+    /// Payloads are latest SCALE requests for actions 2..7; the response encodes
+    /// `Result<latest response, HostNotificationReceivingError>` without a version tag.
+    /// `None` selects this runtime's resident engine. An unavailable external
+    /// owner must return an error, never `None`, to avoid a second persistent writer.
+    async fn receiver_command(
+        &self,
+        product_id: String,
+        action: u8,
+        payload: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, GenericError> {
+        let _ = (product_id, action, payload);
+        Ok(None)
+    }
+
     /// Return at most 32 pending activations, ordered by sequence, without
     /// consuming them. The embedding host binds this platform to the verified
     /// product, authenticated account and environment; none is caller input.
@@ -1245,11 +1293,13 @@ pub enum PermissionAuthorizationRequest {
     /// from product-supplied identity claims. Unscoped `Remote(Calling)` grants
     /// do not authorize this request.
     #[codec(index = 6)]
-    Calling {
-        /// Genesis hash of the authenticated network.
-        network: [u8; 32],
-        /// Product's authority-derived `Index(0)` sr25519 public key.
-        account: [u8; 32],
+    ProfileDisclosure,
+    /// Bounded automatic Bulletin uploads for the rendered account. The core
+    /// rejects an account that is no longer active; product and network are host-owned.
+    #[codec(index = 8)]
+    AutomaticPreimageSubmit {
+        /// Root account whose automatic-upload decision is being edited.
+        root_public_key: Bytes32,
     },
 }
 
@@ -2004,6 +2054,17 @@ pub enum CoreStorageKey {
     /// Host product/account deletion must invoke ReceivingService::revoke first.
     #[codec(index = 20)]
     NotificationReceiving,
+    /// Bounded upload consent and rolling quota. Revocation retains quota and
+    /// advances a generation so outstanding confirmations cannot restore it.
+    #[codec(index = 21)]
+    AutomaticPreimageUploads {
+        /// Authenticated requesting product.
+        product_id: String,
+        /// Root account that explicitly granted consent.
+        root_public_key: Bytes32,
+        /// Host-selected Bulletin network.
+        genesis_hash: Bytes32,
+    },
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -2076,6 +2137,9 @@ pub fn describe_core_storage_key(
             ("NativeChatFileChunk", Some(product_id))
         }
         CoreStorageKey::NotificationReceiving => ("NotificationReceiving", None),
+        CoreStorageKey::AutomaticPreimageUploads { product_id, .. } => {
+            ("AutomaticPreimageUploads", Some(product_id))
+        }
     };
     Ok(CoreStorageKeyDescription { kind, product_id, permission_request })
 }
@@ -3814,13 +3878,21 @@ pub struct ProductSubtreeReview {
 /// carries over to another account or network.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
-pub struct CallingReview {
-    /// Canonical product requesting calling authority.
+pub struct PreimageSubmitReview {
+    /// Size of the preimage in bytes.
+    pub size: u64,
+    /// Authenticated product requesting this upload.
     pub product_id: String,
-    /// Genesis hash of the authenticated network.
-    pub network: [u8; 32],
-    /// Product's authority-derived `Index(0)` sr25519 public key.
-    pub account: [u8; 32],
+    /// Root account to which any durable approval is restricted.
+    pub root_public_key: Bytes32,
+    /// Host-selected Bulletin network covered by the approval.
+    pub genesis_hash: Bytes32,
+    /// Maximum bytes per automatically approved upload.
+    pub automatic_max_bytes: u64,
+    /// Maximum automatic upload attempts in the rolling window.
+    pub automatic_max_uploads: u32,
+    /// Length of the rolling automatic-upload window in seconds.
+    pub automatic_window_seconds: u32,
 }
 
 /// Review shown before a user-confirmed core action continues.
@@ -3863,17 +3935,23 @@ pub enum UserConfirmationReview {
 /// Local user confirmation UI for sensitive core-owned operations.
 #[async_trait]
 pub trait UserConfirmation: Send + Sync {
-	/// Preserve the lifetime of consent for identity and account disclosures.
-	async fn confirm_permission(
-		&self,
-		review: UserConfirmationReview,
-	) -> Result<PermissionDecision, GenericError> {
-		Ok(if self.confirm_user_action(review).await? {
-			PermissionDecision::AllowAlways
-		} else {
-			PermissionDecision::Deny
-		})
-	}
+    /// Preserve the lifetime of consent for identity and account disclosures.
+    async fn confirm_permission(
+        &self,
+        review: UserConfirmationReview,
+    ) -> Result<PermissionDecision, GenericError> {
+        // A boolean upload approval has no explicit durable-consent choice.
+        let upload = matches!(review, UserConfirmationReview::PreimageSubmit(_));
+        Ok(if self.confirm_user_action(review).await? {
+            if upload {
+                PermissionDecision::AllowOnce
+            } else {
+                PermissionDecision::AllowAlways
+            }
+        } else {
+            PermissionDecision::Deny
+        })
+    }
 
 	/// Confirm a reviewed action before the core continues.
 	///
@@ -3905,7 +3983,9 @@ pub trait LocaleHost: Send + Sync {
         &self,
         _request: crate::latest::HostLocaleLocalizeTimestampsRequest,
     ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, GenericError> {
-        Err(GenericError { reason: "Local time conversion is unavailable".into() })
+        Err(GenericError {
+            reason: "Local time conversion is unavailable".into(),
+        })
     }
 }
 
@@ -4166,9 +4246,11 @@ pub trait GamePlatform: Send + Sync {
         product: &ProductContext,
         presented: PresentedContactProfile,
     ) -> Result<(), HostProfilePresentError> {
-        let shared = presented.shared.ok_or_else(|| HostProfilePresentError::Unknown {
-            reason: "Contact profile feedback is unavailable".to_string(),
-        })?;
+        let shared = presented
+            .shared
+            .ok_or_else(|| HostProfilePresentError::Unknown {
+                reason: "Contact profile feedback is unavailable".to_string(),
+            })?;
         self.present_profile(
             product,
             HostProfilePresentRequest {

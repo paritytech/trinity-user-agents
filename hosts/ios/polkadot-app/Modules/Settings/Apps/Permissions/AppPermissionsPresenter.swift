@@ -1,6 +1,7 @@
 import Foundation
 import PolkadotUI
 import Products
+import SubstrateSdk
 
 import TrUAPIHost
 final class AppPermissionsPresenter {
@@ -16,6 +17,8 @@ final class AppPermissionsPresenter {
     private var grants: [ProductPermissionGrant] = []
     private var mediaPermissions: [TrUAPIMediaPermissionSetting] = []
     private var pendingDeletionIds: Set<String> = []
+    private var automaticUploadScope: TrUAPIAutomaticUploadScope?
+    private var automaticUploadsAllowed = false
 
     init(
         productName: String,
@@ -39,8 +42,8 @@ extension AppPermissionsPresenter: AppPermissionsPresenterProtocol {
     }
 
     func toggle(_ item: AppPermissionsViewLayout.Item, isOn: Bool) {
-        if let setting = mediaPermissions.first(where: { $0.id == item.id }) {
-            interactor.setMediaPermission(setting, allowed: isOn)
+        if let scope = automaticUploadScope, item.id == automaticUploadItemId(scope) {
+            interactor.setAutomaticUploads(allowed: isOn, scope: scope)
             return
         }
         guard grantsByItemId[item.id] != nil else {
@@ -65,6 +68,12 @@ extension AppPermissionsPresenter: AppPermissionsPresenterProtocol {
 }
 
 extension AppPermissionsPresenter: AppPermissionsInteractorOutputProtocol {
+    func didReceiveAutomaticUploads(scope: TrUAPIAutomaticUploadScope?, allowed: Bool) {
+        automaticUploadScope = scope
+        automaticUploadsAllowed = allowed
+        refreshItems()
+    }
+
     func didReceive(grants: [ProductPermissionGrant]) {
         self.grants = grants
         grantsByItemId = Dictionary(
@@ -84,21 +93,26 @@ extension AppPermissionsPresenter: AppPermissionsInteractorOutputProtocol {
 }
 
 private extension AppPermissionsPresenter {
+    func automaticUploadItemId(_ scope: TrUAPIAutomaticUploadScope) -> String {
+        "automatic-preimage:\(scope.generation):\(scope.rootPublicKey.toHex(includePrefix: true))"
+    }
+
     func refreshItems() {
         var items = viewModelFactory.createItems(
             from: grants,
             pendingDeletionIds: pendingDeletionIds
         )
-        items.append(contentsOf: mediaPermissions.map { setting in
-            let status: String
-            switch setting.status {
-            case .authorized: status = "Allowed"
-            case .denied: status = "Denied"
-            case .notDetermined: status = "Ask"
-            }
-            return AppPermissionsViewLayout.Item(id: setting.id, title: setting.title,
-                description: "\(status)\n\(setting.detail)", isOn: setting.status == .authorized)
-        })
+        if let scope = automaticUploadScope {
+            items.append(AppPermissionsViewLayout.Item(
+                id: automaticUploadItemId(scope),
+                title: String(localized: .Products.appPermissionAutomaticPreimageTitle),
+                description: String(localized: .Products.appPermissionAutomaticPreimageBody(
+                    rootAccount: scope.rootPublicKey.toHex(includePrefix: true),
+                    bulletinNetwork: scope.bulletinGenesis.toHex(includePrefix: true)
+                )),
+                isOn: automaticUploadsAllowed
+            ))
+        }
         view?.didReceive(items: items)
     }
 }

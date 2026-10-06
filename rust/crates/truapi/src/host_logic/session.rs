@@ -328,21 +328,31 @@ impl SessionState {
 		self.inner.lock().expect("session-state mutex poisoned").current.clone()
 	}
 
-	/// Stream of connection-status events. The first item emitted is the
-	/// current state (so subscribers don't have to read it separately);
-	/// subsequent items reflect every `set_session` / `clear_session`
-	/// transition.
-	pub fn subscribe(&self) -> BoxStream<'static, VersionedItem> {
-		let (tx, rx) = mpsc::unbounded();
-		let mut inner = self.inner.lock().expect("session-state mutex poisoned");
-		let initial = match inner.current {
-			Some(_) => HostAccountConnectionStatusSubscribeItem::Connected,
-			None => HostAccountConnectionStatusSubscribeItem::Disconnected,
-		};
-		inner.subscribers.push(tx);
-		let initial_item = VersionedItem::V1(initial);
-		Box::pin(stream::once(async move { initial_item }).chain(rx))
-	}
+    /// Read the active root without cloning session secrets or pairing state.
+    pub fn current_public_key(&self) -> Option<[u8; 32]> {
+        self.inner
+            .lock()
+            .expect("session-state mutex poisoned")
+            .current
+            .as_ref()
+            .map(|session| session.public_key)
+    }
+
+    /// Stream of connection-status events. The first item emitted is the
+    /// current state (so subscribers don't have to read it separately);
+    /// subsequent items reflect every `set_session` / `clear_session`
+    /// transition.
+    pub fn subscribe(&self) -> BoxStream<'static, VersionedItem> {
+        let (tx, rx) = mpsc::unbounded();
+        let mut inner = self.inner.lock().expect("session-state mutex poisoned");
+        let initial = match inner.current {
+            Some(_) => HostAccountConnectionStatusSubscribeItem::Connected,
+            None => HostAccountConnectionStatusSubscribeItem::Disconnected,
+        };
+        inner.subscribers.push(tx);
+        let initial_item = VersionedItem::V1(initial);
+        Box::pin(stream::once(async move { initial_item }).chain(rx))
+    }
 }
 
 /// Broadcast one connection-status transition and prune dropped subscribers.

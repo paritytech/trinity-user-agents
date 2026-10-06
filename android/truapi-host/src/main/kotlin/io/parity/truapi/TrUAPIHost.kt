@@ -467,7 +467,10 @@ interface HostBridge : NativeChatFilesHost {
     /** Preserve the selected lifetime for identity and account access consent. */
     @Throws(HostRejection::class)
     suspend fun confirmPermission(review: UserConfirmationReview): PermissionDecision =
-        if (confirmUserAction(review)) PermissionDecision.ALLOW_ALWAYS else PermissionDecision.DENY
+        if (confirmUserAction(review)) {
+            if (review is UserConfirmationReview.PreimageSubmit) PermissionDecision.ALLOW_ONCE
+            else PermissionDecision.ALLOW_ALWAYS
+        } else PermissionDecision.DENY
 
     /** Return the current preimage value for [key], or null for a miss. */
     @Throws(HostRejection::class)
@@ -1294,58 +1297,21 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         inner.notifyContactsChanged()
     }
 
-    // Co-own the payment adapters for as long as the runtime holds them.
-    private var topUpRetainer: NativeTopUpCallbacks? = null
-    private var paymentRetainer: NativePaymentCallbacks? = null
-    private var balanceRetainer: NativeBalanceCallbacks? = null
+    /** Current root account; retain this snapshot in account-scoped permission requests. */
+    fun currentSessionPublicKey(): ByteArray? = inner.currentSessionPublicKey()
 
-    /**
-     * Install the host's top-up engine. Set-once; returns whether this call
-     * installed it. Call it before opening any product execution.
-     */
-    fun setTopUp(topUp: TopUpHostBridge): Boolean {
-        val adapter = TopUpCallbackAdapter(topUp)
-        topUpRetainer = adapter
-        return inner.setTopUpCallbacks(adapter)
-    }
+    @Throws(HostRejection::class)
+    suspend fun permissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+    ): PermissionAuthorizationStatus = inner.permissionAuthorizationStatus(productId, request)
 
-    /** Report a later status of [productId]'s top-up [id] to the products following it. */
-    fun notifyTopUpStatus(productId: String, id: ByteArray, status: HostPaymentTopUpStatusSubscribeItem) {
-        inner.notifyTopUpStatus(productId, id, status)
-    }
-
-    /**
-     * Install the host's payment engine. Set-once; returns whether this call
-     * installed it. Call it before opening any product execution.
-     */
-    fun setPayments(payments: PaymentHostBridge): Boolean {
-        val adapter = PaymentCallbackAdapter(payments)
-        paymentRetainer = adapter
-        return inner.setPaymentCallbacks(adapter)
-    }
-
-    /** Report a later status of [productId]'s payment [id] to the products following it. */
-    fun notifyPaymentStatus(productId: String, id: ByteArray, status: HostPaymentStatusSubscribeItem) {
-        inner.notifyPaymentStatus(productId, id, status)
-    }
-
-    /**
-     * Install the host's balance view. Set-once; returns whether this call
-     * installed it. Call it before opening any product execution.
-     */
-    fun setBalance(balance: BalanceHostBridge): Boolean {
-        val adapter = BalanceCallbackAdapter(balance)
-        balanceRetainer = adapter
-        return inner.setBalanceCallbacks(adapter)
-    }
-
-    /**
-     * Report the new balance of [purse] (`null` for the main purse), a decimal
-     * string of CASH units, to the products following it.
-     */
-    fun notifyBalance(purse: UInt?, available: String) {
-        inner.notifyBalance(purse, available)
-    }
+    @Throws(HostRejection::class)
+    suspend fun setPermissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) = inner.setPermissionAuthorizationStatus(productId, request, status)
 
     /**
      * Open one executable connection with a host-assigned immutable context.
