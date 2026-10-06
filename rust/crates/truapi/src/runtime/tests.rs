@@ -2685,49 +2685,6 @@ fn a_top_up_with_a_malformed_key_is_refused_before_the_host_sees_it() {
     );
 }
 
-// The core credits funding deposits with top-ups made as the funding
-// product, under ids anyone can work out from the deposit address. A product
-// under that name could otherwise register them first or read their status.
-#[test]
-fn no_product_tops_up_or_follows_top_ups_as_the_funding_product() {
-    let services = funding_services();
-    let engine = Arc::new(RecordingTopUpPlatform::default());
-    assert!(services.install_top_up_platform(engine.clone()));
-    let host = funding_host(&services, "fund.dot", true);
-    let secret = schnorrkel::MiniSecretKey::from_bytes(&[7; 32])
-        .expect("seed")
-        .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519)
-        .secret
-        .to_bytes();
-
-    let started = top_up(
-        &host,
-        v01::PaymentTopUpSource::PrivateKey {
-            sr25519_secret_key: secret,
-        },
-    );
-    let followed = futures::executor::block_on(
-        futures::executor::block_on(truapi::api::Payment::top_up_status_subscribe(
-            &host,
-            &CallContext::default(),
-            truapi::versioned::payment::HostPaymentTopUpStatusSubscribeRequest::V1(
-                v01::HostPaymentTopUpStatusSubscribeRequest { id: [7; 32] },
-            ),
-        ))
-        .collect::<Vec<_>>(),
-    );
-
-    assert_eq!(
-        (
-            started,
-            followed,
-            engine.started.lock().expect("started mutex poisoned").len(),
-            engine.followed.lock().expect("followed mutex poisoned").len(),
-        ),
-        (Err(CallError::Denied), vec![Err(CallError::Denied)], 0, 0)
-    );
-}
-
 #[test]
 fn a_top_up_needs_a_session() {
     let services = funding_services();
@@ -2781,35 +2738,6 @@ fn bare_localhost_product_allows_dev_product_accounts() {
         )
         .as_deref(),
         Some("myapp.dot")
-    );
-}
-
-/// The funding product's accounts hold deposits in transit, so no product
-/// signs with them: not one that registers the name, and not a development
-/// product that may otherwise reach any account.
-#[test]
-fn no_product_reaches_the_funding_accounts() {
-    let registered = ProductRuntimeHost::new(stub_platform(), runtime_config("fund.dot"), test_spawner());
-    let localhost =
-        ProductRuntimeHost::new(stub_platform(), runtime_config("localhost"), test_spawner());
-    // The user would allow it, so only the guard can refuse.
-    let platform = StubPlatform {
-        account_access_confirmed: true,
-        ..StubPlatform::default()
-    };
-    assert_eq!(
-        (
-            account_target(&registered, "fund.dot"),
-            account_target(&localhost, "fund.dot"),
-            account_target(&localhost, "app.fund.dot"),
-            futures::executor::block_on(crate::runtime::account_access_authorization(
-                &platform,
-                "wallet.dot",
-                "fund.dot",
-            ))
-            .ok(),
-        ),
-        (None, None, None, Some(PermissionAuthorizationStatus::Denied))
     );
 }
 
@@ -4373,25 +4301,6 @@ fn derive_entropy_matches_dotli_vector() {
     assert_eq!(
         hex::encode(inner.entropy),
         "ab1887248c9de3cf4b8c5a255782796d3d35a98c8eb2d7df61a410db8b14da36"
-    );
-}
-
-// Funding accounts are the funding product's entropy for their getcash
-// labels, so a product under that name deriving entropy would hold their
-// keys; a paired host refuses it as the signing host does.
-#[test]
-fn no_product_derives_entropy_as_the_funding_product() {
-    let host = ProductRuntimeHost::new(stub_platform(), runtime_config("fund.dot"), test_spawner());
-    let mut session = sso_session_info();
-    session.root_entropy_source = session_info().root_entropy_source;
-    install_pairing_session(&host, session);
-    let request = HostDeriveEntropyRequest::V1(v01::HostDeriveEntropyRequest {
-        context: b"onramp:eph:usdt-assethub:1".to_vec(),
-    });
-
-    assert_eq!(
-        futures::executor::block_on(host.derive(&CallContext::default(), request)),
-        Err(CallError::Denied)
     );
 }
 

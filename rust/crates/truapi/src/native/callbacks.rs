@@ -327,8 +327,7 @@ pub trait NativeFundingCallbacks: Send + Sync {
         amount: Option<u128>,
     ) -> Result<crate::platform::FundingPresentOutcome, HostRejection>;
 
-    /// A session's status, or what its deposit account holds, changed, for
-    /// host UI such as the in-flight pill or a mismatch prompt.
+    /// A session's status changed, for host UI such as the in-flight pill.
     fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);
 }
 

@@ -650,9 +650,8 @@ runtime_items! {
     pub use runtime::product_manifest::{encode_cached_root_manifest, manifest_cache_key};
     pub use runtime::statement_allowance;
     pub use runtime::{
-        AnnouncedPairing, DevicePairingObserver, FundingNetwork, FundingSigner,
-        MAX_PAIRING_METADATA_CHARS, PairedSsoPeer, PairingProposal, PairingProposalMetadata,
-        ResponderExit,
+        AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
+        PairingProposal, PairingProposalMetadata, ResponderExit,
     };
 
     #[cfg(not(target_arch = "wasm32"))]

@@ -273,51 +273,6 @@ impl NativeTrUApiHostRuntime {
         }
     }
 
-    /// Convert funding deposits into CASH on People, where CASH is Asset
-    /// Hub asset `cash_asset_id`, reading every deposit account for the
-    /// `deposit_asset_ids` and the native token. Set-once; answers whether
-    /// this call enabled it.
-    pub fn enable_funding_conversion(&self, cash_asset_id: u32, deposit_asset_ids: Vec<u32>) -> bool {
-        self.runtime
-            .enable_funding_conversion(crate::FundingNetwork { cash_asset_id }, deposit_asset_ids)
-    }
-
-    /// Convert what arrived of `asset` on session `intent`'s deposit account
-    /// instead of what was asked.
-    pub async fn accept_funding_deposit(
-        &self,
-        intent: String,
-        asset: crate::host_logic::funding::DepositAsset,
-    ) -> Result<(), HostRejection> {
-        Ok(self.runtime.accept_funding_deposit(&intent, asset).await?)
-    }
-
-    /// Try failed session `intent` again from where its funds are.
-    pub async fn retry_funding(&self, intent: String) -> Result<(), HostRejection> {
-        Ok(self.runtime.retry_funding(&intent).await?)
-    }
-
-    /// What arrived on session `intent`'s deposit account that does not
-    /// match what was asked, if anything.
-    pub fn funding_deposit_mismatch(
-        &self,
-        intent: String,
-    ) -> Option<crate::host_logic::funding::DepositMismatch> {
-        self.runtime
-            .funding_session(&intent)?
-            .deposit_mismatch()
-    }
-
-    /// Raw seed of session `intent`'s `kind` account, for a wallet to import
-    /// and move its funds by hand. `None` while no signing session is active.
-    pub fn funding_account_secret(
-        &self,
-        intent: String,
-        kind: crate::host_logic::funding::FundingAccountKind,
-    ) -> Result<Option<crate::Bytes32>, HostRejection> {
-        Ok(self.runtime.funding_account_secret(&intent, kind)?)
-    }
-
     /// Open a funding session on the host's own behalf, as the Balance
     /// card does, and show the overlay. Answers the session id, or `None`
     /// when the user dismissed it.
@@ -327,25 +282,6 @@ impl NativeTrUApiHostRuntime {
         amount: Option<u128>,
     ) -> Result<Option<String>, HostRejection> {
         Ok(self.runtime.open_funding(direction, amount).await?)
-    }
-
-    /// The deposit of `asset` a provider must deliver to credit session
-    /// `intent`'s amount.
-    pub async fn quote_funding_deposit(
-        &self,
-        intent: String,
-        asset: crate::host_logic::funding::DepositAsset,
-    ) -> Result<u128, HostRejection> {
-        Ok(self.runtime.quote_funding_deposit(&intent, asset).await?)
-    }
-
-    /// Give session `intent` the deposit account its provider pays into.
-    pub async fn assign_funding_deposit(
-        &self,
-        intent: String,
-        request: crate::host_logic::funding::DepositRequest,
-    ) -> Result<crate::Bytes32, HostRejection> {
-        Ok(self.runtime.assign_funding_deposit(&intent, request).await?)
     }
 
     /// Session `intent` as the core holds it, for the host's status and
