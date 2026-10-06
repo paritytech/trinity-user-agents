@@ -108,6 +108,10 @@ class EncryptedTrUAPIStorageTest {
 private class FakeEncryptedPreferences(
     private val dropWrites: Boolean = false,
 ) : EncryptedPreferences {
+    override fun putEncryptedStringCommitted(field: String, value: String) = putEncryptedString(field, value)
+    override fun getDecryptedStringOrThrow(field: String): String? = getDecryptedString(field)
+    override fun removeKeyCommitted(field: String) = removeKey(field)
+
     private val values = mutableMapOf<String, String>()
 
     /** Mirrors EncryptionUtil storing "" when it cannot encrypt. */
