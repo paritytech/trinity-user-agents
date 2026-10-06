@@ -17,6 +17,18 @@ owner: "@johnthecat"
 > **NOTE (2026-09-18): retain the legacy Google Fonts exception.**
 > For compatibility, `BLESSED_REMOTE_DOMAINS` lets every product access `fonts.googleapis.com` and `fonts.gstatic.com` without a prompt. This covers all paths and query strings on those hosts, not only font requests, and requests disclose the user's IP address to Google. An explicit matching denial overrides the exception. These implicit grants are not stored.
 
+> **NOTE (2026-10-06): trusted native products skip only notification app consent.**
+> The iOS and Android TrUAPI notification permission callbacks reuse the canonical
+> `hasTrustedRemotePermissions` classifier for the application-consent step only.
+> The core still reads product-scoped decisions before invoking the callback:
+> stored denial, one-use consumption and storage errors retain their existing
+> behavior. The native callback still checks/requests the host application's OS
+> notification permission; OS refusal never returns an authorization or reaches
+> notification scheduling. Camera, microphone and other device capabilities do
+> not inherit this exception. Browser hosts must make the same separation in
+> their concrete permission callback, not bypass that callback in Rust: the
+> shared callback can own both application consent and browser/OS authorization.
+
 ## Summary
 
 The host callback distinguishes `AllowOnce`, `AllowAlways`, and `Deny`.

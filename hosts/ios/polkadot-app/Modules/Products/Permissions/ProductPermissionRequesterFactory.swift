@@ -8,9 +8,9 @@ enum ProductPermissionRequesterFactory {
         fundingProvider: FundingDomainProviding
     ) -> ProductPermissionRequesting {
         let requester = ProductPermissionRequester(router: router)
-        // Ordered narrowest first. The trusted wrapper grants remote access only
-        // and is not tied to the settings-screen build flag, so it still applies
-        // in builds where `ProductAutoAllowList` is empty.
+        // Ordered narrowest first. The trusted wrapper grants remote access and
+        // notification app consent, never OS permission. It still applies when
+        // the settings-screen build flag makes `ProductAutoAllowList` empty.
         //
         // `hasTrustedRemotePermissions` is the core's own answer, so the app and
         // the protocol path cannot disagree about which products are trusted.
