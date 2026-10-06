@@ -71,11 +71,12 @@ impl NativeTrUApiHostRuntime {
             }
         })?;
         let directory = &runtime_config.database_directory;
-        let core_db = futures::executor::block_on(Db::open(core_db_config(directory))).map_err(
-            |err| NativeRuntimeConfigError::DatabaseUnavailable {
-                reason: format!("{}: {err}", directory.display()),
-            },
-        )?;
+        let core_db =
+            futures::executor::block_on(Db::open(core_db_config(directory))).map_err(|err| {
+                NativeRuntimeConfigError::DatabaseUnavailable {
+                    reason: format!("{}: {err}", directory.display()),
+                }
+            })?;
         let events = Arc::new(NativeEventBus::default());
         let platform = Arc::new(CallbackPlatform {
             callbacks: callbacks.clone(),
@@ -94,6 +95,7 @@ impl NativeTrUApiHostRuntime {
             native_wallet,
         ));
         runtime.set_identity_backend_host(platform.clone());
+        runtime.set_permission_status_host(platform.clone());
         assert!(
             runtime
                 .worker_ledger()
@@ -267,13 +269,27 @@ impl NativeTrUApiHostRuntime {
     }
 
     /// Enumerate durable receiving registrations, including synchronized ones.
-    pub async fn receiving_pending(&self) -> Result<Vec<crate::platform::ReceivingRegistration>, HostRejection> {
-        self.runtime.receiving().pending().await.map_err(HostRejection::from)
+    pub async fn receiving_pending(
+        &self,
+    ) -> Result<Vec<crate::platform::ReceivingRegistration>, HostRejection> {
+        self.runtime
+            .receiving()
+            .pending()
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Acknowledge exactly the durable revision synchronized by the transport.
-    pub async fn receiving_synchronized(&self, product_id: String, revision: u64) -> Result<bool, HostRejection> {
-        self.runtime.receiving().synchronized(&product_id, revision).await.map_err(HostRejection::from)
+    pub async fn receiving_synchronized(
+        &self,
+        product_id: String,
+        revision: u64,
+    ) -> Result<bool, HostRejection> {
+        self.runtime
+            .receiving()
+            .synchronized(&product_id, revision)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Verify a complete frame against its independently observed chain and topics.
@@ -282,65 +298,135 @@ impl NativeTrUApiHostRuntime {
         reason = "Preserve the native receiving API shared with generated host bindings"
     )]
     pub async fn receiving_ingest(
-        &self, product_id: String, revision: u64, watch_id: String,
-        actual_genesis: String, actual_channel: String, actual_topics: Vec<String>, frame: Vec<u8>,
+        &self,
+        product_id: String,
+        revision: u64,
+        watch_id: String,
+        actual_genesis: String,
+        actual_channel: String,
+        actual_topics: Vec<String>,
+        frame: Vec<u8>,
     ) -> Result<Vec<crate::latest::ReceivingEvent>, HostRejection> {
-        self.runtime.receiving().ingest(&product_id, revision, watch_id, actual_genesis, actual_channel, actual_topics, frame)
-            .await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .ingest(
+                &product_id,
+                revision,
+                watch_id,
+                actual_genesis,
+                actual_channel,
+                actual_topics,
+                frame,
+            )
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Decode and authenticate a raw SCALE statement before receiving its frame.
     pub async fn receiving_ingest_statement(
-        &self, product_id: String, revision: u64, watch_id: String,
-        actual_genesis: String, statement: Vec<u8>,
+        &self,
+        product_id: String,
+        revision: u64,
+        watch_id: String,
+        actual_genesis: String,
+        statement: Vec<u8>,
     ) -> Result<Vec<crate::latest::ReceivingEvent>, HostRejection> {
-        self.runtime.receiving().ingest_statement(&product_id, revision, watch_id, actual_genesis, statement)
-            .await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .ingest_statement(&product_id, revision, watch_id, actual_genesis, statement)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Reserve display after foreground grace, rechecking receipts and authority.
     pub async fn receiving_prepare_display(
-        &self, product_id: String, revision: u64, event_id: String,
+        &self,
+        product_id: String,
+        revision: u64,
+        event_id: String,
     ) -> Result<Option<crate::latest::ReceivingEvent>, HostRejection> {
-        self.runtime.receiving().prepare_display(&product_id, revision, event_id).await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .prepare_display(&product_id, revision, event_id)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Validate a click before loading the verified product, without enqueueing it.
     pub async fn receiving_validate_activation(
-        &self, product_id: String, revision: u64, event_id: String,
+        &self,
+        product_id: String,
+        revision: u64,
+        event_id: String,
     ) -> Result<Option<crate::latest::ReceivingEvent>, HostRejection> {
-        self.runtime.receiving().validate_activation(&product_id, revision, event_id).await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .validate_activation(&product_id, revision, event_id)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Clear a reservation only after explicit display failure, not an unknown outcome.
     pub async fn receiving_cancel_display(
-        &self, product_id: String, revision: u64, event_id: String,
+        &self,
+        product_id: String,
+        revision: u64,
+        event_id: String,
     ) -> Result<(), HostRejection> {
-        self.runtime.receiving().cancel_display(&product_id, revision, event_id).await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .cancel_display(&product_id, revision, event_id)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Record actual platform display, not enrollment or ingestion.
     pub async fn receiving_confirm_display(
-        &self, product_id: String, revision: u64, event_id: String,
+        &self,
+        product_id: String,
+        revision: u64,
+        event_id: String,
     ) -> Result<(), HostRejection> {
-        self.runtime.receiving().confirm_display(&product_id, revision, event_id).await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .confirm_display(&product_id, revision, event_id)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Resolve a click only under current trusted authority, without launching URLs.
     pub async fn receiving_activate(
-        &self, product_id: String, revision: u64, event_id: String,
+        &self,
+        product_id: String,
+        revision: u64,
+        event_id: String,
     ) -> Result<Option<crate::latest::ReceivingEvent>, HostRejection> {
-        self.runtime.receiving().activate(&product_id, revision, event_id).await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .activate(&product_id, revision, event_id)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Revoke locally before logout or destructive account erasure.
     pub async fn receiving_revoke(&self, product_id: String) -> Result<(), HostRejection> {
-        self.runtime.receiving().revoke(&product_id).await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .revoke(&product_id)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Queue synchronization after the host durably rotates its selected transport.
-    pub async fn receiving_mark_transport_changed(&self, product_id: String) -> Result<(), HostRejection> {
-        self.runtime.receiving().mark_transport_changed(&product_id).await.map_err(HostRejection::from)
+    pub async fn receiving_mark_transport_changed(
+        &self,
+        product_id: String,
+    ) -> Result<(), HostRejection> {
+        self.runtime
+            .receiving()
+            .mark_transport_changed(&product_id)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Install the host's contacts adapter, which owns the contact list and
@@ -391,6 +477,46 @@ impl NativeTrUApiHostRuntime {
             pocket_callbacks,
             product,
         ))
+    }
+
+    /// Root account currently selected by the native authority.
+    pub fn current_session_public_key(&self) -> Option<Bytes32> {
+        self.runtime.current_session_public_key()
+    }
+
+    /// Inspect consent without opening a product execution.
+    pub async fn permission_authorization_status(
+        &self,
+        product_id: String,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<PermissionAuthorizationStatus, HostRejection> {
+        let product = ProductContext::new_with_execution(product_id, ProductExecutionKind::App)
+            .map_err(|error| HostRejection::Rejected {
+                reason: error.to_string(),
+            })?;
+        Ok(self
+            .runtime
+            .product_admin(product)
+            .permission_authorization_status(request)
+            .await?)
+    }
+
+    /// Apply a host settings decision without blocking a UI callback thread.
+    pub async fn set_permission_authorization_status(
+        &self,
+        product_id: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), HostRejection> {
+        let product = ProductContext::new_with_execution(product_id, ProductExecutionKind::App)
+            .map_err(|error| HostRejection::Rejected {
+                reason: error.to_string(),
+            })?;
+        Ok(self
+            .runtime
+            .product_admin(product)
+            .set_permission_authorization_status(request, status)
+            .await?)
     }
 
     /// Take one reference on the product's worker for a modality holder. The

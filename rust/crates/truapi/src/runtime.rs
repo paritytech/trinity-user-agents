@@ -13,6 +13,7 @@ mod allowances;
 /// Core-owned auth/session UI state machine.
 pub mod auth_state;
 mod authority;
+mod automatic_preimage;
 /// In-core Bulletin preimage submission over the shared Subxt client.
 pub mod bulletin_rpc;
 mod capabilities;
@@ -26,14 +27,14 @@ mod dotns_lookup;
 mod identity;
 pub mod login_failure;
 mod native_chat;
+/// Transport-independent authenticated notification frames.
+pub mod notification_envelope;
 mod pairing_host;
 pub mod product_manifest;
 mod product_subtree;
 mod profile;
 /// Durable, host-owned notification registration and activation policy.
 pub mod receiving;
-/// Transport-independent authenticated notification frames.
-pub mod notification_envelope;
 mod renderer;
 mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
@@ -111,13 +112,13 @@ use truapi::versioned::chat::{
     HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
     HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
 };
-#[cfg(any(test, not(target_arch = "wasm32")))]
-use truapi::versioned::jam_peer_transport::HostJamPeerTransportDialError;
 use truapi::versioned::contacts::{
     HostContactsPickError, HostContactsPickManyError, HostContactsPickManyRequest,
     HostContactsPickManyResponse, HostContactsPickRequest, HostContactsPickResponse,
     HostContactsPlaceLabelsError, HostContactsPlaceLabelsRequest, HostContactsPlaceLabelsResponse,
 };
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use truapi::versioned::jam_peer_transport::HostJamPeerTransportDialError;
 use truapi::versioned::pocket::{
     HostPocketListSubscribeError, HostPocketListSubscribeItem, HostPocketListSubscribeRequest,
     HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPocketRemoveCardResponse,
@@ -745,6 +746,10 @@ impl ProductRuntimeHost {
         &self,
         request: PermissionAuthorizationRequest,
     ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+        if let PermissionAuthorizationRequest::AutomaticPreimageSubmit { root_public_key } = request
+        {
+            return self.automatic_upload_status(root_public_key).await;
+        }
         let service = self.permissions_service();
         service.authorization_status(&request).await
     }
@@ -760,7 +765,16 @@ impl ProductRuntimeHost {
         requests: Vec<PermissionAuthorizationRequest>,
     ) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
         let service = self.permissions_service();
-        service.authorization_statuses(&requests).await
+        let mut statuses = Vec::with_capacity(requests.len());
+        for request in requests {
+            statuses.push(match request {
+                PermissionAuthorizationRequest::AutomaticPreimageSubmit { root_public_key } => {
+                    self.automatic_upload_status(root_public_key).await?
+                }
+                _ => service.authorization_status(&request).await?,
+            });
+        }
+        Ok(statuses)
     }
 
     /// Update a stored permission authorization status. `NotDetermined`
@@ -771,6 +785,12 @@ impl ProductRuntimeHost {
         request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus,
     ) -> Result<(), v01::GenericError> {
+        if let PermissionAuthorizationRequest::AutomaticPreimageSubmit { root_public_key } = request
+        {
+            return self
+                .set_automatic_upload_status(root_public_key, status)
+                .await;
+        }
         let service = self.permissions_service();
         let contacts_changed = matches!(request, PermissionAuthorizationRequest::ChatAuthority);
         if contacts_changed {
@@ -2328,10 +2348,12 @@ impl Profile for ProductRuntimeHost {
             }
         };
         let shared = match received.and_then(|received| {
-            received.reference.map(|reference| crate::platform::SharedContactProfile {
-                reference,
-                shared_at: received.timestamp,
-            })
+            received
+                .reference
+                .map(|reference| crate::platform::SharedContactProfile {
+                    reference,
+                    shared_at: received.timestamp,
+                })
         }) {
             Some(shared) => {
                 // A stored reference passed the same screen when it arrived;

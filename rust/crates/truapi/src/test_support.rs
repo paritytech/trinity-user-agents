@@ -18,18 +18,16 @@ use crate::subscription::Spawner;
 use crate::subscription::thread_per_subscription_spawner;
 
 use crate::platform::{
-    AccountAccessReview, AuthPresenter, AuthState, ChainProvider,
+    AccountAccessReview, AuthPresenter, AuthState, ChainProvider, ChatAuthorityReview,
     CoreStorage as PlatformCoreStorage, CoreStorageKey, CreateTransactionReview,
-    Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
-    Navigation as PlatformNavigation, Notifications as PlatformNotifications, PairingHostConfig,
-    Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext,
-    ProductOperations as PlatformProductOperations, ProductStorage as PlatformProductStorage,
-    ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
-    SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
-    ChatAuthorityReview, HopProvider, MainPurseChatPaymentReview,
-    NativeChatFileExportRequest, NativeChatFilePickRequest, NativeChatFilesHost, NativeChatPickedFile,
-    ProfileDisclosureReview,
-    UserConfirmationReview,
+    Features as PlatformFeatures, HopProvider, HostInfo, JsonRpcConnection, LocaleHost,
+    MainPurseChatPaymentReview, NativeChatFileExportRequest, NativeChatFilePickRequest,
+    NativeChatFilesHost, NativeChatPickedFile, Navigation as PlatformNavigation,
+    Notifications as PlatformNotifications, PairingHostConfig, Permissions as PlatformPermissions,
+    PlatformInfo, PreimageHost, ProductContext, ProductOperations as PlatformProductOperations,
+    ProductStorage as PlatformProductStorage, ProductSubtreeReview, ProfileDisclosureReview,
+    ProviderError, ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+    StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::Stream;
 use futures::stream::{self, BoxStream, StreamExt};
@@ -161,6 +159,9 @@ pub struct StubPlatform {
     /// Permission answers retain their lifetime separately from action confirmations.
     pub permission_confirmation_decisions:
         Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
+    pub preimage_reviews: parking_lot::Mutex<Vec<crate::platform::PreimageSubmitReview>>,
+    pub preimage_confirmation_gate:
+        parking_lot::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Inverted so the derived default (`false`) approves, matching the
     /// pre-consent behavior where a cold own-account resolve was not gated.
     pub profile_disclosure_confirmed: bool,
@@ -1199,8 +1200,12 @@ impl PlatformCoreStorage for StubPlatform {
                 reason: "injected core write failure".into(),
             });
         }
-        if key == CoreStorageKey::NotificationReceiving && self.receiving_write_failure.load(Ordering::SeqCst) {
-            return Err(v01::GenericError { reason: "receiving storage unavailable".to_owned() });
+        if key == CoreStorageKey::NotificationReceiving
+            && self.receiving_write_failure.load(Ordering::SeqCst)
+        {
+            return Err(v01::GenericError {
+                reason: "receiving storage unavailable".to_owned(),
+            });
         }
         if let CoreStorageKey::AuthSession = key {
             self.session_writes
@@ -1269,14 +1274,27 @@ impl PlatformNavigation for StubPlatform {
 
 #[crate::platform::async_trait]
 impl PlatformNotifications for StubPlatform {
-    async fn receiver_authority(&self, product_id: &str) -> Result<Option<crate::platform::ReceivingAuthority>, v01::GenericError> {
-        Ok(self.receiving_authority.lock().clone().filter(|a| a.product_id == product_id))
+    async fn receiver_authority(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<crate::platform::ReceivingAuthority>, v01::GenericError> {
+        Ok(self
+            .receiving_authority
+            .lock()
+            .clone()
+            .filter(|a| a.product_id == product_id))
     }
 
-    async fn receiver_consent(&self, _authority: crate::platform::ReceivingAuthority, _watches: Vec<crate::latest::ReceivingWatch>) -> Result<bool, v01::GenericError> {
+    async fn receiver_consent(
+        &self,
+        _authority: crate::platform::ReceivingAuthority,
+        _watches: Vec<crate::latest::ReceivingWatch>,
+    ) -> Result<bool, v01::GenericError> {
         self.receiving_prompts.fetch_add(1, Ordering::SeqCst);
         let gate = self.receiving_consent_gate.lock().take();
-        if let Some(gate) = gate { let _ = gate.await; }
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
         Ok(self.receiving_consent.load(Ordering::SeqCst))
     }
 
@@ -1302,9 +1320,11 @@ impl PlatformNotifications for StubPlatform {
     }
 
     async fn activation_events(&self) -> Result<v01::NotificationActivations, v01::GenericError> {
-        self.notification_activations.clone().ok_or_else(|| v01::GenericError {
-            reason: "notification activation is unsupported".to_string(),
-        })
+        self.notification_activations
+            .clone()
+            .ok_or_else(|| v01::GenericError {
+                reason: "notification activation is unsupported".to_string(),
+            })
     }
 }
 
@@ -2078,6 +2098,7 @@ impl UserConfirmation for StubPlatform {
         &self,
         review: UserConfirmationReview,
     ) -> Result<crate::platform::PermissionDecision, v01::GenericError> {
+        let upload = matches!(review, UserConfirmationReview::PreimageSubmit(_));
         let confirmed = self.confirm_user_action(review).await?;
         Ok(self
             .permission_confirmation_decisions
@@ -2085,7 +2106,11 @@ impl UserConfirmation for StubPlatform {
             .expect("permission confirmation mutex poisoned")
             .pop_front()
             .unwrap_or(if confirmed {
-                crate::platform::PermissionDecision::AllowAlways
+                if upload {
+                    crate::platform::PermissionDecision::AllowOnce
+                } else {
+                    crate::platform::PermissionDecision::AllowAlways
+                }
             } else {
                 crate::platform::PermissionDecision::Deny
             }))
@@ -2200,7 +2225,14 @@ impl UserConfirmation for StubPlatform {
                     self.resource_allocation_confirmed,
                 )
             }
-            UserConfirmationReview::PreimageSubmit(_) => (None, true),
+            UserConfirmationReview::PreimageSubmit(review) => {
+                self.preimage_reviews.lock().push(review);
+                let gate = self.preimage_confirmation_gate.lock().take();
+                if let Some(gate) = gate {
+                    let _ = gate.await;
+                }
+                (None, true)
+            }
             UserConfirmationReview::ProductSubtree(review) => {
                 self.product_subtree_reviews
                     .lock()

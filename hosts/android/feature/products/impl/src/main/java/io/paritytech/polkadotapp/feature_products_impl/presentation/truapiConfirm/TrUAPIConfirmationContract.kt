@@ -10,6 +10,8 @@ interface TrUAPIConfirmationContract {
 
     fun onApproveClicked()
 
+    fun onApproveAutomaticallyClicked()
+
     fun onRejectClicked()
 }
 
@@ -17,6 +19,7 @@ data class TrUAPIConfirmationUiState(
     @StringRes val titleRes: Int,
     val productId: String,
     val details: ImmutableList<TrUAPIConfirmationDetail>,
+    val allowsAutomaticUploads: Boolean = false,
 )
 
 data class TrUAPIConfirmationDetail(
@@ -27,4 +30,5 @@ data class TrUAPIConfirmationDetail(
 sealed interface DetailValue {
     class Text(val text: String) : DetailValue
     class Resource(@StringRes val res: Int) : DetailValue
+    class FormattedResource(@StringRes val res: Int, val arguments: List<String>) : DetailValue
 }

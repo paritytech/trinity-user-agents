@@ -34,16 +34,6 @@ struct TrUAPIReviewPromptMapperTests {
     }
 
     @Test
-    func mapsPreimageSubmitToActionWithRequesterAndSize() {
-        let request = mapper.makeActionRequest(
-            from: PreimageSubmitReview(size: 1_024),
-            requester: "caller.dot"
-        )
-
-        #expect(request == .preimageSubmit(productId: "caller.dot", size: 1_024))
-    }
-
-    @Test
     func mapsAccountAccessToTargetedPermission() {
         let request = mapper.makePermissionRequest(from: AccountAccessReview(
             requestingProductId: "caller.dot",

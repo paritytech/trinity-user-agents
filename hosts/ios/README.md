@@ -136,6 +136,17 @@ teardown cancels and detaches that observation before closing the Rust execution
 and buffered changes during teardown; native compilation and these tests require
 the macOS iOS CI app jobs (`ios-simulator-build`), not a Linux-only core check.
 
+Bulletin upload reviews offer **Allow once**, **Allow bounded automatic uploads**,
+or **Deny**, displaying the reviewed product, byte count, root account and Bulletin
+genesis. Automatic approval is separate from AutoSigning and remote upload access:
+it covers at most 262144 bytes per upload and four uploads per rolling 3600 seconds.
+The app's permission settings read and update this grant through CoreAdmin, binding
+each edit to the displayed root account. Turning the automatic-upload toggle off
+resets that approval without blocking individual upload prompts or resetting the
+quota. Settings hide stale account rows on service/session transitions and reject
+late reads or edits. `ProductsRouterTests` and `AppPermissionsPresenterTests`
+cover decision lifetime, dismissal and account-transition/revocation behavior.
+
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time
 configuration, signing, the required secrets, and the pipeline itself are

@@ -93,10 +93,10 @@ private final class MockThemeManager: ThemeManagerProtocol {
             continuation.onTermination = { [weak self] _ in
                 Task { @MainActor in
                     guard let self else { return }
-                    observers[id] = nil
-                    if observers.isEmpty {
-                        terminationWaiter?.resume()
-                        terminationWaiter = nil
+                    self.observers[id] = nil
+                    if self.observers.isEmpty {
+                        self.terminationWaiter?.resume()
+                        self.terminationWaiter = nil
                     }
                 }
             }
@@ -562,10 +562,19 @@ struct RustRuntimeBridgeTests {
         )
 
         for review in [
-            UserConfirmationReview.preimageSubmit(PreimageSubmitReview(size: 1_024)),
+            UserConfirmationReview.preimageSubmit(PreimageSubmitReview(
+                size: 1_024,
+                productId: "test.product",
+                rootPublicKey: Data(repeating: 1, count: 32),
+                genesisHash: Data(repeating: 2, count: 32),
+                automaticMaxBytes: 262_144,
+                automaticMaxUploads: 4,
+                automaticWindowSeconds: 3_600
+            )),
             .productSubtree(ProductSubtreeReview(productId: "test.product"))
         ] {
             #expect(await presenter.confirm(review: review, from: "test.product") == false)
+            #expect(await presenter.confirmPermission(review: review, from: "test.product") == .deny)
         }
     }
 

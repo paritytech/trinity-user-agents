@@ -399,7 +399,9 @@ public extension HostBridge {
     func chainClose(connectionId: UInt32) throws {}
     func confirmUserAction(review: UserConfirmationReview) async throws -> Bool { false }
     func confirmPermission(review: UserConfirmationReview) async throws -> PermissionDecision {
-        try await confirmUserAction(review: review) ? .allowAlways : .deny
+        guard try await confirmUserAction(review: review) else { return .deny }
+        if case .preimageSubmit = review { return .allowOnce }
+        return .allowAlways
     }
     func lookupPreimage(key: Data) async throws -> Data? { nil }
     func identityUsernameCandidates(username: String, peopleChainGenesisHash: Data) async throws -> [Data] {
@@ -1046,6 +1048,26 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// resolving.
     public func notifyContactsChanged() {
         inner.notifyContactsChanged()
+    }
+
+    /// Current root account; use this snapshot in account-scoped permission requests.
+    public func currentSessionPublicKey() -> Data? {
+        inner.currentSessionPublicKey()
+    }
+
+    public func permissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest
+    ) async throws -> PermissionAuthorizationStatus {
+        try await inner.permissionAuthorizationStatus(productId: productId, request: request)
+    }
+
+    public func setPermissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus
+    ) async throws {
+        try await inner.setPermissionAuthorizationStatus(productId: productId, request: request, status: status)
     }
 
     /// Open one executable connection with a host-assigned immutable context.
