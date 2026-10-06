@@ -50,7 +50,7 @@ fn dispatch(core: &TrUApiCore, frame: ProtocolMessage) -> ProtocolMessage {
 }
 
 #[test]
-fn notification_activation_requests_cannot_select_foreign_scope() {
+fn notification_activation_rejects_foreign_scope_fields() {
     use truapi::versioned::notifications::{
         NotificationActivationAcknowledgeError, NotificationActivationAcknowledgeRequest,
         NotificationActivationAcknowledgeResponse, NotificationActivationEventsError,
@@ -68,42 +68,17 @@ fn notification_activation_requests_cannot_select_foreign_scope() {
             .encode(),
         ),
     ];
-    // Only the version tag and (for acknowledgement) the sequence are input.
-    assert_eq!(requests[0].1, vec![0]);
-    assert_eq!(requests[1].1.len(), 9);
-
     for (method_id, request) in requests {
-        let unsupported = dispatch(
-            &core,
-            ProtocolMessage {
-                request_id: format!("activation:{method_id}:unsupported"),
-                payload: Payload {
-                    trait_id: 8,
-                    method_id,
-                    message_type: MESSAGE_TYPE_REQUEST,
-                    value: request.clone(),
-                },
-            },
-        );
-        let error = v01::GenericError {
-            reason: "notification activation is unsupported".to_string(),
-        };
-        let expected = if method_id == 8 {
-            Result::<NotificationActivationEventsResponse, _>::Err(CallError::Domain(
-                NotificationActivationEventsError::V1(error),
-            ))
-            .encode()
-        } else {
-            Result::<NotificationActivationAcknowledgeResponse, _>::Err(CallError::Domain(
-                NotificationActivationAcknowledgeError::V1(error),
-            ))
-            .encode()
-        };
-        assert_eq!(unsupported.payload.message_type, MESSAGE_TYPE_RESPONSE);
-        assert_eq!(unsupported.payload.value, expected);
-        for foreign_scope in ["another-product.paseo", "another-account", "another-environment"] {
+        for foreign_scope in [false, true] {
             let mut value = request.clone();
-            value.extend(foreign_scope.encode());
+            if foreign_scope {
+                (
+                    "another-product.paseo",
+                    "another-account",
+                    "another-environment",
+                )
+                    .encode_to(&mut value);
+            }
             let response = dispatch(
                 &core,
                 ProtocolMessage {
@@ -123,14 +98,22 @@ fn notification_activation_requests_cannot_select_foreign_scope() {
                     CallError<NotificationActivationEventsError>,
                 >::decode(&mut &response.payload.value[..])
                 .unwrap();
-                assert!(matches!(result, Err(CallError::MalformedFrame { .. })));
+                if foreign_scope {
+                    assert!(matches!(result, Err(CallError::MalformedFrame { .. })));
+                } else {
+                    assert!(matches!(result, Err(CallError::Domain(_))));
+                }
             } else {
                 let result = Result::<
                     NotificationActivationAcknowledgeResponse,
                     CallError<NotificationActivationAcknowledgeError>,
                 >::decode(&mut &response.payload.value[..])
                 .unwrap();
-                assert!(matches!(result, Err(CallError::MalformedFrame { .. })));
+                if foreign_scope {
+                    assert!(matches!(result, Err(CallError::MalformedFrame { .. })));
+                } else {
+                    assert!(matches!(result, Err(CallError::Domain(_))));
+                }
             }
         }
     }

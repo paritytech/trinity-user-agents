@@ -192,7 +192,8 @@ impl<'a> BridgeCtx<'a> {
     }
 
     fn is_encoded_codec(&self, ty: &TypeRef) -> bool {
-        self.is_api_codec(ty) || self.is_local_codec(ty)
+        self.is_api_codec(ty)
+            || self.is_local_codec(ty)
             || matches!(ty, TypeRef::Vec(inner) if self.is_encoded_codec(inner))
     }
 
@@ -252,10 +253,14 @@ fn bridge_fields(
                 field_name: raw_callback_field_name(trait_def, method, platform_trait_names),
                 raw_name: raw_callback_wire_name(trait_def, method, platform_trait_names),
                 optional: optional || method.has_default,
-                absent_is_none: method.has_default && matches!(
-                    &method.return_shape.inner,
-                    PlatformInner::Result { ok: TypeRef::Option(_), .. }
-                ),
+                absent_is_none: method.has_default
+                    && matches!(
+                        &method.return_shape.inner,
+                        PlatformInner::Result {
+                            ok: TypeRef::Option(_),
+                            ..
+                        }
+                    ),
                 namespace: namespace.clone(),
             });
         }
@@ -383,8 +388,13 @@ fn emit_result_method(
         && ctx.is_encoded_codec(inner)
     {
         let call = bridge_call(
-            "invoke_optional_bytes_return", &method.name, &args,
-            &[format!("{:?}", format!("{raw} must resolve to Uint8Array, null or undefined"))],
+            "invoke_optional_bytes_return",
+            &method.name,
+            &args,
+            &[format!(
+                "{:?}",
+                format!("{raw} must resolve to Uint8Array, null or undefined")
+            )],
         );
         let inner_type = rust_type(inner, ctx)?;
         formatdoc! {
@@ -645,10 +655,14 @@ fn js_arg_vec(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<String> {
 fn js_arg_expr(name: &str, ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
     if let TypeRef::Option(inner) = ty {
         if ctx.is_encoded_codec(inner) {
-            return Ok(format!("{name}.as_ref().map_or(JsValue::UNDEFINED, |value| Uint8Array::from(value.encode().as_slice()).into())"));
+            return Ok(format!(
+                "{name}.as_ref().map_or(JsValue::UNDEFINED, |value| Uint8Array::from(value.encode().as_slice()).into())"
+            ));
         }
         if is_bytes(inner) {
-            return Ok(format!("{name}.as_ref().map_or(JsValue::UNDEFINED, |value| Uint8Array::from(value.as_slice()).into())"));
+            return Ok(format!(
+                "{name}.as_ref().map_or(JsValue::UNDEFINED, |value| Uint8Array::from(value.as_slice()).into())"
+            ));
         }
         let value = js_arg_expr("value", inner, ctx)?;
         return Ok(format!(
@@ -666,6 +680,7 @@ fn js_arg_expr(name: &str, ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> 
             "Uint8Array::from({name}.encode().as_slice()).into()"
         ));
     }
+
     if let Some(primitive) = ctx.alias_primitive(ty) {
         return numeric_js_arg(name, primitive);
     }
@@ -891,23 +906,44 @@ mod tests {
     }
 
     fn authority_type() -> TypeRef {
-        TypeRef::Named { name: "ReceivingAuthority".into(), args: Vec::new() }
+        TypeRef::Named {
+            name: "ReceivingAuthority".into(),
+            args: Vec::new(),
+        }
     }
 
     #[test]
     fn optional_codec_result_propagates_callback_failure_before_decode() {
         let ok = TypeRef::Option(Box::new(authority_type()));
-        let error = TypeRef::Named { name: "GenericError".into(), args: Vec::new() };
+        let error = TypeRef::Named {
+            name: "GenericError".into(),
+            args: Vec::new(),
+        };
         let method = PlatformMethod {
-            name: "receiver_authority".into(), docs: None,
-            params: vec![PlatformParam { name: "product".into(), type_ref: TypeRef::Primitive("str".into()), borrowed: true }],
-            return_shape: PlatformReturn { is_async: true, inner: PlatformInner::Result { ok: ok.clone(), err: error.clone() } },
+            name: "receiver_authority".into(),
+            docs: None,
+            params: vec![PlatformParam {
+                name: "product".into(),
+                type_ref: TypeRef::Primitive("str".into()),
+                borrowed: true,
+            }],
+            return_shape: PlatformReturn {
+                is_async: true,
+                inner: PlatformInner::Result {
+                    ok: ok.clone(),
+                    err: error.clone(),
+                },
+            },
             has_default: true,
         };
         let output = emit_result_method(&method, &ok, &error, &context(), false).unwrap();
         assert!(output.contains("product: &str"), "{output}");
         assert!(output.contains(".await.map_err(generic)?;"), "{output}");
-        assert!(output.contains("bytes.map(|bytes| decode_bytes::<crate::platform::ReceivingAuthority>"), "{output}");
+        assert!(
+            output
+                .contains("bytes.map(|bytes| decode_bytes::<crate::platform::ReceivingAuthority>"),
+            "{output}"
+        );
         assert!(output.contains(".transpose()"), "{output}");
     }
 
@@ -915,8 +951,10 @@ mod tests {
     fn optional_and_vector_codec_arguments_use_matching_scale_payloads() {
         let context = context();
         let vector = TypeRef::Vec(Box::new(authority_type()));
-        assert_eq!(js_arg_expr("watches", &vector, &context).unwrap(),
-            "Uint8Array::from(watches.encode().as_slice()).into()");
+        assert_eq!(
+            js_arg_expr("watches", &vector, &context).unwrap(),
+            "Uint8Array::from(watches.encode().as_slice()).into()"
+        );
         let optional = TypeRef::Option(Box::new(authority_type()));
         let output = js_arg_expr("authority", &optional, &context).unwrap();
         assert!(output.contains("map_or(JsValue::UNDEFINED"));
@@ -926,14 +964,26 @@ mod tests {
     #[test]
     fn optional_default_authority_is_absent_not_successful_enrollment() {
         let method = PlatformMethod {
-            name: "receiver_authority".into(), docs: None, params: Vec::new(),
-            return_shape: PlatformReturn { is_async: true, inner: PlatformInner::Result {
-                ok: TypeRef::Option(Box::new(authority_type())),
-                err: TypeRef::Named { name: "GenericError".into(), args: Vec::new() },
-            } },
+            name: "receiver_authority".into(),
+            docs: None,
+            params: Vec::new(),
+            return_shape: PlatformReturn {
+                is_async: true,
+                inner: PlatformInner::Result {
+                    ok: TypeRef::Option(Box::new(authority_type())),
+                    err: TypeRef::Named {
+                        name: "GenericError".into(),
+                        args: Vec::new(),
+                    },
+                },
+            },
             has_default: true,
         };
-        let notifications = PlatformTrait { name: "Notifications".into(), docs: None, methods: vec![method] };
+        let notifications = PlatformTrait {
+            name: "Notifications".into(),
+            docs: None,
+            methods: vec![method],
+        };
         let fields = bridge_fields(&[&notifications], &BTreeSet::new(), &BTreeSet::new());
         assert!(fields[0].optional);
         assert!(fields[0].absent_is_none);

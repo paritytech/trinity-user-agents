@@ -60,6 +60,12 @@ session name requires at least six lowercase ASCII letters after digits and
 separators are omitted. A new `/session foo` fails immediately as too short;
 existing saved accounts and aliases still restore normally.
 
+CLI approval reviews belong to their waiting request. Cancelling a signing
+request withdraws both its chain-permission prerequisite and its signature
+review; disconnecting its product socket also removes the review. Withdrawn
+queued reviews are skipped, late answers cannot authorize them, and the command
+draft is restored before the next request is reviewed.
+
 The signing host registers its built-in full and lite personhood keys when an
 authorized product first lists `peopl.<network suffix>` (for example,
 `peopl.paseo`). The first listing reads People-chain metadata; later listings
@@ -67,6 +73,18 @@ reuse the saved registrations, including after restart. Registration makes the
 handles discoverable; proof creation still checks permission and ring membership.
 The `listRingVrfKeys` example checks that both built-in keys are discoverable
 under `peopl.paseo` on Paseo.
+
+Local signing-host product clearing revokes only that product's grants and
+in-flight authority. Unrelated products and account-scoped authority remain valid.
+Reactivating, replacing or clearing the account still invalidates every prior
+authority snapshot. Resource reviews and allowance-cache commits revalidate
+the relevant product and account before granting or retaining authority.
+Contact resolution, picking and labels use the same product-scoped authority
+check. Independent directory-mutation fences still apply: product clearing
+invalidates the shared contact directory, so an interrupted selection must be
+retried without treating an unrelated product clear as account disconnection.
+Labels invalidated while drawing are withdrawn before the call returns;
+directory-only invalidation reports an interruption, not `NotConnected`.
 
 Preimage lookups that miss the core's cache read the selected network's Bulletin
 node through `bitswap_v1_get`. The CLI verifies the returned bytes against the

@@ -283,6 +283,10 @@ impl NativeTrUApiHostRuntime {
     }
 
     /// Verify a complete frame against its independently observed chain and topics.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Preserve the native receiving API shared with generated host bindings"
+    )]
     pub async fn receiving_ingest(
         &self, product_id: String, revision: u64, watch_id: String,
         actual_genesis: String, actual_channel: String, actual_topics: Vec<String>, frame: Vec<u8>,

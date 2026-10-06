@@ -91,10 +91,9 @@ pub async fn resolve_session_identity_with_chain(
 const IDENTITY_LOOKUP_MAX_ATTEMPTS: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LookupOutcome {
-    /// A username record was found and applied.
+enum LookupOutcome {    /// A username record was found and applied.
     Applied,
-    /// The account has no dotNS labels. Definitive, not worth a retry.
+    /// The account has no usable owned dotNS username. Definitive, not worth a retry.
     NoRecord,
 }
 
@@ -135,7 +134,7 @@ async fn lookup_and_apply(
             Ok(None) => {
                 debug!(
                     account = %hex::encode(account),
-                    "dotNS {label} lookup found no labels"
+                    "dotNS {label} lookup found no usable owned username"
                 );
                 return Ok(LookupOutcome::NoRecord);
             }
@@ -163,7 +162,7 @@ async fn lookup_and_apply(
 /// Resolves `account_id`'s usernames from the dotNS contracts at a fresh Asset
 /// Hub head. Each step carries the lookup transport's own step timeout; the caller's
 /// [`LOOKUP_BUDGET`] bounds the whole resolution. Returns `None` only when
-/// the account holds no labels; absent gateway discovery is unavailable.
+/// the account has no usable owned username; absent gateway discovery is unavailable.
 #[instrument(skip_all, fields(runtime.method = "session.identity.lookup"))]
 async fn lookup_dotns_identity(
     chain: &ChainRuntime,
@@ -186,9 +185,11 @@ async fn lookup_dotns_identity(
         if labels.is_empty() {
             return Ok(None);
         }
-        Ok(Some(
-            classify_labels(&mut lookup, &controller, labels).await?,
-        ))
+        let identity = classify_labels(&mut lookup, &controller, &account_id, labels).await?;
+        Ok(
+            (identity.lite_username.is_some() || identity.full_username.is_some())
+                .then_some(identity),
+        )
     }
     .fuse();
     pin_mut!(lookup);
@@ -231,7 +232,7 @@ pub(super) async fn lookup_local_identity(
                 owned.push(label);
             }
         }
-        classify_labels(&mut lookup, &controller, owned).await
+        classify_labels(&mut lookup, &controller, &account, owned).await
     }
     .fuse();
     let timeout = futures_timer::Delay::new(LOOKUP_BUDGET).fuse();
@@ -276,7 +277,7 @@ mod tests {
     use super::*;
     use crate::chain_runtime::{RuntimeChainProvider, RuntimeFailure};
     use crate::host_logic::dotns_gateway::{
-        VIEW_CALL_ORIGIN, account_to_h160, dispatcher_address_key, selector, timestamp_now_key,
+        VIEW_CALL_ORIGIN, account_to_h160, dispatcher_address_key, selector,
     };
     use crate::platform::JsonRpcConnection;
     use crate::subscription::thread_per_subscription_spawner;
@@ -294,6 +295,7 @@ mod tests {
     const DISPATCHER: [u8; 20] = [0xd1; 20];
     const CONTROLLER: [u8; 20] = [0xc0; 20];
     const REGISTRY: [u8; 20] = [0x9e; 20];
+    const NAME_REGISTRY: [u8; 20] = [0x9f; 20];
     const FACTORY: [u8; 20] = [0xfa; 20];
     const STORE: [u8; 20] = [0x57; 20];
     const ACCOUNT: [u8; 32] = [0xaa; 32];
@@ -365,11 +367,6 @@ mod tests {
         out
     }
 
-    /// Chain time the scripted `Timestamp.Now` reports, in seconds.
-    const NOW_SECS: u64 = 1_800_000_000;
-    /// The scripted controller's `reservationDuration()`.
-    const RESERVATION_DURATION: u64 = 604_800;
-
     /// `ReviveApi_call` output carrying successful return `data`.
     fn contract_result(data: &[u8]) -> Vec<u8> {
         contract_result_with_flags(0, data)
@@ -414,22 +411,43 @@ mod tests {
                 );
                 assert_eq!(&input[36..68], &abi_word(0));
                 assert_eq!(&input[68..100], &abi_word(16));
-                // One live claim and one that lapsed a second ago.
+                // A transferred candidate must not win; the still-owned name
+                // was minted long before the old seven-day reservation cutoff.
                 abi_pending_claims(&[
-                    ("alice.01", NOW_SECS - 10),
-                    ("stale.01", NOW_SECS - RESERVATION_DURATION - 1),
+                    ("transferred.01", 1_800_000_000),
+                    ("alice.01", 1),
                 ])
             }
             (CONTROLLER, s) if s == selector("isPopIssued(string)") => {
-                // Both surviving labels were issued through the gateway.
+                // Provenance alone cannot authorize the transferred name.
                 abi_word(1).to_vec()
             }
-            (CONTROLLER, s) if s == selector("reservationDuration()") => {
-                abi_word(RESERVATION_DURATION).to_vec()
-            }
             (CONTROLLER, s) if s == selector("protocolRegistry()") => abi_address(&REGISTRY),
-            (REGISTRY, s) if s == selector("get(bytes32)") => abi_address(&FACTORY),
+            (REGISTRY, s) if s == selector("get(bytes32)") => {
+                if input[4..] == crate::host_logic::dotns_gateway::registry_key("registry") {
+                    abi_address(&NAME_REGISTRY)
+                } else {
+                    abi_address(&FACTORY)
+                }
+            }
             (REGISTRY, s) if s == selector("tld()") => abi_string(".paseo"),
+            (NAME_REGISTRY, s) if s == selector("recordExists(bytes32)") => {
+                let tld = crate::dotns_views::tld_node(".paseo");
+                let present = ["transferred.01", "alice.01", "myproject"].iter().any(|label| {
+                    input[4..] == crate::host_logic::dotns_gateway::namehash_under(&tld, label)
+                });
+                abi_word(u64::from(present)).to_vec()
+            }
+            (NAME_REGISTRY, s) if s == selector("owner(bytes32)") => {
+                let transferred = crate::host_logic::dotns_gateway::namehash_under(
+                    &crate::dotns_views::tld_node(".paseo"), "transferred.01",
+                );
+                if input[4..] == transferred {
+                    abi_address(&[0xbb; 20])
+                } else {
+                    abi_address(&account_to_h160(&ACCOUNT))
+                }
+            }
             (FACTORY, s) if s == selector("getLabelStore(address)") => {
                 assert_eq!(&input[16..36], account_to_h160(&ACCOUNT));
                 abi_address(&STORE)
@@ -453,6 +471,7 @@ mod tests {
         NoRecord,
         Unavailable,
         GatewayMissing,
+        RejectedPreferred,
     }
 
     struct ScriptedAssetHub {
@@ -531,13 +550,7 @@ mod tests {
                     let mut frames = vec![response(
                         json!({"result": "started", "operationId": operation_id}),
                     )];
-                    if key_bytes == timestamp_now_key() {
-                        frames.push(follow_event(json!({
-                            "event": "operationStorageItems",
-                            "operationId": operation_id,
-                            "items": [{"key": key, "value": format!("0x{}", hex::encode((NOW_SECS * 1_000).to_le_bytes()))}]
-                        })));
-                    }
+
                     if key_bytes == dispatcher_address_key()
                         && !matches!(self.lookup, ScriptedLookup::GatewayMissing)
                     {
@@ -575,7 +588,9 @@ mod tests {
                     let input = Vec::<u8>::decode(&mut &args[70..]).unwrap();
                     let sel: [u8; 4] = input[..4].try_into().unwrap();
                     if dest == FACTORY && sel == selector("getLabelStore(address)") {
-                        assert_eq!(&input[16..36], account_to_h160(&ACCOUNT));
+                        if !matches!(self.lookup, ScriptedLookup::RejectedPreferred) {
+                            assert_eq!(&input[16..36], account_to_h160(&ACCOUNT));
+                        }
                         self.lookup_requests.fetch_add(1, Ordering::SeqCst);
                         if matches!(self.lookup, ScriptedLookup::Unavailable) {
                             return vec![json!({
@@ -586,6 +601,9 @@ mod tests {
                         }
                     }
                     let output = match self.lookup {
+                        ScriptedLookup::RejectedPreferred => {
+                            rejected_preferred_view_output(&dest, &input)
+                        }
                         ScriptedLookup::NoRecord
                             if dest == CONTROLLER
                                 && sel == selector("pendingClaims(address,uint256,uint256)") =>
@@ -694,17 +712,67 @@ mod tests {
             .iter()
             .filter(|request| request.contains("chainHead_v1_call"))
             .count();
-        // protocolRegistry (reverts on the dispatcher), TARGET, pendingClaims,
-        // reservationDuration, protocolRegistry, get(storeFactory), getLabelStore, tld,
-        // one short getLabels page, then one isPopIssued per surviving label
-        // (alice.01, myproject). A repointed chain resolves on the first probe
-        // and needs ten.
+        // Discovery and label enumeration use eight views. Classification
+        // reads provenance for all three candidates, discovers registry/TLD
+        // once, and checks atomic plus nested owners for both dotted names.
         assert_eq!(
-            calls, 11,
-            "the discovery, label and provenance chain is exactly eleven views on a dispatcher chain"
+            calls, 22,
+            "discovery, provenance and current ownership share the runtime follow"
         );
     }
 
+    // Both accounts enumerate nonempty pending labels. Only the root account's
+    // candidate is still owned; the preferred account's candidates are rejected.
+    fn rejected_preferred_view_output(dest: &[u8; 20], input: &[u8]) -> Vec<u8> {
+        let sel: [u8; 4] = input[..4].try_into().unwrap();
+        let data = match (*dest, sel) {
+            (CONTROLLER, s) if s == selector("pendingClaims(address,uint256,uint256)") => {
+                if input[16..36] == account_to_h160(&ACCOUNT) {
+                    abi_pending_claims(&[("transferred.01", 1), ("not-issued", 1)])
+                } else {
+                    assert_eq!(&input[16..36], account_to_h160(&[0x11; 32]));
+                    abi_pending_claims(&[("root.01", 1)])
+                }
+            }
+            (FACTORY, s) if s == selector("getLabelStore(address)") => abi_address(&[0; 20]),
+            (CONTROLLER, s) if s == selector("isPopIssued(string)") => abi_word(u64::from(
+                input != crate::dotns_views::call_string("isPopIssued(string)", "not-issued"),
+            ))
+            .to_vec(),
+            (NAME_REGISTRY, s) if s == selector("recordExists(bytes32)") => {
+                let tld = crate::dotns_views::tld_node(".paseo");
+                abi_word(u64::from(["transferred.01", "root.01"].iter().any(
+                    |label| {
+                        input[4..] == crate::host_logic::dotns_gateway::namehash_under(&tld, label)
+                    },
+                )))
+                .to_vec()
+            }
+            (NAME_REGISTRY, s) if s == selector("owner(bytes32)") => {
+                abi_address(&account_to_h160(&[0x11; 32]))
+            }
+            _ => return view_output(dest, input),
+        };
+        contract_result(&data)
+    }
+
+    #[test]
+    fn rejected_preferred_labels_fall_back_to_owned_root_name() {
+        let mut provider = ScriptedAssetHub::new();
+        provider.lookup = ScriptedLookup::RejectedPreferred;
+        let chain = ChainRuntime::new(Arc::new(provider), thread_per_subscription_spawner());
+        let mut session = unnamed_session();
+        session.public_key = [0x11; 32];
+        let mut expected = session.clone();
+        expected.apply_usernames(Some("root.01".to_string()), None);
+        futures::executor::block_on(resolve_session_identity_with_chain(
+            &chain,
+            [0xcc; 32],
+            &mut session,
+        ))
+        .unwrap();
+        assert_eq!(session, expected);
+    }
     fn unnamed_session() -> SessionInfo {
         let mut session = crate::test_support::sso_session_info();
         session.identity_account_id = Some(ACCOUNT);

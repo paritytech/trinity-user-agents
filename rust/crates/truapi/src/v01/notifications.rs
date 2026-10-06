@@ -52,7 +52,10 @@ pub struct HostPushNotificationCancelRequest {
 /// An authenticated source filter enrolled under host-owned receiving consent.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(feature = "runtime", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct ReceivingWatch {
     /// Product-local opaque watch identifier.
     pub id: String,
@@ -75,7 +78,10 @@ pub struct ReceivingWatch {
 /// Receiving support, consent and durable synchronization state.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(feature = "runtime", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct HostNotificationReceiverStatus {
     /// Whether this host supplies trusted receiving authority.
     pub supported: bool,
@@ -96,7 +102,10 @@ pub struct HostNotificationReceiverStatus {
 /// Confirmed application handling, independent of transport acknowledgement.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(feature = "runtime", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum ReceivingReceiptKind {
     /// The application handled the event in the foreground; not proof of OS display.
     Foreground,
@@ -109,7 +118,10 @@ pub enum ReceivingReceiptKind {
 /// Actual display outcome after recording a receipt, distinct from enrollment ACKs.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(feature = "runtime", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct HostNotificationReceiptResult {
     /// An OS display was positively confirmed by the host or product.
     pub displayed: bool,
@@ -121,7 +133,10 @@ pub struct HostNotificationReceiptResult {
 /// Why an authenticated receiving event was queued.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(feature = "runtime", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum ReceivingEventKind {
     /// An authenticated event arrived without focusing the product.
     Delivery,
@@ -132,7 +147,10 @@ pub enum ReceivingEventKind {
 /// A bounded durable event containing opaque identifiers, never plaintext.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(feature = "runtime", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct ReceivingEvent {
     /// Durable sequence used for polling and acknowledgement.
     pub sequence: u64,
@@ -229,7 +247,8 @@ pub struct NotificationActivation {
     pub sequence: u64,
     /// Identifier of the activated notification.
     pub notification_id: u32,
-    /// Validated product-relative route beginning with exactly one slash.
+    /// Original product destination (local path or supported deep-link URI).
+    /// Opaque data for the product router, never host navigation authority.
     pub route: String,
 }
 

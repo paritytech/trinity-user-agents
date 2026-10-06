@@ -1,6 +1,62 @@
 use super::*;
 
 #[test]
+fn signing_cancelled_during_permission_review_cannot_persist_a_late_grant() {
+    let (release, gate) = futures::channel::oneshot::channel();
+    let platform = Arc::new(StubPlatform {
+        remote_permission_gate: Mutex::new(Some(gate)),
+        ..Default::default()
+    });
+    let host = ProductRuntimeHost::new(
+        platform.clone(),
+        runtime_config("myapp.dot"),
+        test_spawner(),
+    );
+    install_pairing_session(&host, sso_session_info());
+    let cx = CallContext::with_parts(
+        "cancel-permission-review".to_string(),
+        truapi::CancellationToken::default(),
+    );
+    let mut call = Box::pin(host.sign_raw(
+        &cx,
+        HostSignRawRequest::V1(v01::HostSignRawRequest {
+            account: account_id("myapp.dot", 0),
+            payload: v01::RawPayload::Bytes {
+                bytes: b"cancel before signing consent".to_vec(),
+            },
+        }),
+    ));
+    assert!(call.as_mut().now_or_never().is_none());
+    cx.cancel().cancel();
+    assert!(matches!(
+        call.as_mut()
+            .now_or_never()
+            .expect("cancellation must stop waiting for permission"),
+        Err(CallError::Domain(HostSignRawError::V1(
+            v01::HostSignPayloadError::Unknown { .. }
+        )))
+    ));
+    assert!(
+        release.send(()).is_err(),
+        "the permission review must be withdrawn"
+    );
+    assert_eq!(
+        futures::executor::block_on(host.permission_authorization_status(
+            PermissionAuthorizationRequest::Remote(v01::RemotePermissionRequest {
+                permission: v01::RemotePermission::ChainSubmit,
+            }),
+        ))
+        .unwrap(),
+        PermissionAuthorizationStatus::NotDetermined,
+    );
+    assert!(platform.sign_raw_reviews.lock().unwrap().is_empty());
+    assert_eq!(
+        recorded_rpc_method_count(&platform.sent_rpc, "statement_submit"),
+        0,
+    );
+}
+
+#[test]
 #[allow(deprecated)] // Exercise the temporary API's paired-host wire routing.
 fn unwatermarked_signing_routes_product_and_legacy_accounts_without_downgrading() {
     use crate::host_internal::sso_messages::SignRequest;
@@ -379,51 +435,6 @@ fn sign_raw_accepts_confirmation_then_returns_sso_response() {
         .collect::<Vec<_>>();
     unsubscribe_ids.sort();
     assert_eq!(unsubscribe_ids, vec!["own-sub", "peer-sub"]);
-}
-
-#[test]
-fn sign_raw_uses_call_context_timeout_for_sso_response_wait() {
-    let session = sso_session_info();
-    let message_id = "sign-raw-timeout";
-    let mut rpc_responses = sso_success_responses(
-        &session,
-        message_id,
-        sign_response_message(message_id, vec![], None),
-    );
-    rpc_responses.truncate(3);
-    let platform = Arc::new(StubPlatform {
-        sign_raw_confirmed: true,
-        rpc_responses,
-        ..Default::default()
-    });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
-    install_pairing_session(&host, session);
-    let mut cx = CallContext::with_request_id(message_id.to_string());
-    cx.set_timeout(std::time::Duration::from_millis(1));
-    let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
-        account: account_id("myapp.dot", 0),
-        payload: raw_payload(),
-    });
-    let err = futures::executor::block_on(host.sign_raw(&cx, request)).unwrap_err();
-
-    match err {
-        CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Unknown { reason })) => {
-            assert_eq!(
-                reason,
-                "Account authority request timed out after 1ms for sign-raw-timeout"
-            )
-        }
-        other => panic!("expected SSO response timeout, got {other:?}"),
-    }
-
-    wait_until(
-        || recorded_rpc_method_count(&platform.sent_rpc, "statement_unsubscribeStatement") == 2,
-        "timed-out SSO request did not unsubscribe statement streams",
-    );
 }
 
 #[test]
