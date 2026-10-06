@@ -36,6 +36,7 @@ use crate::subscription::Spawner;
 
 const MAX_BUFFERED_SUBSCRIPTIONS: usize = 64;
 const MAX_BUFFERED_ITEMS_PER_SUBSCRIPTION: usize = 256;
+const DEFAULT_REQUEST_ID_PREFIX: &str = "truapi:";
 
 /// JSON-RPC client backed by a host-owned [`JsonRpcConnection`].
 pub struct HostRpcClient {
@@ -43,13 +44,14 @@ pub struct HostRpcClient {
 }
 
 struct HostRpcClientInner {
-	connection: Arc<dyn JsonRpcConnection>,
-	request_ids: AtomicU64,
-	user_handles: AtomicUsize,
-	closed: AtomicBool,
-	stop_response_loop: Mutex<Option<oneshot::Sender<()>>>,
-	pending: Mutex<HashMap<String, PendingRequest>>,
-	subscriptions: Mutex<SubscriptionState>,
+    connection: Arc<dyn JsonRpcConnection>,
+    request_id_prefix: &'static str,
+    request_ids: AtomicU64,
+    user_handles: AtomicUsize,
+    closed: AtomicBool,
+    stop_response_loop: Mutex<Option<oneshot::Sender<()>>>,
+    pending: Mutex<HashMap<String, PendingRequest>>,
+    subscriptions: Mutex<SubscriptionState>,
 }
 
 /// Where a subscription's notifications are delivered.
@@ -218,23 +220,34 @@ where
 }
 
 impl HostRpcClient {
-	/// Wrap `connection` and start the response pump on `spawner`.
-	pub fn new(connection: Arc<dyn JsonRpcConnection>, spawner: Spawner) -> Self {
-		let (stop_response_tx, stop_response_rx) = oneshot::channel();
-		let client = Self {
-			inner: Arc::new(HostRpcClientInner {
-				connection,
-				request_ids: AtomicU64::new(1),
-				user_handles: AtomicUsize::new(1),
-				closed: AtomicBool::new(false),
-				stop_response_loop: Mutex::new(Some(stop_response_tx)),
-				pending: Mutex::new(HashMap::new()),
-				subscriptions: Mutex::new(SubscriptionState::default()),
-			}),
-		};
-		client.spawn_response_loop(spawner, stop_response_rx);
-		client
-	}
+    /// Wrap `connection` and start the response pump on `spawner`.
+    pub fn new(connection: Arc<dyn JsonRpcConnection>, spawner: Spawner) -> Self {
+        Self::with_request_id_prefix(connection, spawner, DEFAULT_REQUEST_ID_PREFIX)
+    }
+
+    /// Like [`Self::new`], with every request id starting with `prefix`, so a
+    /// host can recognise this client's traffic on its connection.
+    pub fn with_request_id_prefix(
+        connection: Arc<dyn JsonRpcConnection>,
+        spawner: Spawner,
+        prefix: &'static str,
+    ) -> Self {
+        let (stop_response_tx, stop_response_rx) = oneshot::channel();
+        let client = Self {
+            inner: Arc::new(HostRpcClientInner {
+                connection,
+                request_id_prefix: prefix,
+                request_ids: AtomicU64::new(1),
+                user_handles: AtomicUsize::new(1),
+                closed: AtomicBool::new(false),
+                stop_response_loop: Mutex::new(Some(stop_response_tx)),
+                pending: Mutex::new(HashMap::new()),
+                subscriptions: Mutex::new(SubscriptionState::default()),
+            }),
+        };
+        client.spawn_response_loop(spawner, stop_response_rx);
+        client
+    }
 
 	/// Whether the underlying response stream has ended or failed.
 	pub fn is_closed(&self) -> bool {
@@ -316,9 +329,13 @@ impl HostRpcClientInner {
 		}
 	}
 
-	fn next_request_id(&self) -> String {
-		format!("truapi:{}", self.request_ids.fetch_add(1, Ordering::Relaxed))
-	}
+    fn next_request_id(&self) -> String {
+        format!(
+            "{}{}",
+            self.request_id_prefix,
+            self.request_ids.fetch_add(1, Ordering::Relaxed)
+        )
+    }
 
 	fn send_request(
 		&self,
