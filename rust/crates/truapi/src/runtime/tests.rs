@@ -2548,6 +2548,43 @@ fn a_funding_cancel_needs_a_confirmed_empty_account() {
     );
 }
 
+// A test host settles a session as though its funds had moved, and the
+// product sees that ending; a session already over, or unknown, is left as
+// it is.
+#[cfg(feature = "test-host")]
+#[test]
+fn a_test_host_settles_a_funding_session_once() {
+    let services = funding_services();
+    assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+        crate::platform::FundingPresentOutcome::Started,
+    )));
+    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, Some(1_000)))
+        .expect("opened")
+        .intent;
+    let delivered = |credited| crate::host_logic::funding::FundingStage::Delivered {
+        credited,
+        settled_at_ms: 1,
+    };
+    let settle = |intent: &str, credited| {
+        futures::executor::block_on(services.settle_funding_for_test(intent, delivered(credited))).expect("saved")
+    };
+
+    assert_eq!(
+        (
+            settle(&intent, 900),
+            settle(&intent, 1),
+            settle("fs_unknown", 900),
+            services.funding().get(&intent).map(|session| session.wire_item()),
+        ),
+        (
+            true,
+            false,
+            false,
+            Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 900 }),
+        )
+    );
+}
+
 // A host's history writes one row per outcome, so an ended session it has
 // not recorded is announced again each time funding resumes, until the host
 // acknowledges it.

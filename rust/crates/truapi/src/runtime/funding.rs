@@ -1030,6 +1030,28 @@ impl RuntimeServices {
             .await
     }
 
+    /// End session `intent` with `stage` as though its funds had moved, for
+    /// test hosts that drive the flow with no chain behind it. Returns
+    /// whether it was still in flight.
+    #[cfg(feature = "test-host")]
+    pub async fn settle_funding_for_test(
+        &self,
+        intent: &str,
+        stage: FundingStage,
+    ) -> Result<bool, FundingSessionError> {
+        let intent = intent.to_string();
+        self.funding()
+            .commit(self.platform.as_ref(), current_unix_millis(), move |sessions| {
+                let settled = sessions
+                    .get_mut(&intent)
+                    .filter(|session| !session.is_terminal())
+                    .map(|session| session.stage = stage)
+                    .is_some();
+                (settled, if settled { vec![intent] } else { Vec::new() })
+            })
+            .await
+    }
+
     /// Record that the host wrote ended session `intent` into its own
     /// history. Returns whether it was ended and not yet acknowledged.
     pub async fn acknowledge_funding_session(&self, intent: &str) -> Result<bool, FundingSessionError> {

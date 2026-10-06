@@ -233,7 +233,11 @@ pub async fn run(
         .activate_local_session(entropy)
         .await
         .map_err(|error| anyhow::anyhow!("activating the signer failed: {}", error.reason))?;
-    runtime.set_funding_platform(Arc::new(TerminalFundingHost));
+    if !runtime.set_funding_platform(Arc::new(TerminalFundingHost)) {
+        bail!(
+            "another funding host is installed; unset TRUAPI_FUNDING_OUTCOMES to run funding-check"
+        );
+    }
     let top_up = Arc::new(StandInTopUp::new());
     let _ = top_up.runtime.set(Arc::downgrade(&runtime));
     runtime.set_top_up_platform(top_up.clone());
