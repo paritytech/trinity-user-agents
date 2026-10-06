@@ -42,6 +42,7 @@ pub trait Payment: Send + Sync {
     /// const topUp = await truapi.payment.topUp({
     ///   amount: 1000n,
     ///   source: { tag: "ProductAccount", value: { derivationIndex: { tag: "Index", value: 0 } } },
+    ///   id: "0x0000000000000000000000000000000000000000000000000000000000000002",
     /// });
     /// assert(topUp.isOk(), "topUp failed:", topUp);
     ///
@@ -71,6 +72,7 @@ pub trait Payment: Send + Sync {
     /// const topUp = await truapi.payment.topUp({
     ///   amount: 1000n,
     ///   source: { tag: "ProductAccount", value: { derivationIndex: { tag: "Index", value: 0 } } },
+    ///   id: "0x0000000000000000000000000000000000000000000000000000000000000003",
     /// });
     /// assert(topUp.isOk(), "topUp failed:", topUp);
     ///
@@ -107,7 +109,7 @@ pub trait Payment: Send + Sync {
     /// const result = await truapi.payment.topUp({
     ///   amount: 1000n,
     ///   source: { tag: "ProductAccount", value: { derivationIndex: { tag: "Index", value: 0 } } },
-    ///   id: new Uint8Array(32),
+    ///   id: "0x0000000000000000000000000000000000000000000000000000000000000001",
     /// });
     /// assert(result.isOk(), "topUp failed:", result);
     /// console.log("balance topped up");
@@ -131,7 +133,7 @@ pub trait Payment: Send + Sync {
     /// const status = await firstValueFrom(
     ///   from(
     ///     truapi.payment.topUpStatusSubscribe({
-    ///       request: { id: new Uint8Array(32) },
+    ///       request: { id: "0x0000000000000000000000000000000000000000000000000000000000000001" },
     ///     }),
     ///   ),
     /// );
