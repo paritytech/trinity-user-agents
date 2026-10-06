@@ -480,13 +480,8 @@ impl SigningHost {
         Ok(())
     }
 
-    /// The product's hard-subtree public key, derived from the active session
-    /// root.
-    ///
-    /// A signing host holds the root, so it derives this rather than asking an
-    /// Account Holder for it the way a pairing host must, and answers the
-    /// `AccountHolder` request of the same name from the same derivation.
-    /// `None` when no session is active: there is no root to derive from.
+    /// Derive the product's hard-subtree public key from the active session root.
+    /// Returns `None` when no session is active.
     pub fn derive_subtree_public_key(
         &self,
         product_id: &str,
@@ -973,8 +968,7 @@ impl ProductAuthority for SigningHost {
                 v01::HostRequestLoginResponse::AlreadyConnected,
             ))
         } else {
-            // The host activates a local session out of band once the wallet
-            // is unlocked; there is no in-core login prompt to drive.
+            // Wallet unlock and session activation are platform-owned.
             Ok(HostRequestLoginResponse::V1(
                 v01::HostRequestLoginResponse::Rejected,
             ))
@@ -991,8 +985,6 @@ impl ProductAuthority for SigningHost {
         _session: &AuthoritySession,
         _product_id: &str,
     ) -> bool {
-        // A signing host derives the subtree locally from root entropy, so
-        // resolution never reaches a remote Account Holder and never prompts.
         false
     }
 
@@ -1002,11 +994,6 @@ impl ProductAuthority for SigningHost {
         calling_product_id: &str,
         account: &v01::ProductAccountId,
     ) -> Result<AutoSigningGrant, AuthorityError> {
-        // A stale session is not a grant, and is answered here rather than
-        // raising a prompt against a session that no longer exists.
-        // `grant_auto_signing` refuses to record a grant whose owner is not
-        // the session's own key, so the session carries the owner a grant can
-        // be keyed on and no root derivation is needed to answer this.
         let (current, activation_generation) = self.require_current_session(session)?;
         if super::authority::is_blessed_owner(calling_product_id, &account.dot_ns_identifier)
             || self.has_auto_signing_grant(
@@ -1204,8 +1191,7 @@ impl AccountHolder for SigningHost {
         self.require_current_session(session)?;
         match request {
             CreateTransactionAuthorityRequest::Product(payload) => {
-                // The product account is authoritative and caller-scoping is
-                // enforced upstream, so the derived key defines the signer.
+                // Caller ownership is validated before entering the account holder.
                 let keypair = self.product_keypair(&payload.signer)?;
                 build_local_transaction(
                     &self.services.chain,
@@ -1223,9 +1209,6 @@ impl AccountHolder for SigningHost {
                 request,
             } => {
                 let keypair = self.product_keypair(&product_account)?;
-                // Defense-in-depth: the slot-zero key must match the legacy
-                // signer the caller asked for (also validated upstream). Never
-                // sign with a diverging key.
                 if keypair.public.to_bytes() != request.signer {
                     return Err(AuthorityError::Unknown {
                         reason: "signing host: legacy signer does not match the product \
@@ -1274,17 +1257,8 @@ impl AccountHolder for SigningHost {
         request: ProductRequest<HostAccountGetAliasRequest>,
     ) -> Result<v01::ContextualAlias, RingVrfError> {
         self.require_current_session(session)?;
-        // A `context` grant covers this. RFC-0024 defines the scope as "acting
-        // as the granting product's account: reading it and the identity that
-        // follows from it", and the contextual alias is that identity: it and
-        // the proof come out of one VRF evaluation, so a grantee that may
-        // `create_proof` already holds the alias the proof attests. Prompting
-        // here would ask the user to approve what the publisher's grant has
-        // already authorized, and would leave the two calls disagreeing about
-        // what `context` means.
-        //
-        // The gate is the same one `create_proof` uses, including stored refusals
-        // for ordinary products. Ungranted calls take the account-access path.
+        // Aliases expose the same identity as `create_proof`, so both must enforce
+        // the same RFC-0024 grant and context restrictions.
         let granted = match self
             .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
             .await
@@ -1293,10 +1267,6 @@ impl AccountHolder for SigningHost {
             Err(RingVrfError::NotAllowlisted) => None,
             Err(err) => return Err(err),
         };
-        // The grant admits the caller's own context and the granting product's,
-        // and no one else's, exactly as on `create_proof`. The alias this returns
-        // and the alias a proof attests are one VRF evaluation, so guarding only
-        // the proof would leave the same bytes reachable through this read.
         let key_handle = match granted {
             Some((key_handle, access)) => {
                 crate::runtime::product_manifest::require_own_context(
@@ -1306,9 +1276,7 @@ impl AccountHolder for SigningHost {
                 key_handle
             }
             None => {
-                // No grant: the prompt path, as before. Both arguments are
-                // normalized first so the decision is filed under, and read
-                // back from, the identity the gate would have decided about.
+                // Permission lookups and prompts must use the same canonical identifiers.
                 let requester = normalize_product_identifier(&request.calling_product_id)
                     .map_err(|_| RingVrfError::NotAllowlisted)?;
                 let owner =
@@ -1368,15 +1336,7 @@ impl AccountHolder for SigningHost {
         let (key_handle, access) = self
             .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
             .await?;
-        // A grant lets the caller act with the owner's key in the caller's own
-        // context. It does not let it choose whose pseudonym to mint: the
-        // contextual alias is a function of (owner key, context), so an
-        // unconstrained context would let a grantee produce the alias the owner
-        // presents to a third product that granted nothing. That third party
-        // cannot consent here and is not a party to the grant.
-        //
-        // The owner's own calls are unaffected; a cross-product caller is held to
-        // its own context or the granting product's.
+        // A grant must not expose the owner's alias in an unrelated product's context.
         crate::runtime::product_manifest::require_own_context(&access, &request.payload.context)?;
         let vrf = vrf::load().await?;
         let entropy = self
@@ -1392,8 +1352,7 @@ impl AccountHolder for SigningHost {
             .ring_resolver
             .resolve(&request.payload.ring_location, &[candidate])
             .await?;
-        // Reject a stale request if the local session disconnected or changed
-        // while its chain snapshot was being resolved.
+        // Chain resolution can outlive the active session.
         self.require_current_session(session)?;
         let context = development_context_bytes(&request.payload.context);
         let (proof, alias) = create_proof(
@@ -1451,11 +1410,7 @@ impl AccountHolder for SigningHost {
                 reason: err.to_string(),
             }
         })?;
-        // Normalized before comparing, and before the prompt. `sso_responder`
-        // hands `calling_product_id` through untouched, so comparing it raw
-        // asks an owner to consent to its own account for spelling itself
-        // differently, and files that decision under the spelling the peer
-        // chose rather than the one the grant path reads back.
+        // Ownership checks and permission decisions must use canonical identifiers.
         let caller = normalize_product_identifier(&request.calling_product_id)
             .map_err(|_| RingVrfError::NotAllowlisted)?;
         if caller != owner {
@@ -1524,11 +1479,7 @@ impl AccountHolder for SigningHost {
             .grant_allowances_unchecked
             .load(std::sync::atomic::Ordering::Relaxed)
         {
-            // Nothing is allocated and no proof is built: a suite in this mode
-            // learns that its product handles a grant, not that a host would
-            // have given one. A withheld tag is still refused here, so the one
-            // resource a suite wants to prove its product lives without stays
-            // refused while the rest are granted.
+            // Synthetic grants let product tests run without on-chain allocation.
             return Ok(v01::HostRequestResourceAllocationResponse {
                 outcomes: request
                     .resources
@@ -1548,9 +1499,6 @@ impl AccountHolder for SigningHost {
             if let Some(reason) = cx.cancel().reason() {
                 return Err(super::authority_cancellation_error(cx, reason));
             }
-            // Checked before the work, not after: withholding is the suite
-            // saying this resource is refused, so performing the allocation and
-            // then reporting a refusal would leave the two disagreeing.
             #[cfg(feature = "test-host")]
             if self.withholds(&resource) {
                 outcomes.push(v01::AllocationOutcome::Rejected);
@@ -1637,8 +1585,7 @@ impl AccountHolder for SigningHost {
 
     fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
         self.require_current_session(session)?;
-        // The same 32 bytes a pairing host receives from the wallet, so one
-        // contact hashes alike whichever role the user is running.
+        // Both host roles must produce the same handle for a contact.
         let root_entropy_source =
             crate::host_logic::entropy::root_entropy_source(&self.root_entropy()?);
         Ok(crate::runtime::contacts::handle_key_from_root_source(
