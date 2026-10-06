@@ -212,12 +212,7 @@ export type CoreStorageKey =
    * Funding sessions: every live one plus a bounded tail of settled ones,
    * as one SCALE blob.
    */
-  | { tag: "FundingSessions"; value?: undefined }
-  /**
-   * Last funding account number handed out per source, as one SCALE blob.
-   * Never reset, so no account is reused.
-   */
-  | { tag: "FundingAccountCounters"; value?: undefined };
+  | { tag: "FundingSessions"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -798,7 +793,6 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         productId: string;
       }>,
       FundingSessions: S._void,
-      FundingAccountCounters: S._void,
     }),
 );
 
@@ -1465,9 +1459,8 @@ export interface FundingPlatform {
   ): Promise<FundingPresentOutcome>;
 
   /**
-   * Observe a session's status change, or a change in what its deposit
-   * account holds, for host UI such as the in-flight pill or a mismatch
-   * prompt.
+   * Observe a session's status change, for host UI such as the in-flight
+   * pill.
    */
   fundingSessionChanged?(
     intent: string,

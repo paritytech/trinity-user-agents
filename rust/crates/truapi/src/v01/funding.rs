@@ -129,9 +129,6 @@ pub enum HostFundingStatusSubscribeItem {
         /// Amount moved before the failure. May be non-zero.
         moved: u128,
     },
-    /// Inbound: the deposit arrived on chain and the host is converting it
-    /// into the user's balance.
-    Converting,
 }
 
 /// Error from [`crate::api::Funding::status_subscribe`].
