@@ -149,7 +149,14 @@
 
                 for id in list.tests {
                     log.info("running \(id, privacy: .public)")
-                    let result = await runTest(id, host: host, runner: runner)
+                    var result = await runTest(id, host: host, runner: runner)
+                    if let destination = Self.navigationDestinations[id],
+                       result["status"] as? String != "success",
+                       await destinationOpened(destination) {
+                        result["status"] = "success"
+                        result["outcome"] = "navigated"
+                        result["message"] = "\(destination) opened"
+                    }
                     log.info("\(id, privacy: .public): \(String(describing: result["status"] ?? ""), privacy: .public)")
                     results.append(result)
                     writeResults(list)
@@ -287,6 +294,21 @@
     // MARK: - Helpers
 
     private extension HostPlaygroundE2EDriver {
+        /// Tests that leave the product for another one. The page that started them goes away
+        /// before it can record a result, so they pass when the destination opens.
+        static let navigationDestinations = ["navigate-polkadot": "truapi-playground.paseo"]
+
+        func destinationOpened(_ host: String) async -> Bool {
+            let deadline = ContinuousClock.now + .seconds(30)
+            while ContinuousClock.now < deadline {
+                if visibleWebView(host: host) != nil {
+                    return true
+                }
+                try? await Task.sleep(for: Timing.poll)
+            }
+            return false
+        }
+
         func visibleWebView(host: String) -> WKWebView? {
             UIApplication.shared.connectedScenes
                 .compactMap { $0 as? UIWindowScene }
