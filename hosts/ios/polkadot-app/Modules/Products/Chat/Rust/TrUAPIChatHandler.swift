@@ -31,10 +31,20 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         case untypedBody
     }
 
-    private let productId: ProductId
-    private let workers: any TrUAPIWorkerManaging
-    /// The product's own chat surface and routers, which outlive any one worker.
-    private let context: ProductWorkerContext
+    private let productUrl: URL
+    /// Opened in `start`, not in `init`: the core's worker registry is keyed by
+    /// product id and evicts the previous entry, so a bot rebuilt before it
+    /// starts would close the execution the live one is about to use.
+    private let makeExecutionModel: @MainActor @Sendable (any ProductChatMessaging) throws
+        -> RustRuntimeEnvironment.ExecutionModel
+    private var executionModel: RustRuntimeEnvironment.ExecutionModel?
+    /// Bound for as long as the chat surface is alive, like the shared worker's
+    /// native api.
+    private let chatSurface = ProductChatSurface()
+    // Set once in init and only read from the MainActor-isolated `attach`;
+    // all facade mutation happens behind its own @MainActor method.
+    private nonisolated(unsafe) let routers: ProductRoutersFacadeProtocol
+    private let engineFactory: @Sendable () -> JSEngineProtocol
     private let renderStartupWindow: Duration
     private let logger: LoggerProtocol
 
@@ -51,8 +61,11 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
     private var disposed = false
 
     init(
-        productId: ProductId,
-        workers: any TrUAPIWorkerManaging,
+        productUrl: URL,
+        makeExecutionModel: @MainActor @Sendable @escaping (any ProductChatMessaging) throws
+            -> RustRuntimeEnvironment.ExecutionModel,
+        routers: ProductRoutersFacadeProtocol,
+        engineFactory: @Sendable @escaping () -> JSEngineProtocol,
         renderStartupWindow: Duration = .seconds(5),
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -184,7 +197,11 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         await executionModel?.media.close()
         await destroyEngineResources()
 
-        logger.debug("Rust chat runtime disposed for: \(productId)")
+        if let executionModel {
+            await executionModel.close()
+        }
+
+        logger.debug("Rust chat runtime disposed for: \(productUrl)")
     }
 }
 
@@ -196,7 +213,13 @@ private extension TrUAPIChatHandler {
         // surface with no binding.
         context.chat.bind(messagingSupport, owner: self)
 
-        request = .asking
+        let model = try await makeExecutionModel(chatSurface)
+        guard !disposed else {
+            await model.close()
+            throw CancellationError()
+        }
+        executionModel = model
+        startRoomsForwarding(chatMessaging: chatSurface, execution: model.execution)
 
         let bootstrapScript = try model.startBridge()
         let scriptsFactory = RustRuntimeScriptsFactory(bootstrapScript: bootstrapScript)

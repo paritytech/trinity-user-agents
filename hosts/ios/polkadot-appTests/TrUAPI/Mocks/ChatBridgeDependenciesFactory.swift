@@ -1,6 +1,7 @@
 import ChainRegistry
 import Foundation
 import Products
+import DesignSystem
 @testable import polkadot_app
 
 /// Minimal dependencies for a chat bridge under test: only the chat callbacks
@@ -35,7 +36,7 @@ func makeChatBridgeDependencies(
         chatFiles: UnavailableNativeChatFiles(),
         preimageCache: TrUAPIPreimageCache { _ in nil },
         hostProvider: InertHostProvider(),
-        themeManager: MockThemeManager(),
+        themeManager: ThemeManager.shared,
         logger: Logger.shared
     )
 }

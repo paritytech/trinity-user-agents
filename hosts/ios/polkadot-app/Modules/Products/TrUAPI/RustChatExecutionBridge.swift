@@ -11,6 +11,7 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
     // The base class keeps `dependencies` private; hold on to the logger here.
     private let logger: LoggerProtocol
 
+    @MainActor
     init(dependencies: Dependencies, chatMessaging: any ProductChatMessaging) {
         self.chatMessaging = chatMessaging
         logger = dependencies.logger

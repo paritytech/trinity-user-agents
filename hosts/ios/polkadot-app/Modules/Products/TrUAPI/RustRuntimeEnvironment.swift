@@ -27,7 +27,16 @@ struct RustRuntimeEnvironment {
     struct ExecutionModel {
         let execution: TrUAPIProductExecutionProtocol
         let chainConnections: TrUAPIChainConnecting
-        let media: NativeMediaBackend
+        let osPermissionAsker: OSPermissionAsking
+        let bridge: RustProductExecutionBridge
+
+        @MainActor
+        func close() {
+            bridge.detach()
+            execution.stopWsBridge()
+            execution.close()
+            chainConnections.closeAll()
+        }
 
         /// Start the localhost ws-bridge and return the bootstrap script to
         /// inject. Called from the runtime's `start`; opening the execution
@@ -46,6 +55,7 @@ struct RustRuntimeEnvironment {
     /// in the runtime's `start` via ``ExecutionModel/startBridge()``. The
     /// execution retains the bridge (callback retainer) and the bridge retains
     /// the pool, so holding `ExecutionModel` pins the whole chain.
+    @MainActor
     func makeSPAExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
         try makeExecution(productId: productId, routers: routers, kind: .app)
     }
@@ -56,6 +66,7 @@ struct RustRuntimeEnvironment {
     }
 
     /// Open a chat execution for `productId`. Mirrors ``makeSPAExecution``.
+    @MainActor
     func makeChatExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
@@ -92,6 +103,7 @@ enum ExecutionPurpose {
 }
 
 private extension RustRuntimeEnvironment {
+    @MainActor
     func makeExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
@@ -121,7 +133,12 @@ private extension RustRuntimeEnvironment {
 
         bridges.host.attach(execution)
 
-        return ExecutionModel(execution: execution, chainConnections: chainConnections, media: bridge.media)
+        return ExecutionModel(
+            execution: execution,
+            chainConnections: chainConnections,
+            osPermissionAsker: osPermissionAsker,
+            bridge: bridge
+        )
     }
 
     func makeBridgeDependencies(

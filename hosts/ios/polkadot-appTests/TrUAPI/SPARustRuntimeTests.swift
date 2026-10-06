@@ -39,6 +39,7 @@ private struct StubTldProvider: DotNsTldProviding {
     func reset() {}
 }
 
+@MainActor
 private func makeRuntime(
     execution: MockProductExecution = MockProductExecution(),
     chainConnections: MockChainConnections = MockChainConnections(),
@@ -58,6 +59,7 @@ private func makeRuntime(
 
 // MARK: - Tests
 
+@MainActor
 struct SPARustRuntimeTests {
     @Test func startWithDirectURLReturnsProductURL() async throws {
         let directURL = try #require(URL(string: "http://localhost:3000"))

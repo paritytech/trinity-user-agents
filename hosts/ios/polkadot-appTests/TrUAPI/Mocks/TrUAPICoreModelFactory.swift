@@ -1,13 +1,17 @@
 import Foundation
 @testable import polkadot_app
 
+@MainActor
 func makeExecutionModel(
     execution: MockProductExecution = MockProductExecution(),
     chainConnections: MockChainConnections = MockChainConnections()
 ) -> RustRuntimeEnvironment.ExecutionModel {
-    RustRuntimeEnvironment.ExecutionModel(
+    let bridge = RustProductExecutionBridge(dependencies: makeChatBridgeDependencies())
+    bridge.attach(execution)
+    return RustRuntimeEnvironment.ExecutionModel(
         execution: execution,
         chainConnections: chainConnections,
-        media: NativeMediaBackend(productId: "test.dot")
+        osPermissionAsker: osPermissionAsker,
+        bridge: bridge
     )
 }
