@@ -29,6 +29,7 @@ mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
+mod sso_account_holder_service;
 /// SSO pairing (login) flow over the statement store bootstrap topic.
 pub mod sso_pairing;
 /// SSO remote request/response messaging over the statement store.
@@ -51,8 +52,8 @@ use std::time::Instant;
 pub use actions::ActionChannel;
 use authority::AuthorityCancelError;
 pub use authority::{
-    AccountCaller, AccountHolder, AccountInvocation, AuthorityError, BulletinAllowanceKey,
-    HostOperation, ProductAuthority,
+    AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
+    BulletinAllowanceKey, HostOperation, ProductAuthority,
 };
 /// Wallet-issued permission for one product during one activation.
 #[derive(Clone)]
@@ -82,10 +83,11 @@ pub use signing_host::{
     PairingProposal, PairingProposalMetadata, ResponderExit,
 };
 pub use signing_host::{
-    LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService,
-    disconnect_paired_host, establish_pairing, notify_pairing_allowance_allocation,
-    notify_pairing_failed, respond_to_pairing, resume_pairing,
+    LocalActivation, SigningHost as SigningHostRole, WalletAccountHolder, disconnect_paired_host,
+    establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
+    respond_to_pairing, resume_pairing,
 };
+pub use sso_account_holder_service::SsoAccountHolderService;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal

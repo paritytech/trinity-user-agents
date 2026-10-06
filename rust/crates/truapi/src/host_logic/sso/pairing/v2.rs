@@ -64,7 +64,7 @@ pub enum Status {
 }
 
 /// Successful handshake payload used to establish the SSO session.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, zeroize::ZeroizeOnDrop)]
 pub struct Success {
     /// User identity sr25519 account id, used for username lookup and chat addressing.
     pub identity_account_id: [u8; 32],

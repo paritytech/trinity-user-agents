@@ -204,6 +204,8 @@ pub struct StubPlatform {
     /// Hold every core-storage read pending forever, standing in for a host
     /// callback that is never answered.
     pub core_storage_pending: bool,
+    /// Pause the first core-storage read until released.
+    pub core_storage_read_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Substitute storage for wallet lifecycle tests.
     pub core_storage_override: Option<Arc<dyn PlatformCoreStorage>>,
     pub chain_connect_pending: bool,
@@ -1068,6 +1070,10 @@ impl PlatformCoreStorage for StubPlatform {
     ) -> Result<Option<Vec<u8>>, v01::GenericError> {
         if let Some(storage) = &self.core_storage_override {
             return storage.read_core_storage(key).await;
+        }
+        let gate = self.core_storage_read_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
         }
         if self.core_storage_pending {
             futures::future::pending::<()>().await;

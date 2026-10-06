@@ -24,9 +24,9 @@ mod executor;
 mod platform;
 mod renderer;
 mod runtime;
+mod sso;
 mod ws_bridge;
 
-pub use crate::host_internal::sso_messages::SsoRequestOutcome;
 pub use crate::host_logic::dotns::{NavigateDecision, PocketDeeplinkAction};
 pub use callbacks::{
     HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativePocketCallbacks,
@@ -38,12 +38,13 @@ pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
     NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };
+pub use sso::{NativeSsoAccountHolderService, NativeSsoAccountHolderSession, SsoRequestOutcome};
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
 use crate::PairingProposal;
-use crate::host_logic::dotns;
 #[cfg(doc)]
 use crate::SigningHostRuntime;
+use crate::host_logic::dotns;
 
 /// Classify a navigation input exactly like the core's internal navigate host
 /// call: dotNS first, then `localhost`, then normalized external, with

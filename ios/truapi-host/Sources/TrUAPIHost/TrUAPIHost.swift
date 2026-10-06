@@ -868,16 +868,17 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try inner.activateLocalSession(secret: secret, liteUsername: liteUsername)
     }
 
-    /// Answer one decrypted SSO remote message from the wallet-managed
-    /// statement-store session. `message` is one SCALE-encoded
-    /// `RemoteMessage` exactly as decrypted. `.response` carries the
-    /// SCALE-encoded reply to post back over the same session;
-    /// `.disconnected` means the peer ended the session (perform native
-    /// teardown); `.ignored` means the message was not a request.
-    /// Confirmation-gated requests await `confirmUserAction`, so this can
-    /// take arbitrarily long — call from a `Task`, never the main thread.
-    public func handleSsoRequest(message: Data) async throws -> SsoRequestOutcome {
-        try await inner.handleSsoRequest(message: message)
+    /// Bind an external SSO transport to the active wallet after verifying
+    /// its own statement and encryption public keys. Retain this binding
+    /// with the transport and open one service per authenticated peer.
+    public func openSsoSession(
+        ownStatementAccountId: Data,
+        ownEncryptionPublicKey: Data
+    ) throws -> NativeSsoAccountHolderSession {
+        try inner.openSsoSession(
+            ownStatementAccountId: ownStatementAccountId,
+            ownEncryptionPublicKey: ownEncryptionPublicKey
+        )
     }
 
     /// Build the SCALE-encoded `Disconnected` message to post over a

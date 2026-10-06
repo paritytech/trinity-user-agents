@@ -22,9 +22,8 @@ use futures::{FutureExt, Stream, StreamExt, pin_mut};
 use parity_scale_codec::Encode;
 use tracing::{debug, instrument, warn};
 
+use super::SigningHost;
 use super::sso_replay::{ReplayExecution, SsoReplayScope, execute_once};
-use super::wallet_account_holder::WalletKeys;
-use super::{SigningHost, SigningHostSsoService};
 use crate::host_internal::sso_messages::{
     IncomingSsoRequest, RemoteMessage, RemoteMessageData, SsoResponseCode,
     build_outgoing_request_statement, build_signed_session_response_statement,
@@ -41,6 +40,7 @@ use crate::runtime::services::RuntimeServices;
 use crate::runtime::sso_remote::{fresh_statement_expiry, sso_message_id};
 use crate::runtime::sso_service::{Dispatch, SsoWithdrawals};
 use crate::runtime::statement_store_rpc;
+use crate::runtime::{AuthoritySession, SsoAccountHolderService};
 use crate::unix_time::current_unix_secs as statement_current_unix_secs;
 
 /// Upper bound on undecodable request ids acknowledged within one serve loop.
@@ -148,6 +148,7 @@ pub trait DevicePairingObserver: Send + Sync {
 }
 
 struct EstablishedPairing {
+    wallet_session: AuthoritySession,
     session: SsoSessionInfo,
     replay_scope: SsoReplayScope,
 }
@@ -225,6 +226,7 @@ pub async fn respond_to_pairing(
         signing_host,
         established.session,
         established.replay_scope,
+        established.wallet_session,
     )
     .await
 }
@@ -245,35 +247,40 @@ async fn establish_pairing_session(
     deeplink: &str,
 ) -> Result<EstablishedPairing, String> {
     let peer = PairedSsoPeer::from_deeplink(deeplink)?;
-    let (_, keys) = signing_host
+    let wallet_session = signing_host
         .wallet
-        .current_keys()
-        .map_err(|err| format!("signing host has no active local session: {err}"))?;
-    let root_public_key = keys
-        .root_public_key()
-        .map_err(|err| format!("root account derivation failed: {err}"))?;
-    let (identity, identity_chat_private_key) = keys
-        .responder_identity()
-        .map_err(|err| format!("responder identity derivation failed: {err}"))?;
+        .current_session()
+        .ok_or_else(|| "signing host has no active local session".to_string())?;
     let device_enc_pub_key = x25519_public_key(services.device_encryption_secret().await?);
-    let session = responder_session_from_identity(&identity, peer)?;
-
-    let success = v2::EncryptedResponse::Success(Box::new(v2::Success {
-        identity_account_id: identity.statement_public_key,
-        root_account_id: root_public_key,
-        identity_chat_private_key,
-        sso_enc_pub_key: identity.encryption_public_key,
-        device_enc_pub_key,
-        root_entropy_source: keys.root_entropy_source(),
-    }));
-    submit_handshake_answer(
-        services,
-        &session,
-        peer,
-        &success,
-        "sso-responder handshake",
-    )
-    .await?;
+    let (session, statement) = {
+        let material = signing_host
+            .wallet
+            .pairing_material(&wallet_session)
+            .map_err(|error| error.to_string())?;
+        let session = responder_session_from_identity(&material.identity, peer)?;
+        let success = v2::EncryptedResponse::Success(Box::new(v2::Success {
+            identity_account_id: material.identity.statement_public_key,
+            root_account_id: wallet_session.public_key,
+            identity_chat_private_key: *material.chat_private_key,
+            sso_enc_pub_key: material.identity.encryption_public_key,
+            device_enc_pub_key,
+            root_entropy_source: *material.product_entropy_source,
+        }));
+        let statement = prepare_handshake_answer(&session, peer, &success)?;
+        (session, statement)
+    };
+    signing_host
+        .wallet
+        .require_current_session(&wallet_session)
+        .map_err(|error| error.to_string())?;
+    services
+        .statement_store
+        .submit(statement, "sso-responder handshake")
+        .await?;
+    signing_host
+        .wallet
+        .require_current_session(&wallet_session)
+        .map_err(|error| error.to_string())?;
     debug!("answered pairing handshake");
     // The submit is the earliest point the peer could read the answer.
     if let Some(observer) = services.device_pairing_observer() {
@@ -281,9 +288,10 @@ async fn establish_pairing_session(
     }
 
     Ok(EstablishedPairing {
+        wallet_session: wallet_session.clone(),
         session,
         replay_scope: SsoReplayScope {
-            root_public_key,
+            root_public_key: wallet_session.public_key,
             peer_statement_account_id: peer.statement_account_id,
             peer_encryption_public_key: peer.encryption_public_key,
         },
@@ -296,23 +304,25 @@ pub async fn resume_pairing(
     signing_host: Arc<SigningHost>,
     peer: PairedSsoPeer,
 ) -> Result<ResponderExit, String> {
-    let (_, keys) = signing_host
+    let wallet_session = signing_host
         .wallet
-        .current_keys()
-        .map_err(|err| format!("signing host has no active local session: {err}"))?;
-    let root_public_key = keys
-        .root_public_key()
-        .map_err(|err| format!("root account derivation failed: {err}"))?;
-    let session = responder_session(&keys, peer)?;
+        .current_session()
+        .ok_or_else(|| "signing host has no active local session".to_string())?;
+    let identity = signing_host
+        .wallet
+        .responder_identity(&wallet_session)
+        .map_err(|error| error.to_string())?;
+    let session = responder_session_from_identity(&identity, peer)?;
     serve_session(
         services,
         signing_host,
         session,
         SsoReplayScope {
-            root_public_key,
+            root_public_key: wallet_session.public_key,
             peer_statement_account_id: peer.statement_account_id,
             peer_encryption_public_key: peer.encryption_public_key,
         },
+        wallet_session,
     )
     .await
 }
@@ -323,11 +333,15 @@ pub async fn disconnect_paired_host(
     signing_host: Arc<SigningHost>,
     peer: PairedSsoPeer,
 ) -> Result<(), String> {
-    let (_, keys) = signing_host
+    let wallet_session = signing_host
         .wallet
-        .current_keys()
-        .map_err(|err| format!("signing host has no active local session: {err}"))?;
-    let session = responder_session(&keys, peer)?;
+        .current_session()
+        .ok_or_else(|| "signing host has no active local session".to_string())?;
+    let identity = signing_host
+        .wallet
+        .responder_identity(&wallet_session)
+        .map_err(|error| error.to_string())?;
+    let session = responder_session_from_identity(&identity, peer)?;
     let message_id = sso_message_id();
     let message = RemoteMessage {
         message_id: message_id.clone(),
@@ -339,17 +353,14 @@ pub async fn disconnect_paired_host(
         vec![message],
         fresh_statement_expiry(),
     )?;
+    signing_host
+        .wallet
+        .require_current_session(&wallet_session)
+        .map_err(|error| error.to_string())?;
     services
         .statement_store
         .submit_sso(statement, "sso-responder disconnect")
         .await
-}
-
-fn responder_session(keys: &WalletKeys, peer: PairedSsoPeer) -> Result<SsoSessionInfo, String> {
-    let (identity, _) = keys
-        .responder_identity()
-        .map_err(|err| format!("responder identity derivation failed: {err}"))?;
-    responder_session_from_identity(&identity, peer)
 }
 
 fn responder_session_from_identity(
@@ -371,16 +382,24 @@ async fn submit_handshake_answer(
     response: &v2::EncryptedResponse,
     context: &'static str,
 ) -> Result<(), String> {
+    let statement = prepare_handshake_answer(session, peer, response)?;
+    services.statement_store.submit(statement, context).await
+}
+
+fn prepare_handshake_answer(
+    session: &SsoSessionInfo,
+    peer: PairedSsoPeer,
+    response: &v2::EncryptedResponse,
+) -> Result<Vec<u8>, String> {
     let handshake = encrypt_v2_handshake_response(peer.encryption_public_key, response)?;
     let topic = bootstrap_topic(peer.statement_account_id, peer.encryption_public_key);
-    let statement = build_signed_statement(
+    build_signed_statement(
         session,
         topic,
         topic,
         handshake.encode(),
         fresh_statement_expiry(),
-    )?;
-    services.statement_store.submit(statement, context).await
+    )
 }
 
 /// The identity and peer a pairing notice went out under.
@@ -409,15 +428,20 @@ pub async fn notify_pairing_allowance_allocation(
     deeplink: &str,
 ) -> Result<AnnouncedPairing, String> {
     let peer = PairedSsoPeer::from_deeplink(deeplink)?;
-    let (_, keys) = signing_host
+    let wallet_session = signing_host
         .wallet
-        .current_keys()
-        .map_err(|err| format!("signing host has no active local session: {err}"))?;
-    let (identity, _) = keys
-        .responder_identity()
-        .map_err(|err| format!("responder identity derivation failed: {err}"))?;
+        .current_session()
+        .ok_or_else(|| "signing host has no active local session".to_string())?;
+    let identity = signing_host
+        .wallet
+        .responder_identity(&wallet_session)
+        .map_err(|error| error.to_string())?;
     let session = responder_session_from_identity(&identity, peer)?;
 
+    signing_host
+        .wallet
+        .require_current_session(&wallet_session)
+        .map_err(|error| error.to_string())?;
     let pending = v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation);
     submit_handshake_answer(
         &services,
@@ -459,8 +483,12 @@ async fn serve_session(
     signing_host: Arc<SigningHost>,
     session: SsoSessionInfo,
     replay_scope: SsoReplayScope,
+    wallet_session: AuthoritySession,
 ) -> Result<ResponderExit, String> {
-    let service = SigningHostSsoService::new(signing_host.clone());
+    let service = SsoAccountHolderService::new(signing_host.wallet.clone(), wallet_session);
+    service
+        .require_current_session()
+        .map_err(|error| error.to_string())?;
     let rpc_client = services
         .statement_store
         .client("sso-responder session")
@@ -487,7 +515,7 @@ async fn serve_session(
     );
     // Boxed as a trait object so the hosts that await a session need not
     // lay out this future or prove it `Send`.
-    serve_pages(pages, signing_host.sso_withdrawals(), |incoming| {
+    serve_pages(pages, service.withdrawals(), |incoming| {
         serve_statement(
             services,
             &signing_host,
@@ -653,12 +681,7 @@ fn withdrawn_targets(incoming: &IncomingSsoRequest) -> Option<Vec<&str>> {
     incoming
         .messages
         .iter()
-        .map(|message| match &message.data {
-            RemoteMessageData::V1(v1::RemoteMessage::Cancel(withdrawal)) => {
-                Some(withdrawal.message_id.as_str())
-            }
-            _ => None,
-        })
+        .map(RemoteMessage::withdrawn_request_id)
         .collect()
 }
 
@@ -666,7 +689,7 @@ fn withdrawn_targets(incoming: &IncomingSsoRequest) -> Option<Vec<&str>> {
 async fn serve_statement(
     services: &RuntimeServices,
     signing_host: &SigningHost,
-    service: &SigningHostSsoService,
+    service: &SsoAccountHolderService,
     session: &SsoSessionInfo,
     replay_scope: SsoReplayScope,
     incoming: IncomingSsoRequest,
@@ -696,7 +719,7 @@ async fn serve_statement(
 /// Ack one inbound request statement and answer its batched messages.
 async fn serve_request(
     services: &RuntimeServices,
-    service: &SigningHostSsoService,
+    service: &SsoAccountHolderService,
     session: &SsoSessionInfo,
     incoming: IncomingSsoRequest,
 ) -> Result<Option<ResponderExit>, String> {
@@ -706,7 +729,7 @@ async fn serve_request(
         let request_name = message.name();
         let responding_to = message.message_id.clone();
         let started = Instant::now();
-        let (response, outcome) = match service.answer(message).await {
+        let (response, outcome) = match service.answer(message).await.map_err(|error| error.to_string())? {
             Dispatch::Response(answer) => (answer.message, answer.outcome),
             Dispatch::Disconnected => {
                 debug!("pairing host disconnected the SSO session");
@@ -730,6 +753,7 @@ async fn serve_request(
             vec![response],
             fresh_statement_expiry(),
         )?;
+        service.require_current_session().map_err(|error| error.to_string())?;
         let publish_result = services
             .statement_store
             .submit_sso(statement, "sso-responder response")
@@ -848,6 +872,7 @@ fn response_cli_summary(
 mod tests {
     use super::super::LocalActivation;
     use super::super::wallet_account_holder::SSO_ENCRYPTION_DOMAIN;
+    use super::super::wallet_account_holder::WalletKeys;
     use super::super::wallet_account_holder::current_unix_secs;
     use super::*;
     use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
@@ -1215,6 +1240,40 @@ mod tests {
         }))
     }
 
+    #[test]
+    fn a_wallet_change_during_device_key_read_never_answers_pairing() {
+        let (release, gate) = futures::channel::oneshot::channel();
+        let platform = Arc::new(StubPlatform {
+            core_storage_read_gate: std::sync::Mutex::new(Some(gate)),
+            rpc_method_responses: vec![("statement_submit", r#"{"status":"new"}"#.to_string())],
+            ..StubPlatform::default()
+        });
+        let (services, signing_host) = signing_fixture(platform.clone());
+        let observer = Arc::new(RecordingPairingObserver::default());
+        services.install_device_pairing_observer(observer.clone());
+        let deeplink = pairing_deeplink(PairedSsoPeer {
+            statement_account_id: [0x31; 32],
+            encryption_public_key: x25519_public_key([0x42; 32]),
+        });
+        let pairing = establish_pairing(services, signing_host.clone(), &deeplink);
+        futures::pin_mut!(pairing);
+        assert!(pairing.as_mut().now_or_never().is_none());
+        futures::executor::block_on(signing_host.activate_local_session(vec![0xcd; 16])).unwrap();
+        release.send(()).unwrap();
+        assert_eq!(
+            (
+                futures::executor::block_on(pairing),
+                platform.sent_rpc.lock().unwrap().len(),
+                observer.paired()
+            ),
+            (
+                Err(crate::runtime::AuthorityError::Disconnected.to_string()),
+                0,
+                Vec::new()
+            ),
+        );
+    }
+
     /// Without this the host never learns a device paired, so no contact is
     /// told a new device joined.
     #[test]
@@ -1368,8 +1427,10 @@ mod tests {
             peer.encryption_public_key,
         )
         .unwrap();
-        let resumed = responder_session(
-            &WalletKeys::new(ENTROPY.to_vec(), NETWORK_SUFFIX.to_string()),
+        let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
+        let selected = signing_host.wallet.current_session().unwrap();
+        let resumed = responder_session_from_identity(
+            &signing_host.wallet.responder_identity(&selected).unwrap(),
             peer,
         )
         .unwrap();
@@ -1414,12 +1475,15 @@ mod tests {
         message_id: &str,
         request: v1::RemoteMessage,
     ) -> v1::RemoteMessage {
-        let service = SigningHostSsoService::new(signing_host.clone());
+        let service = SsoAccountHolderService::new(
+            signing_host.account_holder().clone(),
+            signing_host.account_holder().current_session().unwrap(),
+        );
         let message = RemoteMessage {
             message_id: message_id.to_string(),
             data: RemoteMessageData::V1(request),
         };
-        let Dispatch::Response(answer) = futures::executor::block_on(service.answer(message))
+        let Ok(Dispatch::Response(answer)) = futures::executor::block_on(service.answer(message))
         else {
             panic!("expected a response");
         };
@@ -1430,7 +1494,10 @@ mod tests {
     #[test]
     fn dispatch_without_session_distinguishes_requests_responses_and_disconnects() {
         let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-        let service = SigningHostSsoService::new(signing_host);
+        let service = SsoAccountHolderService::new(
+            signing_host.account_holder().clone(),
+            signing_host.account_holder().current_session().unwrap(),
+        );
         let dispatch = |data| {
             futures::executor::block_on(service.dispatch(
                 None,
@@ -1510,7 +1577,10 @@ mod tests {
             chain_connect_error: Some("allocation node unavailable"),
             ..StubPlatform::default()
         }));
-        let service = SigningHostSsoService::new(signing_host);
+        let service = SsoAccountHolderService::new(
+            signing_host.account_holder().clone(),
+            signing_host.account_holder().current_session().unwrap(),
+        );
         let request = RemoteMessage::request(
             "allocation-1".to_string(),
             sso_messages::ResourceAllocationRequest {
@@ -1523,7 +1593,7 @@ mod tests {
                 on_existing: OnExistingAllowancePolicy::Ignore,
             },
         );
-        let Dispatch::Response(answer) = futures::executor::block_on(service.answer(request))
+        let Ok(Dispatch::Response(answer)) = futures::executor::block_on(service.answer(request))
         else {
             panic!("expected an allocation response");
         };
@@ -1633,11 +1703,7 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform);
-        let expected_secret = signing_host
-            .wallet
-            .current_keys()
-            .unwrap()
-            .1
+        let expected_secret = WalletKeys::new(ENTROPY.to_vec(), NETWORK_SUFFIX.to_string())
             .product_subtree_secret("myapp.dot")
             .expect("product subtree secret derives");
         let expected_ring_vrf_domain_entropy =
@@ -1678,21 +1744,20 @@ mod tests {
         });
         let (_, signing_host) = signing_fixture(platform.clone());
         let session = signing_host.account_holder().current_session();
-        let expected_secret = signing_host
-            .wallet
-            .current_keys()
-            .unwrap()
-            .1
+        let expected_secret = WalletKeys::new(ENTROPY.to_vec(), NETWORK_SUFFIX.to_string())
             .product_subtree_secret("myapp.dot")
             .unwrap();
         let expected_domain = derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot").unwrap();
-        let service = SigningHostSsoService::new(signing_host.clone());
+        let service = SsoAccountHolderService::new(
+            signing_host.account_holder().clone(),
+            signing_host.account_holder().current_session().unwrap(),
+        );
         let answer = service.answer(allocation_request("remote-reset"));
         futures::pin_mut!(answer);
         assert!(answer.as_mut().now_or_never().is_none());
         signing_host.clear_product_state("myapp.dot").unwrap();
         release.send(()).unwrap();
-        let Dispatch::Response(answer) = futures::executor::block_on(answer) else {
+        let Ok(Dispatch::Response(answer)) = futures::executor::block_on(answer) else {
             panic!("expected an allocation response")
         };
         let RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(response)) =
@@ -1729,7 +1794,10 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform.clone());
-        let service = SigningHostSsoService::new(signing_host.clone());
+        let service = SsoAccountHolderService::new(
+            signing_host.account_holder().clone(),
+            signing_host.account_holder().current_session().unwrap(),
+        );
         let message = RemoteMessage::request(
             "alloc-stale".to_string(),
             sso_messages::ResourceAllocationRequest {
@@ -1754,21 +1822,63 @@ mod tests {
             }
             release.send(()).unwrap();
 
-            let Dispatch::Response(answer) = answer.await else {
-                panic!("expected an allocation response");
+            assert_eq!(answer.await, Err(crate::runtime::AuthorityError::Disconnected));
+            assert!(platform.sent_rpc.lock().unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn a_bound_service_cannot_follow_a_replaced_wallet() {
+        for entropy in [vec![0xcd; 16], ENTROPY.to_vec()] {
+            let platform = Arc::new(StubPlatform {
+                resource_allocation_confirmed: true,
+                ..StubPlatform::default()
+            });
+            let (_, signing_host) = signing_fixture(platform.clone());
+            let service = SsoAccountHolderService::new(
+                signing_host.account_holder().clone(),
+                signing_host.account_holder().current_session().unwrap(),
+            );
+            futures::executor::block_on(signing_host.activate_local_session(entropy)).unwrap();
+            let Ok(Dispatch::Response(answer)) =
+                futures::executor::block_on(service.answer(allocation_request("stale-service")))
+            else {
+                panic!("expected a disconnected response")
             };
             let RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(response)) =
                 answer.message.data
             else {
-                panic!("expected an allocation response");
+                panic!("expected an allocation response")
             };
-            assert_eq!(response.responding_to, "alloc-stale");
-            assert!(
-                response.payload.is_err(),
-                "stale consent must not release keys"
+            assert_eq!(
+                (
+                    response.payload,
+                    platform.resource_allocation_reviews.lock().unwrap().len()
+                ),
+                (Err("signing host session is not active".to_string()), 0),
             );
-            assert!(platform.sent_rpc.lock().unwrap().is_empty());
-        });
+        }
+    }
+
+    #[test]
+    fn a_peer_cannot_withdraw_another_peers_request() {
+        let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
+        let first = SsoAccountHolderService::new(
+            signing_host.account_holder().clone(),
+            signing_host.account_holder().current_session().unwrap(),
+        );
+        let second = SsoAccountHolderService::new(
+            signing_host.account_holder().clone(),
+            signing_host.account_holder().current_session().unwrap(),
+        );
+        futures::executor::block_on(first.answer(cancel("cancel", "shared-id"))).unwrap();
+        let response = futures::executor::block_on(second.answer(RemoteMessage::request(
+            "shared-id".to_string(),
+            sso_messages::ProductSubtreeRequest {
+                product_id: "myapp.dot".to_string(),
+            },
+        )));
+        assert!(matches!(response, Ok(Dispatch::Response(_))));
     }
 
     fn allocation_request(message_id: &str) -> RemoteMessage {
@@ -1803,7 +1913,10 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform.clone());
-        let service = SigningHostSsoService::new(signing_host);
+        let service = SsoAccountHolderService::new(
+            signing_host.account_holder().clone(),
+            signing_host.account_holder().current_session().unwrap(),
+        );
         let allocation = service.answer(allocation_request("alloc-1"));
         futures::pin_mut!(allocation);
         assert!(allocation.as_mut().now_or_never().is_none());
@@ -1824,8 +1937,8 @@ mod tests {
                 platform.sent_rpc.lock().unwrap().len()
             ),
             (
-                Dispatch::Withdraw("alloc-1".to_string()),
-                Dispatch::Withdrawn,
+                Ok(Dispatch::Withdraw("alloc-1".to_string())),
+                Ok(Dispatch::Withdrawn),
                 0
             )
         );
@@ -1840,12 +1953,15 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform.clone());
-        let service = SigningHostSsoService::new(signing_host);
+        let service = SsoAccountHolderService::new(
+            signing_host.account_holder().clone(),
+            signing_host.account_holder().current_session().unwrap(),
+        );
 
-        futures::executor::block_on(service.answer(cancel("cancel-1", "alloc-1")));
+        futures::executor::block_on(service.answer(cancel("cancel-1", "alloc-1"))).unwrap();
         let allocation = futures::executor::block_on(service.answer(allocation_request("alloc-1")));
 
-        assert_eq!(allocation, Dispatch::Withdrawn);
+        assert_eq!(allocation, Ok(Dispatch::Withdrawn));
         assert!(
             platform
                 .resource_allocation_reviews

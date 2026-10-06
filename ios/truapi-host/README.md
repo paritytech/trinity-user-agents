@@ -325,22 +325,27 @@ The container enforces product consent, while native media delegates resolve OS 
 
 ## SSO session handling
 
-`TrUAPIHostRuntime` exposes two methods for wallet-owned SSO sessions. Meaningful request answering requires `activateLocalSession` to have been called first; `prepareDisconnectRequest` needs no session.
+An externally owned SSO transport calls `openSsoSession` once with its own statement-account and encryption public keys. Rust verifies both against the active wallet and binds the returned `NativeSsoAccountHolderSession` to that activation. Locking or reactivating the wallet invalidates the binding, including reactivation with the same secret.
 
 ```swift
-func handleSsoRequest(message: Data) async throws -> SsoRequestOutcome
-func prepareDisconnectRequest() -> Data
+let session = try runtime.openSsoSession(
+    ownStatementAccountId: statementAccountId,
+    ownEncryptionPublicKey: encryptionPublicKey
+)
+let service = try session.openService()
 ```
 
-`handleSsoRequest(message:)` takes one SCALE-encoded `RemoteMessage` exactly as decrypted from the statement-store session and routes it through the Rust core. The returned `SsoRequestOutcome` is the generated UniFFI enum (no Swift mirror):
+Retain one generated service per authenticated peer. Before queueing each decrypted SCALE message, call `service.handleSsoControl(message:)`: a non-nil outcome handles the message immediately, allowing Cancel to reach a running request. Queue only nil results, in arrival order, for `service.handleSsoRequest(message:)`. Both calls use the same service and withdrawal state. Malformed messages throw.
 
-- `.response(message:)` — SCALE-encoded reply; post it back over the same session.
-- `.disconnected` — the peer ended the session; tear down the transport and records on the wallet side.
-- `.ignored` — the message was not a request; nothing to post.
+The generated `SsoRequestOutcome` distinguishes these results:
 
-Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`, so `handleSsoRequest` can take arbitrarily long. Always call it from a `Task`, never the main thread.
+- `.response(message:)`: SCALE-encoded reply. Call `service.requireCurrentSession()` before starting the post over the same authenticated transport.
+- `.disconnected`: the peer ended the session; tear down its transport and records.
+- `.ignored`: nothing to post.
 
-`prepareDisconnectRequest()` returns the SCALE-encoded `Disconnected` message to post when the wallet is ending the session. Posting and record cleanup (host entry, device record, device-removed broadcast) stay with the wallet.
+Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`. Release each service with its peer transport and the session binding with its coordinator. An invalid binding cannot be reused after wallet activation; recreate the coordinator and verify its transport keys again.
+
+`runtime.prepareDisconnectRequest()` builds the SCALE-encoded `Disconnected` message without requiring an active wallet. Posting and record cleanup stay with the host.
 
 ## Statement-store allowance renewal
 

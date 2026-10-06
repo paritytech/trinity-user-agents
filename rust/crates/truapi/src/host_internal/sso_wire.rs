@@ -76,6 +76,16 @@ impl ResponseOutcome {
 }
 
 impl RemoteMessage {
+    /// Request withdrawn by this control message.
+    pub fn withdrawn_request_id(&self) -> Option<&str> {
+        match &self.data {
+            RemoteMessageData::V1(v1::RemoteMessage::Cancel(withdrawal)) => {
+                Some(&withdrawal.message_id)
+            }
+            _ => None,
+        }
+    }
+
     /// Service method name for requests; variant name for other messages.
     pub fn name(&self) -> &'static str {
         let RemoteMessageData::V1(message) = &self.data;

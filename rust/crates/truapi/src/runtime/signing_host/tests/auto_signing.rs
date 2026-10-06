@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1};
-use crate::runtime::signing_host::SigningHostSsoService;
+use crate::runtime::SsoAccountHolderService;
 use crate::runtime::sso_service::Dispatch;
 use truapi::versioned::account::HostAccountSignVrfRequest;
 use truapi::versioned::resource_allocation::HostRequestResourceAllocationError;
@@ -184,8 +184,8 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
     };
     let own_signed = sign_locally(request.clone());
     let foreign_signed = sign_locally(vrf_request("other.paseo"));
-    let Dispatch::Response(answer) = futures::executor::block_on(
-        SigningHostSsoService::new(activation).answer(RemoteMessage::request(
+    let Ok(Dispatch::Response(answer)) = futures::executor::block_on(
+        SsoAccountHolderService::new(activation.account_holder().clone(), activation.account_holder().current_session().unwrap()).answer(RemoteMessage::request(
             "relayed-vrf".to_string(),
             ProductRequest {
                 calling_product_id: "dim2.paseo".to_string(),
