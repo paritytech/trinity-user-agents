@@ -207,6 +207,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         }
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
+            confirmationLauncher.decide(review, requesterFallback = callingProductId.value) != TrUAPIPermissionDecision.DENY
+
+        override suspend fun confirmPermission(review: UserConfirmationReview): TrUAPIPermissionDecision =
             confirmationLauncher.decide(review, requesterFallback = callingProductId.value)
 
         override suspend fun devicePermission(
@@ -374,20 +377,18 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 }
 
 /**
- * Confirm-only: the core owns the key and signs after approval, so this
- * answers yes/no and never produces a signature. A review the app cannot
- * describe fails closed, but that is a mapping bug rather than the normal
- * path. [requesterFallback] names the requester for the one review that does
- * not carry a product id itself.
+ * The core owns the key and acts after approval. Preserve the user's decision
+ * lifetime rather than promoting a one-time approval to a durable grant.
+ * A review the app cannot describe fails closed.
  */
 internal suspend fun TrUAPIConfirmationLauncher.decide(
     review: UserConfirmationReview,
     requesterFallback: String,
-): Boolean {
+): TrUAPIPermissionDecision {
     val confirmation = runCatching { review.toConfirmation(requesterFallback) }
         .getOrElse {
             Timber.w(it, "truapi.confirm: could not describe review, rejecting")
-            return false
+            return TrUAPIPermissionDecision.DENY
         }
 
     return awaitDecision(confirmation)

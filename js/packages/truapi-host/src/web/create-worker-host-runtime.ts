@@ -203,6 +203,7 @@ export interface WorkerSigningHostRuntime extends Omit<
 interface CoreState {
   coreId: number;
   productId: string;
+  trustedRemotePermissions: boolean;
   listeners: Set<(message: Uint8Array) => void>;
   closeListeners: Set<(error: Error) => void>;
   closedError: Error | null;
@@ -1521,7 +1522,12 @@ function createWebWorkerHostRuntime(
         case "ready":
           break;
         case "coreReady":
-          handleCoreReady(state, msg.coreId, runtime);
+          handleCoreReady(
+            state,
+            msg.coreId,
+            runtime,
+            msg.trustedRemotePermissions,
+          );
           break;
         case "coreError":
           handleCoreError(state, msg.coreId, msg.error);
@@ -1796,6 +1802,7 @@ function handleCoreReady(
   state: RuntimeState,
   coreId: number,
   runtime: WorkerPairingHostRuntime | null,
+  trustedRemotePermissions: boolean,
 ): void {
   const pending = state.pendingCores.get(coreId);
   if (!pending || !runtime) return;
@@ -1803,6 +1810,7 @@ function handleCoreReady(
   const core: CoreState = {
     coreId,
     productId: pending.productId,
+    trustedRemotePermissions,
     listeners: new Set(),
     closeListeners: new Set(),
     closedError: null,
@@ -2264,6 +2272,7 @@ function buildProvider(
   runtime: WorkerPairingHostRuntime,
 ): TrUApiProductProvider {
   const provider: TrUApiProductProvider = {
+    trustedRemotePermissions: core.trustedRemotePermissions,
     postMessage(bytes: Uint8Array): void {
       if (state.disposed || core.disposed) return;
       if (debugLoggingEnabled(state)) {

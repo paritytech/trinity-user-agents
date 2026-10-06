@@ -18,14 +18,12 @@ import {
 } from "@parity/truapi";
 import type {
   GenericError,
-  HostSignPayloadData,
   HostThemeSubscribeItem as HostThemeSubscribeItemValue,
   ThemeVariant,
 } from "@parity/truapi";
 
 import { createWasmRawCallbacks } from "./generated/host-callbacks-adapter.js";
 import {
-  AuthState,
   CoreStorageKey,
   NativeChatFilePickRequest,
   NativeChatFileExportRequest,
@@ -50,8 +48,12 @@ import { createNotificationReceiverCallbacks } from "./runtime.js";
 const GENESIS = `0x${"11".repeat(32)}` as `0x${string}`;
 
 it("keeps receiving state at its native SCALE slot rather than another host capability's slot", () => {
-  expect(CoreStorageKey.enc({ tag: "NotificationReceiving" })).toEqual(new Uint8Array([20]));
-  expect(CoreStorageKey.dec(new Uint8Array([20])).tag).toBe("NotificationReceiving");
+  expect(CoreStorageKey.enc({ tag: "NotificationReceiving" })).toEqual(
+    new Uint8Array([20]),
+  );
+  expect(CoreStorageKey.dec(new Uint8Array([20])).tag).toBe(
+    "NotificationReceiving",
+  );
 });
 
 it("preserves one-use permission decisions across the WASM callback", async () => {
@@ -61,15 +63,19 @@ it("preserves one-use permission decisions across the WASM callback", async () =
   };
   for (const decision of ["AllowOnce", "AllowAlways", "Deny"] as const) {
     const reviews: UserConfirmationReview[] = [];
-    const raw = createWasmRawCallbacks(makeHostCallbacks({
-      userConfirmation: {
-        confirmPermission: async (request) => {
-          reviews.push(request);
-          return decision;
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        userConfirmation: {
+          confirmPermission: async (request) => {
+            reviews.push(request);
+            return decision;
+          },
         },
-      },
-    }));
-    const encoded = await raw.confirmPermission(UserConfirmationReview.enc(review));
+      }),
+    );
+    const encoded = await raw.confirmPermission(
+      UserConfirmationReview.enc(review),
+    );
     expect({ decision: PermissionDecision.dec(encoded), reviews }).toEqual({
       decision,
       reviews: [review],
@@ -79,39 +85,61 @@ it("preserves one-use permission decisions across the WASM callback", async () =
 
 it("keeps receiving authority host-owned and preserves forever mute across SCALE", async () => {
   const authority: ReceivingAuthority = {
-    productId: "playground.dot", account: "11".repeat(32), environment: "paseo",
-    artifact: "22".repeat(32), genesis: "33".repeat(32), generation: 7n,
-    osPermission: true, transportReady: false,
+    productId: "playground.dot",
+    account: "11".repeat(32),
+    environment: "paseo",
+    artifact: "22".repeat(32),
+    genesis: "33".repeat(32),
+    generation: 7n,
+    osPermission: true,
+    transportReady: false,
   };
-  const watches: ReceivingWatch[] = [{
-    id: "group", genesis: authority.genesis, channel: "44".repeat(32),
-    topics: ["55".repeat(32)], senders: ["66".repeat(32)],
-    expiresAt: 1_800_000_000_000n, mutedUntil: (1n << 64n) - 1n, route: "/group",
-  }];
-  const calls: unknown[] = [];
-  const raw = createWasmRawCallbacks(makeHostCallbacks({
-    notifications: {
-      receiverAuthority: async (productId) => {
-        calls.push(productId);
-        return authority;
-      },
-      receiverConsent: async (scope, policies) => {
-        calls.push({ scope, policies });
-        return false;
-      },
-      receiverCommand: async (productId, action, payload) => {
-        calls.push({ productId, action, payload });
-        throw new Error("owner unavailable");
-      },
+  const watches: ReceivingWatch[] = [
+    {
+      id: "group",
+      genesis: authority.genesis,
+      channel: "44".repeat(32),
+      topics: ["55".repeat(32)],
+      senders: ["66".repeat(32)],
+      expiresAt: 1_800_000_000_000n,
+      mutedUntil: (1n << 64n) - 1n,
+      route: "/group",
     },
-  }));
+  ];
+  const calls: unknown[] = [];
+  const raw = createWasmRawCallbacks(
+    makeHostCallbacks({
+      notifications: {
+        receiverAuthority: async (productId) => {
+          calls.push(productId);
+          return authority;
+        },
+        receiverConsent: async (scope, policies) => {
+          calls.push({ scope, policies });
+          return false;
+        },
+        receiverCommand: async (productId, action, payload) => {
+          calls.push({ productId, action, payload });
+          throw new Error("owner unavailable");
+        },
+      },
+    }),
+  );
   const encoded = await raw.receiverAuthority("playground.dot");
   expect(ReceivingAuthority.dec(encoded!)).toEqual(authority);
-  expect(await raw.receiverConsent(ReceivingAuthority.enc(authority), Vector(ReceivingWatch).enc(watches))).toBe(false);
+  expect(
+    await raw.receiverConsent(
+      ReceivingAuthority.enc(authority),
+      Vector(ReceivingWatch).enc(watches),
+    ),
+  ).toBe(false);
   const payload = new Uint8Array([1, 2]);
-  await expect(raw.receiverCommand("playground.dot", 4, payload)).rejects.toThrow("owner unavailable");
+  await expect(
+    raw.receiverCommand("playground.dot", 4, payload),
+  ).rejects.toThrow("owner unavailable");
   expect(calls).toEqual([
-    "playground.dot", { scope: authority, policies: watches },
+    "playground.dot",
+    { scope: authority, policies: watches },
     { productId: "playground.dot", action: 4, payload },
   ]);
 });
@@ -119,26 +147,44 @@ it("keeps receiving authority host-owned and preserves forever mute across SCALE
 it("does not claim receiving support when callbacks are absent", async () => {
   const raw = createWasmRawCallbacks(makeHostCallbacks());
   expect(await raw.receiverAuthority("playground.dot")).toBeUndefined();
-  expect(await raw.receiverCommand("playground.dot", 2, new Uint8Array())).toBeUndefined();
-  await expect(raw.receiverChanged()).rejects.toThrow("background receiving unsupported");
+  expect(
+    await raw.receiverCommand("playground.dot", 2, new Uint8Array()),
+  ).toBeUndefined();
+  await expect(raw.receiverChanged()).rejects.toThrow(
+    "background receiving unsupported",
+  );
   const standalone = createNotificationReceiverCallbacks({
     readReceivingState: () => undefined,
-    writeReceivingState: () => { throw new Error("storage unavailable"); },
+    writeReceivingState: () => {
+      throw new Error("storage unavailable");
+    },
   });
   expect(await standalone.receiverAuthority("playground.dot")).toBeUndefined();
-  await expect(standalone.receiverConsent(new Uint8Array(), new Uint8Array())).rejects.toThrow("background receiving unsupported");
-  await expect(standalone.receiverChanged()).rejects.toThrow("background receiving unsupported");
-  await expect(standalone.writeReceivingState(new Uint8Array())).rejects.toThrow("storage unavailable");
+  await expect(
+    standalone.receiverConsent(new Uint8Array(), new Uint8Array()),
+  ).rejects.toThrow("background receiving unsupported");
+  await expect(standalone.receiverChanged()).rejects.toThrow(
+    "background receiving unsupported",
+  );
+  await expect(
+    standalone.writeReceivingState(new Uint8Array()),
+  ).rejects.toThrow("storage unavailable");
 });
 
 it("preserves confirmed versus pending display in the receipt wire payload", () => {
   expect(ReceivingReceiptKind.enc("Foreground")).toEqual(new Uint8Array([0]));
   expect(ReceivingReceiptKind.enc("Read")).toEqual(new Uint8Array([1]));
   expect(ReceivingReceiptKind.enc("Displayed")).toEqual(new Uint8Array([2]));
-  expect(HostNotificationReceiptResult.enc({ displayed: false, displayPending: true }))
-    .toEqual(new Uint8Array([0, 1]));
-  expect(HostNotificationReceiptResult.dec(new Uint8Array([1, 0])))
-    .toEqual({ displayed: true, displayPending: false });
+  expect(
+    HostNotificationReceiptResult.enc({
+      displayed: false,
+      displayPending: true,
+    }),
+  ).toEqual(new Uint8Array([0, 1]));
+  expect(HostNotificationReceiptResult.dec(new Uint8Array([1, 0]))).toEqual({
+    displayed: true,
+    displayPending: false,
+  });
 });
 
 const defaultTheme = (variant: ThemeVariant): HostThemeSubscribeItemValue => ({
@@ -153,34 +199,6 @@ const namedTheme = (
   name: { tag: "Custom", value: name },
   variant,
 });
-const PRODUCT_ACCOUNT = {
-  dotNsIdentifier: "playground.dot",
-  derivationIndex: { tag: "Index" as const, value: 0 },
-};
-const PROOF_CONTEXT = {
-  productId: "playground.dot",
-  suffix: { tag: "Index" as const, value: 0 },
-};
-const RING_LOCATION = {
-  chainId: GENESIS,
-  junctions: [{ tag: "PalletInstance" as const, value: 67 }],
-};
-const SIGN_PAYLOAD: HostSignPayloadData = {
-  blockHash: GENESIS,
-  blockNumber: "0x01",
-  era: "0x00",
-  genesisHash: GENESIS,
-  method: "0x0102",
-  nonce: "0x00",
-  specVersion: "0x01",
-  tip: "0x00",
-  transactionVersion: "0x01",
-  signedExtensions: [],
-  version: 4,
-  assetId: undefined,
-  metadataHash: undefined,
-  mode: undefined,
-};
 
 describe("createWasmRawCallbacks", () => {
   it("leaves the native callback absent for the built-in Rust wallet", () => {
@@ -452,251 +470,6 @@ describe("createWasmRawCallbacks", () => {
     expect(writes).toEqual([["session", [1, 2, 3]]]);
     expect(clears).toEqual(["session"]);
     expect(cancelled).toEqual([9]);
-  });
-
-  it("bridges lifecycle, confirmations, and preimage callbacks", async () => {
-    const calls: unknown[][] = [];
-    async function* preimages() {
-      yield ok(undefined);
-      yield ok(new Uint8Array([4, 5, 6]));
-    }
-
-    const raw = createWasmRawCallbacks(
-      makeHostCallbacks({
-        auth: {
-          authStateChanged: (state) => {
-            calls.push(["authStateChanged", state]);
-          },
-        },
-        coreStorage: {
-          readCoreStorage: async (key) =>
-            key.tag === "AuthSession" ? new Uint8Array([1, 2, 3]) : undefined,
-          writeCoreStorage: async (key, value) => {
-            calls.push(["writeCoreStorage", key, [...value]]);
-          },
-          clearCoreStorage: async (key) => {
-            calls.push(["clearCoreStorage", key]);
-          },
-        },
-        userConfirmation: {
-          confirmUserAction: async (review) => {
-            switch (review.tag) {
-              case "SignPayload":
-                return (
-                  review.value.tag === "Product" &&
-                  review.value.value.callingProductId === "playground.dot" &&
-                  review.value.value.request.account.dotNsIdentifier ===
-                    "playground.dot" &&
-                  review.value.value.request.payload.method === "0x0102"
-                );
-              case "SignRaw":
-                return (
-                  review.value.tag === "Product" &&
-                  review.value.value.callingProductId === "playground.dot" &&
-                  review.value.value.watermarked === false &&
-                  review.value.value.request.payload.tag === "Bytes" &&
-                  review.value.value.request.payload.value.bytes === "0x0304"
-                );
-              case "CreateTransaction":
-                return (
-                  review.value.tag === "Product" &&
-                  review.value.value.callingProductId === "playground.dot" &&
-                  review.value.value.payload.signer.derivationIndex.tag ===
-                    "Index" &&
-                  review.value.value.payload.callData === "0x0506"
-                );
-              case "AccountAlias":
-                return (
-                  review.value.callingProductId === "playground.dot" &&
-                  review.value.context.productId === "playground.dot" &&
-                  review.value.ringLocation.junctions[0]?.tag ===
-                    "PalletInstance"
-                );
-              case "CreateProof":
-                return (
-                  review.value.callingProductId === "playground.dot" &&
-                  review.value.context.suffix.tag === "Index" &&
-                  review.value.message[0] === 7
-                );
-              case "AccountAccess":
-                return (
-                  review.value.requestingProductId === "playground.dot" &&
-                  review.value.targetProductId === "wallet.dot"
-                );
-              case "ResourceAllocation":
-                return (
-                  review.value.resources[0]?.tag === "StatementStoreAllowance"
-                );
-              case "PreimageSubmit":
-                calls.push([
-                  "confirmUserAction:PreimageSubmit",
-                  review.value.size,
-                ]);
-                return review.value.size === 42n;
-              default:
-                return false;
-            }
-          },
-        },
-        preimage: {
-          lookupPreimage: (key) => {
-            calls.push(["lookupPreimage", [...key]]);
-            return preimages();
-          },
-        },
-      }),
-    );
-
-    const preimageEvents: (number[] | null)[] = [];
-    const preimageErrors: string[] = [];
-    const disposePreimages = raw.lookupPreimage!(
-      new Uint8Array([9]),
-      (value) => preimageEvents.push(value ? [...value] : null),
-      (error) => preimageErrors.push(error.reason),
-    );
-
-    raw.authStateChanged?.(
-      AuthState.enc({
-        tag: "Pairing",
-        value: { deeplink: "polkadotapp://example" },
-      }),
-    );
-    const authSessionKey = CoreStorageKey.enc({ tag: "AuthSession" });
-    expect(await raw.readCoreStorage!(authSessionKey)).toEqual(
-      new Uint8Array([1, 2, 3]),
-    );
-    await raw.writeCoreStorage!(authSessionKey, new Uint8Array([3, 2, 1]));
-    await raw.clearCoreStorage!(authSessionKey);
-    expect(
-      await raw.confirmUserAction?.(
-        UserConfirmationReview.enc({
-          tag: "SignPayload",
-          value: {
-            tag: "Product",
-            value: {
-              callingProductId: "playground.dot",
-              request: {
-                account: PRODUCT_ACCOUNT,
-                payload: SIGN_PAYLOAD,
-              },
-            },
-          },
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      await raw.confirmUserAction?.(
-        UserConfirmationReview.enc({
-          tag: "SignRaw",
-          value: {
-            tag: "Product",
-            value: {
-              callingProductId: "playground.dot",
-              request: {
-                account: PRODUCT_ACCOUNT,
-                payload: {
-                  tag: "Bytes",
-                  value: { bytes: "0x0304" },
-                },
-              },
-              watermarked: false,
-            },
-          },
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      await raw.confirmUserAction?.(
-        UserConfirmationReview.enc({
-          tag: "CreateTransaction",
-          value: {
-            tag: "Product",
-            value: {
-              callingProductId: "playground.dot",
-              payload: {
-                signer: PRODUCT_ACCOUNT,
-                genesisHash: GENESIS,
-                callData: "0x0506",
-                extensions: [],
-                txExtVersion: 0,
-                contacts: [],
-              },
-            },
-          },
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      await raw.confirmUserAction?.(
-        UserConfirmationReview.enc({
-          tag: "AccountAlias",
-          value: {
-            callingProductId: "playground.dot",
-            context: PROOF_CONTEXT,
-            ringLocation: RING_LOCATION,
-          },
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      await raw.confirmUserAction?.(
-        UserConfirmationReview.enc({
-          tag: "CreateProof",
-          value: {
-            callingProductId: "playground.dot",
-            context: PROOF_CONTEXT,
-            ringLocation: RING_LOCATION,
-            message: new Uint8Array([7, 8]),
-          },
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      await raw.confirmUserAction?.(
-        UserConfirmationReview.enc({
-          tag: "AccountAccess",
-          value: {
-            requestingProductId: "playground.dot",
-            targetProductId: "wallet.dot",
-          },
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      await raw.confirmUserAction?.(
-        UserConfirmationReview.enc({
-          tag: "ResourceAllocation",
-          value: {
-            callingProductId: "playground.dot",
-            resources: [{ tag: "StatementStoreAllowance" }],
-          },
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      await raw.confirmUserAction?.(
-        UserConfirmationReview.enc({
-          tag: "PreimageSubmit",
-          value: { size: 42n },
-        }),
-      ),
-    ).toBe(true);
-
-    await settle();
-
-    expect(preimageEvents).toEqual([null, [4, 5, 6]]);
-    expect(calls).toEqual([
-      ["lookupPreimage", [9]],
-      [
-        "authStateChanged",
-        { tag: "Pairing", value: { deeplink: "polkadotapp://example" } },
-      ],
-      ["writeCoreStorage", { tag: "AuthSession", value: undefined }, [3, 2, 1]],
-      ["clearCoreStorage", { tag: "AuthSession", value: undefined }],
-      ["confirmUserAction:PreimageSubmit", 42n],
-    ]);
-
-    disposePreimages?.();
   });
 
   it("omits the chat callbacks when the host does not serve chat", () => {

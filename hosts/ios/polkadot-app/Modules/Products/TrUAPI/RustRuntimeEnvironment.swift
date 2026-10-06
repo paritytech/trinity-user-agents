@@ -4,6 +4,7 @@ import Products
 import ChainRegistry
 import SubstrateSdk
 import BulletinChain
+import DesignSystem
 
 /// Shared dependencies for opening one product execution off the process-wide
 /// ``TrUAPIHostRuntime``. Embedded by both the SPA and chat rust runtime
@@ -15,6 +16,7 @@ struct RustRuntimeEnvironment {
     let notificationScheduler: ProductNotificationScheduling
     let ipfsFetcher: IpfsFetching
     let hostProvider: ProductHostProviding
+    let themeManager: ThemeManagerProtocol
     let logger: LoggerProtocol
 
     /// The rust pieces a runtime needs: the opened execution and its chain
@@ -23,6 +25,15 @@ struct RustRuntimeEnvironment {
         let execution: TrUAPIProductExecutionProtocol
         let chainConnections: TrUAPIChainConnecting
         let osPermissionAsker: OSPermissionAsking
+        let bridge: RustProductExecutionBridge
+
+        @MainActor
+        func close() {
+            bridge.detach()
+            execution.stopWsBridge()
+            execution.close()
+            chainConnections.closeAll()
+        }
 
         /// Start the localhost ws-bridge and return the bootstrap script to
         /// inject. Called from the runtime's `start`; opening the execution
@@ -41,11 +52,13 @@ struct RustRuntimeEnvironment {
     /// in the runtime's `start` via ``ExecutionModel/startBridge()``. The
     /// execution retains the bridge (callback retainer) and the bridge retains
     /// the pool, so holding `ExecutionModel` pins the whole chain.
+    @MainActor
     func makeSPAExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
         try makeExecution(productId: productId, routers: routers, kind: .app)
     }
 
     /// Open a chat execution for `productId`. Mirrors ``makeSPAExecution``.
+    @MainActor
     func makeChatExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
@@ -56,6 +69,7 @@ struct RustRuntimeEnvironment {
 }
 
 private extension RustRuntimeEnvironment {
+    @MainActor
     func makeExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
@@ -91,7 +105,8 @@ private extension RustRuntimeEnvironment {
         return ExecutionModel(
             execution: execution,
             chainConnections: chainConnections,
-            osPermissionAsker: osPermissionAsker
+            osPermissionAsker: osPermissionAsker,
+            bridge: bridge
         )
     }
 
@@ -126,6 +141,7 @@ private extension RustRuntimeEnvironment {
                 }
             },
             hostProvider: hostProvider,
+            themeManager: themeManager,
             logger: logger
         )
     }

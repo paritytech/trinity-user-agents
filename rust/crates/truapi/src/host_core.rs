@@ -348,6 +348,11 @@ impl PairingHostRuntime {
         )
     }
 
+    /// Root account used to fence account-scoped host administration.
+    pub fn current_session_public_key(&self) -> Option<[u8; 32]> {
+        self.pairing_host.session_state().current_public_key()
+    }
+
     /// Disconnect the active account-authority session.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.disconnect_session"))]
     pub async fn disconnect_session(&self) {
@@ -874,6 +879,11 @@ impl SigningHostRuntime {
     /// Return whether this host currently has an authenticated signing session.
     pub fn has_active_session(&self) -> bool {
         self.signing_host.session_state().current().is_some()
+    }
+
+    /// Root account used to fence account-scoped host administration.
+    pub fn current_session_public_key(&self) -> Option<[u8; 32]> {
+        self.signing_host.session_state().current_public_key()
     }
 
     /// Disconnect the active account-authority session.

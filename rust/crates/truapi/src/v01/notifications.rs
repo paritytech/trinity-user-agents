@@ -247,7 +247,8 @@ pub struct NotificationActivation {
     pub sequence: u64,
     /// Identifier of the activated notification.
     pub notification_id: u32,
-    /// Validated product-relative route beginning with exactly one slash.
+    /// Original product destination (local path or supported deep-link URI).
+    /// Opaque data for the product router, never host navigation authority.
     pub route: String,
 }
 

@@ -57,6 +57,8 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
         from _: String
     ) async -> TrUAPIPermissionDecision {
         switch review {
+        case let .preimageSubmit(preimageReview):
+            await presentPreimagePermission(preimageReview)
         case let .identityDisclosure(identityReview):
             await presentPermission(
                 promptMapper.makePermissionRequest(from: identityReview)
@@ -92,10 +94,9 @@ private extension TrUAPIConfirmationPresenter {
             await confirmStatementSign(
                 promptMapper.makeStatementSignRequest(from: statementReview)
             )
-        case let .preimageSubmit(preimageReview):
-            await confirmAction(
-                promptMapper.makeActionRequest(from: preimageReview, requester: requesterName)
-            )
+        case .preimageSubmit:
+            // A boolean caller cannot express durable upload consent.
+            false
         case let .productSubtree(subtreeReview):
             await confirmAction(promptMapper.makeActionRequest(from: subtreeReview))
         // No prompt exists for profile disclosure yet, so `confirmPermission`
@@ -170,6 +171,19 @@ private extension TrUAPIConfirmationPresenter {
                 let prompt = MainPursePaymentPromptViewFactory.createView(context: context)
                 if !routerFacade.productsRouter.present(view: prompt) {
                     context.deliver(false)
+                }
+            }
+        }
+    }
+
+    func presentPreimagePermission(_ review: PreimageSubmitReview) async -> TrUAPIPermissionDecision {
+        await awaitDecision(cancelled: .deny) { [routerFacade] in
+            await withCheckedContinuation { continuation in
+                let context = TrUAPIPreimageConfirmationContext(review: review)
+                context.setContinuation(continuation)
+                let prompt = TrUAPIActionPromptViewFactory.createPreimageView(context: context)
+                if !routerFacade.productsRouter.present(view: prompt) {
+                    context.deliver(.deny)
                 }
             }
         }

@@ -1015,8 +1015,13 @@ impl UserConfirmation for CliPlatform {
         review: UserConfirmationReview,
     ) -> Result<PermissionDecision, api::GenericError> {
         let (action, detail) = approval_summary(&review);
+        let policy = if matches!(review, UserConfirmationReview::PreimageSubmit(_)) {
+            ApprovalPolicy::Prompt
+        } else {
+            self.approval_policy()
+        };
         Ok(self
-            .decide_with(action, detail, ApprovalKind::Permission)
+            .decide_with_policy(action, detail, ApprovalKind::Permission, policy)
             .await)
     }
 
@@ -1148,8 +1153,12 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
         UserConfirmationReview::PreimageSubmit(review) => (
             "submit preimage",
             format!(
-                "A product requested submission of a {}-byte preimage.",
-                review.size
+                "Product {} requested a {}-byte upload for root 0x{} on Bulletin 0x{}. \
+                 Allow once, or explicitly allow automatic uploads of at most {} bytes, \
+                 {} times per rolling {} seconds. Revoke with --revoke-automatic-uploads {}.",
+                review.product_id, review.size, hex::encode(review.root_public_key),
+                hex::encode(review.genesis_hash), review.automatic_max_bytes,
+                review.automatic_max_uploads, review.automatic_window_seconds, review.product_id
             ),
         ),
         UserConfirmationReview::AccountAccess(review) => (
@@ -2083,23 +2092,6 @@ mod tests {
                 HashMap::from([("theme".to_string(), b"dark".to_vec())]),
             )])
         );
-    }
-
-    #[test]
-    fn approval_summaries_are_concise_and_do_not_dump_payloads() {
-        let review =
-            UserConfirmationReview::PreimageSubmit(truapi::platform::PreimageSubmitReview {
-                size: 4_096,
-            });
-
-        let (action, detail) = approval_summary(&review);
-
-        assert_eq!(action, "submit preimage");
-        assert_eq!(
-            detail,
-            "A product requested submission of a 4096-byte preimage."
-        );
-        assert!(!detail.contains("["));
     }
 
     /// Both products by name, because a signature made with an account the

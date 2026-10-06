@@ -15,6 +15,8 @@ final class MockProductPermissionRepository: ProductPermissionRepositoryProtocol
 
     // MARK: - Stubbing
 
+    var readError: (any Error)?
+
     func stubState(
         productId: String,
         permission: ProductPermission,
@@ -49,6 +51,8 @@ final class MockProductPermissionRepository: ProductPermissionRepositoryProtocol
         productId: String,
         permission: ProductPermission
     ) async throws -> ProductPermissionState {
+        if let readError { throw readError }
+
         let id = key(productId, permission)
 
         if oneTimeGrants.contains(id) {

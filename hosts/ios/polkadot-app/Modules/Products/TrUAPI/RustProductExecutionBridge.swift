@@ -3,6 +3,8 @@ import TrUAPIHost
 import Products
 import ChainRegistry
 import SubstrateSdk
+import DesignSystem
+import UIKit
 
 /// Production `HostBridge` for one product execution: wires the rust core's
 /// platform callbacks to app services and, once attached, notifies the
@@ -28,6 +30,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let chatFiles: NativeChatFilesHost
         let preimageCache: TrUAPIPreimageLookuping
         let hostProvider: ProductHostProviding
+        let themeManager: ThemeManagerProtocol
         let logger: LoggerProtocol
     }
 
@@ -36,17 +39,69 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     private let dependencies: Dependencies
     private weak var execution: TrUAPIProductExecutionProtocol?
+    private let themeLock = NSLock()
+    private var theme: HostThemeSubscribeItem
+    private var themeObservation: Task<Void, Never>?
 
+    @MainActor
     init(dependencies: Dependencies) {
         self.dependencies = dependencies
         storage = ProductStorageBackend(storage: dependencies.productStorage)
         coreStorage = CoreStorageBackend(storage: dependencies.coreStorage)
+        theme = Self.makeTheme(dependencies.themeManager.theme)
+
+        // Register before opening the execution: its synchronous currentTheme
+        // callback already has the selected theme, and no transition is lost
+        // between the snapshot and starting the consumer.
+        let themes = dependencies.themeManager.observeTheme()
+        themeObservation = Task { @MainActor [weak self] in
+            for await theme in themes {
+                guard !Task.isCancelled else { break }
+                self?.themeDidChange(theme)
+            }
+        }
+    }
+
+    deinit {
+        themeObservation?.cancel()
     }
 
     /// Attach the opened execution so callbacks can notify it in place.
+    @MainActor
     func attach(_ execution: TrUAPIProductExecutionProtocol) {
         self.execution = execution
         dependencies.chainConnections.eventHandler = self
+    }
+
+    /// Stop forwarding before the runtime closes the execution. MainActor
+    /// serialization fences both buffered themes and a notification in flight.
+    @MainActor
+    func detach() {
+        themeObservation?.cancel()
+        themeObservation = nil
+        execution = nil
+        dependencies.chainConnections.eventHandler = nil
+    }
+
+    @MainActor
+    private static func makeTheme(_ theme: Theme) -> HostThemeSubscribeItem {
+        HostThemeSubscribeItem(
+            name: .custom(theme.id),
+            variant: theme.colors.bgSurfaceMain.isLight ? .light : .dark
+        )
+    }
+
+    @MainActor
+    private func themeDidChange(_ next: Theme) {
+        let next = Self.makeTheme(next)
+        let changed = themeLock.withLock {
+            guard theme != next else { return false }
+            theme = next
+            return true
+        }
+        if changed {
+            execution?.notifyThemeChanged(theme: next)
+        }
     }
 
     func onCoreLog(marker: String, detail: String) {
@@ -189,7 +244,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func currentTheme() throws -> HostThemeSubscribeItem {
-        HostThemeSubscribeItem(name: .default, variant: .dark)
+        themeLock.withLock { theme }
     }
 
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {

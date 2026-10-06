@@ -3,7 +3,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
-use crate::platform::{PreimageSubmitReview, UserConfirmationReview};
 use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::api::Preimage;
@@ -107,22 +106,13 @@ impl Preimage for ProductRuntimeHost {
             }),
         )
         .await?;
-        let confirmed = until_cancelled(
+        let approval = until_cancelled(
             cx,
-            self.confirm_product_action(UserConfirmationReview::PreimageSubmit(
-                PreimageSubmitReview {
-                    size: value.len() as u64,
-                },
-            )),
+            self.approve_preimage_upload(&session, value.len() as u64),
         )
         .await
         .map_err(|err| preimage_submit_error(err.to_string()))?
         .map_err(|err| preimage_submit_error(err.reason))?;
-        if !confirmed {
-            return Err(preimage_submit_error(
-                "User rejected preimage submission".to_string(),
-            ));
-        }
         let submission_deadline = Instant::now() + PREIMAGE_SUBMIT_TIMEOUT;
         let authority_cx = remote_authority_context_until(
             cx,
@@ -136,6 +126,9 @@ impl Preimage for ProductRuntimeHost {
         )
         .await
         .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
+        self.validate_upload_approval(&session, &approval)
+            .await
+            .map_err(|err| preimage_submit_error(err.reason))?;
 
         let key = match bulletin
             .submit_preimage(cx, submission_deadline, &allowance, &value)
@@ -161,6 +154,9 @@ impl Preimage for ProductRuntimeHost {
                 )
                 .await
                 .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
+                self.validate_upload_approval(&session, &approval)
+                    .await
+                    .map_err(|err| preimage_submit_error(err.reason))?;
                 bulletin
                     .submit_preimage(cx, submission_deadline, &allowance, &value)
                     .await

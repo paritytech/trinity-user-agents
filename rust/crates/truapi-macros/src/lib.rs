@@ -4,6 +4,7 @@
 //! public proc-macro entry points to be defined at the crate root.
 
 mod service;
+mod sso_response_indices;
 mod sso_service;
 mod versioned_type;
 mod wire;
@@ -108,4 +109,13 @@ pub fn versioned_type(item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn sso_service(args: TokenStream, item: TokenStream) -> TokenStream {
     sso_service::expand(args, item)
+}
+
+/// Classify SSO `Response<P>` prefixes using the enum's SCALE discriminants.
+///
+/// This keeps pre-payload correlation in sync with the wire catalog instead
+/// of maintaining a second list of response tags.
+#[proc_macro_attribute]
+pub fn sso_response_indices(args: TokenStream, item: TokenStream) -> TokenStream {
+    sso_response_indices::expand(args, item)
 }

@@ -354,6 +354,7 @@ async fn wait_for_sso_remote_response_inner<T>(
                             session,
                             &value,
                             statement_request_id,
+                            remote_message_id,
                             matches,
                             &mut request_accepted,
                             &mut pending_remote_response,
@@ -372,6 +373,7 @@ async fn wait_for_sso_remote_response_inner<T>(
                             session,
                             &value,
                             statement_request_id,
+                            remote_message_id,
                             matches,
                             &mut request_accepted,
                             &mut pending_remote_response,
@@ -394,6 +396,7 @@ fn handle_sso_remote_statement_page<T>(
     session: &SsoSessionInfo,
     value: &Value,
     statement_request_id: &str,
+    remote_message_id: &str,
     matches: &impl Fn(v1::RemoteMessage) -> Option<Result<T, String>>,
     request_accepted: &mut bool,
     pending_remote_response: &mut Option<T>,
@@ -401,8 +404,13 @@ fn handle_sso_remote_statement_page<T>(
     let page = parse_new_statements_result("sso-remote".to_string(), value)
         .map_err(|err| SsoRemoteResponseError::Failure(err.to_string()))?;
     for statement in page.statements {
-        match decode_sso_session_statement(session, &statement, statement_request_id)
-            .map_err(SsoRemoteResponseError::Failure)?
+        match decode_sso_session_statement(
+            session,
+            &statement,
+            statement_request_id,
+            Some(remote_message_id),
+        )
+        .map_err(SsoRemoteResponseError::Failure)?
         {
             Some(SsoSessionStatement::RequestAccepted) => {
                 *request_accepted = true;
@@ -631,6 +639,81 @@ mod tests {
                 payload: Ok([7; 32]),
             })),
         }
+    }
+
+    #[test]
+    fn a_malformed_foreign_reply_does_not_poison_the_current_request() {
+        let (host, responder) = sso_host_and_responder_sessions();
+        let ack = build_signed_session_response_statement(
+            &responder,
+            "request-1".to_string(),
+            0,
+            fresh_statement_expiry(),
+        )
+        .unwrap();
+        let mut foreign_reply = subtree_response("another-request").encode();
+        foreign_reply.pop();
+        // Extension discriminant 205 and a two-byte compact string length
+        // must use the same correlation rule as baseline response variants.
+        let mut foreign_extension = RemoteMessage {
+            message_id: "extension-response".to_string(),
+            data: RemoteMessageData::V1(v1::RemoteMessage::PaymentTopUpResponse(Response {
+                responding_to: "ø".repeat(40),
+                payload: Ok(()),
+            })),
+        }
+        .encode();
+        foreign_extension.pop();
+        let encrypted = encrypt_session_statement_data(
+            &responder,
+            &SsoStatementData::Request {
+                request_id: "resp-statement".to_string(),
+                data: vec![
+                    foreign_reply,
+                    foreign_extension,
+                    subtree_response("request-1").encode(),
+                ],
+            },
+        )
+        .unwrap();
+        let statement =
+            build_signed_session_request_statement(&responder, encrypted, fresh_statement_expiry())
+                .unwrap();
+
+        let response = wait_for_subtree(&host, vec![peer_page(ack), peer_page(statement)]).unwrap();
+
+        assert_eq!(
+            response,
+            Response {
+                responding_to: "request-1".to_string(),
+                payload: Ok([7; 32]),
+            }
+        );
+    }
+
+    #[test]
+    fn a_malformed_current_reply_still_fails_the_current_request() {
+        let (host, responder) = sso_host_and_responder_sessions();
+        let mut reply = subtree_response("request-1").encode();
+        reply.pop();
+        let encrypted = encrypt_session_statement_data(
+            &responder,
+            &SsoStatementData::Request {
+                request_id: "resp-statement".to_string(),
+                data: vec![reply],
+            },
+        )
+        .unwrap();
+        let statement =
+            build_signed_session_request_statement(&responder, encrypted, fresh_statement_expiry())
+                .unwrap();
+
+        let result = wait_for_subtree(&host, vec![peer_page(statement)]);
+
+        assert!(
+            matches!(result, Err(SsoRemoteResponseError::Failure(reason))
+                if reason.starts_with("invalid SSO remote message:"))
+        );
     }
 
     fn wait_for_subtree(

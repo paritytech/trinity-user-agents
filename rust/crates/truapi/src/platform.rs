@@ -1220,12 +1220,16 @@ pub trait Notifications: Send + Sync {
         watches: Vec<crate::latest::ReceivingWatch>,
     ) -> Result<bool, GenericError> {
         let _ = (authority, watches);
-        Err(GenericError { reason: "background receiving unsupported".into() })
+        Err(GenericError {
+            reason: "background receiving unsupported".into(),
+        })
     }
 
     /// Wake the host's asynchronous synchronization loop, never await network I/O.
     async fn receiver_changed(&self) -> Result<(), GenericError> {
-        Err(GenericError { reason: "background receiving unsupported".into() })
+        Err(GenericError {
+            reason: "background receiving unsupported".into(),
+        })
     }
 
     /// Forward receiving actions to the single host-owned receiver, if external.
@@ -1247,9 +1251,10 @@ pub trait Notifications: Send + Sync {
     /// Return at most 32 pending activations, ordered by sequence, without
     /// consuming them. The embedding host binds this platform to the verified
     /// product, authenticated account and environment; none is caller input.
-    /// Admit only routes starting with exactly one slash, with no backslashes
-    /// or control characters. Polling must not request permissions or enroll
-    /// a background receiver. A missing implementation is an error.
+    /// Destinations may be local absolute paths or HTTP(S)/`polkadot:` links.
+    /// They remain opaque product data, never host navigation authority. Reject
+    /// backslashes and control characters. Polling must not request permissions
+    /// or enroll a background receiver. A missing implementation is an error.
     async fn activation_events(
         &self,
     ) -> Result<truapi::v01::NotificationActivations, GenericError> {
@@ -1333,6 +1338,13 @@ pub enum PermissionAuthorizationRequest {
     /// Chat contacts.
     #[codec(index = 6)]
     ProfileDisclosure,
+    /// Bounded automatic Bulletin uploads for the rendered account. The core
+    /// rejects an account that is no longer active; product and network are host-owned.
+    #[codec(index = 8)]
+    AutomaticPreimageSubmit {
+        /// Root account whose automatic-upload decision is being edited.
+        root_public_key: Bytes32,
+    },
 }
 
 /// Authorization status for a permission request.
@@ -2079,6 +2091,17 @@ pub enum CoreStorageKey {
     /// Host product/account deletion must invoke ReceivingService::revoke first.
     #[codec(index = 20)]
     NotificationReceiving,
+    /// Bounded upload consent and rolling quota. Revocation retains quota and
+    /// advances a generation so outstanding confirmations cannot restore it.
+    #[codec(index = 21)]
+    AutomaticPreimageUploads {
+        /// Authenticated requesting product.
+        product_id: String,
+        /// Root account that explicitly granted consent.
+        root_public_key: Bytes32,
+        /// Host-selected Bulletin network.
+        genesis_hash: Bytes32,
+    },
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -2146,6 +2169,9 @@ pub fn describe_core_storage_key(
             ("NativeChatFileChunk", Some(product_id))
         }
         CoreStorageKey::NotificationReceiving => ("NotificationReceiving", None),
+        CoreStorageKey::AutomaticPreimageUploads { product_id, .. } => {
+            ("AutomaticPreimageUploads", Some(product_id))
+        }
     };
     Ok(CoreStorageKeyDescription { kind, product_id })
 }
@@ -3880,6 +3906,18 @@ pub struct ProductSubtreeReview {
 pub struct PreimageSubmitReview {
     /// Size of the preimage in bytes.
     pub size: u64,
+    /// Authenticated product requesting this upload.
+    pub product_id: String,
+    /// Root account to which any durable approval is restricted.
+    pub root_public_key: Bytes32,
+    /// Host-selected Bulletin network covered by the approval.
+    pub genesis_hash: Bytes32,
+    /// Maximum bytes per automatically approved upload.
+    pub automatic_max_bytes: u64,
+    /// Maximum automatic upload attempts in the rolling window.
+    pub automatic_max_uploads: u32,
+    /// Length of the rolling automatic-upload window in seconds.
+    pub automatic_window_seconds: u32,
 }
 
 /// Review shown before a user-confirmed core action continues.
@@ -3928,8 +3966,14 @@ pub trait UserConfirmation: Send + Sync {
         &self,
         review: UserConfirmationReview,
     ) -> Result<PermissionDecision, GenericError> {
+        // A boolean upload approval has no explicit durable-consent choice.
+        let upload = matches!(review, UserConfirmationReview::PreimageSubmit(_));
         Ok(if self.confirm_user_action(review).await? {
-            PermissionDecision::AllowAlways
+            if upload {
+                PermissionDecision::AllowOnce
+            } else {
+                PermissionDecision::AllowAlways
+            }
         } else {
             PermissionDecision::Deny
         })
@@ -3965,7 +4009,9 @@ pub trait LocaleHost: Send + Sync {
         &self,
         _request: crate::latest::HostLocaleLocalizeTimestampsRequest,
     ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, GenericError> {
-        Err(GenericError { reason: "Local time conversion is unavailable".into() })
+        Err(GenericError {
+            reason: "Local time conversion is unavailable".into(),
+        })
     }
 }
 
@@ -4111,9 +4157,11 @@ pub trait ProfilePlatform: Send + Sync {
         product: &ProductContext,
         presented: PresentedContactProfile,
     ) -> Result<(), HostProfilePresentError> {
-        let shared = presented.shared.ok_or_else(|| HostProfilePresentError::Unknown {
-            reason: "Contact profile feedback is unavailable".to_string(),
-        })?;
+        let shared = presented
+            .shared
+            .ok_or_else(|| HostProfilePresentError::Unknown {
+                reason: "Contact profile feedback is unavailable".to_string(),
+            })?;
         self.present_profile(
             product,
             HostProfilePresentRequest {

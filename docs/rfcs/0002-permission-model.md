@@ -17,6 +17,18 @@ owner: "@johnthecat"
 > **NOTE (2026-09-18): retain the legacy Google Fonts exception.**
 > For compatibility, `BLESSED_REMOTE_DOMAINS` lets every product access `fonts.googleapis.com` and `fonts.gstatic.com` without a prompt. This covers all paths and query strings on those hosts, not only font requests, and requests disclose the user's IP address to Google. An explicit matching denial overrides the exception. These implicit grants are not stored.
 
+> **NOTE (2026-10-06): trusted native products skip only notification app consent.**
+> The iOS and Android TrUAPI notification permission callbacks reuse the canonical
+> `hasTrustedRemotePermissions` classifier for the application-consent step only.
+> The core still reads product-scoped decisions before invoking the callback:
+> stored denial, one-use consumption and storage errors retain their existing
+> behavior. The native callback still checks/requests the host application's OS
+> notification permission; OS refusal never returns an authorization or reaches
+> notification scheduling. Camera, microphone and other device capabilities do
+> not inherit this exception. Browser hosts must make the same separation in
+> their concrete permission callback, not bypass that callback in Rust: the
+> shared callback can own both application consent and browser/OS authorization.
+
 ## Summary
 
 The host callback distinguishes `AllowOnce`, `AllowAlways`, and `Deny`.
@@ -25,6 +37,31 @@ the operation that needs them. Requesting permission upfront does not consume
 the grant. Product-facing permission responses remain boolean.
 
 The Host API currently has two underdefined permission calls — `host_device_permission` and `remote_permission` — that lack coverage for several device capabilities (NFC, Clipboard, OpenUrl, Biometrics), do not support batched remote-permission requests, and have no specified lifecycle for when prompts occur or how decisions are persisted. This RFC defines the complete set of device and remote permissions, updates the `remote_permission` signature to accept a batch, specifies lasting and one-use permission decisions, and establishes that business methods (`host_sign_raw`, `host_sign_payload`, `host_create_transaction`, `host_create_transaction_with_non_product_account`, `remote_statement_store_submit`, `remote_preimage_submit`, `remote_chain_transaction_broadcast`) implicitly trigger permission prompts if permission has not yet been granted.
+
+## Bounded automatic preimage uploads
+
+`RemotePermission::PreimageSubmit` permits the capability, not an unattended upload.
+The core separately requests upload consent, including the product id, active root
+public key, configured Bulletin genesis hash and byte count. `AllowOnce` approves
+only that attempt. `AllowAlways` explicitly enables automatic uploads for that
+product/account/network, limited to **262,144 bytes per upload and four attempts
+per rolling 3,600 seconds**. Larger uploads and an exhausted budget still require
+per-upload review. Trusted products and unrelated automatic-signing grants do not
+bypass this consent.
+
+The host-owned `AutomaticPreimageSubmit { rootPublicKey }` authorization request
+reads or changes this separate setting. The core verifies the root against the
+active session; products cannot administer it. `NotDetermined` and `Denied`
+revoke automatic approval without disabling individually reviewed uploads.
+Revocation or an account change invalidates a pending consent sheet, and the core
+rechecks approval after allowance acquisition. Revocation cannot withdraw a
+transaction already handed to the chain backend.
+
+The core serializes reservations across product connections in its runtime and
+persists usage before contacting the backend. Failed or cancelled attempts remain
+charged; the existing internal allowance retry is the same attempt. Restarting,
+revoking or regranting does not reset the rolling budget. Legacy boolean host
+confirmation callbacks mean `AllowOnce`, never a durable grant.
 
 ## Motivation
 

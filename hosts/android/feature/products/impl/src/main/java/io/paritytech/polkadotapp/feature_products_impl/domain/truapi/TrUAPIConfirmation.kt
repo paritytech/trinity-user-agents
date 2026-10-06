@@ -66,7 +66,12 @@ sealed interface TrUAPIConfirmation {
     /** Submit a preimage to the host-selected backend. */
     class PreimageSubmit(
         override val requesterProductId: String,
-        val sizeBytes: Long,
+        val sizeBytes: ULong,
+        val rootPublicKey: String,
+        val genesisHash: String,
+        val automaticMaxBytes: ULong,
+        val automaticMaxUploads: UInt,
+        val automaticWindowSeconds: UInt,
     ) : TrUAPIConfirmation.Prompt
 
     /** Approve one exact payment from the user's main purse. */

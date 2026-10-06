@@ -1,7 +1,7 @@
 import Foundation
 
-/// Grants remote access without prompting to products the host trusts,
-/// and prompts for everything else. Wraps the real requester.
+/// Grants remote access and notification app consent without prompting to
+/// products the host trusts. Notification OS authorization stays in the handler.
 ///
 /// The core already grants a first-party product every `RemotePermission`
 /// without prompting, but only along the path it owns: the request a product
@@ -13,9 +13,9 @@ import Foundation
 /// Distinct from `AutoAllowProductPermissionRequester`, which grants *every*
 /// permission and is scoped to builds with no Apps settings screen. This one is
 /// narrower on both axes and is not tied to that build flag: it covers remote
-/// access only, and first-party trust does not expire when the settings screen
-/// ships. Device capabilities, account access, balance and identity disclosure
-/// keep prompting for a trusted product, matching the core.
+/// access and notification app consent. Other device capabilities, account
+/// access, balance and identity disclosure keep prompting for a trusted product.
+/// Stored refusals are resolved before this requester; it never overrides them.
 public struct TrustedRemoteProductPermissionRequester: ProductPermissionRequesting {
     private let isTrustedForRemoteAccess: @Sendable (String) -> Bool
     private let wrapped: ProductPermissionRequesting
@@ -32,6 +32,10 @@ public struct TrustedRemoteProductPermissionRequester: ProductPermissionRequesti
         productId: String,
         permission: ProductPermission
     ) async -> PermissionDecision {
+        if permission == .deviceCapability(.notifications), isTrustedForRemoteAccess(productId) {
+            return .allowAlways
+        }
+
         guard !grantsWithoutPrompting(productId: productId, permissions: [permission]) else {
             return .allowAlways
         }

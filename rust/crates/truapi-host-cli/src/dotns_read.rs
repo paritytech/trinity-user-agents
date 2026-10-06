@@ -80,7 +80,7 @@ impl AssetHubReader {
         let labels = resolve_labels(self, &controller, account)
             .await
             .map_err(anyhow::Error::msg)?;
-        classify_labels(self, &controller, labels)
+        classify_labels(self, &controller, account, labels)
             .await
             .map_err(anyhow::Error::msg)
     }

@@ -4,6 +4,7 @@ import Keystore_iOS
 import Products
 import ChainRegistry
 import BulletinChain
+import DesignSystem
 
 /// Creates ``ProductBot`` instances for a given product.
 ///
@@ -86,15 +87,6 @@ private extension ProductBotFactory {
     func createRustRuntime(product: Product, source: ProductWorkerSource) throws -> ChatRuntimeProtocol {
         let runtime = try runtimeProvider.sharedRuntime()
 
-        let rustEnvironment = RustRuntimeEnvironment(
-            runtime: runtime,
-            chainRegistry: chainRegistry,
-            notificationScheduler: ProductNotificationScheduler.shared,
-            ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
-            hostProvider: hostProvider,
-            logger: logger
-        )
-
         let engineContext = try ChatProductEngineFactory.makeContext(
             source: source,
             productFileProvider: productFileProvider,
@@ -106,8 +98,17 @@ private extension ProductBotFactory {
 
         return ChatRustRuntime(
             productUrl: engineContext.productUrl,
-            makeExecutionModel: { [rustEnvironment] chatMessaging in
-                try rustEnvironment.makeChatExecution(
+            makeExecutionModel: { [hostProvider, chainRegistry, logger] chatMessaging in
+                let rustEnvironment = RustRuntimeEnvironment(
+                    runtime: runtime,
+                    chainRegistry: chainRegistry,
+                    notificationScheduler: ProductNotificationScheduler.shared,
+                    ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
+                    hostProvider: hostProvider,
+                    themeManager: ThemeManager.shared,
+                    logger: logger
+                )
+                return try rustEnvironment.makeChatExecution(
                     productId: productId,
                     routers: routers,
                     chatMessaging: chatMessaging
