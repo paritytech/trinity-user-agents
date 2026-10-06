@@ -319,104 +319,106 @@ async fn wait_for_sso_remote_response_inner<T>(
 	let mut request_accepted = false;
 	let mut pending_remote_response = None;
 
-	loop {
-		if own_done && peer_done {
-			return Err(SsoRemoteResponseError::Failure(format!(
-				"SSO response stream ended before response for {}",
-				remote_message_id
-			)));
-		}
-		futures::select! {
-			item = own_statements.next() => {
-				match item {
-					Some(Ok(value)) => {
-						if let Some(response) = handle_sso_remote_statement_page(
-							session,
-							&value,
-							statement_request_id,
-							matches,
-							&mut request_accepted,
-							&mut pending_remote_response,
-						)? {
-							return Ok(response);
-						}
-					}
-					Some(Err(reason)) => return Err(SsoRemoteResponseError::Failure(reason)),
-					None => own_done = true,
-				}
-			}
-			item = peer_statements.next() => {
-				match item {
-					Some(Ok(value)) => {
-						if let Some(response) = handle_sso_remote_statement_page(
-							session,
-							&value,
-							statement_request_id,
-							matches,
-							&mut request_accepted,
-							&mut pending_remote_response,
-						)? {
-							return Ok(response);
-						}
-					}
-					Some(Err(reason)) => return Err(SsoRemoteResponseError::Failure(reason)),
-					None => peer_done = true,
-				}
-			}
-			submit_result = submit => {
-				submit_result?;
-			}
-		}
-	}
+    loop {
+        if own_done && peer_done {
+            return Err(SsoRemoteResponseError::Failure(format!(
+                "SSO response stream ended before response for {}",
+                remote_message_id
+            )));
+        }
+        futures::select! {
+            item = own_statements.next() => {
+                match item {
+                    Some(Ok(value)) => {
+                        if let Some(response) = handle_sso_remote_statement_page(
+                            session,
+                            &value,
+                            statement_request_id,
+                            remote_message_id,
+                            matches,
+                            &mut request_accepted,
+                            &mut pending_remote_response,
+                        )? {
+                            return Ok(response);
+                        }
+                    }
+                    Some(Err(reason)) => return Err(SsoRemoteResponseError::Failure(reason)),
+                    None => own_done = true,
+                }
+            }
+            item = peer_statements.next() => {
+                match item {
+                    Some(Ok(value)) => {
+                        if let Some(response) = handle_sso_remote_statement_page(
+                            session,
+                            &value,
+                            statement_request_id,
+                            remote_message_id,
+                            matches,
+                            &mut request_accepted,
+                            &mut pending_remote_response,
+                        )? {
+                            return Ok(response);
+                        }
+                    }
+                    Some(Err(reason)) => return Err(SsoRemoteResponseError::Failure(reason)),
+                    None => peer_done = true,
+                }
+            }
+            submit_result = submit => {
+                submit_result?;
+            }
+        }
+    }
 }
 
 fn handle_sso_remote_statement_page<T>(
-	session: &SsoSessionInfo,
-	value: &Value,
-	statement_request_id: &str,
-	matches: &impl Fn(v1::RemoteMessage) -> Option<Result<T, String>>,
-	request_accepted: &mut bool,
-	pending_remote_response: &mut Option<T>,
+    session: &SsoSessionInfo,
+    value: &Value,
+    statement_request_id: &str,
+    remote_message_id: &str,
+    matches: &impl Fn(v1::RemoteMessage) -> Option<Result<T, String>>,
+    request_accepted: &mut bool,
+    pending_remote_response: &mut Option<T>,
 ) -> Result<Option<T>, SsoRemoteResponseError> {
-	let page = parse_new_statements_result("sso-remote".to_string(), value)
-		.map_err(|err| SsoRemoteResponseError::Failure(err.to_string()))?;
-	for statement in page.statements {
-		match decode_sso_session_statement(session, &statement, statement_request_id)
-			.map_err(SsoRemoteResponseError::Failure)?
-		{
-			Some(SsoSessionStatement::RequestAccepted) => {
-				*request_accepted = true;
-				if let Some(response) = pending_remote_response.take() {
-					return Ok(Some(response));
-				}
-			},
-			Some(SsoSessionStatement::RemoteMessages(messages)) => {
-				for message in messages {
-					let message = match message {
-						Ok(message) => message,
-						Err(error) => {
-							debug!(%error, "skipping undecodable SSO remote message");
-							continue;
-						},
-					};
-					if message == v1::RemoteMessage::Disconnected {
-						return Err(SsoRemoteResponseError::PeerDisconnected);
-					}
-					let Some(matched) = matches(message) else {
-						continue;
-					};
-					let response = matched.map_err(SsoRemoteResponseError::Failure)?;
-					if *request_accepted {
-						return Ok(Some(response));
-					}
-					*pending_remote_response = Some(response);
-					break;
-				}
-			},
-			None => {},
-		}
-	}
-	Ok(None)
+    let page = parse_new_statements_result("sso-remote".to_string(), value)
+        .map_err(|err| SsoRemoteResponseError::Failure(err.to_string()))?;
+    for statement in page.statements {
+        match decode_sso_session_statement(
+            session,
+            &statement,
+            statement_request_id,
+            Some(remote_message_id),
+        )
+        .map_err(SsoRemoteResponseError::Failure)?
+        {
+            Some(SsoSessionStatement::RequestAccepted) => {
+                *request_accepted = true;
+                if let Some(response) = pending_remote_response.take() {
+                    return Ok(Some(response));
+                }
+            }
+            Some(SsoSessionStatement::RemoteMessages(messages)) => {
+                for message in messages {
+                    let message = message.map_err(SsoRemoteResponseError::Failure)?;
+                    if message == v1::RemoteMessage::Disconnected {
+                        return Err(SsoRemoteResponseError::PeerDisconnected);
+                    }
+                    let Some(matched) = matches(message) else {
+                        continue;
+                    };
+                    let response = matched.map_err(SsoRemoteResponseError::Failure)?;
+                    if *request_accepted {
+                        return Ok(Some(response));
+                    }
+                    *pending_remote_response = Some(response);
+                    break;
+                }
+            }
+            None => {}
+        }
+    }
+    Ok(None)
 }
 
 /// Live statement-store subscription for a single topic.
@@ -612,21 +614,96 @@ mod tests {
 		}
 	}
 
-	fn wait_for_subtree(
-		host: &SsoSessionInfo,
-		pages: Vec<Value>,
-	) -> Result<Response<ProductSubtreeResponse>, SsoRemoteResponseError> {
-		let cancel = CancellationToken::default();
-		futures::executor::block_on(wait_for_sso_remote_response(
-			RemoteResponseWait {
-				own_statements: stream::empty().boxed(),
-				peer_statements: stream::iter(pages.into_iter().map(Ok)).boxed(),
-				submit: futures::future::ready(Ok(())).boxed(),
-				..pending_wait(host, &cancel)
-			},
-			reply_matcher::<ProductSubtreeRequest>("request-1"),
-		))
-	}
+    #[test]
+    fn a_malformed_foreign_reply_does_not_poison_the_current_request() {
+        let (host, responder) = sso_host_and_responder_sessions();
+        let ack = build_signed_session_response_statement(
+            &responder,
+            "request-1".to_string(),
+            0,
+            fresh_statement_expiry(),
+        )
+        .unwrap();
+        let mut foreign_reply = subtree_response("another-request").encode();
+        foreign_reply.pop();
+        // Extension discriminant 205 and a two-byte compact string length
+        // must use the same correlation rule as baseline response variants.
+        let mut foreign_extension = RemoteMessage {
+            message_id: "extension-response".to_string(),
+            data: RemoteMessageData::V1(v1::RemoteMessage::PaymentTopUpResponse(Response {
+                responding_to: "ø".repeat(40),
+                payload: Ok(()),
+            })),
+        }
+        .encode();
+        foreign_extension.pop();
+        let encrypted = encrypt_session_statement_data(
+            &responder,
+            &SsoStatementData::Request {
+                request_id: "resp-statement".to_string(),
+                data: vec![
+                    foreign_reply,
+                    foreign_extension,
+                    subtree_response("request-1").encode(),
+                ],
+            },
+        )
+        .unwrap();
+        let statement =
+            build_signed_session_request_statement(&responder, encrypted, fresh_statement_expiry())
+                .unwrap();
+
+        let response = wait_for_subtree(&host, vec![peer_page(ack), peer_page(statement)]).unwrap();
+
+        assert_eq!(
+            response,
+            Response {
+                responding_to: "request-1".to_string(),
+                payload: Ok([7; 32]),
+            }
+        );
+    }
+
+    #[test]
+    fn a_malformed_current_reply_still_fails_the_current_request() {
+        let (host, responder) = sso_host_and_responder_sessions();
+        let mut reply = subtree_response("request-1").encode();
+        reply.pop();
+        let encrypted = encrypt_session_statement_data(
+            &responder,
+            &SsoStatementData::Request {
+                request_id: "resp-statement".to_string(),
+                data: vec![reply],
+            },
+        )
+        .unwrap();
+        let statement =
+            build_signed_session_request_statement(&responder, encrypted, fresh_statement_expiry())
+                .unwrap();
+
+        let result = wait_for_subtree(&host, vec![peer_page(statement)]);
+
+        assert!(
+            matches!(result, Err(SsoRemoteResponseError::Failure(reason))
+                if reason.starts_with("invalid SSO remote message:"))
+        );
+    }
+
+    fn wait_for_subtree(
+        host: &SsoSessionInfo,
+        pages: Vec<Value>,
+    ) -> Result<Response<ProductSubtreeResponse>, SsoRemoteResponseError> {
+        let cancel = CancellationToken::default();
+        futures::executor::block_on(wait_for_sso_remote_response(
+            RemoteResponseWait {
+                own_statements: stream::empty().boxed(),
+                peer_statements: stream::iter(pages.into_iter().map(Ok)).boxed(),
+                submit: futures::future::ready(Ok(())).boxed(),
+                ..pending_wait(host, &cancel)
+            },
+            reply_matcher::<ProductSubtreeRequest>("request-1"),
+        ))
+    }
 
 	/// A peer that answers with another response kind must fail the call at
 	/// once; skipping it would leave the product waiting for the timeout.

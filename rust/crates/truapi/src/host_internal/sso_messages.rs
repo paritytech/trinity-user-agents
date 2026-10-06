@@ -22,7 +22,7 @@
 
 use core::fmt;
 
-use parity_scale_codec::{Compact, Decode, Encode, Input};
+use parity_scale_codec::{Compact, Decode, Encode};
 use truapi::latest::{
 	AllocatableResource, HostAccountCreateProofResponse, HostAccountGetAliasResponse,
 	HostAccountSignVrfError, HostSignPayloadRequest, HostSignPayloadResponse, HostSignRawRequest,
@@ -463,54 +463,92 @@ pub enum SsoSessionStatement {
 }
 
 /// Decode and classify an inbound encrypted SSO session statement.
+///
+/// A response with a readable foreign correlation id is ignored before its
+/// payload is decoded. Authentication and statement acknowledgements remain
+/// independent of message correlation; `None` decodes every message.
 pub fn decode_sso_session_statement(
-	session: &SsoSessionInfo,
-	statement: &[u8],
-	expected_statement_request_id: &str,
+    session: &SsoSessionInfo,
+    statement: &[u8],
+    expected_statement_request_id: &str,
+    expected_remote_message_id: Option<&str>,
 ) -> Result<Option<SsoSessionStatement>, String> {
-	let verified =
-		decode_verified_statement_data(statement, None).map_err(|err| err.to_string())?;
-	// Freshness gate against replay: a statement whose expiry is in the past
-	// is ignored. Trusts the local clock.
-	if verified
-		.expiry
-		.is_some_and(|expiry| statement_expiry_elapsed(expiry, current_unix_secs()))
-	{
-		return Ok(None);
-	}
-	let encrypted = verified.data;
-	let data = decrypt_session_statement_data(session, &encrypted)?;
-	if verified.signer == session.ss_public_key {
-		return match data {
-			SsoStatementData::Response { request_id, response_code }
-				if request_id == expected_statement_request_id =>
-			{
-				classify_response_ack(request_id, response_code).map(Some)
-			},
-			_ => Ok(None),
-		};
-	}
-	if verified.signer != session.identity_account_id {
-		return Err("statement proof signer does not match expected peer".to_string());
-	}
-	match data {
-		SsoStatementData::Response { request_id, response_code }
-			if request_id == expected_statement_request_id =>
-		{
-			classify_response_ack(request_id, response_code).map(Some)
-		},
-		SsoStatementData::Response { .. } => Ok(None),
-		SsoStatementData::Request { data, .. } => Ok(Some(SsoSessionStatement::RemoteMessages(
-			data.iter()
-				.map(|message| {
-					decode_remote_message(message).map(|message| {
-						let RemoteMessageData::V1(message) = message.data;
-						message
-					})
-				})
-				.collect(),
-		))),
-	}
+    let verified =
+        decode_verified_statement_data(statement, None).map_err(|err| err.to_string())?;
+    // Freshness gate against replay: a statement whose expiry is in the past
+    // is ignored. Trusts the local clock.
+    if verified
+        .expiry
+        .is_some_and(|expiry| statement_expiry_elapsed(expiry, current_unix_secs()))
+    {
+        return Ok(None);
+    }
+    let encrypted = verified.data;
+    let data = Zeroizing::new(decrypt_session_statement_data(session, &encrypted)?);
+    if verified.signer == session.ss_public_key {
+        return match &*data {
+            SsoStatementData::Response {
+                request_id,
+                response_code,
+            } if request_id == expected_statement_request_id => {
+                classify_response_ack(request_id.clone(), *response_code).map(Some)
+            }
+            _ => Ok(None),
+        };
+    }
+    if verified.signer != session.identity_account_id {
+        return Err("statement proof signer does not match expected peer".to_string());
+    }
+    match &*data {
+        SsoStatementData::Response {
+            request_id,
+            response_code,
+        } if request_id == expected_statement_request_id => {
+            classify_response_ack(request_id.clone(), *response_code).map(Some)
+        }
+        SsoStatementData::Response { .. } => Ok(None),
+        SsoStatementData::Request { data, .. } => Ok(Some(SsoSessionStatement::RemoteMessages(
+            data.iter()
+                .filter_map(|message| {
+                    decode_session_remote_message(message, expected_remote_message_id).transpose()
+                })
+                .collect(),
+        ))),
+    }
+}
+
+/// Read a SCALE string without allocating an id that the waiter only compares.
+fn decode_correlation_id<'a>(input: &mut &'a [u8]) -> Result<&'a str, String> {
+    let Compact(length) = Compact::<u32>::decode(input)
+        .map_err(|error| format!("invalid SSO remote message: {error}"))?;
+    let (value, rest) = input
+        .split_at_checked(length as usize)
+        .ok_or_else(|| "invalid SSO remote message: truncated correlation id".to_string())?;
+    *input = rest;
+    core::str::from_utf8(value).map_err(|error| format!("invalid SSO remote message: {error}"))
+}
+
+fn decode_session_remote_message(
+    message: &[u8],
+    expected_remote_message_id: Option<&str>,
+) -> Result<Option<v1::RemoteMessage>, String> {
+    let mut input = message;
+    // The outer id identifies this message, not the request it answers.
+    decode_correlation_id(&mut input)?;
+    if let (Some(expected), [0, index, response @ ..]) = (expected_remote_message_id, input) {
+        if v1::RemoteMessage::is_response_index(*index) {
+            let mut header = response;
+            if decode_correlation_id(&mut header)? != expected {
+                return Ok(None);
+            }
+        }
+    }
+    let RemoteMessageData::V1(decoded) = RemoteMessageData::decode(&mut input)
+        .map_err(|error| format!("invalid SSO remote message: {error}"))?;
+    if !input.is_empty() {
+        return Err("invalid SSO remote message: trailing bytes".to_string());
+    }
+    Ok(Some(decoded))
 }
 
 fn classify_response_ack(
@@ -1639,7 +1677,8 @@ mod tests {
         )
         .unwrap();
 
-        let decoded = decode_sso_session_statement(&session, &statement, "statement-1").unwrap();
+        let decoded =
+            decode_sso_session_statement(&session, &statement, "statement-1", None).unwrap();
 
         assert_eq!(decoded, None);
     }
@@ -1688,7 +1727,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            decode_sso_session_statement(&host_session, &ack, "statement-1").unwrap(),
+            decode_sso_session_statement(&host_session, &ack, "statement-1", Some("remote-1")).unwrap(),
             Some(SsoSessionStatement::RequestAccepted)
         );
 
@@ -1709,9 +1748,13 @@ mod tests {
             fresh_expiry(),
         )
         .unwrap();
-        let decoded =
-            decode_sso_session_statement(&host_session, &response_statement, "statement-1")
-                .unwrap();
+        let decoded = decode_sso_session_statement(
+            &host_session,
+            &response_statement,
+            "statement-1",
+            Some("remote-1"),
+        )
+        .unwrap();
         assert_eq!(
             decoded,
             Some(SsoSessionStatement::RemoteMessages(vec![Ok(
@@ -1822,7 +1865,8 @@ mod tests {
         let session = session();
         let statement = response_ack_statement(&session, fresh_expiry());
 
-        let decoded = decode_sso_session_statement(&session, &statement, "statement-1").unwrap();
+        let decoded =
+            decode_sso_session_statement(&session, &statement, "statement-1", None).unwrap();
 
         assert_eq!(decoded, Some(SsoSessionStatement::RequestAccepted));
     }
@@ -1834,7 +1878,8 @@ mod tests {
         let session = session();
         let statement = response_ack_statement(&session, elapsed_expiry());
 
-        let decoded = decode_sso_session_statement(&session, &statement, "statement-1").unwrap();
+        let decoded =
+            decode_sso_session_statement(&session, &statement, "statement-1", None).unwrap();
 
         assert_eq!(decoded, None);
     }
