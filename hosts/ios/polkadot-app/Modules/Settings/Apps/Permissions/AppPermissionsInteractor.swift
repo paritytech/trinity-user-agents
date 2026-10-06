@@ -61,13 +61,7 @@ extension AppPermissionsInteractor: AppPermissionsInteractorInputProtocol {
 
             do {
                 for try await grants in stream {
-                    let legacy = grants.filter { grant in
-                        switch grant.permission {
-                        case .deviceCapability(.camera), .deviceCapability(.microphone): return false
-                        default: return true
-                        }
-                    }
-                    await self?.presenter?.didReceive(grants: legacy)
+                    self?.presenter?.didReceive(grants: grants)
                 }
             } catch {
                 logger.error("App permissions subscription error: \(error)")
