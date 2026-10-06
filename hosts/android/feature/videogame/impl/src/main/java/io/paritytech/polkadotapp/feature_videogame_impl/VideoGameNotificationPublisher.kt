@@ -10,5 +10,6 @@ interface VideoGameNotificationPublisher {
     fun publishGameStartsSoonNotification()
     fun publishProductGameStartsSoonNotification(productId: ProductId, ringAlarm: Boolean)
     fun cancelProductGameStartsSoonNotification(productId: ProductId)
+    fun cancelProductGameStartNotifications()
     fun cancelGameStartNotifications()
 }

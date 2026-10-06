@@ -27,14 +27,13 @@ class VideoGameNotificationAutoCanceller @Inject constructor(
 ) : AppInitializer {
     context(scope: ComputationalScope)
     override fun initialize(): Result<Unit> = runCancellableCatching {
-        // Cancel when the app comes to the foreground. Ahead of the PERSONHOOD check: the product
-        // game reminder rings in safetynet builds too.
+        if (FeatureOption.PERSONHOOD.isDisabled) return@runCancellableCatching
+
+        // Cancel when the app comes to the foreground.
         appLifecycleObserver.subscribe()
             .filter { it == AppLifecycleState.FOREGROUND }
             .onEach { notificationPublisher.cancelGameStartNotifications() }
             .launchIn(scope)
-
-        if (FeatureOption.PERSONHOOD.isDisabled) return@runCancellableCatching
 
         // Cancel once when the user enters a game session (null -> non-null transition only,
         // so subsequent in-game state updates don't re-cancel later notifications).

@@ -43,10 +43,10 @@ class RealProductGameOsAccess @Inject constructor(
     private val appLifecycleObserver: AppLifecycleObserver,
     private val preferences: Preferences,
 ) : ProductGameOsAccess {
-    override suspend fun requestNotifications(): Boolean {
-        if (NotificationManagerCompat.from(context).areNotificationsEnabled()) return true
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
-        return ask(Manifest.permission.POST_NOTIFICATIONS)
+    override suspend fun requestNotifications(): Result<Unit> {
+        val allowed = NotificationManagerCompat.from(context).areNotificationsEnabled() ||
+            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && ask(Manifest.permission.POST_NOTIFICATIONS))
+        return if (allowed) Result.success(Unit) else Result.failure(IllegalStateException("notifications are not allowed"))
     }
 
     // A refusal is remembered until the user allows it in system settings, so it is not asked again.

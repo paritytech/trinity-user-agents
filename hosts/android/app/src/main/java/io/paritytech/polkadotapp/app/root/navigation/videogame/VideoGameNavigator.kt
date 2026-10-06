@@ -4,6 +4,7 @@ import dagger.Lazy
 import io.paritytech.polkadotapp.app.R
 import io.paritytech.polkadotapp.app.root.navigation.BaseNavigator
 import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
+import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.toPayloadBundle
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatBotData
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
@@ -15,11 +16,13 @@ import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
 import io.paritytech.polkadotapp.feature_videogame_impl.presentation.chatWithPlayers.ChatWithPlayersPayload
 import io.paritytech.polkadotapp.feature_videogame_impl.presentation.gameResults.GameResultsPayload
 import jakarta.inject.Inject
+import kotlinx.coroutines.withContext
 
 class VideoGameNavigator @Inject constructor(
     navigationHolder: NavigationHolder,
     // Lazy breaks the cycle through RealProductSessionController's DeepLinkHandler.
     private val productSessionController: Lazy<ProductSessionController>,
+    private val dispatchers: CoroutineDispatchers,
 ) : BaseNavigator(navigationHolder), VideoGameRouter {
     override fun openChatWithPlayers(gameIndex: GameIndex) {
         val payload = ChatWithPlayersPayload(gameIndex.value)
@@ -62,7 +65,7 @@ class VideoGameNavigator @Inject constructor(
         )
     }
 
-    override fun openGameProduct(productId: ProductId) {
+    override suspend fun openGameProduct(productId: ProductId) = withContext(dispatchers.main) {
         if (isCurrentDestination(R.id.spaBrowserFragment)) {
             productSessionController.get().openProduct(productId)
         } else {

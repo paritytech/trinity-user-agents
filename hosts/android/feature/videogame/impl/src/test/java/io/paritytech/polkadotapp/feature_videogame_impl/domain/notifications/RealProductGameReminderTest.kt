@@ -1,5 +1,11 @@
 package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 
+import io.mockk.clearMocks
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.coVerifySequence
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
@@ -12,18 +18,30 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.clearInvocations
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.times
-import org.mockito.Mockito.verify
 import kotlin.time.Duration.Companion.hours
 
 class RealProductGameReminderTest {
-    private val scheduler: VideoGameReminderScheduler = mock()
-    private val publisher: VideoGameNotificationPublisher = mock()
-    private val calendar = RecordingCalendar()
-    private val osAccess = FakeOsAccess()
+    private val scheduler: VideoGameReminderScheduler = mockk(relaxUnitFun = true)
+    private val publisher: VideoGameNotificationPublisher = mockk(relaxUnitFun = true)
+    private val calendar: ProductGameCalendar = mockk(relaxUnitFun = true)
+
+    private var notificationsAllowed = false
+    private var exactAlarmsAllowed = false
+    private var calendarAllowed = false
+
+    // Answers only the next notifications ask, once completed.
+    private var pendingNotificationsAnswer: CompletableDeferred<Boolean>? = null
+
+    private val osAccess: ProductGameOsAccess = mockk {
+        coEvery { requestNotifications() } coAnswers {
+            val pending = pendingNotificationsAnswer.also { pendingNotificationsAnswer = null }
+            val allowed = pending?.await() ?: notificationsAllowed
+            if (allowed) Result.success(Unit) else Result.failure(IllegalStateException("refused"))
+        }
+        coEvery { requestExactAlarms() } answers { exactAlarmsAllowed }
+        coEvery { requestCalendar() } answers { calendarAllowed }
+    }
+
     private val reminder = RealProductGameReminder(
         VideoGameSettingsPreferences(MapPreferences()),
         scheduler,
@@ -37,65 +55,65 @@ class RealProductGameReminderTest {
     private val other = ProductId.fromStoredValue("acme.dot")
 
     @Test
-    fun `schedule holds the slot, arms its alarm and drops a posted notification`() = runTest {
+    fun `schedule stores the game, arms its alarm and drops a posted notification`() = runTest {
         withOsAllowing(notifications = true, exactAlarms = true, calendar = false)
 
         val result = reminder.schedule(game, START)
 
         assertSuccess(result)
-        assertEquals(listOf(ProductGameSlot(game.value, START, true)), reminder.currentSlots())
-        verify(scheduler).scheduleProductGameStart(game, START)
-        verify(publisher).cancelProductGameStartsSoonNotification(game)
-        assertTrue(calendar.added.isEmpty())
+        assertEquals(listOf(ScheduledProductGame(game.value, START, true)), reminder.currentlyScheduled())
+        verify { scheduler.scheduleProductGameStart(game, START) }
+        verify { publisher.cancelProductGameStartsSoonNotification(game) }
+        coVerify(exactly = 0) { calendar.addGame(any()) }
     }
 
     @Test
-    fun `holds the slot without an alarm when exact alarms are refused`() = runTest {
+    fun `stores the game without an alarm when exact alarms are refused`() = runTest {
         withOsAllowing(notifications = true, exactAlarms = false, calendar = false)
 
         val result = reminder.schedule(game, START)
 
         assertSuccess(result)
-        assertEquals(listOf(ProductGameSlot(game.value, START, false)), reminder.currentSlots())
+        assertEquals(listOf(ScheduledProductGame(game.value, START, false)), reminder.currentlyScheduled())
     }
 
     @Test
-    fun `fails and holds nothing when notifications are refused`() = runTest {
+    fun `fails and stores nothing when notifications are refused`() = runTest {
         withOsAllowing(notifications = false, exactAlarms = true, calendar = true)
 
         val result = reminder.schedule(game, START)
 
         assertTrue(result.isFailure)
-        assertTrue(reminder.currentSlots().isEmpty())
-        assertEquals(listOf(OsAsk.Notifications), osAccess.asked)
-        verify(scheduler, never()).scheduleProductGameStart(game, START)
-        assertTrue(calendar.added.isEmpty())
+        assertTrue(reminder.currentlyScheduled().isEmpty())
+        coVerifySequence { osAccess.requestNotifications() }
+        verify(exactly = 0) { scheduler.scheduleProductGameStart(game, START) }
+        coVerify(exactly = 0) { calendar.addGame(any()) }
     }
 
     @Test
-    fun `each product holds its own slot, soonest first`() = runTest {
+    fun `each product has its own scheduled game, soonest first`() = runTest {
         withOsAllowing(notifications = true, exactAlarms = true, calendar = false)
         reminder.schedule(game, START + 1)
         withOsAllowing(notifications = true, exactAlarms = false, calendar = false)
         reminder.schedule(other, START)
 
         assertEquals(
-            listOf(ProductGameSlot(other.value, START, false), ProductGameSlot(game.value, START + 1, true)),
-            reminder.currentSlots(),
+            listOf(ScheduledProductGame(other.value, START, false), ScheduledProductGame(game.value, START + 1, true)),
+            reminder.currentlyScheduled(),
         )
-        verify(scheduler).scheduleProductGameStart(game, START + 1)
-        verify(scheduler).scheduleProductGameStart(other, START)
+        verify { scheduler.scheduleProductGameStart(game, START + 1) }
+        verify { scheduler.scheduleProductGameStart(other, START) }
     }
 
     @Test
-    fun `a product replaces its own slot`() = runTest {
+    fun `a product replaces its own scheduled game`() = runTest {
         withOsAllowing(notifications = true, exactAlarms = true, calendar = false)
         reminder.schedule(game, START)
         withOsAllowing(notifications = true, exactAlarms = false, calendar = false)
 
         reminder.schedule(game, START + 1)
 
-        assertEquals(listOf(ProductGameSlot(game.value, START + 1, false)), reminder.currentSlots())
+        assertEquals(listOf(ScheduledProductGame(game.value, START + 1, false)), reminder.currentlyScheduled())
     }
 
     @Test
@@ -104,8 +122,12 @@ class RealProductGameReminderTest {
 
         reminder.schedule(game, START)
 
-        assertEquals(listOf(OsAsk.Notifications, OsAsk.ExactAlarms, OsAsk.Calendar), osAccess.asked)
-        assertEquals(listOf(START), calendar.added)
+        coVerifySequence {
+            osAccess.requestNotifications()
+            osAccess.requestExactAlarms()
+            osAccess.requestCalendar()
+        }
+        coVerify(exactly = 1) { calendar.addGame(START) }
     }
 
     @Test
@@ -115,7 +137,7 @@ class RealProductGameReminderTest {
         val result = reminder.schedule(game, START)
 
         assertSuccess(result)
-        assertTrue(calendar.added.isEmpty())
+        coVerify(exactly = 0) { calendar.addGame(any()) }
     }
 
     @Test
@@ -124,8 +146,11 @@ class RealProductGameReminderTest {
 
         reminder.schedule(game, NOW + 1.hours.inWholeMilliseconds - 1)
 
-        assertEquals(listOf(OsAsk.Notifications, OsAsk.ExactAlarms), osAccess.asked)
-        assertTrue(calendar.added.isEmpty())
+        coVerifySequence {
+            osAccess.requestNotifications()
+            osAccess.requestExactAlarms()
+        }
+        coVerify(exactly = 0) { calendar.addGame(any()) }
     }
 
     @Test
@@ -134,7 +159,7 @@ class RealProductGameReminderTest {
 
         reminder.schedule(game, NOW + 1.hours.inWholeMilliseconds)
 
-        assertEquals(listOf(NOW + 1.hours.inWholeMilliseconds), calendar.added)
+        coVerify(exactly = 1) { calendar.addGame(NOW + 1.hours.inWholeMilliseconds) }
     }
 
     @Test
@@ -149,8 +174,8 @@ class RealProductGameReminderTest {
         notificationsAnswer.complete(true)
         testScheduler.advanceUntilIdle()
 
-        assertTrue(reminder.currentSlots().isEmpty())
-        verify(scheduler).cancelProductGameStart(game)
+        assertTrue(reminder.currentlyScheduled().isEmpty())
+        verify { scheduler.cancelProductGameStart(game) }
     }
 
     @Test
@@ -165,84 +190,84 @@ class RealProductGameReminderTest {
         notificationsAnswer.complete(true)
         testScheduler.advanceUntilIdle()
 
-        assertEquals(listOf(ProductGameSlot(game.value, START + 1, true)), reminder.currentSlots())
+        assertEquals(listOf(ScheduledProductGame(game.value, START + 1, true)), reminder.currentlyScheduled())
     }
 
     @Test
-    fun `clearing a slot does not wait on a pending prompt`() = runTest {
+    fun `clearing a game does not wait on a pending prompt`() = runTest {
         withOsAllowing(notifications = true, exactAlarms = true, calendar = false)
         reminder.schedule(game, START)
         val notificationsAnswer = withPendingNotificationsPrompt()
 
         launch { reminder.schedule(other, START) }
         testScheduler.runCurrent()
-        reminder.clear(ProductGameSlot(game.value, START, true))
+        reminder.clear(ScheduledProductGame(game.value, START, true))
 
-        assertTrue(reminder.currentSlots().isEmpty())
+        assertTrue(reminder.currentlyScheduled().isEmpty())
         notificationsAnswer.complete(true)
     }
 
     @Test
-    fun `a cancel drops only that product's slot, alarm and notification`() = runTest {
+    fun `a cancel drops only that product's game, alarm and notification`() = runTest {
         withOsAllowing(notifications = true, exactAlarms = true, calendar = false)
         reminder.schedule(game, START)
         reminder.schedule(other, START + 1)
 
         reminder.cancel(other)
-        assertEquals(listOf(ProductGameSlot(game.value, START, true)), reminder.currentSlots())
-        verify(scheduler).cancelProductGameStart(other)
-        verify(publisher, times(2)).cancelProductGameStartsSoonNotification(other)
-        verify(scheduler, never()).cancelProductGameStart(game)
-        verify(publisher, times(1)).cancelProductGameStartsSoonNotification(game)
+        assertEquals(listOf(ScheduledProductGame(game.value, START, true)), reminder.currentlyScheduled())
+        verify { scheduler.cancelProductGameStart(other) }
+        verify(exactly = 2) { publisher.cancelProductGameStartsSoonNotification(other) }
+        verify(exactly = 0) { scheduler.cancelProductGameStart(game) }
+        verify(exactly = 1) { publisher.cancelProductGameStartsSoonNotification(game) }
 
         reminder.cancel(game)
 
-        assertTrue(reminder.currentSlots().isEmpty())
-        verify(scheduler).cancelProductGameStart(game)
-        verify(publisher, times(2)).cancelProductGameStartsSoonNotification(game)
+        assertTrue(reminder.currentlyScheduled().isEmpty())
+        verify { scheduler.cancelProductGameStart(game) }
+        verify(exactly = 2) { publisher.cancelProductGameStartsSoonNotification(game) }
     }
 
     @Test
     fun `clear leaves a newer schedule alone`() = runTest {
         withOsAllowing(notifications = true, exactAlarms = true, calendar = false)
         reminder.schedule(game, START)
-        val opened = ProductGameSlot(game.value, START, true)
+        val opened = ScheduledProductGame(game.value, START, true)
         reminder.schedule(game, START + 1)
 
         reminder.clear(opened)
 
-        assertEquals(listOf(ProductGameSlot(game.value, START + 1, true)), reminder.currentSlots())
+        assertEquals(listOf(ScheduledProductGame(game.value, START + 1, true)), reminder.currentlyScheduled())
     }
 
     @Test
-    fun `restore re-arms slots whose start is ahead and drops those past the grace`() = runTest {
+    fun `restore re-arms games whose start is ahead and drops those past the grace`() = runTest {
         withOsAllowing(notifications = true, exactAlarms = true, calendar = false)
         reminder.schedule(game, START)
         reminder.schedule(other, NOW - 30_000)
-        clearInvocations(scheduler)
+        clearMocks(scheduler, answers = false)
 
         reminder.restore()
 
-        verify(scheduler).scheduleProductGameStart(game, START)
-        verify(scheduler).cancelProductGameStart(other)
-        assertEquals(listOf(ProductGameSlot(game.value, START, true)), reminder.currentSlots())
-        assertNull(reminder.currentSlot(other))
+        verify { scheduler.scheduleProductGameStart(game, START) }
+        verify { scheduler.cancelProductGameStart(other) }
+        assertEquals(listOf(ScheduledProductGame(game.value, START, true)), reminder.currentlyScheduled())
+        assertNull(reminder.scheduledFor(other))
     }
 
     @Test
-    fun `a slot stays live until the grace after its start has run out`() = runTest {
-        assertTrue(ProductGameSlot(game.value, NOW - 29_999, true).isLiveAt(NOW))
-        assertTrue(!ProductGameSlot(game.value, NOW - 30_000, true).isLiveAt(NOW))
+    fun `a game stays live until the grace after its start has run out`() = runTest {
+        assertTrue(ScheduledProductGame(game.value, NOW - 29_999, true).isLiveAt(NOW))
+        assertTrue(!ScheduledProductGame(game.value, NOW - 30_000, true).isLiveAt(NOW))
     }
 
     private fun withOsAllowing(notifications: Boolean, exactAlarms: Boolean, calendar: Boolean) {
-        osAccess.notifications = notifications
-        osAccess.exactAlarms = exactAlarms
-        osAccess.calendar = calendar
+        notificationsAllowed = notifications
+        exactAlarmsAllowed = exactAlarms
+        calendarAllowed = calendar
     }
 
     private fun withPendingNotificationsPrompt() =
-        CompletableDeferred<Boolean>().also { osAccess.pendingNotificationsAnswer = it }
+        CompletableDeferred<Boolean>().also { pendingNotificationsAnswer = it }
 
     private fun assertSuccess(result: Result<*>) {
         assertTrue("expected Result.success but was ${result.exceptionOrNull()}", result.isSuccess)
@@ -254,45 +279,7 @@ class RealProductGameReminderTest {
     }
 }
 
-private enum class OsAsk { Notifications, ExactAlarms, Calendar }
-
-private class FakeOsAccess : ProductGameOsAccess {
-    var notifications = false
-    var exactAlarms = false
-    var calendar = false
-
-    // Answers only the next notifications ask, once completed.
-    var pendingNotificationsAnswer: CompletableDeferred<Boolean>? = null
-
-    val asked = mutableListOf<OsAsk>()
-
-    override suspend fun requestNotifications(): Boolean {
-        asked += OsAsk.Notifications
-        val pending = pendingNotificationsAnswer ?: return notifications
-        pendingNotificationsAnswer = null
-        return pending.await()
-    }
-
-    override suspend fun requestExactAlarms(): Boolean {
-        asked += OsAsk.ExactAlarms
-        return exactAlarms
-    }
-
-    override suspend fun requestCalendar(): Boolean {
-        asked += OsAsk.Calendar
-        return calendar
-    }
-}
-
-private class RecordingCalendar : ProductGameCalendar {
-    val added = mutableListOf<Long>()
-
-    override suspend fun addGame(startsAtMillis: Long) {
-        added += startsAtMillis
-    }
-}
-
-private class MapPreferences : Preferences by mock(Preferences::class.java) {
+private class MapPreferences : Preferences by mockk() {
     private val values = mutableMapOf<String, String>()
 
     override fun getString(field: String): String? = values[field]

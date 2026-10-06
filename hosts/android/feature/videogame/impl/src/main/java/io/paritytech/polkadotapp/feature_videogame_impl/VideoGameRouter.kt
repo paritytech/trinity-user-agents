@@ -28,5 +28,5 @@ interface VideoGameRouter : ReturnableRouter {
 
     fun openGameResults(payload: GameResultsPayload)
 
-    fun openGameProduct(productId: ProductId)
+    suspend fun openGameProduct(productId: ProductId)
 }

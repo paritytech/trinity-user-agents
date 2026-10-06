@@ -94,6 +94,7 @@ import io.paritytech.polkadotapp.feature_videogame_impl.domain.interactor.VideoG
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.interactor.VideoGameVoteInteractor
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.models.GameContactOrigins
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameCalendar
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameNotificationAutoCanceller
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameOsAccess
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealVideoGameReminderScheduler
@@ -276,6 +277,10 @@ internal interface VideoGameFeatureModule {
     @Binds
     @IntoSet
     fun bindProductGameAutoOpener(impl: ProductGameAutoOpener): AppInitializer
+
+    @Binds
+    @IntoSet
+    fun bindProductGameNotificationAutoCanceller(impl: ProductGameNotificationAutoCanceller): AppInitializer
 
     @Binds
     @IntoSet

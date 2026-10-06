@@ -93,11 +93,14 @@ class RealVideoGameNotificationPublisher @Inject constructor(
 
     private fun productGameTag(productId: ProductId) = PRODUCT_GAME_TAG_PREFIX + productId.value
 
-    override fun cancelGameStartNotifications() {
-        cancel(REGISTERED_GAME_NOTIFICATION_ID)
+    override fun cancelProductGameStartNotifications() {
         activeNotifications
             .filter { it.tag?.startsWith(PRODUCT_GAME_TAG_PREFIX) == true }
             .forEach { cancel(it.id, tag = it.tag) }
+    }
+
+    override fun cancelGameStartNotifications() {
+        cancel(REGISTERED_GAME_NOTIFICATION_ID)
     }
 
     private fun publishGameStartsSoon(deeplink: Uri, notificationId: Int, ringAlarm: Boolean, tag: String? = null) {

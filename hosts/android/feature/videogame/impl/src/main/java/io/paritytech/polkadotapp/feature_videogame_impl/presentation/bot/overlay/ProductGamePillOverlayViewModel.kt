@@ -3,11 +3,12 @@ package io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot.overla
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.currentTimestampFlow
+import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.stateInBackground
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
 import io.paritytech.polkadotapp.feature_videogame_impl.data.VideoGameTimings
-import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameSlot
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ScheduledProductGame
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.product
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -21,23 +22,23 @@ internal class ProductGamePillOverlayViewModel @Inject constructor(
     reminder: RealProductGameReminder,
     private val router: VideoGameRouter,
 ) : BaseViewModel(), GamePillViewModel {
-    private class Countdown(val slot: ProductGameSlot, val secondsLeft: Long)
+    private class Countdown(val game: ScheduledProductGame, val secondsLeft: Long)
 
-    // The soonest start inside the countdown window, if any; slots are held soonest first.
+    // The soonest start inside the countdown window, if any; games are stored soonest first.
     private val countdown: StateFlow<Countdown?> =
-        combine(reminder.slots, currentTimestampFlow()) { slots, now ->
-            slots.firstNotNullOfOrNull { slot -> slot.countdownAt(now) }
+        combine(reminder.scheduled, currentTimestampFlow()) { games, now ->
+            games.firstNotNullOfOrNull { game -> game.countdownAt(now) }
         }.stateInBackground(SharingStarted.WhileSubscribed(), null)
 
     override val pillState: StateFlow<VideoGamePillState> = countdown
         .map { it?.let { VideoGamePillState.Shown.WaitingCountdown(it.secondsLeft) } ?: VideoGamePillState.Hidden }
         .stateInBackground(SharingStarted.WhileSubscribed(), VideoGamePillState.Hidden)
 
-    override fun onPillClicked() {
-        countdown.value?.let { router.openGameProduct(it.slot.product()) }
+    override fun onPillClicked() = launchUnit {
+        countdown.value?.let { router.openGameProduct(it.game.product()) }
     }
 
-    private fun ProductGameSlot.countdownAt(nowMillis: Long): Countdown? {
+    private fun ScheduledProductGame.countdownAt(nowMillis: Long): Countdown? {
         val untilStart = (startsAtMillis - nowMillis).milliseconds
         val inWindow = untilStart.isPositive() && untilStart <= VideoGameTimings.WAITING_ROOM_AVAILABLE_BEFORE
         return if (inWindow) Countdown(this, untilStart.inWholeSeconds) else null

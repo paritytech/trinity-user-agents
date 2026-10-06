@@ -14,13 +14,14 @@ import javax.inject.Singleton
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 
+// A game start a product asked to be reminded of; [ringAlarm] says whether exact alarms were allowed at schedule time.
 @Serializable
-data class ProductGameSlot(val productId: String, val startsAtMillis: Long, val ringAlarm: Boolean)
+data class ScheduledProductGame(val productId: String, val startsAtMillis: Long, val ringAlarm: Boolean)
 
 private val PRODUCT_GAME_START_GRACE = 30.seconds
 
 // Live until the grace after its start has run out.
-internal fun ProductGameSlot.isLiveAt(nowMillis: Long) =
+internal fun ScheduledProductGame.isLiveAt(nowMillis: Long) =
     nowMillis - startsAtMillis < PRODUCT_GAME_START_GRACE.inWholeMilliseconds
 
 @Singleton
@@ -35,66 +36,64 @@ class RealProductGameReminder @Inject constructor(
     private val lock = Mutex()
 
     // Applies schedules and cancels in call order across their OS prompts; [lock] guards only the
-    // slots, so their readers never wait on a prompt.
+    // scheduled games, so their readers never wait on a prompt.
     private val requestLock = Mutex()
 
-    val slots: Flow<List<ProductGameSlot>> get() = preferences.productGameSlotsFlow()
+    val scheduled: Flow<List<ScheduledProductGame>> get() = preferences.scheduledProductGamesFlow()
 
-    fun currentSlots(): List<ProductGameSlot> = preferences.getProductGameSlots()
+    fun currentlyScheduled(): List<ScheduledProductGame> = preferences.getScheduledProductGames()
 
-    fun currentSlot(productId: ProductId): ProductGameSlot? =
-        currentSlots().firstOrNull { it.productId == productId.value }
+    fun scheduledFor(productId: ProductId): ScheduledProductGame? =
+        currentlyScheduled().firstOrNull { it.productId == productId.value }
 
     // An alarm needs both notifications and exact alarms; without exact alarms a notification still reminds.
     override suspend fun schedule(productId: ProductId, startsAtMillis: Long): Result<Unit> = requestLock.withLock {
         val leadMillis = startsAtMillis - now()
-        if (!osAccess.requestNotifications()) {
-            return@withLock Result.failure(IllegalStateException("notifications are not allowed"))
+        osAccess.requestNotifications().map {
+            val ringAlarm = osAccess.requestExactAlarms()
+            lock.withLock { add(ScheduledProductGame(productId.value, startsAtMillis, ringAlarm)) }
+            if (leadMillis >= CALENDAR_MIN_LEAD.inWholeMilliseconds && osAccess.requestCalendar()) {
+                calendar.addGame(startsAtMillis)
+            }
         }
-        val ringAlarm = osAccess.requestExactAlarms()
-        lock.withLock { hold(ProductGameSlot(productId.value, startsAtMillis, ringAlarm)) }
-        if (leadMillis >= CALENDAR_MIN_LEAD.inWholeMilliseconds && osAccess.requestCalendar()) {
-            calendar.addGame(startsAtMillis)
-        }
-        Result.success(Unit)
     }
 
     override suspend fun cancel(productId: ProductId) {
         requestLock.withLock {
-            lock.withLock { currentSlot(productId)?.let(::drop) }
+            lock.withLock { scheduledFor(productId)?.let(::remove) }
         }
     }
 
     override suspend fun restore() {
         lock.withLock {
             val now = now()
-            val (stale, live) = currentSlots().partition { !it.isLiveAt(now) }
-            stale.forEach(::drop)
+            val (stale, live) = currentlyScheduled().partition { !it.isLiveAt(now) }
+            stale.forEach(::remove)
             live.forEach { scheduler.scheduleProductGameStart(it.product(), it.startsAtMillis) }
         }
     }
 
-    // Only drops [slot] if still held, so a schedule made meanwhile survives.
-    suspend fun clear(slot: ProductGameSlot) {
-        lock.withLock { drop(slot) }
+    // Only removes [game] if still scheduled, so a schedule made meanwhile survives.
+    suspend fun clear(game: ScheduledProductGame) {
+        lock.withLock { remove(game) }
     }
 
-    private fun hold(slot: ProductGameSlot) {
-        store(currentSlots().filterNot { it.productId == slot.productId } + slot)
-        notificationPublisher.cancelProductGameStartsSoonNotification(slot.product())
-        scheduler.scheduleProductGameStart(slot.product(), slot.startsAtMillis)
+    private fun add(game: ScheduledProductGame) {
+        save(currentlyScheduled().filterNot { it.productId == game.productId } + game)
+        notificationPublisher.cancelProductGameStartsSoonNotification(game.product())
+        scheduler.scheduleProductGameStart(game.product(), game.startsAtMillis)
     }
 
-    private fun drop(slot: ProductGameSlot) {
-        val slots = currentSlots()
-        if (slot !in slots) return
-        store(slots - slot)
-        scheduler.cancelProductGameStart(slot.product())
-        notificationPublisher.cancelProductGameStartsSoonNotification(slot.product())
+    private fun remove(game: ScheduledProductGame) {
+        val scheduled = currentlyScheduled()
+        if (game !in scheduled) return
+        save(scheduled - game)
+        scheduler.cancelProductGameStart(game.product())
+        notificationPublisher.cancelProductGameStartsSoonNotification(game.product())
     }
 
-    private fun store(slots: List<ProductGameSlot>) =
-        preferences.setProductGameSlots(slots.sortedBy { it.startsAtMillis })
+    private fun save(games: List<ScheduledProductGame>) =
+        preferences.setScheduledProductGames(games.sortedBy { it.startsAtMillis })
 
     private fun now() = timeProvider.now().toEpochMilliseconds()
 
@@ -103,4 +102,4 @@ class RealProductGameReminder @Inject constructor(
     }
 }
 
-fun ProductGameSlot.product(): ProductId = ProductId.fromStoredValue(productId)
+fun ScheduledProductGame.product(): ProductId = ProductId.fromStoredValue(productId)

@@ -2,7 +2,7 @@ package io.paritytech.polkadotapp.feature_videogame_impl.data.notifications
 
 import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameStartAlarmOffset
-import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameSlot
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ScheduledProductGame
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -26,16 +26,16 @@ class VideoGameSettingsPreferences @Inject constructor(
         preferences.putInt(KEY_ALARM_OFFSET_SECONDS, offset.seconds)
     }
 
-    fun getProductGameSlots(): List<ProductGameSlot> = preferences.getString(KEY_PRODUCT_GAME_SLOTS).toSlots()
+    fun getScheduledProductGames(): List<ScheduledProductGame> = preferences.getString(KEY_PRODUCT_GAME_SLOTS).toScheduledGames()
 
-    fun productGameSlotsFlow(): Flow<List<ProductGameSlot>> = preferences.stringFlow(KEY_PRODUCT_GAME_SLOTS)
-        .map { it.toSlots() }
+    fun scheduledProductGamesFlow(): Flow<List<ScheduledProductGame>> = preferences.stringFlow(KEY_PRODUCT_GAME_SLOTS)
+        .map { it.toScheduledGames() }
         .distinctUntilChanged()
 
-    fun setProductGameSlots(slots: List<ProductGameSlot>) {
-        preferences.putString(KEY_PRODUCT_GAME_SLOTS, slots.takeIf { it.isNotEmpty() }?.let(Json::encodeToString))
+    fun setScheduledProductGames(games: List<ScheduledProductGame>) {
+        preferences.putString(KEY_PRODUCT_GAME_SLOTS, games.takeIf { it.isNotEmpty() }?.let(Json::encodeToString))
     }
 
-    private fun String?.toSlots(): List<ProductGameSlot> =
-        this?.let { runCatching { Json.decodeFromString<List<ProductGameSlot>>(it) }.getOrNull() } ?: emptyList()
+    private fun String?.toScheduledGames(): List<ScheduledProductGame> =
+        this?.let { runCatching { Json.decodeFromString<List<ScheduledProductGame>>(it) }.getOrNull() } ?: emptyList()
 }

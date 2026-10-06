@@ -7,8 +7,8 @@ import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.presentation.subscribeIsForeground
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
-import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameSlot
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ScheduledProductGame
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.isLiveAt
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.product
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -27,21 +27,21 @@ class ProductGameAutoOpener @Inject constructor(
 ) : AppInitializer {
     context(scope: ComputationalScope)
     override fun initialize(): Result<Unit> = runCancellableCatching {
-        combine(reminder.slots, appLifecycleObserver.subscribeIsForeground()) { slots, foreground ->
-            slots.takeIf { foreground }.orEmpty()
+        combine(reminder.scheduled, appLifecycleObserver.subscribeIsForeground()) { games, foreground ->
+            games.takeIf { foreground }.orEmpty()
         }
-            .mapLatest { slots -> nextLive(slots)?.let { openAtStart(it) } }
+            .mapLatest { games -> nextLive(games)?.let { openAtStart(it) } }
             .launchIn(scope)
     }
 
-    private fun nextLive(slots: List<ProductGameSlot>): ProductGameSlot? {
+    private fun nextLive(games: List<ScheduledProductGame>): ScheduledProductGame? {
         val now = timeProvider.now().toEpochMilliseconds()
-        return slots.filter { it.isLiveAt(now) }.minByOrNull { it.startsAtMillis }
+        return games.filter { it.isLiveAt(now) }.minByOrNull { it.startsAtMillis }
     }
 
-    private suspend fun openAtStart(slot: ProductGameSlot) {
-        delay(slot.startsAtMillis - timeProvider.now().toEpochMilliseconds())
-        router.openGameProduct(slot.product())
-        reminder.clear(slot)
+    private suspend fun openAtStart(game: ScheduledProductGame) {
+        delay(game.startsAtMillis - timeProvider.now().toEpochMilliseconds())
+        router.openGameProduct(game.product())
+        reminder.clear(game)
     }
 }
