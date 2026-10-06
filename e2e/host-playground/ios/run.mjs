@@ -100,8 +100,9 @@ const applesimutils = spawnSync(
 );
 if (applesimutils.error) {
   console.log("applesimutils is not installed; notification and camera alerts will block their tests.");
-} else if (applesimutils.status !== 0) {
-  console.log(`applesimutils failed: ${(applesimutils.stderr || applesimutils.stdout).trim()}`);
+} else {
+  const output = `${applesimutils.stdout}${applesimutils.stderr}`.trim();
+  console.log(`applesimutils ${applesimutils.status === 0 ? "granted" : "failed"}${output ? `: ${output}` : ""}`);
 }
 
 const dataContainer = appDataContainer();

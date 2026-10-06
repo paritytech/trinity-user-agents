@@ -194,7 +194,11 @@ jobs:
       # Grants the notification and camera permissions simctl cannot.
       - name: Install applesimutils
         continue-on-error: true
-        run: brew tap wix/brew && brew install applesimutils
+        run: |
+          brew tap wix/brew
+          brew trust wix/brew
+          brew install wix/brew/applesimutils
+          applesimutils --version
 
       - name: Write the test account's mnemonic
         env:
