@@ -358,6 +358,7 @@ enum UiEvent {
         kind: ApprovalKind,
         response: oneshot::Sender<PermissionDecision>,
     },
+    ApprovalWithdrawn,
     ChatFiles {
         detail: String,
         max_files: u32,
@@ -606,6 +607,21 @@ pub struct UiHandle {
     sender: mpsc::UnboundedSender<UiEvent>,
 }
 
+struct ApprovalAnswer<'a> {
+    answer: oneshot::Receiver<PermissionDecision>,
+    sender: Option<&'a mpsc::UnboundedSender<UiEvent>>,
+}
+
+impl Drop for ApprovalAnswer<'_> {
+    fn drop(&mut self) {
+        if let Some(sender) = self.sender {
+            // Close before waking the UI when the owning call is dropped.
+            self.answer.close();
+            let _ = sender.send(UiEvent::ApprovalWithdrawn);
+        }
+    }
+}
+
 impl UiHandle {
     /// Add a successful human-facing outcome to the transcript.
     pub fn success(&self, title: impl Into<String>, detail: Option<String>) {
@@ -675,7 +691,15 @@ impl UiHandle {
         {
             return PermissionDecision::Deny;
         }
-        answer.await.unwrap_or(PermissionDecision::Deny)
+        let mut answer = ApprovalAnswer {
+            answer,
+            sender: Some(&self.sender),
+        };
+        let decision = (&mut answer.answer)
+            .await
+            .unwrap_or(PermissionDecision::Deny);
+        answer.sender = None;
+        decision
     }
 
     /// Collect paths only through the existing terminal event owner. Input is
@@ -707,6 +731,15 @@ pub struct TerminalUi {
 }
 
 impl TerminalUi {
+    /// Process queued events and report whether a review still owns the editor.
+    #[cfg(test)]
+    pub fn has_pending_approval(&mut self) -> bool {
+        while let Ok(event) = self.receiver.try_recv() {
+            self.app.handle_event(event);
+        }
+        self.app.pending_approval.is_some()
+    }
+
     /// Create a terminal transcript and its cloneable host bridge.
     pub fn new(
         network: impl Into<String>,
@@ -1628,6 +1661,7 @@ impl App {
     }
 
     fn handle_event(&mut self, event: UiEvent) {
+        self.withdraw_closed_approval();
         match event {
             UiEvent::Log(text) => self.push(FeedItem::Log(text)),
             UiEvent::Notice {
@@ -1655,6 +1689,9 @@ impl App {
                 kind,
                 response,
             } => {
+                if response.is_closed() {
+                    return;
+                }
                 if self.pending_approval.is_some() || self.pending_chat_files.is_some() {
                     let _ = response.send(PermissionDecision::Deny);
                     self.notice(
@@ -1681,6 +1718,7 @@ impl App {
                     saved_input,
                 });
             }
+            UiEvent::ApprovalWithdrawn => {}
             UiEvent::ChatFiles {
                 detail,
                 max_files,
@@ -2282,6 +2320,9 @@ impl App {
     }
 
     fn handle_approval_key(&mut self, key: KeyEvent) {
+        if self.withdraw_closed_approval() {
+            return;
+        }
         let Some(pending) = &self.pending_approval else {
             return;
         };
@@ -2317,6 +2358,22 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn withdraw_closed_approval(&mut self) -> bool {
+        if !self
+            .pending_approval
+            .as_ref()
+            .is_some_and(|pending| pending.response.is_closed())
+        {
+            return false;
+        }
+        let pending = self.pending_approval.take().expect("closed approval");
+        self.entries
+            .retain(|entry| !matches!(entry, FeedItem::Approval { id, .. } if *id == pending.id));
+        self.recalculate_retained();
+        self.editor.set_text(pending.saved_input);
+        true
     }
 
     fn answer_approval(&mut self, approved: PermissionDecision) {
@@ -3400,6 +3457,141 @@ mod tests {
             vec!["default".to_string()],
             "info".to_string(),
         )
+    }
+
+    fn test_ui() -> (TerminalUi, UiHandle) {
+        TerminalUi::new(
+            "testnet",
+            "playground.dot",
+            "default",
+            Vec::new(),
+            "info".into(),
+        )
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_visible_approval_restores_the_draft_without_a_decision() {
+        let (mut ui, handle) = test_ui();
+        ui.app.editor.set_text("/script draft.ts");
+        let (abort, registration) = futures::future::AbortHandle::new_pair();
+        let mut call = Box::pin(futures::future::Abortable::new(
+            handle.decide("sign raw", "withdrawn payload", ApprovalKind::Action),
+            registration,
+        ));
+        assert!(futures::poll!(call.as_mut()).is_pending());
+        assert!(ui.has_pending_approval());
+        ui.app.editor.set_text("unfinished answer");
+
+        abort.abort();
+        assert!(call.await.is_err());
+        assert!(!ui.has_pending_approval());
+        assert_eq!(ui.app.editor.text(), "/script draft.ts");
+        assert!(!ui.app.transcript_text().contains("withdrawn payload"));
+
+        let mut next = Box::pin(handle.decide("sign raw", "next payload", ApprovalKind::Action));
+        assert!(futures::poll!(next.as_mut()).is_pending());
+        assert!(ui.has_pending_approval());
+        ui.app
+            .handle_approval_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert_eq!(next.await, PermissionDecision::AllowAlways);
+        assert_eq!(ui.app.editor.text(), "/script draft.ts");
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_queued_approval_never_replaces_the_editor() {
+        let (mut ui, handle) = test_ui();
+        ui.app.editor.set_text("/script draft.ts");
+        let mut call =
+            Box::pin(handle.decide("sign raw", "withdrawn payload", ApprovalKind::Action));
+        assert!(futures::poll!(call.as_mut()).is_pending());
+        drop(call);
+
+        assert!(!ui.has_pending_approval());
+        assert_eq!(ui.app.editor.text(), "/script draft.ts");
+        assert!(!ui.app.transcript_text().contains("withdrawn payload"));
+    }
+
+    #[tokio::test]
+    async fn a_late_key_cannot_answer_a_withdrawn_approval() {
+        let (mut ui, handle) = test_ui();
+        ui.app.editor.set_text("/script draft.ts");
+        let mut call =
+            Box::pin(handle.decide("sign raw", "withdrawn payload", ApprovalKind::Action));
+        assert!(futures::poll!(call.as_mut()).is_pending());
+        assert!(ui.has_pending_approval());
+        drop(call);
+
+        // The key can win the event-loop race against the withdrawal wake.
+        ui.app
+            .handle_approval_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert!(ui.app.pending_approval.is_none());
+        assert_eq!(ui.app.editor.text(), "/script draft.ts");
+        assert!(!ui.app.transcript_text().contains("withdrawn payload"));
+    }
+
+    #[tokio::test]
+    async fn a_queued_successor_survives_the_previous_approval_withdrawal() {
+        let (mut ui, handle) = test_ui();
+        let mut first = Box::pin(handle.decide("first", "first payload", ApprovalKind::Action));
+        assert!(futures::poll!(first.as_mut()).is_pending());
+        assert!(ui.has_pending_approval());
+        let mut next = Box::pin(handle.decide("next", "next payload", ApprovalKind::Action));
+        assert!(futures::poll!(next.as_mut()).is_pending());
+        drop(first);
+
+        // The next request was enqueued before the old request's withdrawal.
+        assert!(ui.has_pending_approval());
+        assert!(!ui.app.transcript_text().contains("first payload"));
+        assert!(ui.app.transcript_text().contains("next payload"));
+        assert!(futures::poll!(next.as_mut()).is_pending());
+        ui.app
+            .handle_approval_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+        assert_eq!(next.await, PermissionDecision::Deny);
+    }
+
+    #[tokio::test]
+    async fn rejecting_an_overlap_does_not_withdraw_the_active_approval() {
+        let (mut ui, handle) = test_ui();
+        let mut first = Box::pin(handle.decide("first", "first payload", ApprovalKind::Action));
+        assert!(futures::poll!(first.as_mut()).is_pending());
+        assert!(ui.has_pending_approval());
+        let mut overlap = Box::pin(handle.decide("overlap", "other payload", ApprovalKind::Action));
+        assert!(futures::poll!(overlap.as_mut()).is_pending());
+        assert!(ui.has_pending_approval());
+        assert_eq!(overlap.await, PermissionDecision::Deny);
+        assert!(ui.has_pending_approval());
+        assert!(futures::poll!(first.as_mut()).is_pending());
+        ui.app
+            .handle_approval_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert_eq!(first.await, PermissionDecision::AllowAlways);
+    }
+
+    #[tokio::test]
+    async fn cancelling_platform_approvals_releases_the_prompt_lock_in_order() {
+        let (mut ui, handle) = test_ui();
+        let platform = crate::platform::CliPlatform::new(
+            crate::network::Network::default().config(),
+            None,
+            crate::platform::ApprovalPolicy::Prompt,
+            Some(handle),
+        );
+        let mut first = Box::pin(platform.decide("first", "first payload".into()));
+        assert!(futures::poll!(first.as_mut()).is_pending());
+        assert!(ui.has_pending_approval());
+        let mut withdrawn = Box::pin(platform.decide("withdrawn", "queued payload".into()));
+        assert!(futures::poll!(withdrawn.as_mut()).is_pending());
+        let mut next = Box::pin(platform.decide("next", "next payload".into()));
+        assert!(futures::poll!(next.as_mut()).is_pending());
+        drop(withdrawn);
+        drop(first);
+        assert!(futures::poll!(next.as_mut()).is_pending());
+        assert!(ui.has_pending_approval());
+        assert!(!ui.app.transcript_text().contains("first payload"));
+        assert!(!ui.app.transcript_text().contains("queued payload"));
+        assert!(ui.app.transcript_text().contains("next payload"));
+        ui.app
+            .handle_approval_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert!(next.await);
     }
 
     #[test]

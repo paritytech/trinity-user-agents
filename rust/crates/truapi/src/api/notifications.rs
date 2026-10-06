@@ -1,19 +1,19 @@
 //! Unified [`Notifications`] trait.
 
 use crate::versioned::notifications::{
+    HostNotificationAcknowledgeReceiverEventRequest,
+    HostNotificationAcknowledgeReceiverEventResponse, HostNotificationDisableReceiverRequest,
+    HostNotificationDisableReceiverResponse, HostNotificationReceiverEventsRequest,
+    HostNotificationReceiverEventsResponse, HostNotificationReceiverStatusRequest,
+    HostNotificationReceiverStatusResponse, HostNotificationReceivingError,
+    HostNotificationRecordReceiptRequest, HostNotificationRecordReceiptResponse,
+    HostNotificationReplaceReceiverRequest, HostNotificationReplaceReceiverResponse,
     HostPushNotificationCancelError, HostPushNotificationCancelRequest,
     HostPushNotificationCancelResponse, HostPushNotificationError, HostPushNotificationRequest,
-    HostPushNotificationResponse,
-    HostNotificationReceiverStatusRequest, HostNotificationReceiverStatusResponse,
-    HostNotificationReplaceReceiverRequest, HostNotificationReplaceReceiverResponse,
-    HostNotificationDisableReceiverRequest, HostNotificationDisableReceiverResponse,
-    HostNotificationRecordReceiptRequest, HostNotificationRecordReceiptResponse,
-    HostNotificationReceiverEventsRequest, HostNotificationReceiverEventsResponse,
-    HostNotificationAcknowledgeReceiverEventRequest, HostNotificationAcknowledgeReceiverEventResponse,
-    HostNotificationReceivingError,
-    NotificationActivationAcknowledgeError, NotificationActivationAcknowledgeRequest,
-    NotificationActivationAcknowledgeResponse, NotificationActivationEventsError,
-    NotificationActivationEventsRequest, NotificationActivationEventsResponse,
+    HostPushNotificationResponse, NotificationActivationAcknowledgeError,
+    NotificationActivationAcknowledgeRequest, NotificationActivationAcknowledgeResponse,
+    NotificationActivationEventsError, NotificationActivationEventsRequest,
+    NotificationActivationEventsResponse,
 };
 use crate::{CallContext, CallError};
 use crate::{wire, wire_trait};
@@ -172,7 +172,10 @@ pub trait Notifications: Send + Sync {
         &self,
         cx: &CallContext,
         request: HostNotificationAcknowledgeReceiverEventRequest,
-    ) -> Result<HostNotificationAcknowledgeReceiverEventResponse, CallError<HostNotificationReceivingError>>;
+    ) -> Result<
+        HostNotificationAcknowledgeReceiverEventResponse,
+        CallError<HostNotificationReceivingError>,
+    >;
 
     /// Retrieve up to 32 pending activations for this runtime's authenticated
     /// product, account and environment. Retrieval does not consume events,
@@ -203,5 +206,8 @@ pub trait Notifications: Send + Sync {
         &self,
         cx: &CallContext,
         request: NotificationActivationAcknowledgeRequest,
-    ) -> Result<NotificationActivationAcknowledgeResponse, CallError<NotificationActivationAcknowledgeError>>;
+    ) -> Result<
+        NotificationActivationAcknowledgeResponse,
+        CallError<NotificationActivationAcknowledgeError>,
+    >;
 }
