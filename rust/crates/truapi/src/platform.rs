@@ -2580,6 +2580,7 @@ mod tests {
                 "SsoResponderRequestLedger",
                 None,
             ),
+            (CoreStorageKey::FundingSessions, "FundingSessions", None),
         ] {
             let description = describe_core_storage_key(&key.encode()).expect("valid key");
             assert_eq!(description.kind, kind);
