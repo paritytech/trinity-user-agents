@@ -1,4 +1,5 @@
 #if targetEnvironment(simulator) && E2E_TEST
+    import PolkadotUI
     import UIKit
 
     /// Answers the native confirmation sheets a host-playground test raises, such as the signing
@@ -110,6 +111,10 @@
         }
 
         private static func title(of control: UIControl) -> String? {
+            // Design-system buttons render their title in SwiftUI, out of reach of the label walk.
+            if let button = control as? DSButtonView {
+                return button.title
+            }
             let text = labels(in: control)
                 .compactMap(\.text)
                 .joined(separator: " ")
