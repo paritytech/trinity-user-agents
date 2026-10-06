@@ -15,6 +15,7 @@
         static let approvingLabels = ["Approve", "Allow once", "Allow always", "Sign", "Confirm"]
 
         private var task: Task<Void, Never>?
+        private var lastSeen = ""
 
         /// Starts answering sheets until ``stop()``.
         func start() {
@@ -45,6 +46,7 @@
             }.first
 
             guard let control = byIdentifier ?? byLabel else {
+                logSeen(controls)
                 return false
             }
 
@@ -52,6 +54,19 @@
             HostPlaygroundE2E.log.info("answering a sheet with \(title, privacy: .public)")
             control.sendActions(for: .touchUpInside)
             return true
+        }
+
+        /// Logs the controls on screen whenever they change, so a sheet it could not answer shows up
+        /// in the run's log.
+        private func logSeen(_ controls: [UIControl]) {
+            let seen = controls
+                .map { "\(type(of: $0)):\(Self.title(of: $0) ?? $0.accessibilityIdentifier ?? "-")" }
+                .joined(separator: ", ")
+            guard seen != lastSeen else {
+                return
+            }
+            lastSeen = seen
+            HostPlaygroundE2E.log.info("no approving control among: \(seen, privacy: .public)")
         }
 
         private func candidateRoots() -> [UIView] {

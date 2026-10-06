@@ -257,6 +257,7 @@ function captureDiagnostics() {
     [
       "simctl", "spawn", device.udid, "log", "show",
       "--style", "compact",
+      "--info",
       "--start", start,
       "--predicate", `subsystem == "${LOG_SUBSYSTEM}"`,
     ],
