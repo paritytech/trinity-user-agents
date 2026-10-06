@@ -108,9 +108,7 @@ extension SPARustRuntime: SPARuntimeProtocol {
         self.engine = nil
         await engine?.destroy()
 
-        executionModel.execution.stopWsBridge()
-        executionModel.execution.close()
-        executionModel.chainConnections.closeAll()
+        await executionModel.close()
 
         logger.debug("SPA(rust): runtime disposed for \(configuration.page.host.name)")
     }

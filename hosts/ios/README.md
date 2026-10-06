@@ -127,6 +127,15 @@ Polkadot iOS is a self-custodial superapp: your keys are created on your phone, 
 
 Built with **UIKit** and programmatic layout (no Storyboards), using **VIPER** for every feature module: code is split between the main app target and 28 local Swift packages under [`Packages/`](./Packages) with `AppDependencies` as the root package, chain access goes through [substrate-sdk-ios](https://github.com/novasamatech/substrate-sdk-ios) (JSON-RPC, storage subscriptions, extrinsics), and local data lives in CoreData.
 
+TrUAPI SPA and chat executions share the app's DesignSystem `ThemeManager`,
+initialized by `SceneDelegate`. Their initial theme is captured synchronously;
+the subscription then forwards ordered changes using the selected theme's ID
+and its resolved main surface color for the light/dark variant. Execution
+teardown cancels and detaches that observation before closing the Rust execution.
+`RustRuntimeBridgeTests` covers the initial selection, variant/name transitions,
+and buffered changes during teardown; native compilation and these tests require
+the macOS iOS CI app jobs (`ios-simulator-build`), not a Linux-only core check.
+
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time
 configuration, signing, the required secrets, and the pipeline itself are
