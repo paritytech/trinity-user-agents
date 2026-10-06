@@ -2,6 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/media",
+  globalSetup: "./tests/media/turn-server.ts",
   workers: 1,
   timeout: 30_000,
   use: {

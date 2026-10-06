@@ -17,8 +17,13 @@ const html = `<!doctype html><div id="controls"></div>
 <script type="importmap">{"imports":{"neverthrow":"/neverthrow.mjs"}}</script>
 <script type="module" src="/fixture.mjs"></script>`;
 
-// Routes serve real compiled backend code; no peer/capture/signaling APIs are mocked.
+// Routes serve real compiled backend code; no peer/capture/signaling APIs are
+// mocked, and peers relay through the loopback TURN server from turn-server.ts.
 test.beforeEach(async ({ page }) => {
+  const iceServers = JSON.parse(process.env.TRUAPI_MEDIA_ICE_SERVERS ?? "[]");
+  await page.addInitScript((servers) => {
+    Reflect.set(window, "mediaIceServers", servers);
+  }, iceServers);
   await page.route("http://localhost:48196/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     const source = resources.get(path);
@@ -33,6 +38,49 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(async ({ page }) => {
   await page.evaluate("window.mediaFixture?.dispose()");
+});
+
+test("peers connect through TURN and signal only relay candidates", async ({
+  page,
+}) => {
+  await page.evaluate("mediaFixture.startPair()");
+  await expect
+    .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 15_000 })
+    .toEqual({
+      failures: [],
+      captureRequests: 1,
+      peers: ["Connected", "Connected"],
+      remoteCameras: ["Off", "Live"],
+    });
+  expect(await page.evaluate("mediaFixture.iceSnapshot()")).toEqual({
+    gathered: [],
+    signaled: ["relay"],
+  });
+});
+
+test("host and reflexive candidates never leave the backend even if the engine gathers them", async ({
+  page,
+}) => {
+  await page.evaluate("mediaFixture.ignoreRelayPolicy()");
+  await page.evaluate("mediaFixture.startPair()");
+  await expect
+    .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 15_000 })
+    .toEqual({
+      failures: [],
+      captureRequests: 1,
+      peers: ["Connected", "Connected"],
+      remoteCameras: ["Off", "Live"],
+    });
+  // Renegotiate after gathering so descriptions embed gathered candidates too.
+  await page.evaluate("mediaFixture.setAnswererCamera(true)");
+  await expect
+    .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 15_000 })
+    .toMatchObject({ remoteCameras: ["Live", "Live"] });
+  const ice = await page.evaluate<{ gathered: string[]; signaled: string[] }>(
+    "mediaFixture.iceSnapshot()",
+  );
+  expect(ice.gathered).toContain("host");
+  expect(ice.signaled).toEqual(["relay"]);
 });
 
 test("an initially receive-only answerer connects and resumes camera after stopping", async ({

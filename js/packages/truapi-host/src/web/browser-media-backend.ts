@@ -127,11 +127,13 @@ export interface BrowserMediaBackendOptions {
     request: MediaConsentRequest,
     context: BrowserMediaConsentContext,
   ): Promise<boolean>;
-  /** Host-owned ICE configuration; credentials never enter product values. */
+  /**
+   * Host-owned TURN configuration; credentials never enter product values.
+   * Peers are always relay-only, so this must name a reachable TURN relay.
+   */
   iceServers:
     | readonly RTCIceServer[]
     | ((runtimeId: bigint) => Promise<readonly RTCIceServer[]>);
-  iceTransportPolicy?: RTCIceTransportPolicy;
   measureViewport?(
     product: Element,
     mount: Element,
@@ -336,6 +338,8 @@ function rectValid(rect: MediaRect): boolean {
     Number.isSafeInteger(rect.y + rect.height)
   );
 }
+/** Only TURN relay candidates may leave the host; anything else names an address. */
+const RELAY_CANDIDATE = /(?:^|\s)typ\s+relay(?:\s|$)/;
 function intersect(...rects: MediaRect[]): MediaRect {
   const x = Math.max(...rects.map((rect) => rect.x));
   const y = Math.max(...rects.map((rect) => rect.y));
@@ -1230,7 +1234,14 @@ export function createBrowserMediaBackend(
         participantId: peer.id,
         description: {
           kind: description.type === "offer" ? "Offer" : "Answer",
-          sdp: description.sdp,
+          // Descriptions created after gathering embed candidates; keep relays only.
+          sdp: description.sdp
+            .split("\r\n")
+            .filter(
+              (line) =>
+                !line.startsWith("a=candidate:") || RELAY_CANDIDATE.test(line),
+            )
+            .join("\r\n"),
         },
       },
     });
@@ -1338,10 +1349,12 @@ export function createBrowserMediaBackend(
       .then((iceServers) =>
         serializeSession(session, async () => {
           if (!peerAlive(peer)) throw failure("SessionEnded");
+          // Relay-only is not negotiable: host or reflexive candidates would
+          // reveal this device's addresses to every remote participant.
           const pc = new win.RTCPeerConnection(
             webIdl<RTCConfiguration>({
               iceServers: [...iceServers],
-              iceTransportPolicy: options.iceTransportPolicy,
+              iceTransportPolicy: "relay",
             }),
           );
           peer.pc = pc;
@@ -1362,6 +1375,11 @@ export function createBrowserMediaBackend(
           pc.onicecandidate = (event) => {
             if (!peerAlive(peer) || !event.candidate) return;
             const candidate = event.candidate;
+            if (
+              !RELAY_CANDIDATE.test(candidate.candidate) ||
+              (candidate.type ?? "relay") !== "relay"
+            )
+              return;
             emit(session.runtime, {
               tag: "IceCandidate",
               value: {
