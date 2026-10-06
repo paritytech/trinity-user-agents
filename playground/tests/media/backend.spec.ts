@@ -156,6 +156,18 @@ test("cancellation stops a genuine capture delivered after cancellation", async 
   });
 });
 
+test("an event stream opened after attachment starts at the current viewport without replaying the detach", async ({
+  page,
+}) => {
+  // Attachment detaches (revision 1, None) and then measures (revision 2).
+  expect(await page.evaluate("mediaFixture.attachBeforeObserving()")).toEqual({
+    failures: [],
+    core: 2,
+    viewports: [2],
+    surfaces: "Done",
+  });
+});
+
 test("synthetic-device camera withdrawal ends capture but preserves independent decoded receive video", async ({
   page,
 }) => {

@@ -62,6 +62,7 @@ async function observe(node) {
         node.remote = event.value.state;
       } else if (event.tag === "ViewportChanged") {
         node.viewport = event.value.viewport;
+        node.viewports.push(event.value.viewport ?? null);
       } else if (event.tag === "PermissionRevoked") {
         node.revocations.push(event.value);
       }
@@ -81,7 +82,7 @@ function createNode(index) {
   mount.append(frame);
   document.body.append(mount);
   const node = { index, runtime: BigInt(index + 1), session: id(100 + index), intentRevision: 0n,
-    mount, signals: new Map(), revocations: [] };
+    mount, signals: new Map(), revocations: [], viewports: [] };
   node.backend = createBrowserMediaBackend({
     window, document, productId: product.productId,
     getProductElement: () => frame,
@@ -204,6 +205,33 @@ window.mediaFixture = {
     return { failures, captureRequests: captures.length,
       peer: nodes[1].peer, camera: nodes[1].remote?.camera,
       revocations: nodes.slice(1).map((node) => node.revocations) };
+  },
+  // dotli's worker opens the event stream only after the host attached the
+  // runtime: the attach-time detach and viewport must not reach it out of order.
+  async attachBeforeObserving() {
+    const node = createNode(0);
+    nodes.push(node);
+    node.backend.attach(node.runtime);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    node.observer = observe(node);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // The core (runtime/media/backend.rs) takes a revisionless None at once
+    // but only a strictly newer Some, so a replayed detach would strand it.
+    let accepted = 0n;
+    const core = node.viewports.reduce((viewport, next) => {
+      if (!next) return null;
+      if (next.revision <= accepted) return viewport;
+      accepted = next.revision;
+      return next;
+    }, null);
+    await command(node, "OpenSession", { sessionId: node.session, operationId: id(600), tracks: off });
+    await command(node, "CommitOperation", { operationId: id(600) });
+    const surfaces = core
+      ? (await node.backend.mediaBackendCommand(product, node.runtime, { tag: "SetSurfaces",
+          value: { ...remoteCameraSurface(node, id(2)), viewportRevision: core.revision } })).tag
+      : "NoViewport";
+    return { failures, core: core ? Number(core.revision) : null,
+      viewports: node.viewports.map((viewport) => (viewport ? Number(viewport.revision) : null)), surfaces };
   },
   async prepareDelayedCapture() {
     const node = createNode(0);
