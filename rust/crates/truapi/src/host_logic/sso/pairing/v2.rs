@@ -43,6 +43,9 @@ pub enum MetadataKey {
     PlatformType,
     /// Platform version.
     PlatformVersion,
+    /// Unverified location supplied by the proposing host.
+    #[codec(index = 6)]
+    Location,
 }
 
 /// Plaintext wallet response after decrypting the pairing statement.

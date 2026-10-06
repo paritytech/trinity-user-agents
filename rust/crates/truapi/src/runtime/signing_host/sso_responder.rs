@@ -178,7 +178,7 @@ impl PairingProposal {
                 v2::MetadataKey::HostIcon => metadata.host_icon = value,
                 v2::MetadataKey::PlatformType => metadata.platform_type = value,
                 v2::MetadataKey::PlatformVersion => metadata.platform_version = value,
-                v2::MetadataKey::Custom(_) => {}
+                v2::MetadataKey::Custom(_) | v2::MetadataKey::Location => {}
             }
         }
         Ok(Self {
@@ -1384,6 +1384,37 @@ mod tests {
                 platform_type: None,
                 platform_version: None,
             }
+        );
+    }
+
+    #[test]
+    fn pairing_deeplink_accepts_mobile_location_metadata() {
+        let payload = concat!(
+            "01",
+            "3131313131313131313131313131313131313131313131313131313131313131",
+            "4242424242424242424242424242424242424242424242424242424242424242",
+            "08012c70616972656420686f7374060c313b32",
+        );
+        let deeplink = format!("polkadotapp://pair?handshake={payload}");
+
+        assert_eq!(
+            (
+                decode_pairing_deeplink(&deeplink).unwrap().encode(),
+                PairingProposal::from_deeplink(&deeplink).unwrap(),
+            ),
+            (
+                hex::decode(payload).unwrap(),
+                PairingProposal {
+                    peer: PairedSsoPeer {
+                        statement_account_id: [0x31; 32],
+                        encryption_public_key: [0x42; 32],
+                    },
+                    metadata: PairingProposalMetadata {
+                        host_name: Some("paired host".to_string()),
+                        ..Default::default()
+                    },
+                },
+            )
         );
     }
 
