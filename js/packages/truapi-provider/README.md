@@ -72,8 +72,15 @@ builder.setConnectionTypes({ unsecure: false }); // mixed content on an https pa
 
 A light-client connection holds its requests until the chain first syncs, then
 sends them in order. Chain-spec queries, statement-store and Bitswap calls are
-answered at once. To show sync
-progress, watch the chain once something is connected to it:
+answered at once.
+
+A `statement_subscribeStatement` on the light client starts, as on a full node,
+with pages of the statements its peers already store, the last one carrying
+`remaining: 0`; live statements follow. The light client keeps no store of its
+own, so those pages wait for the peers to replay what matches, up to three
+seconds, and are empty if nothing does.
+
+To show sync progress, watch the chain once something is connected to it:
 
 ```js
 const watch = provider.lifecycle(chains.relay);

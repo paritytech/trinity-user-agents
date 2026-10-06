@@ -14,6 +14,11 @@
 //! [`MAX_UNDELIVERED_FRAMES`], so a chain that never syncs refuses work
 //! instead of growing the queue.
 //!
+//! Statement subscriptions: smoldot keeps no statement store and answers a
+//! subscription with an empty first page, while its peers replay what they
+//! store a moment later. [`crate::statement_snapshot`] turns that replay back
+//! into the initial pages a full node sends.
+//!
 //! Warm-start snapshots: take one with
 //! [`EmbeddedChainProvider::snapshot`](crate::EmbeddedChainProvider::snapshot),
 //! persist the returned string, and feed it back on a later run through
@@ -45,6 +50,7 @@ use smoldot_light::{
 
 use crate::config::ChainSource;
 use crate::error::{ProviderError, synthetic_error_frame};
+use crate::statement_snapshot::{InitialPages, SnapshotTiming, StatementRequests};
 
 /// Lock a mutex, recovering the guard if a previous holder panicked.
 ///
@@ -364,6 +370,7 @@ impl LightState {
                 undelivered: AtomicUsize::new(0),
                 held: Mutex::new(Some(Vec::new())),
                 closing: Mutex::new(Some(closing_tx)),
+                statements: statement_protocol.then(Default::default),
             }),
             genesis_hash,
             relay: relay_genesis,
@@ -523,6 +530,10 @@ struct Pipe {
     /// Taken by `close`, which ends the wait for the chain to sync. `None`
     /// means the connection is closed.
     closing: Mutex<Option<oneshot::Sender<()>>>,
+    /// Statement subscriptions in flight, whose initial pages the response
+    /// stream fills from the peers' replay. `None` on a chain without the
+    /// statement protocol, where nothing is replayed.
+    statements: Option<Arc<StatementRequests>>,
 }
 
 /// Decrement `counter` unless it is already zero.
@@ -583,6 +594,10 @@ impl Pipe {
         // Parsed before taking the client lock, which every connection shares.
         let holding = lock(&self.held).is_some();
         let needs_sync = holding && waits_for_sync(&request);
+        // Ahead of smoldot seeing the request, so its answer is recognized.
+        if let Some(statements) = &self.statements {
+            statements.note(&request);
+        }
 
         // The chain-removal check and the request must happen under the same
         // lock: json_rpc_request panics on a removed ChainId.
@@ -680,7 +695,17 @@ impl JsonRpcConnection for LightConnection {
         })
         .filter_map(|()| future::ready(None));
         let pipe = Arc::clone(&self.pipe);
-        stream::select(stream::select(responses, sources.errors), release)
+        let answers = stream::select(responses, sources.errors).boxed();
+        let answers = match &pipe.statements {
+            Some(statements) => InitialPages::new(
+                answers,
+                Arc::clone(statements),
+                SnapshotTiming::LIGHT_CLIENT,
+            )
+            .boxed(),
+            None => answers,
+        };
+        stream::select(answers, release)
             .inspect(move |_| decrement_saturating(&pipe.undelivered))
             .boxed()
     }
@@ -1116,6 +1141,40 @@ mod tests {
             frame_id(&frame),
             2,
             "the statement subscription is not held"
+        );
+    }
+
+    /// smoldot sends its empty first page right behind the subscription id.
+    /// The connection keeps it back for the peers' replay of stored
+    /// statements, so offline, with nothing replayed, it comes once the
+    /// replay window has passed, still empty and still ending the snapshot.
+    #[test]
+    fn the_initial_statement_page_waits_for_the_replay() {
+        let provider = offline_provider();
+        let connection =
+            block_on(provider.connect(RELAY_GENESIS)).expect("offline add_chain succeeds");
+        let mut responses = connection.responses();
+        connection.send(
+            r#"{"jsonrpc":"2.0","id":1,"method":"statement_subscribeStatement","params":["any"]}"#
+                .to_owned(),
+        );
+        let mut next = || -> serde_json::Value {
+            serde_json::from_str(&block_on(responses.next()).expect("the connection stays alive"))
+                .expect("valid JSON")
+        };
+
+        let subscribed = next();
+        let started = std::time::Instant::now();
+        let page = next();
+        assert!(
+            started.elapsed()
+                >= super::SnapshotTiming::LIGHT_CLIENT.window - Duration::from_millis(100),
+            "the empty page was not held for the replay"
+        );
+        assert_eq!(page["params"]["subscription"], subscribed["result"]);
+        assert_eq!(
+            page["params"]["result"]["data"],
+            serde_json::json!({ "statements": [], "remaining": 0 })
         );
     }
 
