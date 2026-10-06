@@ -3347,6 +3347,15 @@ pub trait FundingPlatform: Send + Sync {
         session: FundingPresentation,
     ) -> Result<FundingPresentOutcome, GenericError>;
 
+    /// Show `provider`'s screen at `route` for session `intent`, such as its
+    /// KYC or card entry, in a frame the host owns, and answer once it closes.
+    async fn present_provider_frame(
+        &self,
+        provider: &ProductContext,
+        intent: String,
+        route: String,
+    ) -> Result<truapi::latest::FundingFrameOutcome, GenericError>;
+
     /// Observe a session's status change, for host UI such as the in-flight
     /// pill.
     fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {

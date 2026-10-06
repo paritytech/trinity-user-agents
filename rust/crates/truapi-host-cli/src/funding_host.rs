@@ -23,7 +23,8 @@ use std::time::Duration;
 use truapi::SigningHostRuntime;
 use truapi::host_logic::funding::FundingStage;
 use truapi::latest::{
-    FundingDirection, FundingFailure, GenericError, HostFundingStatusSubscribeItem,
+    FundingDirection, FundingFailure, FundingFrameOutcome, GenericError,
+    HostFundingStatusSubscribeItem,
 };
 use truapi::platform::{
     FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext, async_trait,
@@ -182,6 +183,21 @@ impl FundingPlatform for CliFundingHost {
             }
         });
         Ok(FundingPresentOutcome::Started)
+    }
+
+    async fn present_provider_frame(
+        &self,
+        provider: &ProductContext,
+        intent: String,
+        route: String,
+    ) -> Result<FundingFrameOutcome, GenericError> {
+        self.record(serde_json::json!({
+            "kind": "frame",
+            "intent": intent,
+            "provider": provider.product_id,
+            "route": route,
+        }));
+        Ok(FundingFrameOutcome::Closed)
     }
 
     fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {

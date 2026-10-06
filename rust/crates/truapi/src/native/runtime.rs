@@ -329,9 +329,23 @@ impl NativeTrUApiHostRuntime {
         Ok(self.runtime.acknowledge_funding_session(&intent).await?)
     }
 
-    /// Cancel open funding session `intent`.
+    /// Cancel funding session `intent` at the user's request: it ends if no
+    /// provider serves it, otherwise its provider is asked to stop.
     pub async fn cancel_funding(&self, intent: String) -> Result<bool, HostRejection> {
         Ok(self.runtime.cancel_funding(&intent).await?)
+    }
+
+    /// Hand open funding session `intent` to the provider the user chose, by
+    /// product id.
+    pub async fn select_funding_provider(
+        &self,
+        intent: String,
+        provider_id: String,
+    ) -> Result<bool, HostRejection> {
+        Ok(self
+            .runtime
+            .select_funding_provider(&intent, &provider_id)
+            .await?)
     }
 }
 

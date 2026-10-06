@@ -91,7 +91,7 @@ pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use signing_host::TrackedStatementRenewalTarget;
 use tracing::{instrument, warn};
-use truapi::api::{Chat, Contacts, Funding, Pocket, Renderer};
+use truapi::api::{Chat, Contacts, Funding, FundingProvider, Pocket, Renderer};
 use truapi::versioned::account::{HostAccountGetError, HostAccountSignVrfError};
 use truapi::versioned::chat::{
     HostChatActionSubscribeError, HostChatActionSubscribeItem, HostChatActionSubscribeRequest,
@@ -106,6 +106,12 @@ use truapi::versioned::contacts::{
 use truapi::versioned::funding::{
     HostFundingError, HostFundingRequest, HostFundingResponse, HostFundingStatusSubscribeError,
     HostFundingStatusSubscribeItem, HostFundingStatusSubscribeRequest,
+};
+use truapi::versioned::funding_provider::{
+    HostFundingPresentFrameError, HostFundingPresentFrameRequest, HostFundingPresentFrameResponse,
+    HostFundingReportError, HostFundingReportRequest, HostFundingReportResponse,
+    HostFundingServeSubscribeError, HostFundingServeSubscribeItem,
+    HostFundingServeSubscribeRequest,
 };
 use truapi::versioned::pocket::{
     HostPocketListSubscribeError, HostPocketListSubscribeItem, HostPocketListSubscribeRequest,
@@ -128,6 +134,7 @@ use crate::host_internal::sso_messages::RingVrfError;
 use crate::host_logic::product_account::{
     derivation_index_bytes, derive_product_public_key, public_key_from_address,
 };
+use crate::host_logic::funding::ReportRefusal;
 use crate::host_logic::session::SessionInfo;
 #[cfg(test)]
 use crate::host_logic::session::SessionState;
@@ -1267,6 +1274,18 @@ impl ProductRuntimeHost {
         self.pocket_platform.clone().ok_or(CallError::Unsupported)
     }
 
+    /// Funding provider access policy for this connection: a provider serves
+    /// sessions only from a Worker execution with an active session, and only
+    /// where the host has a funding surface.
+    fn funding_provider_access<E>(&self) -> Result<Arc<dyn crate::platform::FundingPlatform>, CallError<E>> {
+        if self.product.execution_kind != crate::platform::ProductExecutionKind::Worker
+            || self.authority.session_state().current().is_none()
+        {
+            return Err(CallError::Denied);
+        }
+        self.services.funding().platform().ok_or(CallError::Unsupported)
+    }
+
     /// Replace the contact handles a call declares with the accounts they
     /// name, before the call is shown to the user or signed.
     ///
@@ -1561,6 +1580,97 @@ impl Renderer for ProductRuntimeHost {
             return Subscription::interrupted(CallError::Denied);
         }
         self.renderer.subscribe()
+    }
+}
+
+#[truapi::async_trait]
+impl FundingProvider for ProductRuntimeHost {
+    #[instrument(skip_all, fields(runtime.method = "funding_provider.serve_subscribe"))]
+    async fn serve_subscribe(
+        &self,
+        _cx: &CallContext,
+        _request: HostFundingServeSubscribeRequest,
+    ) -> Subscription<HostFundingServeSubscribeItem, CallError<HostFundingServeSubscribeError>>
+    {
+        if let Err(error) = self.funding_provider_access() {
+            return Subscription::interrupted(error);
+        }
+        let registry = self.services.funding();
+        registry.bind(&self.services);
+        let loaded = registry
+            .commit(self.platform.as_ref(), current_unix_millis(), |_| {
+                ((), Vec::new())
+            })
+            .await;
+        if let Err(error) = loaded {
+            return Subscription::interrupted(CallError::HostFailure {
+                reason: error.to_string(),
+            });
+        }
+        registry.keep_expiring(&self.services);
+        Subscription::new(Box::pin(
+            registry
+                .serve(&self.product.product_id)
+                .map(|item| Ok(HostFundingServeSubscribeItem::V1(item))),
+        ))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "funding_provider.report"))]
+    async fn report(
+        &self,
+        _cx: &CallContext,
+        request: HostFundingReportRequest,
+    ) -> Result<HostFundingReportResponse, CallError<HostFundingReportError>> {
+        let HostFundingReportRequest::V1(request) = request;
+        self.funding_provider_access()?;
+        let registry = self.services.funding();
+        registry.bind(&self.services);
+        let reported = registry
+            .report(
+                self.platform.as_ref(),
+                current_unix_millis(),
+                &self.product.product_id,
+                &request.intent,
+                request.update,
+            )
+            .await
+            .map_err(|error| CallError::HostFailure {
+                reason: error.to_string(),
+            })?;
+        let domain = |error| CallError::Domain(HostFundingReportError::V1(error));
+        match reported {
+            Ok(()) => Ok(HostFundingReportResponse::V1),
+            Err(ReportRefusal::NotFound) => Err(domain(v01::HostFundingReportError::NotFound)),
+            Err(ReportRefusal::OutOfOrder) => Err(domain(v01::HostFundingReportError::OutOfOrder)),
+        }
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "funding_provider.present_frame"))]
+    async fn present_frame(
+        &self,
+        _cx: &CallContext,
+        request: HostFundingPresentFrameRequest,
+    ) -> Result<HostFundingPresentFrameResponse, CallError<HostFundingPresentFrameError>> {
+        let HostFundingPresentFrameRequest::V1(request) = request;
+        let platform = self.funding_provider_access()?;
+        if !self
+            .services
+            .funding()
+            .is_serving(&self.product.product_id, &request.intent)
+        {
+            return Err(CallError::Domain(HostFundingPresentFrameError::V1(
+                v01::HostFundingPresentFrameError::NotFound,
+            )));
+        }
+        let outcome = platform
+            .present_provider_frame(&self.product, request.intent, request.route)
+            .await
+            .map_err(|error| CallError::HostFailure {
+                reason: error.reason,
+            })?;
+        Ok(HostFundingPresentFrameResponse::V1(
+            v01::HostFundingPresentFrameResponse { outcome },
+        ))
     }
 }
 

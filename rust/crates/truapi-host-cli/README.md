@@ -777,7 +777,6 @@ Scripts under `js/scripts/` include:
   (`deliver:900,release:500,fail,dismiss`), and a started session is settled
   through the core's test hook with no chain behind it. Every overlay request
   and session change is recorded in `TRUAPI_FUNDING_LOG`, which the cases read.
-  The live on-ramp on Paseo Next is `truapi-host funding-check`.
 
   Contacts are served on every phase, from `TRUAPI_CONTACTS`
   (`alice=0x<32-byte account>;bob=0x…`) or, unset, from a two-name development

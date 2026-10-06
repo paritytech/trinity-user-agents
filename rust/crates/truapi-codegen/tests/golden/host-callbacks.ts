@@ -26,6 +26,7 @@ import {
 } from "@parity/truapi";
 
 import type {
+  FundingFrameOutcome,
   GenericError,
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
@@ -1460,6 +1461,16 @@ export interface FundingPlatform {
     product: ProductContext | undefined,
     session: FundingPresentation,
   ): Promise<FundingPresentOutcome>;
+
+  /**
+   * Show `provider`'s screen at `route` for session `intent`, such as its
+   * KYC or card entry, in a frame the host owns, and answer once it closes.
+   */
+  presentProviderFrame(
+    provider: ProductContext,
+    intent: string,
+    route: string,
+  ): Promise<FundingFrameOutcome>;
 
   /**
    * Observe a session's status change, for host UI such as the in-flight

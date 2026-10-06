@@ -406,14 +406,27 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   Native hosts reach this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `set_top_up_callbacks` with
   `notify_top_up_status` (the top-up engine), `open_funding`,
-  `funding_session`, `funding_sessions`, `cancel_funding` and
-  `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
+  `funding_session`, `funding_sessions`, `select_funding_provider`,
+  `cancel_funding` and `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
   `funding_sessions` lists sessions in flight first, then ended ones, each
   newest first. An ended session is handed to the host through
   `funding_session_changed` each time funding resumes until the host calls
   `acknowledge_funding_session`, so its history writes every outcome once;
   the core keeps the 50 newest recorded sessions and every unrecorded one
   within the 200 newest ended.
+  `select_funding_provider` hands a session to the provider the user chose.
+  That provider's worker runs it through the `FundingProvider` trait:
+  `serveSubscribe` replays its sessions in flight and then streams new ones
+  and cancel requests, `report` stores each update on the session (only from
+  the assigned provider, only forward), and `presentFrame` asks the host to
+  show one of its screens through `present_provider_frame`. The core holds the
+  provider's worker while a session is assigned and open. It ends a session as
+  `Delivered` or `Released` itself, from the claims of the top-ups the
+  provider named (`Crediting`, then `Delivered`) or the completion of the
+  payment request it named (`Collecting`); once funds move, the provider can
+  no longer fail the session and its deadline no longer applies. A cancel ends
+  an unassigned session, asks the provider of an assigned one, and is refused
+  once the provider has seen the user's payment.
 - `PaymentPlatform`: pay from the user's balance to an account once the user
   approves, and stream each payment's status by its caller-chosen id.
   Installed with `set_payment_platform`; native hosts use
