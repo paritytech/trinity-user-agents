@@ -2563,7 +2563,11 @@ impl PairingHost {
         if session.sso.is_none() {
             return Err(AuthorityError::Disconnected);
         }
-        if super::is_funding_product(product_id) {
+        let funding = normalize_product_identifier(product_id)
+            .map_or(super::is_funding_product(product_id), |id| {
+                super::is_funding_product(&id)
+            });
+        if funding {
             return Err(AuthorityError::Rejected);
         }
         let root_entropy_source =
