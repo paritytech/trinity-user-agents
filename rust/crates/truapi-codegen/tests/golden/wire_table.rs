@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "f1965fda63b2fdb4";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "afa136a6be1c6cba";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -554,6 +554,12 @@ pub const GAME_CANCEL_NEXT_GAME: MethodIds = MethodIds {
     method_id: 1,
 };
 
+/// Wire discriminants for `expanded_card_set_face_shown`.
+pub const EXPANDED_CARD_SET_FACE_SHOWN: MethodIds = MethodIds {
+    trait_id: 23,
+    method_id: 0,
+};
+
 /// The full wire table. Trait ids and per-trait method ordering are
 /// part of the wire protocol; only ever append within a trait.
 /// Removed methods leave their slot empty.
@@ -897,5 +903,9 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "game_cancel_next_game",
         kind: WireKind::Request(GAME_CANCEL_NEXT_GAME),
+    },
+    WireEntry {
+        method: "expanded_card_set_face_shown",
+        kind: WireKind::Request(EXPANDED_CARD_SET_FACE_SHOWN),
     },
 ];
