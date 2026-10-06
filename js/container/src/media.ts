@@ -36,7 +36,8 @@ export function installMediaPolicy(
   }
 
   const devices = navigator.mediaDevices;
-  for (const name of ['getUserMedia', 'getDisplayMedia']) {
+  // Enumeration is denied too: device ids and labels identify the device.
+  for (const name of ['getUserMedia', 'getDisplayMedia', 'enumerateDevices']) {
     if (!devices || typeof Reflect.get(devices, name) !== 'function') continue;
     lockMethod(devices, name, function () {
       return new NativePromise(
