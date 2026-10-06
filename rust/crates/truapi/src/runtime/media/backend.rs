@@ -28,6 +28,9 @@ const MAX_DESCRIPTION: usize = 64 * 1024;
 const MAX_CANDIDATE: usize = 4096;
 const MAX_MID: usize = 256;
 const MAX_ACTIONS: usize = 32_768;
+/// Total attempts for one handshake message before its link is failed.
+const SIGNAL_ATTEMPTS: u8 = 4;
+const SIGNAL_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 pub(super) enum Effect {
     Command(MediaBackendCommand),
@@ -42,6 +45,8 @@ pub(super) struct PendingSignal {
     deadline: Instant,
     recipient: VerifiedAdvertisement,
     payload: Zeroizing<Vec<u8>>,
+    attempts: u8,
+    not_before: Instant,
 }
 
 fn terminal_error(outcome: MediaCallOutcome) -> Error {
@@ -218,7 +223,7 @@ pub(super) fn apply_actions_locked(state: &mut State, actions: Vec<GroupAction>)
                 }
                 state.pending_signal_bytes += payload.len();
                 state.pending_signals.push_back(PendingSignal { signaling, recipient, payload,
-                    epoch: state.epoch, deadline: Instant::now() + OPERATION_TIMEOUT });
+                    epoch: state.epoch, deadline: Instant::now() + OPERATION_TIMEOUT, attempts: 1, not_before: Instant::now() });
                 if state.signal_workers < 8 {
                     state.signal_workers += 1;
                     effects.push(Effect::DrainSignals);
@@ -429,6 +434,15 @@ impl MediaService {
                     || !state.group.as_ref().is_some_and(|group| group.send_current(&pending.recipient, &pending.payload)) { continue; }
                 pending
             };
+            // A retried handshake waits for a retired transport to reconnect,
+            // then is fenced again: the link may have ended meanwhile.
+            let wait = pending.not_before.saturating_duration_since(Instant::now());
+            if !wait.is_zero() {
+                futures_timer::Delay::new(wait).await;
+                let state = self.lock();
+                if pending.epoch != state.epoch || !self.current_authority(&state)
+                    || !state.group.as_ref().is_some_and(|group| group.send_current(&pending.recipient, &pending.payload)) { continue; }
+            }
             let remaining = pending.deadline.saturating_duration_since(Instant::now());
             let mut cx = CallContext::default();
             cx.set_timeout(remaining);
@@ -437,8 +451,25 @@ impl MediaService {
                 let effects = {
                     let mut state = self.lock();
                     if state.epoch != pending.epoch { continue; }
-                    let actions = state.group.as_mut().map(|group| group.send_failed(&pending.recipient, &pending.payload)).unwrap_or_default();
-                    apply_actions_locked(&mut state, actions)
+                    let room = state.pending_signals.len() < MAX_MESSAGES
+                        && pending.payload.len() <= MAX_BYTES.saturating_sub(state.pending_signal_bytes);
+                    if pending.attempts < SIGNAL_ATTEMPTS && room
+                        && state.group.as_ref().is_some_and(|group| group.retries_send(&pending.recipient, &pending.payload))
+                    {
+                        // Same plaintext, new packet: the receiver deduplicates the
+                        // handshake, so a copy that did land is harmless.
+                        state.pending_signal_bytes += pending.payload.len();
+                        let not_before = Instant::now() + SIGNAL_RETRY_DELAY;
+                        state.pending_signals.push_back(PendingSignal {
+                            not_before, deadline: not_before + OPERATION_TIMEOUT,
+                            attempts: pending.attempts + 1,
+                            ..pending
+                        });
+                        Vec::new()
+                    } else {
+                        let actions = state.group.as_mut().map(|group| group.send_failed(&pending.recipient, &pending.payload)).unwrap_or_default();
+                        apply_actions_locked(&mut state, actions)
+                    }
                 };
                 self.dispatch_effects(effects);
             }
