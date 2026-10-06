@@ -1,0 +1,7 @@
+// Test-target settings for polkadot-appTests. The suite compiles under the same flags as the app,
+// so ProductRuntimeSettingsTests can assert that the runtime default the configuration declares is
+// the one the app module compiled.
+
+#include "../../Configs/base.devci.xcconfig"
+
+OTHER_SWIFT_FLAGS = $(inherited) $(BASE_SWIFT_FLAGS)
