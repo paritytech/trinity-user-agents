@@ -1042,7 +1042,15 @@ mod tests {
             ],
             ..Default::default()
         });
-        let (_services, signing_host) = signing_fixture(platform.clone());
+        let (services, signing_host) = signing_fixture(platform.clone());
+        let database =
+            futures::executor::block_on(crate::store::Db::open(crate::store::DbConfig {
+                location: crate::store::DbLocation::Memory,
+                migrations: crate::store::core_migrations,
+                readers: 1,
+            }))
+            .unwrap();
+        assert!(services.install_core_db(database.clone()));
 
         // Bounded, because the failure mode of losing the early return is a
         // wait on a chain read the stub deliberately does not answer — an
@@ -1065,6 +1073,19 @@ mod tests {
         .expect("an existing allowance is returned");
 
         assert_eq!(allocation.secret, allowance.secret.to_bytes().to_vec());
+        let records = futures::executor::block_on(database.read(|connection| {
+            Ok(connection.query_row(
+                "SELECT (SELECT COUNT(*) FROM allowance_records), (SELECT COUNT(*) FROM statement_slots)",
+                [],
+                |row| Ok((row.get::<_, u32>(0)?, row.get::<_, u32>(1)?)),
+            )?)
+        }))
+        .unwrap();
+        assert_eq!(
+            records,
+            (0, 0),
+            "an observed claim does not establish device ownership"
+        );
 
         let sent = platform.sent_rpc.lock().expect("rpc list mutex poisoned");
         let methods: Vec<String> = sent

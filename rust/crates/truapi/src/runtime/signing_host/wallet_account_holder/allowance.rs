@@ -1,5 +1,10 @@
 //! Wallet resource approval and allowance issuance.
 
+#[cfg(not(target_arch = "wasm32"))]
+mod journal;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod journal_tests;
+
 use crate::runtime::allowances::current_unix_secs;
 
 use super::WalletAccountHolder;
@@ -37,6 +42,10 @@ pub enum AllowanceAllocationError {
     /// Chain state, metadata, ring, slot, proof, or extrinsic allocation failed.
     #[error("{0}")]
     StatementAllowance(#[from] StatementAllowanceError),
+    /// A confirmed allocation could not be retained locally.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[error("allocation journal: {0}")]
+    Journal(#[from] crate::store::DbError),
     /// Runtime service could not open the required Statement Store RPC client.
     #[error("{0}")]
     StatementStoreRpcClient(#[from] StatementStoreRpcClientError),
@@ -174,6 +183,8 @@ impl WalletAccountHolder {
                 resource: "statement-store",
             });
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        let database = self.services.core_db()?;
         self.require_current_session(session)?;
         let outcome = register_statement_account_pooled(
             rpc,
@@ -208,6 +219,19 @@ impl WalletAccountHolder {
                     %collection,
                     "registered statement-store allowance"
                 );
+                #[cfg(not(target_arch = "wasm32"))]
+                journal::ConfirmedAllocation::new(
+                    session.public_key,
+                    chain.state.genesis_hash,
+                    target,
+                    journal::Allocation::StatementStore {
+                        collection,
+                        period,
+                        slot: seq,
+                    },
+                )?
+                .record(&database)
+                .await?;
             }
             statement_allowance::RegistrationOutcome::AlreadyAllocated { seq, collection } => {
                 debug!(
@@ -292,6 +316,11 @@ impl WalletAccountHolder {
             });
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let database = self.services.core_db()?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let bulletin_genesis = statement_allowance::fetch_genesis_hash(&bulletin_rpc).await?;
+
         let people_client = self
             .services
             .statement_store
@@ -361,6 +390,15 @@ impl WalletAccountHolder {
             remained_transactions = authorization.remained_transactions,
             "Bulletin authorization visible"
         );
+        #[cfg(not(target_arch = "wasm32"))]
+        journal::ConfirmedAllocation::new(
+            session.public_key,
+            bulletin_genesis,
+            target,
+            journal::Allocation::Bulletin,
+        )?
+        .record(&database)
+        .await?;
         self.with_keys(session, |keys| {
             Ok(keys
                 .bulletin_allowance_key(product_id)?
@@ -421,6 +459,8 @@ impl WalletAccountHolder {
             self.require_current_session(session)?;
             return Ok(());
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        let database = self.services.core_db()?;
         let network_suffix =
             statement_allowance::slot::read_network_suffix(asset_hub_client.rpc()).await?;
 
@@ -460,6 +500,15 @@ impl WalletAccountHolder {
             block = %outcome.block_hash,
             "claimed PGAS allowance"
         );
+        #[cfg(not(target_arch = "wasm32"))]
+        journal::ConfirmedAllocation::new(
+            session.public_key,
+            asset_hub.state.genesis_hash,
+            target,
+            journal::Allocation::SmartContract { day: outcome.day },
+        )?
+        .record(&database)
+        .await?;
         self.require_current_session(session)?;
         Ok(())
     }

@@ -50,8 +50,9 @@ const CORE_DB_READERS: usize = 2;
 
 /// Schema of the core database, one migration per change, in order.
 pub fn core_migrations() -> Migrations<'static> {
-    Migrations::new(vec![rusqlite_migration::M::up(
-        "CREATE TABLE product_storage (
+    Migrations::new(vec![
+        rusqlite_migration::M::up(
+            "CREATE TABLE product_storage (
             product_id TEXT NOT NULL,
             key TEXT NOT NULL,
             value BLOB NOT NULL,
@@ -61,7 +62,31 @@ pub fn core_migrations() -> Migrations<'static> {
             key BLOB NOT NULL PRIMARY KEY,
             value BLOB NOT NULL
         );",
-    )])
+        ),
+        rusqlite_migration::M::up(
+            "CREATE TABLE allowance_records (
+            wallet BLOB NOT NULL,
+            chain BLOB NOT NULL,
+            resource TEXT NOT NULL,
+            account BLOB NOT NULL,
+            allocated_at INTEGER NOT NULL,
+            priority INTEGER,
+            last_renewed_period INTEGER,
+            PRIMARY KEY (wallet, chain, resource, account)
+        );
+        CREATE TABLE statement_slots (
+            wallet BLOB NOT NULL,
+            chain BLOB NOT NULL,
+            collection TEXT NOT NULL,
+            period INTEGER NOT NULL,
+            slot INTEGER NOT NULL,
+            account BLOB NOT NULL,
+            priority INTEGER NOT NULL,
+            last_allocated_or_renewed_at INTEGER NOT NULL,
+            PRIMARY KEY (wallet, chain, collection, period, slot)
+        );",
+        ),
+    ])
 }
 
 /// The core database configuration for a host-provided directory.

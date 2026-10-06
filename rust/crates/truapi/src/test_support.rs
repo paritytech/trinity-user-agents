@@ -175,6 +175,8 @@ pub struct StubPlatform {
     pub cancelled_notifications: Arc<Mutex<Vec<u32>>>,
     pub sent_rpc: Arc<Mutex<Vec<String>>>,
     pub rpc_responses: Vec<String>,
+    /// One channel-backed connection for tests that control RPC notifications.
+    pub rpc_connection: Mutex<Option<Box<dyn JsonRpcConnection>>>,
     /// Responses keyed by JSON-RPC method, answered as each request arrives with
     /// that request's own id echoed back. A `state_call` is keyed by the runtime
     /// API it names instead, so metadata and view-function reads stay separable.
@@ -1882,6 +1884,9 @@ impl ChainProvider for StubPlatform {
         if self.chain_connect_pending {
             let _guard = DropFlagGuard(self.pending_connect_dropped.clone());
             futures::future::pending::<()>().await;
+        }
+        if let Some(connection) = self.rpc_connection.lock().unwrap().take() {
+            return Ok(connection);
         }
         Ok(Box::new(RecordingConnection {
             sent: self.sent_rpc.clone(),

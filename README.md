@@ -193,6 +193,8 @@ Native runtimes start locked. Explicit `activateWallet` reads the selected prote
 
 Native StatementStore and Bulletin allowance keys persist through `SecretCoreStorage`, scoped to the wallet and product. Locking preserves them; product reset removes only that product. StatementStore retains its allocation period so expiry and delayed rejection cannot erase a newer grant.
 
+Confirmed native and CLI product allocations record public account history and exact Statement Store slots in wallet-scoped SQLite tables. A failed journal write reports an error without resubmitting the claim; reusing an observed allowance does not establish device ownership. Renewal still uses its separate target ledger, and mobile renewal scheduling remains native.
+
 `ProductRuntimeHost<H>` combines account policy with `HostSession` for login, disconnect and identity lookup, and `ProductConnection` for adapters, permissions, action streams and open operation demand. `SsoRequestService` and `SigningHost` implement `HostSession` directly. Product dispatch, control handles and renderer references share the connection and canonical session state. Rust runtime constructors take the session dependency explicitly.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.

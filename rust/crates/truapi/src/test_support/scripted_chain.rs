@@ -56,6 +56,18 @@ impl ScriptedProvider {
             connect_calls: Arc::new(AtomicUsize::new(0)),
         }
     }
+
+    /// Open the scripted connection through a platform's boxed callback surface.
+    pub fn connection(&self) -> Box<dyn JsonRpcConnection> {
+        self.connect_calls.fetch_add(1, Ordering::SeqCst);
+        let receiver = self.receiver.lock().unwrap().take();
+        Box::new(ScriptedConnection {
+            respond: self.respond.clone(),
+            sent: self.sent.clone(),
+            sender: self.sender.clone(),
+            receiver: Mutex::new(receiver),
+        })
+    }
 }
 
 struct ScriptedConnection {
@@ -96,14 +108,7 @@ impl RuntimeChainProvider for ScriptedProvider {
         &self,
         _genesis_hash: Vec<u8>,
     ) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
-        self.connect_calls.fetch_add(1, Ordering::SeqCst);
-        let receiver = self.receiver.lock().unwrap().take();
-        Ok(Arc::new(ScriptedConnection {
-            respond: self.respond.clone(),
-            sent: self.sent.clone(),
-            sender: self.sender.clone(),
-            receiver: Mutex::new(receiver),
-        }))
+        Ok(Arc::from(self.connection()))
     }
 }
 
