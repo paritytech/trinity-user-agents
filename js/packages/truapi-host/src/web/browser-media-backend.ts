@@ -1807,12 +1807,12 @@ export function createBrowserMediaBackend(
           return false;
         // A host assertion cannot waive the actual same-origin boundary. A
         // readable child document can also reach its parent and our raw tracks.
-        try {
-          void frame.contentWindow.document;
-          return false;
-        } catch {
-          return true;
-        }
+        // contentDocument is null exactly when the frame's current document is
+        // not same-origin (including opaque sandbox origins); the initial
+        // about:blank is readable, so an unloaded frame fails closed. The value
+        // is used, unlike a read probed for its exception, which minifiers that
+        // assume side-effect-free property reads delete.
+        return frame.contentDocument === null;
       }
       if (
         product.namespaceURI ===
