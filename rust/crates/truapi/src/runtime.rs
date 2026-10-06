@@ -19,6 +19,7 @@ mod capabilities;
 mod chat;
 pub mod contacts;
 mod dotns_lookup;
+mod host_grants;
 mod identity;
 pub mod login_failure;
 mod pairing_host;

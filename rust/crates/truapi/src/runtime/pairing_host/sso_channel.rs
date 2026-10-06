@@ -23,7 +23,7 @@ use crate::host_internal::sso_messages::{
     build_outgoing_request_statement, decode_sso_session_statement, v1,
 };
 use crate::host_internal::sso_wire::SsoRequest;
-use crate::host_logic::session::{SessionInfo, SessionState, SsoSessionInfo};
+use crate::host_logic::session::{SessionInfo, SsoSessionInfo};
 use crate::host_logic::statement_store::parse_new_statements_result;
 
 use futures::FutureExt;
@@ -54,10 +54,7 @@ impl PairingHost {
         let key = SsoSessionKey::from_session(&sso);
 
         let (registration, spawner, previous) = {
-            let _lifecycle = self
-                .session_lifecycle
-                .lock()
-                .expect("session lifecycle mutex poisoned");
+            let _lifecycle = self.grants.lifecycle();
             if !self.current_sso_session_matches(key) {
                 return;
             }
@@ -111,9 +108,9 @@ impl PairingHost {
             .newest_request
             .lock()
             .expect("newest request mutex poisoned") = None;
-        self.clear_statement_store_allowance_keys(session);
-        self.clear_bulletin_allowance_keys(session);
-        self.clear_product_subtrees(session);
+        self.grants.clear_statement_store_allowance_keys(session);
+        self.grants.clear_bulletin_allowance_keys(session);
+        self.grants.clear_product_subtrees(session);
         self.disconnect_monitor
             .lock()
             .expect("SSO disconnect monitor mutex poisoned")
@@ -242,7 +239,7 @@ impl PairingHost {
             .ok_or_else(|| SsoRemoteResponseError::Failure("No SSO session state".to_string()))?;
         let key = SsoSessionKey::from_session(sso);
         let (_disconnect_guard, disconnect) = self.session_disconnects.subscribe(sso);
-        if !session_matches_key(&self.session_state, key) {
+        if !key.matches(&self.session_state) {
             return Err(SsoRemoteResponseError::LocalDisconnected);
         }
         let message_id = sso_message_id();
@@ -278,7 +275,7 @@ impl PairingHost {
         let submitting = Arc::new(AtomicBool::new(false));
         let submit_started = submitting.clone();
         let submit = async move {
-            if !session_matches_key(&session_state, key) {
+            if !key.matches(&session_state) {
                 return Err(SsoRemoteResponseError::LocalDisconnected);
             }
             submit_started.store(true, Ordering::Release);
@@ -320,7 +317,7 @@ impl PairingHost {
         if let Err(SsoRemoteResponseError::Cancelled(err)) = &result
             && err.reason() == CancellationReason::Cancelled
             && submitting.load(Ordering::Acquire)
-            && session_matches_key(&self.session_state, key)
+            && key.matches(&self.session_state)
         {
             self.withdraw_request(sso, &message_id);
         }
@@ -339,9 +336,13 @@ impl PairingHost {
         product_id: String,
     ) -> Result<[u8; 32], AuthorityError> {
         let sso = session.sso.as_ref().ok_or(AuthorityError::Disconnected)?;
-        let lifecycle_epoch = self.current_session_lifecycle_epoch();
+        let lifecycle_epoch = self.grants.lifecycle().revision();
         let cache_key = (SsoSessionKey::from_session(sso), product_id.clone());
-        if let Some(public_key) = self.known_product_subtree(session, cache_key.clone()).await {
+        if let Some(public_key) = self
+            .grants
+            .known_product_subtree(&self.session_state, session, cache_key.clone())
+            .await
+        {
             return Ok(public_key);
         }
         let public_key = self
@@ -350,7 +351,14 @@ impl PairingHost {
             .map_err(remote_authority_error)?
             .map_err(remote_authority_error)?;
         if !self
-            .persist_product_subtree_if_current(session, lifecycle_epoch, cache_key, public_key)
+            .grants
+            .persist_product_subtree_if_current(
+                &self.session_state,
+                session,
+                lifecycle_epoch,
+                cache_key,
+                public_key,
+            )
             .await
         {
             return Err(AuthorityError::Disconnected);
@@ -662,7 +670,13 @@ impl PairingHost {
         product_id: String,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
         if let Some(cached) = self
-            .cached_statement_store_allowance_key(session, lifecycle_epoch, &product_id)
+            .grants
+            .cached_statement_store_allowance_key(
+                &self.session_state,
+                session,
+                lifecycle_epoch,
+                &product_id,
+            )
             .await?
         {
             return Ok(cached);
@@ -678,7 +692,7 @@ impl PairingHost {
             .await?
         {
             SsoAllocatedResource::StatementStoreAllowance { slot_account_key } => {
-                self.cache_statement_store_allowance_key(
+                self.grants.cache_statement_store_allowance_key(&self.session_state,
                     session,
                     lifecycle_epoch,
                     &product_id,
@@ -700,7 +714,13 @@ impl PairingHost {
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
         if let Some(cached) = self
-            .cached_bulletin_allowance_key(session, lifecycle_epoch, &product_id)
+            .grants
+            .cached_bulletin_allowance_key(
+                &self.session_state,
+                session,
+                lifecycle_epoch,
+                &product_id,
+            )
             .await?
         {
             return Ok(cached);
@@ -724,7 +744,13 @@ impl PairingHost {
         lifecycle_epoch: u64,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        self.evict_bulletin_allowance_key(session, lifecycle_epoch, &product_id)
+        self.grants
+            .evict_bulletin_allowance_key(
+                &self.session_state,
+                session,
+                lifecycle_epoch,
+                &product_id,
+            )
             .await?;
         self.allocate_bulletin_allowance_key(
             cx,
@@ -755,7 +781,7 @@ impl PairingHost {
             .await?
         {
             SsoAllocatedResource::BulletinAllowance { slot_account_key } => {
-                self.cache_bulletin_allowance_key(
+                self.grants.cache_bulletin_allowance_key(&self.session_state,
                     session,
                     lifecycle_epoch,
                     &product_id,
@@ -766,16 +792,6 @@ impl PairingHost {
             other => Err(unexpected_resource("bulletin allowance", &other)),
         }
     }
-}
-
-/// True when the current session's SSO channel matches `key`.
-pub fn session_matches_key(session_state: &SessionState, key: SsoSessionKey) -> bool {
-    session_state.current().as_ref().is_some_and(|current| {
-        current
-            .sso
-            .as_ref()
-            .is_some_and(|sso| SsoSessionKey::from_session(sso) == key)
-    })
 }
 
 fn ring_vrf_transport_error(reason: SsoRemoteResponseError) -> RingVrfError {

@@ -1,9 +1,11 @@
 use super::*;
 use crate::platform::CoreStorage;
 use crate::runtime::ProductRuntimeHost;
+use crate::runtime::allowances;
 use crate::test_support::{StubPlatform, sso_session_info, test_spawner};
 use futures::FutureExt;
 use futures::executor::block_on;
+use parity_scale_codec::Encode;
 use std::collections::BTreeMap;
 use truapi::latest::GenericError;
 
@@ -80,13 +82,14 @@ fn replacement_waits_for_old_session_cleanup() {
     let subtree =
         crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
             .unwrap();
-    block_on(host.remember_auto_signing_key(
+    let revision = host.grants_for_tests().lifecycle().revision();
+    block_on(host.grants_for_tests().remember_auto_signing_key(
+        &host.session_state(),
         &session,
-        host.current_session_lifecycle_epoch(),
+        revision,
         "myapp.dot",
         subtree.public.to_bytes(),
-        subtree.secret.to_bytes(),
-        [0x42; 32],
+        AutoSigningKey::from_parts(subtree.secret.to_bytes(), [0x42; 32]),
     ))
     .unwrap();
     let blob = encode_persisted_session(&session);
@@ -107,26 +110,33 @@ fn replacement_waits_for_old_session_cleanup() {
     block_on(cleanup);
     block_on(activation).unwrap();
     assert!(
-        !block_on(host.auto_signing_key(&session, "myapp.dot"))
-            .unwrap()
-            .is_some()
+        !block_on(
+            host.grants_for_tests()
+                .auto_signing_key(&session, "myapp.dot")
+        )
+        .unwrap()
+        .is_some()
     );
-    block_on(host.remember_auto_signing_key(
+    let revision = host.grants_for_tests().lifecycle().revision();
+    block_on(host.grants_for_tests().remember_auto_signing_key(
+        &host.session_state(),
         &session,
-        host.current_session_lifecycle_epoch(),
+        revision,
         "myapp.dot",
         subtree.public.to_bytes(),
-        subtree.secret.to_bytes(),
-        [0x55; 32],
+        AutoSigningKey::from_parts(subtree.secret.to_bytes(), [0x55; 32]),
     ))
     .unwrap();
-    let expected = vec![PersistedAutoSigningKey {
-        owner: AutoSigningOwner::from_session(&session),
-        product_id: "myapp.dot".to_string(),
-        expected_product_subtree_public_key: subtree.public.to_bytes(),
-        secret: subtree.secret.to_bytes(),
-        ring_vrf_domain_entropy: [0x55; 32],
-    }]
+    let expected = vec![(
+        (
+            session.public_key,
+            session.sso.as_ref().map(|sso| sso.identity_account_id),
+        ),
+        "myapp.dot".to_string(),
+        subtree.public.to_bytes(),
+        subtree.secret.to_bytes(),
+        [0x55_u8; 32],
+    )]
     .encode();
     assert_eq!(
         (
@@ -144,9 +154,12 @@ fn replacement_waits_for_old_session_cleanup() {
             ]
         ),
     );
-    let key = block_on(host.auto_signing_key(&session, "myapp.dot"))
-        .unwrap()
-        .unwrap();
+    let key = block_on(
+        host.grants_for_tests()
+            .auto_signing_key(&session, "myapp.dot"),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(
         (*key.as_secret_bytes(), *key.ring_vrf_domain_entropy()),
         (subtree.secret.to_bytes(), [0x55; 32])
@@ -179,12 +192,16 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
             SsoSessionKey::from_session(session.sso.as_ref().unwrap()),
             "myapp.dot".to_string(),
         );
-        assert!(block_on(host.persist_product_subtree_if_current(
-            &session,
-            host.current_session_lifecycle_epoch(),
-            cache_key,
-            [0xAB; 32],
-        )));
+        let revision = host.grants_for_tests().lifecycle().revision();
+        assert!(block_on(
+            host.grants_for_tests().persist_product_subtree_if_current(
+                &host.session_state(),
+                &session,
+                revision,
+                cache_key,
+                [0xAB; 32],
+            )
+        ));
         let (release, pause) = oneshot::channel();
         *storage.pause.lock().unwrap() = Some((CoreStorageKey::AutoSigningKeys, pause));
         *storage.failure.lock().unwrap() = Some(CoreStorageKey::AutoSigningKeys);

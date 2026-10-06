@@ -1,6 +1,6 @@
 //! Shared runtime fixtures and cross-capability integration tests.
 
-use super::authority::{AccountCaller, AccountInvocation};
+use super::authority::{AccountCaller, AccountInvocation, AutoSigningKey};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -5821,13 +5821,14 @@ fn auto_signing_ring_vrf_requires_registration_and_signs_locally() {
         "myapp.dot",
     )
     .unwrap();
-    futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
+    let revision = pairing_host.grants_for_tests().lifecycle().revision();
+    futures::executor::block_on(pairing_host.grants_for_tests().remember_auto_signing_key(
+        &pairing_host.session_state(),
         &session,
-        pairing_host.current_session_lifecycle_epoch(),
+        revision,
         "myapp.dot",
         subtree.public.to_bytes(),
-        subtree.secret.to_bytes(),
-        domain,
+        AutoSigningKey::from_parts(subtree.secret.to_bytes(), domain),
     ))
     .unwrap();
 
@@ -6000,9 +6001,12 @@ fn auto_signing_logout_reset_clears_cached_and_persisted_capability() {
     );
     assert!(
         !futures::executor::block_on(
-            pairing_host.has_auto_signing_key_for_tests(&session, "myapp.dot")
+            pairing_host
+                .grants_for_tests()
+                .auto_signing_key(&session, "myapp.dot")
         )
-        .expect("AutoSigning storage remains readable"),
+        .expect("AutoSigning storage remains readable")
+        .is_some(),
         "logout must evict the in-memory AutoSigning capability"
     );
 }
@@ -6019,7 +6023,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
         test_spawner(),
     );
     install_pairing_session(&host, session.clone());
-    let stale_epoch = pairing_host.current_session_lifecycle_epoch();
+    let stale_epoch = pairing_host.grants_for_tests().lifecycle().revision();
     let root =
         crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
     let subtree =
@@ -6029,31 +6033,40 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
     futures::executor::block_on(pairing_host.logout_and_reset_pairing()).unwrap();
     futures::executor::block_on(pairing_host.set_connected_session_for_tests(session.clone()));
     let auto_signing_error =
-        futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
+        futures::executor::block_on(pairing_host.grants_for_tests().remember_auto_signing_key(
+            &pairing_host.session_state(),
             &session,
             stale_epoch,
             "myapp.dot",
             subtree.public.to_bytes(),
-            subtree.secret.to_bytes(),
-            [0x42; 32],
+            AutoSigningKey::from_parts(subtree.secret.to_bytes(), [0x42; 32]),
         ))
         .expect_err("the old AutoSigning allocation completion must be rejected");
-    let statement_store_result =
-        futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
-            &session,
-            stale_epoch,
-            "myapp.dot",
-            subtree.secret.to_bytes().to_vec(),
-        ));
+    let statement_store_result = futures::executor::block_on(
+        pairing_host
+            .grants_for_tests()
+            .cache_statement_store_allowance_key(
+                &pairing_host.session_state(),
+                &session,
+                stale_epoch,
+                "myapp.dot",
+                subtree.secret.to_bytes().to_vec(),
+            ),
+    );
     let Err(statement_store_error) = statement_store_result else {
         panic!("the old statement-store allocation completion must be rejected");
     };
-    let bulletin_result = futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
-        &session,
-        stale_epoch,
-        "myapp.dot",
-        subtree.secret.to_bytes().to_vec(),
-    ));
+    let bulletin_result = futures::executor::block_on(
+        pairing_host
+            .grants_for_tests()
+            .cache_bulletin_allowance_key(
+                &pairing_host.session_state(),
+                &session,
+                stale_epoch,
+                "myapp.dot",
+                subtree.secret.to_bytes().to_vec(),
+            ),
+    );
     let Err(bulletin_error) = bulletin_result else {
         panic!("the old Bulletin allocation completion must be rejected");
     };
@@ -6082,9 +6095,12 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
     );
     assert!(
         !futures::executor::block_on(
-            pairing_host.has_auto_signing_key_for_tests(&session, "myapp.dot")
+            pairing_host
+                .grants_for_tests()
+                .auto_signing_key(&session, "myapp.dot")
         )
-        .expect("AutoSigning storage remains readable"),
+        .expect("AutoSigning storage remains readable")
+        .is_some(),
         "the stale allocation must not restore cached AutoSigning authority"
     );
 }
@@ -6102,7 +6118,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
     );
     install_pairing_session(&host, session.clone());
     cache_test_product_subtree(&host, &session, "other.dot");
-    let stale_epoch = pairing_host.current_session_lifecycle_epoch();
+    let stale_epoch = pairing_host.grants_for_tests().lifecycle().revision();
     let root =
         crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
     let first =
@@ -6113,109 +6129,154 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
             .unwrap();
 
     for (product_id, subtree) in [("myapp.dot", &first), ("other.dot", &other)] {
-        futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
+        futures::executor::block_on(pairing_host.grants_for_tests().remember_auto_signing_key(
+            &pairing_host.session_state(),
             &session,
             stale_epoch,
             product_id,
             subtree.public.to_bytes(),
-            subtree.secret.to_bytes(),
-            [0x42; 32],
+            AutoSigningKey::from_parts(subtree.secret.to_bytes(), [0x42; 32]),
         ))
         .unwrap();
-        futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
-            &session,
-            stale_epoch,
-            product_id,
-            subtree.secret.to_bytes().to_vec(),
-        ))
+        futures::executor::block_on(
+            pairing_host
+                .grants_for_tests()
+                .cache_statement_store_allowance_key(
+                    &pairing_host.session_state(),
+                    &session,
+                    stale_epoch,
+                    product_id,
+                    subtree.secret.to_bytes().to_vec(),
+                ),
+        )
         .unwrap();
-        futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
-            &session,
-            stale_epoch,
-            product_id,
-            subtree.secret.to_bytes().to_vec(),
-        ))
+        futures::executor::block_on(
+            pairing_host
+                .grants_for_tests()
+                .cache_bulletin_allowance_key(
+                    &pairing_host.session_state(),
+                    &session,
+                    stale_epoch,
+                    product_id,
+                    subtree.secret.to_bytes().to_vec(),
+                ),
+        )
         .unwrap();
     }
 
     futures::executor::block_on(pairing_host.clear_product_state("myapp.dot")).unwrap();
-    let current_epoch = pairing_host.current_session_lifecycle_epoch();
+    let current_epoch = pairing_host.grants_for_tests().lifecycle().revision();
     assert_ne!(current_epoch, stale_epoch);
     assert_eq!(
-        pairing_host.capability_cache_sizes_for_tests(),
+        pairing_host
+            .grants_for_tests()
+            .capability_cache_sizes_for_tests(),
         (1, 1, 1, 1)
     );
     assert!(
         !futures::executor::block_on(
-            pairing_host.has_auto_signing_key_for_tests(&session, "myapp.dot")
+            pairing_host
+                .grants_for_tests()
+                .auto_signing_key(&session, "myapp.dot")
         )
-        .unwrap()
-    );
-    assert!(
-        futures::executor::block_on(
-            pairing_host.has_auto_signing_key_for_tests(&session, "other.dot")
-        )
-        .unwrap()
-    );
-    assert!(
-        futures::executor::block_on(pairing_host.cached_statement_store_allowance_key(
-            &session,
-            current_epoch,
-            "myapp.dot",
-        ))
-        .unwrap()
-        .is_none()
-    );
-    assert!(
-        futures::executor::block_on(pairing_host.cached_statement_store_allowance_key(
-            &session,
-            current_epoch,
-            "other.dot",
-        ))
         .unwrap()
         .is_some()
     );
     assert!(
-        futures::executor::block_on(pairing_host.cached_bulletin_allowance_key(
-            &session,
-            current_epoch,
-            "myapp.dot",
-        ))
+        futures::executor::block_on(
+            pairing_host
+                .grants_for_tests()
+                .auto_signing_key(&session, "other.dot")
+        )
+        .unwrap()
+        .is_some()
+    );
+    assert!(
+        futures::executor::block_on(
+            pairing_host
+                .grants_for_tests()
+                .cached_statement_store_allowance_key(
+                    &pairing_host.session_state(),
+                    &session,
+                    current_epoch,
+                    "myapp.dot"
+                )
+        )
         .unwrap()
         .is_none()
     );
     assert!(
-        futures::executor::block_on(pairing_host.cached_bulletin_allowance_key(
-            &session,
-            current_epoch,
-            "other.dot",
-        ))
+        futures::executor::block_on(
+            pairing_host
+                .grants_for_tests()
+                .cached_statement_store_allowance_key(
+                    &pairing_host.session_state(),
+                    &session,
+                    current_epoch,
+                    "other.dot"
+                )
+        )
+        .unwrap()
+        .is_some()
+    );
+    assert!(
+        futures::executor::block_on(
+            pairing_host
+                .grants_for_tests()
+                .cached_bulletin_allowance_key(
+                    &pairing_host.session_state(),
+                    &session,
+                    current_epoch,
+                    "myapp.dot"
+                )
+        )
+        .unwrap()
+        .is_none()
+    );
+    assert!(
+        futures::executor::block_on(
+            pairing_host
+                .grants_for_tests()
+                .cached_bulletin_allowance_key(
+                    &pairing_host.session_state(),
+                    &session,
+                    current_epoch,
+                    "other.dot"
+                )
+        )
         .unwrap()
         .is_some()
     );
 
     assert!(matches!(
-        futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
+        futures::executor::block_on(pairing_host.grants_for_tests().remember_auto_signing_key(
+            &pairing_host.session_state(),
             &session,
             stale_epoch,
             "myapp.dot",
             first.public.to_bytes(),
-            first.secret.to_bytes(),
-            [0x42; 32],
+            AutoSigningKey::from_parts(first.secret.to_bytes(), [0x42; 32])
         )),
         Err(AuthorityError::Disconnected)
     ));
     assert!(matches!(
-        futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
-            &session,
-            stale_epoch,
-            "myapp.dot",
-            first.secret.to_bytes().to_vec(),
-        )),
+        futures::executor::block_on(
+            pairing_host
+                .grants_for_tests()
+                .cache_statement_store_allowance_key(
+                    &pairing_host.session_state(),
+                    &session,
+                    stale_epoch,
+                    "myapp.dot",
+                    first.secret.to_bytes().to_vec()
+                )
+        ),
         Err(AuthorityError::Disconnected)
     ));
     assert_eq!(
-        pairing_host.capability_cache_sizes_for_tests(),
+        pairing_host
+            .grants_for_tests()
+            .capability_cache_sizes_for_tests(),
         (1, 1, 1, 1)
     );
     assert_eq!(
@@ -6241,37 +6302,49 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
         test_spawner(),
     );
     install_pairing_session(&host, session.clone());
-    let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
+    let lifecycle_epoch = pairing_host.grants_for_tests().lifecycle().revision();
     let root =
         crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
     let subtree =
         crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
             .unwrap();
-    futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
+    futures::executor::block_on(pairing_host.grants_for_tests().remember_auto_signing_key(
+        &pairing_host.session_state(),
         &session,
         lifecycle_epoch,
         "myapp.dot",
         subtree.public.to_bytes(),
-        subtree.secret.to_bytes(),
-        [0x42; 32],
+        AutoSigningKey::from_parts(subtree.secret.to_bytes(), [0x42; 32]),
     ))
     .unwrap();
-    futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
-        &session,
-        lifecycle_epoch,
-        "myapp.dot",
-        subtree.secret.to_bytes().to_vec(),
-    ))
+    futures::executor::block_on(
+        pairing_host
+            .grants_for_tests()
+            .cache_statement_store_allowance_key(
+                &pairing_host.session_state(),
+                &session,
+                lifecycle_epoch,
+                "myapp.dot",
+                subtree.secret.to_bytes().to_vec(),
+            ),
+    )
     .unwrap();
-    futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
-        &session,
-        lifecycle_epoch,
-        "myapp.dot",
-        subtree.secret.to_bytes().to_vec(),
-    ))
+    futures::executor::block_on(
+        pairing_host
+            .grants_for_tests()
+            .cache_bulletin_allowance_key(
+                &pairing_host.session_state(),
+                &session,
+                lifecycle_epoch,
+                "myapp.dot",
+                subtree.secret.to_bytes().to_vec(),
+            ),
+    )
     .unwrap();
     assert_eq!(
-        pairing_host.capability_cache_sizes_for_tests(),
+        pairing_host
+            .grants_for_tests()
+            .capability_cache_sizes_for_tests(),
         (1, 1, 1, 1)
     );
 
@@ -6279,7 +6352,9 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 
     assert!(pairing_host.session_state().current().is_none());
     assert_eq!(
-        pairing_host.capability_cache_sizes_for_tests(),
+        pairing_host
+            .grants_for_tests()
+            .capability_cache_sizes_for_tests(),
         (0, 0, 0, 0)
     );
     assert!(
@@ -6312,25 +6387,35 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
     );
     install_pairing_session(&host, session.clone());
     request_auto_signing(&host, "auto-replace");
-    let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
+    let lifecycle_epoch = pairing_host.grants_for_tests().lifecycle().revision();
     let root =
         crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
     let subtree =
         crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
             .unwrap();
-    futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
-        &session,
-        lifecycle_epoch,
-        "myapp.dot",
-        subtree.secret.to_bytes().to_vec(),
-    ))
+    futures::executor::block_on(
+        pairing_host
+            .grants_for_tests()
+            .cache_statement_store_allowance_key(
+                &pairing_host.session_state(),
+                &session,
+                lifecycle_epoch,
+                "myapp.dot",
+                subtree.secret.to_bytes().to_vec(),
+            ),
+    )
     .unwrap();
-    futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
-        &session,
-        lifecycle_epoch,
-        "myapp.dot",
-        subtree.secret.to_bytes().to_vec(),
-    ))
+    futures::executor::block_on(
+        pairing_host
+            .grants_for_tests()
+            .cache_bulletin_allowance_key(
+                &pairing_host.session_state(),
+                &session,
+                lifecycle_epoch,
+                "myapp.dot",
+                subtree.secret.to_bytes().to_vec(),
+            ),
+    )
     .unwrap();
 
     let mut replacement = session;
@@ -6363,9 +6448,12 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
     );
     assert!(
         !futures::executor::block_on(
-            pairing_host.has_auto_signing_key_for_tests(&replacement, "myapp.dot")
+            pairing_host
+                .grants_for_tests()
+                .auto_signing_key(&replacement, "myapp.dot")
         )
-        .expect("AutoSigning storage remains readable"),
+        .expect("AutoSigning storage remains readable")
+        .is_some(),
         "a newly paired wallet must not reuse the previous wallet's cached capability"
     );
 }
@@ -6400,9 +6488,12 @@ fn auto_signing_restored_different_wallet_rejects_persisted_capability() {
 
     assert!(
         !futures::executor::block_on(
-            pairing_host.has_auto_signing_key_for_tests(&replacement, "myapp.dot")
+            pairing_host
+                .grants_for_tests()
+                .auto_signing_key(&replacement, "myapp.dot")
         )
-        .expect("AutoSigning storage remains readable"),
+        .expect("AutoSigning storage remains readable")
+        .is_some(),
         "a different restored wallet must not use a prior wallet's capability"
     );
     assert!(
