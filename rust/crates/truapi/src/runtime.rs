@@ -355,6 +355,7 @@ impl ProductConnection {
             self.platform.as_ref(),
             self.platform.as_ref(),
             &self.product,
+            self.services.permissions.clone(),
         )
         .with_status_host(self.permission_status.as_deref())
         .with_temporary_permissions(self.temporary_permissions.clone())
@@ -520,16 +521,24 @@ impl ProductConnection {
         let product_id = self.product_id();
         let request = PermissionAuthorizationRequest::IdentityDisclosure;
         let service = self.permissions_service();
-        let cached = service
-            .authorization_status(&request)
-            .await
-            .map_err(|err| format!("permission storage failed: {err:?}"))?;
-        if cached != PermissionAuthorizationStatus::NotDetermined {
-            return Ok(cached);
-        }
+        let key = crate::host_internal::permissions::permission_key(&product_id, &request);
+        let (review, registration) = self.services.permissions.review(key.clone(), None).await;
+        futures::future::Abortable::new(
+            async {
+                let Some(commit) = self.services.permissions.require(&review).await else {
+                    return Ok(PermissionAuthorizationStatus::NotDetermined);
+                };
+                let cached = service
+                    .authorization_status(&request)
+                    .await
+                    .map_err(|err| format!("permission storage failed: {err:?}"))?;
+                if cached != PermissionAuthorizationStatus::NotDetermined {
+                    return Ok(cached);
+                }
 
-        // A dismissed confirmation must not persist a refusal.
-        let decision = match self
+                drop(commit);
+                // A dismissed confirmation must not persist a refusal.
+                let decision = match self
             .platform
             .confirm_permission(UserConfirmationReview::IdentityDisclosure(
                 IdentityDisclosureReview {
@@ -541,16 +550,29 @@ impl ProductConnection {
             Ok(decision) => decision,
             Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
         };
-        let status = match decision {
-            PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
-            PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
-            PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
-        };
-        service
-            .set_authorization_status(&request, status)
-            .await
-            .map_err(|err| format!("permission storage failed: {err:?}"))?;
-        Ok(status)
+                let Some(_commit) = self.services.permissions.require(&review).await else {
+                    return Ok(PermissionAuthorizationStatus::NotDetermined);
+                };
+                let status = match decision {
+                    PermissionDecision::AllowOnce => {
+                        return Ok(PermissionAuthorizationStatus::Authorized);
+                    }
+                    PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
+                    PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
+                };
+                crate::host_internal::permissions::set_authorization_status(
+                    self.platform.as_ref(),
+                    key,
+                    status,
+                )
+                .await
+                .map_err(|err| format!("permission storage failed: {err:?}"))?;
+                Ok(status)
+            },
+            registration,
+        )
+        .await
+        .unwrap_or(Ok(PermissionAuthorizationStatus::NotDetermined))
     }
 
     /// Chat access policy for this connection; see [`chat_platform_for`].
@@ -885,6 +907,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 
 async fn account_access_authorization(
     platform: &dyn Platform,
+    coordinator: &crate::host_internal::permissions::PermissionCoordinator,
     requesting_product_id: &str,
     target_product_id: &str,
 ) -> Result<PermissionAuthorizationStatus, AccountAccessAuthorizationError> {
@@ -907,29 +930,50 @@ async fn account_access_authorization(
     // still names the id the user saw; only the slot it is filed under is the
     // product's.
     let caller = crate::host_internal::product_manifest::bare_product_label(requesting_product_id);
-    let cached = crate::host_internal::permissions::account_access_status(platform, caller, target)
-        .await
-        .map_err(AccountAccessAuthorizationError::PermissionStorage)?;
-    if cached != PermissionAuthorizationStatus::NotDetermined {
-        return Ok(cached);
-    }
+    let key = crate::platform::CoreStorageKey::account_access_authorization(caller, target);
+    let (review, registration) = coordinator.review(key, None).await;
+    futures::future::Abortable::new(
+        async {
+            let Some(commit) = coordinator.require(&review).await else {
+                return Ok(PermissionAuthorizationStatus::NotDetermined);
+            };
+            let cached =
+                crate::host_internal::permissions::account_access_status(platform, caller, target)
+                    .await
+                    .map_err(AccountAccessAuthorizationError::PermissionStorage)?;
+            if cached != PermissionAuthorizationStatus::NotDetermined {
+                return Ok(cached);
+            }
 
-    let decision = platform
-        .confirm_permission(UserConfirmationReview::AccountAccess(AccountAccessReview {
-            requesting_product_id: requesting_product_id.to_string(),
-            target_product_id: target_product_id.to_string(),
-        }))
-        .await
-        .map_err(AccountAccessAuthorizationError::Confirmation)?;
-    let status = match decision {
-        PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
-        PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
-        PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
-    };
-    crate::host_internal::permissions::set_account_access_status(platform, caller, target, status)
-        .await
-        .map_err(AccountAccessAuthorizationError::PermissionStorage)?;
-    Ok(status)
+            drop(commit);
+            let decision = platform
+                .confirm_permission(UserConfirmationReview::AccountAccess(AccountAccessReview {
+                    requesting_product_id: requesting_product_id.to_string(),
+                    target_product_id: target_product_id.to_string(),
+                }))
+                .await
+                .map_err(AccountAccessAuthorizationError::Confirmation)?;
+            let Some(_commit) = coordinator.require(&review).await else {
+                return Ok(PermissionAuthorizationStatus::NotDetermined);
+            };
+            let status = match decision {
+                PermissionDecision::AllowOnce => {
+                    return Ok(PermissionAuthorizationStatus::Authorized);
+                }
+                PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
+                PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
+            };
+            crate::host_internal::permissions::set_account_access_status(
+                platform, caller, target, status,
+            )
+            .await
+            .map_err(AccountAccessAuthorizationError::PermissionStorage)?;
+            Ok(status)
+        },
+        registration,
+    )
+    .await
+    .unwrap_or(Ok(PermissionAuthorizationStatus::NotDetermined))
 }
 
 #[derive(Debug, thiserror::Error)]

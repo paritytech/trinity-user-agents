@@ -32,6 +32,8 @@ const STATEMENT_CACHE_MAX_ENTRIES: usize = 64;
 pub struct RuntimeServices {
     /// Host platform backing all syscalls.
     pub platform: Arc<dyn Platform>,
+    /// Active permission reviews and execution-local grants.
+    pub permissions: Arc<crate::host_internal::permissions::PermissionCoordinator>,
     /// Host identity reported to products via `System::host_info`.
     pub host_info: HostInfo,
     /// Host chat adapter, when the host serves the Chat capability. `None`
@@ -113,6 +115,7 @@ impl RuntimeServices {
         let bulletin = BulletinRpc::new(chain.clone(), bulletin_chain_genesis_hash);
         Arc::new(Self {
             platform,
+            permissions: Arc::default(),
             host_info,
             chat_platform: None,
             permission_status: OnceLock::new(),

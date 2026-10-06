@@ -1128,6 +1128,7 @@ mod tests {
         cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
         futures::executor::block_on(crate::runtime::account_access_authorization(
             platform.as_ref(),
+            &Default::default(),
             "ordinary.dot",
             "peopl.dot",
         ))

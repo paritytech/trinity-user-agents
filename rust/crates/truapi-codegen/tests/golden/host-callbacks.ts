@@ -1374,6 +1374,7 @@ export interface CoreAdmin {
  * product-indexed variants, which are `PermissionAuthorization`,
  * `ProductSubtree`, and `ProductManifest`. Keying host storage by that value
  * makes the sweep a prefix delete rather than a scan.
+ * A started mutation must settle before later reads, even if its caller is dropped.
  */
 export interface CoreStorage {
   /**

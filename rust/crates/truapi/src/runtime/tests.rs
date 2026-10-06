@@ -3859,6 +3859,54 @@ fn get_user_id_returns_primary_username() {
 }
 
 #[test]
+fn revoked_identity_permission_cannot_be_restored_by_a_pending_confirmation() {
+    futures::executor::block_on(async {
+        for decision in [
+            crate::platform::PermissionDecision::AllowOnce,
+            crate::platform::PermissionDecision::AllowAlways,
+        ] {
+            let (release, gate) = futures::channel::oneshot::channel();
+            let platform = Arc::new(StubPlatform {
+                permission_confirmation_gate: Mutex::new(Some(gate)),
+                permission_confirmation_decisions: Mutex::new([decision].into()),
+                ..Default::default()
+            });
+            let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+            install_pairing_session(&host, session_info());
+            let context = CallContext::default();
+            let mut disclosure = Box::pin(host.get_user_id(&context, HostGetUserIdRequest::V1));
+            assert!(futures::poll!(&mut disclosure).is_pending());
+            host.connection
+                .set_permission_authorization_status(
+                    PermissionAuthorizationRequest::IdentityDisclosure,
+                    PermissionAuthorizationStatus::Denied,
+                )
+                .await
+                .unwrap();
+            let completed = futures::poll!(&mut disclosure);
+            let cancelled_prompt = release.send(()).is_err();
+            let result = match completed {
+                core::task::Poll::Ready(result) => result,
+                core::task::Poll::Pending => disclosure.await,
+            };
+            assert_eq!(
+                (
+                    result.is_err(),
+                    cancelled_prompt,
+                    host.connection
+                        .permission_authorization_status(
+                            PermissionAuthorizationRequest::IdentityDisclosure
+                        )
+                        .await
+                        .unwrap()
+                ),
+                (true, true, PermissionAuthorizationStatus::Denied)
+            );
+        }
+    });
+}
+
+#[test]
 fn get_user_id_caches_identity_disclosure_grant() {
     let platform = Arc::new(StubPlatform {
         identity_disclosure_confirmed: true,

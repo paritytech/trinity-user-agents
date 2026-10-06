@@ -266,6 +266,7 @@ impl WalletAccountHolder {
             match invocation.caller {
                 AccountCaller::Local { .. } => crate::runtime::account_access_authorization(
                     self.services.platform.as_ref(),
+                    &self.services.permissions,
                     requester,
                     owner,
                 )

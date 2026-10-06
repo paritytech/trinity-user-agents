@@ -225,6 +225,22 @@ impl Db {
         self.readers.conn_and_then(f).await
     }
 
+    /// Orders a read behind started writes even when their callers were dropped.
+    pub async fn read_after_writes<T, F>(&self, read: F) -> Result<T, DbError>
+    where
+        F: FnOnce(&rusqlite::Connection) -> Result<T, DbError> + Send + 'static,
+        T: Send + 'static,
+    {
+        self.writer
+            .conn_and_then(move |connection| {
+                connection.pragma_update(None, "query_only", true)?;
+                let result = read(connection);
+                connection.pragma_update(None, "query_only", false)?;
+                result
+            })
+            .await
+    }
+
     /// Reports the SQLite version, schema version and file path.
     pub async fn status(&self) -> Result<DbStatus, DbError> {
         self.read(|conn| {
@@ -372,8 +388,21 @@ mod tests {
             Ok(())
         }));
 
-        assert!(matches!(result, Err(DbError::Sqlite(_))));
+        let ordered = block_on(db.read_after_writes(|conn| {
+            conn.execute("INSERT INTO ledger (note) VALUES ('sneaky')", [])?;
+            Ok(())
+        }));
+        assert!(matches!(
+            (result, ordered),
+            (Err(DbError::Sqlite(_)), Err(DbError::Sqlite(_)))
+        ));
         assert_eq!(notes(&db), Vec::<String>::new());
+        block_on(db.write(|tx| {
+            tx.execute("INSERT INTO ledger (note) VALUES ('allowed')", [])?;
+            Ok(())
+        }))
+        .unwrap();
+        assert_eq!(notes(&db), vec!["allowed".to_string()]);
     }
 
     #[test]

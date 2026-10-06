@@ -105,6 +105,8 @@ pub struct StubPlatform {
     /// Permission answers retain their lifetime separately from action confirmations.
     pub permission_confirmation_decisions:
         Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
+    /// Keep confirmation pending while a settings decision withdraws it.
+    pub permission_confirmation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Inverted so the derived default (`false`) approves, matching the
     /// pre-consent behavior where a cold own-account resolve was not gated.
     pub product_subtree_denied: bool,
@@ -1922,6 +1924,10 @@ impl UserConfirmation for StubPlatform {
         review: UserConfirmationReview,
     ) -> Result<crate::platform::PermissionDecision, v01::GenericError> {
         let confirmed = self.confirm_user_action(review).await?;
+        let gate = self.permission_confirmation_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
         Ok(self
             .permission_confirmation_decisions
             .lock()

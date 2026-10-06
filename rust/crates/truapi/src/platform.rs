@@ -2788,6 +2788,7 @@ mod tests {
 /// product-indexed variants, which are `PermissionAuthorization`,
 /// `ProductSubtree`, and `ProductManifest`. Keying host storage by that value
 /// makes the sweep a prefix delete rather than a scan.
+/// A started mutation must settle before later reads, even if its caller is dropped.
 #[async_trait]
 pub trait CoreStorage: Send + Sync {
     /// Read a core-owned value by typed slot.

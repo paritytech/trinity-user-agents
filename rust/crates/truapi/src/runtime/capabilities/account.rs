@@ -58,6 +58,7 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
         if product_account_id.dot_ns_identifier != product_id {
             match account_access_authorization(
                 self.connection.platform.as_ref(),
+                &self.connection.services.permissions,
                 &product_id,
                 &product_account_id.dot_ns_identifier,
             )

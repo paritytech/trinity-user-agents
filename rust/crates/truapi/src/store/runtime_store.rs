@@ -13,6 +13,8 @@ use crate::platform::{
     CoreStorage, CoreStorageKey, ProductStorage, ProductStorageKey, SecretCoreStorage,
     SecretCoreStorageKey, async_trait,
 };
+#[cfg(test)]
+use crate::platform::{PermissionAuthorizationRequest, PermissionAuthorizationStatus};
 use crate::v01::HostLocalStorageReadError;
 
 const ENVELOPE_VERSION: u8 = 1;
@@ -216,21 +218,24 @@ impl CoreStorage for RuntimeStore {
         &self,
         key: CoreStorageKey,
     ) -> Result<Option<Vec<u8>>, GenericError> {
+        let permission = matches!(key, CoreStorageKey::PermissionAuthorization { .. });
         let key = key.encode();
         let identity = core_identity(&key);
-        let value = self
-            .database
-            .read(move |connection| {
-                Ok(connection
-                    .query_row(
-                        "SELECT value FROM core_state WHERE key = ?1",
-                        params![key],
-                        |row| row.get::<_, Vec<u8>>(0),
-                    )
-                    .optional()?)
-            })
-            .await
-            .map_err(core_error)?;
+        let read = move |connection: &rusqlite::Connection| {
+            Ok(connection
+                .query_row(
+                    "SELECT value FROM core_state WHERE key = ?1",
+                    params![key],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional()?)
+        };
+        let value = if permission {
+            self.database.read_after_writes(read).await
+        } else {
+            self.database.read(read).await
+        }
+        .map_err(core_error)?;
         value
             .map(|value| self.decrypt(&identity, &value))
             .transpose()
@@ -270,6 +275,123 @@ mod tests {
     use crate::store::core_db_config;
     use crate::test_support::{StubPlatform, secret_core_storage_test_key};
     use futures::{FutureExt, StreamExt};
+
+    #[test]
+    fn permission_reads_wait_for_a_started_commit_after_its_caller_is_dropped() {
+        futures::executor::block_on(async {
+            use crate::host_internal::permissions::PermissionsService;
+            use crate::latest::HostDevicePermissionRequest;
+            use crate::platform::{PermissionDecision, ProductContext};
+            for status in [
+                PermissionAuthorizationStatus::Denied,
+                PermissionAuthorizationStatus::NotDetermined,
+                PermissionAuthorizationStatus::Authorized,
+            ] {
+                let directory = tempfile::tempdir().unwrap();
+                let mut config = core_db_config(directory.path());
+                config.readers = 1;
+                let database = Db::open(config).await.unwrap();
+                let store = RuntimeStore::open(database.clone(), &StubPlatform::default())
+                    .await
+                    .unwrap();
+                let request =
+                    PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera);
+                let prompt = StubPlatform::default();
+                if status == PermissionAuthorizationStatus::Authorized {
+                    prompt
+                        .device_permission_decisions
+                        .lock()
+                        .unwrap()
+                        .push_back(PermissionDecision::AllowAlways);
+                }
+                prompt
+                    .device_permission_decisions
+                    .lock()
+                    .unwrap()
+                    .push_back(PermissionDecision::AllowOnce);
+                let product = ProductContext::new("product.dot".to_string()).unwrap();
+                let service = PermissionsService::new(&store, &prompt, &product, Arc::default());
+                if status == PermissionAuthorizationStatus::NotDetermined {
+                    service
+                        .set_authorization_status(&request, PermissionAuthorizationStatus::Denied)
+                        .await
+                        .unwrap();
+                }
+                let (started, entered) = futures::channel::oneshot::channel();
+                let (release, finish) = std::sync::mpsc::channel();
+                database
+                    .read_after_writes(move |connection| {
+                        let mut started = Some(started);
+                        connection.commit_hook(Some(move || {
+                            if let Some(started) = started.take() {
+                                started.send(()).unwrap();
+                                finish.recv().unwrap();
+                            }
+                            false
+                        }))?;
+                        Ok(())
+                    })
+                    .await
+                    .unwrap();
+                let mut write = Box::pin(async {
+                    if status == PermissionAuthorizationStatus::Authorized {
+                        service
+                            .authorize_device(HostDevicePermissionRequest::Camera)
+                            .await
+                            .map(|_| ())
+                    } else {
+                        service.set_authorization_status(&request, status).await
+                    }
+                });
+                assert!(matches!(
+                    futures::future::select(entered, &mut write).await,
+                    futures::future::Either::Left((Ok(()), _))
+                ));
+                drop(write);
+                let mut authorization =
+                    Box::pin(service.authorize_device(HostDevicePermissionRequest::Camera));
+                let initial = futures::poll!(&mut authorization);
+                database
+                    .read(|connection| {
+                        Ok(
+                            connection.query_row("SELECT COUNT(*) FROM core_state", [], |row| {
+                                row.get::<_, i64>(0)
+                            })?,
+                        )
+                    })
+                    .await
+                    .unwrap();
+                let before_commit = match initial {
+                    core::task::Poll::Pending => futures::poll!(&mut authorization),
+                    ready => ready,
+                };
+                let still_waiting = before_commit.is_pending();
+                release.send(()).unwrap();
+                let outcome = match before_commit {
+                    core::task::Poll::Ready(result) => result,
+                    core::task::Poll::Pending => authorization.await,
+                }
+                .unwrap();
+                let expected = if status == PermissionAuthorizationStatus::Denied {
+                    PermissionAuthorizationStatus::Denied
+                } else {
+                    PermissionAuthorizationStatus::Authorized
+                };
+                assert_eq!(
+                    (
+                        still_waiting,
+                        outcome,
+                        prompt.device_permission_requests.lock().unwrap().len()
+                    ),
+                    (
+                        true,
+                        expected,
+                        usize::from(status != PermissionAuthorizationStatus::Denied)
+                    )
+                );
+            }
+        });
+    }
 
     #[test]
     fn encrypted_records_reopen_and_reject_other_rows_or_damaged_envelopes() {

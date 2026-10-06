@@ -174,6 +174,87 @@ fn remote_vrf_cannot_reuse_a_native_auto_signing_grant() {
 }
 
 #[test]
+fn a_native_account_access_revocation_withdraws_the_wallet_confirmation() {
+    futures::executor::block_on(async {
+        for decision in [
+            crate::platform::PermissionDecision::AllowOnce,
+            crate::platform::PermissionDecision::AllowAlways,
+        ] {
+            let (release, gate) = futures::channel::oneshot::channel();
+            let platform = Arc::new(StubPlatform {
+                account_access_confirmed: true,
+                permission_confirmation_gate: std::sync::Mutex::new(Some(gate)),
+                permission_confirmation_decisions: std::sync::Mutex::new([decision].into()),
+                ..Default::default()
+            });
+            let (services, authority) = signing_runtime_with_platform(platform.clone());
+            authority
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let session = authority.account_holder().current_session().unwrap();
+            let product = ProductContext::new("app.myapp.dot".to_string()).unwrap();
+            let context = CallContext::default();
+            let mut request = Box::pin(authority.account_holder().list_ring_vrf_keys(
+                AccountInvocation {
+                    call: &context,
+                    session: &session,
+                    caller: AccountCaller::Local {
+                        product: &product,
+                        authorization: None,
+                        outbound_review: None,
+                    },
+                },
+                HostAccountListRingVrfKeysRequest {
+                    owner: "foreign.dot".to_string(),
+                    disclosure: RingVrfKeyDisclosure::PublicKey,
+                },
+            ));
+            assert!(futures::poll!(&mut request).is_pending());
+            let admin = crate::host_internal::permissions::PermissionsService::new(
+                platform.as_ref(),
+                platform.as_ref(),
+                &product,
+                services.permissions.clone(),
+            );
+            admin
+                .set_authorization_status(
+                    &crate::platform::PermissionAuthorizationRequest::AccountAccess {
+                        target_product_id: "foreign.dot".to_string(),
+                    },
+                    PermissionAuthorizationStatus::Denied,
+                )
+                .await
+                .unwrap();
+            let completed = futures::poll!(&mut request);
+            let cancelled_prompt = release.send(()).is_err();
+            let result = match completed {
+                core::task::Poll::Ready(result) => result,
+                core::task::Poll::Pending => request.await,
+            };
+            assert_eq!(
+                (
+                    result,
+                    cancelled_prompt,
+                    crate::host_internal::permissions::account_access_status(
+                        platform.as_ref(),
+                        "myapp",
+                        "foreign"
+                    )
+                    .await
+                    .unwrap()
+                ),
+                (
+                    Err(RingVrfError::Rejected),
+                    true,
+                    PermissionAuthorizationStatus::Denied
+                )
+            );
+        }
+    });
+}
+
+#[test]
 fn remote_account_access_neither_reuses_nor_changes_native_permissions() {
     for operation in ["alias", "list"] {
         for (stored, confirmed, storage_error) in [
