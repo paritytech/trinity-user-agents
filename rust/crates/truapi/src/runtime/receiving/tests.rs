@@ -120,6 +120,52 @@ fn display_reservation_and_activation_are_distinct_and_replay_safe() {
 }
 
 #[test]
+fn unchanged_watch_republication_preserves_cold_activation() {
+    block_on(async {
+        let (platform, service) = setup();
+        let watch = watch();
+        let revision = service.replace(PRODUCT, 0, vec![watch.clone()]).await.unwrap().revision;
+        let event = deliver(&service, revision, 3).await.unwrap().remove(0);
+        service.prepare_display(PRODUCT, revision, event.event_id.clone()).await.unwrap().unwrap();
+        service.confirm_display(PRODUCT, revision, event.event_id.clone()).await.unwrap();
+        assert!(service.synchronized(PRODUCT, revision).await.unwrap());
+        drop(service);
+        let restored = ReceivingService::new(platform, test_spawner());
+        let status = restored.replace(PRODUCT, revision, vec![watch.clone()]).await.unwrap();
+        assert_eq!(status.revision, revision);
+        assert!(!status.sync_pending);
+        assert_eq!(restored.events(PRODUCT, 0).await.unwrap(), vec![event.clone()]);
+        let preview = restored.validate_activation(PRODUCT, revision, event.event_id.clone()).await.unwrap().unwrap();
+        assert_eq!(preview.route, watch.route);
+        let activation = restored.activate(PRODUCT, revision, event.event_id.clone()).await.unwrap().unwrap();
+        restored.replace(PRODUCT, revision, vec![watch]).await.unwrap();
+        assert!(restored.events(PRODUCT, 0).await.unwrap().contains(&activation));
+        assert!(restored.prepare_display(PRODUCT, revision, event.event_id.clone()).await.unwrap().is_none());
+        assert!(restored.activate(PRODUCT, revision, event.event_id).await.unwrap().is_none());
+        assert!(deliver(&restored, revision, 3).await.unwrap().is_empty());
+    });
+}
+
+#[test]
+fn changed_route_still_fences_pending_click_and_stale_replacement() {
+    block_on(async {
+        let (_, service) = setup();
+        let mut watch = watch();
+        let revision = service.replace(PRODUCT, 0, vec![watch.clone()]).await.unwrap().revision;
+        let event = deliver(&service, revision, 3).await.unwrap().remove(0);
+        service.prepare_display(PRODUCT, revision, event.event_id.clone()).await.unwrap().unwrap();
+        service.confirm_display(PRODUCT, revision, event.event_id.clone()).await.unwrap();
+        watch.route = "/another-conversation".into();
+        let changed = service.replace(PRODUCT, revision, vec![watch.clone()]).await.unwrap();
+        assert_ne!(changed.revision, revision);
+        assert!(matches!(service.validate_activation(PRODUCT, revision, event.event_id.clone()).await, Err(Error::Conflict)));
+        assert!(matches!(service.activate(PRODUCT, revision, event.event_id).await, Err(Error::Conflict)));
+        assert!(matches!(service.replace(PRODUCT, revision, vec![watch]).await, Err(Error::Conflict)));
+        assert!(service.events(PRODUCT, 0).await.unwrap().is_empty());
+    });
+}
+
+#[test]
 fn message_receipts_do_not_acknowledge_a_queued_user_activation() {
     block_on(async {
         for kind in [ReceivingReceiptKind::Foreground, ReceivingReceiptKind::Displayed, ReceivingReceiptKind::Read] {

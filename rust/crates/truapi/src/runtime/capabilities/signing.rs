@@ -42,10 +42,14 @@ impl Signing for ProductRuntimeHost {
                 v01::HostSignPayloadError::PermissionDenied,
             ))
         })?;
-        self.require_chain_submit(HostSignPayloadError::V1(
-            v01::HostSignPayloadError::PermissionDenied,
-        ))
-        .await?;
+        until_cancelled(
+            cx,
+            self.require_chain_submit(HostSignPayloadError::V1(
+                v01::HostSignPayloadError::PermissionDenied,
+            )),
+        )
+        .await
+        .map_err(|reason| signing_call_error(HostSignPayloadError::V1, reason))??;
         let Some(session) = self.authority.current_session() else {
             return Err(CallError::Domain(HostSignPayloadError::V1(
                 v01::HostSignPayloadError::Rejected,
@@ -134,10 +138,14 @@ impl Signing for ProductRuntimeHost {
                 v01::HostCreateTransactionError::PermissionDenied,
             ))
         })?;
-        self.require_chain_submit(HostCreateTransactionError::V1(
-            v01::HostCreateTransactionError::PermissionDenied,
-        ))
-        .await?;
+        until_cancelled(
+            cx,
+            self.require_chain_submit(HostCreateTransactionError::V1(
+                v01::HostCreateTransactionError::PermissionDenied,
+            )),
+        )
+        .await
+        .map_err(|reason| transaction_call_error(HostCreateTransactionError::V1, reason))??;
         let Some(session) = self.authority.current_session() else {
             return Err(CallError::Domain(HostCreateTransactionError::V1(
                 v01::HostCreateTransactionError::Rejected,
@@ -249,10 +257,16 @@ impl Signing for ProductRuntimeHost {
                 }),
             ));
         }
-        self.require_chain_submit(HostSignPayloadWithLegacyAccountError::V1(
-            v01::HostSignPayloadError::PermissionDenied,
-        ))
-        .await?;
+        until_cancelled(
+            cx,
+            self.require_chain_submit(HostSignPayloadWithLegacyAccountError::V1(
+                v01::HostSignPayloadError::PermissionDenied,
+            )),
+        )
+        .await
+        .map_err(|reason| {
+            signing_call_error(HostSignPayloadWithLegacyAccountError::V1, reason)
+        })??;
         let confirmed = until_cancelled(
             cx,
             self.platform
@@ -343,10 +357,16 @@ impl Signing for ProductRuntimeHost {
                     },
                 ))
             })?;
-        self.require_chain_submit(HostCreateTransactionWithLegacyAccountError::V1(
-            v01::HostCreateTransactionError::PermissionDenied,
-        ))
-        .await?;
+        until_cancelled(
+            cx,
+            self.require_chain_submit(HostCreateTransactionWithLegacyAccountError::V1(
+                v01::HostCreateTransactionError::PermissionDenied,
+            )),
+        )
+        .await
+        .map_err(|reason| {
+            transaction_call_error(HostCreateTransactionWithLegacyAccountError::V1, reason)
+        })??;
         let confirmed = until_cancelled(
             cx,
             self.platform
@@ -431,10 +451,14 @@ impl ProductRuntimeHost {
                 v01::HostSignPayloadError::PermissionDenied,
             ))
         })?;
-        self.require_chain_submit(HostSignRawError::V1(
-            v01::HostSignPayloadError::PermissionDenied,
-        ))
-        .await?;
+        until_cancelled(
+            cx,
+            self.require_chain_submit(HostSignRawError::V1(
+                v01::HostSignPayloadError::PermissionDenied,
+            )),
+        )
+        .await
+        .map_err(|reason| signing_call_error(HostSignRawError::V1, reason))??;
         let Some(session) = self.authority.current_session() else {
             return Err(CallError::Domain(HostSignRawError::V1(
                 v01::HostSignPayloadError::Rejected,
@@ -517,10 +541,14 @@ impl ProductRuntimeHost {
                     err.into_host_error(LEGACY_ACCOUNT_UNAVAILABLE_REASON),
                 ))
             })?;
-        self.require_chain_submit(HostSignRawWithLegacyAccountError::V1(
-            v01::HostSignPayloadError::PermissionDenied,
-        ))
-        .await?;
+        until_cancelled(
+            cx,
+            self.require_chain_submit(HostSignRawWithLegacyAccountError::V1(
+                v01::HostSignPayloadError::PermissionDenied,
+            )),
+        )
+        .await
+        .map_err(|reason| signing_call_error(HostSignRawWithLegacyAccountError::V1, reason))??;
         let confirmed = until_cancelled(
             cx,
             self.platform

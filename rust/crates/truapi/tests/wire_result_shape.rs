@@ -101,7 +101,11 @@ fn notification_activation_requests_cannot_select_foreign_scope() {
         };
         assert_eq!(unsupported.payload.message_type, MESSAGE_TYPE_RESPONSE);
         assert_eq!(unsupported.payload.value, expected);
-        for foreign_scope in ["another-product.paseo", "another-account", "another-environment"] {
+        for foreign_scope in [
+            "another-product.paseo",
+            "another-account",
+            "another-environment",
+        ] {
             let mut value = request.clone();
             value.extend(foreign_scope.encode());
             let response = dispatch(

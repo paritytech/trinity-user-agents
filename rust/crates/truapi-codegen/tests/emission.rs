@@ -24,7 +24,6 @@ fn nightly_toolchain() -> String {
     })
 }
 
-
 /// Path to the rustdoc JSON of `truapi`'s protocol definitions alone, the
 /// input codegen reads the API from, building it on first use.
 fn produce_rustdoc_json(workspace_root: &Path) -> PathBuf {
@@ -123,7 +122,6 @@ fn workspace_tempdir(workspace: &Path) -> tempfile::TempDir {
         .expect("workspace tempdir")
 }
 
-
 /// Idempotence guard at the integration level: running the binary twice
 /// against the same input must produce identical output. This catches
 /// non-determinism (HashMap iteration order, timestamps, etc.) that the
@@ -206,4 +204,3 @@ fn read_tree(root: &Path) -> BTreeMap<PathBuf, String> {
     }
     files
 }
-
