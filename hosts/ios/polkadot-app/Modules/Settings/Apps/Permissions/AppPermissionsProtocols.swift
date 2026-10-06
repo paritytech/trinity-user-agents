@@ -3,6 +3,7 @@ import PolkadotUI
 import Products
 import UIKitExt
 
+@MainActor
 protocol AppPermissionsViewProtocol: ControllerBackedProtocol {
     func didReceive(items: [AppPermissionsViewLayout.Item])
     func setTitle(_ title: String)
@@ -17,12 +18,13 @@ protocol AppPermissionsPresenterProtocol: AnyObject {
 
 protocol AppPermissionsInteractorInputProtocol: AnyObject {
     func setup()
-    func revokeOnDisappear(permissions: [ProductPermission])
+    func revokeOnDisappear(records: [AppPermissionRecord])
 }
 
 @MainActor
 protocol AppPermissionsInteractorOutputProtocol: AnyObject {
-    func didReceive(grants: [ProductPermissionGrant])
+    func didReceive(error: Error)
+    func didReceive(grants: [AppPermissionRecord])
 }
 
 @MainActor

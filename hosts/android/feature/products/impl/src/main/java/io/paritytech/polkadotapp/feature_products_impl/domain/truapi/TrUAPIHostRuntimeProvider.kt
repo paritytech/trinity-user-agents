@@ -109,7 +109,8 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         }
     }
 
-    private suspend fun constructedRuntime(): Result<TrUAPIHostRuntime> {
+    /** Joins shared storage construction without selecting or unlocking a wallet. */
+    suspend fun constructedRuntime(): Result<TrUAPIHostRuntime> {
         val pending = bootMutex.withLock {
             construction ?: scope.async { build() }.also { construction = it }
         }

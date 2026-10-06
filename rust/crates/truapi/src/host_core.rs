@@ -882,6 +882,16 @@ impl SigningHostRuntime {
             .map_err(ring_vrf_admin_error)
     }
 
+    /// Shared ordering for active permission reviews and native settings.
+    pub fn permissions(&self) -> &Arc<crate::host_internal::permissions::PermissionCoordinator> {
+        &self.services.permissions
+    }
+
+    /// Configured product network, available independently of wallet activation.
+    pub fn network_suffix(&self) -> &str {
+        self.signing_host.account_holder().network_suffix()
+    }
+
     /// Invalidate active wallet work without deleting its durable records.
     pub fn lock_wallet(&self) {
         self.signing_host.lock_wallet();

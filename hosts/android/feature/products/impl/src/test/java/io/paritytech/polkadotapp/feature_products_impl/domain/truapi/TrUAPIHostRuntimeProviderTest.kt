@@ -25,10 +25,14 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -36,6 +40,9 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import uniffi.truapi.AuthState
+import uniffi.truapi.PermissionAuthorizationRequest
+import uniffi.truapi.PermissionAuthorizationStatus
+import uniffi.truapi.PermissionRecord
 import uniffi.truapi.SecretCoreStorageKey
 import java.util.concurrent.ConcurrentHashMap
 
@@ -57,6 +64,34 @@ class TrUAPIHostRuntimeProviderTest {
         coEvery { read(any()) } answers { protectedValues[firstArg()] }
         coEvery { write(any(), any()) } answers { protectedValues[firstArg()] = secondArg() }
         coEvery { clear(any()) } answers { protectedValues.remove(firstArg()); Unit }
+    }
+
+    @Test
+    fun `saved settings share the constructed runtime while wallet activation is unavailable`() = runTest {
+        coEvery { secrets.getMetaAccountPassphrase(1) } returns null
+        val provider = provider(StandardTestDispatcher(testScheduler))
+        provider.constructedRuntime().getOrThrow().use { runtime ->
+            assertTrue(runCatching { runtime.statementRenewalOwnerKey() }.isFailure)
+            val observedInitial = CompletableDeferred<Unit>()
+            val snapshots = async {
+                runtime.observePermissionRecords("calendar.dot")
+                    .onEach { observedInitial.complete(Unit) }
+                    .take(2)
+                    .toList()
+            }
+            observedInitial.await()
+            val request = PermissionAuthorizationRequest.IdentityDisclosure
+            runtime.setPermissionRecord("calendar.dot", request, PermissionAuthorizationStatus.DENIED)
+            assertEquals(
+                listOf(emptyList(), listOf(PermissionRecord("calendar.dot", request, PermissionAuthorizationStatus.DENIED))),
+                snapshots.await()
+            )
+            coVerify(exactly = 0) { secrets.getMetaAccountPassphrase(any()) }
+
+            assertTrue(provider.runtime().isFailure)
+            assertSame(runtime, provider.constructedRuntime().getOrThrow())
+            coVerify(exactly = 1) { secretStorage.write(SecretCoreStorageKey.StorageEncryptionKey, any()) }
+        }
     }
 
     @Test

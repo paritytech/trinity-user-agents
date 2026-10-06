@@ -2,6 +2,7 @@ import Foundation
 import PolkadotUI
 import Products
 
+@MainActor
 final class AppPermissionsPresenter {
     weak var view: AppPermissionsViewProtocol?
 
@@ -11,8 +12,7 @@ final class AppPermissionsPresenter {
 
     private let productName: String
 
-    private var grantsByItemId: [String: ProductPermissionGrant] = [:]
-    private var grants: [ProductPermissionGrant] = []
+    private var grants: [(id: String, record: AppPermissionRecord)] = []
     private var pendingDeletionIds: Set<String> = []
 
     init(
@@ -37,7 +37,7 @@ extension AppPermissionsPresenter: AppPermissionsPresenterProtocol {
     }
 
     func toggle(_ item: AppPermissionsViewLayout.Item, isOn: Bool) {
-        guard grantsByItemId[item.id] != nil else {
+        guard grants.contains(where: { $0.id == item.id }) else {
             return
         }
 
@@ -51,21 +51,29 @@ extension AppPermissionsPresenter: AppPermissionsPresenterProtocol {
     }
 
     func viewWillDisappear() {
-        let permissionsToRevoke = pendingDeletionIds.compactMap { grantsByItemId[$0]?.permission }
+        let records = grants.filter { pendingDeletionIds.contains($0.id) }.map(\.record)
         pendingDeletionIds.removeAll()
 
-        interactor.revokeOnDisappear(permissions: permissionsToRevoke)
+        interactor.revokeOnDisappear(records: records)
     }
 }
 
 extension AppPermissionsPresenter: AppPermissionsInteractorOutputProtocol {
-    func didReceive(grants: [ProductPermissionGrant]) {
-        self.grants = grants
-        grantsByItemId = Dictionary(
-            uniqueKeysWithValues: grants.map { ($0.identifier, $0) }
+    func didReceive(error: Error) {
+        wireframe.present(
+            message: String(describing: error),
+            title: String(localized: .Common.error),
+            closeAction: String(localized: .Common.close),
+            from: view
         )
+    }
 
-        let validIds = Set(grantsByItemId.keys)
+    func didReceive(grants: [AppPermissionRecord]) {
+        self.grants = grants.map { record in
+            (self.grants.first { $0.record.hasSameIdentity(as: record) }?.id ?? UUID().uuidString, record)
+        }
+
+        let validIds = Set(self.grants.map(\.id))
         pendingDeletionIds = pendingDeletionIds.intersection(validIds)
 
         refreshItems()

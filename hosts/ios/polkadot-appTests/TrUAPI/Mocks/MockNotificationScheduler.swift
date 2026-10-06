@@ -8,6 +8,7 @@ final class MockNotificationScheduler: ProductNotificationScheduling, @unchecked
     var notificationIdToReturn: UInt32 = 42
     var cancelledNotificationId: UInt32?
     var onCancel: ((UInt32) -> Void)?
+    var onCancelAll: ((ProductId) -> Void)?
 
     func schedule(productId: ProductId, request: ScheduledNotificationRequest) async throws -> UInt32 {
         scheduledProductId = productId
@@ -20,5 +21,7 @@ final class MockNotificationScheduler: ProductNotificationScheduling, @unchecked
         onCancel?(notificationId)
     }
 
-    func cancelAll(forProductId _: ProductId) async throws {}
+    func cancelAll(forProductId productId: ProductId) async throws {
+        onCancelAll?(productId)
+    }
 }

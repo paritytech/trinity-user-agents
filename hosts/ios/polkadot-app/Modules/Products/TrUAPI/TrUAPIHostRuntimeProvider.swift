@@ -21,6 +21,9 @@ enum TrUAPIRuntimeConfigError: Error {
 protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     var secretStorage: HostSecretStorageBackend { get }
 
+    /// Join process construction without unlocking a wallet.
+    func constructedRuntime() async throws -> TrUAPIHostRuntime
+
     /// Join the selected wallet activation without owning its cancellation.
     func sharedRuntime() async throws -> TrUAPIHostRuntime
     func lockWallet()
@@ -118,10 +121,9 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         }
     }
 
-    func sharedRuntime() async throws -> TrUAPIHostRuntime {
+    func constructedRuntime() async throws -> TrUAPIHostRuntime {
         let construction = try lock.withLock {
             try Task.checkCancellation()
-            guard !isLocked else { throw TrUAPIRuntimeConfigError.walletLocked }
             if let construction { return construction }
             let pending = try Construction.pending(makeRuntimeTask())
             self.construction = pending
@@ -132,6 +134,16 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             case let .pending(task): try await task.value
             case let .ready(ready): ready
             }
+        try Task.checkCancellation()
+        return runtime
+    }
+
+    func sharedRuntime() async throws -> TrUAPIHostRuntime {
+        try lock.withLock {
+            try Task.checkCancellation()
+            guard !isLocked else { throw TrUAPIRuntimeConfigError.walletLocked }
+        }
+        let runtime = try await constructedRuntime()
         let pending = try lock.withLock { () throws -> Task<Void, Error> in
             try Task.checkCancellation()
             guard !isLocked else { throw TrUAPIRuntimeConfigError.walletLocked }

@@ -1,10 +1,11 @@
 import Foundation
 import PolkadotUI
 import Products
+import TrUAPIHost
 
 protocol AppPermissionsViewModelMaking {
     func createItems(
-        from grants: [ProductPermissionGrant],
+        from grants: [(id: String, record: AppPermissionRecord)],
         pendingDeletionIds: Set<String>
     ) -> [AppPermissionsViewLayout.Item]
 }
@@ -15,14 +16,14 @@ final class AppPermissionsViewModelFactory {
 
 extension AppPermissionsViewModelFactory: AppPermissionsViewModelMaking {
     func createItems(
-        from grants: [ProductPermissionGrant],
+        from grants: [(id: String, record: AppPermissionRecord)],
         pendingDeletionIds: Set<String>
     ) -> [AppPermissionsViewLayout.Item] {
         grants.map { grant in
-            let display = displayInfo(for: grant.permission)
-            let isOn = !pendingDeletionIds.contains(grant.identifier)
+            let display = displayInfo(for: grant.record)
+            let isOn = !pendingDeletionIds.contains(grant.id)
             return AppPermissionsViewLayout.Item(
-                id: grant.identifier,
+                id: grant.id,
                 title: display.title,
                 description: display.description,
                 isOn: isOn
@@ -33,6 +34,30 @@ extension AppPermissionsViewModelFactory: AppPermissionsViewModelMaking {
 
 private extension AppPermissionsViewModelFactory {
     typealias DisplayInfo = (title: String, description: String)
+
+    func displayInfo(for record: AppPermissionRecord) -> DisplayInfo {
+        switch record {
+        case let .legacy(grant): displayInfo(for: grant.permission)
+        case let .rust(record): displayInfo(for: record.request)
+        }
+    }
+
+    func displayInfo(for request: PermissionAuthorizationRequest) -> DisplayInfo {
+        switch request {
+        case let .device(capability): displayInfo(for: .deviceCapability(capability.deviceCapabilityType))
+        case .identityDisclosure: displayInfo(for: .userIdentityAccess)
+        case let .accountAccess(targetProductId): displayInfo(for: ProductPermission
+                .accountAccess(targetProductId: targetProductId))
+        case let .remote(request):
+            switch request.permission {
+            case let .remote(domains): displayInfo(for: .networkAccess(domain: domains.joined(separator: ", ")))
+            case .webRtc: displayInfo(for: .webRtcAccess)
+            case .chainSubmit: displayInfo(for: .chainSubmitAccess)
+            case .preimageSubmit: displayInfo(for: .preimageSubmitAccess)
+            case .statementSubmit: displayInfo(for: .statementSubmitAccess)
+            }
+        }
+    }
 
     func displayInfo(for permission: ProductPermission) -> DisplayInfo {
         switch permission {

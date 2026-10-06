@@ -9,6 +9,9 @@ use crate::platform::{
 use parity_scale_codec::Encode;
 use truapi::{Bytes32, v01};
 
+use super::permissions::{
+    NativePermissionObserver, NativePermissionSubscription, observe_permissions,
+};
 use super::reject_undecodable_deeplink;
 use super::renderer::observe_renderer;
 use super::renderer::{NativeRendererObserver, NativeRendererSubscription};
@@ -251,6 +254,41 @@ pub struct NativeAnnouncedPairing {
 
 #[uniffi::export]
 impl NativeTrUApiHostRuntime {
+    /// Observe saved answers without requiring an active wallet.
+    pub fn observe_permission_records(
+        &self,
+        product_id: Option<String>,
+        observer: Box<dyn NativePermissionObserver>,
+    ) -> Arc<NativePermissionSubscription> {
+        observe_permissions(
+            self.storage
+                .permission_records(product_id, self.runtime.network_suffix().to_string()),
+            observer.into(),
+            self.spawner.clone(),
+        )
+    }
+
+    /// Edit the saved record and withdraw affected active authorization work.
+    pub async fn set_permission_record(
+        &self,
+        product_id: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), HostRejection> {
+        let product_id =
+            crate::platform::normalize_product_identifier(&product_id).map_err(|error| {
+                HostRejection::Rejected {
+                    reason: error.to_string(),
+                }
+            })?;
+        let key = crate::host_internal::permissions::permission_key(&product_id, &request);
+        let _commit = self.runtime.permissions().change(&key).await;
+        self.storage
+            .set_permission_record(&product_id, &request, status)
+            .await?;
+        Ok(())
+    }
+
     /// Construct a locked host runtime without reading wallet secrets.
     #[uniffi::constructor]
     pub async fn with_runtime_config(
@@ -1331,6 +1369,78 @@ mod tests {
                     3,
                     PermissionAuthorizationStatus::NotDetermined,
                 )
+            );
+        });
+    }
+
+    #[test]
+    fn settings_revocation_reaches_every_execution_without_touching_other_products() {
+        use truapi::api::Permissions;
+        let callbacks = Arc::new(EventCallbacks {
+            remote_permission_result: Ok(PermissionDecision::AllowOnce),
+            ..EventCallbacks::new()
+        });
+        let host = native_host_runtime(callbacks.clone(), native_host_runtime_config()).unwrap();
+        let executions: Vec<_> = ["fetch.dot", "fetch.dot", "other.dot"]
+            .into_iter()
+            .map(|product| {
+                host.open_product_execution(
+                    callbacks.clone(),
+                    None,
+                    None,
+                    native_execution_config(product, ProductExecutionKind::App),
+                )
+                .unwrap()
+            })
+            .collect();
+        futures::executor::block_on(async {
+            let request = truapi::latest::RemotePermissionRequest {
+                permission: truapi::latest::RemotePermission::Remote {
+                    domains: vec!["api.example.com".to_string()],
+                },
+            };
+            for execution in &executions {
+                execution
+                    .admin()
+                    .product_runtime()
+                    .request_remote_permission(
+                        &truapi::CallContext::default(),
+                        truapi::versioned::permissions::RemotePermissionRequest::V1(
+                            request.clone(),
+                        ),
+                    )
+                    .await
+                    .unwrap();
+            }
+            host.set_permission_record(
+                "fetch.dot".to_string(),
+                PermissionAuthorizationRequest::Remote(truapi::latest::RemotePermissionRequest {
+                    permission: truapi::latest::RemotePermission::Remote {
+                        domains: vec!["*".to_string()],
+                    },
+                }),
+                PermissionAuthorizationStatus::Denied,
+            )
+            .await
+            .unwrap();
+            let mut statuses = Vec::new();
+            for execution in &executions {
+                statuses.push(
+                    execution
+                        .permission_authorization_status(PermissionAuthorizationRequest::Remote(
+                            request.clone(),
+                        ))
+                        .await
+                        .unwrap(),
+                );
+            }
+            assert_eq!(
+                statuses,
+                vec![
+                    PermissionAuthorizationStatus::Denied,
+                    PermissionAuthorizationStatus::Denied,
+                    PermissionAuthorizationStatus::Authorized
+                ]
             );
         });
     }

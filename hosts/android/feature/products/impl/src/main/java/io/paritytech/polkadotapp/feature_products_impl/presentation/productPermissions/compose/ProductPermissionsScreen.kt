@@ -11,8 +11,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
+import io.paritytech.polkadotapp.common.presentation.loading.onError
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.loading.onLoading
+import io.paritytech.polkadotapp.design.components.error.DefaultErrorState
 import io.paritytech.polkadotapp.design.components.progress.LoadingScreenState
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
@@ -23,6 +25,7 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
+import io.paritytech.polkadotapp.feature_products_impl.domain.productPermissions.SavedProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productPermissions.ProductPermissionsViewModel
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productPermissions.compose.components.ProductPermissionItem
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productPermissions.models.ProductPermissionsUiModel
@@ -43,7 +46,7 @@ fun ProductPermissionsScreen(viewModel: ProductPermissionsViewModel) {
 private fun ProductPermissionsScreenInternal(
     state: LoadingState<ProductPermissionsUiModel>,
     onBack: () -> Unit,
-    onPermissionToggle: (ProductPermissionStatus) -> Unit
+    onPermissionToggle: (SavedProductPermission) -> Unit
 ) {
     PolkadotSurface {
         Column(
@@ -72,6 +75,14 @@ private fun ProductPermissionsScreenInternal(
                 .onLoading {
                     LoadingScreenState()
                 }
+                .onError {
+                    PolkadotTopBar(
+                        title = stringResource(RCommon.string.product_settings_permissions),
+                        navigationAction = rememberTopBarAction(action = onBack),
+                        titleAlignment = TopBarTitleAlignment.Center,
+                    )
+                    DefaultErrorState(stringResource(RCommon.string.generic_error_notification))
+                }
         }
     }
 }
@@ -85,9 +96,9 @@ private fun ProductPermissionsScreenPreview() {
                 ProductPermissionsUiModel(
                     productName = "Web3 Summit",
                     permissions = listOf(
-                        ProductPermissionStatus(ProductPermission.DeviceCapability(DeviceCapabilityType.Camera), granted = true),
-                        ProductPermissionStatus(ProductPermission.DeviceCapability(DeviceCapabilityType.Location), granted = true),
-                        ProductPermissionStatus(ProductPermission.RemotePermission.NetworkAccess("api.example.com"), granted = false)
+                        SavedProductPermission.Legacy(ProductPermissionStatus(ProductPermission.DeviceCapability(DeviceCapabilityType.Camera), granted = true)),
+                        SavedProductPermission.Legacy(ProductPermissionStatus(ProductPermission.DeviceCapability(DeviceCapabilityType.Location), granted = true)),
+                        SavedProductPermission.Legacy(ProductPermissionStatus(ProductPermission.RemotePermission.NetworkAccess("api.example.com"), granted = false))
                     )
                 )
             ),

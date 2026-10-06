@@ -32,6 +32,15 @@ extension AppsListPresenter: AppsListPresenterProtocol {
 }
 
 extension AppsListPresenter: AppsListInteractorOutputProtocol {
+    func didReceive(error: Error) {
+        wireframe.present(
+            message: String(describing: error),
+            title: String(localized: .Common.error),
+            closeAction: String(localized: .Common.close),
+            from: view
+        )
+    }
+
     func didReceive(products: [ResolvedProduct]) {
         view?.didReceive(items: viewModelFactory.createItems(from: products))
     }

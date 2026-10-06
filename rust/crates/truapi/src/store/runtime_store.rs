@@ -3,17 +3,17 @@ use std::sync::Arc;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use futures::stream::{self, BoxStream, StreamExt};
-use parity_scale_codec::Encode;
+use parity_scale_codec::{Decode, Encode};
 use rusqlite::{OptionalExtension, params};
 use zeroize::Zeroizing;
 
 use super::{Db, DbError};
+use crate::host_internal::permissions::{PermissionRecord, saved_permission_updates};
 use crate::latest::{GenericError, HostLocalStorageChangeItem};
 use crate::platform::{
     CoreStorage, CoreStorageKey, ProductStorage, ProductStorageKey, SecretCoreStorage,
     SecretCoreStorageKey, async_trait,
 };
-#[cfg(test)]
 use crate::platform::{PermissionAuthorizationRequest, PermissionAuthorizationStatus};
 use crate::v01::HostLocalStorageReadError;
 
@@ -70,6 +70,110 @@ impl RuntimeStore {
             database,
             encryption_key: Arc::new(encryption_key),
         })
+    }
+
+    /// Saved permission records observed from the same committed core state.
+    pub fn permission_records(
+        &self,
+        product_id: Option<String>,
+        network_suffix: String,
+    ) -> BoxStream<'static, Result<Vec<PermissionRecord>, GenericError>> {
+        let product_id = match product_id
+            .map(|product| crate::platform::normalize_product_identifier(&product))
+            .transpose()
+        {
+            Ok(product) => product,
+            Err(error) => {
+                return stream::once(async move {
+                    Err(GenericError {
+                        reason: error.to_string(),
+                    })
+                })
+                .boxed();
+            }
+        };
+        let store = self.clone();
+        self.database
+            .observe(
+                "SELECT key, value FROM core_state ORDER BY key",
+                move |statement| {
+                    let rows = statement.query_map([], |row| {
+                        Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?))
+                    })?;
+                    let mut records = Vec::new();
+                    for row in rows {
+                        let (encoded, value) = row;
+                        let mut input = encoded.as_slice();
+                        let key = CoreStorageKey::decode(&mut input)
+                            .map_err(|error| DbError::Protection(error.to_string()))?;
+                        if !input.is_empty() {
+                            return Err(DbError::Protection(
+                                "core key contains trailing bytes".to_string(),
+                            ));
+                        }
+                        let CoreStorageKey::PermissionAuthorization {
+                            product_id: owner,
+                            request,
+                        } = &key
+                        else {
+                            continue;
+                        };
+                        if let Some(product) = &product_id {
+                            let filter = if matches!(
+                                request,
+                                PermissionAuthorizationRequest::AccountAccess { .. }
+                            ) {
+                                crate::host_internal::product_manifest::bare_product_label(product)
+                            } else {
+                                product.as_str()
+                            };
+                            if owner != filter {
+                                continue;
+                            }
+                        }
+                        let value = store.decrypt(&core_identity(&encoded), &value)?;
+                        if let Some(record) =
+                            PermissionRecord::decode(&key, &value, &network_suffix)
+                                .map_err(|error| DbError::Protection(error.reason))?
+                        {
+                            records.push(record);
+                        }
+                    }
+                    Ok(records)
+                },
+            )
+            .map(|result| result.map_err(core_error))
+            .boxed()
+    }
+
+    /// Commit one settings edit, including domain fan-out, as one visible change.
+    pub async fn set_permission_record(
+        &self,
+        product_id: &str,
+        request: &PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), GenericError> {
+        let updates = saved_permission_updates(product_id, request, status)?
+            .into_iter()
+            .map(|(key, value)| {
+                let key = key.encode();
+                let value = value
+                    .map(|value| self.encrypt(&core_identity(&key), &value))
+                    .transpose()?;
+                Ok((key, value))
+            })
+            .collect::<Result<Vec<_>, DbError>>()
+            .map_err(core_error)?;
+        self.database.write(move |transaction| {
+            for (key, value) in updates {
+                if let Some(value) = value {
+                    transaction.execute("INSERT INTO core_state (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value", params![key, value])?;
+                } else {
+                    transaction.execute("DELETE FROM core_state WHERE key = ?1", params![key])?;
+                }
+            }
+            Ok(())
+        }).await.map_err(core_error)
     }
 
     fn encrypt(&self, identity: &[u8], value: &[u8]) -> Result<Vec<u8>, DbError> {
@@ -275,6 +379,161 @@ mod tests {
     use crate::store::core_db_config;
     use crate::test_support::{StubPlatform, secret_core_storage_test_key};
     use futures::{FutureExt, StreamExt};
+
+    #[test]
+    fn saved_permission_edits_preserve_bundle_identity_and_observe_committed_records() {
+        futures::executor::block_on(async {
+            use crate::latest::{
+                HostDevicePermissionRequest, RemotePermission, RemotePermissionRequest,
+            };
+            let directory = tempfile::tempdir().unwrap();
+            let database = Db::open(core_db_config(directory.path())).await.unwrap();
+            let store = RuntimeStore::open(database.clone(), &StubPlatform::default())
+                .await
+                .unwrap();
+            let remote = |domains: &[&str]| {
+                PermissionAuthorizationRequest::Remote(RemotePermissionRequest {
+                    permission: RemotePermission::Remote {
+                        domains: domains.iter().map(|domain| domain.to_string()).collect(),
+                    },
+                })
+            };
+            let first = remote(&["a.example.com"]);
+            let second = remote(&["b.example.com"]);
+            let bundle = remote(&["a.example.com", "b.example.com"]);
+            let mut records =
+                store.permission_records(Some("product.paseo".to_string()), "paseo".to_string());
+            assert_eq!(records.next().await, Some(Ok(vec![])));
+            store
+                .set_permission_record(
+                    "product.paseo",
+                    &first,
+                    PermissionAuthorizationStatus::Authorized,
+                )
+                .await
+                .unwrap();
+            records.next().await.unwrap().unwrap();
+            store
+                .set_permission_record(
+                    "product.paseo",
+                    &bundle,
+                    PermissionAuthorizationStatus::Denied,
+                )
+                .await
+                .unwrap();
+            records.next().await.unwrap().unwrap();
+            store
+                .set_permission_record(
+                    "product.paseo",
+                    &bundle,
+                    PermissionAuthorizationStatus::NotDetermined,
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                records.next().await,
+                Some(Ok(vec![PermissionRecord {
+                    product_id: "product.paseo".to_string(),
+                    request: first.clone(),
+                    status: PermissionAuthorizationStatus::Authorized
+                }]))
+            );
+            store
+                .set_permission_record(
+                    "product.paseo",
+                    &bundle,
+                    PermissionAuthorizationStatus::Denied,
+                )
+                .await
+                .unwrap();
+            records.next().await.unwrap().unwrap();
+            store
+                .set_permission_record(
+                    "product.paseo",
+                    &bundle,
+                    PermissionAuthorizationStatus::Authorized,
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                records.next().await,
+                Some(Ok(vec![
+                    PermissionRecord {
+                        product_id: "product.paseo".to_string(),
+                        request: first,
+                        status: PermissionAuthorizationStatus::Authorized
+                    },
+                    PermissionRecord {
+                        product_id: "product.paseo".to_string(),
+                        request: second,
+                        status: PermissionAuthorizationStatus::Authorized
+                    },
+                ]))
+            );
+            let account = PermissionAuthorizationRequest::AccountAccess {
+                target_product_id: "peer".to_string(),
+            };
+            let camera =
+                PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera);
+            store
+                .set_permission_record(
+                    "calendar.paseo",
+                    &account,
+                    PermissionAuthorizationStatus::Authorized,
+                )
+                .await
+                .unwrap();
+            let mut global = store.permission_records(None, "paseo".to_string());
+            let account_only = global.next().await.unwrap().unwrap();
+            assert!(account_only.contains(&PermissionRecord {
+                product_id: "calendar.paseo".to_string(),
+                request: account.clone(),
+                status: PermissionAuthorizationStatus::Authorized
+            }));
+            store
+                .set_permission_record(
+                    "calendar.paseo",
+                    &camera,
+                    PermissionAuthorizationStatus::Authorized,
+                )
+                .await
+                .unwrap();
+            let mixed = global.next().await.unwrap().unwrap();
+            assert_eq!(
+                mixed
+                    .iter()
+                    .filter(|record| record.product_id == "calendar.paseo")
+                    .count(),
+                2
+            );
+            store
+                .set_permission_record(
+                    "calendar.paseo",
+                    &account,
+                    PermissionAuthorizationStatus::NotDetermined,
+                )
+                .await
+                .unwrap();
+            let mut selected =
+                store.permission_records(Some("calendar.paseo".to_string()), "paseo".to_string());
+            assert_eq!(
+                selected.next().await,
+                Some(Ok(vec![PermissionRecord {
+                    product_id: "calendar.paseo".to_string(),
+                    request: camera.clone(),
+                    status: PermissionAuthorizationStatus::Authorized
+                }]))
+            );
+            store
+                .write_core_storage(
+                    crate::host_internal::permissions::permission_key("calendar.paseo", &camera),
+                    vec![255],
+                )
+                .await
+                .unwrap();
+            assert!(selected.next().await.unwrap().is_err());
+        });
+    }
 
     #[test]
     fn permission_reads_wait_for_a_started_commit_after_its_caller_is_dropped() {

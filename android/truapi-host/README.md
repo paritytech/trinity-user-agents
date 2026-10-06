@@ -194,7 +194,9 @@ The core's `Permissions` platform trait has two methods, and so does the bridge:
 
 `product` is the requesting execution's `ProductExecutionConfig`.
 
-Both return `PermissionDecision` (`ALLOW_ONCE`, `ALLOW_ALWAYS`, or `DENY`). Preserve the choice so the core can consume one-use grants without persisting them. OS refusal after app consent should throw rather than record a product denial. The same typed values drive the `TrUAPIProductExecution` permission admin API (`permissionAuthorizationStatus`, `setPermissionAuthorizationStatus`), which reads and updates the persisted decisions without prompting.
+Both return `PermissionDecision` (`ALLOW_ONCE`, `ALLOW_ALWAYS`, or `DENY`). Preserve the choice so the core can consume one-use grants without persisting them. OS refusal after app consent should throw rather than record a product denial. The `TrUAPIProductExecution` permission admin API (`permissionAuthorizationStatus`, `setPermissionAuthorizationStatus`) inspects effective authorization and applies its existing per-domain administration policy without prompting.
+
+Settings can collect `runtime.observePermissionRecords(productId)` while the wallet is locked. Each `PermissionRecord` retains its canonical request and saved status; the flow reports committed snapshots and fails on storage or decoding errors. Collection cancellation closes its native subscription. Use `runtime.setPermissionRecord(record.productId, record.request, status)` to edit the saved answer, preserving the returned identity. `DENIED` retains a denial and `NOT_DETERMINED` resets that exact record. Rust owns remote-domain grant expansion and invalidates matching active reviews and temporary grants. Saved records do not include OS permission state or one-use answers.
 
 The browser container checks product consent before opening WebSockets or requesting camera and microphone access. After installing it, the WebChromeClient media callback should check only the Android OS permission, so it does not consume product consent twice.
 

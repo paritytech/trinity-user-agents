@@ -7,10 +7,17 @@ enum AppPermissionsViewFactory {
         productId: ProductId,
         productName: String
     ) -> AppPermissionsViewProtocol? {
+        let permissions: AppPermissionSettings
+        do {
+            permissions = try AppPermissionSettings()
+        } catch {
+            Logger.shared.error("Permission settings unavailable: \(error)")
+            return nil
+        }
+
         let interactor = AppPermissionsInteractor(
             productId: productId,
-            providerFactory: ProductPermissionDataProviderFactory(),
-            repository: ProductPermissionRepository()
+            permissions: permissions
         )
 
         let wireframe = AppPermissionsWireframe()

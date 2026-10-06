@@ -707,6 +707,24 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.notifyContactsChanged()
     }
 
+    /// Observe saved permissions independently of wallet activation.
+    public func permissionRecords(productId: String? = nil) -> AsyncThrowingStream<[PermissionRecord], Error> {
+        let (stream, continuation) = AsyncThrowingStream.makeStream(of: [PermissionRecord].self)
+        let observer = PermissionStreamObserver(continuation: continuation)
+        let subscription = inner.observePermissionRecords(productId: productId, observer: observer)
+        continuation.onTermination = { @Sendable _ in subscription.cancel() }
+        return stream
+    }
+
+    /// Edit the canonical saved request; `.notDetermined` removes its record.
+    public func setPermissionRecord(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus
+    ) async throws {
+        try await inner.setPermissionRecord(productId: productId, request: request, status: status)
+    }
+
     /// Open one executable connection with a host-assigned immutable context.
     /// Pass `chat` to install the host's Chat adapter; hosts without the Chat
     /// modality omit it. Pass `pocket` to install the card collection, and
@@ -1134,4 +1152,24 @@ public struct RendererStreamError: Error, CustomStringConvertible {
     public let reason: String
 
     public var description: String { reason }
+}
+
+private final class PermissionStreamObserver: NativePermissionObserver, @unchecked Sendable {
+    private let continuation: AsyncThrowingStream<[PermissionRecord], Error>.Continuation
+
+    init(continuation: AsyncThrowingStream<[PermissionRecord], Error>.Continuation) {
+        self.continuation = continuation
+    }
+
+    func onUpdate(records: [PermissionRecord]) {
+        continuation.yield(records)
+    }
+
+    func onComplete() {
+        continuation.finish()
+    }
+
+    func onError(reason: String) {
+        continuation.finish(throwing: HostRejection.Rejected(reason: reason))
+    }
 }

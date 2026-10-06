@@ -21,6 +21,7 @@ mod config;
 mod errors;
 mod events;
 mod executor;
+mod permissions;
 mod platform;
 mod renderer;
 mod runtime;
@@ -36,6 +37,7 @@ pub use callbacks::{
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{HostRejection, NativeCoreDatabaseError};
+pub use permissions::{NativePermissionObserver, NativePermissionSubscription};
 pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
     NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,

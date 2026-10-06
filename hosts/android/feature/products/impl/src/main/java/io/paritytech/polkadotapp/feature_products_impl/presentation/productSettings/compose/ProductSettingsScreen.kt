@@ -11,8 +11,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
+import io.paritytech.polkadotapp.common.presentation.loading.onError
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.loading.onLoading
+import io.paritytech.polkadotapp.design.components.error.DefaultErrorState
 import io.paritytech.polkadotapp.design.components.progress.LoadingScreenState
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
@@ -82,6 +84,14 @@ private fun ProductSettingsScreenInternal(
                 }
                 .onLoading {
                     LoadingScreenState()
+                }
+                .onError {
+                    PolkadotTopBar(
+                        title = stringResource(RCommon.string.bottom_nav_menu_settings),
+                        navigationAction = rememberTopBarAction(action = onBack),
+                        titleAlignment = TopBarTitleAlignment.Center,
+                    )
+                    DefaultErrorState(stringResource(RCommon.string.generic_error_notification))
                 }
         }
     }

@@ -5,8 +5,7 @@ final class AppPermissionsInteractor {
     weak var presenter: AppPermissionsInteractorOutputProtocol?
 
     private let productId: ProductId
-    private let providerFactory: ProductPermissionDataProviderMaking
-    private let repository: ProductPermissionRepositoryProtocol
+    private let permissions: AppPermissionSettings
     private let notificationScheduler: ProductNotificationScheduling
     private let logger: LoggerProtocol
 
@@ -14,14 +13,12 @@ final class AppPermissionsInteractor {
 
     init(
         productId: ProductId,
-        providerFactory: ProductPermissionDataProviderMaking,
-        repository: ProductPermissionRepositoryProtocol,
+        permissions: AppPermissionSettings,
         notificationScheduler: ProductNotificationScheduling = ProductNotificationScheduler.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.productId = productId
-        self.providerFactory = providerFactory
-        self.repository = repository
+        self.permissions = permissions
         self.notificationScheduler = notificationScheduler
         self.logger = logger
     }
@@ -33,40 +30,39 @@ final class AppPermissionsInteractor {
 
 extension AppPermissionsInteractor: AppPermissionsInteractorInputProtocol {
     func setup() {
-        subscriptionTask = Task { [weak self, providerFactory, productId, logger] in
-            let stream = providerFactory.subscribeGrants(
-                productId: productId,
-                grantedOnly: true
-            )
-
+        subscriptionTask = Task { [weak self, permissions, productId, logger] in
             do {
+                let stream = try await permissions.grantedRecords(productId: productId)
                 for try await grants in stream {
                     await self?.presenter?.didReceive(grants: grants)
                 }
             } catch {
+                guard !Task.isCancelled else { return }
                 logger.error("App permissions subscription error: \(error)")
+                await self?.presenter?.didReceive(error: error)
             }
         }
     }
 
-    func revokeOnDisappear(permissions: [ProductPermission]) {
-        guard !permissions.isEmpty else { return }
+    func revokeOnDisappear(records: [AppPermissionRecord]) {
+        guard !records.isEmpty else { return }
 
         // currently revoke is called once, when scene closed
         // stop subscription to not update UI during disappear
         subscriptionTask?.cancel()
 
-        let revokesNotifications = permissions.contains(.deviceCapability(.notifications))
+        let revokesNotifications = records.contains(where: \.isNotifications)
 
-        Task { [repository, notificationScheduler, productId, logger] in
+        Task { [weak self, permissions, notificationScheduler, productId, logger] in
             do {
-                try await repository.revoke(productId: productId, permissions: permissions)
+                try await permissions.revoke(records)
 
                 if revokesNotifications {
                     try await notificationScheduler.cancelAll(forProductId: productId)
                 }
             } catch {
                 logger.error("Failed to revoke product permissions: \(error)")
+                await self?.presenter?.didReceive(error: error)
             }
         }
     }

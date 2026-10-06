@@ -54,6 +54,119 @@ use truapi::latest::{
     GenericError, HostDevicePermissionRequest, RemotePermission, RemotePermissionRequest,
 };
 
+/// One saved permission answer with its canonical request identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct PermissionRecord {
+    /// Resolvable product scope in the host's configured network.
+    pub product_id: String,
+    /// Exact permission identity used for editing the saved answer.
+    pub request: PermissionAuthorizationRequest,
+    /// Saved decision, independent of temporary grants and OS authorization.
+    pub status: PermissionAuthorizationStatus,
+}
+
+impl PermissionRecord {
+    /// Decode only permission rows and preserve malformed answers as errors.
+    pub fn decode(
+        key: &CoreStorageKey,
+        value: &[u8],
+        network_suffix: &str,
+    ) -> Result<Option<Self>, GenericError> {
+        let CoreStorageKey::PermissionAuthorization {
+            product_id,
+            request,
+        } = key
+        else {
+            return Ok(None);
+        };
+        if permission_key(product_id, request) != *key {
+            return Err(GenericError {
+                reason: "noncanonical stored permission key".to_string(),
+            });
+        }
+        let product_id = if matches!(
+            request,
+            PermissionAuthorizationRequest::AccountAccess { .. }
+        ) && !crate::platform::is_localhost_product_identifier(product_id)
+        {
+            format!("{product_id}.{network_suffix}")
+        } else {
+            product_id.clone()
+        };
+        let product_id =
+            crate::platform::normalize_product_identifier(&product_id).map_err(|error| {
+                GenericError {
+                    reason: error.to_string(),
+                }
+            })?;
+        Ok(Some(Self {
+            product_id,
+            request: request.clone(),
+            status: decode_stored_authorization(value)?.into(),
+        }))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+type PermissionUpdates = Vec<(CoreStorageKey, Option<Vec<u8>>)>;
+
+/// Exact saved-record edits, with domain grants matching prompt policy.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn saved_permission_updates(
+    product_id: &str,
+    request: &PermissionAuthorizationRequest,
+    status: PermissionAuthorizationStatus,
+) -> Result<PermissionUpdates, GenericError> {
+    let product_id =
+        crate::platform::normalize_product_identifier(product_id).map_err(|error| {
+            GenericError {
+                reason: error.to_string(),
+            }
+        })?;
+    let key = permission_key(&product_id, request);
+    if let PermissionAuthorizationRequest::Remote(remote) = request
+        && let Some(domains) = requested_domains(remote)
+    {
+        if domains.is_empty()
+            || domains
+                .iter()
+                .any(|domain| !is_valid_remote_domain_pattern(domain))
+        {
+            return Err(GenericError {
+                reason: "invalid permission domain pattern".to_string(),
+            });
+        }
+        if status == PermissionAuthorizationStatus::Authorized {
+            let CoreStorageKey::PermissionAuthorization {
+                request: PermissionAuthorizationRequest::Remote(remote),
+                ..
+            } = &key
+            else {
+                unreachable!()
+            };
+            let domains = requested_domains(remote).expect("domain request stays canonical");
+            let mut updates: Vec<_> = domains
+                .iter()
+                .map(|domain| {
+                    (
+                        CoreStorageKey::remote_domain_authorization(&product_id, domain),
+                        Some(StoredAuthorizationStatus::Authorized.encode()),
+                    )
+                })
+                .collect();
+            if domains.len() > 1 {
+                updates.push((key, None));
+            }
+            return Ok(updates);
+        }
+    }
+    Ok(vec![(
+        key,
+        status_into_stored(status).map(|status| status.encode()),
+    )])
+}
+
 /// Persisted answer for a single permission request. Keep `Authorized` at
 /// discriminant 0 and `Denied` at 1 to preserve the existing two-variant cache
 /// encoding.

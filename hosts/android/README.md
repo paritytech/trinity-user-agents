@@ -195,7 +195,7 @@ Report vulnerabilities responsibly following [Parity's security policy](https://
 
 The shared Rust host opens one encrypted installation database asynchronously and starts locked with public configuration only. Product data and public core records live in Rust-owned SQLite; the installation encryption key uses the existing strict protected store. Construction survives a cancelled product waiter and a failed wallet activation, so retrying activation reuses the same database owner. Its separate wallet provider reads the existing protected root for the captured WALLET `MetaAccount.id`, encoded as a decimal string, and verifies that selection before and after the read. The provider-owned startup coroutine awaits activation before publishing the runtime; a product closing during startup does not cancel it. Root-read failures fail signing readiness and remain retryable. Wallet selection changes immediately lock the active Rust wallet before replacement, so a failed replacement cannot leave products signing for the previous wallet. Device lock and app backgrounding retain the existing application policy.
 
-Permission settings still use the native repository pending the dependent settings-routing change.
+Enabled TrUAPI permission settings join the same constructed runtime without wallet activation. They observe saved Rust records, keep grouped remote-domain requests as one editable identity, and persist toggle changes as authorization or denial. Storage errors remain visible, and Rust applies revocation to active reviews and temporary grants. With the runtime disabled, settings and synchronous one-use guards retain their separate Room-backed path.
 
 ## License
 

@@ -558,8 +558,9 @@ try TrUAPIHost.installProductScripts(
 )
 webView.load(URLRequest(url: productURL))
 
-// Settings changes apply to subsequent permission-checked operations.
-try execution.setPermissionAuthorizationStatus(
+// Saved settings remain accessible while the wallet is locked.
+try await runtime.setPermissionRecord(
+    productId: "your-product.example",
     request: .remote(RemotePermissionRequest(permission: .remote(domains: ["api.example.com"]))),
     status: .denied
 )
@@ -573,6 +574,8 @@ runtime.lockWallet()
 ```
 
 The updated `@parity/truapi` SDK keeps the same client across connection loss. The SDK replaces the socket; interrupted operations fail with `ConnectionResetError` and are never replayed. Recreate read/watch subscriptions in the provider that owns them. SDKs 0.16.0 and 0.18.0 can still start through the minimal `__HOST_API_PORT__` adapter, but require a page reload after a disconnect. Remove that adapter once deployed products adopt the injected client.
+
+`runtime.permissionRecords(productId:)` observes canonical saved records, globally when the filter is omitted. The stream reports storage errors and cancels its native subscription when observation ends. Pass the record's product ID and request to `setPermissionRecord`; `.notDetermined` removes that saved record. Settings edits revoke matching temporary grants across live executions and cancel overlapping pending permission reviews. Neither observing nor editing requires wallet activation.
 
 The shared container uses the same WebSocket as SDK calls and asks Rust to authorize each fetch or XHR before sending it, and each remote WebSocket before connecting. It parses the URL with captured browser primitives and sends its hostname to `authorize_remote_permission`; Rust normalizes and checks the domain. Swift supplies the endpoint and handles native permission prompts; it does not relay individual network permission messages. An upfront permission request and a network operation are separate, so an Allow once decision is consumed by the next permitted operation rather than persisted.
 

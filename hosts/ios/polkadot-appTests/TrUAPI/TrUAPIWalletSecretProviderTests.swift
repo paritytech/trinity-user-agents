@@ -157,6 +157,113 @@ final class TrUAPIHostRuntimeReadinessTests {
         #expect(keychain.reads == 1)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    @MainActor
+    func lockedSettingsObserveAndResetWithoutWalletActivation() async throws {
+        let provider = try makeProvider()
+        provider.lockWallet()
+        let runtime = try await provider.constructedRuntime()
+        let permissions = try AppPermissionSettings(runtimeEnabled: true, runtimeProvider: provider)
+        let notification = PermissionRecord(
+            productId: "unresolved.paseo",
+            request: .device(.notifications),
+            status: .authorized
+        )
+        let account = PermissionRecord(
+            productId: "unresolved.paseo",
+            request: .accountAccess(targetProductId: "other"),
+            status: .authorized
+        )
+        try await runtime.setPermissionRecord(
+            productId: notification.productId, request: notification.request, status: notification.status
+        )
+        try await runtime.setPermissionRecord(
+            productId: account.productId,
+            request: account.request,
+            status: account.status
+        )
+        try await runtime.setPermissionRecord(productId: "denied.paseo", request: .device(.camera), status: .denied)
+        try await runtime.setPermissionRecord(productId: "z.paseo", request: .device(.camera), status: .authorized)
+        let apps = AppsListInteractor(permissions: permissions, productResolver: FailingSettingsProductResolver())
+        let appsOutput = SettingsAppsOutput()
+        apps.presenter = appsOutput
+        defer { withExtendedLifetime(apps) {} }
+        var appUpdates = appsOutput.updates.makeAsyncIterator()
+        apps.setup()
+        #expect(await appUpdates.next() == ["unresolved.paseo", "z.paseo"])
+        #expect(await appUpdates.next() == ["unresolved.paseo", "z.paseo"])
+
+        let scheduler = MockNotificationScheduler()
+        let (cancelled, cancellation) = AsyncStream.makeStream(of: String.self)
+        scheduler.onCancelAll = { cancellation.yield($0) }
+        var cancellations = cancelled.makeAsyncIterator()
+        let interactor = AppPermissionsInteractor(
+            productId: "unresolved.paseo", permissions: permissions, notificationScheduler: scheduler
+        )
+        let output = SettingsPermissionsOutput()
+        interactor.presenter = output
+        var updates = output.updates.makeAsyncIterator()
+        interactor.setup()
+        let records = try #require(await updates.next())
+        let saved = records.compactMap { record -> PermissionRecord? in
+            guard case let .rust(record) = record else { return nil }
+            return record
+        }
+        #expect(Set(saved) == Set([notification, account]))
+        interactor.revokeOnDisappear(records: [.rust(notification)])
+        #expect(await cancellations.next() == "unresolved.paseo")
+        #expect(await appUpdates.next() == ["unresolved.paseo", "z.paseo"])
+        #expect(await appUpdates.next() == ["unresolved.paseo", "z.paseo"])
+        var persisted = runtime.permissionRecords(productId: "unresolved.paseo").makeAsyncIterator()
+        #expect(try await persisted.next() == [account])
+        scheduler.onCancelAll = { _ in Issue.record("Account reset must not cancel notifications") }
+        interactor.revokeOnDisappear(records: [.rust(account)])
+        #expect(try await persisted.next() == [])
+        #expect(await appUpdates.next() == ["z.paseo"])
+        #expect(keychain.reads == 0)
+        #expect(throws: HostRejection.self) { try runtime.statementRenewalOwnerKey() }
+        #expect(try await provider.constructedRuntime() === runtime)
+        await #expect(throws: TrUAPIRuntimeConfigError.self) { try await provider.sharedRuntime() }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    @MainActor
+    func settingsSurfaceConstructionFailureWithoutReadingWalletSecrets() async throws {
+        let protectedKeys = ObservedKeychain()
+        protectedKeys.failWrites = true
+        let provider = try makeProvider(secretStorage: makeSecretStorage(keychain: protectedKeys))
+        provider.lockWallet()
+        let permissions = try AppPermissionSettings(runtimeEnabled: true, runtimeProvider: provider)
+        let scheduler = MockNotificationScheduler()
+        scheduler.onCancelAll = { _ in Issue.record("A failed reset must not cancel notifications") }
+        let interactor = AppPermissionsInteractor(
+            productId: "product",
+            permissions: permissions,
+            notificationScheduler: scheduler
+        )
+        defer { withExtendedLifetime(interactor) {} }
+        let output = SettingsPermissionsOutput()
+        interactor.presenter = output
+        var errors = output.errors.makeAsyncIterator()
+        interactor.setup()
+        let error = try #require(await errors.next())
+        guard case NativeRuntimeConfigError.DatabaseUnavailable = error else {
+            Issue.record("Unexpected construction failure: \(error)")
+            return
+        }
+        interactor.revokeOnDisappear(records: [.rust(.init(
+            productId: "product",
+            request: .device(.notifications),
+            status: .authorized
+        ))])
+        let resetError = try #require(await errors.next())
+        guard case NativeRuntimeConfigError.DatabaseUnavailable = resetError else {
+            Issue.record("Unexpected reset failure: \(resetError)")
+            return
+        }
+        #expect(keychain.reads == 0)
+    }
+
     private func makeSecretStorage(keychain: ObservedKeychain) -> TrUAPISecretStorage {
         TrUAPISecretStorage(
             keychain: keychain,
@@ -252,4 +359,39 @@ private final class ObservedKeychain: KeystoreProtocol {
 
     func checkKey(for identifier: String) throws -> Bool { try storage.checkKey(for: identifier) }
     func deleteKey(for identifier: String) throws { try storage.deleteKey(for: identifier) }
+}
+
+@MainActor
+private final class SettingsAppsOutput: AppsListInteractorOutputProtocol {
+    let updates: AsyncStream<[String]>
+    private let continuation: AsyncStream<[String]>.Continuation
+
+    init() {
+        (updates, continuation) = AsyncStream.makeStream(of: [String].self)
+    }
+
+    func didReceive(products: [ResolvedProduct]) { continuation.yield(products.map(\.id)) }
+    func didReceive(error: Error) { Issue.record(error) }
+}
+
+@MainActor
+private final class SettingsPermissionsOutput: AppPermissionsInteractorOutputProtocol {
+    let updates: AsyncStream<[AppPermissionRecord]>
+    let errors: AsyncStream<Error>
+    private let continuation: AsyncStream<[AppPermissionRecord]>.Continuation
+    private let errorContinuation: AsyncStream<Error>.Continuation
+
+    init() {
+        (updates, continuation) = AsyncStream.makeStream(of: [AppPermissionRecord].self)
+        (errors, errorContinuation) = AsyncStream.makeStream(of: Error.self)
+    }
+
+    func didReceive(grants: [AppPermissionRecord]) { continuation.yield(grants) }
+    func didReceive(error: Error) { errorContinuation.yield(error) }
+}
+
+private final class FailingSettingsProductResolver: ProductResolving, Sendable {
+    func resolve(_ productId: ProductId) async throws -> ResolvedProduct {
+        throw HostRejection.Rejected(reason: "No manifest for \(productId)")
+    }
 }

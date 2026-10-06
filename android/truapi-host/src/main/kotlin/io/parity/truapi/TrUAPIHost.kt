@@ -51,6 +51,8 @@ import uniffi.truapi.ThemeName
 import uniffi.truapi.ThemeVariant
 import uniffi.truapi.AuthState
 import uniffi.truapi.HostChainSet
+import uniffi.truapi.NativePermissionObserver
+import uniffi.truapi.PermissionRecord
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
@@ -646,6 +648,39 @@ class TrUAPIHostRuntime private constructor(
         }
     }
 
+    /** Observes committed saved answers, independently of wallet activation or OS permission state. */
+    fun observePermissionRecords(productId: String? = null): Flow<List<PermissionRecord>> =
+        callbackFlow {
+            val observer = object : NativePermissionObserver {
+                override fun onUpdate(records: List<PermissionRecord>) {
+                    runCatching { trySend(records) }
+                }
+
+                override fun onError(reason: String) {
+                    runCatching { close(PermissionStreamException(reason)) }
+                }
+
+                override fun onComplete() {
+                    runCatching { close() }
+                }
+            }
+            val subscription = inner.observePermissionRecords(productId, observer)
+            awaitClose {
+                subscription.cancel()
+                subscription.close()
+            }
+        }.conflate()
+
+    /** Persists a saved answer and invalidates matching active permission grants and reviews. */
+    @Throws(HostRejection::class)
+    suspend fun setPermissionRecord(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) {
+        inner.setPermissionRecord(productId, request, status)
+    }
+
     // Co-owns the contacts adapter for as long as the runtime holds it.
     private var contactsRetainer: NativeContactsCallbacks? = null
 
@@ -895,6 +930,9 @@ class TrUAPIHostRuntime private constructor(
         inner.close()
     }
 }
+
+/** A saved-permission observation that could not read or decode its records. */
+class PermissionStreamException(reason: String) : Exception(reason)
 
 /** A render the product declined or could not encode. */
 class RendererStreamException(

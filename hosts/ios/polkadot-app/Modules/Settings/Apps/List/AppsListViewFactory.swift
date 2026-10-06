@@ -7,8 +7,16 @@ enum AppsListViewFactory {
     ) -> AppsListViewProtocol? {
         let flowState = flowStateProvider.flowState()
 
+        let permissions: AppPermissionSettings
+        do {
+            permissions = try AppPermissionSettings()
+        } catch {
+            Logger.shared.error("Permission settings unavailable: \(error)")
+            return nil
+        }
+
         let interactor = AppsListInteractor(
-            providerFactory: ProductPermissionDataProviderFactory(),
+            permissions: permissions,
             productResolver: flowState.productResolver
         )
 
