@@ -365,6 +365,9 @@ async function runTest(page, id) {
 async function screenshot(adb, path) {
   const png = await adb(["exec-out", "screencap", "-p"], { allowFailure: true, binaryOutput: true });
   if (png?.length) writeFileSync(path, png);
+  // What the approver sees on the same screen, or why it sees nothing.
+  const dump = await adb(["exec-out", "uiautomator", "dump", "/dev/tty"], { allowFailure: true });
+  writeFileSync(path.replace(/\.png$/, ".xml"), dump ?? "uiautomator dump failed\n");
 }
 
 /** The app's own logcat, with long hex strings and SS58-shaped addresses masked. */
