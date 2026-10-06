@@ -116,7 +116,6 @@ private func makeContact(accountId: AccountId, isBlocked: Bool = false) -> Chat.
         chatRequest: nil,
         ownKeyId: Chat.Contact.Own(signKeyId: "", encryptionKeyId: ""),
         imageData: nil,
-        source: .chat,
         isBlocked: isBlocked,
         devices: [],
         pendingDevicesFanOut: false,

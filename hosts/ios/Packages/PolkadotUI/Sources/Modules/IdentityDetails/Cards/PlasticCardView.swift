@@ -39,23 +39,6 @@ struct PlasticCardView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
                 Spacer()
-
-                // TODO: not implemented for W3S
-//                VStack(alignment: .leading, spacing: 8) {
-//                    // TODO: use proper game count
-//                    HStack(spacing: 5) {
-//                        GameIndicatorView(filled: true)
-//                        ForEach(0 ..< 5) { _ in
-//                            GameIndicatorView()
-//                        }
-//                    }
-//                    .shadow(color: .white, radius: 0.31874, x: 0, y: 0.50998)
-//                    .shadow(color: Color(hex: 0xA0ABB3), radius: 0.1275, x: 0, y: -0.25499)
-//
-//                    Text(.Identity.gamesUntilMembership)
-//                        .textStyle(.caption12Regular())
-//                        .foregroundStyle(Color(hex: 0x808B93))
-//                }
             }
             .padding(.vertical, DSSpacings.extraMedium)
             .padding(.horizontal, DSSpacings.mediumIncreased)

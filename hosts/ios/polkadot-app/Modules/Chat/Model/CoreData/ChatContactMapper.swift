@@ -48,8 +48,6 @@ extension ChatContactMapper: CoreDataMapperProtocol {
 
         let ownKeyId = try Chat.Contact.Own(entity: entity)
 
-        let source: Chat.Contact.Source = .chat
-
         let devices = (entity.devices as? Set<CDContactDevice>)?.compactMap { deviceEntity -> Chat.PeerDevice? in
             guard let statementAccountId = deviceEntity.statementAccountId,
                   let encryptionPublicKey = deviceEntity.encryptionPublicKey else {
@@ -75,7 +73,6 @@ extension ChatContactMapper: CoreDataMapperProtocol {
             chatRequest: chatRequest,
             ownKeyId: ownKeyId,
             imageData: entity.imageData,
-            source: source,
             isBlocked: entity.isBlocked,
             devices: devices,
             pendingDevicesFanOut: entity.pendingDevicesFanOut,

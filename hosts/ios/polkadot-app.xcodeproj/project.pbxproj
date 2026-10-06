@@ -1053,6 +1053,8 @@
 		};
 		A539854B2E93F1A600A5BB13 /* DevCI */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.devci.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1289,6 +1291,8 @@
 		};
 		A5EDAAFB2E93ECB0005DDA62 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.debug.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1313,6 +1317,8 @@
 		};
 		A5EDAAFC2E93ECB0005DDA62 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.release.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1439,6 +1445,8 @@
 		};
 		A6F1C0102F00A10000AA0003 /* Safetynet */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.safetynet.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1623,6 +1631,8 @@
 		};
 		E97BAB582F7BDE6700ED9B80 /* Nightly */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.nightly.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
