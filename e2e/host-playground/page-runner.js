@@ -68,8 +68,13 @@
   }
 
   // Whether the playground has finished deciding it is inside a host and has
-  // rendered its buttons.
-  const ready = () => document.querySelector('[data-testid^="run-"]') !== null;
+  // rendered its buttons. A test that navigates within the product leaves it on
+  // a page without tests, so that page is sent back to the list.
+  const ready = () => {
+    if (document.querySelector('[data-testid^="run-"]') !== null) return true;
+    if (location.pathname !== "/") location.assign("/");
+    return false;
+  };
 
   window.__hostPlaygroundE2E = { runOne, ready };
 })();
