@@ -6,6 +6,8 @@ Runs the public `host-playground` product inside the iOS and Android host apps a
 - `page-runner.js` is injected into the product page by each driver and runs one test per call.
 - `report.mjs` turns a run's `results.json` into `report.md` and a one-line summary.
 
+`.github/workflows/host-playground-e2e.yml` runs both platforms in CI, on pull requests that touch this directory and by manual dispatch, signing in with the `E2E_ANDROID_MNEMONIC` and `E2E_IOS_MNEMONIC` test accounts and uploading each run's results and report.
+
 ## Android
 
 The Android driver runs a nightly build of `hosts/android` that carries the hooks in `android/hooks`. They open the app's WebViews to DevTools and, when the runner leaves a mnemonic at `files/e2e-seed` in the app's data directory, consume the file and restore that account and its on-chain username. The hooks are added by a Gradle init script, so `hosts/android` itself is unchanged:
