@@ -241,6 +241,14 @@ impl ReceivingService {
         check_revision(find(&ledger, &authority), expected_revision)?;
         let timestamp = now();
         validate_watches(&watches, &authority, timestamp)?;
+        // Startup may republish the same policy before a pending click is delivered.
+        // Only a real policy change should fence that click or restart relay sync.
+        if let Some(record) = find(&ledger, &authority) {
+            if current(record, &authority) && record.consent && record.enabled == !watches.is_empty()
+                && record.watches.iter().map(|watch| &watch.policy).eq(watches.iter()) {
+                return Ok(status(&fresh, Some(record)));
+            }
+        }
         let position = ledger.records.iter().position(|r| same_scope(&r.authority, &authority));
         if position.is_none() && ledger.records.len() >= MAX_REGISTRATIONS { return Err(Error::Capacity); }
         // A product's previous account/artifact cannot keep receiving accidentally.

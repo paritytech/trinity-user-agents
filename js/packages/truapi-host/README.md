@@ -209,6 +209,12 @@ resolves and cancels reservations only on explicit display failure. Retained
 v2 responses contain a carrier and actual source metadata, so this adapter uses
 `receivingIngest`, not `receivingIngestStatement`.
 
+Republishing an identical watch snapshot under the same live authority preserves
+its registration revision, synchronization state, and queued events. This lets
+cold-start products restore their watches without invalidating the click that
+opened them. Stale compare-and-swap tokens still fail; a changed policy, including
+its activation route or expiry, advances the revision and fences old clicks.
+
 Relay watches retain each original core-consent expiry, at most 30 days, without
 a separate 24-hour lease or dependence on periodic browser execution. Transport
 rotation and retries never extend that expiry; renewal beyond it requires fresh
