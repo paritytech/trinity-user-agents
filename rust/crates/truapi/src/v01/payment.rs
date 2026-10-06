@@ -73,6 +73,10 @@ pub struct HostPaymentTopUpRequest {
 
 /// Request to initiate a payment to another account.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct HostPaymentRequest {
     /// Optional purse selector. `None` means MAIN_PURSE.
     pub from: Option<u32>,
@@ -80,37 +84,38 @@ pub struct HostPaymentRequest {
     pub amount: u128,
     /// Destination account.
     pub destination: [u8; 32],
-}
-
-/// Receipt returned after a successful payment request.
-///
-/// See [RFC 0006].
-///
-/// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub struct HostPaymentResponse {
-    /// The assigned payment identifier.
-    pub id: String,
+    /// Caller-chosen id the payment's status is followed by. Reusing one is
+    /// refused with `AlreadyExists`, which makes a retried call safe.
+    pub id: [u8; 32],
 }
 
 /// Payment lifecycle status pushed to subscribers.
 ///
-/// Once a terminal state (`Completed` or `Failed`) is reached, the host
-/// delivers it and may close the subscription.
+/// `Completed`, `Failed` and `PartiallyClaimed` are terminal, and stay
+/// readable after the payment ends.
 ///
 /// See [RFC 0006].
 ///
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum HostPaymentStatusSubscribeItem {
     /// Payment is being processed.
     Processing,
-    /// Payment has been settled successfully.
+    /// The full amount reached the destination.
     Completed,
     /// Payment has failed.
     Failed {
         /// Failure reason.
         reason: String,
+    },
+    /// Less than the requested amount reached the destination.
+    PartiallyClaimed {
+        /// Amount that did.
+        actual_claimed: u128,
     },
 }
 
@@ -163,13 +168,23 @@ pub enum HostPaymentTopUpError {
 /// See [RFC 0006].
 ///
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::Display)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Error)
+)]
 pub enum HostPaymentError {
+    /// A payment with this id already exists.
+    #[display("a payment with this id already exists")]
+    AlreadyExists,
     /// User rejected the payment request.
+    #[display("the payment was declined")]
     Rejected,
     /// User's available balance is not sufficient for the requested amount.
+    #[display("the balance does not cover the payment")]
     InsufficientBalance,
     /// Catch-all.
+    #[display("{reason}")]
     Unknown {
         /// Human-readable failure reason.
         reason: String,
@@ -195,8 +210,8 @@ pub enum HostPaymentStatusSubscribeError {
 /// Request to subscribe to a payment status.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostPaymentStatusSubscribeRequest {
-    /// Payment identifier to watch.
-    pub payment_id: String,
+    /// Id the payment was requested with.
+    pub id: [u8; 32],
 }
 
 /// Request to follow one top-up.

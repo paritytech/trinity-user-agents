@@ -213,6 +213,16 @@ pub mod latest {
     /// Failure watching a funding session.
     pub type HostFundingStatusSubscribeError =
         LatestOf<versioned::funding::HostFundingStatusSubscribeError>;
+    /// Payment request.
+    pub type HostPaymentRequest = LatestOf<versioned::payment::HostPaymentRequest>;
+    /// Payment request failure.
+    pub type HostPaymentError = LatestOf<versioned::payment::HostPaymentError>;
+    /// Progress of a payment.
+    pub type HostPaymentStatusSubscribeItem =
+        LatestOf<versioned::payment::HostPaymentStatusSubscribeItem>;
+    /// Failure following a payment.
+    pub type HostPaymentStatusSubscribeError =
+        LatestOf<versioned::payment::HostPaymentStatusSubscribeError>;
     /// Payment top-up request.
     pub type HostPaymentTopUpRequest = LatestOf<versioned::payment::HostPaymentTopUpRequest>;
     /// Payment top-up failure.

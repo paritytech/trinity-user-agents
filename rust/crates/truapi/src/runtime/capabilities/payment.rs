@@ -30,7 +30,7 @@ use truapi::versioned::payment::{
 use truapi::{CallContext, CallError, Subscription, v01};
 
 use crate::host_internal::extrinsic::sr25519_secret_from_bytes;
-use crate::runtime::{PAYMENTS_NOT_IMPLEMENTED, ProductRuntimeHost};
+use crate::runtime::ProductRuntimeHost;
 
 #[truapi::async_trait]
 impl CoinPayment for ProductRuntimeHost {
@@ -143,27 +143,53 @@ impl Payment for ProductRuntimeHost {
     async fn request(
         &self,
         _cx: &CallContext,
-        _request: HostPaymentRequest,
+        request: HostPaymentRequest,
     ) -> Result<HostPaymentResponse, CallError<HostPaymentError>> {
-        Err(CallError::Domain(HostPaymentError::V1(
-            v01::HostPaymentError::Unknown {
-                reason: PAYMENTS_NOT_IMPLEMENTED.to_string(),
-            },
-        )))
+        let HostPaymentRequest::V1(request) = request;
+        let platform = self
+            .services
+            .payment_platform()
+            .ok_or(CallError::Unsupported)?;
+        // Payments the core makes as the funding product, into its funding
+        // accounts under ids anyone can work out, must not be raced or read
+        // by a product under that name.
+        if self.authority.current_session().is_none()
+            || crate::runtime::is_funding_product(&self.product_id())
+        {
+            return Err(CallError::Denied);
+        }
+        platform
+            .request_payment(&self.product, request)
+            .await
+            .map(|()| HostPaymentResponse::V1)
+            .map_err(|error| CallError::Domain(HostPaymentError::V1(error)))
     }
 
     #[instrument(skip_all, fields(runtime.method = "payment.status_subscribe"))]
     async fn status_subscribe(
         &self,
         _cx: &CallContext,
-        _request: HostPaymentStatusSubscribeRequest,
+        request: HostPaymentStatusSubscribeRequest,
     ) -> Subscription<HostPaymentStatusSubscribeItem, CallError<HostPaymentStatusSubscribeError>>
     {
-        Subscription::interrupted(CallError::Domain(HostPaymentStatusSubscribeError::V1(
-            v01::HostPaymentStatusSubscribeError::Unknown {
-                reason: PAYMENTS_NOT_IMPLEMENTED.to_string(),
-            },
-        )))
+        let HostPaymentStatusSubscribeRequest::V1(request) = request;
+        let Some(platform) = self.services.payment_platform() else {
+            return Subscription::interrupted(CallError::Unsupported);
+        };
+        if self.authority.current_session().is_none()
+            || crate::runtime::is_funding_product(&self.product_id())
+        {
+            return Subscription::interrupted(CallError::Denied);
+        }
+        Subscription::new(Box::pin(
+            platform
+                .subscribe_payment_status(&self.product, request.id)
+                .map(|item| {
+                    item.map(HostPaymentStatusSubscribeItem::V1).map_err(|error| {
+                        CallError::Domain(HostPaymentStatusSubscribeError::V1(error))
+                    })
+                }),
+        ))
     }
 
     #[instrument(skip_all, fields(runtime.method = "payment.top_up"))]

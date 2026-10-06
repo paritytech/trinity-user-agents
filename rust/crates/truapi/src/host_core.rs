@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use crate::platform::{
     ChatPlatform, ContactsPlatform, FundingPlatform, PermissionStatusHost, PocketPlatform,
-    TopUpPlatform,
+    PaymentPlatform, TopUpPlatform,
 };
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
@@ -273,6 +273,14 @@ impl PairingHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_top_up_platform"))]
     pub fn set_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
         self.services.install_top_up_platform(platform)
+    }
+
+    /// Install the host's [`PaymentPlatform`], which pays from the user's
+    /// balance once the user approves. Set-once; returns whether this call
+    /// installed it.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_payment_platform"))]
+    pub fn set_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
+        self.services.install_payment_platform(platform)
     }
 
     /// Install the host's [`FundingPlatform`], the native funding overlay.
@@ -795,6 +803,14 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_top_up_platform"))]
     pub fn set_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
         self.services.install_top_up_platform(platform)
+    }
+
+    /// Install the host's [`PaymentPlatform`], which pays from the user's
+    /// balance once the user approves. Set-once; returns whether this call
+    /// installed it.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_payment_platform"))]
+    pub fn set_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
+        self.services.install_payment_platform(platform)
     }
 
     /// Install the host's [`FundingPlatform`], the native funding overlay.

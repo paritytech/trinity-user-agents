@@ -332,6 +332,35 @@ pub trait NativeFundingCallbacks: Send + Sync {
     fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);
 }
 
+/// Native payment engine, which pays from the user's balance to an account.
+/// A host passes an implementation to
+/// [`NativeTrUApiHostRuntime::set_payment_callbacks`] and reports each later
+/// status with [`NativeTrUApiHostRuntime::notify_payment_status`].
+///
+/// [`NativeTrUApiHostRuntime::set_payment_callbacks`]: super::NativeTrUApiHostRuntime::set_payment_callbacks
+/// [`NativeTrUApiHostRuntime::notify_payment_status`]: super::NativeTrUApiHostRuntime::notify_payment_status
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativePaymentCallbacks: Send + Sync {
+    /// Ask the user to approve payment `request` for `product_id`, returning
+    /// once the user has decided: `Ok` when they authorized it and the host
+    /// took it on. Ids are scoped to `product_id`. Its amount is a decimal
+    /// string of CASH units.
+    async fn request_payment(
+        &self,
+        product_id: String,
+        request: v01::HostPaymentRequest,
+    ) -> Result<(), v01::HostPaymentError>;
+
+    /// The current status of `product_id`'s payment `id`, or `None` when the
+    /// host holds no such payment.
+    fn payment_status(
+        &self,
+        product_id: String,
+        id: crate::Bytes32,
+    ) -> Result<Option<v01::HostPaymentStatusSubscribeItem>, HostRejection>;
+}
+
 /// Native top-up engine, which claims a source's funds into the user's
 /// balance. A host passes an implementation to
 /// [`NativeTrUApiHostRuntime::set_top_up_callbacks`] and reports each later

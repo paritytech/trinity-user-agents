@@ -13,7 +13,7 @@ truapi_macros::versioned_type! {
     pub enum HostPaymentTopUpStatusSubscribeItem { V1 => v01::HostPaymentTopUpStatusSubscribeItem }
     pub enum HostPaymentTopUpStatusSubscribeError { V1 => v01::HostPaymentTopUpStatusSubscribeError }
     pub enum HostPaymentRequest { V1 => v01::HostPaymentRequest }
-    pub enum HostPaymentResponse { V1 => v01::HostPaymentResponse }
+    pub enum HostPaymentResponse { V1 }
     pub enum HostPaymentError { V1 => v01::HostPaymentError }
     pub enum HostPaymentStatusSubscribeRequest { V1 => v01::HostPaymentStatusSubscribeRequest }
     pub enum HostPaymentStatusSubscribeItem { V1 => v01::HostPaymentStatusSubscribeItem }

@@ -33,7 +33,8 @@ use truapi::latest::{
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
     HostChatRegisterBotResponse, HostDevicePermissionRequest, HostFeatureSupportedRequest,
     HostFeatureSupportedResponse, HostFundingStatusSubscribeItem, HostLocalStorageChangeItem,
-    HostLocaleSubscribeItem, HostNavigateToError, HostPaymentTopUpError, HostPaymentTopUpRequest,
+    HostLocaleSubscribeItem, HostNavigateToError, HostPaymentError, HostPaymentRequest, HostPaymentStatusSubscribeError,
+    HostPaymentStatusSubscribeItem, HostPaymentTopUpError, HostPaymentTopUpRequest,
     HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem, HostPlatform,
     HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
     HostPushNotificationRequest, HostPushNotificationResponse, HostSignPayloadRequest,
@@ -3293,6 +3294,32 @@ pub trait TopUpPlatform: Send + Sync {
         'static,
         Result<HostPaymentTopUpStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError>,
     >;
+}
+
+/// Host-implemented payment engine: pays from the user's balance to an
+/// account, once the user approves. Optional: a host that omits it leaves
+/// payment requests answered `Unsupported`.
+///
+/// The host owns the approval sheet, the transfer and its persistence, and
+/// scopes ids to `product`.
+#[async_trait]
+pub trait PaymentPlatform: Send + Sync {
+    /// Ask the user to approve `request`. Returns once the user has decided:
+    /// `Ok` when they authorized it and the host took it on; the payment's
+    /// outcome arrives through its status.
+    async fn request_payment(
+        &self,
+        product: &ProductContext,
+        request: HostPaymentRequest,
+    ) -> Result<(), HostPaymentError>;
+
+    /// Emit a payment's current status and every later one, ending after a
+    /// terminal status.
+    fn subscribe_payment_status(
+        &self,
+        product: &ProductContext,
+        id: [u8; 32],
+    ) -> BoxStream<'static, Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>>;
 }
 
 /// A funding session as the host overlay needs it to open on the right screen.

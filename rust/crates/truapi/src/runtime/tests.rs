@@ -2834,6 +2834,148 @@ fn a_top_up_needs_a_session() {
     );
 }
 
+#[derive(Default)]
+struct RecordingPaymentPlatform {
+    requested: Mutex<Vec<(String, truapi::latest::HostPaymentRequest)>>,
+    followed: Mutex<Vec<(String, [u8; 32])>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
+    async fn request_payment(
+        &self,
+        product: &ProductContext,
+        request: truapi::latest::HostPaymentRequest,
+    ) -> Result<(), truapi::latest::HostPaymentError> {
+        self.requested
+            .lock()
+            .expect("requested mutex poisoned")
+            .push((product.product_id.clone(), request));
+        Ok(())
+    }
+
+    fn subscribe_payment_status(
+        &self,
+        product: &ProductContext,
+        id: [u8; 32],
+    ) -> futures::stream::BoxStream<
+        'static,
+        Result<truapi::latest::HostPaymentStatusSubscribeItem, truapi::latest::HostPaymentStatusSubscribeError>,
+    > {
+        self.followed
+            .lock()
+            .expect("followed mutex poisoned")
+            .push((product.product_id.clone(), id));
+        Box::pin(futures::stream::iter([
+            Ok(v01::HostPaymentStatusSubscribeItem::Processing),
+            Ok(v01::HostPaymentStatusSubscribeItem::PartiallyClaimed { actual_claimed: 600 }),
+        ]))
+    }
+}
+
+fn payment_request() -> v01::HostPaymentRequest {
+    v01::HostPaymentRequest {
+        from: None,
+        amount: 1_000,
+        destination: [3; 32],
+        id: [9; 32],
+    }
+}
+
+fn request_payment(
+    host: &ProductRuntimeHost,
+) -> Result<truapi::versioned::payment::HostPaymentResponse, CallError<truapi::versioned::payment::HostPaymentError>> {
+    futures::executor::block_on(truapi::api::Payment::request(
+        host,
+        &CallContext::default(),
+        truapi::versioned::payment::HostPaymentRequest::V1(payment_request()),
+    ))
+}
+
+fn follow_payment(
+    host: &ProductRuntimeHost,
+) -> Vec<
+    Result<
+        truapi::versioned::payment::HostPaymentStatusSubscribeItem,
+        CallError<truapi::versioned::payment::HostPaymentStatusSubscribeError>,
+    >,
+> {
+    futures::executor::block_on(
+        futures::executor::block_on(truapi::api::Payment::status_subscribe(
+            host,
+            &CallContext::default(),
+            truapi::versioned::payment::HostPaymentStatusSubscribeRequest::V1(
+                v01::HostPaymentStatusSubscribeRequest { id: [9; 32] },
+            ),
+        ))
+        .collect::<Vec<_>>(),
+    )
+}
+
+// The host owns the approval sheet and the transfer; core hands it the
+// request as the product made it, and relays the status the host reports,
+// a partial payment included.
+#[test]
+fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
+    let services = funding_services();
+    let engine = Arc::new(RecordingPaymentPlatform::default());
+    assert!(services.install_payment_platform(engine.clone()));
+    let host = funding_host(&services, "wallet.dot", true);
+
+    assert_eq!(
+        (
+            request_payment(&host),
+            follow_payment(&host),
+            engine.requested.lock().expect("requested mutex poisoned").clone(),
+            engine.followed.lock().expect("followed mutex poisoned").clone(),
+        ),
+        (
+            Ok(truapi::versioned::payment::HostPaymentResponse::V1),
+            vec![
+                Ok(truapi::versioned::payment::HostPaymentStatusSubscribeItem::V1(
+                    v01::HostPaymentStatusSubscribeItem::Processing
+                )),
+                Ok(truapi::versioned::payment::HostPaymentStatusSubscribeItem::V1(
+                    v01::HostPaymentStatusSubscribeItem::PartiallyClaimed { actual_claimed: 600 }
+                )),
+            ],
+            vec![("wallet.dot".to_string(), payment_request())],
+            vec![("wallet.dot".to_string(), [9; 32])],
+        )
+    );
+}
+
+// Payments the core makes as the funding product use ids anyone can work
+// out; a product under that name, or one without a session, must not reach
+// the host's payments.
+#[test]
+fn no_product_pays_as_the_funding_product_or_without_a_session() {
+    let services = funding_services();
+    let engine = Arc::new(RecordingPaymentPlatform::default());
+    assert!(services.install_payment_platform(engine.clone()));
+    let funding = funding_host(&services, "fund.dot", true);
+    let signed_out = funding_host(&services, "wallet.dot", false);
+
+    assert_eq!(
+        (
+            request_payment(&funding),
+            follow_payment(&funding),
+            request_payment(&signed_out),
+            follow_payment(&signed_out),
+            engine.requested.lock().expect("requested mutex poisoned").len(),
+            engine.followed.lock().expect("followed mutex poisoned").len(),
+        ),
+        (
+            Err(CallError::Denied),
+            vec![Err(CallError::Denied)],
+            Err(CallError::Denied),
+            vec![Err(CallError::Denied)],
+            0,
+            0
+        )
+    );
+}
+
 #[test]
 fn chain_follow_ids_are_scoped_per_product_core() {
     let (host_config, product) = runtime_config("same.dot");

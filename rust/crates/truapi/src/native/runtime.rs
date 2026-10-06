@@ -26,7 +26,7 @@ use crate::{PairedSsoPeer, ResponderExit, SigningHostRuntime};
 
 use super::callbacks::{
     HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeFundingCallbacks,
-    NativePocketCallbacks, NativeTopUpCallbacks,
+    NativePaymentCallbacks, NativePocketCallbacks, NativeTopUpCallbacks,
 };
 use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -37,7 +37,7 @@ use super::executor::shared_native_executor;
 use super::events::NativeEventBus;
 use super::platform::{
     CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, FundingCallbackPlatform,
-    PocketCallbackPlatform, TopUpCallbackPlatform,
+    PaymentCallbackPlatform, PocketCallbackPlatform, TopUpCallbackPlatform,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
@@ -56,6 +56,8 @@ pub struct NativeTrUApiHostRuntime {
     /// The host's top-up engine, once installed, which later statuses are
     /// pushed through.
     top_up: OnceLock<Arc<TopUpCallbackPlatform>>,
+    /// The payment engine statuses are pushed to, once installed.
+    payments: OnceLock<Arc<PaymentCallbackPlatform>>,
 }
 
 impl NativeTrUApiHostRuntime {
@@ -122,6 +124,7 @@ impl NativeTrUApiHostRuntime {
             }))),
             worker_executions: Mutex::new(HashMap::new()),
             top_up: OnceLock::new(),
+            payments: OnceLock::new(),
         }))
     }
 
@@ -269,6 +272,27 @@ impl NativeTrUApiHostRuntime {
         status: v01::HostPaymentTopUpStatusSubscribeItem,
     ) {
         if let Some(platform) = self.top_up.get() {
+            platform.notify_status(product_id, id, status);
+        }
+    }
+
+    /// Install the host's payment engine. Set-once; answers whether this
+    /// call installed it. Report each later status with
+    /// [`Self::notify_payment_status`].
+    pub fn set_payment_callbacks(&self, callbacks: Arc<dyn NativePaymentCallbacks>) -> bool {
+        let platform = Arc::new(PaymentCallbackPlatform::new(callbacks));
+        self.runtime.set_payment_platform(platform.clone()) && self.payments.set(platform).is_ok()
+    }
+
+    /// Report a later status of `product_id`'s payment `id` to the products
+    /// and core following it.
+    pub fn notify_payment_status(
+        &self,
+        product_id: String,
+        id: crate::Bytes32,
+        status: v01::HostPaymentStatusSubscribeItem,
+    ) {
+        if let Some(platform) = self.payments.get() {
             platform.notify_status(product_id, id, status);
         }
     }

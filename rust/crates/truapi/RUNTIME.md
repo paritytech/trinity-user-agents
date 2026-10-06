@@ -464,6 +464,12 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   the new stage by subscribing again. `funding_account_secret` exports an
   account's raw seed, as getcash does, for a user to take funds back with a
   wallet.
+- `PaymentPlatform`: pay from the user's balance to an account once the user
+  approves, and stream each payment's status by its caller-chosen id.
+  Installed with `set_payment_platform`; native hosts use
+  `set_payment_callbacks` with `notify_payment_status`. The core requires a
+  session and refuses the funding product. Without it, `request` and
+  `statusSubscribe` answer `Unsupported`.
 - `TopUpPlatform`: claim a top-up source's funds into the user's balance and
   stream each top-up's status. Installed with `set_top_up_platform`. The core
   requires a session and checks the source keys; the host owns claiming,

@@ -49,6 +49,8 @@ pub struct RuntimeServices {
     /// Host top-up engine, installed once at startup by a host that claims
     /// funds into the balance. Unset leaves every top-up `Unsupported`.
     top_up_platform: OnceLock<Arc<dyn crate::platform::TopUpPlatform>>,
+    /// The host's payment engine, once installed.
+    payment_platform: OnceLock<Arc<dyn crate::platform::PaymentPlatform>>,
     /// Host contacts adapter, installed once at startup by a host with a
     /// contact picker. Unset leaves every product contacts call `Unsupported`.
     contacts_platform: OnceLock<Arc<dyn crate::platform::ContactsPlatform>>,
@@ -124,6 +126,7 @@ impl RuntimeServices {
             pocket_platform: OnceLock::new(),
             funding: Default::default(),
             top_up_platform: OnceLock::new(),
+            payment_platform: OnceLock::new(),
             contacts_platform: OnceLock::new(),
             contact_handles: Default::default(),
             device_pairing_observer: OnceLock::new(),
@@ -220,6 +223,17 @@ impl RuntimeServices {
     /// The host's top-up engine, when one is installed.
     pub fn top_up_platform(&self) -> Option<Arc<dyn crate::platform::TopUpPlatform>> {
         self.top_up_platform.get().cloned()
+    }
+
+    /// Install the host's payment engine. Set-once; returns whether this
+    /// call installed it.
+    pub fn install_payment_platform(&self, platform: Arc<dyn crate::platform::PaymentPlatform>) -> bool {
+        self.payment_platform.set(platform).is_ok()
+    }
+
+    /// The host's payment engine, when one is installed.
+    pub fn payment_platform(&self) -> Option<Arc<dyn crate::platform::PaymentPlatform>> {
+        self.payment_platform.get().cloned()
     }
 
     /// Funding sessions shared by every product runtime of this host.

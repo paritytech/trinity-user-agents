@@ -40,8 +40,6 @@ use truapi::frame::{
 mod common;
 use common::{RecordingTransport, WireShapePlatform, test_runtime_config, test_spawner};
 
-const PAYMENTS_NOT_IMPLEMENTED: &str = "Payments are not supported in dot.li";
-
 fn dispatch(core: &TrUApiCore, frame: ProtocolMessage) -> ProtocolMessage {
     let encoded = frame.encode();
     let response_bytes = futures::executor::block_on(core.receive_from_product(&encoded))
@@ -200,36 +198,6 @@ fn versioned_interrupt_err_payload<Wrapper: Encode>(wrapped_error: Wrapper) -> V
     expected
 }
 
-fn assert_request_returns_domain_error<Wrapper: Encode>(
-    core: &TrUApiCore,
-    request_id: &str,
-    method: &str,
-    value: Vec<u8>,
-    wrapped_error: Wrapper,
-) {
-    let ids = request_ids(method).expect("known request method");
-    let response = dispatch(
-        core,
-        ProtocolMessage {
-            request_id: request_id.into(),
-            payload: Payload {
-                trait_id: ids.trait_id,
-                method_id: ids.method_id,
-                message_type: MESSAGE_TYPE_REQUEST,
-                value,
-            },
-        },
-    );
-    assert_eq!(response.request_id, request_id);
-    assert_eq!(response.payload.trait_id, ids.trait_id);
-    assert_eq!(response.payload.method_id, ids.method_id);
-    assert_eq!(response.payload.message_type, MESSAGE_TYPE_RESPONSE);
-    assert_eq!(
-        response.payload.value,
-        versioned_result_err_payload(wrapped_error)
-    );
-}
-
 fn assert_subscription_start_interrupts_error<Wrapper: Encode>(
     core: &TrUApiCore,
     request_id: &str,
@@ -328,28 +296,68 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
     assert_eq!(response.payload.value, expected);
 }
 
+/// A host with no payment engine answers `Unsupported`, so a product can tell
+/// "this host never pays" from a payment that failed.
 #[test]
-fn deferred_payment_requests_return_dotli_not_implemented_errors() {
+fn payment_request_reports_unsupported_without_a_host_engine() {
     let core = make_core();
     let request = v01::HostPaymentRequest {
         from: None,
         amount: 1,
         destination: [0u8; 32],
+        id: [7; 32],
     };
+    let ids = request_ids("payment_request").expect("known request method");
+    let frame = ProtocolMessage {
+        request_id: "p:payment".into(),
+        payload: Payload {
+            trait_id: ids.trait_id,
+            method_id: ids.method_id,
+            message_type: MESSAGE_TYPE_REQUEST,
+            value: truapi::versioned::payment::HostPaymentRequest::V1(request).encode(),
+        },
+    };
+    let response = dispatch(&core, frame);
+    assert_eq!(response.payload.value, vec![0x01u8, 0x02u8]);
+}
 
-    assert_request_returns_domain_error(
-        &core,
-        "p:payment",
-        "payment_request",
-        truapi::versioned::payment::HostPaymentRequest::V1(request).encode(),
-        truapi::versioned::payment::HostPaymentError::V1(v01::HostPaymentError::Unknown {
-            reason: PAYMENTS_NOT_IMPLEMENTED.to_string(),
-        }),
+/// Following a payment on a host with no payment engine interrupts with
+/// `Unsupported`, as requesting one answers.
+#[test]
+fn payment_status_subscription_interrupts_unsupported_without_a_host_engine() {
+    let core = make_core();
+    let status = v01::HostPaymentStatusSubscribeRequest { id: [7; 32] };
+    let ids = subscription_ids("payment_status_subscribe").expect("known subscription method");
+    let transport = Arc::new(RecordingTransport::default());
+    futures::executor::block_on(
+        core.dispatch(
+            ProtocolMessage {
+                request_id: "p:status".into(),
+                payload: Payload {
+                    trait_id: ids.trait_id,
+                    method_id: ids.method_id,
+                    message_type: MESSAGE_TYPE_START,
+                    value: truapi::versioned::payment::HostPaymentStatusSubscribeRequest::V1(
+                        status,
+                    )
+                    .encode(),
+                },
+            },
+            transport.clone(),
+        ),
+    );
+    transport.wait_for(1, std::time::Duration::from_secs(5));
+
+    let sent = transport.sent.lock().unwrap();
+    assert_eq!(
+        (sent[0].payload.message_type, sent[0].payload.value.clone()),
+        // [Result::Err=0x01][CallError::Unsupported=0x02], as for a request.
+        (MESSAGE_TYPE_INTERRUPT, vec![0x01u8, 0x02u8])
     );
 }
 
 #[test]
-fn deferred_payment_subscriptions_interrupt_dotli_not_implemented_errors() {
+fn payment_balance_subscription_interrupts_permission_denied() {
     let core = make_core();
     let balance = v01::HostPaymentBalanceSubscribeRequest { purse: None };
     assert_subscription_start_interrupts_error(
@@ -359,21 +367,6 @@ fn deferred_payment_subscriptions_interrupt_dotli_not_implemented_errors() {
         truapi::versioned::payment::HostPaymentBalanceSubscribeRequest::V1(balance).encode(),
         truapi::versioned::payment::HostPaymentBalanceSubscribeError::V1(
             v01::HostPaymentBalanceSubscribeError::PermissionDenied,
-        ),
-    );
-
-    let status = v01::HostPaymentStatusSubscribeRequest {
-        payment_id: "payment-id".to_string(),
-    };
-    assert_subscription_start_interrupts_error(
-        &core,
-        "p:status",
-        "payment_status_subscribe",
-        truapi::versioned::payment::HostPaymentStatusSubscribeRequest::V1(status).encode(),
-        truapi::versioned::payment::HostPaymentStatusSubscribeError::V1(
-            v01::HostPaymentStatusSubscribeError::Unknown {
-                reason: PAYMENTS_NOT_IMPLEMENTED.to_string(),
-            },
         ),
     );
 }
