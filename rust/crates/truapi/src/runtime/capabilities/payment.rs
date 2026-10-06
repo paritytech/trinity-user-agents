@@ -150,12 +150,7 @@ impl Payment for ProductRuntimeHost {
             .services
             .payment_platform()
             .ok_or(CallError::Unsupported)?;
-        // Payments the core makes as the funding product, into its funding
-        // accounts under ids anyone can work out, must not be raced or read
-        // by a product under that name.
-        if self.authority.current_session().is_none()
-            || crate::runtime::is_funding_product(&self.product_id())
-        {
+        if self.authority.current_session().is_none() {
             return Err(CallError::Denied);
         }
         platform
@@ -176,9 +171,7 @@ impl Payment for ProductRuntimeHost {
         let Some(platform) = self.services.payment_platform() else {
             return Subscription::interrupted(CallError::Unsupported);
         };
-        if self.authority.current_session().is_none()
-            || crate::runtime::is_funding_product(&self.product_id())
-        {
+        if self.authority.current_session().is_none() {
             return Subscription::interrupted(CallError::Denied);
         }
         Subscription::new(Box::pin(
@@ -203,12 +196,7 @@ impl Payment for ProductRuntimeHost {
             .services
             .top_up_platform()
             .ok_or(CallError::Unsupported)?;
-        // The core credits funding deposits through top-ups made as the
-        // funding product, so a product under that name could race or fake
-        // them.
-        if self.authority.current_session().is_none()
-            || crate::runtime::is_funding_product(&self.product_id())
-        {
+        if self.authority.current_session().is_none() {
             return Err(CallError::Denied);
         }
         let domain = |error| CallError::Domain(HostPaymentTopUpError::V1(error));
@@ -235,9 +223,7 @@ impl Payment for ProductRuntimeHost {
         let Some(platform) = self.services.top_up_platform() else {
             return Subscription::interrupted(CallError::Unsupported);
         };
-        if self.authority.current_session().is_none()
-            || crate::runtime::is_funding_product(&self.product_id())
-        {
+        if self.authority.current_session().is_none() {
             return Subscription::interrupted(CallError::Denied);
         }
         Subscription::new(Box::pin(

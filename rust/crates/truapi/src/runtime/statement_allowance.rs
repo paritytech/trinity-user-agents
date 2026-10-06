@@ -21,7 +21,6 @@ mod test_fixtures;
 mod view;
 mod view_cache;
 
-pub use key_hash::blake2_128_concat;
 pub use view::ViewFunctionError;
 
 use std::collections::HashMap;
