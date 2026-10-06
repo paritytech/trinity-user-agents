@@ -3,10 +3,10 @@
 use crate::versioned::notifications::{
     HostPushNotificationCancelError, HostPushNotificationCancelRequest,
     HostPushNotificationCancelResponse, HostPushNotificationError, HostPushNotificationRequest,
-    HostPushNotificationResponse,
-    NotificationActivationAcknowledgeError, NotificationActivationAcknowledgeRequest,
-    NotificationActivationAcknowledgeResponse, NotificationActivationEventsError,
-    NotificationActivationEventsRequest, NotificationActivationEventsResponse,
+    HostPushNotificationResponse, NotificationActivationAcknowledgeError,
+    NotificationActivationAcknowledgeRequest, NotificationActivationAcknowledgeResponse,
+    NotificationActivationEventsError, NotificationActivationEventsRequest,
+    NotificationActivationEventsResponse,
 };
 use crate::{CallContext, CallError};
 use crate::{wire, wire_trait};
@@ -89,5 +89,8 @@ pub trait Notifications: Send + Sync {
         &self,
         cx: &CallContext,
         request: NotificationActivationAcknowledgeRequest,
-    ) -> Result<NotificationActivationAcknowledgeResponse, CallError<NotificationActivationAcknowledgeError>>;
+    ) -> Result<
+        NotificationActivationAcknowledgeResponse,
+        CallError<NotificationActivationAcknowledgeError>,
+    >;
 }
