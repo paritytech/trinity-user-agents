@@ -285,7 +285,10 @@ fn emit_wasm_adapter(
     .unwrap();
     let needs_scale = traits.iter().flat_map(|t| &t.methods).any(|method| {
         let vector_codec = |ty: &TypeRef| {
-            let ty = match ty { TypeRef::Option(inner) => inner.as_ref(), other => other };
+            let ty = match ty {
+                TypeRef::Option(inner) => inner.as_ref(),
+                other => other,
+            };
             matches!(ty, TypeRef::Vec(_))
                 && encoded_codec_expr(ty, codec_types, local_codec_types).is_some()
         };
@@ -1282,7 +1285,8 @@ fn encoded_codec_expr(
 ) -> Option<String> {
     match ty {
         TypeRef::Named { name, args }
-            if args.is_empty() && (codec_types.contains(name) || local_codec_types.contains(name)) =>
+            if args.is_empty()
+                && (codec_types.contains(name) || local_codec_types.contains(name)) =>
         {
             Some(name.clone())
         }
@@ -1316,7 +1320,9 @@ fn adapter_unary_impl(
     } else if let TypeRef::Option(inner) = ok
         && let Some(codec) = encoded_codec_expr(inner, codec_types, local_codec_types)
     {
-        format!("{{ const value = await {call}; return value == null ? undefined : {codec}.enc(value); }}")
+        format!(
+            "{{ const value = await {call}; return value == null ? undefined : {codec}.enc(value); }}"
+        )
     } else {
         format!("await {call}")
     };
@@ -1459,7 +1465,9 @@ fn local_codec_expr_for_type(type_def: &TypeDef) -> Result<String> {
                 ));
             }
             let indexed = variants.iter().enumerate().any(|(position, variant)| {
-                variant.codec_index.is_some_and(|index| index as usize != position)
+                variant
+                    .codec_index
+                    .is_some_and(|index| index as usize != position)
             });
             let entries = variants
                 .iter()
@@ -1475,7 +1483,11 @@ fn local_codec_expr_for_type(type_def: &TypeDef) -> Result<String> {
                 })
                 .collect::<Result<Vec<_>>>()?
                 .join(", ");
-            let constructor = if indexed { "indexedTaggedUnion" } else { "TaggedUnion" };
+            let constructor = if indexed {
+                "indexedTaggedUnion"
+            } else {
+                "TaggedUnion"
+            };
             Ok(format!("S.{constructor}({{{entries}}})"))
         }
     }
@@ -2065,10 +2077,14 @@ mod tests {
     #[test]
     fn wasm_adapter_encodes_optional_and_vector_codec_results() {
         for (shape, expected) in [
-            (TypeRef::Vec(Box::new(named("HostFeatureSupportedResponse"))),
-                "featureSupportedResultCodec.enc(await callbacks.features.featureSupported("),
-            (TypeRef::Option(Box::new(named("HostFeatureSupportedResponse"))),
-                "value == null ? undefined : HostFeatureSupportedResponse.enc(value)"),
+            (
+                TypeRef::Vec(Box::new(named("HostFeatureSupportedResponse"))),
+                "featureSupportedResultCodec.enc(await callbacks.features.featureSupported(",
+            ),
+            (
+                TypeRef::Option(Box::new(named("HostFeatureSupportedResponse"))),
+                "value == null ? undefined : HostFeatureSupportedResponse.enc(value)",
+            ),
         ] {
             let definition = platform_with_method(method_with_return(shape));
             let output = emit_wasm_adapter(&definition, &codec_types(), &BTreeSet::new()).unwrap();
@@ -2079,10 +2095,14 @@ mod tests {
     #[test]
     fn wasm_adapter_decodes_optional_and_vector_codec_parameters() {
         for (shape, expected) in [
-            (TypeRef::Vec(Box::new(named("HostFeatureSupportedRequest"))),
-                "S.Vector(HostFeatureSupportedRequest).dec(request)"),
-            (TypeRef::Option(Box::new(named("HostFeatureSupportedRequest"))),
-                "request == null ? undefined : HostFeatureSupportedRequest.dec(request)"),
+            (
+                TypeRef::Vec(Box::new(named("HostFeatureSupportedRequest"))),
+                "S.Vector(HostFeatureSupportedRequest).dec(request)",
+            ),
+            (
+                TypeRef::Option(Box::new(named("HostFeatureSupportedRequest"))),
+                "request == null ? undefined : HostFeatureSupportedRequest.dec(request)",
+            ),
         ] {
             let definition = platform_with_method(method_with_param(shape));
             let output = emit_wasm_adapter(&definition, &codec_types(), &BTreeSet::new()).unwrap();

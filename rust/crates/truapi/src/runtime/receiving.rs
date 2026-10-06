@@ -529,6 +529,10 @@ impl ReceivingService {
 
     /// Validate actual source and the complete authenticated frame before minting
     /// a local handle. Provider payload IDs alone must never call this path.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Keep observed source fields explicit and preserve the host receiving API"
+    )]
     pub async fn ingest(&self, product: &str, revision: u64, watch_id: String,
         actual_genesis: String, actual_channel: String, actual_topics: Vec<String>, frame: Vec<u8>)
         -> Result<Vec<ReceivingEvent>, Error> {

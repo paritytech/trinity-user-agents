@@ -465,7 +465,8 @@ mod tests {
     }
 
     #[derive(Clone, Copy, Default)]
-    enum ScriptedLookup {        #[default]
+    enum ScriptedLookup {
+        #[default]
         Labels,
         NoRecord,
         Unavailable,
@@ -549,6 +550,7 @@ mod tests {
                     let mut frames = vec![response(
                         json!({"result": "started", "operationId": operation_id}),
                     )];
+
                     if key_bytes == dispatcher_address_key()
                         && !matches!(self.lookup, ScriptedLookup::GatewayMissing)
                     {
@@ -771,7 +773,6 @@ mod tests {
         .unwrap();
         assert_eq!(session, expected);
     }
-
     fn unnamed_session() -> SessionInfo {
         let mut session = crate::test_support::sso_session_info();
         session.identity_account_id = Some(ACCOUNT);

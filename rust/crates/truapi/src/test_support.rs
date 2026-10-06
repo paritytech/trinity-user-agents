@@ -142,6 +142,7 @@ pub struct StubPlatform {
     pub remote_permission_denied: bool,
     pub remote_permission_decisions:
         Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
+    pub remote_permission_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Every `remote_permission` request, in order, so a test can assert which
     /// domains reached the prompt and that a stored grant suppresses a re-ask.
     pub remote_permission_requests: Arc<Mutex<Vec<v01::RemotePermissionRequest>>>,
@@ -1343,6 +1344,10 @@ impl PlatformPermissions for StubPlatform {
             .lock()
             .expect("remote permission list mutex poisoned")
             .push(request);
+        let gate = self.remote_permission_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
         if let Some(decision) = self
             .remote_permission_decisions
             .lock()

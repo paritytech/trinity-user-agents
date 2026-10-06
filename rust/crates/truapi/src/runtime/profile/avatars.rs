@@ -318,7 +318,7 @@ impl ContactAvatarPlacement {
                     )
                     .await
                     .unwrap_or_default();
-                    if authority.current_session().as_ref() == Some(&session) {
+                    if authority.session_is_current(&session, None) {
                         resolved
                     } else {
                         Vec::new()
