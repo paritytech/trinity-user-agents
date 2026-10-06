@@ -191,6 +191,11 @@ jobs:
         working-directory: hosts/ios
         run: bundle exec fastlane build_app_simulator
 
+      # Grants the notification and camera permissions simctl cannot.
+      - name: Install applesimutils
+        continue-on-error: true
+        run: brew tap wix/brew && brew install applesimutils
+
       - name: Write the test account's mnemonic
         env:
           MNEMONIC: ${{ secrets.E2E_IOS_MNEMONIC }}

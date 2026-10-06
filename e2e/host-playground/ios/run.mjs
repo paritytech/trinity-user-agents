@@ -89,6 +89,20 @@ run("xcrun", ["simctl", "install", device.udid, app]);
 for (const service of ["location", "microphone"]) {
   spawnSync("xcrun", ["simctl", "privacy", device.udid, "grant", service, bundle], { stdio: "ignore" });
 }
+// simctl cannot grant notifications or the camera. Their system alerts would
+// otherwise stay up for the whole run, and iOS shows one alert at a time, so
+// every later permission request would wait behind them. applesimutils, when
+// installed, writes those grants into the simulator directly.
+const applesimutils = spawnSync(
+  "applesimutils",
+  ["--byId", device.udid, "--bundle", bundle, "--setPermissions", "notifications=YES,camera=YES,faceid=YES"],
+  { encoding: "utf8" },
+);
+if (applesimutils.error) {
+  console.log("applesimutils is not installed; notification and camera alerts will block their tests.");
+} else if (applesimutils.status !== 0) {
+  console.log(`applesimutils failed: ${(applesimutils.stderr || applesimutils.stdout).trim()}`);
+}
 
 const dataContainer = appDataContainer();
 const exchange = join(dataContainer, "tmp", "truapi-e2e");
