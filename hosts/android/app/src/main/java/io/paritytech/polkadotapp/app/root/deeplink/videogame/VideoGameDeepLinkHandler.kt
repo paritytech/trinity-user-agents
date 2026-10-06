@@ -35,7 +35,7 @@ class VideoGameDeepLinkHandler @Inject constructor(
     override suspend fun canHandle(data: Uri): Boolean {
         if (data.scheme != DeepLinkHandler.APP_SCHEME || data.host != WEEKLY_GAME_HOST) return false
 
-        // The weekly game needs PERSONHOOD; the product game reminder is delivered in every build.
+        // The weekly game needs PERSONHOOD; the product game reminder is not tied to it.
         return FeatureOption.PERSONHOOD.isEnabled || data.isProductGameLink()
     }
 
