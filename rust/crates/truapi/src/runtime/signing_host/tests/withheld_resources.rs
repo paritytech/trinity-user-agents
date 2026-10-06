@@ -148,7 +148,9 @@ fn a_withheld_bulletin_allowance_yields_no_key_on_either_call() {
         .expect("activation succeeds");
     activation.set_grant_allowances_unchecked(true);
     activation.set_withheld_resources(vec!["BulletinAllowance".to_string()]);
-    let session = activation.current_session().expect("the session just made");
+    let session = activation
+        .current_operation()
+        .expect("the session just made");
     let cx = CallContext::default();
 
     let keys = futures::executor::block_on(async {

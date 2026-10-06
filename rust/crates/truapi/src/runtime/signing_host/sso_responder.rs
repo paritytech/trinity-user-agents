@@ -310,9 +310,9 @@ async fn establish_pairing_session(
     deeplink: &str,
 ) -> Result<EstablishedPairing, String> {
     let peer = PairedSsoPeer::from_deeplink(deeplink)?;
-    let keys = signing_host
+    let (_, keys) = signing_host
         .wallet
-        .keys()
+        .current_keys()
         .map_err(|err| format!("signing host has no active local session: {err}"))?;
     let root_public_key = keys
         .root_public_key()
@@ -361,9 +361,9 @@ pub async fn resume_pairing(
     signing_host: Arc<SigningHost>,
     peer: PairedSsoPeer,
 ) -> Result<ResponderExit, String> {
-    let keys = signing_host
+    let (_, keys) = signing_host
         .wallet
-        .keys()
+        .current_keys()
         .map_err(|err| format!("signing host has no active local session: {err}"))?;
     let root_public_key = keys
         .root_public_key()
@@ -388,9 +388,9 @@ pub async fn disconnect_paired_host(
     signing_host: Arc<SigningHost>,
     peer: PairedSsoPeer,
 ) -> Result<(), String> {
-    let keys = signing_host
+    let (_, keys) = signing_host
         .wallet
-        .keys()
+        .current_keys()
         .map_err(|err| format!("signing host has no active local session: {err}"))?;
     let session = responder_session(&keys, peer)?;
     let message_id = sso_message_id();
@@ -474,9 +474,9 @@ pub async fn notify_pairing_allowance_allocation(
     deeplink: &str,
 ) -> Result<AnnouncedPairing, String> {
     let peer = PairedSsoPeer::from_deeplink(deeplink)?;
-    let keys = signing_host
+    let (_, keys) = signing_host
         .wallet
-        .keys()
+        .current_keys()
         .map_err(|err| format!("signing host has no active local session: {err}"))?;
     let (identity, _) = keys
         .responder_identity()
@@ -930,10 +930,9 @@ pub async fn allocate_statement_store_allowance(
         register_statement_account_pooled, scan_collections,
     };
 
-    signing_host.require_current_session(session)?;
     let allowance = signing_host
         .wallet
-        .keys()?
+        .keys(session)?
         .statement_allowance_key(product_id)?;
     // The key is derived locally; only its registration needs the chain. A
     // host answering allocation as granted hands back the derived key so a
@@ -985,7 +984,7 @@ pub async fn allocate_statement_store_allowance(
             %collection,
             "statement-store allowance already allocated"
         );
-        signing_host.require_current_session(session)?;
+        signing_host.wallet.require_current_session(session)?;
         return Ok(StatementStoreAllocation {
             secret: allowance.secret.to_bytes().to_vec(),
             period,
@@ -1000,7 +999,7 @@ pub async fn allocate_statement_store_allowance(
             resource: "statement-store",
         });
     }
-    signing_host.require_current_session(session)?;
+    signing_host.wallet.require_current_session(session)?;
     let outcome = register_statement_account_pooled(
         rpc,
         &chain.metadata,
@@ -1045,7 +1044,7 @@ pub async fn allocate_statement_store_allowance(
             );
         }
     }
-    signing_host.require_current_session(session)?;
+    signing_host.wallet.require_current_session(session)?;
     if let Err(reason) = allowance_renewal::track(
         signing_host,
         vec![StatementRenewalTarget::ProductStatementAllowance {
@@ -1056,7 +1055,7 @@ pub async fn allocate_statement_store_allowance(
     {
         warn!(%product_id, %reason, "failed to record statement-store renewal target");
     }
-    signing_host.require_current_session(session)?;
+    signing_host.wallet.require_current_session(session)?;
     Ok(StatementStoreAllocation {
         secret: allowance.secret.to_bytes().to_vec(),
         period,
@@ -1076,10 +1075,9 @@ pub async fn allocate_bulletin_allowance(
         wait_bulletin_authorization,
     };
 
-    signing_host.require_current_session(session)?;
     let allowance = signing_host
         .wallet
-        .keys()?
+        .keys(session)?
         .bulletin_allowance_key(product_id)?;
     #[cfg(feature = "test-host")]
     if signing_host.grants_allowances_unchecked() {
@@ -1101,7 +1099,7 @@ pub async fn allocate_bulletin_allowance(
     if matches!(policy, OnExistingAllowancePolicy::Ignore)
         && current_allowance.is_some_and(|allowance| allowance.available())
     {
-        signing_host.require_current_session(session)?;
+        signing_host.wallet.require_current_session(session)?;
         return Ok(allowance.secret.to_bytes().to_vec());
     }
 
@@ -1136,7 +1134,7 @@ pub async fn allocate_bulletin_allowance(
         current_unix_secs()?,
         period_duration,
     )?;
-    signing_host.require_current_session(session)?;
+    signing_host.wallet.require_current_session(session)?;
     let outcome = claim_long_term_storage(statement_allowance::LongTermStorageClaim {
         rpc: people_rpc,
         metadata: &chain.metadata,
@@ -1174,7 +1172,7 @@ pub async fn allocate_bulletin_allowance(
         remained_transactions = authorization.remained_transactions,
         "Bulletin authorization visible"
     );
-    signing_host.require_current_session(session)?;
+    signing_host.wallet.require_current_session(session)?;
     Ok(allowance.secret.to_bytes().to_vec())
 }
 
@@ -1202,12 +1200,10 @@ pub async fn allocate_smart_contract_allowance(
     use crate::host_logic::features;
     use crate::runtime::statement_allowance::{self, ChainClient, find_including_rings, pgas};
 
-    signing_host.require_current_session(session)?;
-
     // PGAS credits the product account the caller named.
     let target = signing_host
         .wallet
-        .keys()?
+        .keys(session)?
         .product_keypair(&v01::ProductAccountId {
             dot_ns_identifier: product_id.to_string(),
             derivation_index,
@@ -1241,7 +1237,7 @@ pub async fn allocate_smart_contract_allowance(
         && pgas::holds_a_full_claim(asset_hub_client.rpc(), &asset_hub.metadata, &target).await?
     {
         debug!(%product_id, "PGAS allowance already funded; leaving it alone");
-        signing_host.require_current_session(session)?;
+        signing_host.wallet.require_current_session(session)?;
         return Ok(());
     }
     let network_suffix =
@@ -1263,7 +1259,7 @@ pub async fn allocate_smart_contract_allowance(
         .next()
         .ok_or(AllowanceAllocationError::MissingPersonhoodMembership { resource: "PGAS" })?;
 
-    signing_host.require_current_session(session)?;
+    signing_host.wallet.require_current_session(session)?;
     let outcome = pgas::claim_pgas(pgas::PgasClaim {
         asset_hub_rpc: asset_hub_client.rpc(),
         asset_hub: &asset_hub,
@@ -1283,7 +1279,7 @@ pub async fn allocate_smart_contract_allowance(
         block = %outcome.block_hash,
         "claimed PGAS allowance"
     );
-    signing_host.require_current_session(session)?;
+    signing_host.wallet.require_current_session(session)?;
     Ok(())
 }
 
@@ -2093,8 +2089,9 @@ mod tests {
         let (_, signing_host) = signing_fixture(platform);
         let expected_secret = signing_host
             .wallet
-            .keys()
+            .current_keys()
             .unwrap()
+            .1
             .product_subtree_secret("myapp.dot")
             .expect("product subtree secret derives");
         let expected_ring_vrf_domain_entropy =
@@ -2122,6 +2119,56 @@ mod tests {
                     ring_vrf_domain_entropy: expected_ring_vrf_domain_entropy,
                 }
             )]
+        );
+    }
+
+    #[test]
+    fn native_product_reset_does_not_invalidate_remote_allocation_review() {
+        let (release, gate) = futures::channel::oneshot::channel();
+        let platform = Arc::new(StubPlatform {
+            resource_allocation_confirmed: true,
+            resource_allocation_confirmation_gate: std::sync::Mutex::new(Some(gate)),
+            ..StubPlatform::default()
+        });
+        let (_, signing_host) = signing_fixture(platform.clone());
+        let session = signing_host.current_session();
+        let expected_secret = signing_host
+            .wallet
+            .keys(session.as_ref().unwrap())
+            .unwrap()
+            .product_subtree_secret("myapp.dot")
+            .unwrap();
+        let expected_domain = derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot").unwrap();
+        let service = SigningHostSsoService::new(signing_host.clone());
+        let answer = service.answer(allocation_request("remote-reset"));
+        futures::pin_mut!(answer);
+        assert!(answer.as_mut().now_or_never().is_none());
+        signing_host.clear_product_state("myapp.dot").unwrap();
+        release.send(()).unwrap();
+        let Dispatch::Response(answer) = futures::executor::block_on(answer) else {
+            panic!("expected an allocation response")
+        };
+        let RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(response)) =
+            answer.message.data
+        else {
+            panic!("expected an allocation response")
+        };
+        assert_eq!(
+            (
+                response.payload,
+                signing_host.current_session(),
+                platform.resource_allocation_reviews.lock().unwrap().len()
+            ),
+            (
+                Ok(vec![SsoAllocationOutcome::Allocated(
+                    SsoAllocatedResource::AutoSigning {
+                        product_root_private_key: expected_secret,
+                        ring_vrf_domain_entropy: expected_domain
+                    }
+                )]),
+                session,
+                1
+            ),
         );
     }
 

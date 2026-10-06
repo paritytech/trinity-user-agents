@@ -12,7 +12,9 @@ fn remote_vrf_cannot_reuse_a_native_auto_signing_grant() {
     let (_, authority) = signing_runtime_with_platform(platform.clone());
     futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
     let session = authority.current_session().unwrap();
-    authority.grant_auto_signing(&session, "myapp.dot").unwrap();
+    authority
+        .grant_auto_signing(&authority.current_operation().unwrap(), "myapp.dot")
+        .unwrap();
     let local = futures::executor::block_on(AccountHolder::sign_vrf(
         authority.as_ref(),
         AccountInvocation {

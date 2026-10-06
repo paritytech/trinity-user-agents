@@ -39,9 +39,9 @@ pub use sso_service::SigningHostSsoService;
 
 use super::authority::{
     AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
-    AutoSigningGrant, BulletinAllowanceKey, CreateTransactionAuthorityRequest, ProductAuthority,
-    SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
-    authority_session_validation_id,
+    AutoSigningGrant, BulletinAllowanceKey, CreateTransactionAuthorityRequest, HostOperation,
+    ProductAuthority, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
+    StatementStoreAllowanceKey,
 };
 use super::ring_vrf_registry::RingVrfRegistryStore;
 use super::{RuntimeServices, connected_session_ui_info, validate_vrf_transcript};
@@ -51,7 +51,7 @@ use crate::host_internal::transaction::sign_extrinsic_payload;
 use crate::host_logic::features::genesis_for;
 use crate::host_logic::product_account::{SR25519_SIGNING_CONTEXT, personhood_product_id};
 use crate::host_logic::raw_signing::raw_payload_bytes;
-use crate::host_logic::session::{SessionInfo, SessionState};
+use crate::host_logic::session::SessionState;
 use crate::runtime::auth_state::AuthStateMachine;
 use crate::runtime::sso_service::SsoWithdrawals;
 use crate::runtime::statement_allowance::collection::PersonhoodCollection;
@@ -79,7 +79,7 @@ use zeroize::Zeroizing;
 
 #[derive(Default)]
 struct LocalGrantState {
-    activation_generation: u64,
+    revision: u64,
     auto_signing_grants: HashSet<([u8; 32], String)>,
     /// Per product, the period its statement-store allowance was last seen
     /// registered in, and its key.
@@ -88,20 +88,40 @@ struct LocalGrantState {
 }
 
 impl LocalGrantState {
-    fn advance_activation(&mut self) {
-        self.activation_generation = self
-            .activation_generation
+    fn has_auto_signing_grant(
+        &self,
+        owner: [u8; 32],
+        calling_product_id: &str,
+        account_product_id: &str,
+    ) -> bool {
+        let (Ok(calling_product_id), Ok(account_product_id)) = (
+            normalize_product_identifier(calling_product_id),
+            normalize_product_identifier(account_product_id),
+        ) else {
+            return false;
+        };
+        if calling_product_id != account_product_id {
+            return false;
+        }
+
+        self.auto_signing_grants
+            .contains(&(owner, calling_product_id))
+    }
+
+    fn clear_grants(&mut self) {
+        self.revision = self
+            .revision
             .checked_add(1)
-            .expect("local activation generation exhausted");
+            .expect("host grant revision exhausted");
         self.auto_signing_grants.clear();
         self.statement_allowance_keys.clear();
     }
 
     fn revoke_product(&mut self, product_id: &str) {
-        self.activation_generation = self
-            .activation_generation
+        self.revision = self
+            .revision
             .checked_add(1)
-            .expect("local activation generation exhausted");
+            .expect("host grant revision exhausted");
         self.auto_signing_grants
             .retain(|(_, granted_product_id)| granted_product_id != product_id);
         self.statement_allowance_keys.remove(product_id);
@@ -109,18 +129,13 @@ impl LocalGrantState {
 
     fn statement_allowance_key(
         &self,
-        activation_generation: u64,
         product_id: &str,
         period: u32,
-    ) -> Result<Option<&StatementStoreAllowanceKey>, AuthorityError> {
-        if self.activation_generation != activation_generation {
-            return Err(AuthorityError::Disconnected);
-        }
-        Ok(self
-            .statement_allowance_keys
+    ) -> Option<&StatementStoreAllowanceKey> {
+        self.statement_allowance_keys
             .get(product_id)
             .filter(|(cached_period, _)| *cached_period == period)
-            .map(|(_, key)| key))
+            .map(|(_, key)| key)
     }
 
     fn forget_statement_allowance_key(&mut self, product_id: &str, public_key: [u8; 32]) {
@@ -132,21 +147,6 @@ impl LocalGrantState {
             self.statement_allowance_keys.remove(product_id);
         }
     }
-
-    fn remember_statement_allowance_key(
-        &mut self,
-        activation_generation: u64,
-        product_id: String,
-        period: u32,
-        key: StatementStoreAllowanceKey,
-    ) -> Result<(), AuthorityError> {
-        if self.activation_generation != activation_generation {
-            return Err(AuthorityError::Disconnected);
-        }
-        self.statement_allowance_keys
-            .insert(product_id, (period, key));
-        Ok(())
-    }
 }
 
 /// Wallet-local account authority for a signing host.
@@ -154,7 +154,6 @@ pub struct SigningHost {
     services: Arc<RuntimeServices>,
     platform: Arc<dyn Platform>,
     wallet: WalletAccountHolder,
-    session_state: Arc<SessionState>,
     auth_state: AuthStateMachine,
     ring_resolver: Arc<dyn RingResolver>,
     /// Answer resource allocation as granted without performing it.
@@ -200,7 +199,6 @@ impl SigningHost {
             grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
             #[cfg(feature = "test-host")]
             withheld_resources: Mutex::new(HashSet::new()),
-            session_state: SessionState::new(),
             auth_state: AuthStateMachine::new(platform.clone()),
             ring_resolver,
             local_grants: Mutex::new(LocalGrantState::default()),
@@ -307,7 +305,6 @@ impl SigningHost {
             grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
             #[cfg(feature = "test-host")]
             withheld_resources: Mutex::new(HashSet::new()),
-            session_state: SessionState::new(),
             auth_state: AuthStateMachine::new(platform.clone()),
             ring_resolver,
             local_grants: Mutex::new(LocalGrantState::default()),
@@ -320,7 +317,7 @@ impl SigningHost {
 
     /// Shared session holder for connection-status subscriptions.
     pub fn session_state(&self) -> Arc<SessionState> {
-        self.session_state.clone()
+        self.wallet.session_state()
     }
 
     /// Network suffix used for reserved wallet identities.
@@ -338,76 +335,44 @@ impl SigningHost {
 
     fn grant_auto_signing(
         &self,
-        session: &AuthoritySession,
+        operation: &HostOperation,
         product_id: &str,
     ) -> Result<(), AuthorityError> {
-        let (_, activation_generation) = self.require_current_session(session)?;
-        let product_id = self
-            .wallet
-            .keys()?
-            .validate_product_owner(session.public_key, product_id)?;
-
         let mut state = self
             .local_grants
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
-        if state.activation_generation != activation_generation {
-            return Err(AuthorityError::Disconnected);
-        }
+        operation.require_revision(state.revision)?;
+        let product_id = self
+            .wallet
+            .keys(&operation.session)?
+            .validate_product_owner(operation.session.public_key, product_id)?;
         state
             .auto_signing_grants
-            .insert((session.public_key, product_id));
+            .insert((operation.session.public_key, product_id));
         Ok(())
     }
 
     fn retain_statement_store_allowance(
         &self,
-        session: &AuthoritySession,
+        operation: &HostOperation,
         product_id: &str,
         allocation: sso_responder::StatementStoreAllocation,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
         let key = StatementStoreAllowanceKey::from_secret_bytes(allocation.secret)?;
-        let (_, activation_generation) = self.require_current_session(session)?;
-        self.local_grants
-            .lock()
-            .expect("local AutoSigning grant mutex poisoned")
-            .remember_statement_allowance_key(
-                activation_generation,
-                product_id.to_string(),
-                allocation.period,
-                key.clone(),
-            )?;
-        Ok(key)
-    }
-
-    fn has_auto_signing_grant(
-        &self,
-        activation_generation: u64,
-        owner: [u8; 32],
-        calling_product_id: &str,
-        account_product_id: &str,
-    ) -> bool {
-        let (Ok(calling_product_id), Ok(account_product_id)) = (
-            normalize_product_identifier(calling_product_id),
-            normalize_product_identifier(account_product_id),
-        ) else {
-            return false;
-        };
-        if calling_product_id != account_product_id {
-            return false;
-        }
-
-        let state = self
+        let mut state = self
             .local_grants
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
-        state.activation_generation == activation_generation
-            && state
-                .auto_signing_grants
-                .contains(&(owner, calling_product_id))
+        operation.require_revision(state.revision)?;
+        self.wallet.require_current_session(&operation.session)?;
+        state
+            .statement_allowance_keys
+            .insert(product_id.to_string(), (allocation.period, key.clone()));
+        Ok(key)
     }
 
-    /// Fence in-flight grant work and revoke this product's grants from the
+/// Fence in-flight grant work and revoke this product's grants from the
     /// current local activation while preserving unrelated products.
     pub fn clear_product_state(&self, product_id: &str) -> Result<(), AuthorityError> {
         let product_id = normalize_product_identifier(product_id).map_err(|error| {
@@ -433,7 +398,7 @@ impl SigningHost {
                 reason: err.to_string(),
             }
         })?;
-        let Ok(keys) = self.wallet.keys() else {
+        let Ok((_, keys)) = self.wallet.current_keys() else {
             return Ok(None);
         };
         keys.product_subtree_public_key(&product_id).map(Some)
@@ -444,41 +409,8 @@ impl SigningHost {
             .local_grants
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
-        state.advance_activation();
+        state.clear_grants();
         self.wallet.clear();
-        self.session_state.clear_session();
-    }
-
-    fn current_local_session(&self) -> Option<AuthoritySession> {
-        let state = self
-            .local_grants
-            .lock()
-            .expect("local AutoSigning grant mutex poisoned");
-        let session = self.session_state.current()?;
-        Some(AuthoritySession::from_session_info(
-            &session,
-            local_session_validation_id(&session, state.activation_generation),
-        ))
-    }
-
-    fn require_current_session(
-        &self,
-        session: &AuthoritySession,
-    ) -> Result<(SessionInfo, u64), AuthorityError> {
-        let state = self
-            .local_grants
-            .lock()
-            .expect("local AutoSigning grant mutex poisoned");
-        let current = self
-            .session_state
-            .current()
-            .ok_or(AuthorityError::Disconnected)?;
-        if local_session_validation_id(&current, state.activation_generation)
-            != session.validation_id
-        {
-            return Err(AuthorityError::Disconnected);
-        }
-        Ok((current, state.activation_generation))
     }
 
     fn ring_vrf_entropy(
@@ -486,16 +418,17 @@ impl SigningHost {
         session: &AuthoritySession,
         handle: &v01::ProductAccountId,
     ) -> Result<Zeroizing<[u8; 32]>, RingVrfError> {
-        self.require_current_session(session)?;
-        self.wallet.keys()?.ring_vrf_entropy(handle)
+        self.wallet.keys(session)?.ring_vrf_entropy(handle)
     }
 
     fn reserved_person_collection_candidates(
         &self,
         session: &AuthoritySession,
     ) -> Result<Vec<CollectionCandidate>, AuthorityError> {
-        self.require_current_session(session)?;
-        Ok(self.wallet.keys()?.reserved_person_collection_candidates())
+        Ok(self
+            .wallet
+            .keys(session)?
+            .reserved_person_collection_candidates())
     }
 
     async fn register_builtin_personhood_keys_if_needed(
@@ -569,7 +502,7 @@ impl SigningHost {
         session: &AuthoritySession,
         handle: &v01::ProductAccountId,
     ) -> Result<Option<v01::RegisteredRingVrfKey>, RingVrfError> {
-        self.require_current_session(session)?;
+        self.wallet.require_current_session(session)?;
         self.ring_vrf_registry
             .entry(session.public_key, handle)
             .await
@@ -702,7 +635,7 @@ impl SigningHost {
         &self,
         ring: &v01::RingLocation,
     ) -> Result<Vec<v01::ProductAccountId>, RingVrfError> {
-        let session = self.current_local_session().ok_or(RingVrfError::Unknown {
+        let session = self.wallet.current_session().ok_or(RingVrfError::Unknown {
             reason: "no active session".to_string(),
         })?;
         self.ring_vrf_registry
@@ -714,7 +647,7 @@ impl SigningHost {
         &self,
         ring: &v01::RingLocation,
     ) -> Result<Option<v01::ProductAccountId>, RingVrfError> {
-        let session = self.current_local_session().ok_or(RingVrfError::Unknown {
+        let session = self.wallet.current_session().ok_or(RingVrfError::Unknown {
             reason: "no active session".to_string(),
         })?;
         self.ring_vrf_registry
@@ -727,7 +660,7 @@ impl SigningHost {
         ring: v01::RingLocation,
         handle: v01::ProductAccountId,
     ) -> Result<(), RingVrfError> {
-        let session = self.current_local_session().ok_or(RingVrfError::Unknown {
+        let session = self.wallet.current_session().ok_or(RingVrfError::Unknown {
             reason: "no active session".to_string(),
         })?;
         self.ring_vrf_registry
@@ -791,6 +724,128 @@ impl SigningHost {
 
 #[async_trait::async_trait]
 impl ProductAuthority for SigningHost {
+    fn current_operation(&self) -> Option<HostOperation> {
+        let state = self
+            .local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned");
+        self.wallet
+            .current_session()
+            .map(|session| HostOperation::new(session, state.revision))
+    }
+
+    fn require_current_operation(&self, operation: &HostOperation) -> Result<(), AuthorityError> {
+        let state = self
+            .local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned");
+        operation.require_revision(state.revision)?;
+        self.wallet.require_current_session(&operation.session)?;
+        Ok(())
+    }
+
+    async fn allocate_resources(
+        &self,
+        cx: &CallContext,
+        operation: &HostOperation,
+        product_id: String,
+        request: v01::HostRequestResourceAllocationRequest,
+    ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
+        self.require_current_operation(operation)?;
+        let session = &operation.session;
+        #[cfg(feature = "test-host")]
+        if self
+            .grant_allowances_unchecked
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            // Synthetic grants let product tests run without on-chain allocation.
+            return Ok(v01::HostRequestResourceAllocationResponse {
+                outcomes: request
+                    .resources
+                    .iter()
+                    .map(|resource| {
+                        if self.withholds(resource) {
+                            v01::AllocationOutcome::Rejected
+                        } else {
+                            v01::AllocationOutcome::Allocated
+                        }
+                    })
+                    .collect(),
+            });
+        }
+        let mut outcomes = Vec::with_capacity(request.resources.len());
+        for resource in request.resources {
+            self.require_current_operation(operation)?;
+            if let Some(reason) = cx.cancel().reason() {
+                return Err(super::authority_cancellation_error(cx, reason));
+            }
+            #[cfg(feature = "test-host")]
+            if self.withholds(&resource) {
+                outcomes.push(v01::AllocationOutcome::Rejected);
+                continue;
+            }
+            let outcome = match resource {
+                v01::AllocatableResource::StatementStoreAllowance => operation
+                    .run(
+                        self,
+                        sso_responder::allocate_statement_store_allowance(
+                            &self.services,
+                            self,
+                            session,
+                            &product_id,
+                            OnExistingAllowancePolicy::Increase,
+                        ),
+                    )
+                    .await
+                    .and_then(|allocation| {
+                        self.retain_statement_store_allowance(operation, &product_id, allocation)
+                            .map(|_| v01::AllocationOutcome::Allocated)
+                            .map_err(sso_responder::AllowanceAllocationError::Authority)
+                    }),
+                v01::AllocatableResource::BulletinAllowance => operation
+                    .run(
+                        self,
+                        sso_responder::allocate_bulletin_allowance(
+                            &self.services,
+                            self,
+                            session,
+                            &product_id,
+                            OnExistingAllowancePolicy::Increase,
+                        ),
+                    )
+                    .await
+                    .map(|_| v01::AllocationOutcome::Allocated),
+                v01::AllocatableResource::SmartContractAllowance(index) => operation
+                    .run(
+                        self,
+                        sso_responder::allocate_smart_contract_allowance(
+                            &self.services,
+                            self,
+                            session,
+                            &product_id,
+                            index,
+                            OnExistingAllowancePolicy::Increase,
+                        ),
+                    )
+                    .await
+                    .map(|()| v01::AllocationOutcome::Allocated),
+                v01::AllocatableResource::AutoSigning => self
+                    .grant_auto_signing(operation, &product_id)
+                    .map(|_| v01::AllocationOutcome::Allocated)
+                    .map_err(sso_responder::AllowanceAllocationError::Authority),
+            };
+            match outcome {
+                Ok(outcome) => outcomes.push(outcome),
+                Err(reason) => {
+                    tracing::warn!(%product_id, %reason, "direct resource allocation item failed");
+                    outcomes.push(v01::AllocationOutcome::NotAvailable);
+                }
+            }
+        }
+        self.require_current_operation(operation)?;
+        Ok(v01::HostRequestResourceAllocationResponse { outcomes })
+    }
+
     fn session_state(&self) -> Arc<SessionState> {
         SigningHost::session_state(self)
     }
@@ -799,7 +854,7 @@ impl ProductAuthority for SigningHost {
         &self,
         _product: &ProductContext,
     ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
-        if let Some(session) = self.session_state.current() {
+        if let Some(session) = self.wallet.session_state().current() {
             self.auth_state
                 .connected(&connected_session_ui_info(&session));
             Ok(HostRequestLoginResponse::V1(
@@ -832,10 +887,13 @@ impl ProductAuthority for SigningHost {
         calling_product_id: &str,
         account: &v01::ProductAccountId,
     ) -> Result<AutoSigningGrant, AuthorityError> {
-        let (current, activation_generation) = self.require_current_session(session)?;
+        let state = self
+            .local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned");
+        let current = self.wallet.require_current_session(session)?;
         if super::authority::is_blessed_owner(calling_product_id, &account.dot_ns_identifier)
-            || self.has_auto_signing_grant(
-                activation_generation,
+            || state.has_auto_signing_grant(
                 current.public_key,
                 calling_product_id,
                 &account.dot_ns_identifier,
@@ -850,34 +908,42 @@ impl ProductAuthority for SigningHost {
     async fn statement_store_allowance_key(
         &self,
         _cx: &CallContext,
-        session: &AuthoritySession,
+        operation: &HostOperation,
         product_id: String,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        let (_, activation_generation) = self.require_current_session(session)?;
+        self.require_current_operation(operation)?;
+        let session = &operation.session;
         #[cfg(feature = "test-host")]
         self.refuse_withheld(&v01::AllocatableResource::StatementStoreAllowance)?;
         let period = statement_allowance::slot::current_period(
             sso_responder::current_unix_secs()
                 .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?,
         );
-        if let Some(key) = self
-            .local_grants
-            .lock()
-            .expect("local AutoSigning grant mutex poisoned")
-            .statement_allowance_key(activation_generation, &product_id, period)?
         {
-            return Ok(key.clone());
+            let state = self
+                .local_grants
+                .lock()
+                .expect("local AutoSigning grant mutex poisoned");
+            operation.require_revision(state.revision)?;
+            self.wallet.require_current_session(session)?;
+            if let Some(key) = state.statement_allowance_key(&product_id, period) {
+                return Ok(key.clone());
+            }
         }
-        let allocation = sso_responder::allocate_statement_store_allowance(
-            &self.services,
-            self,
-            session,
-            &product_id,
-            OnExistingAllowancePolicy::Ignore,
-        )
-        .await
-        .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?;
-        self.retain_statement_store_allowance(session, &product_id, allocation)
+        let allocation = operation
+            .run(
+                self,
+                sso_responder::allocate_statement_store_allowance(
+                    &self.services,
+                    self,
+                    session,
+                    &product_id,
+                    OnExistingAllowancePolicy::Ignore,
+                ),
+            )
+            .await
+            .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?;
+        self.retain_statement_store_allowance(operation, &product_id, allocation)
     }
 
     fn forget_statement_store_allowance_key(&self, product_id: &str, public_key: [u8; 32]) {
@@ -890,42 +956,54 @@ impl ProductAuthority for SigningHost {
     async fn bulletin_allowance_key(
         &self,
         _cx: &CallContext,
-        session: &AuthoritySession,
+        operation: &HostOperation,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        self.require_current_session(session)?;
+        self.require_current_operation(operation)?;
+        let session = &operation.session;
         #[cfg(feature = "test-host")]
         self.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
-        let secret = sso_responder::allocate_bulletin_allowance(
-            &self.services,
-            self,
-            session,
-            &product_id,
-            OnExistingAllowancePolicy::Ignore,
-        )
-        .await
-        .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?;
+        let secret = operation
+            .run(
+                self,
+                sso_responder::allocate_bulletin_allowance(
+                    &self.services,
+                    self,
+                    session,
+                    &product_id,
+                    OnExistingAllowancePolicy::Ignore,
+                ),
+            )
+            .await
+            .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?;
+        self.require_current_operation(operation)?;
         BulletinAllowanceKey::from_secret_bytes(secret)
     }
 
     async fn refresh_bulletin_allowance_key(
         &self,
         _cx: &CallContext,
-        session: &AuthoritySession,
+        operation: &HostOperation,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        self.require_current_session(session)?;
+        self.require_current_operation(operation)?;
+        let session = &operation.session;
         #[cfg(feature = "test-host")]
         self.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
-        let secret = sso_responder::allocate_bulletin_allowance(
-            &self.services,
-            self,
-            session,
-            &product_id,
-            OnExistingAllowancePolicy::Increase,
-        )
-        .await
-        .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?;
+        let secret = operation
+            .run(
+                self,
+                sso_responder::allocate_bulletin_allowance(
+                    &self.services,
+                    self,
+                    session,
+                    &product_id,
+                    OnExistingAllowancePolicy::Increase,
+                ),
+            )
+            .await
+            .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?;
+        self.require_current_operation(operation)?;
         BulletinAllowanceKey::from_secret_bytes(secret)
     }
 }
@@ -933,7 +1011,7 @@ impl ProductAuthority for SigningHost {
 #[async_trait::async_trait]
 impl AccountHolder for SigningHost {
     fn current_session(&self) -> Option<AuthoritySession> {
-        self.current_local_session()
+        self.wallet.current_session()
     }
 
     async fn product_subtree_public_key(
@@ -942,13 +1020,15 @@ impl AccountHolder for SigningHost {
         session: &AuthoritySession,
         product_id: String,
     ) -> Result<[u8; 32], AuthorityError> {
-        self.require_current_session(session)?;
+        self.wallet.require_current_session(session)?;
         let product_id = normalize_product_identifier(&product_id).map_err(|err| {
             AuthorityError::Unavailable {
                 reason: err.to_string(),
             }
         })?;
-        self.wallet.keys()?.product_subtree_public_key(&product_id)
+        self.wallet
+            .keys(session)?
+            .product_subtree_public_key(&product_id)
     }
 
     async fn sign_vrf(
@@ -961,21 +1041,16 @@ impl AccountHolder for SigningHost {
             .caller
             .product_id()
             .ok_or(AuthorityError::Rejected)?;
-        self.require_current_session(session)?;
+        self.wallet.require_current_session(session)?;
         validate_vrf_transcript(&request).map_err(|reason| AuthorityError::Unknown { reason })?;
-        let keypair = self.wallet.keys()?.product_keypair(&request.account)?;
-        let (current, activation_generation) = self.require_current_session(session)?;
+        self.wallet
+            .keys(session)?
+            .product_keypair(&request.account)?;
         let granted = match invocation.caller {
             AccountCaller::Local(_) => {
-                super::authority::is_blessed_owner(
-                    calling_product_id,
-                    &request.account.dot_ns_identifier,
-                ) || self.has_auto_signing_grant(
-                    activation_generation,
-                    current.public_key,
-                    calling_product_id,
-                    &request.account.dot_ns_identifier,
-                )
+                self.auto_signing_status(session, calling_product_id, &request.account)
+                    .await?
+                    == AutoSigningGrant::Active
             }
             AccountCaller::Remote { .. } => false,
         };
@@ -996,15 +1071,7 @@ impl AccountHolder for SigningHost {
                 return Err(AuthorityError::Rejected);
             }
         }
-        let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
-            &keypair,
-            &request.transcript_label,
-            request
-                .items
-                .iter()
-                .map(|item| (item.label.as_slice(), item.value.as_slice())),
-        );
-        Ok(v01::VrfSignature { pre_output, proof })
+        self.wallet.sign_vrf(session, &request)
     }
 
     async fn sign_payload(
@@ -1014,17 +1081,20 @@ impl AccountHolder for SigningHost {
         _calling_product_id: Option<&str>,
         request: SignPayloadAuthorityRequest,
     ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
-        self.require_current_session(session)?;
         let (keypair, payload) = match request {
             SignPayloadAuthorityRequest::Product(request) => (
-                self.wallet.keys()?.product_keypair(&request.account)?,
+                self.wallet
+                    .keys(session)?
+                    .product_keypair(&request.account)?,
                 request.payload,
             ),
             SignPayloadAuthorityRequest::LegacyAccount {
                 product_account,
                 request,
             } => (
-                self.wallet.keys()?.product_keypair(&product_account)?,
+                self.wallet
+                    .keys(session)?
+                    .product_keypair(&product_account)?,
                 request.payload,
             ),
         };
@@ -1041,11 +1111,13 @@ impl AccountHolder for SigningHost {
     ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
         let (keypair, payload) = match request {
             SignRawAuthorityRequest::Product(request) => (
-                self.wallet.keys()?.product_keypair(&request.account)?,
+                self.wallet
+                    .keys(session)?
+                    .product_keypair(&request.account)?,
                 request.payload,
             ),
             SignRawAuthorityRequest::LegacyAccount { account, request } => {
-                let keypair = self.wallet.keys()?.identity_keypair()?;
+                let keypair = self.wallet.keys(session)?.identity_keypair()?;
                 if keypair.public.to_bytes() != account {
                     return Err(AuthorityError::Unavailable {
                         reason: "signing host: the requested legacy account is not available in \
@@ -1056,7 +1128,7 @@ impl AccountHolder for SigningHost {
                 (keypair, request.payload)
             }
         };
-        self.require_current_session(session)?;
+        self.wallet.require_current_session(session)?;
         let message = raw_payload_bytes(payload, watermarked)?;
         let signature = keypair
             .secret
@@ -1075,11 +1147,13 @@ impl AccountHolder for SigningHost {
         _calling_product_id: Option<&str>,
         request: CreateTransactionAuthorityRequest,
     ) -> Result<v01::HostCreateTransactionResponse, AuthorityError> {
-        self.require_current_session(session)?;
         match request {
             CreateTransactionAuthorityRequest::Product(payload) => {
                 // Caller ownership is validated before entering the account holder.
-                let keypair = self.wallet.keys()?.product_keypair(&payload.signer)?;
+                let keypair = self
+                    .wallet
+                    .keys(session)?
+                    .product_keypair(&payload.signer)?;
                 build_local_transaction(
                     &self.services.chain,
                     &keypair,
@@ -1095,7 +1169,10 @@ impl AccountHolder for SigningHost {
                 product_account,
                 request,
             } => {
-                let keypair = self.wallet.keys()?.product_keypair(&product_account)?;
+                let keypair = self
+                    .wallet
+                    .keys(session)?
+                    .product_keypair(&product_account)?;
                 if keypair.public.to_bytes() != request.signer {
                     return Err(AuthorityError::Unknown {
                         reason: "signing host: legacy signer does not match the product \
@@ -1115,7 +1192,7 @@ impl AccountHolder for SigningHost {
                 .map_err(AuthorityError::from)
             }
             CreateTransactionAuthorityRequest::IdentityAccount(request) => {
-                let keypair = self.wallet.keys()?.identity_keypair()?;
+                let keypair = self.wallet.keys(session)?.identity_keypair()?;
                 if keypair.public.to_bytes() != request.signer {
                     return Err(AuthorityError::Unavailable {
                         reason: "signing host: the requested identity account is not available in \
@@ -1143,7 +1220,7 @@ impl AccountHolder for SigningHost {
         request: HostAccountGetAliasRequest,
     ) -> Result<v01::ContextualAlias, RingVrfError> {
         let session = invocation.session;
-        self.require_current_session(session)?;
+        self.wallet.require_current_session(session)?;
         // Aliases expose the same identity as `create_proof`, so both must enforce
         // the same RFC-0024 grant and context restrictions.
         let granted = match self
@@ -1197,7 +1274,7 @@ impl AccountHolder for SigningHost {
         request: HostAccountCreateProofRequest,
     ) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
         let session = invocation.session;
-        self.require_current_session(session)?;
+        self.wallet.require_current_session(session)?;
         let (key_handle, access) = self
             .require_ring_vrf_key_access(invocation.caller, &request.key_handle)
             .await?;
@@ -1213,7 +1290,7 @@ impl AccountHolder for SigningHost {
             .resolve(&request.ring_location, &[candidate])
             .await?;
         // Chain resolution can outlive the active session.
-        self.require_current_session(session)?;
+        self.wallet.require_current_session(session)?;
         let context = development_context_bytes(&request.context);
         let (proof, alias) = create_proof(&vrf, &entropy, &resolved, &context, &request.message)?;
         Ok(v01::HostAccountCreateProofResponse {
@@ -1233,7 +1310,7 @@ impl AccountHolder for SigningHost {
         session: &AuthoritySession,
         request: ProductRequest<HostAccountRegisterRingVrfKeyRequest>,
     ) -> Result<[u8; 32], RingVrfError> {
-        self.require_current_session(session)?;
+        self.wallet.require_current_session(session)?;
         self.ring_resolver.validate(&request.payload.ring).await?;
 
         let handle = v01::ProductAccountId {
@@ -1258,7 +1335,7 @@ impl AccountHolder for SigningHost {
         request: HostAccountListRingVrfKeysRequest,
     ) -> Result<Vec<v01::RegisteredRingVrfKey>, RingVrfError> {
         let session = invocation.session;
-        self.require_current_session(session)?;
+        self.wallet.require_current_session(session)?;
         let owner =
             normalize_product_identifier(&request.owner).map_err(|err| RingVrfError::Unknown {
                 reason: err.to_string(),
@@ -1282,7 +1359,7 @@ impl AccountHolder for SigningHost {
             .ring_vrf_registry
             .owner_entries(session.public_key, &owner)
             .await?;
-        self.require_current_session(session)?;
+        self.wallet.require_current_session(session)?;
         if request.disclosure == v01::RingVrfKeyDisclosure::Anonymized {
             for entry in &mut entries {
                 entry.public_key = None;
@@ -1297,7 +1374,7 @@ impl AccountHolder for SigningHost {
         request: HostAccountRingVrfSignRequest,
     ) -> Result<Vec<u8>, RingVrfError> {
         let session = invocation.session;
-        self.require_current_session(session)?;
+        self.wallet.require_current_session(session)?;
         let (key_handle, _access) = self
             .require_ring_vrf_key_access(invocation.caller, &request.key_handle)
             .await?;
@@ -1308,98 +1385,6 @@ impl AccountHolder for SigningHost {
         vrf.sign(&entropy, &request.message)
     }
 
-    async fn allocate_resources(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-        request: v01::HostRequestResourceAllocationRequest,
-    ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
-        self.require_current_session(session)?;
-        #[cfg(feature = "test-host")]
-        if self
-            .grant_allowances_unchecked
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
-            // Synthetic grants let product tests run without on-chain allocation.
-            return Ok(v01::HostRequestResourceAllocationResponse {
-                outcomes: request
-                    .resources
-                    .iter()
-                    .map(|resource| {
-                        if self.withholds(resource) {
-                            v01::AllocationOutcome::Rejected
-                        } else {
-                            v01::AllocationOutcome::Allocated
-                        }
-                    })
-                    .collect(),
-            });
-        }
-        let mut outcomes = Vec::with_capacity(request.resources.len());
-        for resource in request.resources {
-            if let Some(reason) = cx.cancel().reason() {
-                return Err(super::authority_cancellation_error(cx, reason));
-            }
-            #[cfg(feature = "test-host")]
-            if self.withholds(&resource) {
-                outcomes.push(v01::AllocationOutcome::Rejected);
-                continue;
-            }
-            let outcome = match resource {
-                v01::AllocatableResource::StatementStoreAllowance =>
-                    sso_responder::allocate_statement_store_allowance(
-                        &self.services,
-                        self,
-                        session,
-                        &product_id,
-                        OnExistingAllowancePolicy::Increase,
-                    )
-                    .await
-                    .and_then(|allocation| {
-                        self.retain_statement_store_allowance(session, &product_id, allocation)
-                            .map(|_| v01::AllocationOutcome::Allocated)
-                            .map_err(sso_responder::AllowanceAllocationError::Authority)
-                    }),
-                v01::AllocatableResource::BulletinAllowance => {
-                    sso_responder::allocate_bulletin_allowance(
-                        &self.services,
-                        self,
-                        session,
-                        &product_id,
-                        OnExistingAllowancePolicy::Increase,
-                    )
-                    .await
-                    .map(|_| v01::AllocationOutcome::Allocated)
-                }
-                v01::AllocatableResource::SmartContractAllowance(index) => {
-                    sso_responder::allocate_smart_contract_allowance(
-                        &self.services,
-                        self,
-                        session,
-                        &product_id,
-                        index,
-                        OnExistingAllowancePolicy::Increase,
-                    )
-                    .await
-                    .map(|()| v01::AllocationOutcome::Allocated)
-                }
-                v01::AllocatableResource::AutoSigning => self
-                    .grant_auto_signing(session, &product_id)
-                    .map(|_| v01::AllocationOutcome::Allocated)
-                    .map_err(sso_responder::AllowanceAllocationError::Authority),
-            };
-            match outcome {
-                Ok(outcome) => outcomes.push(outcome),
-                Err(reason) => {
-                    tracing::warn!(%product_id, %reason, "direct resource allocation item failed");
-                    outcomes.push(v01::AllocationOutcome::NotAvailable);
-                }
-            }
-        }
-        Ok(v01::HostRequestResourceAllocationResponse { outcomes })
-    }
-
     async fn sign_statement_store_product_payload(
         &self,
         _cx: &CallContext,
@@ -1408,8 +1393,7 @@ impl AccountHolder for SigningHost {
         account: v01::ProductAccountId,
         payload: Vec<u8>,
     ) -> Result<[u8; 64], AuthorityError> {
-        self.require_current_session(session)?;
-        let keypair = self.wallet.keys()?.product_keypair(&account)?;
+        let keypair = self.wallet.keys(session)?.product_keypair(&account)?;
         Ok(keypair
             .secret
             .sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)
@@ -1422,21 +1406,14 @@ impl AccountHolder for SigningHost {
         product_id: &str,
         context: &[u8],
     ) -> Result<[u8; 32], AuthorityError> {
-        self.require_current_session(session)?;
-        self.wallet.keys()?.derive_entropy(product_id, context)
+        self.wallet
+            .keys(session)?
+            .derive_entropy(product_id, context)
     }
 
     fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
-        self.require_current_session(session)?;
-        Ok(self.wallet.keys()?.contacts_handle_key())
+        Ok(self.wallet.keys(session)?.contacts_handle_key())
     }
-}
-
-fn local_session_validation_id(session: &SessionInfo, activation_generation: u64) -> Vec<u8> {
-    let mut id = authority_session_validation_id(session);
-    id.extend_from_slice(b":activation:");
-    id.extend_from_slice(&activation_generation.to_le_bytes());
-    id
 }
 
 #[cfg(test)]
@@ -2800,7 +2777,7 @@ mod tests {
         assert_eq!(session.identity_account_id, Some(identity));
         assert_eq!(
             authority
-                .wallet.keys().unwrap().identity_keypair()
+                .wallet.current_keys().unwrap().1.identity_keypair()
                 .expect("identity")
                 .public
                 .to_bytes(),
@@ -3226,12 +3203,12 @@ mod tests {
         let (_services, authority) = signing_runtime_with_platform(platform);
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
-        let stale_session = authority.current_session().expect("active session");
+        let operation = authority.current_operation().expect("active session");
         authority
-            .grant_auto_signing(&stale_session, "myapp.dot")
+            .grant_auto_signing(&operation, "myapp.dot")
             .expect("first product grant succeeds");
         authority
-            .grant_auto_signing(&stale_session, "other.dot")
+            .grant_auto_signing(&operation, "other.dot")
             .expect("other product grant succeeds");
 
         authority
@@ -3239,23 +3216,23 @@ mod tests {
             .expect("product clear succeeds");
 
         let current_session = authority.current_session().expect("session remains active");
-        let (_, current_generation) = authority
-            .require_current_session(&current_session)
-            .expect("current session validates");
-        assert!(!authority.has_auto_signing_grant(
-            current_generation,
-            current_session.public_key,
-            "myapp.dot",
-            "myapp.dot",
-        ));
-        assert!(authority.has_auto_signing_grant(
-            current_generation,
-            current_session.public_key,
-            "other.dot",
-            "other.dot",
-        ));
+        assert_eq!(current_session, operation.session);
+        assert!(
+            !authority
+                .local_grants
+                .lock()
+                .unwrap()
+                .has_auto_signing_grant(current_session.public_key, "myapp.dot", "myapp.dot",)
+        );
+        assert!(
+            authority
+                .local_grants
+                .lock()
+                .unwrap()
+                .has_auto_signing_grant(current_session.public_key, "other.dot", "other.dot",)
+        );
         assert!(matches!(
-            authority.grant_auto_signing(&stale_session, "myapp.dot"),
+            authority.grant_auto_signing(&operation, "myapp.dot"),
             Err(AuthorityError::Disconnected)
         ));
     }
@@ -3360,12 +3337,14 @@ mod tests {
         let (_services, authority) = signing_runtime_with_platform(platform.clone());
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("first activation succeeds");
-        let stale = authority.current_session().expect("first session snapshot");
+        let stale = authority
+            .current_operation()
+            .expect("first session snapshot");
 
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("same wallet replacement activation succeeds");
         let current = authority.current_session().expect("replacement session");
-        assert_ne!(stale.validation_id, current.validation_id);
+        assert_ne!(stale.session.validation_id, current.validation_id);
 
         let error = futures::executor::block_on(authority.allocate_resources(
             &CallContext::default(),
@@ -3854,7 +3833,7 @@ mod tests {
         let (_services, authority) = signing_runtime_with_platform(platform);
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation");
-        let session = authority.current_session().expect("connected");
+        let session = authority.current_operation().expect("connected");
         let cx = CallContext::default();
 
         let mut allocation = Box::pin(authority.allocate_resources(
@@ -3886,7 +3865,7 @@ mod tests {
             signing_runtime_with_platform(Arc::new(StubPlatform::default()));
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation");
-        let session = authority.current_session().expect("connected");
+        let session = authority.current_operation().expect("connected");
         let cancel = truapi::CancellationToken::default();
         cancel.cancel();
         let cx = CallContext::with_parts("allocation-withdrawn".to_string(), cancel);
@@ -3923,7 +3902,7 @@ mod tests {
         let (_services, authority) = signing_runtime_with_platform(platform);
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation");
-        let session = authority.current_session().expect("connected");
+        let session = authority.current_operation().expect("connected");
         let cx = CallContext::default();
 
         let empty = futures::executor::block_on(authority.allocate_resources(

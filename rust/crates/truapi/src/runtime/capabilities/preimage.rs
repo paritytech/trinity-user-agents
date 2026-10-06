@@ -21,7 +21,7 @@ use crate::runtime::bulletin_rpc::BulletinSubmitError;
 use crate::runtime::{
     PERMISSION_DENIED_REASON, PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, PREIMAGE_SUBMIT_TIMEOUT,
     ProductRuntimeHost, bulletin_allowance_error_reason, preimage_submit_error,
-    remote_authority_call, remote_authority_context_until, until_cancelled,
+    remote_authority_context_until, until_cancelled,
 };
 
 #[truapi::async_trait]
@@ -96,7 +96,7 @@ impl Preimage for ProductRuntimeHost {
         request: RemotePreimageSubmitRequest,
     ) -> Result<RemotePreimageSubmitResponse, CallError<RemotePreimageSubmitError>> {
         let RemotePreimageSubmitRequest::V1(value) = request;
-        let Some(session) = self.authority.current_session() else {
+        let Some(operation) = self.authority.current_operation() else {
             return Err(preimage_submit_error("No active session".to_string()));
         };
         let bulletin = &self.services.bulletin;
@@ -129,13 +129,15 @@ impl Preimage for ProductRuntimeHost {
             PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
             submission_deadline,
         );
-        let allowance = remote_authority_call(
-            &authority_cx,
-            self.authority
-                .bulletin_allowance_key(&authority_cx, &session, self.product_id()),
-        )
-        .await
-        .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
+        let allowance = self
+            .account_operation(
+                &operation,
+                &authority_cx,
+                self.authority
+                    .bulletin_allowance_key(&authority_cx, &operation, self.product_id()),
+            )
+            .await
+            .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
 
         let key = match bulletin
             .submit_preimage(cx, submission_deadline, &allowance, &value)
@@ -151,11 +153,12 @@ impl Preimage for ProductRuntimeHost {
                     PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
                     submission_deadline,
                 );
-                let allowance = remote_authority_call(
+                let allowance = self.account_operation(
+                    &operation,
                     &authority_cx,
                     self.authority.refresh_bulletin_allowance_key(
                         &authority_cx,
-                        &session,
+                        &operation,
                         self.product_id(),
                     ),
                 )

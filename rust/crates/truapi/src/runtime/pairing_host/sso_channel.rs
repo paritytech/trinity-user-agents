@@ -637,9 +637,9 @@ impl PairingHost {
         &self,
         cx: &CallContext,
         session: &SessionInfo,
+        lifecycle_epoch: u64,
         product_id: String,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        let lifecycle_epoch = self.current_session_lifecycle_epoch();
         if let Some(cached) = self
             .cached_statement_store_allowance_key(session, lifecycle_epoch, &product_id)
             .await?
@@ -675,9 +675,9 @@ impl PairingHost {
         &self,
         cx: &CallContext,
         session: &SessionInfo,
+        lifecycle_epoch: u64,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let lifecycle_epoch = self.current_session_lifecycle_epoch();
         if let Some(cached) = self
             .cached_bulletin_allowance_key(session, lifecycle_epoch, &product_id)
             .await?
@@ -700,9 +700,9 @@ impl PairingHost {
         &self,
         cx: &CallContext,
         session: &SessionInfo,
+        lifecycle_epoch: u64,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let lifecycle_epoch = self.current_session_lifecycle_epoch();
         self.evict_bulletin_allowance_key(session, lifecycle_epoch, &product_id)
             .await?;
         self.allocate_bulletin_allowance_key(

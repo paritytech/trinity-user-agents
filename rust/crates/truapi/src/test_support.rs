@@ -122,6 +122,8 @@ pub struct StubPlatform {
     pub sign_vrf_confirmed: bool,
     pub sign_vrf_error: Option<&'static str>,
     pub sign_vrf_reviews: Arc<Mutex<Vec<SignVrfReview>>>,
+    /// Pause a VRF review until the test releases its confirmation.
+    pub sign_vrf_confirmation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Every `StatementStoreProductSign` review passed to `confirm_user_action`, in order.
     pub statement_store_product_sign_reviews: Arc<Mutex<Vec<StatementStoreProductSignReview>>>,
     pub create_transaction_confirmed: bool,
@@ -1864,6 +1866,10 @@ impl UserConfirmation for StubPlatform {
                     .lock()
                     .expect("VRF signing review list mutex poisoned")
                     .push(review);
+                let gate = self.sign_vrf_confirmation_gate.lock().unwrap().take();
+                if let Some(gate) = gate {
+                    gate.await.expect("VRF confirmation gate was released");
+                }
                 (self.sign_vrf_error, self.sign_vrf_confirmed)
             }
             UserConfirmationReview::StatementStoreProductSign(review) => {

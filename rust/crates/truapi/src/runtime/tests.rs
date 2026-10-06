@@ -5044,6 +5044,46 @@ fn an_authority_call_withdrawn_before_it_starts_is_never_polled() {
 }
 
 #[test]
+fn product_reset_during_allocation_review_cannot_request_paired_grants() {
+    let (release, gate) = futures::channel::oneshot::channel();
+    let platform = Arc::new(StubPlatform {
+        resource_allocation_confirmed: true,
+        resource_allocation_confirmation_gate: Mutex::new(Some(gate)),
+        ..Default::default()
+    });
+    let (host_config, product) = runtime_config("myapp.dot");
+    let (host, pairing_host) = ProductRuntimeHost::new_pairing_for_tests(
+        platform.clone(),
+        host_config,
+        product,
+        test_spawner(),
+    );
+    install_pairing_session(&host, sso_session_info());
+    let cx = CallContext::default();
+    let call = ResourceAllocation::request(&host, &cx, resource_allocation_request());
+    futures::pin_mut!(call);
+    assert!(call.as_mut().now_or_never().is_none());
+    futures::executor::block_on(pairing_host.clear_product_state("myapp.dot")).unwrap();
+    release.send(()).unwrap();
+    assert_eq!(
+        (
+            call.as_mut()
+                .now_or_never()
+                .map(|result| result.map(|_| ())),
+            recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement")
+        ),
+        (
+            Some(Err(CallError::Domain(
+                HostRequestResourceAllocationError::V1(v01::ResourceAllocationError::Unknown {
+                    reason: AuthorityError::Disconnected.to_string()
+                })
+            ))),
+            0
+        ),
+    );
+}
+
+#[test]
 fn resource_allocation_accepts_confirmation_then_returns_sso_response() {
     let session = sso_session_info();
     let slot_account_key = {

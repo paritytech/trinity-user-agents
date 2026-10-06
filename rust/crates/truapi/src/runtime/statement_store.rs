@@ -6,11 +6,9 @@ use core::task::{Context, Poll};
 
 use futures::StreamExt as _;
 
-use super::authority::{AuthorityError, StatementStoreAllowanceKey};
+use super::authority::{AuthorityError, HostOperation, StatementStoreAllowanceKey};
 use super::statement_store_rpc::{self, StatementStoreRpc};
-use super::{
-    PERMISSION_DENIED_REASON, ProductRuntimeHost, remote_authority_call, remote_authority_context,
-};
+use super::{PERMISSION_DENIED_REASON, ProductRuntimeHost, remote_authority_context};
 use crate::host_logic::statement_store::{
     MAX_MATCH_ALL_TOPICS, MAX_MATCH_ANY_TOPICS, TopicFilterKind, decode_signed_statement,
     parse_new_statements_result, sign_statement_fields, signed_statement_to_scale,
@@ -67,6 +65,7 @@ impl StatementStore for ProductRuntimeHost {
                     latest::RemoteStatementStoreCreateProofError::UnknownAccount,
                 ))
             })?;
+        let operation = self.authority.current_operation();
         let Some(owner) = self
             .authorized_product_account(&inner.product_account_id.dot_ns_identifier, cx)
             .await
@@ -76,8 +75,16 @@ impl StatementStore for ProductRuntimeHost {
             )));
         };
         inner.product_account_id.dot_ns_identifier = owner;
+        let operation = operation
+            .ok_or(StatementProofFailure::NoSession)
+            .map_err(statement_proof_error)?;
         let proof = self
-            .create_product_statement_proof(cx, inner.product_account_id, inner.statement)
+            .create_product_statement_proof(
+                cx,
+                &operation,
+                inner.product_account_id,
+                inner.statement,
+            )
             .await
             .map_err(statement_proof_error)?;
         Ok(RemoteStatementStoreCreateProofResponse::V1(
@@ -337,15 +344,13 @@ impl ProductRuntimeHost {
     async fn create_product_statement_proof(
         &self,
         cx: &CallContext,
+        operation: &HostOperation,
         product_account_id: latest::ProductAccountId,
         statement: latest::Statement,
     ) -> Result<latest::StatementProof, StatementProofFailure> {
-        let session = self
-            .authority
-            .current_session()
-            .ok_or(StatementProofFailure::NoSession)?;
+        let session = &operation.session;
         let signer = self
-            .product_account_public_key(cx, &session, &product_account_id)
+            .product_account_public_key(cx, operation, &product_account_id)
             .await
             .map_err(|err| StatementProofFailure::UnableToSign(err.to_string()))?;
         let fields = statement_fields_from_v01(statement)
@@ -369,11 +374,12 @@ impl ProductRuntimeHost {
             }
         }
         let cx = remote_authority_context(cx);
-        let signature = remote_authority_call(
+        let signature = self.account_operation(
+            operation,
             &cx,
             self.authority.sign_statement_store_product_payload(
                 &cx,
-                &session,
+                session,
                 Some(self.product_id().as_str()),
                 product_account_id,
                 payload,
@@ -389,18 +395,20 @@ impl ProductRuntimeHost {
         cx: &CallContext,
         statement: latest::Statement,
     ) -> Result<latest::StatementProof, StatementProofFailure> {
-        let session = self
+        let operation = self
             .authority
-            .current_session()
+            .current_operation()
             .ok_or(StatementProofFailure::NoSession)?;
         let cx = remote_authority_context(cx);
-        let allowance = remote_authority_call(
-            &cx,
-            self.authority
-                .statement_store_allowance_key(&cx, &session, self.product_id()),
-        )
-        .await
-        .map_err(statement_authority_failure)?;
+        let allowance = self
+            .account_operation(
+                &operation,
+                &cx,
+                self.authority
+                    .statement_store_allowance_key(&cx, &operation, self.product_id()),
+            )
+            .await
+            .map_err(statement_authority_failure)?;
         create_statement_proof_with_key(statement, &allowance)
     }
 }

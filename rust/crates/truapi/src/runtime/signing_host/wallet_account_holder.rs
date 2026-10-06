@@ -1,7 +1,7 @@
-//! Active wallet secrets and the keys derived from them.
+//! Wallet activation, session validation and derived keys.
 
-use std::sync::Mutex;
-use truapi::latest::ProductAccountId;
+use std::sync::{Arc, Mutex};
+use truapi::latest::{HostAccountSignVrfRequest, ProductAccountId, VrfSignature};
 use zeroize::Zeroizing;
 
 use crate::host_internal::sso_messages::RingVrfError;
@@ -12,22 +12,59 @@ use crate::host_logic::product_account::{
     derive_product_subtree_keypair, derive_ring_vrf_domain_entropy, derive_ring_vrf_entropy,
     derive_root_keypair_from_entropy, derive_sr25519_hard_path,
 };
-use crate::host_logic::session::SessionInfo;
+use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::host_logic::sso::pairing::{
     ResponderIdentity, derive_identity_chat_private_key, derive_x25519_keypair_from_entropy,
 };
 use crate::platform::normalize_product_identifier;
-use crate::runtime::authority::AuthorityError;
+use crate::runtime::authority::{
+    AuthorityError, AuthoritySession, authority_session_validation_id,
+};
 use crate::runtime::statement_allowance::CollectionCandidate;
 use crate::runtime::statement_allowance::collection::PersonhoodCollection;
 
 /// RFC-0022 domain for the responder's persistent SSO X25519 key.
 pub const SSO_ENCRYPTION_DOMAIN: &[u8] = b"sso";
 
-/// Owns wallet entropy for the active local session.
+/// Owns the active wallet session and its zeroizable entropy.
 pub struct WalletAccountHolder {
     network_suffix: String,
-    keys: Mutex<Option<WalletKeys>>,
+    lifecycle: Mutex<WalletState>,
+    session_state: Arc<SessionState>,
+}
+
+#[derive(Default)]
+struct WalletState {
+    activation: u64,
+    keys: Option<WalletKeys>,
+}
+
+impl WalletState {
+    fn advance(&mut self) {
+        self.activation = self
+            .activation
+            .checked_add(1)
+            .expect("wallet activation exhausted");
+    }
+
+    fn session(&self, session: &SessionInfo) -> AuthoritySession {
+        let mut validation_id = authority_session_validation_id(session);
+        validation_id.extend_from_slice(b":activation:");
+        validation_id.extend_from_slice(&self.activation.to_le_bytes());
+        AuthoritySession::from_session_info(session, validation_id)
+    }
+
+    fn require_session(
+        &self,
+        current: Option<SessionInfo>,
+        session: &AuthoritySession,
+    ) -> Result<SessionInfo, AuthorityError> {
+        let current = current.ok_or(AuthorityError::Disconnected)?;
+        if self.session(&current).validation_id != session.validation_id {
+            return Err(AuthorityError::Disconnected);
+        }
+        Ok(current)
+    }
 }
 
 /// Validated activation material, installed only after host grants are invalidated.
@@ -41,7 +78,8 @@ impl WalletAccountHolder {
     pub fn new(network_suffix: String) -> Self {
         Self {
             network_suffix,
-            keys: Mutex::new(None),
+            lifecycle: Mutex::new(WalletState::default()),
+            session_state: SessionState::new(),
         }
     }
 
@@ -50,13 +88,82 @@ impl WalletAccountHolder {
         &self.network_suffix
     }
 
-    /// Capture one wallet for derivations that must remain consistent across awaits.
-    pub fn keys(&self) -> Result<WalletKeys, AuthorityError> {
-        self.keys
+    /// Connection-status subscriptions for the active wallet.
+    pub fn session_state(&self) -> Arc<SessionState> {
+        self.session_state.clone()
+    }
+
+    /// Select the current wallet activation.
+    pub fn current_session(&self) -> Option<AuthoritySession> {
+        let state = self
+            .lifecycle
             .lock()
-            .expect("wallet keys mutex poisoned")
-            .clone()
-            .ok_or(AuthorityError::Disconnected)
+            .expect("wallet lifecycle mutex poisoned");
+        self.session_state
+            .current()
+            .map(|session| state.session(&session))
+    }
+
+    /// Require the same activation that was selected before an asynchronous operation.
+    pub fn require_current_session(
+        &self,
+        session: &AuthoritySession,
+    ) -> Result<SessionInfo, AuthorityError> {
+        self.lifecycle
+            .lock()
+            .expect("wallet lifecycle mutex poisoned")
+            .require_session(self.session_state.current(), session)
+    }
+
+    /// Capture one wallet for grouped derivations across asynchronous work.
+    pub fn current_keys(&self) -> Result<(AuthoritySession, WalletKeys), AuthorityError> {
+        let state = self
+            .lifecycle
+            .lock()
+            .expect("wallet lifecycle mutex poisoned");
+        let session = self
+            .session_state
+            .current()
+            .ok_or(AuthorityError::Disconnected)?;
+        let keys = state.keys.clone().ok_or(AuthorityError::Disconnected)?;
+        Ok((state.session(&session), keys))
+    }
+
+    /// Capture keys only for the selected wallet activation.
+    pub fn keys(&self, session: &AuthoritySession) -> Result<WalletKeys, AuthorityError> {
+        let state = self
+            .lifecycle
+            .lock()
+            .expect("wallet lifecycle mutex poisoned");
+        state.require_session(self.session_state.current(), session)?;
+        state.keys.clone().ok_or(AuthorityError::Disconnected)
+    }
+
+    /// Sign only while the approved wallet activation remains installed.
+    pub fn sign_vrf(
+        &self,
+        session: &AuthoritySession,
+        request: &HostAccountSignVrfRequest,
+    ) -> Result<VrfSignature, AuthorityError> {
+        let state = self
+            .lifecycle
+            .lock()
+            .expect("wallet lifecycle mutex poisoned");
+        state.require_session(self.session_state.current(), session)?;
+        let keypair = state
+            .keys
+            .as_ref()
+            .ok_or(AuthorityError::Disconnected)?
+            .product_keypair(&request.account)?;
+        let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
+            &keypair,
+            &request.transcript_label,
+            request
+                .items
+                .iter()
+                .map(|item| (item.label.as_slice(), item.value.as_slice())),
+        );
+        Ok(VrfSignature { pre_output, proof })
     }
 
     /// Validate and derive activation material without changing the active wallet.
@@ -86,13 +193,25 @@ impl WalletAccountHolder {
 
     /// Install under the host's grant lock so session and grant changes are atomic.
     pub fn install(&self, activation: PreparedWalletActivation) -> SessionInfo {
-        *self.keys.lock().expect("wallet keys mutex poisoned") = Some(activation.keys);
+        let mut state = self
+            .lifecycle
+            .lock()
+            .expect("wallet lifecycle mutex poisoned");
+        state.advance();
+        state.keys = Some(activation.keys);
+        self.session_state.set_session(activation.session.clone());
         activation.session
     }
 
     /// Clear under the host's grant lock, dropping the active wallet secrets.
     pub fn clear(&self) {
-        self.keys.lock().expect("wallet keys mutex poisoned").take();
+        let mut state = self
+            .lifecycle
+            .lock()
+            .expect("wallet lifecycle mutex poisoned");
+        state.advance();
+        state.keys.take();
+        self.session_state.clear_session();
     }
 }
 

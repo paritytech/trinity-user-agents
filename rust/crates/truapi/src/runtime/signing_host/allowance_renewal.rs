@@ -20,7 +20,6 @@ use super::SigningHost;
 use super::sso_responder::current_unix_secs;
 use super::wallet_account_holder::WalletKeys;
 use crate::runtime::RuntimeServices;
-use crate::runtime::authority::AccountHolder;
 use crate::runtime::statement_allowance::renewal::{
     RenewalChainContext, ResolvedRenewalTarget, StatementRenewalReport, next_tick_delay,
     renew_targets,
@@ -311,7 +310,10 @@ pub async fn track(
         .into_iter()
         .map(StatementRenewalTarget::normalized)
         .collect::<Result<Vec<_>, _>>()?;
-    let keys = signing_host.wallet.keys().map_err(|err| err.to_string())?;
+    let (_, keys) = signing_host
+        .wallet
+        .current_keys()
+        .map_err(|err| err.to_string())?;
     track_targets(
         signing_host.platform.as_ref(),
         signing_host.renewal.ledger_lock(),
@@ -342,7 +344,10 @@ pub async fn list(
 /// the two is how a host tells the entries it will actually renew from the ones
 /// a pass will prune.
 pub fn active_owner_key(signing_host: &SigningHost) -> Result<[u8; 32], String> {
-    let keys = signing_host.wallet.keys().map_err(|err| err.to_string())?;
+    let (_, keys) = signing_host
+        .wallet
+        .current_keys()
+        .map_err(|err| err.to_string())?;
     keys.root_public_key().map_err(|err| err.to_string())
 }
 
@@ -351,7 +356,10 @@ pub async fn untrack_account_for_signing_host(
     signing_host: &SigningHost,
     account_id: &[u8; 32],
 ) -> Result<bool, String> {
-    let keys = signing_host.wallet.keys().map_err(|err| err.to_string())?;
+    let (_, keys) = signing_host
+        .wallet
+        .current_keys()
+        .map_err(|err| err.to_string())?;
     untrack_account(
         signing_host.platform.as_ref(),
         signing_host.renewal.ledger_lock(),
@@ -426,7 +434,10 @@ pub async fn renew_now(
     services: &Arc<RuntimeServices>,
     signing_host: &SigningHost,
 ) -> Result<StatementRenewalReport, String> {
-    let keys = signing_host.wallet.keys().map_err(|err| err.to_string())?;
+    let (session, keys) = signing_host
+        .wallet
+        .current_keys()
+        .map_err(|err| err.to_string())?;
     let period = statement_allowance::slot::current_period(
         current_unix_secs().map_err(|err| err.to_string())?,
     );
@@ -436,6 +447,10 @@ pub async fn renew_now(
         keys.root_public_key().map_err(|err| err.to_string())?,
     )
     .await?;
+    signing_host
+        .wallet
+        .require_current_session(&session)
+        .map_err(|err| err.to_string())?;
     let resolved = resolve_targets(&keys, &targets);
     if resolved.is_empty() {
         return Ok(StatementRenewalReport {
@@ -446,14 +461,7 @@ pub async fn renew_now(
         });
     }
 
-    // The same accessor on-demand allocation uses, so a change to the reserved
-    // key reaches renewal too — and it revalidates the session first.
-    let session = signing_host
-        .current_session()
-        .ok_or_else(|| "no active session for statement-store renewal".to_string())?;
-    let candidates = signing_host
-        .reserved_person_collection_candidates(&session)
-        .map_err(|err| err.to_string())?;
+    let candidates = keys.reserved_person_collection_candidates();
     let rpc = statement_allowance::rpc::RpcClient::new(
         services
             .statement_store
@@ -487,6 +495,10 @@ pub async fn renew_now(
         candidates: &candidates,
         memberships: &memberships,
     };
+    signing_host
+        .wallet
+        .require_current_session(&session)
+        .map_err(|err| err.to_string())?;
     let mut report = renew_targets(
         &context,
         period,
@@ -494,6 +506,10 @@ pub async fn renew_now(
         signing_host.renewal.registration_lock(),
     )
     .await;
+    signing_host
+        .wallet
+        .require_current_session(&session)
+        .map_err(|err| err.to_string())?;
     report.pruned = pruned;
     Ok(report)
 }
@@ -531,7 +547,7 @@ pub fn start_renewal_loop(services: &Arc<RuntimeServices>, signing_host: &Arc<Si
 }
 
 async fn run_tick(services: &Arc<RuntimeServices>, signing_host: &SigningHost) {
-    if signing_host.wallet.keys().is_err() {
+    if signing_host.wallet.current_session().is_none() {
         debug!("skipping statement-store renewal tick; no active session");
         return;
     }

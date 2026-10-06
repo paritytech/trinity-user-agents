@@ -36,10 +36,8 @@ impl LocalActivation for SigningHost {
                 .local_grants
                 .lock()
                 .expect("local AutoSigning grant mutex poisoned");
-            state.advance_activation();
-            let session = self.wallet.install(activation);
-            self.session_state.set_session(session.clone());
-            session
+            state.clear_grants();
+            self.wallet.install(activation)
         };
         self.auth_state
             .connected(&connected_session_ui_info(&session));

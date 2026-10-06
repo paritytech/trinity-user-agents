@@ -13,7 +13,7 @@ fn invalid_activation_preserves_the_active_wallet_and_its_grants() {
     .expect("initial activation succeeds");
     let session = authority.current_session().expect("active wallet");
     authority
-        .grant_auto_signing(&session, "myapp.dot")
+        .grant_auto_signing(&authority.current_operation().unwrap(), "myapp.dot")
         .expect("AutoSigning is granted to the product");
     let runtime = product_runtime(services, authority.clone());
 
@@ -57,5 +57,143 @@ fn invalid_activation_preserves_the_active_wallet_and_its_grants() {
         ),
         (Some(session), true, true),
         "a failed activation must preserve the session token, signing key and grant",
+    );
+}
+
+#[test]
+fn pending_vrf_approval_distinguishes_wallet_and_host_reset() {
+    use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1};
+    use crate::runtime::signing_host::SigningHostSsoService;
+    use crate::runtime::sso_service::Dispatch;
+    use futures::FutureExt;
+    use truapi::versioned::account::{HostAccountSignVrfError, HostAccountSignVrfRequest};
+
+    for remote in [false, true] {
+        for change in ["lock", "reactivate", "reset"] {
+            let (release, gate) = futures::channel::oneshot::channel();
+            let platform = Arc::new(StubPlatform {
+                sign_vrf_confirmed: true,
+                sign_vrf_confirmation_gate: std::sync::Mutex::new(Some(gate)),
+                ..StubPlatform::default()
+            });
+            let (services, authority) = signing_runtime_with_platform(platform.clone());
+            futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+                .unwrap();
+            let session = authority.current_session().unwrap();
+            let runtime = product_runtime(services, authority.clone());
+            let service = SigningHostSsoService::new(authority.clone());
+            let answer = async {
+                if remote {
+                    let Dispatch::Response(answer) = service
+                        .answer(RemoteMessage::request(
+                            "pending-vrf".to_string(),
+                            ProductRequest {
+                                calling_product_id: "myapp.dot".to_string(),
+                                payload: vrf_request("myapp.dot"),
+                            },
+                        ))
+                        .await
+                    else {
+                        panic!("expected a VRF response")
+                    };
+                    let RemoteMessageData::V1(v1::RemoteMessage::SignVrfResponse(response)) =
+                        answer.message.data
+                    else {
+                        panic!("expected a VRF signing response")
+                    };
+                    response.payload.map(|_| ())
+                } else {
+                    runtime
+                        .sign_vrf(
+                            &CallContext::default(),
+                            HostAccountSignVrfRequest::V1(vrf_request("myapp.dot")),
+                        )
+                        .await
+                        .map(|_| ())
+                        .map_err(|error| match error {
+                            CallError::Domain(HostAccountSignVrfError::V1(error)) => error,
+                            other => panic!("unexpected signing failure: {other:?}"),
+                        })
+                }
+            };
+            futures::pin_mut!(answer);
+            assert!(answer.as_mut().now_or_never().is_none());
+            match change {
+                "lock" => futures::executor::block_on(authority.disconnect()),
+                "reactivate" => {
+                    futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+                        .unwrap();
+                }
+                "reset" => authority.clear_product_state("myapp.dot").unwrap(),
+                _ => unreachable!(),
+            }
+            release.send(()).unwrap();
+            let expected = if change == "reset" && remote {
+                Ok(())
+            } else {
+                Err(v01::HostAccountSignVrfError::NotConnected)
+            };
+            assert_eq!(
+                (
+                    futures::executor::block_on(answer),
+                    authority.current_session() == Some(session),
+                    platform.sign_vrf_reviews.lock().unwrap().len()
+                ),
+                (expected, change == "reset", 1),
+                "{change}, remote: {remote}",
+            );
+        }
+    }
+}
+
+#[test]
+fn product_reset_during_allocation_review_cannot_restore_native_grants() {
+    use futures::FutureExt;
+
+    let (release, gate) = futures::channel::oneshot::channel();
+    let platform = Arc::new(StubPlatform {
+        resource_allocation_confirmed: true,
+        resource_allocation_confirmation_gate: std::sync::Mutex::new(Some(gate)),
+        ..StubPlatform::default()
+    });
+    let (services, authority) = signing_runtime_with_platform(platform.clone());
+    futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let runtime = product_runtime(services, authority.clone());
+    let cx = CallContext::default();
+    let allocation = ResourceAllocation::request(
+        &runtime,
+        &cx,
+        HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
+            resources: vec![v01::AllocatableResource::AutoSigning],
+        }),
+    );
+    futures::pin_mut!(allocation);
+    assert!(allocation.as_mut().now_or_never().is_none());
+    authority.clear_product_state("myapp.dot").unwrap();
+    release.send(()).unwrap();
+    let result = futures::executor::block_on(allocation);
+    let session = authority.current_session().unwrap();
+    let status = futures::executor::block_on(authority.auto_signing_status(
+        &session,
+        "myapp.dot",
+        &vrf_request("myapp.dot").account,
+    ));
+    assert_eq!(
+        (
+            result.map(|_| ()),
+            status,
+            platform.resource_allocation_reviews.lock().unwrap().len()
+        ),
+        (
+            Err(CallError::Domain(
+                truapi::versioned::resource_allocation::HostRequestResourceAllocationError::V1(
+                    v01::ResourceAllocationError::Unknown {
+                        reason: AuthorityError::Disconnected.to_string()
+                    }
+                )
+            )),
+            Ok(crate::runtime::authority::AutoSigningGrant::Absent),
+            1
+        ),
     );
 }

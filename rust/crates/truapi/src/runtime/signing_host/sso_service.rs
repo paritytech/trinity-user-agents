@@ -278,14 +278,11 @@ impl SigningHostSsoService {
                 })
             }
             api::AllocatableResource::AutoSigning => {
-                let product_root_private_key = signing_host
-                    .wallet
-                    .keys()?
+                let keys = signing_host.wallet.keys(session)?;
+                let product_root_private_key = keys
                     .product_subtree_secret(calling_product_id)
                     .map_err(AllowanceAllocationError::Authority)?;
-                let ring_vrf_domain_entropy = signing_host
-                    .wallet
-                    .keys()?
+                let ring_vrf_domain_entropy = keys
                     .ring_vrf_domain_entropy(calling_product_id)
                     .map_err(super::product_authority_error)
                     .map_err(AllowanceAllocationError::Authority)?;
@@ -431,11 +428,13 @@ impl SigningHostSsoService {
             }
 
             self.signing_host
+                .wallet
                 .require_current_session(&cx.session)
                 .map_err(|err| err.to_string())?;
             let mut outcomes = Vec::with_capacity(request.resources.len());
             for resource in request.resources {
                 self.signing_host
+                    .wallet
                     .require_current_session(&cx.session)
                     .map_err(|err| err.to_string())?;
                 if cx.call.cancel().is_cancelled() {
@@ -450,6 +449,7 @@ impl SigningHostSsoService {
                     )
                     .await;
                 self.signing_host
+                    .wallet
                     .require_current_session(&cx.session)
                     .map_err(|err| err.to_string())?;
                 outcomes.push(outcome.unwrap_or_else(|err| {

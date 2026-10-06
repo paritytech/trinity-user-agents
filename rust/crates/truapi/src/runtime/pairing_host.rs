@@ -26,7 +26,7 @@ use super::auth_state::AuthStateMachine;
 use super::authority::{
     AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
     AutoSigningGrant, AutoSigningKey, BulletinAllowanceKey, CreateTransactionAuthorityRequest,
-    ProductAuthority, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
+    HostOperation, ProductAuthority, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
     StatementStoreAllowanceKey, authority_session, require_current_session,
 };
 use super::connected_session_ui_info;
@@ -1236,6 +1236,19 @@ impl PairingHost {
         session: &AuthoritySession,
     ) -> Result<SessionInfo, AuthorityError> {
         require_current_session(&self.session_state, session)
+    }
+
+    fn operation_session(
+        &self,
+        operation: &HostOperation,
+    ) -> Result<(SessionInfo, u64), AuthorityError> {
+        let lifecycle = self
+            .session_lifecycle
+            .lock()
+            .expect("session lifecycle mutex poisoned");
+        operation.require_revision(lifecycle.epoch)?;
+        let session = self.current_private_session(&operation.session)?;
+        Ok((session, lifecycle.epoch))
     }
 
     async fn refresh_current_session_identity(&self) -> Option<AuthoritySession> {
@@ -2503,25 +2516,6 @@ impl PairingHost {
         .await
     }
 
-    async fn allocate_resources(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-        request: v01::HostRequestResourceAllocationRequest,
-    ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        let lifecycle_epoch = self.current_session_lifecycle_epoch();
-        let outcomes = self
-            .remote_allocate_resources(cx, &session, product_id.clone(), request)
-            .await?;
-        self.cache_allowance_outcomes(cx, &session, lifecycle_epoch, &product_id, &outcomes)
-            .await?;
-        Ok(v01::HostRequestResourceAllocationResponse {
-            outcomes: outcomes.into_iter().map(Into::into).collect(),
-        })
-    }
-
     async fn cache_allowance_outcomes(
         &self,
         cx: &CallContext,
@@ -2672,6 +2666,37 @@ fn login_error_reason(err: &CallError<HostRequestLoginError>) -> String {
 
 #[async_trait::async_trait]
 impl ProductAuthority for PairingHost {
+    fn current_operation(&self) -> Option<HostOperation> {
+        let lifecycle = self
+            .session_lifecycle
+            .lock()
+            .expect("session lifecycle mutex poisoned");
+        self.current_session()
+            .map(|session| HostOperation::new(session, lifecycle.epoch))
+    }
+
+    fn require_current_operation(&self, operation: &HostOperation) -> Result<(), AuthorityError> {
+        self.operation_session(operation).map(|_| ())
+    }
+
+    async fn allocate_resources(
+        &self,
+        cx: &CallContext,
+        operation: &HostOperation,
+        product_id: String,
+        request: v01::HostRequestResourceAllocationRequest,
+    ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
+        let (session, lifecycle_epoch) = self.operation_session(operation)?;
+        let outcomes = self
+            .remote_allocate_resources(cx, &session, product_id.clone(), request)
+            .await?;
+        self.cache_allowance_outcomes(cx, &session, lifecycle_epoch, &product_id, &outcomes)
+            .await?;
+        Ok(v01::HostRequestResourceAllocationResponse {
+            outcomes: outcomes.into_iter().map(Into::into).collect(),
+        })
+    }
+
     fn session_state(&self) -> Arc<SessionState> {
         PairingHost::session_state(self)
     }
@@ -2728,33 +2753,33 @@ impl ProductAuthority for PairingHost {
     async fn statement_store_allowance_key(
         &self,
         cx: &CallContext,
-        session: &AuthoritySession,
+        operation: &HostOperation,
         product_id: String,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        self.remote_statement_store_allowance_key(cx, &session, product_id)
+        let (session, lifecycle_epoch) = self.operation_session(operation)?;
+        self.remote_statement_store_allowance_key(cx, &session, lifecycle_epoch, product_id)
             .await
     }
 
     async fn bulletin_allowance_key(
         &self,
         cx: &CallContext,
-        session: &AuthoritySession,
+        operation: &HostOperation,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        self.remote_bulletin_allowance_key(cx, &session, product_id)
+        let (session, lifecycle_epoch) = self.operation_session(operation)?;
+        self.remote_bulletin_allowance_key(cx, &session, lifecycle_epoch, product_id)
             .await
     }
 
     async fn refresh_bulletin_allowance_key(
         &self,
         cx: &CallContext,
-        session: &AuthoritySession,
+        operation: &HostOperation,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        self.remote_refresh_bulletin_allowance_key(cx, &session, product_id)
+        let (session, lifecycle_epoch) = self.operation_session(operation)?;
+        self.remote_refresh_bulletin_allowance_key(cx, &session, lifecycle_epoch, product_id)
             .await
     }
 }
@@ -2852,16 +2877,6 @@ impl AccountHolder for PairingHost {
         request: HostAccountRingVrfSignRequest,
     ) -> Result<Vec<u8>, RingVrfError> {
         PairingHost::ring_vrf_sign(self, invocation, request).await
-    }
-
-    async fn allocate_resources(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-        request: v01::HostRequestResourceAllocationRequest,
-    ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
-        PairingHost::allocate_resources(self, cx, session, product_id, request).await
     }
 
     async fn sign_statement_store_product_payload(

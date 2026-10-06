@@ -14,7 +14,7 @@ use truapi::{CallContext, CallError, v01};
 
 use crate::runtime::{
     ProductRuntimeHost, RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-    remote_authority_call, remote_authority_context_with_default, until_cancelled,
+    remote_authority_context_with_default, until_cancelled,
 };
 
 #[truapi::async_trait]
@@ -27,7 +27,7 @@ impl ResourceAllocation for ProductRuntimeHost {
     ) -> Result<HostRequestResourceAllocationResponse, CallError<HostRequestResourceAllocationError>>
     {
         let HostRequestResourceAllocationRequest::V1(inner) = request;
-        let Some(session) = self.authority.current_session() else {
+        let Some(operation) = self.authority.current_operation() else {
             return Err(CallError::Domain(HostRequestResourceAllocationError::V1(
                 v01::ResourceAllocationError::Unknown {
                     reason: "No active session".to_string(),
@@ -66,10 +66,11 @@ impl ResourceAllocation for ProductRuntimeHost {
             cx,
             RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
         );
-        remote_authority_call(
+        self.account_operation(
+            &operation,
             &cx,
             self.authority
-                .allocate_resources(&cx, &session, self.product_id(), inner),
+                .allocate_resources(&cx, &operation, self.product_id(), inner),
         )
         .await
         .map(HostRequestResourceAllocationResponse::V1)
@@ -92,16 +93,21 @@ impl Entropy for ProductRuntimeHost {
         request: HostDeriveEntropyRequest,
     ) -> Result<HostDeriveEntropyResponse, CallError<HostDeriveEntropyError>> {
         let HostDeriveEntropyRequest::V1(v01::HostDeriveEntropyRequest { context }) = request;
-        let Some(session) = self.authority.current_session() else {
+        let Some(operation) = self.authority.current_operation() else {
             return Err(CallError::Domain(HostDeriveEntropyError::V1(
                 v01::HostDeriveEntropyError::Unknown {
                     reason: "Not connected".to_string(),
                 },
             )));
         };
+        let session = &operation.session;
         let entropy = self
             .authority
-            .derive_entropy(&session, &self.product_id(), &context)
+            .require_current_operation(&operation)
+            .and_then(|()| {
+                self.authority
+                    .derive_entropy(session, &self.product_id(), &context)
+            })
             .map_err(|err| {
                 CallError::Domain(HostDeriveEntropyError::V1(
                     v01::HostDeriveEntropyError::Unknown {
