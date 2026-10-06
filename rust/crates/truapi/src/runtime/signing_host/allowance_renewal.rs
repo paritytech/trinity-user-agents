@@ -18,9 +18,7 @@ use tracing::{debug, info, warn};
 
 use super::SigningHost;
 use super::sso_responder::current_unix_secs;
-use crate::host_logic::product_account::{
-    derive_identity_keypair, derive_root_keypair_from_entropy, derive_sr25519_hard_path,
-};
+use super::wallet_account_holder::WalletKeys;
 use crate::runtime::RuntimeServices;
 use crate::runtime::authority::AccountHolder;
 use crate::runtime::statement_allowance::renewal::{
@@ -114,14 +112,6 @@ impl TrackedStatementRenewalTarget {
     fn is_owned_by(&self, owner: [u8; 32]) -> bool {
         self.owner.is_none_or(|recorded| recorded == owner)
     }
-}
-
-/// Root public key of the identity rooted at `entropy`, used to own raw ledger
-/// entries.
-fn owner_key(entropy: &[u8]) -> Result<[u8; 32], String> {
-    derive_root_keypair_from_entropy(entropy)
-        .map(|pair| pair.public.to_bytes())
-        .map_err(|err| err.to_string())
 }
 
 /// Renewal coordination state owned by [`SigningHost`].
@@ -272,9 +262,7 @@ fn decode_entries(blob: &[u8]) -> Result<Vec<TrackedStatementRenewalTarget>, Str
     Ok(entries)
 }
 
-/// Resolve a ledger entry into a concrete account for this session's entropy.
-/// The label a target reports under, derivable without an active session so a
-/// pruned entry reads the same as a renewed one.
+/// Stable labels identify pruned entries even without an active wallet.
 fn target_label(target: &StatementRenewalTarget) -> String {
     match target {
         StatementRenewalTarget::ProductStatementAllowance { product_id } => {
@@ -286,26 +274,22 @@ fn target_label(target: &StatementRenewalTarget) -> String {
 }
 
 fn resolve_target(
-    entropy: &[u8],
-    network_suffix: &str,
+    keys: &WalletKeys,
     target: &StatementRenewalTarget,
 ) -> Result<ResolvedRenewalTarget, String> {
     let label = target_label(target);
     match target {
         StatementRenewalTarget::ProductStatementAllowance { product_id } => {
-            let pair = derive_sr25519_hard_path(
-                entropy,
-                &["allowance", "statement-store", product_id.as_str()],
-            )
-            .map_err(|err| err.to_string())?;
+            let pair = keys
+                .statement_allowance_key(product_id)
+                .map_err(|err| err.to_string())?;
             Ok(ResolvedRenewalTarget {
                 label,
                 account_id: pair.public.to_bytes(),
             })
         }
         StatementRenewalTarget::WalletSso => {
-            let pair =
-                derive_identity_keypair(entropy, network_suffix).map_err(|err| err.to_string())?;
+            let pair = keys.identity_keypair().map_err(|err| err.to_string())?;
             Ok(ResolvedRenewalTarget {
                 label,
                 account_id: pair.public.to_bytes(),
@@ -327,11 +311,11 @@ pub async fn track(
         .into_iter()
         .map(StatementRenewalTarget::normalized)
         .collect::<Result<Vec<_>, _>>()?;
-    let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
+    let keys = signing_host.wallet.keys().map_err(|err| err.to_string())?;
     track_targets(
         signing_host.platform.as_ref(),
         signing_host.renewal.ledger_lock(),
-        owner_key(&entropy)?,
+        keys.root_public_key().map_err(|err| err.to_string())?,
         targets,
     )
     .await
@@ -358,8 +342,8 @@ pub async fn list(
 /// the two is how a host tells the entries it will actually renew from the ones
 /// a pass will prune.
 pub fn active_owner_key(signing_host: &SigningHost) -> Result<[u8; 32], String> {
-    let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
-    owner_key(&entropy)
+    let keys = signing_host.wallet.keys().map_err(|err| err.to_string())?;
+    keys.root_public_key().map_err(|err| err.to_string())
 }
 
 /// Stop renewing one fixed statement account for the active identity.
@@ -367,37 +351,30 @@ pub async fn untrack_account_for_signing_host(
     signing_host: &SigningHost,
     account_id: &[u8; 32],
 ) -> Result<bool, String> {
-    let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
+    let keys = signing_host.wallet.keys().map_err(|err| err.to_string())?;
     untrack_account(
         signing_host.platform.as_ref(),
         signing_host.renewal.ledger_lock(),
-        owner_key(&entropy)?,
+        keys.root_public_key().map_err(|err| err.to_string())?,
         account_id,
     )
     .await
 }
 
-/// Resolve every ledger target under `entropy`, skipping any that cannot be
-/// resolved.
-///
-/// A target is skipped rather than failing the pass: one unusable entry must
-/// not stop every other target from being renewed.
+/// Skip unusable entries so they cannot prevent renewal of other targets.
 fn resolve_targets(
-    entropy: &[u8],
-    network_suffix: &str,
+    keys: &WalletKeys,
     targets: &[StatementRenewalTarget],
 ) -> Vec<ResolvedRenewalTarget> {
     targets
         .iter()
-        .filter_map(
-            |target| match resolve_target(entropy, network_suffix, target) {
-                Ok(resolved) => Some(resolved),
-                Err(reason) => {
-                    warn!(?target, %reason, "skipping an unresolvable renewal target");
-                    None
-                }
-            },
-        )
+        .filter_map(|target| match resolve_target(keys, target) {
+            Ok(resolved) => Some(resolved),
+            Err(reason) => {
+                warn!(?target, %reason, "skipping an unresolvable renewal target");
+                None
+            }
+        })
         .collect()
 }
 
@@ -449,17 +426,17 @@ pub async fn renew_now(
     services: &Arc<RuntimeServices>,
     signing_host: &SigningHost,
 ) -> Result<StatementRenewalReport, String> {
-    let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
+    let keys = signing_host.wallet.keys().map_err(|err| err.to_string())?;
     let period = statement_allowance::slot::current_period(
         current_unix_secs().map_err(|err| err.to_string())?,
     );
     let (targets, pruned) = owned_targets(
         signing_host.platform.as_ref(),
         signing_host.renewal.ledger_lock(),
-        owner_key(&entropy)?,
+        keys.root_public_key().map_err(|err| err.to_string())?,
     )
     .await?;
-    let resolved = resolve_targets(&entropy, signing_host.network_suffix(), &targets);
+    let resolved = resolve_targets(&keys, &targets);
     if resolved.is_empty() {
         return Ok(StatementRenewalReport {
             period,
@@ -554,7 +531,7 @@ pub fn start_renewal_loop(services: &Arc<RuntimeServices>, signing_host: &Arc<Si
 }
 
 async fn run_tick(services: &Arc<RuntimeServices>, signing_host: &SigningHost) {
-    if signing_host.root_entropy().is_err() {
+    if signing_host.wallet.keys().is_err() {
         debug!("skipping statement-store renewal tick; no active session");
         return;
     }
@@ -595,6 +572,7 @@ fn absorb_tick(state: &RenewalState, result: Result<StatementRenewalReport, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::host_logic::product_account::derive_sr25519_hard_path;
     use std::collections::HashMap;
     use std::sync::Mutex;
 
@@ -906,21 +884,21 @@ mod tests {
         // An all-digit product id past `u64::MAX` fails junction derivation with
         // `NumericJunctionOutOfRange`.
         let unresolvable = product(&"9".repeat(25));
-        let entropy = [7u8; 32];
+        let keys = WalletKeys::new(vec![7; 32], "paseo".to_string());
 
-        assert!(resolve_target(&entropy, "paseo", &unresolvable).is_err());
+        assert!(resolve_target(&keys, &unresolvable).is_err());
         let targets = [unresolvable, product("a.dot")];
 
         // Resolving strictly loses the healthy target with the broken one.
         assert!(
             targets
                 .iter()
-                .map(|target| resolve_target(&entropy, "paseo", target))
+                .map(|target| resolve_target(&keys, target))
                 .collect::<Result<Vec<_>, _>>()
                 .is_err()
         );
 
-        let resolved = resolve_targets(&entropy, "paseo", &targets);
+        let resolved = resolve_targets(&keys, &targets);
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].label, "product:a.dot");
     }
@@ -1161,7 +1139,11 @@ mod tests {
                 .public
                 .to_bytes();
 
-        let resolved = resolve_target(&entropy, "paseo", &product("a.dot")).unwrap();
+        let resolved = resolve_target(
+            &WalletKeys::new(entropy.to_vec(), "paseo".to_string()),
+            &product("a.dot"),
+        )
+        .unwrap();
         assert_eq!(
             resolved,
             ResolvedRenewalTarget {
@@ -1180,8 +1162,11 @@ mod tests {
                 .public
                 .to_bytes();
 
-        let resolved =
-            resolve_target(&entropy, "paseo", &StatementRenewalTarget::WalletSso).unwrap();
+        let resolved = resolve_target(
+            &WalletKeys::new(entropy.to_vec(), "paseo".to_string()),
+            &StatementRenewalTarget::WalletSso,
+        )
+        .unwrap();
 
         assert_eq!(
             resolved,
@@ -1346,8 +1331,12 @@ mod tests {
     #[test]
     fn owner_key_follows_the_root_entropy() {
         assert_ne!(
-            owner_key(&[7u8; 32]).unwrap(),
-            owner_key(&[8u8; 32]).unwrap()
+            WalletKeys::new(vec![7; 32], "paseo".to_string())
+                .root_public_key()
+                .unwrap(),
+            WalletKeys::new(vec![8; 32], "paseo".to_string())
+                .root_public_key()
+                .unwrap()
         );
     }
 
