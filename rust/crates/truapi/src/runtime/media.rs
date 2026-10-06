@@ -198,7 +198,11 @@ impl MediaService {
                     state.ensure_open()?;
                     if self.current_authority(&state) && state.signaling.is_some() { return Ok(()); }
                     if state.binding.is_some() { None } else {
-                        if let Some(wake) = state.signaling_wake.take() { let _ = wake.send(()); }
+                        // Sticky: an attempt in flight cannot consume this wake,
+                        // so its failure retries at once instead of backing off.
+                        state.retry_requested = true;
+                        if let Some(wake) = state.signaling_wake.take()
+                            && wake.send(()).is_ok() { state.retry_requested = false; }
                         let (ready, bound) = oneshot::channel();
                         state.ready_waiters.retain(|waiter| !waiter.is_canceled());
                         state.ready_waiters.push(ready);
@@ -252,11 +256,12 @@ impl MediaService {
             guard.complete();
         }.boxed());
     }
+    /// Wait slot for one backoff; already fired when a retry was requested.
     fn signaling_wake(&self) -> Option<oneshot::Receiver<()>> {
         let mut state = self.lock();
         if state.closed { return None; }
         let (wake, woken) = oneshot::channel();
-        state.signaling_wake = Some(wake);
+        if std::mem::take(&mut state.retry_requested) { let _ = wake.send(()); } else { state.signaling_wake = Some(wake); }
         Some(woken)
     }
     async fn bind_signaling(&self) -> Result<(u64, SignalingEvents)> {
@@ -271,6 +276,7 @@ impl MediaService {
                 return Err(domain(v::HostMediaError::NotConnected));
             }
             state.binding = Some(Binding { session: link.session, identity: link.identity });
+            state.retry_requested = false;
             state.group = Some(GroupEngine::new(advertisement));
             state.signaling = Some(link.signaling);
             (state.epoch, std::mem::take(&mut state.ready_waiters))
@@ -743,6 +749,42 @@ mod tests {
         let result = create.join().unwrap();
         assert!(started.elapsed() < OPERATION_TIMEOUT, "creation proceeds once signaling binds");
         assert!(matches!(result, Ok(wire::HostMediaCreateSessionResponse::V1(_))), "{result:?}");
+        host.close_media();
+    }
+
+    #[test]
+    fn a_waiter_parked_during_an_attempt_skips_the_next_backoff() {
+        let (gate, attempts) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicUsize::new(0)));
+        let bind = released(Arc::new(AtomicBool::new(true)), Arc::new(AtomicUsize::new(0)), advertisement(1, 11),
+            Arc::new(Mutex::new(None)));
+        let connect: Connect = {
+            let (gate, attempts) = (gate.clone(), attempts.clone());
+            Arc::new(move |service: &MediaService| {
+                if attempts.fetch_add(1, Ordering::SeqCst) > 0 { return bind(service); }
+                // The first attempt stays in flight until released, then fails.
+                let gate = gate.clone();
+                async move {
+                    while !gate.load(Ordering::SeqCst) { futures_timer::Delay::new(Duration::from_millis(5)).await; }
+                    Err(domain(v::HostMediaError::NotConnected))
+                }.boxed()
+            })
+        };
+        let host = Arc::new(host(connect, Backoff { min: Duration::from_secs(4), max: Duration::from_secs(4) }));
+        let mut subscription = subscribe(&host);
+        assert!(matches!(event(next_within(&mut subscription, Duration::from_secs(1))), v::MediaEvent::Snapshot { .. }));
+        wait_until(|| attempts.load(Ordering::SeqCst) == 1, "the first signaling attempt is in flight");
+        let creating = host.clone();
+        let create = std::thread::spawn(move || futures::executor::block_on(creating.create_session(&CallContext::default(),
+            wire::HostMediaCreateSessionRequest::V1(v::HostMediaCreateSessionRequest { operation_id: [9; 32], tracks: state::off_tracks() }))));
+        // The operation parks while the attempt is in flight, not during a backoff.
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!create.is_finished(), "creation waits for signaling");
+        let failed_at = Instant::now();
+        gate.store(true, Ordering::SeqCst);
+        let result = create.join().unwrap();
+        assert!(matches!(result, Ok(wire::HostMediaCreateSessionResponse::V1(_))), "{result:?}");
+        assert!(failed_at.elapsed() < Duration::from_secs(1), "the retry request outlives the attempt: {:?}", failed_at.elapsed());
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
         host.close_media();
     }
 

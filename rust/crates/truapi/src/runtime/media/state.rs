@@ -295,6 +295,9 @@ pub(super) struct State {
     pub signaling_started: bool,
     /// Present while the connector waits between attempts; firing it retries now.
     pub signaling_wake: Option<oneshot::Sender<()>>,
+    /// A waiter asked for a retry the connector has not yet taken. Sticky, so a
+    /// request made during an attempt skips the backoff after that attempt.
+    pub retry_requested: bool,
     /// Operations waiting, within their own deadline, for signaling to bind.
     pub ready_waiters: Vec<oneshot::Sender<()>>,
     pub group: Option<GroupEngine>,
@@ -314,7 +317,8 @@ impl State {
     pub fn new() -> Self {
         Self { capabilities: None, backend_started: false, fatal: false, closed: false, epoch: 0,
             permission_writes: 0, pending_signals: VecDeque::new(), pending_signal_bytes: 0, signal_workers: 0,
-            binding: None, signaling: None, signaling_started: false, signaling_wake: None, ready_waiters: Vec::new(),
+            binding: None, signaling: None, signaling_started: false, signaling_wake: None, retry_requested: false,
+            ready_waiters: Vec::new(),
             group: None, sessions: BTreeMap::new(), issued_participants: 0,
             incoming: BTreeMap::new(), operations: BTreeMap::new(), listeners: Vec::new(), sequence: 0, viewport: None, viewport_revision: 0 }
     }
