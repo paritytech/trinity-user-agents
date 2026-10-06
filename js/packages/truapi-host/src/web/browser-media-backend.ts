@@ -2066,8 +2066,9 @@ export function createBrowserMediaBackend(
       )
         throw failure("InvalidSurface");
       seen.add(surface.surfaceId);
-      if (surface.source.tag === "Remote")
-        requirePeer(session, surface.source.value.participantId);
+      // The core validates participant handles. It admits a participant before
+      // the call handshake creates its peer here, so a picture may be placed
+      // early; render() shows it once that peer's media is live.
     }
     const fingerprint = JSON.stringify(surfaces);
     if (

@@ -84,25 +84,52 @@ function createNode(index) {
   });
   return node;
 }
+function remoteCameraSurface(node, participantId) {
+  return {
+    sessionId: node.session, viewportRevision: node.viewport.revision, layoutRevision: 0n,
+    surfaces: [{
+      surfaceId: 1, source: { tag: "Remote", value: { participantId, picture: "Camera" } },
+      rect: { x: 0, y: 0, width: 320, height: 200 }, clip: { x: 0, y: 0, width: 320, height: 200 },
+      cornerRadius: 0, depth: 0, fit: "Contain", mirrored: false, visible: true, placement: "AboveProduct",
+    }],
+  };
+}
+async function openPair() {
+  nodes.push(createNode(0), createNode(1));
+  for (const node of nodes) {
+    const capabilities = await node.backend.mediaBackendCapabilities(product);
+    if (!capabilities.supported) throw new Error("Browser Media unsupported");
+    node.observer = observe(node);
+    node.backend.attach(node.runtime);
+  }
+  if (captures.length) throw new Error("Capability discovery captured media");
+  for (const node of nodes) {
+    const operationId = id(200 + node.index);
+    await command(node, "OpenSession", { sessionId: node.session, operationId,
+      tracks: { ...off, camera: node.index === 0 } });
+    await command(node, "CommitOperation", { operationId });
+  }
+}
+async function connectPair() {
+  await command(nodes[1], "CreatePeer", { sessionId: nodes[1].session, participantId: id(1), offerer: false });
+  await command(nodes[0], "CreatePeer", { sessionId: nodes[0].session, participantId: id(2), offerer: true });
+}
 
 window.mediaFixture = {
   async startPair() {
-    nodes.push(createNode(0), createNode(1));
-    for (const node of nodes) {
-      const capabilities = await node.backend.mediaBackendCapabilities(product);
-      if (!capabilities.supported) throw new Error("Browser Media unsupported");
-      node.observer = observe(node);
-      node.backend.attach(node.runtime);
-    }
-    if (captures.length) throw new Error("Capability discovery captured media");
-    for (const node of nodes) {
-      const operationId = id(200 + node.index);
-      await command(node, "OpenSession", { sessionId: node.session, operationId,
-        tracks: { ...off, camera: node.index === 0 } });
-      await command(node, "CommitOperation", { operationId });
-    }
-    await command(nodes[1], "CreatePeer", { sessionId: nodes[1].session, participantId: id(1), offerer: false });
-    await command(nodes[0], "CreatePeer", { sessionId: nodes[0].session, participantId: id(2), offerer: true });
+    await openPair();
+    await connectPair();
+  },
+  async startPairWithEarlyPicture() {
+    await openPair();
+    const receiver = nodes[1];
+    while (!receiver.viewport) await new Promise((resolve) => setTimeout(resolve, 10));
+    // The core admits a participant before the call handshake creates its
+    // backend peer; the product may already place that participant's picture.
+    const early = await receiver.backend.mediaBackendCommand(product, receiver.runtime,
+      { tag: "SetSurfaces", value: remoteCameraSurface(receiver, id(1)) });
+    await connectPair();
+    return early;
   },
   async setAnswererCamera(enabled) {
     const node = nodes[1];
@@ -125,14 +152,7 @@ window.mediaFixture = {
     });
     await command(camera, "CommitOperation", { operationId: id(202) });
     const receiver = nodes[1];
-    await command(receiver, "SetSurfaces", {
-      sessionId: receiver.session, viewportRevision: receiver.viewport.revision, layoutRevision: 0n,
-      surfaces: [{
-        surfaceId: 1, source: { tag: "Remote", value: { participantId: id(1), picture: "Camera" } },
-        rect: { x: 0, y: 0, width: 320, height: 200 }, clip: { x: 0, y: 0, width: 320, height: 200 },
-        cornerRadius: 0, depth: 0, fit: "Contain", mirrored: false, visible: true, placement: "AboveProduct",
-      }],
-    });
+    await command(receiver, "SetSurfaces", remoteCameraSurface(receiver, id(1)));
   },
   decodedFrames() {
     return nodes[1].mount.querySelector("video")?.getVideoPlaybackQuality().totalVideoFrames ?? 0;
