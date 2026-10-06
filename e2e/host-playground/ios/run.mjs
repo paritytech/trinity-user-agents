@@ -12,13 +12,15 @@
 // and a `done` marker there. The seed phrase is never printed and is deleted by
 // the app on first read, and by this runner on exit.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -101,9 +103,27 @@ try {
   copyFileSync(mnemonicFile, seed);
   chmodSync(seed, 0o600);
 
-  launch({ terminate: true });
-  const outcome = await waitForDone(Number(args["timeout-minutes"]) * 60_000);
-  exitCode = finish(outcome);
+  // Streamed for the whole run: the simulator keeps info lines only briefly,
+  // so reading them back at the end loses all but the last few minutes.
+  const logFile = openSync(join(out, "app.log"), "w");
+  const logStream = spawn(
+    "xcrun",
+    [
+      "simctl", "spawn", device.udid, "log", "stream",
+      "--style", "compact",
+      "--level", "info",
+      "--predicate", `subsystem == "${LOG_SUBSYSTEM}"`,
+    ],
+    { stdio: ["ignore", logFile, "ignore"] },
+  );
+  try {
+    launch({ terminate: true });
+    const outcome = await waitForDone(Number(args["timeout-minutes"]) * 60_000);
+    exitCode = finish(outcome);
+  } finally {
+    logStream.kill();
+    closeSync(logFile);
+  }
 } finally {
   rmSync(seed, { force: true });
 }
@@ -243,27 +263,12 @@ function finish(outcome) {
   return failed ? 1 : 0;
 }
 
-/** A screenshot, the hook's own log lines, and the names of any crash reports since the run began. */
+/** A screenshot and the names of any crash reports since the run began; app.log is streamed separately. */
 function captureDiagnostics() {
   spawnSync("xcrun", ["simctl", "io", device.udid, "screenshot", join(out, "failure.png")], {
     stdio: "ignore",
   });
 
-  // `log show --start` reads local time.
-  const local = new Date(startedAt.getTime() - startedAt.getTimezoneOffset() * 60_000);
-  const start = local.toISOString().replace("T", " ").slice(0, 19);
-  const log = spawnSync(
-    "xcrun",
-    [
-      "simctl", "spawn", device.udid, "log", "show",
-      "--style", "compact",
-      "--info",
-      "--start", start,
-      "--predicate", `subsystem == "${LOG_SUBSYSTEM}"`,
-    ],
-    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-  );
-  writeFileSync(join(out, "app.log"), log.stdout ?? "");
 
   const reports = join(process.env.HOME, "Library/Logs/DiagnosticReports");
   const crashes = existsSync(reports)
