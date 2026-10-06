@@ -61,7 +61,7 @@ extension AppPermissionsInteractor: AppPermissionsInteractorInputProtocol {
 
             do {
                 for try await grants in stream {
-                    await self?.presenter?.didReceive(grants: grants)
+                    self?.presenter?.didReceive(grants: grants)
                 }
             } catch {
                 logger.error("App permissions subscription error: \(error)")
