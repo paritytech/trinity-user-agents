@@ -45,7 +45,7 @@ pub use sso_responder::{
 pub use sso_service::SigningHostSsoService;
 
 use super::authority::{
-    AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
+    AccountHolder, AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
     CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
     SignRawAuthorityRequest, StatementStoreAllowanceKey, authority_session_validation_id,
 };
@@ -485,7 +485,7 @@ impl SigningHost {
     ///
     /// A signing host holds the root, so it derives this rather than asking an
     /// Account Holder for it the way a pairing host must, and answers the
-    /// `ProductAuthority` request of the same name from the same derivation.
+    /// `AccountHolder` request of the same name from the same derivation.
     /// `None` when no session is active: there is no root to derive from.
     pub fn derive_subtree_public_key(
         &self,
@@ -958,10 +958,6 @@ impl SigningHost {
 
 #[async_trait::async_trait]
 impl ProductAuthority for SigningHost {
-    fn current_session(&self) -> Option<AuthoritySession> {
-        self.current_local_session()
-    }
-
     fn session_state(&self) -> Arc<SessionState> {
         SigningHost::session_state(self)
     }
@@ -988,25 +984,6 @@ impl ProductAuthority for SigningHost {
     async fn disconnect(&self) {
         self.clear_local_session();
         self.auth_state.store_disconnected();
-    }
-
-    async fn product_subtree_public_key(
-        &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<[u8; 32], AuthorityError> {
-        self.require_current_session(session)?;
-        let product_id = normalize_product_identifier(&product_id).map_err(|err| {
-            AuthorityError::Unavailable {
-                reason: err.to_string(),
-            }
-        })?;
-        let entropy = self.root_entropy()?;
-        let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
-        derive_product_subtree_keypair(&root, &product_id)
-            .map(|keypair| keypair.public.to_bytes())
-            .map_err(product_authority_error)
     }
 
     async fn subtree_resolution_reaches_account_holder(
@@ -1043,6 +1020,111 @@ impl ProductAuthority for SigningHost {
         } else {
             Ok(AutoSigningGrant::Absent)
         }
+    }
+
+    async fn statement_store_allowance_key(
+        &self,
+        _cx: &CallContext,
+        session: &AuthoritySession,
+        product_id: String,
+    ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
+        let (_, activation_generation) = self.require_current_session(session)?;
+        #[cfg(feature = "test-host")]
+        self.refuse_withheld(&v01::AllocatableResource::StatementStoreAllowance)?;
+        let period = statement_allowance::slot::current_period(
+            sso_responder::current_unix_secs()
+                .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?,
+        );
+        if let Some(key) = self
+            .local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned")
+            .statement_allowance_key(activation_generation, &product_id, period)?
+        {
+            return Ok(key.clone());
+        }
+        self.allocate_statement_store_allowance_key(
+            session,
+            &product_id,
+            OnExistingAllowancePolicy::Ignore,
+        )
+        .await
+        .map_err(sso_responder::AllowanceAllocationError::into_authority_error)
+    }
+
+    fn forget_statement_store_allowance_key(&self, product_id: &str, public_key: [u8; 32]) {
+        self.local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned")
+            .forget_statement_allowance_key(product_id, public_key);
+    }
+
+    async fn bulletin_allowance_key(
+        &self,
+        _cx: &CallContext,
+        session: &AuthoritySession,
+        product_id: String,
+    ) -> Result<BulletinAllowanceKey, AuthorityError> {
+        self.require_current_session(session)?;
+        #[cfg(feature = "test-host")]
+        self.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
+        let secret = sso_responder::allocate_bulletin_allowance(
+            &self.services,
+            self,
+            session,
+            &product_id,
+            OnExistingAllowancePolicy::Ignore,
+        )
+        .await
+        .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?;
+        BulletinAllowanceKey::from_secret_bytes(secret)
+    }
+
+    async fn refresh_bulletin_allowance_key(
+        &self,
+        _cx: &CallContext,
+        session: &AuthoritySession,
+        product_id: String,
+    ) -> Result<BulletinAllowanceKey, AuthorityError> {
+        self.require_current_session(session)?;
+        #[cfg(feature = "test-host")]
+        self.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
+        let secret = sso_responder::allocate_bulletin_allowance(
+            &self.services,
+            self,
+            session,
+            &product_id,
+            OnExistingAllowancePolicy::Increase,
+        )
+        .await
+        .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?;
+        BulletinAllowanceKey::from_secret_bytes(secret)
+    }
+}
+
+#[async_trait::async_trait]
+impl AccountHolder for SigningHost {
+    fn current_session(&self) -> Option<AuthoritySession> {
+        self.current_local_session()
+    }
+
+    async fn product_subtree_public_key(
+        &self,
+        _cx: &CallContext,
+        session: &AuthoritySession,
+        product_id: String,
+    ) -> Result<[u8; 32], AuthorityError> {
+        self.require_current_session(session)?;
+        let product_id = normalize_product_identifier(&product_id).map_err(|err| {
+            AuthorityError::Unavailable {
+                reason: err.to_string(),
+            }
+        })?;
+        let entropy = self.root_entropy()?;
+        let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+        derive_product_subtree_keypair(&root, &product_id)
+            .map(|keypair| keypair.public.to_bytes())
+            .map_err(product_authority_error)
     }
 
     async fn sign_vrf(
@@ -1522,85 +1604,6 @@ impl ProductAuthority for SigningHost {
         Ok(v01::HostRequestResourceAllocationResponse { outcomes })
     }
 
-    async fn statement_store_allowance_key(
-        &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        let (_, activation_generation) = self.require_current_session(session)?;
-        #[cfg(feature = "test-host")]
-        self.refuse_withheld(&v01::AllocatableResource::StatementStoreAllowance)?;
-        let period = statement_allowance::slot::current_period(
-            sso_responder::current_unix_secs()
-                .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?,
-        );
-        if let Some(key) = self
-            .local_grants
-            .lock()
-            .expect("local AutoSigning grant mutex poisoned")
-            .statement_allowance_key(activation_generation, &product_id, period)?
-        {
-            return Ok(key.clone());
-        }
-        self.allocate_statement_store_allowance_key(
-            session,
-            &product_id,
-            OnExistingAllowancePolicy::Ignore,
-        )
-        .await
-        .map_err(sso_responder::AllowanceAllocationError::into_authority_error)
-    }
-
-    fn forget_statement_store_allowance_key(&self, product_id: &str, public_key: [u8; 32]) {
-        self.local_grants
-            .lock()
-            .expect("local AutoSigning grant mutex poisoned")
-            .forget_statement_allowance_key(product_id, public_key);
-    }
-
-    async fn bulletin_allowance_key(
-        &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        self.require_current_session(session)?;
-        #[cfg(feature = "test-host")]
-        self.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
-        let secret = sso_responder::allocate_bulletin_allowance(
-            &self.services,
-            self,
-            session,
-            &product_id,
-            OnExistingAllowancePolicy::Ignore,
-        )
-        .await
-        .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?;
-        BulletinAllowanceKey::from_secret_bytes(secret)
-    }
-
-    async fn refresh_bulletin_allowance_key(
-        &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        self.require_current_session(session)?;
-        #[cfg(feature = "test-host")]
-        self.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
-        let secret = sso_responder::allocate_bulletin_allowance(
-            &self.services,
-            self,
-            session,
-            &product_id,
-            OnExistingAllowancePolicy::Increase,
-        )
-        .await
-        .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?;
-        BulletinAllowanceKey::from_secret_bytes(secret)
-    }
-
     async fn sign_statement_store_product_payload(
         &self,
         _cx: &CallContext,
@@ -1672,7 +1675,9 @@ mod tests {
         AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
         SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
     };
-    use super::super::{ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole};
+    use super::super::{
+        AccountHolder, ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole,
+    };
     use super::TEST_NETWORK_SUFFIX;
     use super::ring_vrf::{MemberCandidate, ResolvedRing, RingResolver};
     use super::{LocalActivation, RingVrfError, SR25519_SIGNING_CONTEXT};

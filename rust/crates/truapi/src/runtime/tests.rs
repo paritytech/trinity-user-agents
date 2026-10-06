@@ -7154,7 +7154,7 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
         .current_session()
         .expect("the pairing host has an active session");
 
-    let proof = futures::executor::block_on(ProductAuthority::create_proof(
+    let proof = futures::executor::block_on(AccountHolder::create_proof(
         &*pairing_host,
         &CallContext::default(),
         &session,
@@ -7180,7 +7180,7 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
         "the pairing authority must refuse a foreign key that no manifest granted"
     );
 
-    let signed = futures::executor::block_on(ProductAuthority::ring_vrf_sign(
+    let signed = futures::executor::block_on(AccountHolder::ring_vrf_sign(
         &*pairing_host,
         &CallContext::default(),
         &session,

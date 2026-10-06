@@ -24,10 +24,10 @@ use zeroize::Zeroize;
 use super::allowances::{self, AllowanceCacheKey, AllowanceResource};
 use super::auth_state::AuthStateMachine;
 use super::authority::{
-    AuthorityError, AuthoritySession, AutoSigningGrant, AutoSigningKey, BulletinAllowanceKey,
-    CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
-    SignRawAuthorityRequest, StatementStoreAllowanceKey, authority_session,
-    require_current_session,
+    AccountHolder, AuthorityError, AuthoritySession, AutoSigningGrant, AutoSigningKey,
+    BulletinAllowanceKey, CreateTransactionAuthorityRequest, ProductAuthority,
+    SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
+    authority_session, require_current_session,
 };
 use super::connected_session_ui_info;
 use super::identity::resolve_session_identity_with_chain;
@@ -2621,10 +2621,6 @@ fn login_error_reason(err: &CallError<HostRequestLoginError>) -> String {
 
 #[async_trait::async_trait]
 impl ProductAuthority for PairingHost {
-    fn current_session(&self) -> Option<AuthoritySession> {
-        PairingHost::current_session(self)
-    }
-
     fn session_state(&self) -> Arc<SessionState> {
         PairingHost::session_state(self)
     }
@@ -2661,15 +2657,6 @@ impl ProductAuthority for PairingHost {
         self.refresh_current_session_identity().await
     }
 
-    async fn product_subtree_public_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<[u8; 32], AuthorityError> {
-        PairingHost::product_subtree_public_key(self, cx, session, product_id).await
-    }
-
     async fn subtree_resolution_reaches_account_holder(
         &self,
         session: &AuthoritySession,
@@ -2685,6 +2672,49 @@ impl ProductAuthority for PairingHost {
         account: &v01::ProductAccountId,
     ) -> Result<AutoSigningGrant, AuthorityError> {
         PairingHost::auto_signing_status(self, session, calling_product_id, account).await
+    }
+
+    async fn statement_store_allowance_key(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        product_id: String,
+    ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
+        PairingHost::statement_store_allowance_key(self, cx, session, product_id).await
+    }
+
+    async fn bulletin_allowance_key(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        product_id: String,
+    ) -> Result<BulletinAllowanceKey, AuthorityError> {
+        PairingHost::bulletin_allowance_key(self, cx, session, product_id).await
+    }
+
+    async fn refresh_bulletin_allowance_key(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        product_id: String,
+    ) -> Result<BulletinAllowanceKey, AuthorityError> {
+        PairingHost::refresh_bulletin_allowance_key(self, cx, session, product_id).await
+    }
+}
+
+#[async_trait::async_trait]
+impl AccountHolder for PairingHost {
+    fn current_session(&self) -> Option<AuthoritySession> {
+        PairingHost::current_session(self)
+    }
+
+    async fn product_subtree_public_key(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        product_id: String,
+    ) -> Result<[u8; 32], AuthorityError> {
+        PairingHost::product_subtree_public_key(self, cx, session, product_id).await
     }
 
     async fn sign_vrf(
@@ -2781,33 +2811,6 @@ impl ProductAuthority for PairingHost {
         request: v01::HostRequestResourceAllocationRequest,
     ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
         PairingHost::allocate_resources(self, cx, session, product_id, request).await
-    }
-
-    async fn statement_store_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        PairingHost::statement_store_allowance_key(self, cx, session, product_id).await
-    }
-
-    async fn bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        PairingHost::bulletin_allowance_key(self, cx, session, product_id).await
-    }
-
-    async fn refresh_bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        PairingHost::refresh_bulletin_allowance_key(self, cx, session, product_id).await
     }
 
     async fn sign_statement_store_product_payload(

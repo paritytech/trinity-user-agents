@@ -22,7 +22,7 @@ use crate::host_logic::product_account::{
     derive_identity_keypair, derive_root_keypair_from_entropy, derive_sr25519_hard_path,
 };
 use crate::runtime::RuntimeServices;
-use crate::runtime::authority::ProductAuthority;
+use crate::runtime::authority::AccountHolder;
 use crate::runtime::statement_allowance::renewal::{
     RenewalChainContext, ResolvedRenewalTarget, StatementRenewalReport, next_tick_delay,
     renew_targets,

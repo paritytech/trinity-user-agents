@@ -49,8 +49,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 pub use actions::ActionChannel;
+pub use authority::{AccountHolder, AuthorityError, BulletinAllowanceKey, ProductAuthority};
 use authority::{AuthorityCancelError, AuthoritySession};
-pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
 

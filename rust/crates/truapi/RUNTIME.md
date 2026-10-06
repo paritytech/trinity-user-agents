@@ -223,8 +223,7 @@ path. Web hosts do not compile the store.
 
 ### The two roles
 
-Both implement the role-neutral **`ProductAuthority`** trait; each owns its
-role-specific lifecycle, so no method exists on a role that can't mean it:
+Both roles implement **`AccountHolder`** for account derivation, signing, proofs and resource allocation, and **`ProductAuthority: AccountHolder`** for connection lifecycle, grant checks and cached allowance keys. Product runtimes hold `Arc<dyn ProductAuthority>` and call account operations through its supertrait. Each role retains its own approval policy, key custody and caching behavior.
 
 - **`PairingHost`** (seedless): the user's keys live in an external wallet, so
   signing/aliases/entropy relay over an encrypted SSO channel (statement store

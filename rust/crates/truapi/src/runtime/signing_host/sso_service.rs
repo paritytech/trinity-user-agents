@@ -30,7 +30,7 @@ use crate::host_logic::product_account::{
     derive_ring_vrf_domain_entropy, product_public_key_to_address,
 };
 use crate::runtime::authority::{
-    AuthoritySession, CreateTransactionAuthorityRequest, ProductAuthority,
+    AccountHolder, AuthoritySession, CreateTransactionAuthorityRequest,
     SignPayloadAuthorityRequest, SignRawAuthorityRequest,
 };
 use crate::runtime::sso_service::{Dispatch, SsoReply, SsoRequestContext};
