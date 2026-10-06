@@ -26,6 +26,11 @@ pub enum Network {
 pub const IDENTITY_BACKEND_BASE_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_BASE";
 
 impl Network {
+    /// CLI resolution includes the opt-in disposable local-network configuration.
+    pub fn cli_config(self) -> anyhow::Result<NetworkConfig> {
+        crate::local_network::resolve(self.config())
+    }
+
     /// Preset resolved with any environment overrides applied.
     pub fn config(self) -> NetworkConfig {
         apply_backend_override(self.preset(), std::env::var(IDENTITY_BACKEND_BASE_ENV).ok())

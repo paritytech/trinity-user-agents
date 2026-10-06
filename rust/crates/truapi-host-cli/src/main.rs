@@ -21,6 +21,7 @@ mod chat;
 mod contacts;
 mod dotns_read;
 mod frame_server;
+mod local_network;
 mod network;
 mod platform;
 mod pocket;
@@ -213,6 +214,11 @@ impl LogController {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Validate and print opt-in local routing without contacting any chain.
+    LocalNetworkCheck {
+        #[arg(long, value_enum, default_value = "paseo-next-v2")]
+        network: Network,
+    },
     /// Run a seedless pairing host for product scripts or interactive pairing.
     ///
     /// With `--script`, exits with the script's status. Without it, stays in an
@@ -590,6 +596,26 @@ async fn dispatch(
     // carries the switch.
     match command {
         Command::Update => update::run_update_command().await,
+        Command::LocalNetworkCheck { network } => {
+            anyhow::ensure!(
+                std::env::var_os(local_network::CONFIG_ENV).is_some(),
+                "HOST_CLI_LOCAL_NETWORK_CONFIG must be set"
+            );
+            let config = network.cli_config()?;
+            println!(
+                "{}",
+                serde_json::json!({
+                    "schemaVersion": 1,
+                    "network": config.id,
+                    "namespace": config.network_suffix,
+                    "identity_backend_base": config.identity_backend_base,
+                    "people": { "ws": config.people_ws, "genesis": format!("0x{}", hex::encode(config.people_genesis)) },
+                    "asset_hub": { "ws": config.asset_hub_ws, "genesis": format!("0x{}", hex::encode(config.asset_hub_genesis)) },
+                    "bulletin": { "ws": config.bulletin_ws, "genesis": format!("0x{}", hex::encode(config.bulletin_genesis)) },
+                })
+            );
+            Ok(())
+        }
         Command::PairingHost(args) => {
             run_pairing_host(args, log_filter, log_controller, debugger).await
         }
@@ -601,7 +627,7 @@ async fn dispatch(
             let entropy = bip39::Mnemonic::parse(mnemonic.trim())
                 .context("invalid BIP-39 mnemonic")?
                 .to_entropy();
-            attestation::check_identity(network.config(), &entropy).await
+            attestation::check_identity(network.cli_config()?, &entropy).await
         }
         Command::RegisterName {
             mnemonic,
@@ -623,7 +649,7 @@ async fn dispatch(
                 })
                 .transpose()?;
             register_name::register_name(&register_name::RegisterNameConfig {
-                network: network.config(),
+                network: network.cli_config()?,
                 entropy,
                 label,
                 link_lite,
@@ -637,14 +663,14 @@ async fn dispatch(
             target,
             lookback,
             submit,
-        } => run_alloc_check(mnemonic, network.config(), target, lookback, submit).await,
+        } => run_alloc_check(mnemonic, network.cli_config()?, target, lookback, submit).await,
         Command::PgasCheck {
             mnemonic,
             network,
             target,
             lookback,
             submit,
-        } => run_pgas_check(mnemonic, network.config(), target, lookback, submit).await,
+        } => run_pgas_check(mnemonic, network.cli_config()?, target, lookback, submit).await,
     }
 }
 
@@ -1209,7 +1235,7 @@ async fn run_pairing_host(
             "interactive pairing-host requires a TTY; use pairing-host --script <path>",
         );
     }
-    let network = args.network.config();
+    let network = args.network.cli_config()?;
     let base_path = state_base_path(args.base_path);
     let product =
         frame_server::ProductSelection::new(args.product_id, args.execution_kind.context())?;
@@ -1337,7 +1363,7 @@ async fn run_signing_host(
         args.execution_kind.context(),
     )?;
     let product_id = product.current();
-    let network = args.network.config();
+    let network = args.network.cli_config()?;
     let base_path = state_base_path(args.base_path.clone());
     let session_catalog = SessionCatalog::new(base_path.clone(), network.id)?;
     let initial_session_name = initial_session_name(&args, &session_catalog)?;
