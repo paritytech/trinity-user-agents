@@ -502,6 +502,7 @@ impl FundingRegistry {
                 session.watched_deposit(current_unix_millis()).is_some()
                     || session.watched_withdrawal(current_unix_millis()).is_some()
                     || session.withdrawing().is_some()
+                    || session.paying_out().is_some()
                     || session.converting().is_some()
                     || session.crediting().is_some()
             })
@@ -1201,6 +1202,9 @@ impl RuntimeServices {
                 if let Err(reason) = services.advance_withdrawal_moves().await {
                     tracing::warn!(%reason, "funding withdrawal move failed");
                 }
+                if let Err(reason) = services.advance_payouts().await {
+                    tracing::warn!(%reason, "funding payout pass failed");
+                }
             }
         }));
     }
@@ -1795,6 +1799,7 @@ mod tests {
             attempt: 0,
             since_ms: NOW,
             taken: false,
+            payout: None,
         });
         insert(&registry, storage.as_ref(), withdrawing);
 

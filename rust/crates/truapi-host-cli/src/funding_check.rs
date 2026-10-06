@@ -368,6 +368,10 @@ async fn follow(runtime: &SigningHostRuntime, intent: &str) -> Result<()> {
                 "the session failed: {reason:?}; its funds are still held, try again with --retry"
             ),
             FundingStage::Failed { reason, .. } => bail!("the session failed: {reason:?}"),
+            FundingStage::Released { debited, .. } => {
+                println!("paid out a withdrawal of {debited} CASH units");
+                return Ok(());
+            }
             FundingStage::Delivered { credited, .. } => {
                 println!("credited {credited} CASH units (stand-in top-up: no coins moved)");
                 return Ok(());

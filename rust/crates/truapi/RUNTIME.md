@@ -451,7 +451,19 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   Asset Hub trusts People for it and is reserve-withdrawn otherwise. It has
   landed once the account holds no CASH and Asset Hub shows at least the
   dry run's landing less 5%, and the session is `Withdrawn`; three rejected
-  transactions hold it for `retry_funding`.
+  transactions, or 15 minutes of refusals, hold it for `retry_funding`.
+  `set_withdrawal_payout` names where the PAS goes from there: a provider's
+  deposit channel with its expiry, checked against the provider's own record
+  by whoever hands it over, or the user's own account. The withdrawal
+  account then pays everything it holds there with `Balances::transfer_all`,
+  which closes it, as getcash's sweep pays a channel; a channel within
+  about 23 minutes of closing (the read, the transaction's 64-block era and
+  ten minutes for the provider) is not paid, and the session waits for a new
+  payout and a retry. Once the account is empty, down to the existential
+  deposit, the session is `Released`. Following the provider's swap to its
+  destination is the provider's; a channel should name the withdrawal
+  account as its refund address, as getcash's do, and a refund that lands
+  there is paid out again once a new payout is set.
   `cancel_funding` cancels a session while nothing has arrived, as getcash
   does: it is refused once a deposit was seen or while anything is on the
   deposit account, which is read first, and nothing is cancelled if that

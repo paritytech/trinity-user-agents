@@ -383,6 +383,21 @@ impl NativeTrUApiHostRuntime {
             .await?)
     }
 
+    /// Name the Asset Hub account session `intent`'s withdrawal pays out
+    /// to: a provider's channel closing at `expires_at_ms`, or the user's own
+    /// account with none.
+    pub async fn set_withdrawal_payout(
+        &self,
+        intent: String,
+        address: crate::Bytes32,
+        expires_at_ms: Option<u64>,
+    ) -> Result<(), HostRejection> {
+        Ok(self
+            .runtime
+            .set_withdrawal_payout(&intent, address, expires_at_ms)
+            .await?)
+    }
+
     /// Give session `intent` the deposit account its provider pays into.
     pub async fn assign_funding_deposit(
         &self,

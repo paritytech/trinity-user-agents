@@ -28,7 +28,9 @@ use crate::runtime::statement_allowance::extension::{ChainState, Metadata as Ext
 
 mod withdraw;
 
-pub use withdraw::{PreparedWithdrawal, WithdrawCall, WithdrawChains, landing_floor};
+pub use withdraw::{
+    PayoutChains, PreparedPayout, PreparedWithdrawal, WithdrawCall, WithdrawChains, landing_floor,
+};
 
 /// XCM version every program and dry run uses.
 const XCM_VERSION: u32 = 5;

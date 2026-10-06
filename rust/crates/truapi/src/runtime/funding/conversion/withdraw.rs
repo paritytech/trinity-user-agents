@@ -573,6 +573,86 @@ impl WithdrawChains for Chains {
     }
 }
 
+/// A payout transaction signed and ready to submit on Asset Hub.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedPayout {
+    /// The signed extrinsic.
+    pub extrinsic: Vec<u8>,
+    /// Last Asset Hub block it can be included in.
+    pub valid_until_block: u64,
+}
+
+/// What paying a withdrawal out reads and does on Asset Hub.
+pub trait PayoutChains: Send + Sync {
+    /// `account`'s PAS on Asset Hub.
+    fn asset_hub_native<'a>(&'a self, account: &'a [u8; 32]) -> BoxFuture<'a, Result<u128, ConversionError>>;
+    /// `account`'s next nonce on Asset Hub.
+    fn asset_hub_nonce<'a>(&'a self, account: &'a [u8; 32]) -> BoxFuture<'a, Result<u32, ConversionError>>;
+    /// The finalized Asset Hub block these reads are pinned to.
+    fn asset_hub_block(&self) -> u64;
+    /// Asset Hub's existential deposit, the most a payout that went through
+    /// can leave behind.
+    fn asset_hub_existential_deposit<'a>(&'a self) -> BoxFuture<'a, Result<u128, ConversionError>>;
+    /// Sign the payout of everything the account `keypair` holds to `to`.
+    fn prepare_payout<'a>(
+        &'a self,
+        keypair: &'a schnorrkel::Keypair,
+        nonce: u32,
+        to: [u8; 32],
+    ) -> BoxFuture<'a, Result<PreparedPayout, ConversionError>>;
+}
+
+impl PayoutChains for Chains {
+    fn asset_hub_native<'a>(&'a self, account: &'a [u8; 32]) -> BoxFuture<'a, Result<u128, ConversionError>> {
+        Box::pin(Chains::asset_hub_native(self, account))
+    }
+
+    fn asset_hub_nonce<'a>(&'a self, account: &'a [u8; 32]) -> BoxFuture<'a, Result<u32, ConversionError>> {
+        Box::pin(self.account_nonce(account))
+    }
+
+    fn asset_hub_block(&self) -> u64 {
+        self.asset_hub.block_number()
+    }
+
+    fn asset_hub_existential_deposit<'a>(&'a self) -> BoxFuture<'a, Result<u128, ConversionError>> {
+        Box::pin(self.min_balance(crate::host_logic::funding::DepositAsset::Native))
+    }
+
+    fn prepare_payout<'a>(
+        &'a self,
+        keypair: &'a schnorrkel::Keypair,
+        nonce: u32,
+        to: [u8; 32],
+    ) -> BoxFuture<'a, Result<PreparedPayout, ConversionError>> {
+        Box::pin(async move {
+            let extensions = self
+                .extensions
+                .as_deref()
+                .ok_or_else(|| chain("Asset Hub's signing metadata was not loaded"))?;
+            let signer = Sr25519Signer::from_keypair(keypair);
+            Ok(PreparedPayout {
+                extrinsic: sign_on(&self.asset_hub, extensions, &signer, &payout_call(&to), &native(), nonce)?,
+                valid_until_block: self.asset_hub.block_number() + super::MORTAL_PERIOD_BLOCKS,
+            })
+        })
+    }
+}
+
+/// Everything the signing account holds on Asset Hub to `to`, the account
+/// reaped behind it, as getcash's sweep pays a provider's channel: a
+/// transfer inside an extrinsic, which is what a channel witnesses.
+fn payout_call(to: &[u8; 32]) -> RuntimeCall {
+    RuntimeCall::new(
+        "Balances",
+        "transfer_all",
+        vec![
+            ("dest", Value::unnamed_variant("Id", [Value::from_bytes(to)])),
+            ("keep_alive", Value::bool(false)),
+        ],
+    )
+}
+
 /// A chain's `TrustedQueryApi` answer for `asset` from `location`.
 async fn trusted(
     at: &subxt::client::OnlineClientAtBlock<subxt::config::substrate::SubstrateConfig>,
@@ -895,6 +975,44 @@ mod live {
             landing: account,
             transfer: chains.cash_transfer().await.expect("transfer chosen"),
         }
+    }
+
+    // The payout is named and encoded as Asset Hub's runtime takes it: a
+    // dry run of it from an account holding PAS runs.
+    #[tokio::test]
+    #[ignore = "reaches Paseo Next"]
+    async fn the_payout_call_encodes_and_dry_runs_live() {
+        let chains = chains().await;
+        let mut entries = chains
+            .asset_hub
+            .storage()
+            .iter(dynamic::storage::<(Value,), Value>("System", "Account"), ())
+            .await
+            .expect("accounts iterate");
+        let mut holder = None;
+        while let Some(entry) = entries.next().await {
+            let entry = entry.expect("entry reads");
+            let value = entry.value().decode().expect("decodes");
+            if u128_at(field(&value, "data").expect("data"), "free").expect("free") >= 10_000_000_000 {
+                let key = entry.key_bytes();
+                holder = Some(<[u8; 32]>::try_from(&key[key.len() - 32..]).expect("account id"));
+                break;
+            }
+        }
+        let holder = holder.expect("an Asset Hub account holds PAS");
+        let origin = Value::unnamed_variant("system", [Value::unnamed_variant("Signed", [Value::from_bytes(holder)])]);
+
+        let effects = ok(call_api(
+            &chains.asset_hub,
+            "DryRunApi",
+            "dry_run_call",
+            vec![origin, payout_call(&[7; 32]).value(), Value::u128(XCM_VERSION.into())],
+        )
+        .await
+        .expect("dry run"))
+        .expect("dry run ran");
+
+        assert_eq!(variant_name(field(&effects, "execution_result").expect("result")), Some("Ok"));
     }
 
     // The swap is named and encoded as People's runtime takes it: a dry run

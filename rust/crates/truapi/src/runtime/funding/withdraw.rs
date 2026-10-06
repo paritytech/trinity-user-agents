@@ -15,16 +15,17 @@ use truapi::latest::{
 };
 
 use super::conversion::{
-    ConversionChains, ConversionError, PreparedWithdrawal, WithdrawCall, WithdrawChains,
-    landing_floor,
+    ConversionChains, ConversionError, PayoutChains, PreparedPayout, PreparedWithdrawal,
+    WithdrawCall, WithdrawChains, landing_floor,
 };
 use super::{
     FundingSigner, STALL_AFTER_MS, SignOn, CANCEL_CONFIRM, CancelFundingError, FundingRegistry, MAX_USED_ACCOUNTS, within_chain_timeout,
     within_timeout,
 };
 use crate::host_logic::funding::{
-    FundingSessionError, FundingWithdrawal, PaymentReading, PaymentWord, WithdrawStep,
-    WithdrawSubmission, funding_attempt_id,
+    FundingSessionError, FundingWithdrawal, PAYOUT_EXPIRY_MARGIN_MS, PaymentReading, PaymentWord,
+    PayoutStep, PayoutSubmission, WithdrawStep, WithdrawSubmission, WithdrawalPayout,
+    funding_attempt_id,
 };
 use crate::platform::{CoreStorage, ProductContext};
 use crate::runtime::services::RuntimeServices;
@@ -194,7 +195,119 @@ async fn plan_withdrawal(
     }))
 }
 
+/// What a pass decided for one withdrawal being paid out.
+#[derive(Debug, PartialEq, Eq)]
+enum PlannedPayout {
+    /// Record a step.
+    Record(PayoutStep),
+    /// Record the submission to `payout`, then submit `extrinsic` on Asset
+    /// Hub.
+    Submit {
+        submission: PayoutSubmission,
+        payout: WithdrawalPayout,
+        extrinsic: Vec<u8>,
+    },
+}
+
+/// Decide the next step for paying `withdrawal` out to `payout`, as
+/// getcash's sweep does, from the account's balance alone: an empty account
+/// after a submission was paid out; one included that left the PAS failed;
+/// one whose era passed unincluded is dropped. With nothing on its way, a
+/// channel too close to its expiry is not paid, since what lands in a closed
+/// one is lost; otherwise the transfer of everything goes out.
+async fn plan_payout(
+    chains: &dyn PayoutChains,
+    signer: &dyn FundingSigner,
+    withdrawal: &FundingWithdrawal,
+    payout: WithdrawalPayout,
+    submission: Option<PayoutSubmission>,
+    now_ms: u64,
+) -> Result<Option<PlannedPayout>, ConversionError> {
+    let account = &withdrawal.account;
+    let held = chains.asset_hub_native(account).await?;
+    let record = |step| Ok(Some(PlannedPayout::Record(step)));
+    if let Some(PayoutSubmission {
+        nonce,
+        valid_until_block,
+    }) = submission
+    {
+        // A transfer that went through leaves at most the existential
+        // deposit, when the account could not be reaped.
+        if held <= chains.asset_hub_existential_deposit().await? {
+            return record(PayoutStep::Sent);
+        }
+        if chains.asset_hub_nonce(account).await? > nonce {
+            return record(PayoutStep::Rejected {
+                reason: "the payout was included and failed".into(),
+            });
+        }
+        if chains.asset_hub_block() > valid_until_block {
+            return record(PayoutStep::Dropped);
+        }
+        return Ok(None);
+    }
+    if held == 0 {
+        return record(PayoutStep::Empty);
+    }
+    if payout
+        .expires_at_ms
+        .is_some_and(|expires_at_ms| now_ms.saturating_add(PAYOUT_EXPIRY_MARGIN_MS) >= expires_at_ms)
+    {
+        return record(PayoutStep::ChannelClosing);
+    }
+    let keypair = signer
+        .withdrawal_keypair(&withdrawal.destination_id, withdrawal.number)
+        .map_err(|error| ConversionError::Chain(error.reason))?;
+    let Some(keypair) = keypair.filter(|keypair| keypair.public.to_bytes() == *account) else {
+        tracing::warn!("the active identity does not hold this withdrawal account's key");
+        return Ok(None);
+    };
+    let nonce = chains.asset_hub_nonce(account).await?;
+    let PreparedPayout {
+        extrinsic,
+        valid_until_block,
+    } = chains.prepare_payout(&keypair, nonce, payout.address).await?;
+    Ok(Some(PlannedPayout::Submit {
+        submission: PayoutSubmission {
+            nonce,
+            valid_until_block,
+        },
+        payout,
+        extrinsic,
+    }))
+}
+
 impl FundingRegistry {
+    /// Every session paying a withdrawal out, with its withdrawal account,
+    /// payout and the payout transaction on its way.
+    fn paying_out(&self) -> Vec<(String, FundingWithdrawal, WithdrawalPayout, Option<PayoutSubmission>)> {
+        self.lock_sessions()
+            .values()
+            .filter_map(|session| {
+                let (withdrawal, payout, submission) = session.paying_out()?;
+                Some((session.intent.clone(), withdrawal.clone(), payout, submission))
+            })
+            .collect()
+    }
+
+    /// Apply one step of a withdrawal's payout to session `intent`.
+    async fn record_payout_step(
+        &self,
+        storage: &(impl CoreStorage + ?Sized),
+        now_ms: u64,
+        intent: &str,
+        step: PayoutStep,
+    ) -> Result<(), FundingSessionError> {
+        let intent = intent.to_string();
+        self.commit(storage, now_ms, move |sessions| {
+            let changed = sessions
+                .get_mut(&intent)
+                .is_some_and(|session| session.advance_payout(step, now_ms));
+            ((), if changed { vec![intent] } else { Vec::new() })
+        })
+        .await
+    }
+
     /// Every session whose CASH is being moved to Asset Hub, with its
     /// withdrawal account and the transaction on its way.
     fn moving_withdrawals(&self) -> Vec<(String, FundingWithdrawal, Option<WithdrawSubmission>)> {
@@ -308,6 +421,7 @@ impl RuntimeServices {
                 attempt: 0,
                 since_ms: current_unix_millis(),
                 taken: false,
+                payout: None,
             };
             let owned = intent.to_string();
             let assigned = registry
@@ -554,6 +668,126 @@ impl RuntimeServices {
         }
         Ok(())
     }
+
+    /// Name the Asset Hub account session `intent`'s withdrawal pays out to:
+    /// the provider's channel, checked against the provider's own record by
+    /// whoever hands it over, or the user's own account. Refused once a
+    /// payout is on its way or done.
+    pub async fn set_withdrawal_payout(
+        self: &Arc<Self>,
+        intent: &str,
+        payout: WithdrawalPayout,
+    ) -> Result<(), WithdrawError> {
+        let owned = intent.to_string();
+        let set = self
+            .funding()
+            .commit(self.platform.as_ref(), current_unix_millis(), move |sessions| {
+                let set = sessions.get_mut(&owned).map(|session| session.set_payout(payout));
+                (set, Vec::new())
+            })
+            .await?;
+        match set {
+            None => Err(WithdrawError::NotFound),
+            Some(false) => Err(WithdrawError::NotAwaitingWithdrawal),
+            Some(true) => {
+                self.watch_funding_deposits();
+                Ok(())
+            }
+        }
+    }
+
+    /// One pass over the withdrawals being paid out: record what was sent,
+    /// dropped, rejected or refused, and submit what is ready.
+    pub async fn advance_payouts(self: &Arc<Self>) -> Result<(), String> {
+        let registry = self.funding();
+        let paying = registry.paying_out();
+        let Some(conversion) = registry.conversion.get() else {
+            return Ok(());
+        };
+        if paying.is_empty() {
+            return Ok(());
+        }
+        let signing = paying.iter().any(|(_, _, _, submission)| submission.is_none());
+        let chains = self
+            .funding_chains(conversion.network, if signing { SignOn::AssetHub } else { SignOn::Nowhere })
+            .await
+            .map_err(|error| error.to_string())?;
+        let storage = self.platform.as_ref();
+        let record = |intent: String, step| async move {
+            if let Err(error) = registry.record_payout_step(storage, current_unix_millis(), &intent, step).await {
+                tracing::warn!(%intent, %error, "recording a funding payout failed");
+                return false;
+            }
+            true
+        };
+        for (intent, withdrawal, payout, submission) in paying {
+            let planned = within_chain_timeout(plan_payout(
+                &chains,
+                conversion.signer.as_ref(),
+                &withdrawal,
+                payout,
+                submission,
+                current_unix_millis(),
+            ))
+            .await;
+            let planned = match planned {
+                Ok(Ok(planned)) => planned,
+                Ok(Err(ConversionError::Refused(reason) | ConversionError::PsmRefused { reason, .. })) => {
+                    Some(PlannedPayout::Record(PayoutStep::Refused { reason }))
+                }
+                Ok(Err(ConversionError::Chain(reason))) | Err(GenericError { reason }) => {
+                    tracing::warn!(%intent, %reason, "funding payout pass failed");
+                    continue;
+                }
+            };
+            match planned {
+                None => {}
+                Some(PlannedPayout::Record(step)) => {
+                    record(intent.clone(), step).await;
+                }
+                Some(PlannedPayout::Submit {
+                    submission,
+                    payout,
+                    extrinsic,
+                }) => {
+                    // Never submitted unless recorded for the payout still
+                    // named, so a lost answer is judged by the balance and a
+                    // re-pointed payout is not paid to the old account.
+                    let recorded = registry
+                        .commit(storage, current_unix_millis(), {
+                            let intent = intent.clone();
+                            move |sessions| {
+                                let now_ms = current_unix_millis();
+                                let step = PayoutStep::Submitted { submission, payout };
+                                let changed = sessions
+                                    .get_mut(&intent)
+                                    .is_some_and(|session| session.advance_payout(step, now_ms));
+                                (changed, if changed { vec![intent] } else { Vec::new() })
+                            }
+                        })
+                        .await;
+                    match recorded {
+                        Ok(true) => {}
+                        Ok(false) => continue,
+                        Err(error) => {
+                            tracing::warn!(%intent, %error, "recording a funding payout failed");
+                            continue;
+                        }
+                    }
+                    match chains.submit(extrinsic).await {
+                        Ok(()) => {}
+                        Err(ConversionError::Refused(reason) | ConversionError::PsmRefused { reason, .. }) => {
+                            record(intent.clone(), PayoutStep::Refused { reason }).await;
+                        }
+                        Err(ConversionError::Chain(reason)) => {
+                            tracing::warn!(%intent, %reason, "submitting a funding payout failed");
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -638,6 +872,7 @@ mod tests {
             attempt: 0,
             since_ms: NOW,
             taken: true,
+            payout: None,
         }
     }
 
@@ -782,5 +1017,129 @@ mod tests {
         .expect("planned");
 
         assert_eq!(wrong, None);
+    }
+
+    /// Asset Hub answering fixed reads and signing a fixed payout.
+    struct AssetHub {
+        held: u128,
+        nonce: u32,
+        block: u64,
+    }
+
+    impl PayoutChains for AssetHub {
+        fn asset_hub_native<'a>(&'a self, _: &'a [u8; 32]) -> BoxFuture<'a, Result<u128, ConversionError>> {
+            Box::pin(async { Ok(self.held) })
+        }
+
+        fn asset_hub_nonce<'a>(&'a self, _: &'a [u8; 32]) -> BoxFuture<'a, Result<u32, ConversionError>> {
+            Box::pin(async { Ok(self.nonce) })
+        }
+
+        fn asset_hub_block(&self) -> u64 {
+            self.block
+        }
+
+        fn asset_hub_existential_deposit<'a>(&'a self) -> BoxFuture<'a, Result<u128, ConversionError>> {
+            Box::pin(async { Ok(10) })
+        }
+
+        fn prepare_payout<'a>(
+            &'a self,
+            _: &'a schnorrkel::Keypair,
+            _: u32,
+            _: [u8; 32],
+        ) -> BoxFuture<'a, Result<PreparedPayout, ConversionError>> {
+            Box::pin(async {
+                Ok(PreparedPayout {
+                    extrinsic: vec![9],
+                    valid_until_block: 164,
+                })
+            })
+        }
+    }
+
+    fn pay_out(
+        held: u128,
+        nonce: u32,
+        block: u64,
+        expires_at_ms: Option<u64>,
+        submission: Option<PayoutSubmission>,
+        now_ms: u64,
+    ) -> Option<PlannedPayout> {
+        let payout = WithdrawalPayout {
+            address: [8; 32],
+            expires_at_ms,
+        };
+        block_on(plan_payout(
+            &AssetHub { held, nonce, block },
+            &Keys(keypair(1)),
+            &withdrawal(),
+            payout,
+            submission,
+            now_ms,
+        ))
+        .expect("planned")
+    }
+
+    // getcash's sweep is judged by the balance alone: an account emptied,
+    // down to the existential deposit it may not be reaped below, after a
+    // submission was paid out whatever became of the answer; one included
+    // that left the PAS failed and cost a fee; one whose era passed is
+    // dropped. A channel about to close is not paid, since what lands in a
+    // closed one is neither swapped nor refunded.
+    #[test]
+    fn a_payout_is_judged_by_the_balance_and_never_sent_to_a_closing_channel() {
+        let sent = Some(PayoutSubmission {
+            nonce: 3,
+            valid_until_block: 164,
+        });
+        let closes = NOW + PAYOUT_EXPIRY_MARGIN_MS;
+
+        assert_eq!(
+            [
+                pay_out(950, 3, 100, None, None, NOW),
+                pay_out(950, 3, 100, Some(closes + 1), None, NOW),
+                pay_out(950, 3, 100, Some(closes), None, NOW),
+                pay_out(0, 3, 100, None, None, NOW),
+                pay_out(0, 4, 100, None, sent, NOW),
+                pay_out(10, 4, 100, None, sent, NOW),
+                pay_out(950, 4, 100, None, sent, NOW),
+                pay_out(950, 3, 165, None, sent, NOW),
+                pay_out(950, 3, 164, None, sent, NOW),
+            ],
+            [
+                Some(PlannedPayout::Submit {
+                    submission: PayoutSubmission {
+                        nonce: 3,
+                        valid_until_block: 164,
+                    },
+                    payout: WithdrawalPayout {
+                        address: [8; 32],
+                        expires_at_ms: None,
+                    },
+                    extrinsic: vec![9],
+                }),
+                Some(PlannedPayout::Submit {
+                    submission: PayoutSubmission {
+                        nonce: 3,
+                        valid_until_block: 164,
+                    },
+                    payout: WithdrawalPayout {
+                        address: [8; 32],
+                        expires_at_ms: Some(closes + 1),
+                    },
+                    extrinsic: vec![9],
+                }),
+                Some(PlannedPayout::Record(PayoutStep::ChannelClosing)),
+                Some(PlannedPayout::Record(PayoutStep::Empty)),
+                Some(PlannedPayout::Record(PayoutStep::Sent)),
+                Some(PlannedPayout::Record(PayoutStep::Sent)),
+                Some(PlannedPayout::Record(PayoutStep::Rejected {
+                    reason: "the payout was included and failed".into(),
+                })),
+                Some(PlannedPayout::Record(PayoutStep::Dropped)),
+                None,
+            ]
+        );
     }
 }

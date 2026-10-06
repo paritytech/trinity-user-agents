@@ -715,6 +715,31 @@ impl SigningHostRuntime {
             })
     }
 
+    /// Name the Asset Hub account session `intent`'s withdrawal pays out
+    /// to, `address` as its public key: a provider's deposit channel closing
+    /// at `expires_at_ms`, checked against the provider's own record before
+    /// it is handed over, or the user's own account with no expiry.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_withdrawal_payout"))]
+    pub async fn set_withdrawal_payout(
+        &self,
+        intent: &str,
+        address: [u8; 32],
+        expires_at_ms: Option<u64>,
+    ) -> Result<(), v01::GenericError> {
+        self.services
+            .set_withdrawal_payout(
+                intent,
+                crate::host_logic::funding::WithdrawalPayout {
+                    address,
+                    expires_at_ms,
+                },
+            )
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
     /// The product's hard-subtree public key, derived from the active session
     /// root, or `None` while no session is active.
     ///

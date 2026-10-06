@@ -94,7 +94,31 @@ pub struct FundingWithdrawal {
     /// the session no longer expires or cancels, as getcash holds a taken
     /// payment.
     pub taken: bool,
+    /// Where the PAS goes from Asset Hub, once the host or provider names it.
+    pub payout: Option<WithdrawalPayout>,
 }
+
+/// The Asset Hub account a withdrawal pays out to: a provider's deposit
+/// channel, or the user's own account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct WithdrawalPayout {
+    /// The account, as its public key.
+    pub address: [u8; 32],
+    /// When a provider closes the channel, in Unix milliseconds; `None` for
+    /// an account that does not close.
+    pub expires_at_ms: Option<u64>,
+}
+
+/// How close to a channel's expiry a payout may still go out: the transfer
+/// has to be read, signed, included within its mortal era and then seen by
+/// the provider before the channel closes, and what lands in a closed one
+/// is lost. getcash's 30 s read and 10 min for the provider, with the era's
+/// 64 blocks at 12 s in place of its 180 s submit bound.
+pub const PAYOUT_EXPIRY_MARGIN_MS: u64 = 30_000 + 64 * 12_000 + 600_000;
 
 /// The id of attempt `attempt` on `account`, as getcash numbers its top-ups
 /// and payments: the account itself first, then
@@ -159,7 +183,8 @@ pub enum FundingStep {
     Landed,
     /// The host's top-up is claiming the CASH.
     Claiming,
-    /// The CASH is in the user's balance.
+    /// The session succeeded: the CASH is in the user's balance, or a
+    /// withdrawal was paid out.
     Settled,
     /// The session ran out of time.
     Expired,
@@ -469,8 +494,25 @@ pub enum FundingStage {
     /// Outbound: the withdrawal's PAS is on the withdrawal account on Asset
     /// Hub, to be paid out.
     Withdrawn {
+        /// CASH the user paid in, in payment balance units.
+        paid: u128,
         /// PAS that landed, in planck.
         landed: u128,
+        /// Payout transactions included on Asset Hub that failed so far.
+        rejections: u8,
+        /// When the next payout transaction started being refused, if it
+        /// still is, in Unix milliseconds.
+        refused_since_ms: Option<u64>,
+        /// The payout transaction on its way, if one is.
+        submission: Option<PayoutSubmission>,
+    },
+    /// Outbound terminal success: the withdrawal account paid everything it
+    /// held to the payout account and closed.
+    Released {
+        /// CASH the user paid in, in payment balance units.
+        debited: u128,
+        /// When the payout left, in Unix milliseconds.
+        settled_at_ms: u64,
     },
     /// Inbound terminal success: the CASH is in the user's balance.
     Delivered {
@@ -509,6 +551,14 @@ pub enum FundingResume {
     Withdrawal {
         /// CASH the account received, in payment balance units.
         paid: u128,
+    },
+    /// The PAS is on the withdrawal account on Asset Hub: pay it out again,
+    /// to the payout set by then.
+    Payout {
+        /// CASH the user paid in, in payment balance units.
+        paid: u128,
+        /// PAS that landed, in planck.
+        landed: u128,
     },
     /// The CASH is on People: credit it from `progress`.
     Credit {
@@ -589,6 +639,7 @@ impl FundingSession {
             } => FundingStep::Converting,
             FundingStage::Paid { .. } => FundingStep::Paid,
             FundingStage::Withdrawn { .. } => FundingStep::Landed,
+            FundingStage::Released { .. } => FundingStep::Settled,
             FundingStage::Open => FundingStep::Started,
             FundingStage::Converting {
                 submission: None, ..
@@ -665,7 +716,9 @@ impl FundingSession {
             | FundingStage::Crediting { .. }
             | FundingStage::Paid { .. }
             | FundingStage::Withdrawn { .. } => None,
-            FundingStage::Delivered { settled_at_ms, .. } => Some(settled_at_ms),
+            FundingStage::Delivered { settled_at_ms, .. } | FundingStage::Released { settled_at_ms, .. } => {
+                Some(settled_at_ms)
+            }
             FundingStage::Failed { settled_at_ms, .. } => Some(settled_at_ms),
         }
     }
@@ -689,6 +742,9 @@ impl FundingSession {
                 | FundingStage::Withdrawn { .. },
                 _,
             ) => HostFundingStatusSubscribeItem::Converting,
+            (FundingStage::Released { debited, .. }, _) => HostFundingStatusSubscribeItem::Released {
+                debited: *debited,
+            },
             (FundingStage::Delivered { credited, .. }, _) => {
                 HostFundingStatusSubscribeItem::Delivered {
                     credited: *credited,
@@ -862,6 +918,13 @@ impl FundingSession {
                 withdrawal.taken = false;
                 FundingStage::Open
             }
+            FundingResume::Payout { paid, landed } => FundingStage::Withdrawn {
+                paid,
+                landed,
+                rejections: 0,
+                refused_since_ms: None,
+                submission: None,
+            },
             FundingResume::Withdrawal { paid } => FundingStage::Paid {
                 paid,
                 rejections: 0,
@@ -1492,13 +1555,203 @@ impl FundingSession {
                     );
                 }
             }
-            WithdrawStep::Landed { landed } => self.stage = FundingStage::Withdrawn { landed },
+            WithdrawStep::Landed { landed } => {
+                self.stage = FundingStage::Withdrawn {
+                    paid: *paid,
+                    landed,
+                    rejections: 0,
+                    refused_since_ms: None,
+                    submission: None,
+                }
+            }
             WithdrawStep::Stalled => {
                 return self.fail(
                     FundingFailure::Other {
                         code: "withdraw_stalled".into(),
                         message: "the withdrawal left People but never reached Asset Hub; its assets wait in Asset Hub's trap for the withdrawal account".into(),
                     },
+                    now_ms,
+                );
+            }
+        }
+        true
+    }
+}
+
+/// A payout transaction on its way on Asset Hub.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct PayoutSubmission {
+    /// The account's nonce it was signed with.
+    pub nonce: u32,
+    /// Last Asset Hub block it can be included in.
+    pub valid_until_block: u64,
+}
+
+/// What one pass of a withdrawal's payout found or did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PayoutStep {
+    /// The payout to `payout` is about to be submitted.
+    Submitted {
+        /// The transaction.
+        submission: PayoutSubmission,
+        /// Where it pays, which must still be the session's payout.
+        payout: WithdrawalPayout,
+    },
+    /// The account is empty: the payout went out.
+    Sent,
+    /// The submitted payout's era ended unincluded; the next pass submits
+    /// again.
+    Dropped,
+    /// It was included and failed, which costs a fee.
+    Rejected {
+        /// Why.
+        reason: String,
+    },
+    /// Signing it, or Asset Hub's transaction pool, refused it.
+    Refused {
+        /// Why.
+        reason: String,
+    },
+    /// Nothing is on the account to pay out, and nothing went out.
+    Empty,
+    /// The channel closes too soon to pay it; nothing moved.
+    ChannelClosing,
+}
+
+impl FundingSession {
+    /// The withdrawal account, its payout and the payout transaction on its
+    /// way, of a session whose PAS is on Asset Hub, once a payout is named.
+    pub fn paying_out(&self) -> Option<(&FundingWithdrawal, WithdrawalPayout, Option<PayoutSubmission>)> {
+        match (&self.stage, &self.withdrawal) {
+            (FundingStage::Withdrawn { submission, .. }, Some(withdrawal)) => {
+                Some((withdrawal, withdrawal.payout?, *submission))
+            }
+            _ => None,
+        }
+    }
+
+    /// Name the account a withdrawal pays out to, or a new one after a
+    /// channel closed: while the withdrawal is in flight or held for a
+    /// retry, never while a payout is on its way. A released withdrawal
+    /// takes a new payout too and pays out again, for PAS a provider refunded
+    /// to the withdrawal account, as getcash pays a refund out to a fresh
+    /// channel. Returns whether it was set.
+    pub fn set_payout(&mut self, payout: WithdrawalPayout) -> bool {
+        let settable = match &self.stage {
+            FundingStage::Withdrawn { submission, .. } => submission.is_none(),
+            FundingStage::Released { .. } => true,
+            FundingStage::Failed { resume, .. } => matches!(
+                resume,
+                Some(FundingResume::Payment | FundingResume::Withdrawal { .. } | FundingResume::Payout { .. })
+            ),
+            _ => !self.is_terminal(),
+        };
+        if !settable || self.withdrawal.is_none() {
+            return false;
+        }
+        if let FundingStage::Released { debited, .. } = self.stage {
+            self.stage = FundingStage::Withdrawn {
+                paid: debited,
+                landed: 0,
+                rejections: 0,
+                refused_since_ms: None,
+                submission: None,
+            };
+        }
+        if let Some(withdrawal) = self.withdrawal.as_mut() {
+            withdrawal.payout = Some(payout);
+        }
+        true
+    }
+
+    /// Advance a withdrawal being paid out by one step. Returns whether the
+    /// session changed.
+    pub fn advance_payout(&mut self, step: PayoutStep, now_ms: u64) -> bool {
+        let FundingStage::Withdrawn {
+            paid,
+            landed,
+            rejections,
+            refused_since_ms,
+            submission,
+        } = &mut self.stage
+        else {
+            return false;
+        };
+        let resume = Some(FundingResume::Payout {
+            paid: *paid,
+            landed: *landed,
+        });
+        match step {
+            PayoutStep::Submitted {
+                submission: submitted,
+                payout,
+            } => {
+                // Re-pointed since the pass read it, or already on its way:
+                // not submitted.
+                let current = self.withdrawal.as_ref().and_then(|withdrawal| withdrawal.payout);
+                if submission.is_some() || current != Some(payout) {
+                    return false;
+                }
+                *submission = Some(submitted);
+                *refused_since_ms = None;
+            }
+            PayoutStep::Dropped => *submission = None,
+            PayoutStep::Empty => {
+                return self.fail(
+                    FundingFailure::Other {
+                        code: "payout_empty".into(),
+                        message: "the withdrawal account holds nothing to pay out".into(),
+                    },
+                    now_ms,
+                );
+            }
+            PayoutStep::Sent => {
+                self.stage = FundingStage::Released {
+                    debited: *paid,
+                    settled_at_ms: now_ms,
+                };
+            }
+            PayoutStep::Rejected { reason } => {
+                *submission = None;
+                *rejections = rejections.saturating_add(1);
+                if *rejections >= MAX_WITHDRAW_REJECTIONS {
+                    return self.fail_resumable(
+                        FundingFailure::Other {
+                            code: "payout_rejected".into(),
+                            message: format!(
+                                "the payout was rejected {MAX_WITHDRAW_REJECTIONS} times, last: {reason}"
+                            ),
+                        },
+                        resume,
+                        now_ms,
+                    );
+                }
+            }
+            PayoutStep::Refused { reason } => {
+                *submission = None;
+                let since = *refused_since_ms.get_or_insert(now_ms);
+                if now_ms.saturating_sub(since) > WITHDRAW_REFUSAL_WINDOW_MS {
+                    return self.fail_resumable(
+                        FundingFailure::Other {
+                            code: "payout_refused".into(),
+                            message: reason,
+                        },
+                        resume,
+                        now_ms,
+                    );
+                }
+            }
+            PayoutStep::ChannelClosing => {
+                return self.fail_resumable(
+                    FundingFailure::Other {
+                        code: "channel_expired".into(),
+                        message: "the provider's channel closes too soon to pay it; nothing was sent".into(),
+                    },
+                    resume,
                     now_ms,
                 );
             }
@@ -1952,6 +2205,7 @@ mod tests {
             attempt: 0,
             since_ms: NOW,
             taken,
+            payout: None,
         });
         session
     }
@@ -2090,7 +2344,13 @@ mod tests {
                     submission: None,
                 },
                 FundingStep::Landed,
-                FundingStage::Withdrawn { landed: 950 },
+                FundingStage::Withdrawn {
+                    paid: 1_000,
+                    landed: 950,
+                    rejections: 0,
+                    refused_since_ms: None,
+                    submission: None,
+                },
             )
         );
     }
@@ -2130,6 +2390,111 @@ mod tests {
                         valid_until_block: 10,
                         pas_before: 0,
                     }),
+                },
+            )
+        );
+    }
+
+    fn withdrawn() -> FundingSession {
+        let mut session = paid();
+        session.advance_withdrawal(WithdrawStep::Landed { landed: 950 }, NOW);
+        session
+    }
+
+    // A payout goes only where it was named, never to one re-pointed since
+    // the pass read it; a channel that closed holds the PAS for a new one,
+    // which can then be named and paid; once a payout is on its way the
+    // account cannot be re-pointed; once it left the session is released
+    // with what the user paid in, and a refund to the account can be paid
+    // out again to a fresh channel.
+    #[test]
+    fn a_withdrawal_is_paid_out_where_named_and_released() {
+        let channel = WithdrawalPayout {
+            address: [8; 32],
+            expires_at_ms: Some(NOW + 1),
+        };
+        let own = WithdrawalPayout {
+            address: [9; 32],
+            expires_at_ms: None,
+        };
+        let mut closed = withdrawn();
+        closed.set_payout(channel);
+        closed.advance_payout(PayoutStep::ChannelClosing, NOW);
+        let renamed = closed.set_payout(own);
+        closed.retry(NOW + 1).expect("retried");
+        let paying = closed.paying_out().map(|(_, payout, _)| payout);
+        let stale = closed.advance_payout(
+            PayoutStep::Submitted {
+                submission: PayoutSubmission {
+                    nonce: 3,
+                    valid_until_block: 164,
+                },
+                payout: channel,
+            },
+            NOW + 2,
+        );
+        closed.advance_payout(
+            PayoutStep::Submitted {
+                submission: PayoutSubmission {
+                    nonce: 3,
+                    valid_until_block: 164,
+                },
+                payout: own,
+            },
+            NOW + 2,
+        );
+        let repointed = closed.set_payout(channel);
+        closed.advance_payout(PayoutStep::Sent, NOW + 3);
+        let released = (closed.wire_item(), closed.step());
+        let refunded = closed.set_payout(channel);
+
+        assert_eq!(
+            (renamed, paying, stale, repointed, released, refunded, closed.step()),
+            (
+                true,
+                Some(own),
+                false,
+                false,
+                (HostFundingStatusSubscribeItem::Released { debited: 1_000 }, FundingStep::Settled),
+                true,
+                FundingStep::Landed,
+            )
+        );
+    }
+
+    // A payout that keeps failing at inclusion costs a fee each time, so the
+    // third holds it for a retry; an account with nothing to pay out ends
+    // the session, since a retry would find the same.
+    #[test]
+    fn a_payout_is_held_after_three_rejections_and_an_empty_account_ends_it() {
+        let mut rejected = withdrawn();
+        for _ in 0..3 {
+            rejected.advance_payout(PayoutStep::Rejected { reason: "no".into() }, NOW);
+        }
+        let mut empty = withdrawn();
+        empty.advance_payout(PayoutStep::Empty, NOW);
+
+        assert_eq!(
+            (rejected.stage, empty.stage),
+            (
+                FundingStage::Failed {
+                    reason: FundingFailure::Other {
+                        code: "payout_rejected".into(),
+                        message: "the payout was rejected 3 times, last: no".into(),
+                    },
+                    settled_at_ms: NOW,
+                    resume: Some(FundingResume::Payout {
+                        paid: 1_000,
+                        landed: 950,
+                    }),
+                },
+                FundingStage::Failed {
+                    reason: FundingFailure::Other {
+                        code: "payout_empty".into(),
+                        message: "the withdrawal account holds nothing to pay out".into(),
+                    },
+                    settled_at_ms: NOW,
+                    resume: None,
                 },
             )
         );

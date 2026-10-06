@@ -3040,6 +3040,7 @@ fn a_withdrawal_is_paid_through_the_host_and_a_refusal_is_asked_again() {
                     attempt: 0,
                     since_ms: crate::runtime::current_unix_millis(),
                     taken: false,
+                    payout: None,
                 });
             }
             ((), Vec::new())
