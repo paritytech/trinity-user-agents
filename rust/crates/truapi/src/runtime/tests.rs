@@ -93,8 +93,8 @@ fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
 }
 
 fn install_pairing_session(host: &ProductRuntimeHost, session: SessionInfo) {
-    let product_id =
-        normalize_product_identifier(&host.product_id()).expect("test product identifier is valid");
+    let product_id = normalize_product_identifier(&host.connection.product_id())
+        .expect("test product identifier is valid");
     if session.sso.is_some() {
         host.test_cache_product_subtree(&session, &product_id, test_product_subtree(&product_id));
     }
@@ -207,10 +207,12 @@ fn a_storage_key_is_namespaced_under_its_owner() {
     // The owner is an argument, not `self`: keying off the caller would hand a
     // granted foreign read the caller's own values under the target's name.
     let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
-    let key = host.product_storage_key("wallet.dot", "k".to_string());
+    let key = host
+        .connection
+        .product_storage_key("wallet.dot", "k".to_string());
     let decoded = ProductStorageKey::decode(&key).expect("the key round-trips");
     assert_eq!(decoded.product_id(), "wallet.dot");
-    assert_ne!(decoded.product_id(), host.product_id());
+    assert_ne!(decoded.product_id(), host.connection.product_id());
 }
 
 #[test]
@@ -221,7 +223,7 @@ fn a_read_naming_the_caller_however_it_is_spelled_reaches_its_own_storage() {
     let platform = stub_platform();
     let storage = platform.clone();
     let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-    let own = host.product_id();
+    let own = host.connection.product_id();
     storage.local_storage.lock().expect("mutex").insert(
         ProductStorageKey::new(&own, "k")
             .expect("the owner normalizes")
@@ -368,7 +370,10 @@ fn a_grant_to_another_product_does_not_admit_this_caller() {
 /// another product's account. The caller is `unknown.dot` throughout, so a
 /// manifest names the bare label `unknown`.
 fn account_target(host: &ProductRuntimeHost, target: &str) -> Option<String> {
-    futures::executor::block_on(host.authorized_product_account(target, &CallContext::default()))
+    futures::executor::block_on(
+        host.connection
+            .authorized_product_account(target, &CallContext::default()),
+    )
 }
 
 #[test]
@@ -600,7 +605,10 @@ fn with_no_session_a_proof_refusal_never_discloses_whether_a_grant_exists() {
 
     assert_eq!(proof_refusal(&host, "granting.dot"), sessionless);
     assert_eq!(proof_refusal(&host, "silent.dot"), sessionless);
-    assert_eq!(proof_refusal(&host, &host.product_id()), sessionless);
+    assert_eq!(
+        proof_refusal(&host, &host.connection.product_id()),
+        sessionless
+    );
 }
 
 fn proof_refusal(
@@ -618,7 +626,7 @@ fn a_proof_naming_the_caller_in_another_spelling_is_still_its_own() {
     // Normalized before comparison, so casing cannot turn a product's own
     // key into a cross-product refusal.
     let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
-    let shouted = host.product_id().to_uppercase();
+    let shouted = host.connection.product_id().to_uppercase();
     assert_eq!(
         proof_refusal(&host, &shouted),
         Some(CallError::Domain(HostAccountCreateProofError::V1(
@@ -1158,7 +1166,7 @@ fn a_removed_contact_stops_resolving_once_the_host_signals() {
         .lock()
         .expect("listed mutex poisoned")
         .clear();
-    host.services.contact_handles.clear();
+    host.connection.services.contact_handles.clear();
 
     assert_eq!(
         futures::executor::block_on(
@@ -2359,8 +2367,8 @@ fn chain_follow_ids_are_scoped_per_product_core() {
         product,
     );
 
-    assert_eq!(first.follow_id("request-1"), "c1:request-1");
-    assert_eq!(second.follow_id("request-1"), "c2:request-1");
+    assert_eq!(first.connection.follow_id("request-1"), "c1:request-1");
+    assert_eq!(second.connection.follow_id("request-1"), "c2:request-1");
 }
 
 #[test]
@@ -2370,7 +2378,8 @@ fn bare_localhost_product_allows_dev_product_accounts() {
 
     assert_eq!(
         futures::executor::block_on(
-            host.authorized_product_account("myapp.dot", &CallContext::default())
+            host.connection
+                .authorized_product_account("myapp.dot", &CallContext::default())
         )
         .as_deref(),
         Some("myapp.dot")
@@ -2691,7 +2700,7 @@ fn navigate_to_consumes_open_url_allow_once_at_handoff() {
                     url: url.to_string(),
                 });
                 let first = host.navigate_to(&cx, request.clone()).await;
-                let status = host
+                let status = host.connection
                     .permission_authorization_status(PermissionAuthorizationRequest::Device(
                         v01::HostDevicePermissionRequest::OpenUrl,
                     ))
@@ -2754,7 +2763,7 @@ fn device_authorization_consumes_allow_once_for_each_capability() {
                     }
                 }
                 let first = host.authorize_device_permission(&cx, request.clone()).await;
-                let status = host
+                let status = host.connection
                     .permission_authorization_status(PermissionAuthorizationRequest::Device(
                         capability,
                     ))
@@ -3733,7 +3742,8 @@ fn get_user_id_caches_identity_disclosure_grant() {
 
     assert_eq!(platform.identity_disclosure_calls.load(Ordering::SeqCst), 1);
     let status = futures::executor::block_on(
-        host.permission_authorization_status(PermissionAuthorizationRequest::IdentityDisclosure),
+        host.connection
+            .permission_authorization_status(PermissionAuthorizationRequest::IdentityDisclosure),
     )
     .unwrap();
     assert_eq!(status, PermissionAuthorizationStatus::Authorized);
@@ -3759,7 +3769,7 @@ fn get_user_id_allow_once_does_not_authorize_the_next_disclosure() {
             .await
             .unwrap();
         let HostGetUserIdResponse::V1(response) = response;
-        let status = host
+        let status = host.connection
             .permission_authorization_status(PermissionAuthorizationRequest::IdentityDisclosure)
             .await
             .unwrap();
@@ -3816,7 +3826,8 @@ fn get_user_id_caches_identity_disclosure_denial() {
         ))
     ));
     let status = futures::executor::block_on(
-        host.permission_authorization_status(PermissionAuthorizationRequest::IdentityDisclosure),
+        host.connection
+            .permission_authorization_status(PermissionAuthorizationRequest::IdentityDisclosure),
     )
     .unwrap();
     assert_eq!(status, PermissionAuthorizationStatus::Denied);
@@ -3851,7 +3862,8 @@ fn get_user_id_dismissed_identity_disclosure_stays_not_determined() {
         ))
     ));
     let status = futures::executor::block_on(
-        host.permission_authorization_status(PermissionAuthorizationRequest::IdentityDisclosure),
+        host.connection
+            .permission_authorization_status(PermissionAuthorizationRequest::IdentityDisclosure),
     )
     .unwrap();
     assert_eq!(status, PermissionAuthorizationStatus::NotDetermined);
@@ -3910,7 +3922,7 @@ fn get_user_id_respects_pre_authorized_identity_disclosure() {
     let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
     install_pairing_session(&host, session_info());
     let cx = CallContext::default();
-    futures::executor::block_on(host.set_permission_authorization_status(
+    futures::executor::block_on(host.connection.set_permission_authorization_status(
         PermissionAuthorizationRequest::IdentityDisclosure,
         PermissionAuthorizationStatus::Authorized,
     ))
@@ -4198,7 +4210,7 @@ fn preimage_lookup_cache_hit_emits_once_and_stays_open() {
     let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
     let value = vec![4, 5, 6, 7];
     let key = preimage_key(&value);
-    host.services.cache_preimage(key, value.clone());
+    host.connection.services.cache_preimage(key, value.clone());
 
     let cx = CallContext::default();
     let request =
@@ -4397,7 +4409,9 @@ fn local_storage_subscribe_interrupts_on_a_platform_stream_failure() {
     );
 
     platform.fail_storage_subscriptions(
-        &host.product_storage_key("myapp.dot", "progress".to_string()),
+        &host
+            .connection
+            .product_storage_key("myapp.dot", "progress".to_string()),
         "store unavailable",
     );
 
@@ -4473,7 +4487,7 @@ fn an_open_operation_holds_worker_demand_until_it_ends() {
         test_spawner(),
     );
     let cx = CallContext::default();
-    let ledger = &host.services().worker_ledger;
+    let ledger = &host.connection.services().worker_ledger;
 
     let HostWorkerBeginOperationResponse::V1(response) =
         futures::executor::block_on(host.begin_operation(
@@ -4512,7 +4526,7 @@ fn ending_an_operation_twice_releases_only_the_demand_it_held() {
         test_spawner(),
     );
     let cx = CallContext::default();
-    let ledger = &host.services().worker_ledger;
+    let ledger = &host.connection.services().worker_ledger;
     let begin = || {
         let HostWorkerBeginOperationResponse::V1(response) =
             futures::executor::block_on(host.begin_operation(
@@ -4586,7 +4600,8 @@ fn tearing_down_a_connection_reports_the_stop_before_its_last_reference_goes() {
     );
     let recorder = Arc::new(DemandRecorder::default());
     assert!(
-        host.services()
+        host.connection
+            .services()
             .worker_ledger
             .install_demand_observer(recorder.clone())
     );
@@ -4598,7 +4613,7 @@ fn tearing_down_a_connection_reports_the_stop_before_its_last_reference_goes() {
     ))
     .expect("begin operation");
 
-    host.release_open_operations();
+    host.connection.release_open_operations();
 
     // A native reconnect drops the replaced connection's last reference only
     // after the new one exists, so a stop deferred to that point would reach
@@ -4671,7 +4686,10 @@ fn a_cancelled_begin_ends_the_operation_the_host_started() {
         );
         std::thread::yield_now();
     }
-    assert_eq!(host.services().worker_ledger.count("myapp.dot"), 0);
+    assert_eq!(
+        host.connection.services().worker_ledger.count("myapp.dot"),
+        0
+    );
 }
 
 #[test]
@@ -4686,7 +4704,7 @@ fn a_failed_end_still_drops_the_demand_the_operation_held() {
         test_spawner(),
     );
     let cx = CallContext::default();
-    let ledger = &host.services().worker_ledger;
+    let ledger = &host.connection.services().worker_ledger;
 
     let HostWorkerBeginOperationResponse::V1(response) =
         futures::executor::block_on(host.begin_operation(
@@ -4723,7 +4741,7 @@ fn dropping_a_connection_releases_the_demand_its_open_operations_held() {
         runtime_config("myapp.dot"),
         test_spawner(),
     );
-    let services = host.services().clone();
+    let services = host.connection.services().clone();
     let cx = CallContext::default();
 
     futures::executor::block_on(host.begin_operation(
@@ -5449,7 +5467,8 @@ fn transaction_naming(
 fn granted_pairing_host_with_contact(account: [u8; 32]) -> (Arc<StubPlatform>, ProductRuntimeHost) {
     let (platform, host) = granted_pairing_host();
     assert!(
-        host.services
+        host.connection
+            .services
             .install_contacts_platform(StubContactsPlatform::picking(account)),
         "the picker installs before anything reads it",
     );

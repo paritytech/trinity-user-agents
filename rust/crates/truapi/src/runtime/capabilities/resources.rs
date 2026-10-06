@@ -33,7 +33,7 @@ impl ResourceAllocation for ProductRuntimeHost {
         };
 
         self.authority
-            .allocate_resources(cx, &operation, &self.product, inner)
+            .allocate_resources(cx, &operation, &self.connection.product, inner)
             .await
             .map(HostRequestResourceAllocationResponse::V1)
             .map_err(|error| match error {
@@ -71,7 +71,7 @@ impl Entropy for ProductRuntimeHost {
             .require_current_operation(&operation)
             .and_then(|()| {
                 self.authority
-                    .account_holder().derive_entropy(session, &self.product_id(), &context)
+                    .account_holder().derive_entropy(session, &self.connection.product_id(), &context)
             })
             .map_err(|err| {
                 CallError::Domain(HostDeriveEntropyError::V1(

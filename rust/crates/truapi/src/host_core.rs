@@ -33,9 +33,10 @@ use crate::host_logic::worker::WorkerLedger;
 use crate::runtime::{
     ActionChannel, AuthorityError, AuthoritySession, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
     DevicePairingObserver, HostGrantStore, LocalActivation, PairedSsoPeer, PairingHostRole,
-    ProductAuthority, ProductRuntimeHost, ResponderExit, RuntimeServices, SigningHostRole,
-    SsoRequestService, WalletAccountHolder, disconnect_paired_host, establish_pairing,
-    notify_pairing_allowance_allocation, notify_pairing_failed, respond_to_pairing, resume_pairing,
+    ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices,
+    SigningHostRole, SsoRequestService, WalletAccountHolder, disconnect_paired_host,
+    establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
+    respond_to_pairing, resume_pairing,
 };
 use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
 use crate::transport::Transport;
@@ -1193,6 +1194,7 @@ impl HostAdmin {
         request: PermissionAuthorizationRequest,
     ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
         self.product_runtime
+            .connection()
             .permission_authorization_status(request)
             .await
     }
@@ -1208,6 +1210,7 @@ impl HostAdmin {
         requests: Vec<PermissionAuthorizationRequest>,
     ) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
         self.product_runtime
+            .connection()
             .permission_authorization_statuses(requests)
             .await
     }
@@ -1220,6 +1223,7 @@ impl HostAdmin {
         status: PermissionAuthorizationStatus,
     ) -> Result<(), v01::GenericError> {
         self.product_runtime
+            .connection()
             .set_permission_authorization_status(request, status)
             .await
     }
@@ -1273,6 +1277,7 @@ impl CoreAdmin for HostAdmin {
 
     async fn get_device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
         self.product_runtime
+            .connection()
             .services()
             .device_encryption_secret()
             .await
@@ -1348,6 +1353,7 @@ async fn product_subtree_public_key(
 pub struct ProductRuntime {
     core: TrUApiCore,
     admin: HostAdmin,
+    connection: Arc<ProductConnection>,
     transport: Arc<SinkTransport>,
     host_subscriptions: Arc<HostInitiatedSubscriptionManager>,
     disposed: Arc<AtomicBool>,
@@ -1359,18 +1365,18 @@ pub struct ProductRuntime {
 /// product connection.
 #[derive(Clone)]
 pub struct ProductRuntimeControl {
-    runtime: Arc<ProductRuntimeHost>,
+    connection: Arc<ProductConnection>,
     transport: Arc<SinkTransport>,
     host_subscriptions: Arc<HostInitiatedSubscriptionManager>,
     disposed: Arc<AtomicBool>,
 }
 
 impl ProductRuntimeControl {
-    fn runtime(&self) -> Result<&ProductRuntimeHost, ProductRuntimeError> {
+    fn connection(&self) -> Result<&ProductConnection, ProductRuntimeError> {
         if self.disposed.load(Ordering::Acquire) {
             return Err(ProductRuntimeError::Closed);
         }
-        Ok(&self.runtime)
+        Ok(&self.connection)
     }
 
     /// Publish one host-authored Chat action into this connection's action
@@ -1379,7 +1385,7 @@ impl ProductRuntimeControl {
         &self,
         action: v01::HostChatActionSubscribeItem,
     ) -> Result<(), ProductRuntimeError> {
-        self.runtime()?.publish_chat_action(
+        self.connection()?.publish_chat_action(
             truapi::versioned::chat::HostChatActionSubscribeItem::V1(action),
         )
     }
@@ -1391,7 +1397,7 @@ impl ProductRuntimeControl {
         &self,
         item: v01::HostRendererActionSubscribeItem,
     ) -> Result<(), ProductRuntimeError> {
-        self.runtime()?.publish_renderer_action(
+        self.connection()?.publish_renderer_action(
             truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(item),
         )
     }
@@ -1410,8 +1416,8 @@ impl ProductRuntimeControl {
         truapi::Subscription<v01::RendererNode, truapi::CallError<v01::GenericError>>,
         ProductRuntimeError,
     > {
-        self.runtime()?.renderer_access()?;
-        let reference = WorkerReference::acquire(self.runtime.clone());
+        self.connection()?.renderer_access()?;
+        let reference = WorkerReference::acquire(self.connection.clone());
         let request = truapi::versioned::renderer::ProductRendererRenderRequest::V1(request);
         let transport: Arc<dyn Transport> = self.transport.clone();
         let stream = crate::generated::dispatcher::renderer_render(
@@ -1443,20 +1449,20 @@ impl ProductRuntimeControl {
 
 /// One reference the core holds on a product's worker, released on drop.
 struct WorkerReference {
-    runtime: Arc<ProductRuntimeHost>,
+    connection: Arc<ProductConnection>,
 }
 
 impl WorkerReference {
-    /// Take a reference on the worker of the product `runtime` serves.
-    fn acquire(runtime: Arc<ProductRuntimeHost>) -> Self {
-        runtime.acquire_worker_reference();
-        Self { runtime }
+    /// Take a reference on the worker of the product `connection` serves.
+    fn acquire(connection: Arc<ProductConnection>) -> Self {
+        connection.acquire_worker_reference();
+        Self { connection }
     }
 }
 
 impl Drop for WorkerReference {
     fn drop(&mut self) {
-        self.runtime.release_worker_reference();
+        self.connection.release_worker_reference();
     }
 }
 
@@ -1465,11 +1471,7 @@ impl ProductRuntime {
     /// what it cached before. For an embedder that holds only this runtime;
     /// one holding the host runtime calls it there.
     pub fn notify_contacts_changed(&self) {
-        self.admin
-            .product_runtime
-            .services()
-            .contact_handles
-            .clear();
+        self.connection.services().contact_handles.clear();
     }
 
     /// Build a product-facing host core around a platform implementation and
@@ -1568,6 +1570,7 @@ impl ProductRuntime {
                 services.spawner.clone(),
                 authority.session_state(),
             ),
+            connection: admin.product_runtime.connection().clone(),
             admin,
             transport,
             host_subscriptions,
@@ -1647,7 +1650,7 @@ impl ProductRuntime {
     /// Return a cloneable native control handle bound to this connection.
     pub fn control(&self) -> ProductRuntimeControl {
         ProductRuntimeControl {
-            runtime: self.admin.product_runtime.clone(),
+            connection: self.connection.clone(),
             transport: self.transport.clone(),
             host_subscriptions: self.host_subscriptions.clone(),
             disposed: self.disposed.clone(),
@@ -1736,9 +1739,9 @@ impl ProductRuntime {
                 handle.abort();
             }
         }
-        self.admin.product_runtime.detach_chat();
-        self.admin.product_runtime.detach_renderer();
-        self.admin.product_runtime.release_open_operations();
+        self.connection.detach_chat();
+        self.connection.detach_renderer();
+        self.connection.release_open_operations();
         self.host_subscriptions.close();
         self.core.cancel_subscriptions();
     }
@@ -2829,7 +2832,12 @@ mod tests {
             test_spawner(),
             Arc::new(RecordingSink::default()),
         );
-        let services = runtime.admin.product_runtime().services().clone();
+        let services = runtime
+            .admin
+            .product_runtime()
+            .connection()
+            .services()
+            .clone();
         let demand = Arc::new(RecordingDemand::default());
         assert!(
             services
@@ -2944,7 +2952,12 @@ mod tests {
     #[test]
     fn a_render_the_product_ends_releases_its_worker_reference() {
         let (runtime, sink) = render_runtime();
-        let services = runtime.admin.product_runtime().services().clone();
+        let services = runtime
+            .admin
+            .product_runtime()
+            .connection()
+            .services()
+            .clone();
         let mut render = start_render(&runtime, "loyalty");
         assert_eq!(services.worker_ledger.count("worker.dot"), 1);
 
@@ -2972,7 +2985,12 @@ mod tests {
     #[test]
     fn a_render_the_product_interrupts_releases_its_worker_reference() {
         let (runtime, sink) = render_runtime();
-        let services = runtime.admin.product_runtime().services().clone();
+        let services = runtime
+            .admin
+            .product_runtime()
+            .connection()
+            .services()
+            .clone();
         let mut render = start_render(&runtime, "loyalty");
 
         let request_id = render_request_id(&sink, 0);
@@ -3004,7 +3022,12 @@ mod tests {
     #[test]
     fn a_render_refused_for_a_malformed_tree_releases_its_worker_reference() {
         let (runtime, sink) = render_runtime();
-        let services = runtime.admin.product_runtime().services().clone();
+        let services = runtime
+            .admin
+            .product_runtime()
+            .connection()
+            .services()
+            .clone();
         let mut render = start_render(&runtime, "loyalty");
 
         let request_id = render_request_id(&sink, 0);
@@ -3027,7 +3050,12 @@ mod tests {
     #[test]
     fn disposing_the_core_releases_an_open_renders_worker_reference() {
         let (runtime, _sink) = render_runtime();
-        let services = runtime.admin.product_runtime().services().clone();
+        let services = runtime
+            .admin
+            .product_runtime()
+            .connection()
+            .services()
+            .clone();
         let mut render = start_render(&runtime, "loyalty");
         assert_eq!(services.worker_ledger.count("worker.dot"), 1);
 
@@ -3045,7 +3073,12 @@ mod tests {
     #[test]
     fn one_render_ending_leaves_the_other_renders_worker_reference() {
         let (runtime, sink) = render_runtime();
-        let services = runtime.admin.product_runtime().services().clone();
+        let services = runtime
+            .admin
+            .product_runtime()
+            .connection()
+            .services()
+            .clone();
         let mut first = start_render(&runtime, "loyalty");
         let second = start_render(&runtime, "rewards");
         assert_eq!(services.worker_ledger.count("worker.dot"), 2);
@@ -3343,38 +3376,44 @@ mod tests {
     }
 
     #[test]
-    fn dispose_releases_the_demand_open_operations_hold() {
-        let platform = Arc::new(StubPlatform::default());
-        let sink = Arc::new(RecordingSink::default());
-        let (host_config, product) = runtime_config("myapp.dot");
-        let runtime = ProductRuntime::from_platform_with_config(
-            platform,
-            host_config,
-            product,
-            test_spawner(),
-            sink,
-        );
-        let host = runtime.admin.product_runtime().clone();
+    fn open_operation_demand_lasts_until_dispose_or_the_last_control() {
+        for dispose in [false, true] {
+            let platform = Arc::new(StubPlatform::default());
+            let sink = Arc::new(RecordingSink::default());
+            let (host_config, product) = runtime_config("myapp.dot");
+            let runtime = ProductRuntime::from_platform_with_config(
+                platform,
+                host_config,
+                product,
+                test_spawner(),
+                sink,
+            );
+            let host = runtime.admin.product_runtime();
+            let services = host.connection().services().clone();
+            let control = runtime.control();
 
-        futures::executor::block_on(truapi::api::Worker::begin_operation(
-            host.as_ref(),
-            &truapi::CallContext::default(),
-            truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-                truapi::v01::HostWorkerBeginOperationRequest { label: None },
-            ),
-        ))
-        .expect("begin operation");
-        assert_eq!(host.services().worker_ledger.count("myapp.dot"), 1);
+            futures::executor::block_on(truapi::api::Worker::begin_operation(
+                host.as_ref(),
+                &truapi::CallContext::default(),
+                truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
+                    truapi::v01::HostWorkerBeginOperationRequest { label: None },
+                ),
+            ))
+            .expect("begin operation");
+            assert_eq!(services.worker_ledger.count("myapp.dot"), 1);
 
-        runtime.dispose();
+            if dispose {
+                runtime.dispose();
+            }
+            drop(runtime);
+            assert_eq!(
+                services.worker_ledger.count("myapp.dot"),
+                usize::from(!dispose)
+            );
 
-        // A disposed connection can outlive its last `Arc` holder, so the
-        // release cannot wait for `Drop`.
-        assert_eq!(
-            host.services().worker_ledger.count("myapp.dot"),
-            0,
-            "disposing a connection drops the demand its open operations held"
-        );
+            drop(control);
+            assert_eq!(services.worker_ledger.count("myapp.dot"), 0);
+        }
     }
 
     #[test]

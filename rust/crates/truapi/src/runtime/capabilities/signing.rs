@@ -39,10 +39,11 @@ impl Signing for ProductRuntimeHost {
             ))
         })?;
         let operation = self.authority.current_operation();
-        self.require_chain_submit(HostSignPayloadError::V1(
-            v01::HostSignPayloadError::PermissionDenied,
-        ))
-        .await?;
+        self.connection
+            .require_chain_submit(HostSignPayloadError::V1(
+                v01::HostSignPayloadError::PermissionDenied,
+            ))
+            .await?;
         let Some(operation) = operation else {
             return Err(CallError::Domain(HostSignPayloadError::V1(
                 v01::HostSignPayloadError::Rejected,
@@ -50,6 +51,7 @@ impl Signing for ProductRuntimeHost {
         };
         let session = &operation.session;
         let Some(owner) = self
+            .connection
             .authorized_product_account(&inner.account.dot_ns_identifier, cx)
             .await
         else {
@@ -60,12 +62,12 @@ impl Signing for ProductRuntimeHost {
         inner.account.dot_ns_identifier = owner;
         let authorization = self
             .authority
-            .wallet_authorization(&operation, &self.product)
+            .wallet_authorization(&operation, &self.connection.product)
             .map_err(|reason| signing_call_error(HostSignPayloadError::V1, reason))?;
         self.account_call(
             &operation,
             self.authority.account_holder().sign_payload(
-                AccountInvocation { call: cx, session, caller: AccountCaller::Local { product: &self.product, authorization: authorization.as_ref() } },
+                AccountInvocation { call: cx, session, caller: AccountCaller::Local { product: &self.connection.product, authorization: authorization.as_ref() } },
                 SignPayloadAuthorityRequest::Product(inner),
             ),
         )
@@ -109,10 +111,11 @@ impl Signing for ProductRuntimeHost {
             ))
         })?;
         let operation = self.authority.current_operation();
-        self.require_chain_submit(HostCreateTransactionError::V1(
-            v01::HostCreateTransactionError::PermissionDenied,
-        ))
-        .await?;
+        self.connection
+            .require_chain_submit(HostCreateTransactionError::V1(
+                v01::HostCreateTransactionError::PermissionDenied,
+            ))
+            .await?;
         let Some(operation) = operation else {
             return Err(CallError::Domain(HostCreateTransactionError::V1(
                 v01::HostCreateTransactionError::Rejected,
@@ -120,6 +123,7 @@ impl Signing for ProductRuntimeHost {
         };
         let session = &operation.session;
         let Some(owner) = self
+            .connection
             .authorized_product_account(&inner.signer.dot_ns_identifier, cx)
             .await
         else {
@@ -152,12 +156,12 @@ impl Signing for ProductRuntimeHost {
             })?;
         let authorization = self
             .authority
-            .wallet_authorization(&operation, &self.product)
+            .wallet_authorization(&operation, &self.connection.product)
             .map_err(|reason| transaction_call_error(HostCreateTransactionError::V1, reason))?;
         self.account_call(
             &operation,
             self.authority.account_holder().create_transaction(
-                AccountInvocation { call: cx, session, caller: AccountCaller::Local { product: &self.product, authorization: authorization.as_ref() } },
+                AccountInvocation { call: cx, session, caller: AccountCaller::Local { product: &self.connection.product, authorization: authorization.as_ref() } },
                 CreateTransactionAuthorityRequest::Product(inner),
             ),
         )
@@ -197,17 +201,18 @@ impl Signing for ProductRuntimeHost {
                 }),
             ));
         }
-        self.require_chain_submit(HostSignPayloadWithLegacyAccountError::V1(
-            v01::HostSignPayloadError::PermissionDenied,
-        ))
-        .await?;
+        self.connection
+            .require_chain_submit(HostSignPayloadWithLegacyAccountError::V1(
+                v01::HostSignPayloadError::PermissionDenied,
+            ))
+            .await?;
         self.account_call(
             &operation,
             self.authority.account_holder().sign_payload(
-                AccountInvocation { call: cx, session, caller: AccountCaller::Local { product: &self.product, authorization: None } },
+                AccountInvocation { call: cx, session, caller: AccountCaller::Local { product: &self.connection.product, authorization: None } },
                 SignPayloadAuthorityRequest::LegacyAccount {
                     product_account: v01::ProductAccountId {
-                        dot_ns_identifier: self.product_id(),
+                        dot_ns_identifier: self.connection.product_id(),
                         derivation_index: v01::DerivationIndex::Index(0),
                     },
                     request: inner,
@@ -272,14 +277,15 @@ impl Signing for ProductRuntimeHost {
                     },
                 ))
             })?;
-        self.require_chain_submit(HostCreateTransactionWithLegacyAccountError::V1(
-            v01::HostCreateTransactionError::PermissionDenied,
-        ))
-        .await?;
+        self.connection
+            .require_chain_submit(HostCreateTransactionWithLegacyAccountError::V1(
+                v01::HostCreateTransactionError::PermissionDenied,
+            ))
+            .await?;
         let authority_request = match signer {
             LegacySigner::Product => CreateTransactionAuthorityRequest::LegacyAccount {
                 product_account: v01::ProductAccountId {
-                    dot_ns_identifier: self.product_id(),
+                    dot_ns_identifier: self.connection.product_id(),
                     derivation_index: v01::DerivationIndex::Index(0),
                 },
                 request: inner,
@@ -289,7 +295,7 @@ impl Signing for ProductRuntimeHost {
         self.account_call(
             &operation,
             self.authority.account_holder().create_transaction(
-                AccountInvocation { call: cx, session, caller: AccountCaller::Local { product: &self.product, authorization: None } },
+                AccountInvocation { call: cx, session, caller: AccountCaller::Local { product: &self.connection.product, authorization: None } },
                 authority_request,
             ),
         )
@@ -322,10 +328,11 @@ impl ProductRuntimeHost {
             ))
         })?;
         let operation = self.authority.current_operation();
-        self.require_chain_submit(HostSignRawError::V1(
-            v01::HostSignPayloadError::PermissionDenied,
-        ))
-        .await?;
+        self.connection
+            .require_chain_submit(HostSignRawError::V1(
+                v01::HostSignPayloadError::PermissionDenied,
+            ))
+            .await?;
         let Some(operation) = operation else {
             return Err(CallError::Domain(HostSignRawError::V1(
                 v01::HostSignPayloadError::Rejected,
@@ -333,6 +340,7 @@ impl ProductRuntimeHost {
         };
         let session = &operation.session;
         let Some(owner) = self
+            .connection
             .authorized_product_account(&inner.account.dot_ns_identifier, cx)
             .await
         else {
@@ -343,7 +351,7 @@ impl ProductRuntimeHost {
         inner.account.dot_ns_identifier = owner;
         let authorization = self
             .authority
-            .wallet_authorization(&operation, &self.product)
+            .wallet_authorization(&operation, &self.connection.product)
             .map_err(|reason| raw_signing_call_error(HostSignRawError::V1, reason))?;
         self.account_call(
             &operation,
@@ -352,7 +360,7 @@ impl ProductRuntimeHost {
                     call: cx,
                     session,
                     caller: AccountCaller::Local {
-                        product: &self.product,
+                        product: &self.connection.product,
                         authorization: authorization.as_ref(),
                     },
                 },
@@ -387,14 +395,15 @@ impl ProductRuntimeHost {
                     err.into_host_error(LEGACY_ACCOUNT_UNAVAILABLE_REASON),
                 ))
             })?;
-        self.require_chain_submit(HostSignRawWithLegacyAccountError::V1(
-            v01::HostSignPayloadError::PermissionDenied,
-        ))
-        .await?;
+        self.connection
+            .require_chain_submit(HostSignRawWithLegacyAccountError::V1(
+                v01::HostSignPayloadError::PermissionDenied,
+            ))
+            .await?;
         let authority_request = match signer {
             LegacySigner::Product => SignRawAuthorityRequest::LegacyAccount {
                 product_account: v01::ProductAccountId {
-                    dot_ns_identifier: self.product_id(),
+                    dot_ns_identifier: self.connection.product_id(),
                     derivation_index: v01::DerivationIndex::Index(0),
                 },
                 request: inner,
@@ -411,7 +420,7 @@ impl ProductRuntimeHost {
                     call: cx,
                     session,
                     caller: AccountCaller::Local {
-                        product: &self.product,
+                        product: &self.connection.product,
                         authorization: None,
                     },
                 },

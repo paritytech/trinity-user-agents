@@ -57,10 +57,10 @@ impl Account for ProductRuntimeHost {
         };
         let session = &operation.session;
 
-        let product_id = self.product_id();
+        let product_id = self.connection.product_id();
         if product_account_id.dot_ns_identifier != product_id {
             match account_access_authorization(
-                self.platform.as_ref(),
+                self.connection.platform.as_ref(),
                 &product_id,
                 &product_account_id.dot_ns_identifier,
             )
@@ -94,7 +94,7 @@ impl Account for ProductRuntimeHost {
             // surface and reject before the SSO call.
             let approved = until_cancelled(
                 cx,
-                self.confirm_product_action(UserConfirmationReview::ProductSubtree(
+                self.connection.confirm_product_action(UserConfirmationReview::ProductSubtree(
                     ProductSubtreeReview {
                         product_id: product_account_id.dot_ns_identifier.clone(),
                     },
@@ -152,7 +152,7 @@ impl Account for ProductRuntimeHost {
                 AccountInvocation {
                     call: &cx,
                     session,
-                    caller: AccountCaller::Local { product: &self.product, authorization: None },
+                    caller: AccountCaller::Local { product: &self.connection.product, authorization: None },
                 },
                 request,
             ),
@@ -189,7 +189,7 @@ impl Account for ProductRuntimeHost {
         };
         let session = &operation.session;
 
-        let calling_product_id = self.product_id();
+        let calling_product_id = self.connection.product_id();
         let cx = remote_authority_context(cx);
         // The grant lookup runs *before* `remote_authority_call`, under a bound of
         // its own. It can reach dotNS on the Asset Hub, several sequential chain
@@ -205,7 +205,7 @@ impl Account for ProductRuntimeHost {
         // The gate returns the normalized owner it decided about and the handle
         // is rebuilt from it, so authorization and key derivation agree by
         // construction rather than by a registry lookup happening to miss.
-        let Some(owner) = self
+        let Some(owner) = self.connection
             .bounded_cross_product_scope_target(
                 &request.key_handle.dot_ns_identifier,
                 Granted::Context,
@@ -235,7 +235,7 @@ impl Account for ProductRuntimeHost {
                 AccountInvocation {
                     call: &cx,
                     session,
-                    caller: AccountCaller::Local { product: &self.product, authorization: None },
+                    caller: AccountCaller::Local { product: &self.connection.product, authorization: None },
                 },
                 request,
             ),
@@ -266,7 +266,7 @@ impl Account for ProductRuntimeHost {
             &operation,
             &cx,
             self.authority.account_holder().register_ring_vrf_key(
-                AccountInvocation { call: &cx, session, caller: AccountCaller::Local { product: &self.product, authorization: None } },
+                AccountInvocation { call: &cx, session, caller: AccountCaller::Local { product: &self.connection.product, authorization: None } },
                 request,
             ),
         )
@@ -308,7 +308,7 @@ impl Account for ProductRuntimeHost {
                 AccountInvocation {
                     call: &cx,
                     session,
-                    caller: AccountCaller::Local { product: &self.product, authorization: None },
+                    caller: AccountCaller::Local { product: &self.connection.product, authorization: None },
                 },
                 request,
             ),
@@ -343,12 +343,12 @@ impl Account for ProductRuntimeHost {
             )));
         };
         let session = &operation.session;
-        let calling_product_id = self.product_id();
+        let calling_product_id = self.connection.product_id();
         let cx = remote_authority_context(cx);
         // As in `create_account_proof`: the lookup is bounded before the authority
         // call rather than inside it, and the handle carried on is the normalized
         // owner the gate decided about rather than the spelling the caller sent.
-        let Some(owner) = self
+        let Some(owner) = self.connection
             .bounded_cross_product_scope_target(
                 &request.key_handle.dot_ns_identifier,
                 Granted::Context,
@@ -378,7 +378,7 @@ impl Account for ProductRuntimeHost {
                 AccountInvocation {
                     call: &cx,
                     session,
-                    caller: AccountCaller::Local { product: &self.product, authorization: None },
+                    caller: AccountCaller::Local { product: &self.connection.product, authorization: None },
                 },
                 request,
             ),
@@ -415,7 +415,7 @@ impl Account for ProductRuntimeHost {
         let session = &operation.session;
         let authorization = self
             .authority
-            .wallet_authorization(&operation, &self.product)
+            .wallet_authorization(&operation, &self.connection.product)
             .map_err(|error| CallError::Domain(HostAccountSignVrfError::V1(error.into())))?;
         let cx = remote_authority_context(cx);
         self.account_operation(
@@ -425,7 +425,7 @@ impl Account for ProductRuntimeHost {
                 AccountInvocation {
                     call: &cx,
                     session,
-                    caller: AccountCaller::Local { product: &self.product, authorization: authorization.as_ref() },
+                    caller: AccountCaller::Local { product: &self.connection.product, authorization: authorization.as_ref() },
                 },
                 request,
             ),
@@ -460,7 +460,7 @@ impl Account for ProductRuntimeHost {
             )));
         };
 
-        match self.identity_disclosure_authorization().await {
+        match self.connection.identity_disclosure_authorization().await {
             Ok(PermissionAuthorizationStatus::Authorized) => {}
             Ok(
                 PermissionAuthorizationStatus::Denied
@@ -504,12 +504,12 @@ impl Account for ProductRuntimeHost {
         Subscription::new(self.authority.session_state().subscribe().map(Ok))
     }
 
-    #[instrument(skip_all, fields(runtime.method = "account.request_login", product = %self.product.product_id))]
+    #[instrument(skip_all, fields(runtime.method = "account.request_login", product = %self.connection.product.product_id))]
     async fn request_login(
         &self,
         _cx: &CallContext,
         _request: HostRequestLoginRequest,
     ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
-        self.authority.request_login(&self.product).await
+        self.authority.request_login(&self.connection.product).await
     }
 }

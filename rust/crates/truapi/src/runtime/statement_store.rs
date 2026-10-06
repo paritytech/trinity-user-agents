@@ -8,7 +8,9 @@ use futures::StreamExt as _;
 
 use super::authority::{AuthorityError, HostOperation, StatementStoreAllowanceKey};
 use super::statement_store_rpc::{self, StatementStoreRpc};
-use super::{PERMISSION_DENIED_REASON, ProductRuntimeHost, remote_authority_context};
+use super::{
+    PERMISSION_DENIED_REASON, ProductConnection, ProductRuntimeHost, remote_authority_context,
+};
 use crate::host_logic::statement_store::{
     MAX_MATCH_ALL_TOPICS, MAX_MATCH_ANY_TOPICS, TopicFilterKind, decode_signed_statement,
     parse_new_statements_result, sign_statement_fields, signed_statement_to_scale,
@@ -42,7 +44,7 @@ impl StatementStore for ProductRuntimeHost {
         RemoteStatementStoreSubscribeItem,
         CallError<RemoteStatementStoreSubscribeError>,
     > {
-        match self.open_statement_subscription(request).await {
+        match self.connection.open_statement_subscription(request).await {
             Ok(subscription) => subscription,
             Err(error) => Subscription::interrupted(error),
         }
@@ -66,6 +68,7 @@ impl StatementStore for ProductRuntimeHost {
             })?;
         let operation = self.authority.current_operation();
         let Some(owner) = self
+            .connection
             .authorized_product_account(&inner.product_account_id.dot_ns_identifier, cx)
             .await
         else {
@@ -118,13 +121,14 @@ impl StatementStore for ProductRuntimeHost {
     ) -> Result<RemoteStatementStoreSubmitResponse, CallError<RemoteStatementStoreSubmitError>>
     {
         let RemoteStatementStoreSubmitRequest::V1(statement) = request;
-        self.require_remote_permission(
-            latest::RemotePermission::StatementSubmit,
-            RemoteStatementStoreSubmitError::V1(latest::GenericError {
-                reason: PERMISSION_DENIED_REASON.to_string(),
-            }),
-        )
-        .await?;
+        self.connection
+            .require_remote_permission(
+                latest::RemotePermission::StatementSubmit,
+                RemoteStatementStoreSubmitError::V1(latest::GenericError {
+                    reason: PERMISSION_DENIED_REASON.to_string(),
+                }),
+            )
+            .await?;
         if let Some(reason) = cx.cancel().reason() {
             return Err(CallError::Domain(RemoteStatementStoreSubmitError::V1(
                 latest::GenericError {
@@ -137,7 +141,7 @@ impl StatementStore for ProductRuntimeHost {
                 reason,
             }))
         })?;
-        self.statement_store_rpc()
+        self.connection.statement_store_rpc()
             .submit_sso(encoded, "statement-store")
             .await
             .map_err(|reason| {
@@ -145,13 +149,13 @@ impl StatementStore for ProductRuntimeHost {
                     && statement_store_rpc::is_no_allowance_rejection(&reason)
                 {
                     self.authority
-                        .forget_statement_store_allowance_key(&self.product_id(), signer);
+                        .forget_statement_store_allowance_key(&self.connection.product_id(), signer);
                 }
                 CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError {
                     reason: format!("statement-store submit failed: {reason}"),
                 }))
             })?;
-        self.services.cache_statement(statement);
+        self.connection.services.cache_statement(statement);
         Ok(RemoteStatementStoreSubmitResponse::V1)
     }
 }
@@ -253,7 +257,7 @@ impl futures::Stream for StatementStoreSubscriptionStream {
     }
 }
 
-impl ProductRuntimeHost {
+impl ProductConnection {
     /// Open the remote statement-store subscription, reporting a failure
     /// before its first item as the interrupt the subscription ends with.
     async fn open_statement_subscription(
@@ -339,7 +343,9 @@ impl ProductRuntimeHost {
     pub fn statement_store_rpc(&self) -> StatementStoreRpc {
         self.services.statement_store.clone()
     }
+}
 
+impl ProductRuntimeHost {
     async fn create_product_statement_proof(
         &self,
         cx: &CallContext,
@@ -359,7 +365,7 @@ impl ProductRuntimeHost {
         let signature = self.account_call(
             operation,
             self.authority.account_holder().sign_statement_store_product_payload(
-                crate::runtime::authority::AccountInvocation { call: cx, session, caller: crate::runtime::authority::AccountCaller::Local { product: &self.product, authorization: None } },
+                crate::runtime::authority::AccountInvocation { call: cx, session, caller: crate::runtime::authority::AccountCaller::Local { product: &self.connection.product, authorization: None } },
                 product_account_id,
                 payload,
             ),
@@ -384,7 +390,7 @@ impl ProductRuntimeHost {
                 &operation,
                 &cx,
                 self.authority
-                    .statement_store_allowance_key(&cx, &operation, self.product_id()),
+                    .statement_store_allowance_key(&cx, &operation, self.connection.product_id()),
             )
             .await
             .map_err(statement_authority_failure)?;
@@ -812,7 +818,8 @@ mod tests {
             signed_statement([7; 32])
         );
         assert_eq!(
-            host.services
+            host.connection
+                .services
                 .cached_statements(TopicFilterKind::MatchAll, &[[7; 32]]),
             vec![signed_statement([7; 32])]
         );
@@ -937,7 +944,7 @@ mod tests {
             ..Default::default()
         });
         let host = ProductRuntimeHost::new(platform, runtime_config("myapp.dot"), test_spawner());
-        host.services.cache_statement(cached.clone());
+        host.connection.services.cache_statement(cached.clone());
         let cx = CallContext::with_request_id("sub-cached".to_string());
         let mut subscription = futures::executor::block_on(StatementStore::subscribe(
             &host,
@@ -966,7 +973,8 @@ mod tests {
             )))
         );
         assert!(
-            host.services
+            host.connection
+                .services
                 .cached_statements(TopicFilterKind::MatchAny, &[[7; 32]])
                 .is_empty()
         );

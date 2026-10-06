@@ -84,14 +84,15 @@ pub mod latest {
         HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
         HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
         OperationStartedResult, PocketCard, ProductAccountId, ProductProofContext, RawPayload,
-        RegisteredRingVrfKey, RemotePermission, RemoteStatementStoreCreateProofError,
-        RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-        RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
-        RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
-        RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, Shape,
-        SignedStatement, Size, Statement, StatementProof, StorageQueryItem, StorageQueryType,
-        StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
-        TypographyStyle, VerticalAlignment, VrfSignature,
+        RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
+        RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
+        RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
+        RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, ResourceAllocationError,
+        RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
+        RuntimeSpec, RuntimeType, Shape, SignedStatement, Size, Statement, StatementProof,
+        StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps, TextProps,
+        ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
+        VrfSignature,
     };
 
     /// Latest payload type of a versioned envelope.
