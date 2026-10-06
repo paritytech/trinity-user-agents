@@ -225,7 +225,7 @@ path. Web hosts do not compile the store.
 
 Both roles implement **`AccountHolder`** for account derivation, signing, proofs and resource allocation, and **`ProductAuthority: AccountHolder`** for connection lifecycle, grant checks and cached allowance keys. Product runtimes hold `Arc<dyn ProductAuthority>` and call account operations through its supertrait. Each role retains its own approval policy, key custody and caching behavior.
 
-`SigningHost` owns host grants and coordinates activation, approval and SSO dispatch. Its `WalletAccountHolder` owns active root entropy, derivation and session validation. Activation is prepared before taking the host grant lock; installation and clearing use that lock to keep wallet state and grant invalidation together. Opaque `WalletKeys` snapshots let SSO and renewal derive related keys from one wallet across asynchronous work without exposing raw entropy.
+`SigningHost` owns host grants, session state and validation, and coordinates activation, approval and SSO dispatch. Its `WalletAccountHolder` owns active root entropy and derivation. Activation is prepared before taking the host grant lock; installation and clearing use that lock to keep wallet state and grant invalidation together. Opaque `WalletKeys` snapshots let SSO and renewal derive related keys from one wallet across asynchronous work without exposing raw entropy.
 
 - **`PairingHost`** (seedless): the user's keys live in an external wallet, so
   signing/aliases/entropy relay over an encrypted SSO channel (statement store

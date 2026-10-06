@@ -40,7 +40,7 @@ pub use sso_service::SigningHostSsoService;
 use super::authority::{
     AccountHolder, AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
     CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
-    SignRawAuthorityRequest, StatementStoreAllowanceKey,
+    SignRawAuthorityRequest, StatementStoreAllowanceKey, authority_session_validation_id,
 };
 use super::ring_vrf_registry::RingVrfRegistryStore;
 use super::{RuntimeServices, connected_session_ui_info, validate_vrf_transcript};
@@ -153,6 +153,7 @@ pub struct SigningHost {
     services: Arc<RuntimeServices>,
     platform: Arc<dyn Platform>,
     wallet: WalletAccountHolder,
+    session_state: Arc<SessionState>,
     auth_state: AuthStateMachine,
     ring_resolver: Arc<dyn RingResolver>,
     /// Answer resource allocation as granted without performing it.
@@ -198,6 +199,7 @@ impl SigningHost {
             grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
             #[cfg(feature = "test-host")]
             withheld_resources: Mutex::new(HashSet::new()),
+            session_state: SessionState::new(),
             auth_state: AuthStateMachine::new(platform.clone()),
             ring_resolver,
             local_grants: Mutex::new(LocalGrantState::default()),
@@ -304,6 +306,7 @@ impl SigningHost {
             grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
             #[cfg(feature = "test-host")]
             withheld_resources: Mutex::new(HashSet::new()),
+            session_state: SessionState::new(),
             auth_state: AuthStateMachine::new(platform.clone()),
             ring_resolver,
             local_grants: Mutex::new(LocalGrantState::default()),
@@ -316,7 +319,7 @@ impl SigningHost {
 
     /// Shared session holder for connection-status subscriptions.
     pub fn session_state(&self) -> Arc<SessionState> {
-        self.wallet.session_state()
+        self.session_state.clone()
     }
 
     /// Network suffix used for reserved wallet identities.
@@ -450,6 +453,7 @@ impl SigningHost {
             .expect("local AutoSigning grant mutex poisoned");
         state.advance_activation();
         self.wallet.clear();
+        self.session_state.clear_session();
     }
 
     fn current_local_session(&self) -> Option<AuthoritySession> {
@@ -457,7 +461,11 @@ impl SigningHost {
             .local_grants
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
-        self.wallet.current_session(state.activation_generation)
+        let session = self.session_state.current()?;
+        Some(AuthoritySession::from_session_info(
+            &session,
+            local_session_validation_id(&session, state.activation_generation),
+        ))
     }
 
     fn require_current_session(
@@ -469,8 +477,14 @@ impl SigningHost {
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
         let current = self
-            .wallet
-            .require_current_session(session, state.activation_generation)?;
+            .session_state
+            .current()
+            .ok_or(AuthorityError::Disconnected)?;
+        if local_session_validation_id(&current, state.activation_generation)
+            != session.validation_id
+        {
+            return Err(AuthorityError::Disconnected);
+        }
         Ok((current, state.activation_generation))
     }
 
@@ -810,7 +824,7 @@ impl ProductAuthority for SigningHost {
         &self,
         _product: &ProductContext,
     ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
-        if let Some(session) = self.wallet.session_state().current() {
+        if let Some(session) = self.session_state.current() {
             self.auth_state
                 .connected(&connected_session_ui_info(&session));
             Ok(HostRequestLoginResponse::V1(
@@ -1434,6 +1448,13 @@ impl AccountHolder for SigningHost {
     }
 }
 
+fn local_session_validation_id(session: &SessionInfo, activation_generation: u64) -> Vec<u8> {
+    let mut id = authority_session_validation_id(session);
+    id.extend_from_slice(b":activation:");
+    id.extend_from_slice(&activation_generation.to_le_bytes());
+    id
+}
+
 #[cfg(test)]
 mod tests {
     mod activation;
@@ -1441,8 +1462,6 @@ mod tests {
     mod auto_signing;
     mod cross_product_account;
     mod raw_signing;
-
-    use crate::runtime::statement_allowance::collection::PersonhoodCollection;
     #[cfg(feature = "test-host")]
     mod withheld_resources;
 
@@ -1468,6 +1487,7 @@ mod tests {
         derive_root_keypair_from_entropy, index_bytes,
     };
     use crate::platform::{HostInfo, Platform, PlatformInfo, ProductContext, SigningHostConfig};
+    use crate::runtime::statement_allowance::collection::PersonhoodCollection;
     use crate::test_support::{StubPlatform, test_spawner};
     use truapi::api::{Account, Entropy, ResourceAllocation, Signing};
     use truapi::latest::{

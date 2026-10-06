@@ -186,7 +186,7 @@ ignored; a `Cancel` returns at once, so the wallet passes it on without queueing
 it behind the request it withdraws) and `prepareDisconnectRequest` (builds the SCALE-encoded wire message
 for a wallet-initiated disconnect) on `TrUAPIHostRuntime`. Response posting and
 session-record cleanup remain on the wallet side.
-The Rust runtime separates account operations (`AccountHolder`) from host lifecycle, grant checks and cached allowance keys (`ProductAuthority`). `SigningHost` coordinates local operations with `WalletAccountHolder`, which owns active wallet entropy and key derivation. Both native and paired roles validate the active session before accessing allowance keys.
+The Rust runtime separates account operations (`AccountHolder`) from host lifecycle, grant checks and cached allowance keys (`ProductAuthority`). `SigningHost` owns local sessions and grants, and coordinates operations with `WalletAccountHolder`, which owns active wallet entropy and key derivation. Both native and paired roles validate the active session before accessing allowance keys.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.
 Product and SSO signing share canonical payloads and the one-byte `OptionBool`

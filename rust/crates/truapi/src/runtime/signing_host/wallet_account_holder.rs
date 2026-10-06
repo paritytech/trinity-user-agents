@@ -1,6 +1,6 @@
 //! Active wallet secrets and the keys derived from them.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use truapi::latest::ProductAccountId;
 use zeroize::Zeroizing;
 
@@ -12,14 +12,12 @@ use crate::host_logic::product_account::{
     derive_product_subtree_keypair, derive_ring_vrf_domain_entropy, derive_ring_vrf_entropy,
     derive_root_keypair_from_entropy, derive_sr25519_hard_path,
 };
-use crate::host_logic::session::{SessionInfo, SessionState};
+use crate::host_logic::session::SessionInfo;
 use crate::host_logic::sso::pairing::{
     ResponderIdentity, derive_identity_chat_private_key, derive_x25519_keypair_from_entropy,
 };
 use crate::platform::normalize_product_identifier;
-use crate::runtime::authority::{
-    AuthorityError, AuthoritySession, authority_session_validation_id,
-};
+use crate::runtime::authority::AuthorityError;
 use crate::runtime::statement_allowance::CollectionCandidate;
 use crate::runtime::statement_allowance::collection::PersonhoodCollection;
 
@@ -29,7 +27,6 @@ pub const SSO_ENCRYPTION_DOMAIN: &[u8] = b"sso";
 /// Owns wallet entropy for the active local session.
 pub struct WalletAccountHolder {
     network_suffix: String,
-    session_state: Arc<SessionState>,
     keys: Mutex<Option<WalletKeys>>,
 }
 
@@ -40,11 +37,10 @@ pub struct PreparedWalletActivation {
 }
 
 impl WalletAccountHolder {
-    /// Start locked, with no wallet secrets or active session.
+    /// Start locked, with no wallet secrets.
     pub fn new(network_suffix: String) -> Self {
         Self {
             network_suffix,
-            session_state: SessionState::new(),
             keys: Mutex::new(None),
         }
     }
@@ -52,11 +48,6 @@ impl WalletAccountHolder {
     /// Network suffix used for reserved wallet identities.
     pub fn network_suffix(&self) -> &str {
         &self.network_suffix
-    }
-
-    /// Shared connection state for host subscriptions.
-    pub fn session_state(&self) -> Arc<SessionState> {
-        self.session_state.clone()
     }
 
     /// Capture one wallet for derivations that must remain consistent across awaits.
@@ -96,39 +87,12 @@ impl WalletAccountHolder {
     /// Install under the host's grant lock so session and grant changes are atomic.
     pub fn install(&self, activation: PreparedWalletActivation) -> SessionInfo {
         *self.keys.lock().expect("wallet keys mutex poisoned") = Some(activation.keys);
-        self.session_state.set_session(activation.session.clone());
         activation.session
     }
 
     /// Clear under the host's grant lock, dropping the active wallet secrets.
     pub fn clear(&self) {
         self.keys.lock().expect("wallet keys mutex poisoned").take();
-        self.session_state.clear_session();
-    }
-
-    /// Bind a session snapshot to the host's current grant generation.
-    pub fn current_session(&self, activation_generation: u64) -> Option<AuthoritySession> {
-        let session = self.session_state.current()?;
-        Some(AuthoritySession::from_session_info(
-            &session,
-            local_session_validation_id(&session, activation_generation),
-        ))
-    }
-
-    /// Reject snapshots invalidated by activation, disconnect or product revocation.
-    pub fn require_current_session(
-        &self,
-        session: &AuthoritySession,
-        activation_generation: u64,
-    ) -> Result<SessionInfo, AuthorityError> {
-        let current = self
-            .session_state
-            .current()
-            .ok_or(AuthorityError::Disconnected)?;
-        if local_session_validation_id(&current, activation_generation) != session.validation_id {
-            return Err(AuthorityError::Disconnected);
-        }
-        Ok(current)
     }
 }
 
@@ -316,13 +280,6 @@ impl WalletKeys {
             identity_chat_private_key,
         ))
     }
-}
-
-fn local_session_validation_id(session: &SessionInfo, activation_generation: u64) -> Vec<u8> {
-    let mut id = authority_session_validation_id(session);
-    id.extend_from_slice(b":activation:");
-    id.extend_from_slice(&activation_generation.to_le_bytes());
-    id
 }
 
 /// Map unavailable wallet derivations to the account-operation error contract.
