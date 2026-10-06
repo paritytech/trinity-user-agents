@@ -800,7 +800,13 @@ fn contacts_host(
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
+    let host = ProductRuntimeHost::from_services(
+        services,
+        adapters,
+        pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
+        product,
+    );
     if connected {
         install_pairing_session(&host, session_info());
     }
@@ -868,7 +874,13 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
+    let host = ProductRuntimeHost::from_services(
+        services,
+        adapters,
+        pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
+        product,
+    );
     install_pairing_session(&host, session_info());
 
     assert_eq!(pick(&host).unwrap_err(), CallError::Unsupported);
@@ -1214,7 +1226,13 @@ fn host_with_contacts(contacts: Arc<dyn crate::platform::ContactsPlatform>) -> P
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
+    let host = ProductRuntimeHost::from_services(
+        services,
+        adapters,
+        pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
+        product,
+    );
     install_pairing_session(&host, session_info());
     host
 }
@@ -1448,7 +1466,13 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host.clone(), product);
+    let host = ProductRuntimeHost::from_services(
+        services,
+        adapters,
+        pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
+        product,
+    );
     install_pairing_session(&host, session.clone());
     let cancel = truapi::CancellationToken::default();
     let cx = CallContext::with_parts("sign-raw-withdrawn".to_string(), cancel.clone());
@@ -1606,7 +1630,13 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host.clone(), product);
+    let host = ProductRuntimeHost::from_services(
+        services,
+        adapters,
+        pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
+        product,
+    );
     install_pairing_session(&host, session.clone());
     let mut cx = CallContext::with_request_id("sign-raw-timeout".to_string());
     cx.set_timeout(std::time::Duration::from_millis(50));
@@ -1672,6 +1702,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
         services,
         adapters,
         pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
         product,
     ));
     install_pairing_session(&host, session.clone());
@@ -1743,7 +1774,13 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
     let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.chat_platform = Some(chat_platform.clone());
-    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
+    let host = ProductRuntimeHost::from_services(
+        services,
+        adapters,
+        pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
+        product,
+    );
     install_pairing_session(&host, session_info());
 
     let post = |payload: v01::ChatMessageContent| {
@@ -1889,7 +1926,13 @@ fn chat_room_ids_agree_across_create_and_post() {
     let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.chat_platform = Some(chat_platform.clone());
-    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
+    let host = ProductRuntimeHost::from_services(
+        services,
+        adapters,
+        pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
+        product,
+    );
     install_pairing_session(&host, session_info());
 
     // Precomposed on create, decomposed on post: the host must see one id,
@@ -1976,7 +2019,13 @@ fn chat_register_bot_rejects_unsafe_product_fields() {
     let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.chat_platform = Some(chat_platform.clone());
-    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product.clone());
+    let host = ProductRuntimeHost::from_services(
+        services,
+        adapters,
+        pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
+        product.clone(),
+    );
     install_pairing_session(&host, session_info());
 
     let register = |bot_id: &str, name: &str, icon: &str| {
@@ -2066,7 +2115,8 @@ fn chat_register_bot_reaches_the_installed_adapter() {
     let host = ProductRuntimeHost::from_services(
         services.clone(),
         adapters,
-        pairing_host,
+        pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
         product.clone(),
     );
     install_pairing_session(&host, session_info());
@@ -2177,7 +2227,13 @@ fn pocket_host(
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.pocket_platform =
         pocket.map(|pocket| pocket as Arc<dyn crate::platform::PocketPlatform>);
-    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
+    let host = ProductRuntimeHost::from_services(
+        services,
+        adapters,
+        pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
+        product,
+    );
     if with_session {
         install_pairing_session(&host, session_info());
     }
@@ -2358,12 +2414,14 @@ fn chain_follow_ids_are_scoped_per_product_core() {
         services.clone(),
         crate::host_core::ConnectionAdapters::from_services(&services),
         pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
         product.clone(),
     );
     let second = ProductRuntimeHost::from_services(
         services.clone(),
         crate::host_core::ConnectionAdapters::from_services(&services),
-        pairing_host,
+        pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
         product,
     );
 
@@ -2479,7 +2537,13 @@ fn permission_prompts_name_the_requesting_product_and_execution_kind() {
     let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let pairing_host = PairingHost::new(services.clone(), sso, grants);
-    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product.clone());
+    let host = ProductRuntimeHost::from_services(
+        services,
+        adapters,
+        pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
+        product.clone(),
+    );
     let cx = CallContext::default();
 
     futures::executor::block_on(host.request_device_permission(
@@ -5941,7 +6005,7 @@ fn auto_signing_ring_vrf_requires_registration_and_signs_locally() {
     .unwrap();
     let revision = pairing_host.grants_for_tests().lifecycle().revision();
     futures::executor::block_on(pairing_host.grants_for_tests().remember_auto_signing_key(
-        &pairing_host.session_state(),
+        &pairing_host.sso_for_tests().session_state(),
         &session,
         revision,
         "myapp.dot",
@@ -6156,7 +6220,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
     );
     let auto_signing_error =
         futures::executor::block_on(pairing_host.grants_for_tests().remember_auto_signing_key(
-            &pairing_host.session_state(),
+            &pairing_host.sso_for_tests().session_state(),
             &session,
             stale_epoch,
             "myapp.dot",
@@ -6168,7 +6232,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
         pairing_host
             .grants_for_tests()
             .cache_statement_store_allowance_key(
-                &pairing_host.session_state(),
+                &pairing_host.sso_for_tests().session_state(),
                 &session,
                 stale_epoch,
                 "myapp.dot",
@@ -6182,7 +6246,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
         pairing_host
             .grants_for_tests()
             .cache_bulletin_allowance_key(
-                &pairing_host.session_state(),
+                &pairing_host.sso_for_tests().session_state(),
                 &session,
                 stale_epoch,
                 "myapp.dot",
@@ -6252,7 +6316,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 
     for (product_id, subtree) in [("myapp.dot", &first), ("other.dot", &other)] {
         futures::executor::block_on(pairing_host.grants_for_tests().remember_auto_signing_key(
-            &pairing_host.session_state(),
+            &pairing_host.sso_for_tests().session_state(),
             &session,
             stale_epoch,
             product_id,
@@ -6264,7 +6328,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
             pairing_host
                 .grants_for_tests()
                 .cache_statement_store_allowance_key(
-                    &pairing_host.session_state(),
+                    &pairing_host.sso_for_tests().session_state(),
                     &session,
                     stale_epoch,
                     product_id,
@@ -6276,7 +6340,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
             pairing_host
                 .grants_for_tests()
                 .cache_bulletin_allowance_key(
-                    &pairing_host.session_state(),
+                    &pairing_host.sso_for_tests().session_state(),
                     &session,
                     stale_epoch,
                     product_id,
@@ -6318,7 +6382,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
             pairing_host
                 .grants_for_tests()
                 .cached_statement_store_allowance_key(
-                    &pairing_host.session_state(),
+                    &pairing_host.sso_for_tests().session_state(),
                     &session,
                     current_epoch,
                     "myapp.dot"
@@ -6332,7 +6396,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
             pairing_host
                 .grants_for_tests()
                 .cached_statement_store_allowance_key(
-                    &pairing_host.session_state(),
+                    &pairing_host.sso_for_tests().session_state(),
                     &session,
                     current_epoch,
                     "other.dot"
@@ -6346,7 +6410,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
             pairing_host
                 .grants_for_tests()
                 .cached_bulletin_allowance_key(
-                    &pairing_host.session_state(),
+                    &pairing_host.sso_for_tests().session_state(),
                     &session,
                     current_epoch,
                     "myapp.dot"
@@ -6360,7 +6424,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
             pairing_host
                 .grants_for_tests()
                 .cached_bulletin_allowance_key(
-                    &pairing_host.session_state(),
+                    &pairing_host.sso_for_tests().session_state(),
                     &session,
                     current_epoch,
                     "other.dot"
@@ -6372,7 +6436,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 
     assert!(matches!(
         futures::executor::block_on(pairing_host.grants_for_tests().remember_auto_signing_key(
-            &pairing_host.session_state(),
+            &pairing_host.sso_for_tests().session_state(),
             &session,
             stale_epoch,
             "myapp.dot",
@@ -6386,7 +6450,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
             pairing_host
                 .grants_for_tests()
                 .cache_statement_store_allowance_key(
-                    &pairing_host.session_state(),
+                    &pairing_host.sso_for_tests().session_state(),
                     &session,
                     stale_epoch,
                     "myapp.dot",
@@ -6431,7 +6495,7 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
         crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
             .unwrap();
     futures::executor::block_on(pairing_host.grants_for_tests().remember_auto_signing_key(
-        &pairing_host.session_state(),
+        &pairing_host.sso_for_tests().session_state(),
         &session,
         lifecycle_epoch,
         "myapp.dot",
@@ -6443,7 +6507,7 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
         pairing_host
             .grants_for_tests()
             .cache_statement_store_allowance_key(
-                &pairing_host.session_state(),
+                &pairing_host.sso_for_tests().session_state(),
                 &session,
                 lifecycle_epoch,
                 "myapp.dot",
@@ -6455,7 +6519,7 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
         pairing_host
             .grants_for_tests()
             .cache_bulletin_allowance_key(
-                &pairing_host.session_state(),
+                &pairing_host.sso_for_tests().session_state(),
                 &session,
                 lifecycle_epoch,
                 "myapp.dot",
@@ -6472,7 +6536,13 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 
     futures::executor::block_on(pairing_host.sso_for_tests().reset_session_state());
 
-    assert!(pairing_host.session_state().current().is_none());
+    assert!(
+        pairing_host
+            .sso_for_tests()
+            .session_state()
+            .current()
+            .is_none()
+    );
     assert_eq!(
         pairing_host
             .grants_for_tests()
@@ -6519,7 +6589,7 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
         pairing_host
             .grants_for_tests()
             .cache_statement_store_allowance_key(
-                &pairing_host.session_state(),
+                &pairing_host.sso_for_tests().session_state(),
                 &session,
                 lifecycle_epoch,
                 "myapp.dot",
@@ -6531,7 +6601,7 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
         pairing_host
             .grants_for_tests()
             .cache_bulletin_allowance_key(
-                &pairing_host.session_state(),
+                &pairing_host.sso_for_tests().session_state(),
                 &session,
                 lifecycle_epoch,
                 "myapp.dot",
@@ -7506,7 +7576,13 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host.clone(), product);
+    let host = ProductRuntimeHost::from_services(
+        services,
+        adapters,
+        pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
+        product,
+    );
     install_pairing_session(&host, session_info());
     let session = pairing_host
         .current_session()
@@ -7585,7 +7661,13 @@ fn a_grant_lookup_obeys_the_callers_deadline() {
     let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
     let pairing_host = PairingHost::new(services.clone(), sso, grants);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
+    let host = ProductRuntimeHost::from_services(
+        services,
+        adapters,
+        pairing_host.clone(),
+        pairing_host.sso_for_tests().clone(),
+        product,
+    );
     install_pairing_session(&host, session_info());
 
     let mut cx = CallContext::default();

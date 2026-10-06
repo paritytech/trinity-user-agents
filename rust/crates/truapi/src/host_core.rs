@@ -32,11 +32,11 @@ use crate::frame::ProtocolMessage;
 use crate::host_logic::worker::WorkerLedger;
 use crate::runtime::{
     ActionChannel, AuthorityError, AuthoritySession, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-    DevicePairingObserver, HostGrantStore, LocalActivation, PairedSsoPeer, PairingHostRole,
-    ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices,
-    SigningHostRole, SsoRequestService, WalletAccountHolder, disconnect_paired_host,
-    establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
-    respond_to_pairing, resume_pairing,
+    DevicePairingObserver, HostGrantStore, HostSession, LocalActivation, PairedSsoPeer,
+    PairingHostRole, ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit,
+    RuntimeServices, SigningHostRole, SsoRequestService, WalletAccountHolder,
+    disconnect_paired_host, establish_pairing, notify_pairing_allowance_allocation,
+    notify_pairing_failed, respond_to_pairing, resume_pairing,
 };
 use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
 use crate::transport::Transport;
@@ -297,6 +297,7 @@ impl PairingHostRuntime {
         ProductRuntime::new(
             self.services.clone(),
             self.pairing_host.clone(),
+            self.sso.clone(),
             product,
             ConnectionAdapters::from_services(&self.services),
             sink,
@@ -309,6 +310,7 @@ impl PairingHostRuntime {
         HostAdmin::new(
             self.services.clone(),
             self.pairing_host.clone(),
+            self.sso.clone(),
             product,
             ConnectionAdapters::from_services(&self.services),
         )
@@ -435,7 +437,7 @@ impl PairingHostRuntime {
     ) -> Result<v01::HostRequestLoginResponse, v01::GenericError> {
         let product = product_context(product_id)?;
         match self.sso.request_login(&product).await {
-            Ok(truapi::versioned::account::HostRequestLoginResponse::V1(response)) => Ok(response),
+            Ok(response) => Ok(response),
             Err(error) => Err(v01::GenericError {
                 reason: pairing_login_error_reason(error),
             }),
@@ -529,12 +531,10 @@ impl PairingHostRuntime {
 }
 
 fn pairing_login_error_reason(
-    error: truapi::CallError<truapi::versioned::account::HostRequestLoginError>,
+    error: truapi::CallError<truapi::latest::HostRequestLoginError>,
 ) -> String {
     match error {
-        truapi::CallError::Domain(truapi::versioned::account::HostRequestLoginError::V1(
-            v01::HostRequestLoginError::Unknown { reason },
-        ))
+        truapi::CallError::Domain(truapi::latest::HostRequestLoginError::Unknown { reason })
         | truapi::CallError::HostFailure { reason }
         | truapi::CallError::MalformedFrame { reason } => reason,
         truapi::CallError::Denied => "login denied".to_string(),
@@ -749,6 +749,7 @@ impl SigningHostRuntime {
         ProductRuntime::new(
             self.services.clone(),
             self.signing_host.clone(),
+            self.signing_host.clone(),
             product,
             ConnectionAdapters::from_services(&self.services),
             sink,
@@ -767,6 +768,7 @@ impl SigningHostRuntime {
         ProductRuntime::new(
             self.services.clone(),
             self.signing_host.clone(),
+            self.signing_host.clone(),
             product,
             adapters,
             sink,
@@ -778,6 +780,7 @@ impl SigningHostRuntime {
     pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
         HostAdmin::new(
             self.services.clone(),
+            self.signing_host.clone(),
             self.signing_host.clone(),
             product,
             ConnectionAdapters::from_services(&self.services),
@@ -794,6 +797,7 @@ impl SigningHostRuntime {
     ) -> HostAdmin {
         HostAdmin::new(
             self.services.clone(),
+            self.signing_host.clone(),
             self.signing_host.clone(),
             product,
             adapters,
@@ -1162,6 +1166,7 @@ impl HostAdmin {
     pub fn new(
         services: Arc<RuntimeServices>,
         authority: Arc<dyn ProductAuthority>,
+        host_session: Arc<dyn HostSession>,
         product: ProductContext,
         adapters: ConnectionAdapters,
     ) -> Self {
@@ -1169,6 +1174,7 @@ impl HostAdmin {
             services,
             adapters,
             authority.clone(),
+            host_session,
             product,
         ));
         Self {
@@ -1180,7 +1186,7 @@ impl HostAdmin {
     /// Core-owned logout/disconnect.
     #[instrument(skip_all, fields(runtime.method = "host_admin.disconnect_session"))]
     pub async fn disconnect_session(&self) {
-        self.authority.disconnect().await;
+        self.product_runtime.host_session().disconnect().await;
     }
 
     /// Read a stored permission authorization status without prompting.
@@ -1260,7 +1266,8 @@ impl CoreAdmin for HostAdmin {
 
     async fn get_session_chat_identity_key(&self) -> Result<Option<[u8; 32]>, v01::GenericError> {
         Ok(self
-            .authority
+            .product_runtime
+            .host_session()
             .session_state()
             .current()
             .and_then(|session| session.identity_chat_private_key))
@@ -1268,7 +1275,8 @@ impl CoreAdmin for HostAdmin {
 
     async fn get_device_statement_key(&self) -> Result<Option<Vec<u8>>, v01::GenericError> {
         Ok(self
-            .authority
+            .product_runtime
+            .host_session()
             .session_state()
             .current()
             .and_then(|session| session.sso)
@@ -1352,7 +1360,7 @@ async fn product_subtree_public_key(
 /// in-flight dispatch cancellation on dispose.
 pub struct ProductRuntime {
     core: TrUApiCore,
-    admin: HostAdmin,
+    host_session: Arc<dyn HostSession>,
     connection: Arc<ProductConnection>,
     transport: Arc<SinkTransport>,
     host_subscriptions: Arc<HostInitiatedSubscriptionManager>,
@@ -1551,11 +1559,19 @@ impl ProductRuntime {
     pub fn new(
         services: Arc<RuntimeServices>,
         authority: Arc<dyn ProductAuthority>,
+        host_session: Arc<dyn HostSession>,
         product: ProductContext,
         adapters: ConnectionAdapters,
         sink: Arc<dyn FrameSink>,
     ) -> Self {
-        let admin = HostAdmin::new(services.clone(), authority.clone(), product, adapters);
+        let runtime = Arc::new(ProductRuntimeHost::from_services(
+            services.clone(),
+            adapters,
+            authority,
+            host_session.clone(),
+            product,
+        ));
+        let connection = runtime.connection().clone();
         let disposed = Arc::new(AtomicBool::new(false));
         let transport = Arc::new(SinkTransport {
             sink,
@@ -1566,12 +1582,11 @@ impl ProductRuntime {
         let host_subscriptions = Arc::new(HostInitiatedSubscriptionManager::new());
         Self {
             core: TrUApiCore::from_product_runtime(
-                admin.product_runtime.clone(),
+                runtime,
                 services.spawner.clone(),
-                authority.session_state(),
             ),
-            connection: admin.product_runtime.connection().clone(),
-            admin,
+            connection,
+            host_session,
             transport,
             host_subscriptions,
             disposed,
@@ -1662,7 +1677,7 @@ impl ProductRuntime {
     /// session state.
     #[instrument(skip_all, fields(runtime.method = "product_runtime.disconnect_session"))]
     pub async fn disconnect_session(&self) {
-        self.admin.disconnect_session().await;
+        self.host_session.disconnect().await;
     }
 
     /// Read a stored permission authorization status without prompting.
@@ -1675,7 +1690,9 @@ impl ProductRuntime {
         &self,
         request: PermissionAuthorizationRequest,
     ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-        self.admin.permission_authorization_status(request).await
+        self.connection
+            .permission_authorization_status(request)
+            .await
     }
 
     /// Read stored permission authorization statuses without prompting.
@@ -1688,7 +1705,9 @@ impl ProductRuntime {
         &self,
         requests: Vec<PermissionAuthorizationRequest>,
     ) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-        self.admin.permission_authorization_statuses(requests).await
+        self.connection
+            .permission_authorization_statuses(requests)
+            .await
     }
 
     /// Update a stored permission authorization status. `NotDetermined`
@@ -1699,7 +1718,7 @@ impl ProductRuntime {
         request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus,
     ) -> Result<(), v01::GenericError> {
-        self.admin
+        self.connection
             .set_permission_authorization_status(request, status)
             .await
     }
@@ -2749,24 +2768,31 @@ mod tests {
             crate::platform::ProductExecutionKind::Worker,
         )
         .expect("worker product context is valid");
+        let sink = Arc::new(RecordingSink::default());
         let runtime = ProductRuntime::from_platform_with_config(
             Arc::new(StubPlatform::default()),
             host_config,
             product,
             test_spawner(),
-            Arc::new(RecordingSink::default()),
+            sink.clone(),
         );
-        let host = runtime.admin.product_runtime().clone();
         assert!(
-            host.test_session_state().current().is_none(),
+            runtime.core.session_state().current().is_none(),
             "the fixture must be signed out for this test to mean anything"
         );
 
-        let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
-            host.as_ref(),
-            &CallContext::with_request_id("renderer:1".to_string()),
-            truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
-        ));
+        let ids = subscription_ids("renderer_action_subscribe").expect("known subscription");
+        let mut frame = ProtocolMessage {
+            request_id: "renderer:1".to_string(),
+            payload: Payload {
+                trait_id: ids.trait_id,
+                method_id: ids.method_id,
+                message_type: crate::frame::MESSAGE_TYPE_START,
+                value: truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1.encode(),
+            },
+        };
+        futures::executor::block_on(runtime.receive_frame(frame.encode()))
+            .expect("subscribe actions");
 
         let _render = runtime
             .control()
@@ -2777,6 +2803,7 @@ mod tests {
                 payload: vec![],
             })
             .expect("a signed-out Worker connection may render");
+        sink.frames.lock().unwrap().clear();
 
         let published = v01::HostRendererActionSubscribeItem {
             context: v01::RenderContext::PocketCard {
@@ -2790,17 +2817,15 @@ mod tests {
             .publish_renderer_action(published.clone())
             .expect("a signed-out Worker connection may receive actions");
 
-        let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
-        let delivered = match actions.poll_next_unpin(&mut cx) {
-            core::task::Poll::Ready(Some(item)) => item,
-            other => panic!("a published renderer action must be ready, got {other:?}"),
-        };
-        let Ok(truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(delivered)) =
-            delivered
-        else {
-            panic!("expected a renderer action item")
-        };
-        assert_eq!(delivered, published);
+        frame.payload.message_type = crate::frame::MESSAGE_TYPE_RECEIVE;
+        frame.payload.value =
+            truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(published).encode();
+        wait_until(
+            || !sink.frames.lock().unwrap().is_empty(),
+            "renderer action must arrive",
+        );
+        let frames = sink.frames.lock().unwrap().clone();
+        assert_eq!(frames, vec![frame.encode()]);
     }
 
     #[test]
@@ -2832,12 +2857,7 @@ mod tests {
             test_spawner(),
             Arc::new(RecordingSink::default()),
         );
-        let services = runtime
-            .admin
-            .product_runtime()
-            .connection()
-            .services()
-            .clone();
+        let services = runtime.connection.services().clone();
         let demand = Arc::new(RecordingDemand::default());
         assert!(
             services
@@ -2952,12 +2972,7 @@ mod tests {
     #[test]
     fn a_render_the_product_ends_releases_its_worker_reference() {
         let (runtime, sink) = render_runtime();
-        let services = runtime
-            .admin
-            .product_runtime()
-            .connection()
-            .services()
-            .clone();
+        let services = runtime.connection.services().clone();
         let mut render = start_render(&runtime, "loyalty");
         assert_eq!(services.worker_ledger.count("worker.dot"), 1);
 
@@ -2985,12 +3000,7 @@ mod tests {
     #[test]
     fn a_render_the_product_interrupts_releases_its_worker_reference() {
         let (runtime, sink) = render_runtime();
-        let services = runtime
-            .admin
-            .product_runtime()
-            .connection()
-            .services()
-            .clone();
+        let services = runtime.connection.services().clone();
         let mut render = start_render(&runtime, "loyalty");
 
         let request_id = render_request_id(&sink, 0);
@@ -3022,12 +3032,7 @@ mod tests {
     #[test]
     fn a_render_refused_for_a_malformed_tree_releases_its_worker_reference() {
         let (runtime, sink) = render_runtime();
-        let services = runtime
-            .admin
-            .product_runtime()
-            .connection()
-            .services()
-            .clone();
+        let services = runtime.connection.services().clone();
         let mut render = start_render(&runtime, "loyalty");
 
         let request_id = render_request_id(&sink, 0);
@@ -3050,12 +3055,7 @@ mod tests {
     #[test]
     fn disposing_the_core_releases_an_open_renders_worker_reference() {
         let (runtime, _sink) = render_runtime();
-        let services = runtime
-            .admin
-            .product_runtime()
-            .connection()
-            .services()
-            .clone();
+        let services = runtime.connection.services().clone();
         let mut render = start_render(&runtime, "loyalty");
         assert_eq!(services.worker_ledger.count("worker.dot"), 1);
 
@@ -3073,12 +3073,7 @@ mod tests {
     #[test]
     fn one_render_ending_leaves_the_other_renders_worker_reference() {
         let (runtime, sink) = render_runtime();
-        let services = runtime
-            .admin
-            .product_runtime()
-            .connection()
-            .services()
-            .clone();
+        let services = runtime.connection.services().clone();
         let mut first = start_render(&runtime, "loyalty");
         let second = start_render(&runtime, "rewards");
         assert_eq!(services.worker_ledger.count("worker.dot"), 2);
@@ -3375,12 +3370,31 @@ mod tests {
         );
     }
 
+    fn begin_worker_operation(runtime: &ProductRuntime) {
+        let ids = request_ids("worker_begin_operation").expect("known Worker request");
+        let frame = ProtocolMessage {
+            request_id: "worker:begin".to_string(),
+            payload: Payload {
+                trait_id: ids.trait_id,
+                method_id: ids.method_id,
+                message_type: crate::frame::MESSAGE_TYPE_REQUEST,
+                value: truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
+                    truapi::latest::HostWorkerBeginOperationRequest { label: None },
+                )
+                .encode(),
+            },
+        };
+        futures::executor::block_on(runtime.receive_frame(frame.encode()))
+            .expect("begin operation frame");
+    }
+
     #[test]
     fn open_operation_demand_lasts_until_dispose_or_the_last_control() {
         for dispose in [false, true] {
             let platform = Arc::new(StubPlatform::default());
             let sink = Arc::new(RecordingSink::default());
-            let (host_config, product) = runtime_config("myapp.dot");
+            let (host_config, mut product) = runtime_config("myapp.dot");
+            product.execution_kind = crate::platform::ProductExecutionKind::Worker;
             let runtime = ProductRuntime::from_platform_with_config(
                 platform,
                 host_config,
@@ -3388,18 +3402,10 @@ mod tests {
                 test_spawner(),
                 sink,
             );
-            let host = runtime.admin.product_runtime();
-            let services = host.connection().services().clone();
+            let services = runtime.connection.services().clone();
             let control = runtime.control();
 
-            futures::executor::block_on(truapi::api::Worker::begin_operation(
-                host.as_ref(),
-                &truapi::CallContext::default(),
-                truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-                    truapi::v01::HostWorkerBeginOperationRequest { label: None },
-                ),
-            ))
-            .expect("begin operation");
+            begin_worker_operation(&runtime);
             assert_eq!(services.worker_ledger.count("myapp.dot"), 1);
 
             if dispose {
@@ -3420,7 +3426,8 @@ mod tests {
     fn dispose_ends_the_operations_the_host_is_still_holding() {
         let platform = Arc::new(StubPlatform::default());
         let sink = Arc::new(RecordingSink::default());
-        let (host_config, product) = runtime_config("myapp.dot");
+        let (host_config, mut product) = runtime_config("myapp.dot");
+        product.execution_kind = crate::platform::ProductExecutionKind::Worker;
         let runtime = ProductRuntime::from_platform_with_config(
             platform.clone(),
             host_config,
@@ -3428,16 +3435,8 @@ mod tests {
             test_spawner(),
             sink,
         );
-        let host = runtime.admin.product_runtime().clone();
 
-        futures::executor::block_on(truapi::api::Worker::begin_operation(
-            host.as_ref(),
-            &truapi::CallContext::default(),
-            truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-                truapi::v01::HostWorkerBeginOperationRequest { label: None },
-            ),
-        ))
-        .expect("begin operation");
+        begin_worker_operation(&runtime);
 
         runtime.dispose();
 
@@ -3807,6 +3806,7 @@ mod tests {
         let host = ProductRuntimeHost::from_services(
             runtime.services.clone(),
             ConnectionAdapters::from_services(&runtime.services),
+            runtime.signing_host.clone(),
             runtime.signing_host.clone(),
             ProductContext::new("unknown.dot".to_string()).expect("valid product id"),
         );

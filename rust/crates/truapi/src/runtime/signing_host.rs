@@ -31,7 +31,7 @@ use super::authority::{
     AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
     BulletinAllowanceKey, HostOperation, ProductAuthority, StatementStoreAllowanceKey,
 };
-use super::{RuntimeServices, connected_session_ui_info};
+use super::{HostSession, RuntimeServices, connected_session_ui_info};
 use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
 use crate::host_logic::session::SessionState;
 use crate::runtime::auth_state::AuthStateMachine;
@@ -51,7 +51,7 @@ const TEST_NETWORK_SUFFIX: &str = "dot";
 #[cfg(test)]
 use crate::platform::Platform;
 use crate::platform::{ProductContext, normalize_product_identifier};
-use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse};
+use truapi::latest::{HostRequestLoginError, HostRequestLoginResponse};
 use truapi::{CallContext, CallError, v01};
 
 #[derive(Default)]
@@ -196,11 +196,6 @@ impl SigningHost {
             #[cfg(not(target_arch = "wasm32"))]
             renewal_loop_started: std::sync::atomic::AtomicBool::new(false),
         })
-    }
-
-    /// Shared session holder for connection-status subscriptions.
-    pub fn session_state(&self) -> Arc<SessionState> {
-        self.wallet.session_state()
     }
 
     fn sso_replay_locks(&self) -> &SsoReplayLocks {
@@ -348,6 +343,40 @@ impl SigningHost {
     }
 }
 
+#[crate::platform::async_trait]
+impl HostSession for SigningHost {
+    /// Shared session holder for connection-status subscriptions.
+    fn session_state(&self) -> Arc<SessionState> {
+        self.wallet.session_state()
+    }
+
+    async fn request_login(
+        &self,
+        _product: &ProductContext,
+    ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
+        if let Some(session) = self.wallet.session_state().current() {
+            self.auth_state
+                .connected(&connected_session_ui_info(&session));
+            Ok(HostRequestLoginResponse::AlreadyConnected)
+        } else {
+            // Wallet unlock and session activation are platform-owned.
+            Ok(HostRequestLoginResponse::Rejected)
+        }
+    }
+
+    async fn disconnect(&self) {
+        self.clear_local_session();
+        self.auth_state.store_disconnected();
+    }
+
+    async fn primary_username(&self) -> Option<String> {
+        self.wallet
+            .current_session()?
+            .primary_username()
+            .map(str::to_string)
+    }
+}
+
 #[async_trait::async_trait]
 impl ProductAuthority for SigningHost {
     fn account_holder(&self) -> &dyn AccountHolder {
@@ -458,33 +487,6 @@ impl ProductAuthority for SigningHost {
             Ok(v01::HostRequestResourceAllocationResponse { outcomes })
         };
         super::remote_authority_call(&cx, operation.run(self, allocation)).await
-    }
-
-    fn session_state(&self) -> Arc<SessionState> {
-        SigningHost::session_state(self)
-    }
-
-    async fn request_login(
-        &self,
-        _product: &ProductContext,
-    ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
-        if let Some(session) = self.wallet.session_state().current() {
-            self.auth_state
-                .connected(&connected_session_ui_info(&session));
-            Ok(HostRequestLoginResponse::V1(
-                v01::HostRequestLoginResponse::AlreadyConnected,
-            ))
-        } else {
-            // Wallet unlock and session activation are platform-owned.
-            Ok(HostRequestLoginResponse::V1(
-                v01::HostRequestLoginResponse::Rejected,
-            ))
-        }
-    }
-
-    async fn disconnect(&self) {
-        self.clear_local_session();
-        self.auth_state.store_disconnected();
     }
 
     async fn subtree_resolution_reaches_account_holder(
@@ -627,7 +629,8 @@ mod tests {
         StatementStoreAllowanceKey,
     };
     use super::super::{
-        AccountHolder, ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole,
+        AccountHolder, HostSession, ProductAuthority, ProductRuntimeHost, RuntimeServices,
+        SigningHostRole,
     };
     use super::LocalActivation;
     use super::TEST_NETWORK_SUFFIX;
@@ -781,11 +784,12 @@ mod tests {
 
     fn product_runtime(
         services: Arc<RuntimeServices>,
-        authority: Arc<dyn ProductAuthority>,
+        authority: Arc<SigningHostRole>,
     ) -> ProductRuntimeHost {
         ProductRuntimeHost::from_services(
             services.clone(),
             crate::host_core::ConnectionAdapters::from_services(&services),
+            authority.clone(),
             authority,
             ProductContext::new("myapp.dot".to_string()).expect("valid product id"),
         )
@@ -793,12 +797,13 @@ mod tests {
 
     fn product_runtime_for(
         services: Arc<RuntimeServices>,
-        authority: Arc<dyn ProductAuthority>,
+        authority: Arc<SigningHostRole>,
         product_id: &str,
     ) -> ProductRuntimeHost {
         ProductRuntimeHost::from_services(
             services.clone(),
             crate::host_core::ConnectionAdapters::from_services(&services),
+            authority.clone(),
             authority,
             ProductContext::new(product_id.to_string()).expect("valid product id"),
         )

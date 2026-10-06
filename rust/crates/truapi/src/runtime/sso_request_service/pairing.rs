@@ -40,7 +40,7 @@ use subxt_rpcs::client::RpcSubscription;
 use tracing::{debug, info, instrument};
 use truapi::CallError;
 use truapi::latest as api;
-use truapi::versioned::account::HostRequestLoginError;
+use truapi::latest::HostRequestLoginError;
 #[cfg(test)]
 use truapi::versioned::account::HostRequestLoginResponse;
 
@@ -153,11 +153,9 @@ impl<'a> SsoPairingFlow<'a> {
             .auth_state
             .pairing_started(bootstrap.deeplink.clone())
         else {
-            return Err(CallError::Domain(HostRequestLoginError::V1(
-                api::HostRequestLoginError::Unknown {
-                    reason: "login already in progress".to_string(),
-                },
-            )));
+            return Err(CallError::Domain(api::HostRequestLoginError::Unknown {
+                reason: "login already in progress".to_string(),
+            }));
         };
         info!("presenting pairing QR, waiting for wallet handshake");
         let mut reset_guard = AbandonedPairingGuard {
@@ -195,14 +193,10 @@ impl<'a> SsoPairingFlow<'a> {
         self.host
             .auth_state
             .login_failed_before_pairing(reason.clone());
-        CallError::Domain(HostRequestLoginError::V1(
-            api::HostRequestLoginError::Unknown { reason },
-        ))
+        CallError::Domain(api::HostRequestLoginError::Unknown { reason })
     }
 
-    /// Everything between the `Pairing` emission and a terminal outcome.
-    /// Every error returned here maps to `AuthState::LoginFailed` at the
-    /// single exit in [`Self::request_login`].
+    /// Errors become `LoginFailed` at the single exit in `request_session`.
     async fn run_pairing_flow(
         &self,
         bootstrap: &PairingBootstrap,

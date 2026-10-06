@@ -916,7 +916,7 @@ mod tests {
     }
     use crate::host_logic::statement_store::decode_verified_statement_data;
     use crate::platform::{HostInfo, Platform, PlatformInfo, SigningHostConfig};
-    use crate::runtime::authority::ProductAuthority;
+    use crate::runtime::HostSession;
     use crate::runtime::services::RuntimeServices;
     use crate::test_support::{StubPlatform, test_spawner};
     use std::sync::Arc;

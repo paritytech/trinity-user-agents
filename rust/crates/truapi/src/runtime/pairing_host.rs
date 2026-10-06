@@ -10,6 +10,7 @@ use truapi::latest::{
     HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
 };
 
+use super::HostSession;
 use super::authority::{
     AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
     AutoSigningKey, BulletinAllowanceKey, CreateTransactionAuthorityRequest, HostOperation,
@@ -34,14 +35,13 @@ use crate::host_logic::product_account::{
     derive_ring_vrf_entropy_from_domain,
 };
 use crate::host_logic::raw_signing::raw_payload_bytes;
-use crate::host_logic::session::{SessionInfo, SessionState};
+use crate::host_logic::session::SessionInfo;
 use crate::runtime::vrf;
 
 use crate::platform::{
     Platform, ProductContext, SignVrfReview, UserConfirmationReview, normalize_product_identifier,
 };
-use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse};
-use truapi::{CallContext, CallError, v01};
+use truapi::{CallContext, v01};
 use zeroize::Zeroizing;
 
 use super::ring_vrf_registry::{RingVrfRegistryStore, validate_owner_listing};
@@ -861,10 +861,6 @@ impl ProductAuthority for PairingHost {
         .await
     }
 
-    fn session_state(&self) -> Arc<SessionState> {
-        self.sso.session_state()
-    }
-
     #[cfg(test)]
     fn cache_product_subtree_for_test(
         &self,
@@ -874,21 +870,6 @@ impl ProductAuthority for PairingHost {
     ) {
         self.grants
             .cache_product_subtree_for_test(session, product_id, public_key);
-    }
-
-    async fn request_login(
-        &self,
-        product: &ProductContext,
-    ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
-        self.sso.request_login(product).await
-    }
-
-    async fn disconnect(&self) {
-        self.sso.disconnect().await;
-    }
-
-    async fn refresh_session_identity(&self) -> Option<AuthoritySession> {
-        self.sso.refresh_current_session_identity().await
     }
 
     async fn subtree_resolution_reaches_account_holder(

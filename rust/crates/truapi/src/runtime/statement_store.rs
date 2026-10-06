@@ -553,6 +553,7 @@ mod tests {
             services.clone(),
             crate::host_core::ConnectionAdapters::from_services(&services),
             signing_host.clone(),
+            signing_host.clone(),
             ProductContext::new(product_id.to_string()).expect("valid product id"),
         );
         (host, signing_host)

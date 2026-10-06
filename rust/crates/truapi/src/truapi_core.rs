@@ -15,8 +15,8 @@ use crate::frame::ProtocolMessage;
 use crate::generated::dispatcher;
 use crate::host_logic::session::SessionState;
 use crate::runtime::{
-    HostGrantStore, PairingHostRole, ProductAuthority, ProductRuntimeHost, RuntimeServices,
-    SsoRequestService,
+    HostGrantStore, HostSession, PairingHostRole, ProductAuthority, ProductRuntimeHost,
+    RuntimeServices, SsoRequestService,
 };
 use crate::subscription::Spawner;
 use crate::transport::Transport;
@@ -70,7 +70,7 @@ impl TrUApiCore {
         let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
         let pairing_host = PairingHostRole::new(services.clone(), sso.clone(), grants);
         sso.clone().start_session_store_sync(spawner);
-        Self::from_runtime_parts(services, pairing_host, product)
+        Self::from_runtime_parts(services, pairing_host, sso, product)
     }
 
     /// Build a product-facing core from shared services and authority.
@@ -78,25 +78,24 @@ impl TrUApiCore {
     fn from_runtime_parts(
         services: Arc<RuntimeServices>,
         authority: Arc<dyn ProductAuthority>,
+        host_session: Arc<dyn HostSession>,
         product: ProductContext,
     ) -> Self {
         let runtime = Arc::new(ProductRuntimeHost::from_services(
             services.clone(),
             crate::host_core::ConnectionAdapters::from_services(&services),
-            authority.clone(),
+            authority,
+            host_session,
             product,
         ));
-        Self::from_product_runtime(runtime, services.spawner.clone(), authority.session_state())
+        Self::from_product_runtime(runtime, services.spawner.clone())
     }
 
     /// Build a dispatcher core around an already-created product runtime.
     #[instrument(skip_all, fields(runtime.method = "core.from_product_runtime"))]
-    pub fn from_product_runtime(
-        runtime: Arc<ProductRuntimeHost>,
-        spawner: Spawner,
-        session_state: Arc<SessionState>,
-    ) -> Self {
+    pub fn from_product_runtime(runtime: Arc<ProductRuntimeHost>, spawner: Spawner) -> Self {
         let execution_kind = runtime.connection().execution_kind();
+        let session_state = runtime.host_session().session_state();
         let mut dispatcher = Dispatcher::for_execution(spawner, execution_kind);
         dispatcher::register(&mut dispatcher, runtime);
         Self {

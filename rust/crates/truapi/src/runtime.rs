@@ -20,6 +20,7 @@ mod chat;
 pub mod contacts;
 mod dotns_lookup;
 mod host_grants;
+mod host_session;
 mod identity;
 pub mod login_failure;
 mod pairing_host;
@@ -74,6 +75,7 @@ type ContactsPicker = (
 );
 use futures::{FutureExt, StreamExt, pin_mut};
 pub use host_grants::HostGrantStore;
+pub use host_session::HostSession;
 #[cfg(test)]
 use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
@@ -308,6 +310,7 @@ fn authority_cancellation_error(cx: &CallContext, reason: CancellationReason) ->
 pub struct ProductRuntimeHost {
     connection: Arc<ProductConnection>,
     authority: Arc<dyn ProductAuthority>,
+    host_session: Arc<dyn HostSession>,
 }
 
 /// Per-connection adapters, permissions, channels and open operation demand.
@@ -695,6 +698,7 @@ impl ProductRuntimeHost {
         services: Arc<RuntimeServices>,
         adapters: crate::host_core::ConnectionAdapters,
         authority: Arc<dyn ProductAuthority>,
+        host_session: Arc<dyn HostSession>,
         product: ProductContext,
     ) -> Self {
         let core_instance = services.next_core_instance();
@@ -704,7 +708,7 @@ impl ProductRuntimeHost {
             chat_platform: adapters.chat_platform,
             permission_status: adapters.permission_status,
             temporary_permissions: adapters.permission_grants,
-            session_state: authority.session_state(),
+            session_state: host_session.session_state(),
             product,
             core_instance,
             chat: adapters.chat,
@@ -715,12 +719,18 @@ impl ProductRuntimeHost {
         Self {
             connection,
             authority,
+            host_session,
         }
     }
 
     /// Shared connection state used by product control handles.
     pub fn connection(&self) -> &Arc<ProductConnection> {
         &self.connection
+    }
+
+    /// Lifecycle owner shared by this connection and its host administration.
+    pub fn host_session(&self) -> &Arc<dyn HostSession> {
+        &self.host_session
     }
 
     /// Test constructor building a standalone pairing-host runtime.
@@ -808,16 +818,16 @@ impl ProductRuntimeHost {
         );
         let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
         let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-        let pairing_host = PairingHost::new(services.clone(), sso, grants);
+        let pairing_host = PairingHost::new(services.clone(), sso.clone(), grants);
         let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-        let host = Self::from_services(services, adapters, pairing_host.clone(), product);
+        let host = Self::from_services(services, adapters, pairing_host.clone(), sso, product);
         (host, pairing_host)
     }
 
     /// Test-only access to the shared session-state holder.
     #[cfg(test)]
     pub fn test_session_state(&self) -> Arc<SessionState> {
-        self.authority.session_state()
+        self.host_session.session_state()
     }
 
     /// Seed the paired Account Holder's hard product subtree for unit tests.
@@ -836,7 +846,7 @@ impl ProductRuntimeHost {
     #[cfg(test)]
     #[instrument(skip_all, fields(runtime.method = "account.disconnect"))]
     pub async fn disconnect(&self) {
-        self.authority.disconnect().await;
+        self.host_session.disconnect().await;
     }
 
     fn normalize_product_account_id(

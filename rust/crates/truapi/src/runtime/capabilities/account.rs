@@ -473,22 +473,18 @@ impl Account for ProductRuntimeHost {
             Err(reason) => return Err(CallError::HostFailure { reason }),
         }
 
-        let session = if session.primary_username().is_some() {
-            session
-        } else {
-            self.authority
-                .refresh_session_identity()
-                .await
-                .unwrap_or(session)
-        };
-        let primary_username = session.primary_username().ok_or_else(|| {
+        let primary_username = match session.primary_username() {
+            Some(name) => Some(name.to_string()),
+            None => self.host_session.primary_username().await,
+        }
+        .ok_or_else(|| {
             CallError::Domain(HostGetUserIdError::V1(v01::HostGetUserIdError::Unknown {
                 reason: "No primary username for this session".to_string(),
             }))
         })?;
 
         Ok(HostGetUserIdResponse::V1(v01::HostGetUserIdResponse {
-            primary_username: primary_username.to_string(),
+            primary_username,
         }))
     }
 
@@ -501,7 +497,7 @@ impl Account for ProductRuntimeHost {
         HostAccountConnectionStatusSubscribeItem,
         CallError<HostAccountConnectionStatusSubscribeError>,
     > {
-        Subscription::new(self.authority.session_state().subscribe().map(Ok))
+        Subscription::new(self.connection.session_state.subscribe().map(Ok))
     }
 
     #[instrument(skip_all, fields(runtime.method = "account.request_login", product = %self.connection.product.product_id))]
@@ -510,6 +506,17 @@ impl Account for ProductRuntimeHost {
         _cx: &CallContext,
         _request: HostRequestLoginRequest,
     ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
-        self.authority.request_login(&self.connection.product).await
+        self.host_session
+            .request_login(&self.connection.product)
+            .await
+            .map(HostRequestLoginResponse::V1)
+            .map_err(|error| match error {
+                CallError::Domain(error) => CallError::Domain(HostRequestLoginError::V1(error)),
+                CallError::Denied => CallError::Denied,
+                CallError::Unsupported => CallError::Unsupported,
+                CallError::MalformedFrame { reason } => CallError::MalformedFrame { reason },
+                CallError::HostFailure { reason } => CallError::HostFailure { reason },
+                CallError::Cancelled => CallError::Cancelled,
+            })
     }
 }

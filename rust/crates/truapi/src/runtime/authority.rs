@@ -1,11 +1,10 @@
-//! Account calls and host lifecycle contracts.
+//! Account calls and host grant contracts.
 //!
 //! Caller origin separates local host permissions from remote wallet consent.
 
 use super::WalletAuthorization;
 use crate::platform::ProductContext;
 use async_trait::async_trait;
-use std::sync::Arc;
 use truapi::latest::{
     HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasRequest,
     HostAccountGetAliasResponse, HostAccountListRingVrfKeysRequest,
@@ -18,8 +17,7 @@ use truapi::latest::{
     HostSignRawWithLegacyAccountRequest, LegacyAccountTxPayload, ProductAccountId,
     ProductAccountTxPayload, VrfSignature,
 };
-use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse};
-use truapi::{CallContext, CallError, CancellationReason};
+use truapi::{CallContext, CancellationReason};
 
 use crate::host_internal::extrinsic::LocalTransactionError;
 use crate::host_internal::sso_messages::RingVrfError;
@@ -634,7 +632,7 @@ pub trait AccountHolder: Send + Sync {
     fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;
 }
 
-/// Host lifecycle, grant checks and cached allowance keys for product runtimes.
+/// Account selection, resource acquisition and retained grants for product runtimes.
 #[async_trait]
 pub trait ProductAuthority: Send + Sync {
     /// Account holder selected by this host.
@@ -655,9 +653,6 @@ pub trait ProductAuthority: Send + Sync {
         request: HostRequestResourceAllocationRequest,
     ) -> Result<HostRequestResourceAllocationResponse, AuthorityError>;
 
-    /// Connection-status subscriptions without transferring session ownership.
-    fn session_state(&self) -> Arc<SessionState>;
-
     /// Seed the paired subtree cache for account-operation tests.
     #[cfg(test)]
     fn cache_product_subtree_for_test(
@@ -666,20 +661,6 @@ pub trait ProductAuthority: Send + Sync {
         _product_id: &str,
         _public_key: [u8; 32],
     ) {
-    }
-
-    /// Request account connection for the calling product.
-    async fn request_login(
-        &self,
-        product: &ProductContext,
-    ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>>;
-
-    /// Disconnect the current account-authority session.
-    async fn disconnect(&self);
-
-    /// Refresh session identity without user interaction.
-    async fn refresh_session_identity(&self) -> Option<AuthoritySession> {
-        self.account_holder().current_session()
     }
 
     /// Whether subtree resolution needs SSO and therefore host consent.

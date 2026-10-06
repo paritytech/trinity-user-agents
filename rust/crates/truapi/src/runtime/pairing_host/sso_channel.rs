@@ -1,5 +1,7 @@
 //! SSO statement-store channel to the paired remote signing host.
 
+use crate::runtime::HostSession;
+
 use super::super::authority::{
     AuthorityCancelError, AuthorityError, BulletinAllowanceKey, CreateTransactionAuthorityRequest,
     SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
