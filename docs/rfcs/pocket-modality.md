@@ -23,7 +23,8 @@ neither.
 
 A face is drawn through the [Unified Renderer](https://github.com/paritytech/trinity-user-agents/pull/633)'s `PocketCard`
 context. The collection itself is one `Pocket` trait with two methods, a Pocket section in the Worker manifest, and a
-deeplink grammar that names a target modality.
+deeplink grammar that names a target modality. An opened card adds one `ExpandedCard` trait, through which the Widget
+moves the face out of the way and back.
 
 Tracking issue: [#563](https://github.com/paritytech/trinity-user-agents/issues/563).
 
@@ -66,9 +67,16 @@ start before the worker answers, and a privileged card has something to show on 
 ### Expanded card
 
 Tapping a face opens the product's `widget` executable with the card named in the launch URL query, `card=<card_id>`.
-Pocket adds no channel of its own. The Widget runs under the same product identity and storage namespace as the worker,
-so the card the user opened and the state it shows are one product's. Keeping the native face visible through the open
-and close animation, and preloading the WebView, are host implementation and not part of the contract.
+The Widget runs under the same product identity and storage namespace as the worker, so the card the user opened and the
+state it shows are one product's.
+
+The host draws the face above the Widget, and the user can move it out of the way and back. The Widget can do the same
+with `ExpandedCard::set_face_shown`, to take the whole screen or to bring the face back after something on it changed. A
+card definition's `faceShown` sets where the face starts when the card opens. The host sizes the Widget to the part of
+the screen the face leaves, so the Widget learns the space it has from its own `resize` event. The face is never locked:
+the user can always move it, and a call that arrives while the user is moving it is dropped. Keeping the native face
+visible through the open and close animation, and preloading the WebView, are host implementation and not part of the
+contract.
 
 ### Lifecycle
 
@@ -93,8 +101,11 @@ type PocketCardDefinition = {
   id: string; // Card label, unique within the product. Screened as a chat identifier is.
   title: string; // Shown in the approval dialog and in host chrome.
   preview: string; // Path inside the worker archive to a RendererNode tree, JSON in the generated TypeScript shape.
+  faceShown?: boolean; // Whether the face is shown above the expanded card when it opens. Default true.
 };
 ```
+
+A `faceShown` that is not a boolean makes the definition invalid, as a missing `title` does.
 
 The preview is a static file in the CID-pinned archive, so the host can show a card before any product code runs, the
 same property the [funding modality](https://github.com/paritytech/trinity-user-agents/pull/339) relies on for its rail list.
@@ -214,6 +225,46 @@ No request names a product: the host knows which worker it is talking to, so a p
 another product's cards. A host with no Pocket surface answers `remove_card` with `Unavailable` and interrupts
 `list_subscribe` with the same error, which a product reads as an unsupported host rather than as an empty collection.
 
+The expanded card's call comes from the Widget, and `Pocket` is reachable only from the worker. An execution restriction
+applies to a whole trait, so the call is a trait of its own, `23`, with `set_face_shown` as method `0`.
+
+```rust
+/// The face drawn above the calling Widget when the Widget is an expanded card.
+#[wire_trait(id = 23)]
+#[crate::service(required_execution = Widget)]
+#[crate::async_trait]
+pub trait ExpandedCard: Send + Sync {
+    /// Show or hide the face above the calling Widget. Succeeds when the face is already in that state.
+    #[wire(id = 0)]
+    async fn set_face_shown(
+        &self,
+        cx: &CallContext,
+        request: HostExpandedCardSetFaceShownRequest,
+    ) -> Result<HostExpandedCardSetFaceShownResponse, CallError<HostExpandedCardSetFaceShownError>>;
+}
+```
+
+```rust
+pub struct HostExpandedCardSetFaceShownRequest {
+    /// `true` brings the face back, `false` moves it out of the way.
+    pub shown: bool,
+}
+
+pub enum HostExpandedCardSetFaceShownError {
+    /// The Widget is not shown under its card right now, such as one the host keeps loaded after the card closed.
+    NotPresented,
+    /// Catch-all.
+    Unknown {
+        /// Human-readable reason.
+        reason: String,
+    },
+}
+```
+
+`HostExpandedCardSetFaceShownResponse` is a bare `V1`, as `remove_card`'s is. The call moves the face above the Widget
+that made it, so no request names a card. An App or Worker caller is `Denied`, and a host without expanded cards answers
+`Unsupported`.
+
 ## Trade-offs
 
 - **No product-initiated add.** A product cannot surface a card at the moment it becomes relevant; it has to get the
@@ -227,6 +278,8 @@ another product's cards. A host with no Pocket surface answers `remove_card` wit
 - **Expanded cards need a Widget.** A product with cards but no `widget` executable has faces that do not open. Products
   that want interaction without a WebView use face actions. `Pocket` is reachable only from the worker, so an expanded
   card that wants to offer "Remove from Pocket" has to reach its own worker to do it.
+- **The face is moved, not locked.** A Widget cannot keep the face away against the user, so a product that wants the
+  whole screen has to tolerate the user pulling the face back.
 - **Pocket declares no rendering method of its own.** A `card_render` and `action_subscribe` pair keyed by `card_id` was
   considered and dropped: a face is a body like any other, and a pair per surface costs four wire ids each and gives a
   product one handler per surface to register.
