@@ -369,6 +369,20 @@ impl NativeTrUApiHostRuntime {
         Ok(self.runtime.quote_funding_deposit(&intent, asset).await?)
     }
 
+    /// Give open outbound session `intent` a withdrawal account for
+    /// `destination_id` and ask for the user's payment into it. Returns the
+    /// account.
+    pub async fn assign_funding_withdrawal(
+        &self,
+        intent: String,
+        destination_id: String,
+    ) -> Result<crate::Bytes32, HostRejection> {
+        Ok(self
+            .runtime
+            .assign_funding_withdrawal(&intent, &destination_id)
+            .await?)
+    }
+
     /// Give session `intent` the deposit account its provider pays into.
     pub async fn assign_funding_deposit(
         &self,

@@ -2838,6 +2838,8 @@ fn a_top_up_needs_a_session() {
 struct RecordingPaymentPlatform {
     requested: Mutex<Vec<(String, truapi::latest::HostPaymentRequest)>>,
     followed: Mutex<Vec<(String, [u8; 32])>>,
+    /// Refuses the next request with this, once.
+    refuse: Mutex<Option<truapi::latest::HostPaymentError>>,
 }
 
 #[truapi::async_trait]
@@ -2851,7 +2853,10 @@ impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
             .lock()
             .expect("requested mutex poisoned")
             .push((product.product_id.clone(), request));
-        Ok(())
+        match self.refuse.lock().expect("refuse mutex poisoned").take() {
+            Some(refusal) => Err(refusal),
+            None => Ok(()),
+        }
     }
 
     fn subscribe_payment_status(
@@ -2972,6 +2977,97 @@ fn no_product_pays_as_the_funding_product_or_without_a_session() {
             vec![Err(CallError::Denied)],
             0,
             0
+        )
+    );
+}
+
+/// A signer for the funding product with no keys, enough for core to make
+/// payments as the funding product.
+struct FundingProduct;
+
+impl crate::runtime::FundingSigner for FundingProduct {
+    fn deposit_keypair(
+        &self,
+        _: &str,
+        _: u32,
+    ) -> Result<Option<schnorrkel::Keypair>, truapi::latest::GenericError> {
+        Ok(None)
+    }
+
+    fn funding_product_id(&self) -> String {
+        "fund.dot".into()
+    }
+}
+
+// The user pays a withdrawal into its account through the host, as the
+// funding product, under getcash's payment ids: the account first, then a
+// new id for each retry, since the host refuses an id it has seen. A refused
+// payment ends the session for that retry, which asks the user again.
+#[test]
+fn a_withdrawal_is_paid_through_the_host_and_a_refusal_is_asked_again() {
+    let services = funding_services();
+    let engine = Arc::new(RecordingPaymentPlatform::default());
+    assert!(services.install_payment_platform(engine.clone()));
+    assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+        crate::platform::FundingPresentOutcome::Started,
+    )));
+    assert!(services.funding().install_conversion(
+        crate::runtime::FundingNetwork { cash_asset_id: 1 },
+        Vec::new(),
+        Arc::new(FundingProduct),
+    ));
+    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::Out, Some(1_000)))
+        .expect("opened")
+        .intent;
+    let account = [4; 32];
+    futures::executor::block_on(services.funding().commit(
+        services.platform.as_ref(),
+        crate::runtime::current_unix_millis(),
+        |sessions| {
+            if let Some(session) = sessions.get_mut(&intent) {
+                session.assign_withdrawal(crate::host_logic::funding::FundingWithdrawal {
+                    destination_id: "dot-assethub".into(),
+                    number: 1,
+                    account,
+                    attempt: 0,
+                    since_ms: crate::runtime::current_unix_millis(),
+                    taken: false,
+                });
+            }
+            ((), Vec::new())
+        },
+    ))
+    .expect("assigned");
+    *engine.refuse.lock().expect("refuse mutex poisoned") = Some(v01::HostPaymentError::Rejected);
+
+    let refused = futures::executor::block_on(services.request_withdrawal_payment(&intent));
+    let failed = services.funding().get(&intent).map(|session| session.step());
+    let retried = futures::executor::block_on(services.retry_funding(&intent)).is_ok();
+    let paid_to = |id| v01::HostPaymentRequest {
+        from: None,
+        amount: 1_000,
+        destination: account,
+        id,
+    };
+
+    assert_eq!(
+        (
+            refused.is_err(),
+            failed,
+            retried,
+            engine.requested.lock().expect("requested mutex poisoned").clone(),
+        ),
+        (
+            true,
+            Some(crate::host_logic::funding::FundingStep::Failed),
+            true,
+            vec![
+                ("fund.dot".to_string(), paid_to(account)),
+                (
+                    "fund.dot".to_string(),
+                    paid_to(crate::host_logic::funding::funding_attempt_id(&account, 1))
+                ),
+            ],
         )
     );
 }

@@ -375,7 +375,8 @@ async fn follow(runtime: &SigningHostRuntime, intent: &str) -> Result<()> {
             FundingStage::Open
             | FundingStage::Converting { .. }
             | FundingStage::Converted
-            | FundingStage::Crediting { .. } => {}
+            | FundingStage::Crediting { .. }
+            | FundingStage::Paid { .. } => {}
         }
         tokio::time::sleep(POLL).await;
     }

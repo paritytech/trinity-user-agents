@@ -17,7 +17,7 @@ use truapi::latest::{
 };
 
 use super::FundingSigner;
-use crate::host_logic::funding::{CreditProgress, CreditStep, FundingDeposit};
+use crate::host_logic::funding::{CreditProgress, CreditStep, FundingDeposit, funding_attempt_id};
 use crate::platform::{ProductContext, TopUpPlatform};
 
 /// Smallest amount a top-up claims, in CASH units: what the account holds is
@@ -132,7 +132,7 @@ impl Credit<'_> {
             source: PaymentTopUpSource::PrivateKey {
                 sr25519_secret_key: keypair.secret.to_bytes(),
             },
-            id: top_up_id(&deposit.account, attempt),
+            id: funding_attempt_id(&deposit.account, attempt),
         };
         match self.top_up.top_up(self.product, request).await {
             Ok(()) | Err(HostPaymentTopUpError::AlreadyExists) => {
@@ -157,21 +157,12 @@ impl Credit<'_> {
     {
         let mut statuses = self
             .top_up
-            .subscribe_top_up_status(self.product, top_up_id(&deposit.account, attempt));
+            .subscribe_top_up_status(self.product, funding_attempt_id(&deposit.account, attempt));
         super::within_timeout(STATUS_TIMEOUT, statuses.next())
             .await
             .ok()
             .flatten()
     }
-}
-
-/// The id of top-up `attempt` from `account`: the account itself first, then
-/// `blake2_256(account ‖ attempt)`, as getcash numbers them.
-fn top_up_id(account: &[u8; 32], attempt: u8) -> [u8; 32] {
-    if attempt == 0 {
-        return *account;
-    }
-    sp_crypto_hashing::blake2_256(&[account.as_slice(), &u32::from(attempt).to_le_bytes()].concat())
 }
 
 #[cfg(test)]

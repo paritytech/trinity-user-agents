@@ -11,7 +11,9 @@ use std::collections::BTreeMap;
 
 use parity_scale_codec::{Decode, Encode};
 use tracing::warn;
-use truapi::latest::{FundingDirection, FundingFailure, HostFundingStatusSubscribeItem};
+use truapi::latest::{
+    FundingDirection, FundingFailure, HostFundingStatusSubscribeItem, HostPaymentStatusSubscribeItem,
+};
 
 use crate::host_logic::entropy::{ProductEntropyError, derive_product_entropy};
 use crate::host_logic::product_account::{ProductAccountError, derive_root_keypair_from_entropy};
@@ -59,6 +61,9 @@ pub struct FundingSession {
     /// it has: what crediting claims from, and what stays stranded on the
     /// account when less is credited.
     pub landed: Option<u128>,
+    /// Where an outbound session's payment goes, once its destination is
+    /// known.
+    pub withdrawal: Option<FundingWithdrawal>,
     /// When each step in flight was first reached, in the order reached.
     /// The session starts at `opened_at_ms` and ends when its stage says.
     pub stamps: Vec<FundingStamp>,
@@ -66,6 +71,66 @@ pub struct FundingSession {
     /// history. An ended session is handed to the host until it has.
     pub acknowledged: bool,
 }
+
+/// The account an outbound session's payment goes to, and the payment.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct FundingWithdrawal {
+    /// Where the funds go from Asset Hub, as in the account label.
+    pub destination_id: String,
+    /// Account number for `destination_id`.
+    pub number: u32,
+    /// Public key of the withdrawal account on People and Asset Hub.
+    pub account: [u8; 32],
+    /// Which payment attempt is asked for, from 0; its id is
+    /// [`funding_attempt_id`] of the account.
+    pub attempt: u8,
+    /// When that attempt was asked for, in Unix milliseconds.
+    pub since_ms: u64,
+    /// Whether the host reported the payment under way or done, after which
+    /// the session no longer expires or cancels, as getcash holds a taken
+    /// payment.
+    pub taken: bool,
+}
+
+/// The id of attempt `attempt` on `account`, as getcash numbers its top-ups
+/// and payments: the account itself first, then
+/// `blake2_256(account ‖ u32le attempt)`.
+pub fn funding_attempt_id(account: &[u8; 32], attempt: u8) -> [u8; 32] {
+    if attempt == 0 {
+        return *account;
+    }
+    sp_crypto_hashing::blake2_256(&[account.as_slice(), &u32::from(attempt).to_le_bytes()].concat())
+}
+
+/// What the host said of a withdrawal's payment, and for which attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaymentReading {
+    /// The attempt whose id was asked about.
+    pub attempt: u8,
+    /// The answer.
+    pub word: PaymentWord,
+}
+
+/// The host's answer about one payment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PaymentWord {
+    /// The host did not answer in time.
+    Unanswered,
+    /// The host holds no payment under the id.
+    NotFound,
+    /// The payment's status.
+    Said(HostPaymentStatusSubscribeItem),
+}
+
+/// How long a requested payment may go untaken before the session expires,
+/// as getcash's payment window.
+pub const PAYMENT_WINDOW_MS: u64 = 30 * 60 * 1_000;
+/// Code a session fails with when its payment did not go through.
+const PAYMENT_FAILED: &str = "payment_failed";
 
 /// Where a session is, for the host's progress and history views: the
 /// stage, with an inbound session's deposit account and submission folded
@@ -78,6 +143,11 @@ pub struct FundingSession {
 pub enum FundingStep {
     /// Opened; nothing chosen yet.
     Started,
+    /// An outbound session asked the user to pay into its withdrawal
+    /// account.
+    AwaitingPayment,
+    /// The user's CASH is on the withdrawal account.
+    Paid,
     /// An inbound session has a deposit account and waits for the payment.
     AwaitingDeposit,
     /// The deposit arrived.
@@ -382,6 +452,12 @@ pub enum FundingStage {
         /// What the top-ups have claimed so far.
         progress: CreditProgress,
     },
+    /// Outbound: the user's CASH is on the withdrawal account on People,
+    /// to be converted and sent on.
+    Paid {
+        /// CASH on the account, in payment balance units.
+        paid: u128,
+    },
     /// Inbound terminal success: the CASH is in the user's balance.
     Delivered {
         /// Amount credited, in payment balance units.
@@ -411,6 +487,9 @@ pub enum FundingStage {
 pub enum FundingResume {
     /// The deposit is still on Asset Hub: convert it again by its route.
     Conversion,
+    /// The payment into the withdrawal account did not go through: ask for
+    /// it again, under the next attempt's id.
+    Payment,
     /// The CASH is on People: credit it from `progress`.
     Credit {
         /// What the top-ups claimed, and the attempt to go on with.
@@ -473,6 +552,7 @@ impl FundingSession {
             deposit: None,
             quote: None,
             landed: None,
+            withdrawal: None,
             stamps: Vec::new(),
             acknowledged: false,
         }
@@ -482,6 +562,8 @@ impl FundingSession {
     pub fn step(&self) -> FundingStep {
         match &self.stage {
             FundingStage::Open if self.deposit.is_some() => FundingStep::AwaitingDeposit,
+            FundingStage::Open if self.withdrawal.is_some() => FundingStep::AwaitingPayment,
+            FundingStage::Paid { .. } => FundingStep::Paid,
             FundingStage::Open => FundingStep::Started,
             FundingStage::Converting {
                 submission: None, ..
@@ -555,7 +637,8 @@ impl FundingSession {
             FundingStage::Open
             | FundingStage::Converting { .. }
             | FundingStage::Converted
-            | FundingStage::Crediting { .. } => None,
+            | FundingStage::Crediting { .. }
+            | FundingStage::Paid { .. } => None,
             FundingStage::Delivered { settled_at_ms, .. } => Some(settled_at_ms),
             FundingStage::Failed { settled_at_ms, .. } => Some(settled_at_ms),
         }
@@ -575,7 +658,8 @@ impl FundingSession {
             (
                 FundingStage::Converting { .. }
                 | FundingStage::Converted
-                | FundingStage::Crediting { .. },
+                | FundingStage::Crediting { .. }
+                | FundingStage::Paid { .. },
                 _,
             ) => HostFundingStatusSubscribeItem::Converting,
             (FundingStage::Delivered { credited, .. }, _) => {
@@ -615,10 +699,10 @@ impl FundingSession {
     }
 
     /// Whether the expiry sweep ends this session at its deadline: an open
-    /// one with no deposit account. One with an account is ended by the
-    /// deposit watch, after a read that shows its deposit did not arrive.
+    /// one with no deposit or withdrawal account. One with an account is
+    /// ended by its watch, after a read that shows its funds did not arrive.
     pub fn expires_by_sweep(&self) -> bool {
-        self.stage == FundingStage::Open && self.deposit.is_none()
+        self.stage == FundingStage::Open && self.deposit.is_none() && self.withdrawal.is_none()
     }
 
     /// Expire the session if the sweep owns it and its deadline passed.
@@ -685,12 +769,19 @@ impl FundingSession {
                     reason: FundingFailure::Expired,
                     ..
                 }
+                | FundingStage::Failed {
+                    resume: Some(FundingResume::Payment),
+                    ..
+                }
         );
         if !cancellable {
             return Err(CancelRefusal::Underway);
         }
         if self.deposit.as_ref().is_some_and(|deposit| !deposit.holdings.is_empty()) {
             return Err(CancelRefusal::FundsArrived);
+        }
+        if self.withdrawal.as_ref().is_some_and(|withdrawal| withdrawal.taken) {
+            return Err(CancelRefusal::Underway);
         }
         self.stage = FundingStage::Failed {
             reason: FundingFailure::Cancelled,
@@ -728,6 +819,21 @@ impl FundingSession {
                     refusals: 0,
                     submission: None,
                 }
+            }
+            FundingResume::Payment => {
+                // Past the late watch nothing reads the account, so CASH that
+                // reached it since would be asked for twice.
+                let watched = self.watched_withdrawal(now_ms).is_some();
+                let withdrawal = self
+                    .withdrawal
+                    .as_mut()
+                    .filter(|_| watched)
+                    .ok_or(RetryRefusal::NotResumable)?;
+                // A reused id would be taken for the payment already made.
+                withdrawal.attempt = withdrawal.attempt.checked_add(1).ok_or(RetryRefusal::NotResumable)?;
+                withdrawal.since_ms = now_ms;
+                withdrawal.taken = false;
+                FundingStage::Open
             }
             FundingResume::Credit { progress } => FundingStage::Crediting {
                 progress: CreditProgress {
@@ -841,6 +947,118 @@ impl FundingSession {
             self.deadline_ms = now_ms.saturating_add(SESSION_WINDOW_MS);
         }
         Ok(())
+    }
+
+    /// Give an open outbound session that names its amount its withdrawal
+    /// account. Returns whether it was given one.
+    pub fn assign_withdrawal(&mut self, withdrawal: FundingWithdrawal) -> bool {
+        let assignable = self.awaits_withdrawal();
+        if assignable {
+            self.withdrawal = Some(withdrawal);
+        }
+        assignable
+    }
+
+    /// Whether the session is an open outbound one that names its amount and
+    /// has no withdrawal account yet.
+    pub fn awaits_withdrawal(&self) -> bool {
+        self.direction == FundingDirection::Out
+            && self.stage == FundingStage::Open
+            && self.amount.is_some()
+            && self.withdrawal.is_none()
+    }
+
+    /// The withdrawal account a session still reads: an open session's, or
+    /// one that expired, was cancelled or had its payment fail, for
+    /// [`LATE_WATCH_MS`] after, since CASH that reaches the account is the
+    /// user's, as getcash completes a payment its key shows from any state
+    /// before it moves on.
+    pub fn watched_withdrawal(&self, now_ms: u64) -> Option<&FundingWithdrawal> {
+        let recent = self
+            .settled_at_ms()
+            .is_none_or(|settled_at_ms| now_ms.saturating_sub(settled_at_ms) <= LATE_WATCH_MS);
+        self.withdrawal.as_ref().filter(|_| self.payment_pending() && recent)
+    }
+
+    /// Whether a withdrawal's payment can still arrive and move the session
+    /// on: it is open, or it expired, was cancelled or had its payment fail.
+    pub fn payment_pending(&self) -> bool {
+        self.withdrawal.is_some()
+            && match &self.stage {
+                FundingStage::Open => true,
+                FundingStage::Failed { reason, resume, .. } => {
+                    matches!(reason, FundingFailure::Expired | FundingFailure::Cancelled)
+                        || *resume == Some(FundingResume::Payment)
+                }
+                _ => false,
+            }
+    }
+
+    /// Record a finalized reading of the withdrawal account's CASH on
+    /// People and the host's word on the payment, taken at `now_ms`, as
+    /// getcash judges a withdrawal's payment. CASH on the account means it
+    /// was paid, whatever the host says: the session waits for it even once
+    /// the host reports the payment complete. Otherwise the host's latest
+    /// word for the current attempt decides: under way or done, it no longer
+    /// expires; failed, the session ends for a retry; unknown to the host,
+    /// it was never taken, and one never taken expires after its window.
+    /// Returns whether the session changed.
+    pub fn observe_withdrawal(&mut self, cash: u128, payment: PaymentReading, now_ms: u64) -> bool {
+        if !self.payment_pending() {
+            return false;
+        }
+        if cash > 0 {
+            self.stage = FundingStage::Paid { paid: cash };
+            return true;
+        }
+        if self.stage != FundingStage::Open {
+            return false;
+        }
+        let Some(withdrawal) = self.withdrawal.as_mut() else {
+            return false;
+        };
+        let word = match payment {
+            PaymentReading { attempt, word } if attempt == withdrawal.attempt => word,
+            // The host's word on an earlier attempt says nothing of this one.
+            PaymentReading { .. } => PaymentWord::Unanswered,
+        };
+        let taken = match word {
+            PaymentWord::Said(HostPaymentStatusSubscribeItem::Failed { reason }) => {
+                return self.fail_resumable(
+                    FundingFailure::Other {
+                        code: PAYMENT_FAILED.into(),
+                        message: reason,
+                    },
+                    Some(FundingResume::Payment),
+                    now_ms,
+                );
+            }
+            PaymentWord::Said(_) => true,
+            PaymentWord::NotFound => false,
+            PaymentWord::Unanswered => withdrawal.taken,
+        };
+        let changed = taken != withdrawal.taken;
+        withdrawal.taken = taken;
+        let expired = !taken
+            && now_ms.saturating_sub(withdrawal.since_ms) > PAYMENT_WINDOW_MS
+            && self.fail(FundingFailure::Expired, now_ms);
+        changed || expired
+    }
+
+    /// End an open outbound session whose payment the host or user refused,
+    /// for a retry under the next attempt's id. Returns whether it changed.
+    pub fn refuse_payment(&mut self, message: String, now_ms: u64) -> bool {
+        if self.stage != FundingStage::Open || self.withdrawal.is_none() {
+            return false;
+        }
+        self.fail_resumable(
+            FundingFailure::Other {
+                code: PAYMENT_FAILED.into(),
+                message,
+            },
+            Some(FundingResume::Payment),
+            now_ms,
+        )
     }
 
     /// The deposit an open inbound session is waiting on, if one is assigned.
@@ -1534,6 +1752,110 @@ mod tests {
                     refusals: 0,
                     submission: None,
                 },
+                false
+            )
+        );
+    }
+
+    fn withdrawing(taken: bool) -> FundingSession {
+        let mut session = FundingSession {
+            amount: Some(1_000),
+            ..session(FundingDirection::Out)
+        };
+        session.assign_withdrawal(FundingWithdrawal {
+            destination_id: "dot-assethub".into(),
+            number: 1,
+            account: [4; 32],
+            attempt: 0,
+            since_ms: NOW,
+            taken,
+        });
+        session
+    }
+
+    // getcash judges a withdrawal's payment by the account first: CASH there
+    // is paid whatever the host says; then by the host's latest word on the
+    // current attempt: under way, it no longer expires; failed, even after
+    // it was under way, it is retried; unknown, it was never taken; and one
+    // never taken expires after its window. A word on an earlier attempt
+    // says nothing of this one.
+    #[test]
+    fn a_withdrawal_payment_is_judged_as_getcash_judges_it() {
+        let said = |status| PaymentReading {
+            attempt: 0,
+            word: PaymentWord::Said(status),
+        };
+        let word = |word| PaymentReading { attempt: 0, word };
+        let observe = |mut session: FundingSession, cash, payment, now_ms| {
+            let changed = session.observe_withdrawal(cash, payment, now_ms);
+            (changed, session.step(), session.withdrawal.map(|withdrawal| withdrawal.taken))
+        };
+        let late = NOW + PAYMENT_WINDOW_MS + 1;
+        let failed = || said(HostPaymentStatusSubscribeItem::Failed { reason: "declined".into() });
+        let processing = || said(HostPaymentStatusSubscribeItem::Processing);
+        let mut expired = withdrawing(false);
+        expired.observe_withdrawal(0, word(PaymentWord::Unanswered), late);
+        let stale = PaymentReading {
+            attempt: 1,
+            word: PaymentWord::Said(HostPaymentStatusSubscribeItem::Processing),
+        };
+
+        assert_eq!(
+            [
+                observe(withdrawing(false), 0, word(PaymentWord::Unanswered), NOW + 1),
+                observe(withdrawing(false), 0, processing(), NOW + 1),
+                observe(withdrawing(false), 0, failed(), NOW + 1),
+                observe(withdrawing(true), 0, failed(), NOW + 1),
+                observe(withdrawing(true), 0, word(PaymentWord::NotFound), NOW + 1),
+                observe(withdrawing(false), 0, word(PaymentWord::Unanswered), late),
+                observe(withdrawing(true), 0, processing(), late),
+                observe(withdrawing(false), 0, stale, late),
+                observe(withdrawing(false), 900, word(PaymentWord::Unanswered), NOW + 1),
+                observe(expired, 900, word(PaymentWord::Unanswered), late + 1),
+            ],
+            [
+                (false, FundingStep::AwaitingPayment, Some(false)),
+                (true, FundingStep::AwaitingPayment, Some(true)),
+                (true, FundingStep::Failed, Some(false)),
+                (true, FundingStep::Failed, Some(true)),
+                (true, FundingStep::AwaitingPayment, Some(false)),
+                (true, FundingStep::Expired, Some(false)),
+                (false, FundingStep::AwaitingPayment, Some(true)),
+                (true, FundingStep::Expired, Some(false)),
+                (true, FundingStep::Paid, Some(false)),
+                (true, FundingStep::Paid, Some(false)),
+            ]
+        );
+    }
+
+    // A withdrawal's payment is asked for again under the next attempt's
+    // id, but not once the account is no longer read, when CASH that reached
+    // it would be asked for twice; one that failed can be cancelled, one
+    // under way cannot, and none waits on the 24 h sweep, which would end a
+    // payment the host is still taking.
+    #[test]
+    fn a_withdrawal_retries_under_a_new_id_and_a_taken_one_cannot_be_cancelled() {
+        let mut refused = withdrawing(false);
+        refused.refuse_payment("declined".into(), NOW);
+        let mut too_late = refused.clone();
+        let mut cancelled = refused.clone();
+        let retried = refused.retry(NOW + 5).map(|()| refused.withdrawal.clone());
+
+        assert_eq!(
+            (
+                retried.map(|withdrawal| withdrawal.map(|withdrawal| (withdrawal.attempt, withdrawal.since_ms))),
+                too_late.retry(NOW + LATE_WATCH_MS + 1),
+                cancelled.cancel(NOW + 1),
+                withdrawing(true).cancel(NOW),
+                withdrawing(false).cancel(NOW),
+                withdrawing(false).expires_by_sweep(),
+            ),
+            (
+                Ok(Some((1, NOW + 5))),
+                Err(RetryRefusal::NotResumable),
+                Ok(()),
+                Err(CancelRefusal::Underway),
+                Ok(()),
                 false
             )
         );

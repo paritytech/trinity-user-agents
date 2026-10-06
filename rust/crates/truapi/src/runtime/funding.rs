@@ -27,6 +27,7 @@ use truapi::latest::{
 
 mod conversion;
 mod credit;
+mod withdraw;
 
 use conversion::{Chains, ConversionChains, ConversionError};
 #[cfg(test)]
@@ -144,13 +145,15 @@ impl FundingRegistry {
     }
 
     /// Cancel session `intent`, first recording `holdings`, a fresh reading
-    /// of its deposit account when it has one.
+    /// of its deposit account when it has one. `confirmed_withdrawal` says
+    /// its withdrawal account and payment were read fresh just before.
     pub async fn cancel(
         &self,
         storage: &(impl CoreStorage + ?Sized),
         now_ms: u64,
         intent: &str,
         holdings: Option<Vec<DepositHolding>>,
+        confirmed_withdrawal: bool,
     ) -> Result<(), CancelFundingError> {
         let intent = intent.to_string();
         self.commit(storage, now_ms, move |sessions| {
@@ -159,7 +162,9 @@ impl FundingRegistry {
             };
             // An account assigned since the read, or funds a watch pass
             // recorded since, are not covered by it.
-            if holdings.is_none() && session.deposit.is_some() {
+            if (holdings.is_none() && session.deposit.is_some())
+                || (!confirmed_withdrawal && session.payment_pending())
+            {
                 return (Err(CancelFundingError::Unconfirmed), Vec::new());
             }
             if session.deposit.as_ref().is_some_and(|deposit| !deposit.holdings.is_empty()) {
@@ -484,6 +489,7 @@ impl FundingRegistry {
             .values()
             .any(|session| {
                 session.watched_deposit(current_unix_millis()).is_some()
+                    || session.watched_withdrawal(current_unix_millis()).is_some()
                     || session.converting().is_some()
                     || session.crediting().is_some()
             })
@@ -969,6 +975,13 @@ impl RuntimeServices {
     pub async fn cancel_funding(self: &Arc<Self>, intent: &str) -> Result<(), CancelFundingError> {
         let registry = self.funding();
         let session = registry.get(intent).ok_or(CancelFundingError::NotFound)?;
+        let confirmed_withdrawal = match session.withdrawal.as_ref().filter(|_| session.payment_pending()) {
+            Some(withdrawal) => {
+                self.confirm_payment_untaken(intent, withdrawal).await?;
+                true
+            }
+            None => false,
+        };
         let holdings = match (&session.deposit, registry.conversion.get()) {
             (None, _) => None,
             (Some(_), None) => return Err(CancelFundingError::Unconfirmed),
@@ -994,7 +1007,13 @@ impl RuntimeServices {
             }
         };
         registry
-            .cancel(self.platform.as_ref(), current_unix_millis(), intent, holdings)
+            .cancel(
+                self.platform.as_ref(),
+                current_unix_millis(),
+                intent,
+                holdings,
+                confirmed_withdrawal,
+            )
             .await
     }
 
@@ -1012,21 +1031,32 @@ impl RuntimeServices {
     pub async fn retry_funding(self: &Arc<Self>, intent: &str) -> Result<(), AssignDepositError> {
         let intent = intent.to_string();
         let now_ms = current_unix_millis();
+        let retrying = intent.clone();
         self.funding()
             .commit(self.platform.as_ref(), now_ms, move |sessions| {
                 let retried = sessions
-                    .get_mut(&intent)
+                    .get_mut(&retrying)
                     .ok_or(AssignDepositError::NotFound)
                     .and_then(|session| {
                         session
                             .retry(now_ms)
                             .map_err(|refusal| AssignDepositError::Refused(refusal.to_string()))
                     });
-                let changed = if retried.is_ok() { vec![intent] } else { Vec::new() };
+                let changed = if retried.is_ok() { vec![retrying] } else { Vec::new() };
                 (retried, changed)
             })
             .await??;
+        // A payment asked for again needs the user's approval again.
+        let asks_payment = self
+            .funding()
+            .get(&intent)
+            .is_some_and(|session| session.stage == FundingStage::Open && session.withdrawal.is_some());
         self.watch_funding_deposits();
+        if asks_payment {
+            self.request_withdrawal_payment(&intent)
+                .await
+                .map_err(|error| AssignDepositError::Refused(error.to_string()))?;
+        }
         Ok(())
     }
 
@@ -1155,6 +1185,7 @@ impl RuntimeServices {
                 if let Err(reason) = services.advance_credits().await {
                     tracing::warn!(%reason, "funding credit pass failed");
                 }
+                services.advance_withdrawals().await;
             }
         }));
     }
@@ -1675,11 +1706,11 @@ mod tests {
             balance: 3,
         };
 
-        let refused = block_on(registry.cancel(storage.as_ref(), NOW, "fs_1", Some(vec![stray])));
+        let refused = block_on(registry.cancel(storage.as_ref(), NOW, "fs_1", Some(vec![stray]), false));
         let holdings = || registry.get("fs_1").and_then(|session| session.deposit).map(|deposit| deposit.holdings);
         let after_fresh_read = holdings();
         // A read taken before the watch recorded the stray must not erase it.
-        let stale = block_on(registry.cancel(storage.as_ref(), NOW, "fs_1", Some(Vec::new())));
+        let stale = block_on(registry.cancel(storage.as_ref(), NOW, "fs_1", Some(Vec::new()), false));
 
         assert_eq!(
             (refused, after_fresh_read, stale, holdings()),
@@ -1721,15 +1752,45 @@ mod tests {
 
         assert_eq!(
             (
-                block_on(registry.cancel(storage.as_ref(), NOW, "fs_1", Some(vec![paid]))),
+                block_on(registry.cancel(storage.as_ref(), NOW, "fs_1", Some(vec![paid]), false)),
                 registry.get("fs_1").map(|session| session.step()),
-                block_on(registry.cancel(storage.as_ref(), NOW, "fs_2", None)),
+                block_on(registry.cancel(storage.as_ref(), NOW, "fs_2", None, false)),
             ),
             (
                 Err(CancelFundingError::Refused(CancelRefusal::Underway)),
                 Some(FundingStep::DepositSeen),
                 Err(CancelFundingError::Unconfirmed),
             )
+        );
+    }
+
+    // A withdrawal is cancelled only after its account and payment were read
+    // fresh, so one assigned after the cancel looked is not cancelled unread.
+    #[test]
+    fn a_withdrawal_is_never_cancelled_unread() {
+        let storage = stub_platform();
+        let registry = FundingRegistry::default();
+        let mut withdrawing = FundingSession {
+            direction: FundingDirection::Out,
+            amount: Some(1_000),
+            ..session("fs_1", NOW)
+        };
+        withdrawing.assign_withdrawal(crate::host_logic::funding::FundingWithdrawal {
+            destination_id: "dot-assethub".into(),
+            number: 1,
+            account: [4; 32],
+            attempt: 0,
+            since_ms: NOW,
+            taken: false,
+        });
+        insert(&registry, storage.as_ref(), withdrawing);
+
+        assert_eq!(
+            (
+                block_on(registry.cancel(storage.as_ref(), NOW, "fs_1", None, false)),
+                block_on(registry.cancel(storage.as_ref(), NOW, "fs_1", None, true)),
+            ),
+            (Err(CancelFundingError::Unconfirmed), Ok(()))
         );
     }
 

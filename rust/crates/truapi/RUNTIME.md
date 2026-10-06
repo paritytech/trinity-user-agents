@@ -429,6 +429,18 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   the account, stays out of the history bound, and `retry_funding` picks it
   up: the conversion again by its route, or the credit from its last
   attempt. A product sees the retried session by subscribing again.
+  For a withdrawal, `assign_funding_withdrawal` gives an outbound session
+  that names its amount a `wd:eph:<destination>:<n>` account, the next one
+  with no CASH on People, and asks the host's `PaymentPlatform` to have the
+  user pay the amount into it, as the funding product, under getcash's
+  payment ids (the account, then `blake2(account ‖ attempt)`). The watch
+  reads the account's CASH and the host's latest word on the current
+  attempt: CASH there moves the session to `Paid`, a payment under way no
+  longer expires, a failed or refused one ends the session for
+  `retry_funding`, which asks again under the next id while the account is
+  still read, and one never taken expires after 30 minutes. A cancel reads
+  both first and is refused once the payment is taken. The watch starts
+  before the request, which resolves only once the user has decided.
   `cancel_funding` cancels a session while nothing has arrived, as getcash
   does: it is refused once a deposit was seen or while anything is on the
   deposit account, which is read first, and nothing is cancelled if that

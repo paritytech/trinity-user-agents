@@ -683,6 +683,38 @@ impl SigningHostRuntime {
             })
     }
 
+    /// Give open outbound session `intent` a withdrawal account for
+    /// `destination_id` and ask the host to have the user pay the session's
+    /// amount into it, as getcash pays its withdrawal key. Returns the
+    /// account.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.assign_funding_withdrawal"))]
+    pub async fn assign_funding_withdrawal(
+        &self,
+        intent: &str,
+        destination_id: &str,
+    ) -> Result<[u8; 32], v01::GenericError> {
+        let derive = |number| {
+            self.signing_host
+                .derive_funding_account(
+                    crate::host_logic::funding::FundingAccountKind::Withdrawal,
+                    destination_id,
+                    number,
+                )
+                .map_err(|err| v01::GenericError {
+                    reason: err.to_string(),
+                })?
+                .ok_or_else(|| v01::GenericError {
+                    reason: "no signing session is active".into(),
+                })
+        };
+        self.services
+            .assign_funding_withdrawal(intent, destination_id, derive)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
     /// The product's hard-subtree public key, derived from the active session
     /// root, or `None` while no session is active.
     ///
