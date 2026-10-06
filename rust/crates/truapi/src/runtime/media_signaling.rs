@@ -39,7 +39,10 @@ const CALL_BUDGET: Duration = Duration::from_secs(5);
 const RECONNECT_BUDGET: Duration = Duration::from_secs(30);
 const RETRY_DELAY: Duration = Duration::from_secs(1);
 const RENEW_AFTER: u64 = 300;
-const EVENT_CAPACITY: usize = 128;
+// One full Statement Store page of messages always fits an empty queue; the
+// headroom holds the Ready/Reconnecting events a slow consumer can accumulate.
+const MESSAGE_CAPACITY: usize = PAGE_CAPACITY;
+const EVENT_CAPACITY: usize = MESSAGE_CAPACITY + 16;
 const REPLAY_CAPACITY: usize = 16_384;
 const ENDPOINT_CAPACITY: usize = 32;
 const PAGE_CAPACITY: usize = 256;
@@ -549,6 +552,12 @@ impl Inner {
     fn receive(&self, value: Value) -> Result<()> {
         let Some(page) = bounded_page(value, MAX_PACKET_BYTES)? else { return Ok(()) };
         for statement in page.statements {
+            // Overflow ends the endpoint and every call on it. Leave messages a
+            // lagging consumer has no room for unadmitted, as if lost in transit:
+            // replay records only admitted packets, so a later delivery succeeds.
+            if self.state.lock().expect("media signaling state poisoned").events.len() >= MESSAGE_CAPACITY {
+                break;
+            }
             let message = self.with_live(|live, now| {
                 let advertisement = live.advertisement.as_ref().ok_or(MediaSignalingError::NotConnected)?;
                 let topic = inbox_topic(&self.identity, &advertisement.advertisement().fields.endpoint_id)
@@ -788,4 +797,78 @@ fn same_endpoint(left: &VerifiedAdvertisement, right: &VerifiedAdvertisement) ->
         && left.endpoint_id == right.endpoint_id
         && left.signing_key == right.signing_key
         && left.encryption_key == right.encryption_key
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use schnorrkel::{ExpansionMode, MiniSecretKey};
+    use crate::host_logic::media_protocol::ACCOUNT_SIGNING_CONTEXT;
+    use crate::runtime::pairing_host::PairingHost;
+    use crate::test_support::{StubPlatform, runtime_config, sso_session_info, test_spawner};
+
+    const NETWORK: [u8; 32] = [7; 32];
+
+    fn endpoint(seed: u8, now: u64) -> (RuntimeSecrets, VerifiedAdvertisement) {
+        let account = MiniSecretKey::from_bytes(&[seed; 32]).unwrap().expand_to_keypair(ExpansionMode::Ed25519);
+        let identity = MediaIdentity { network: NETWORK, product_id: "vox.dot".into(), account: account.public.to_bytes() };
+        let secrets = RuntimeSecrets::generate(identity, REPLAY_CAPACITY).unwrap();
+        let unsigned = secrets.unsigned_advertisement(now, now + 600).unwrap();
+        let signature = account.sign_simple(ACCOUNT_SIGNING_CONTEXT, &unsigned.account_signing_input()).to_bytes();
+        (secrets, unsigned.authenticate(signature, now).unwrap())
+    }
+
+    fn page(statements: &[Vec<u8>]) -> Value {
+        let statements: Vec<_> = statements.iter().map(|statement| format!("0x{}", hex::encode(statement))).collect();
+        serde_json::json!({ "event": "newStatements", "data": { "statements": statements } })
+    }
+
+    fn drain(inner: &Inner) -> usize {
+        let mut state = inner.state.lock().unwrap();
+        state.events.drain(..).filter(|event| matches!(event, MediaSignalingEvent::Message(_))).count()
+    }
+
+    #[test]
+    fn a_full_page_never_overflows_the_endpoint() {
+        let (config, _) = runtime_config("vox.dot");
+        let services = RuntimeServices::new(Arc::new(StubPlatform::default()), config.host.host_info.clone(),
+            config.people_chain_genesis_hash, config.bulletin_chain_genesis_hash,
+            config.asset_hub_chain_genesis_hash, test_spawner());
+        let authority = PairingHost::new(services.clone(), config);
+        futures::executor::block_on(authority.set_connected_session_for_tests(sso_session_info()));
+        let session = authority.current_session().unwrap();
+        let now = current_unix_secs();
+        let (local_secrets, local) = endpoint(1, now);
+        let (sender_secrets, sender) = endpoint(2, now);
+        let fields = &local.advertisement().fields;
+        let identity = MediaIdentity { network: NETWORK, product_id: fields.product_id.clone(), account: fields.account };
+        let topic = inbox_topic(&identity, &fields.endpoint_id).unwrap();
+        let inner = Inner::new(services, authority.clone(), session.clone(), identity, local_secrets);
+        inner.state.lock().unwrap().live.as_mut().unwrap().advertisement = Some(local.clone());
+        let seal = |count: usize| -> Vec<Vec<u8>> {
+            (0..count).map(|index| {
+                let packet = seal_packet(&sender_secrets, &sender, &local, &index.to_le_bytes(), now, now + 60).unwrap();
+                authority.sign_media_statement(&session, packet, vec![topic], now + 60).unwrap()
+            }).collect()
+        };
+
+        // One page carries more admitted packets than the old 128-event queue.
+        inner.receive(page(&seal(PAGE_CAPACITY))).unwrap();
+        assert!(inner.ensure_current().is_ok());
+        assert_eq!(drain(&inner), PAGE_CAPACITY);
+
+        // A consumer that has not drained leaves room for only part of the next
+        // page: the rest stays unadmitted and the endpoint stays up.
+        inner.receive(page(&seal(PAGE_CAPACITY - 8))).unwrap();
+        let extra = seal(16);
+        inner.receive(page(&extra)).unwrap();
+        inner.emit(MediaSignalingEvent::Reconnecting).unwrap();
+        inner.emit(MediaSignalingEvent::Ready).unwrap();
+        assert!(inner.ensure_current().is_ok());
+        assert_eq!(drain(&inner), PAGE_CAPACITY);
+        // Unadmitted packets were not replay-recorded; admitted ones were.
+        inner.receive(page(&extra)).unwrap();
+        assert_eq!(drain(&inner), 8);
+        assert!(inner.ensure_current().is_ok());
+    }
 }
