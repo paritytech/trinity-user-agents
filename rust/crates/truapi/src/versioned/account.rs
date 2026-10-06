@@ -9,6 +9,8 @@ truapi_macros::versioned_type! {
     pub enum HostAccountGetAliasRequest { V1 => v01::HostAccountGetAliasRequest }
     pub enum HostAccountGetAliasResponse { V1 => v01::ContextualAlias }
     pub enum HostAccountGetAliasError { V1 => v01::HostAccountGetAliasError }
+    pub enum HostAccountCreateHonourProofRequest { V1 => v01::HostAccountCreateHonourProofRequest }
+    pub enum HostAccountCreateHonourProofResponse { V1 => v01::HostAccountCreateHonourProofResponse }
     pub enum HostAccountCreateProofRequest { V1 => v01::HostAccountCreateProofRequest }
     pub enum HostAccountCreateProofResponse { V1 => v01::HostAccountCreateProofResponse }
     pub enum HostAccountCreateProofError { V1 => v01::HostAccountCreateProofError }

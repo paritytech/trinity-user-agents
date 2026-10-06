@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "ea1a1441ff0219b1";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "aea9bfe6ad315c2c";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -138,6 +138,12 @@ pub const ACCOUNT_LIST_RING_VRF_KEYS: MethodIds = MethodIds {
 pub const ACCOUNT_RING_VRF_SIGN: MethodIds = MethodIds {
     trait_id: 2,
     method_id: 10,
+};
+
+/// Wire discriminants for `account_create_honour_proof`.
+pub const ACCOUNT_CREATE_HONOUR_PROOF: MethodIds = MethodIds {
+    trait_id: 2,
+    method_id: 11,
 };
 
 /// Wire discriminants for `chain_follow_head_subscribe`.
@@ -609,6 +615,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "account_ring_vrf_sign",
         kind: WireKind::Request(ACCOUNT_RING_VRF_SIGN),
+    },
+    WireEntry {
+        method: "account_create_honour_proof",
+        kind: WireKind::Request(ACCOUNT_CREATE_HONOUR_PROOF),
     },
     WireEntry {
         method: "chain_follow_head_subscribe",

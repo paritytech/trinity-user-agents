@@ -69,6 +69,44 @@ pub fn prove(
     })
 }
 
+/// A proof over several 32-byte contexts and the corresponding aliases:
+/// `Result<(Vec<u8>, Vec<[u8; 32]>), String>`.
+#[wasm_bindgen]
+pub fn prove_multi_context(
+    entropy: &[u8],
+    domain: u32,
+    member: &[u8],
+    members: &[u8],
+    contexts: &[u8],
+    message: &[u8],
+) -> Vec<u8> {
+    with_secret(entropy, |secret| {
+        let domain = RingDomainSize::try_from(domain).map_err(describe)?;
+        let member: [u8; 32] = member.try_into().map_err(describe)?;
+        let (members, []) = members.as_chunks::<32>() else {
+            return Err("ring members are not 32-byte keys".to_owned());
+        };
+        let (contexts, []) = contexts.as_chunks::<32>() else {
+            return Err("contexts are not 32-byte values".to_owned());
+        };
+        if contexts.is_empty() {
+            return Err("at least one context is required".to_owned());
+        }
+        let commitment = BandersnatchVrfVerifiable::open(domain, &member, members.iter().copied())
+            .map_err(describe)?;
+        let context_slices: Vec<&[u8]> =
+            contexts.iter().map(|context| context.as_slice()).collect();
+        let (proof, aliases) = BandersnatchVrfVerifiable::create_multi_context(
+            commitment,
+            secret,
+            &context_slices,
+            message,
+        )
+        .map_err(describe)?;
+        Ok((proof.into_inner(), aliases.into_iter().collect::<Vec<_>>()))
+    })
+}
+
 fn with_secret<T: Encode>(
     entropy: &[u8],
     operation: impl FnOnce(&Secret) -> Result<T, String>,
@@ -159,5 +197,31 @@ mod tests {
             ),
             Ok(alias),
         );
+    }
+
+    #[test]
+    fn multi_context_proof_rejects_malformed_inputs() {
+        let member = key(2);
+        for (entropy, selected, members, contexts) in [
+            (&[2; 31][..], &member[..], &member[..], &[1; 64][..]),
+            (&[2; 32][..], &[0; 31][..], &member[..], &[1; 64][..]),
+            (&[2; 32][..], &member[..], &[0; 31][..], &[1; 64][..]),
+            (&[2; 32][..], &member[..], &member[..], &[1; 63][..]),
+            (&[2; 32][..], &member[..], &member[..], &[][..]),
+        ] {
+            let encoded = prove_multi_context(
+                entropy,
+                DOMAIN.value(),
+                selected,
+                members,
+                contexts,
+                b"message",
+            );
+            assert!(
+                Result::<(Vec<u8>, Vec<[u8; 32]>), String>::decode_all(&mut &encoded[..])
+                    .unwrap()
+                    .is_err()
+            );
+        }
     }
 }

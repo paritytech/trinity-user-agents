@@ -17,13 +17,14 @@ use super::sso_responder::{
     allocate_statement_store_allowance,
 };
 use crate::host_internal::sso_messages::{
-    CreateAccountProofResponse, CreateTransactionLegacyPayload, CreateTransactionPayload,
-    CreateTransactionRequest, CreateTransactionResponse, CreateTransactionWithLegacyAccountRequest,
-    GetAccountAliasResponse, ListRingVrfKeysResponse, OnExistingAllowancePolicy, ProductRequest,
-    ProductSubtreeRequest, ProductSubtreeResponse, RegisterRingVrfKeyResponse, RemoteMessage,
-    ResourceAllocationRequest, ResourceAllocationResponse, RingVrfSignResponse,
-    SignRawWithLegacyAccountRequest, SignRawWithLegacyAccountResponse, SignRequest, SignResponse,
-    SignVrfResponse, SsoAllocatedResource, SsoAllocationOutcome,
+    CreateAccountProofResponse, CreateHonourProofResponse, CreateTransactionLegacyPayload,
+    CreateTransactionPayload, CreateTransactionRequest, CreateTransactionResponse,
+    CreateTransactionWithLegacyAccountRequest, GetAccountAliasResponse, ListRingVrfKeysResponse,
+    OnExistingAllowancePolicy, ProductRequest, ProductSubtreeRequest, ProductSubtreeResponse,
+    RegisterRingVrfKeyResponse, RemoteMessage, ResourceAllocationRequest,
+    ResourceAllocationResponse, RingVrfSignResponse, SignRawWithLegacyAccountRequest,
+    SignRawWithLegacyAccountResponse, SignRequest, SignResponse, SignVrfResponse,
+    SsoAllocatedResource, SsoAllocationOutcome,
 };
 use crate::host_internal::sso_wire::ResponseOutcome;
 use crate::host_logic::product_account::{
@@ -517,6 +518,17 @@ impl SigningHostSsoService {
     ) -> CreateAccountProofResponse {
         self.signing_host
             .create_proof(&cx.call, &cx.session, request)
+            .await
+    }
+
+    /// Create a proof over the Honour contexts.
+    async fn create_honour_proof(
+        &self,
+        cx: &SsoRequestContext,
+        request: ProductRequest<api::HostAccountCreateHonourProofRequest>,
+    ) -> CreateHonourProofResponse {
+        self.signing_host
+            .create_honour_proof(&cx.call, &cx.session, request)
             .await
     }
 

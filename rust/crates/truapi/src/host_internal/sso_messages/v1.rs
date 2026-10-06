@@ -7,17 +7,18 @@
 
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{
-    HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
-    HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest, HostAccountSignVrfRequest,
+    HostAccountCreateHonourProofRequest, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+    HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+    HostAccountRingVrfSignRequest, HostAccountSignVrfRequest,
 };
 
 use super::{
-    CreateAccountProofResponse, CreateTransactionRequest, CreateTransactionResponse,
-    CreateTransactionWithLegacyAccountRequest, GetAccountAliasResponse, ListRingVrfKeysResponse,
-    ProductRequest, ProductSubtreeRequest, ProductSubtreeResponse, RegisterRingVrfKeyResponse,
-    ResourceAllocationRequest, ResourceAllocationResponse, Response, RingVrfSignResponse,
-    SignRawWithLegacyAccountRequest, SignRawWithLegacyAccountResponse, SignRequest, SignResponse,
-    SignVrfResponse, Withdrawal,
+    CreateAccountProofResponse, CreateHonourProofResponse, CreateTransactionRequest,
+    CreateTransactionResponse, CreateTransactionWithLegacyAccountRequest, GetAccountAliasResponse,
+    ListRingVrfKeysResponse, ProductRequest, ProductSubtreeRequest, ProductSubtreeResponse,
+    RegisterRingVrfKeyResponse, ResourceAllocationRequest, ResourceAllocationResponse, Response,
+    RingVrfSignResponse, SignRawWithLegacyAccountRequest, SignRawWithLegacyAccountResponse,
+    SignRequest, SignResponse, SignVrfResponse, Withdrawal,
 };
 
 /// v1 messages exchanged with the paired signing host over the encrypted SSO channel.
@@ -88,4 +89,10 @@ pub enum RemoteMessage {
     /// the pairing host.
     #[codec(index = 24)]
     Cancel(Withdrawal),
+    /// Request an Honour proof from the signing host.
+    #[codec(index = 25)]
+    CreateHonourProofRequest(ProductRequest<HostAccountCreateHonourProofRequest>),
+    /// Answer to [`RemoteMessage::CreateHonourProofRequest`].
+    #[codec(index = 26)]
+    CreateHonourProofResponse(Response<CreateHonourProofResponse>),
 }

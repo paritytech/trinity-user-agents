@@ -680,3 +680,63 @@ fn coin_payment_request_reports_unsupported_on_the_wire() {
     // `Unsupported` carries no domain payload, so no wrapper tag follows.
     assert_eq!(response.payload.value, vec![0x01u8, 0x02u8]);
 }
+
+#[test]
+fn honour_proof_wire_rejects_missing_sessions_and_truncated_messages() {
+    use truapi::latest::{
+        DerivationIndex, HostAccountCreateHonourProofRequest, ProductAccountId, RingLocation,
+    };
+    use truapi::versioned::account::{
+        HostAccountCreateHonourProofRequest as Request,
+        HostAccountCreateHonourProofResponse as Answer, HostAccountCreateProofError as Error,
+    };
+
+    let request = Request::V1(HostAccountCreateHonourProofRequest {
+        key_handle: ProductAccountId {
+            dot_ns_identifier: "myapp.dot".to_string(),
+            derivation_index: DerivationIndex::Index(7),
+        },
+        ring_location: RingLocation {
+            chain_id: [0x22; 32],
+            junctions: vec![],
+        },
+        subject: [1; 32],
+        point: 255,
+        message: [2; 32],
+    });
+    let ids = request_ids("account_create_honour_proof").unwrap();
+    assert_eq!((ids.trait_id, ids.method_id), (2, 11));
+    let core = make_core();
+    for truncated in [false, true] {
+        let mut value = request.encode();
+        if truncated {
+            value.pop();
+        }
+        let response = dispatch(
+            &core,
+            ProtocolMessage {
+                request_id: "honour-1".to_string(),
+                payload: Payload {
+                    trait_id: ids.trait_id,
+                    method_id: ids.method_id,
+                    message_type: MESSAGE_TYPE_REQUEST,
+                    value,
+                },
+            },
+        );
+        assert_eq!(response.request_id, "honour-1");
+        assert_eq!(response.payload.message_type, MESSAGE_TYPE_RESPONSE);
+        let result =
+            Result::<Answer, CallError<Error>>::decode(&mut &response.payload.value[..]).unwrap();
+        if truncated {
+            assert!(matches!(result, Err(CallError::MalformedFrame { .. })));
+        } else {
+            assert_eq!(
+                result,
+                Err(CallError::Domain(Error::V1(
+                    v01::HostAccountCreateProofError::Rejected
+                )))
+            );
+        }
+    }
+}

@@ -12,7 +12,8 @@ use tracing::instrument;
 use truapi::api::Account;
 use truapi::versioned::account::{
     HostAccountConnectionStatusSubscribeError, HostAccountConnectionStatusSubscribeItem,
-    HostAccountConnectionStatusSubscribeRequest, HostAccountCreateProofError,
+    HostAccountConnectionStatusSubscribeRequest, HostAccountCreateHonourProofRequest,
+    HostAccountCreateHonourProofResponse, HostAccountCreateProofError,
     HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasError,
     HostAccountGetAliasRequest, HostAccountGetAliasResponse, HostAccountGetError,
     HostAccountGetRequest, HostAccountGetResponse, HostAccountListRingVrfKeysError,
@@ -239,6 +240,65 @@ impl Account for ProductRuntimeHost {
         )
         .await
         .map(HostAccountCreateProofResponse::V1)
+        .map_err(|err| {
+            CallError::Domain(HostAccountCreateProofError::V1(ring_vrf_proof_error(err)))
+        })
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "account.create_honour_proof"))]
+    async fn create_honour_proof(
+        &self,
+        cx: &CallContext,
+        request: HostAccountCreateHonourProofRequest,
+    ) -> Result<HostAccountCreateHonourProofResponse, CallError<HostAccountCreateProofError>> {
+        let HostAccountCreateHonourProofRequest::V1(mut request) = request;
+        request.key_handle =
+            Self::normalize_product_account_id(request.key_handle).map_err(|()| {
+                CallError::Domain(HostAccountCreateProofError::V1(
+                    v01::HostAccountCreateProofError::Unknown {
+                        reason: "Invalid key handle".to_string(),
+                    },
+                ))
+            })?;
+        let Some(session) = self.authority.current_session() else {
+            return Err(CallError::Domain(HostAccountCreateProofError::V1(
+                v01::HostAccountCreateProofError::Rejected,
+            )));
+        };
+
+        let calling_product_id = self.product_id();
+        let cx = remote_authority_context(cx);
+        let Some(owner) = self
+            .bounded_cross_product_scope_target(
+                &request.key_handle.dot_ns_identifier,
+                Granted::Context,
+                &cx,
+            )
+            .await
+        else {
+            tracing::info!(
+                caller = %calling_product_id,
+                owner = %request.key_handle.dot_ns_identifier,
+                "cross-product ring-VRF access refused at the runtime frontend"
+            );
+            return Err(CallError::Domain(HostAccountCreateProofError::V1(
+                v01::HostAccountCreateProofError::NotAllowlisted,
+            )));
+        };
+        request.key_handle.dot_ns_identifier = owner;
+        remote_authority_call(
+            &cx,
+            self.authority.create_honour_proof(
+                &cx,
+                &session,
+                ProductRequest {
+                    calling_product_id,
+                    payload: request,
+                },
+            ),
+        )
+        .await
+        .map(HostAccountCreateHonourProofResponse::V1)
         .map_err(|err| {
             CallError::Domain(HostAccountCreateProofError::V1(ring_vrf_proof_error(err)))
         })

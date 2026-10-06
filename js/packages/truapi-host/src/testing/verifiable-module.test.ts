@@ -5,6 +5,7 @@
 // chain. So this checks each bundle's layout and pin, and drives the testing
 // core's own load through its test-host export.
 import { describe, expect, it } from "bun:test";
+import { Bytes, Result, Tuple, Vector, str } from "@parity/truapi/scale";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -41,6 +42,49 @@ async function glue<T>(
 }
 
 suite("verifiable module", () => {
+  it("creates one proof with aliases in the supplied context order", async () => {
+    const verifiable = await glue<{
+      member(entropy: Uint8Array): Uint8Array;
+      alias(entropy: Uint8Array, context: Uint8Array): Uint8Array;
+      prove_multi_context(
+        entropy: Uint8Array,
+        domain: number,
+        member: Uint8Array,
+        members: Uint8Array,
+        contexts: Uint8Array,
+        message: Uint8Array,
+      ): Uint8Array;
+    }>("testing/truapi_verifiable.js");
+    const entropy = new Uint8Array(32).fill(4);
+    const member = Result(Bytes(32), str).dec(verifiable.member(entropy));
+    expect(member.success).toBe(true);
+    if (!member.success) throw new Error(member.value);
+    const contexts = [new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)];
+    const encoded = verifiable.prove_multi_context(
+      entropy,
+      2048,
+      member.value,
+      member.value,
+      new Uint8Array([...contexts[0], ...contexts[1]]),
+      new Uint8Array(32),
+    );
+    const response = Result(Tuple(Bytes(), Vector(Bytes(32))), str).dec(
+      encoded,
+    );
+    expect(response.success).toBe(true);
+    if (!response.success) throw new Error(response.value);
+    const [proof, aliases] = response.value;
+    expect(proof.length).toBeGreaterThan(0);
+    expect(aliases).toEqual(
+      contexts.map((context) => {
+        const alias = Result(Bytes(32), str).dec(
+          verifiable.alias(entropy, context),
+        );
+        if (!alias.success) throw new Error(alias.value);
+        return alias.value;
+      }),
+    );
+  });
   it("loads beside the testing core and derives the member it derives directly", async () => {
     const core = await glue<{
       ringVrfMember(entropy: Uint8Array): Promise<Uint8Array>;
