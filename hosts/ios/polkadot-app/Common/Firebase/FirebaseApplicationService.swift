@@ -78,10 +78,6 @@ final class FirebaseApplicationService: RemoteConfigManaging {
         asyncWaitForRemoteConfigValues(for: .generalXcmConfig)
     }
 
-    func asyncWaitGameResultsFallbackURL() -> CompoundOperationWrapper<URL> {
-        asyncWaitForRemoteConfigValues(for: .gameResultsFallbackURL)
-    }
-
     func asyncWaitW3sMerchants<T: Decodable>() -> CompoundOperationWrapper<T> {
         asyncWaitForRemoteConfigValues(for: .w3sMerchants)
     }
@@ -101,7 +97,6 @@ final class FirebaseApplicationService: RemoteConfigManaging {
         RemoteAppConfig(
             identityBackendUrl: url(for: .identityBackendUrl),
             ipfsGatewayUrl: url(for: .ipfsGatewayUrl),
-            gameDashboardUrl: url(for: .gameDashboardUrl),
             dotNsResolver: dotNsResolverAddress(),
             dotNsNameRegistry: dotNsNameRegistryAddress(),
             coinageInstanceId: coinageInstanceId(),
@@ -271,12 +266,10 @@ private extension String {
     static let chains = "chains_v2"
     static let xcmTransfers = "cross_chain_transfers"
     static let generalXcmConfig = "xcm_general_config"
-    static let gameResultsFallbackURL = "game_results_fallback_url"
     static let w3sMerchants = "w3s_merchants"
     static let txExtensionVersions = "transaction_extension_versions"
     static let identityBackendUrl = "identity_backend_url"
     static let ipfsGatewayUrl = "ipfs_gateway_url"
-    static let gameDashboardUrl = "game_dashboard_url"
     static let dotNsResolver = "dot_ns_config"
     static let coinageInstanceId = "coinage_instance_id"
     static let fundingConfig = "funding_config"

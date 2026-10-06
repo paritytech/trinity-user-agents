@@ -42,7 +42,7 @@ The project uses local SPM packages under `Packages/`, with `AppDependencies` as
 - **HandoffService** — Handoff/continuity
 - **Coinage** — Private Payment System implementation: coin models, denominations, transfer planning, and lifecycle
 - **DurableTransactions** — Domain-neutral crash-durable transaction engine (ledger, submission watch, recovery pass, completion ladder, pinned chain view). Domains plug in through `TxCompletionOracle`; Coinage is the first. Ships `DurableTransactionsTestSupport` fakes
-- **Individuality** — Personhood / identity claims
+- **Individuality** — People, LitePeople, Members, Allowance, Pgas, Resources, the identity pallet and the origin restriction pallet
 - **BulletinChain** — Bulletin/news chain integration
 - **AssetExchange** — Asset exchange protocols
 - **AssetHubSdk** — Asset Hub blockchain integration

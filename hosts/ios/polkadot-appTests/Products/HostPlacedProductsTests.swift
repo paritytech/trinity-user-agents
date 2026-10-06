@@ -38,6 +38,13 @@ struct HostPlacedProductsTests {
 
 @Suite("The host-placement switch")
 struct HostPlacementSettingTests {
+    @Test("With no stored choice the host places its products")
+    func unsetDefaultsToEnabled() {
+        let settings = InMemorySettingsManager()
+
+        #expect(settings.isHostPlacementEnabled)
+    }
+
     /// The override exists so a tester can see either arrangement, including both bots at once,
     /// without building a second configuration.
     @Test("An explicit switch off is respected")
