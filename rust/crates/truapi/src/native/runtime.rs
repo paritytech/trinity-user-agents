@@ -292,6 +292,11 @@ impl NativeTrUApiHostRuntime {
         Ok(self.runtime.accept_funding_deposit(&intent, asset).await?)
     }
 
+    /// Try failed session `intent` again from where its funds are.
+    pub async fn retry_funding(&self, intent: String) -> Result<(), HostRejection> {
+        Ok(self.runtime.retry_funding(&intent).await?)
+    }
+
     /// What arrived on session `intent`'s deposit account that does not
     /// match what was asked, if anything.
     pub fn funding_deposit_mismatch(

@@ -861,6 +861,19 @@ impl SigningHostRuntime {
             })
     }
 
+    /// Try failed session `intent` again from where its funds are, as
+    /// getcash's "try again": a refused or held conversion converts again by
+    /// its route, an unclaimed or timed-out credit goes on claiming.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.retry_funding"))]
+    pub async fn retry_funding(&self, intent: &str) -> Result<(), v01::GenericError> {
+        self.services
+            .retry_funding(intent)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
     /// Raw seed of session `intent`'s `kind` account, for a wallet to import
     /// and move its funds by hand. `None` while no signing session is active,
     /// or while it is another account's than the one the session recorded.

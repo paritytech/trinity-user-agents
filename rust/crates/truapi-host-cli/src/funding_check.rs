@@ -104,8 +104,8 @@ impl FundingPlatform for TerminalFundingHost {
 /// not have.
 ///
 /// It checks what a real claim would rest on: the source key controls the
-/// session's deposit account, and the amount is within the CASH core saw land
-/// on People. Then it reports the claim finalized without moving anything, so
+/// session's deposit account, and the amount is the claim core sized from
+/// the account's CASH on People. Then it reports the claim finalized without moving anything, so
 /// a run reaches `Delivered` with every core step real except the claim.
 struct StandInTopUp {
     runtime: OnceLock<Weak<SigningHostRuntime>>,
@@ -139,14 +139,14 @@ impl StandInTopUp {
         let Some(session) = session else {
             return Some("no session to claim for");
         };
-        let landed = match session.stage {
-            FundingStage::Converted { landed } | FundingStage::Crediting { landed, .. } => landed,
-            _ => return Some("no CASH has landed for the session"),
-        };
         if session.deposit.map(|deposit| deposit.account) != Some(secret.to_public().to_bytes()) {
             return Some("the source key does not control the deposit account");
         }
-        (request.amount > landed).then_some("the amount exceeds the CASH that landed")
+        let sized = match session.stage {
+            FundingStage::Crediting { progress } => progress.claim.map(|claim| claim.amount),
+            _ => None,
+        };
+        (sized != Some(request.amount)).then_some("the amount is not the claim core sized")
     }
 }
 
@@ -210,6 +210,8 @@ pub struct FundingCheck {
     pub intent: Option<String>,
     /// Convert what arrived of this asset instead of what was asked.
     pub accept: Option<FundingAsset>,
+    /// Try a failed session again from where its funds are.
+    pub retry: bool,
     /// Print the session's account seeds for a wallet, and stop.
     pub export_key: bool,
 }
@@ -255,6 +257,13 @@ pub async fn run(
             .await
             .map_err(|error| anyhow::anyhow!("accepting the deposit failed: {}", error.reason))?;
         println!("accepted what arrived of {deposit_asset:?}");
+    }
+    if check.retry {
+        runtime
+            .retry_funding(&intent)
+            .await
+            .map_err(|error| anyhow::anyhow!("retrying the session failed: {}", error.reason))?;
+        println!("retrying the session");
     }
     follow(&runtime, &intent).await
 }
@@ -341,6 +350,13 @@ async fn follow(runtime: &SigningHostRuntime, intent: &str) -> Result<()> {
             last_mismatch = mismatch;
         }
         match session.stage {
+            FundingStage::Failed {
+                reason,
+                resume: Some(_),
+                ..
+            } => bail!(
+                "the session failed: {reason:?}; its funds are still held, try again with --retry"
+            ),
             FundingStage::Failed { reason, .. } => bail!("the session failed: {reason:?}"),
             FundingStage::Delivered { credited, .. } => {
                 println!("credited {credited} CASH units (stand-in top-up: no coins moved)");

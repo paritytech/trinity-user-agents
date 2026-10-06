@@ -334,6 +334,10 @@ enum Command {
         /// came after the session ended.
         #[arg(long, value_enum, requires = "intent")]
         accept: Option<funding_check::FundingAsset>,
+        /// With `--intent`: try a failed session again from where its funds
+        /// are, a held conversion or an unclaimed credit.
+        #[arg(long, requires = "intent")]
+        retry: bool,
         /// With `--intent`: print the session's account seeds for a wallet to
         /// take the funds back by hand, and stop.
         #[arg(long, requires = "intent")]
@@ -688,6 +692,7 @@ async fn dispatch(
             state_dir,
             intent,
             accept,
+            retry,
             export_key,
         } => {
             let check = funding_check::FundingCheck {
@@ -698,6 +703,7 @@ async fn dispatch(
                 state_dir,
                 intent,
                 accept,
+                retry,
                 export_key,
             };
             funding_check::run(check, |config, state_dir| {

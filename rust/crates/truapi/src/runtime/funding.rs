@@ -39,7 +39,7 @@ use super::statement_allowance::{ChainClient, ChainContext};
 use super::statement_allowance::rpc::RpcClient;
 use crate::host_logic::features;
 use crate::host_logic::funding::{
-    AcceptRefusal, ConversionRoute, ConversionStep, ConversionSubmission, CreditAttempt, CreditStep,
+    AcceptRefusal, ConversionRoute, ConversionStep, ConversionSubmission, CreditProgress, CreditStep,
     DepositAsset, DepositHolding, DepositMismatch, DepositQuote, DepositRequest,
     FundingDeposit, FundingSession, FundingSessionError, FundingStage,
     load_sessions, next_account_number, retained, store_sessions,
@@ -431,18 +431,17 @@ impl FundingRegistry {
             .collect()
     }
 
-    /// Every session awaiting or being credited, with its deposit, landed
-    /// CASH and running attempt.
+    /// Every session awaiting or being credited, with its deposit and what
+    /// its top-ups claimed so far.
     fn crediting_sessions(&self) -> Vec<CreditingSession> {
         self.lock_sessions()
             .values()
             .filter_map(|session| {
-                let (deposit, landed, running) = session.crediting()?;
+                let (deposit, progress) = session.crediting()?;
                 Some(CreditingSession {
                     intent: session.intent.clone(),
                     deposit: deposit.clone(),
-                    landed,
-                    running,
+                    progress,
                 })
             })
             .collect()
@@ -519,8 +518,15 @@ impl FundingRegistry {
 struct CreditingSession {
     intent: String,
     deposit: FundingDeposit,
-    landed: u128,
-    running: Option<CreditAttempt>,
+    progress: Option<CreditProgress>,
+}
+
+impl CreditingSession {
+    /// Whether the next top-up has yet to be sized from what the account
+    /// holds.
+    fn sizing(&self) -> bool {
+        self.progress.is_none_or(|progress| progress.claim.is_none())
+    }
 }
 
 /// A deposit request with the route core chose for it.
@@ -556,8 +562,9 @@ enum PlannedStep {
 ///
 /// A submitted conversion is judged only by what it did: landed once People
 /// shows its CASH on top of what was there before; dropped once its era has
-/// passed unincluded, or once it was included and the deposit is still on
-/// Asset Hub; stalled once it took the deposit and nothing arrived in time.
+/// passed unincluded; refused once it was included and the deposit is still
+/// on Asset Hub, so a conversion failing on chain is bounded like one a dry
+/// run refuses; stalled once it took the deposit and nothing arrived in time.
 /// A fresh conversion is signed only by the account the deposit sits on.
 async fn plan_conversion(
     chains: &dyn ConversionChains,
@@ -581,7 +588,12 @@ async fn plan_conversion(
                 .await
                 .map_err(|error| ConversionError::Chain(error.reason))?;
             if held >= submission.spent {
-                Some(ConversionStep::Dropped)
+                // Included without taking the deposit: it failed on chain,
+                // and resubmitting it as is costs a fee each time.
+                Some(ConversionStep::Refused {
+                    reason: "the conversion was included and failed".into(),
+                    psm: None,
+                })
             } else if now_ms.saturating_sub(submission.submitted_at_ms) > STALL_AFTER_MS {
                 // What did land on People is the user's: credit it rather
                 // than fail, where getcash fails the job as a shortfall.
@@ -696,7 +708,9 @@ impl AssignDepositError {
     /// A conversion error as an assignment error: a refusal stays one.
     fn from_conversion(error: ConversionError) -> Self {
         match error {
-            ConversionError::Refused(reason) => Self::Refused(reason),
+            ConversionError::Refused(reason) | ConversionError::PsmRefused { reason, .. } => {
+                Self::Refused(reason)
+            }
             ConversionError::Chain(reason) => Self::Chain(GenericError { reason }),
         }
     }
@@ -822,6 +836,30 @@ impl RuntimeServices {
             .await?;
         self.watch_funding_deposits();
         Ok(account)
+    }
+
+    /// Try a failed session `intent` again from where its funds are: its
+    /// conversion if the deposit is still on Asset Hub, its crediting if the
+    /// CASH is on People.
+    pub async fn retry_funding(self: &Arc<Self>, intent: &str) -> Result<(), AssignDepositError> {
+        let intent = intent.to_string();
+        let now_ms = current_unix_millis();
+        self.funding()
+            .commit(self.platform.as_ref(), now_ms, move |sessions| {
+                let retried = sessions
+                    .get_mut(&intent)
+                    .ok_or(AssignDepositError::NotFound)
+                    .and_then(|session| {
+                        session
+                            .retry(now_ms)
+                            .map_err(|refusal| AssignDepositError::Refused(refusal.to_string()))
+                    });
+                let changed = if retried.is_ok() { vec![intent] } else { Vec::new() };
+                (retried, changed)
+            })
+            .await??;
+        self.watch_funding_deposits();
+        Ok(())
     }
 
     /// Convert what arrived of `asset` on session `intent`'s deposit account,
@@ -1031,15 +1069,43 @@ impl RuntimeServices {
             signer: conversion.signer.as_ref(),
             product: &product,
         };
-        for CreditingSession {
-            intent,
-            deposit,
-            landed,
-            running,
-        } in crediting
-        {
+        // Each top-up is sized from what the account holds on People when
+        // it starts, as getcash sizes its claims.
+        let chains = if crediting.iter().any(CreditingSession::sizing) {
+            match self.funding_chains(conversion.network, false).await {
+                Ok(chains) => Some(chains),
+                Err(error) => {
+                    tracing::warn!(%error, "reading funding accounts on People failed");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        for session in crediting {
+            let held = match &chains {
+                Some(chains) if session.sizing() => {
+                    let read = within_chain_timeout(chains.landed(&session.deposit.account)).await;
+                    match read
+                        .map_err(|error| error.reason)
+                        .and_then(|held| held.map_err(|error| error.to_string()))
+                    {
+                        Ok(held) => Some(held),
+                        Err(reason) => {
+                            tracing::warn!(intent = %session.intent, %reason, "reading a funding account on People failed");
+                            None
+                        }
+                    }
+                }
+                _ => None,
+            };
+            let CreditingSession {
+                intent,
+                deposit,
+                progress,
+            } = session;
             let now_ms = current_unix_millis();
-            match credit.plan(&deposit, landed, running, now_ms).await {
+            match credit.plan(&deposit, progress, held, now_ms).await {
                 Ok(Some(step)) => registry
                     .record_credit(self.platform.as_ref(), now_ms, &intent, step)
                     .await
@@ -1116,7 +1182,13 @@ impl RuntimeServices {
             let planned = match planned {
                 Ok(Ok(planned)) => planned,
                 Ok(Err(ConversionError::Refused(reason))) => {
-                    Some(PlannedStep::Record(ConversionStep::Refused { reason }))
+                    Some(PlannedStep::Record(ConversionStep::Refused { reason, psm: None }))
+                }
+                Ok(Err(ConversionError::PsmRefused { reason, refusal })) => {
+                    Some(PlannedStep::Record(ConversionStep::Refused {
+                        reason,
+                        psm: Some(refusal),
+                    }))
                 }
                 Ok(Err(ConversionError::Chain(reason))) | Err(GenericError { reason }) => {
                     tracing::warn!(%intent, %reason, "funding conversion pass failed");
@@ -1139,8 +1211,8 @@ impl RuntimeServices {
                         .map_err(|error| error.to_string())?;
                     match chains.submit(extrinsic).await {
                         Ok(()) => Ok(()),
-                        Err(ConversionError::Refused(reason)) => {
-                            let refused = ConversionStep::Refused { reason };
+                        Err(ConversionError::Refused(reason) | ConversionError::PsmRefused { reason, .. }) => {
+                            let refused = ConversionStep::Refused { reason, psm: None };
                             registry
                                 .record_conversion(storage, current_unix_millis(), &intent, refused)
                                 .await
@@ -1325,6 +1397,7 @@ mod tests {
             Some(FundingStage::Failed {
                 reason: FundingFailure::Expired,
                 settled_at_ms: NOW,
+                resume: None,
             })
         );
     }
@@ -1546,6 +1619,7 @@ mod tests {
                     Some(FundingStage::Failed {
                         reason: FundingFailure::Expired,
                         settled_at_ms: past_deadline,
+                        resume: None,
                     }),
                 ],
             )
@@ -1704,7 +1778,9 @@ mod tests {
 
     // Resubmitting while the first transaction can still land would convert
     // twice, so a submission is dropped only once it provably cannot: its era
-    // passed unincluded, or it was included and left the deposit in place.
+    // passed unincluded, or it was included and left the deposit in place,
+    // which counts as a refusal so a failing conversion is not paid for
+    // forever.
     #[test]
     fn a_submission_is_dropped_only_once_it_cannot_convert() {
         let chains = |nonce, balance, block| Scripted {
@@ -1726,7 +1802,10 @@ mod tests {
             [
                 None,
                 Some(PlannedStep::Record(ConversionStep::Dropped)),
-                Some(PlannedStep::Record(ConversionStep::Dropped)),
+                Some(PlannedStep::Record(ConversionStep::Refused {
+                    reason: "the conversion was included and failed".into(),
+                    psm: None,
+                })),
                 None,
                 Some(PlannedStep::Record(ConversionStep::Stalled)),
             ]
@@ -1764,6 +1843,7 @@ mod tests {
             stage: FundingStage::Failed {
                 reason: FundingFailure::Expired,
                 settled_at_ms,
+                resume: None,
             },
             deposit: Some(FundingDeposit {
                 account: holder,
@@ -1825,6 +1905,7 @@ mod tests {
                 stage: FundingStage::Failed {
                     reason: FundingFailure::Expired,
                     settled_at_ms: NOW,
+                    resume: None,
                 },
                 deposit: Some(converting_deposit()),
                 ..session("fs_ended", NOW - DAY_MS)

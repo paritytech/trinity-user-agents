@@ -22,7 +22,7 @@ use truapi::latest::{GenericError, TxPayloadExtension};
 use crate::host_internal::extrinsic::{Sr25519Signer, build_signed_extrinsic_v4};
 use super::DepositBalances;
 use super::credit::CLAIM_UNIT;
-use crate::host_logic::funding::{ConversionRoute, DepositAsset, DepositQuote, FundingDeposit};
+use crate::host_logic::funding::{ConversionRoute, DepositAsset, DepositQuote, FundingDeposit, PsmRefusal};
 use crate::runtime::statement_allowance::ChainContext;
 use crate::runtime::statement_allowance::extension::{ChainState, Metadata as ExtensionMetadata};
 
@@ -154,6 +154,14 @@ pub enum ConversionError {
     /// since retrying the same conversion keeps failing.
     #[display("refused: {_0}")]
     Refused(String),
+    /// The PSM refused the mint, as getcash classes the refusal.
+    #[display("refused by the PSM: {reason}")]
+    PsmRefused {
+        /// Why, as the chain reported it.
+        reason: String,
+        /// How the PSM refused it.
+        refusal: PsmRefusal,
+    },
     /// The chains could not be read or reached. Retried on the next pass.
     #[display("{_0}")]
     Chain(String),
@@ -686,6 +694,11 @@ impl Chains {
                     first_refusal.get_or_insert(refusal.reason);
                     allowance *= 2;
                 }
+                Err(DryRunRefusal {
+                    reason,
+                    psm: Some(refusal),
+                    ..
+                }) => return Err(ConversionError::PsmRefused { reason, refusal }),
                 Err(refusal) => {
                     return Err(ConversionError::Refused(first_refusal.unwrap_or(refusal.reason)));
                 }
@@ -740,6 +753,7 @@ impl Chains {
             Ok(Err(DryRunRefusal {
                 reason,
                 fees_short: false,
+                psm: None,
             }))
         };
         let origin = Value::unnamed_variant(
@@ -759,6 +773,7 @@ impl Chains {
             return Ok(Err(DryRunRefusal {
                 reason: format!("dry run failed on Asset Hub: {} ({execution})", names.join(" / ")),
                 fees_short: names.iter().any(|name| name == "NotHoldingFees"),
+                psm: psm_refusal(&names),
             }));
         }
         let events = field(&effects, "emitted_events")?;
@@ -1350,16 +1365,18 @@ fn cash_to_teleport(target: u128) -> Option<u128> {
     teleported_for(target.div_ceil(CLAIM_UNIT).checked_mul(CLAIM_UNIT)?)
 }
 
-/// Why a dry run refused a conversion, and whether more fees would cure it.
+/// Why a dry run refused a conversion, whether more fees would cure it, and
+/// how the PSM refused it when it was the PSM.
 #[derive(Debug)]
 struct DryRunRefusal {
     reason: String,
     fees_short: bool,
+    psm: Option<PsmRefusal>,
 }
 
-/// The error names a failed dispatch's module error decodes to through
-/// `metadata`: the pallet error, then any enum inside it, such
-/// as the XCM error a failed local execution carries.
+/// The names a failed dispatch's module error decodes to through
+/// `metadata`: the pallet, its error, then any enum inside it, such as the
+/// XCM error a failed local execution carries.
 fn module_error_names(metadata: &subxt::Metadata, execution: &Value) -> Vec<String> {
     let Some(module) = find_variant(execution, "Module") else {
         return Vec::new();
@@ -1384,7 +1401,7 @@ fn module_error_names(metadata: &subxt::Metadata, execution: &Value) -> Vec<Stri
     let Some(variant) = bytes.first().and_then(|byte| pallet.error_variant_by_index(*byte)) else {
         return Vec::new();
     };
-    let mut names = vec![variant.name.clone()];
+    let mut names = vec![pallet.name().to_string(), variant.name.clone()];
     let mut cursor = 1;
     for field in &variant.fields {
         let Some(ty) = metadata.types().resolve(field.ty.id) else {
@@ -1404,6 +1421,15 @@ fn module_error_names(metadata: &subxt::Metadata, execution: &Value) -> Vec<Stri
         }
     }
     names
+}
+
+/// How the PSM refused a dispatch whose module error decodes to `names`, if
+/// it was the PSM.
+fn psm_refusal(names: &[String]) -> Option<PsmRefusal> {
+    match names {
+        [pallet, error, ..] if pallet == "Psm" => PsmRefusal::of(error),
+        _ => None,
+    }
 }
 
 /// The first variant named `name` anywhere in `value`.
@@ -1927,9 +1953,10 @@ mod tests {
 
         assert_eq!(
             module_error_names(&metadata, &execution),
-            ["LocalExecutionIncompleteWithError", "NotHoldingFees"]
+            ["PolkadotXcm", "LocalExecutionIncompleteWithError", "NotHoldingFees"]
         );
     }
+
 
 
     // Sized from the getcash formulas: the PSM keeps its fee, rounded up,
@@ -2056,6 +2083,57 @@ mod live {
         Chains::at_finalized(&asset_hub, &client(PEOPLE).await, NETWORK, Some(context))
             .await
             .expect("chains pinned")
+    }
+
+    // getcash holds a mint the PSM will not serve at once and counts one it
+    // cannot serve now; any other pallet's error is not a PSM refusal.
+    // Classed by name, so a renamed PSM error fails here instead of being
+    // retried as an unknown one.
+    #[tokio::test]
+    #[ignore = "reads Paseo Next"]
+    async fn a_psm_error_is_classed_as_getcash_classes_it() {
+        let chains = chains().await;
+        let metadata = chains.asset_hub.metadata_ref();
+        let module_error = |pallet: &str, error: &str| {
+            let pallet = metadata.pallet_by_name(pallet).expect("pallet");
+            let variant = pallet
+                .error_variants()
+                .and_then(|variants| variants.iter().find(|variant| variant.name == error))
+                .expect("variant")
+                .index;
+            let execution = Value::unnamed_variant(
+                "Err",
+                [Value::named_variant(
+                    "Module",
+                    [
+                        ("index", Value::u128(pallet.error_index().into())),
+                        ("error", Value::unnamed_composite([variant, 0, 0, 0].map(|byte| Value::u128(byte.into())))),
+                    ],
+                )],
+            );
+            psm_refusal(&module_error_names(metadata, &execution))
+        };
+
+        assert_eq!(
+            [
+                module_error("Psm", "MintingStopped"),
+                module_error("Psm", "ExceedsMaxPsmDebt"),
+                module_error("Psm", "FeeTooHigh"),
+                module_error("Psm", "BelowMinimumSwap"),
+                module_error("Psm", "AllSwapsStopped"),
+                module_error("Psm", "AmountTooSmallAfterConversion"),
+                module_error("PolkadotXcm", "LocalExecutionIncompleteWithError"),
+            ],
+            [
+                Some(PsmRefusal::Unavailable),
+                Some(PsmRefusal::Unavailable),
+                Some(PsmRefusal::WillNotServe),
+                Some(PsmRefusal::WillNotServe),
+                Some(PsmRefusal::Unavailable),
+                Some(PsmRefusal::WillNotServe),
+                None,
+            ]
+        );
     }
 
     /// An account holding at least `least` of asset `id` on Asset Hub.

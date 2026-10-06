@@ -240,14 +240,32 @@ pub struct ConversionSubmission {
     pub spent: u128,
 }
 
-/// Dry runs refused before a conversion gives up.
+/// Refusals before a conversion gives up, as getcash holds a mint the PSM
+/// keeps refusing.
 const MAX_CONVERSION_REFUSALS: u8 = 3;
+/// Top-up attempts before crediting settles for what they claimed.
+const MAX_CLAIM_ATTEMPTS: u8 = 3;
 /// How long a session that ended with its deposit recoverable keeps being
 /// read, as getcash watches a payment: funds that arrive late, or stay after
 /// a refused conversion, can still be converted.
 pub const LATE_WATCH_MS: u64 = 72 * 60 * 60 * 1_000;
 /// Code a session fails with when its conversion was refused.
 const CONVERSION_REFUSED: &str = "conversion_refused";
+/// Code a session fails with when the PSM would not mint its deposit.
+const CONVERSION_HELD: &str = "conversion_held";
+/// Code a session fails with when its top-ups claimed nothing.
+const CREDIT_UNCLAIMED: &str = "credit_unclaimed";
+
+/// Why a failed session cannot be retried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+pub enum RetryRefusal {
+    /// It did not fail, or its funds are not where a retry can reach them.
+    #[display("the session has nothing to retry")]
+    NotResumable,
+    /// Nothing of the deposit's asset is on the deposit account.
+    #[display("the deposit account holds none of the deposit")]
+    NothingHeld,
+}
 
 /// Why a deposit could not be accepted as it arrived.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
@@ -294,14 +312,8 @@ pub enum FundingStage {
     /// Inbound: the host's top-up is claiming the landed CASH into the
     /// user's balance.
     Crediting {
-        /// CASH on People, in payment balance units.
-        landed: u128,
-        /// Which top-up attempt is running, from 0.
-        attempt: u8,
-        /// When that attempt was registered, in Unix milliseconds.
-        since_ms: u64,
-        /// When the first attempt was registered, in Unix milliseconds.
-        started_ms: u64,
+        /// What the top-ups have claimed so far.
+        progress: CreditProgress,
     },
     /// Inbound terminal success: the CASH is in the user's balance.
     Delivered {
@@ -316,7 +328,62 @@ pub enum FundingStage {
         reason: FundingFailure,
         /// When it ended, in Unix milliseconds.
         settled_at_ms: u64,
+        /// Where a retry picks up, when the funds are still on the session's
+        /// accounts.
+        resume: Option<FundingResume>,
     },
+}
+
+/// Where a retry of a failed session picks up, as getcash re-arms a held or
+/// unclaimed request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum FundingResume {
+    /// The deposit is still on Asset Hub: convert it again by its route.
+    Conversion,
+    /// The CASH is on People: credit it from `progress`.
+    Credit {
+        /// What the top-ups claimed, and the attempt to go on with.
+        progress: CreditProgress,
+    },
+}
+
+/// Top-ups claiming a session's CASH, as getcash tracks its claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct CreditProgress {
+    /// CASH the earlier attempts claimed, in payment balance units.
+    pub credited: u128,
+    /// Which attempt is running or next, from 0.
+    pub attempt: u8,
+    /// The attempt's claim, `None` until it is sized from what the account
+    /// holds.
+    pub claim: Option<Claim>,
+    /// When crediting started, or was last retried, in Unix milliseconds.
+    pub started_ms: u64,
+}
+
+/// One top-up, kept from when it is sized so that registering it again
+/// after a restart asks for the same amount under the same id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct Claim {
+    /// CASH it claims, in payment balance units.
+    pub amount: u128,
+    /// When it was sized, then when the host accepted it, in Unix
+    /// milliseconds.
+    pub since_ms: u64,
+    /// Whether the host accepted it.
+    pub registered: bool,
 }
 
 impl FundingSession {
@@ -390,12 +457,23 @@ impl FundingSession {
     /// End the session with `reason`, unless it already ended. Returns whether
     /// it changed.
     pub fn fail(&mut self, reason: FundingFailure, now_ms: u64) -> bool {
+        self.fail_resumable(reason, None, now_ms)
+    }
+
+    /// [`Self::fail`], leaving where a retry picks up.
+    fn fail_resumable(
+        &mut self,
+        reason: FundingFailure,
+        resume: Option<FundingResume>,
+        now_ms: u64,
+    ) -> bool {
         if self.is_terminal() {
             return false;
         }
         self.stage = FundingStage::Failed {
             reason,
             settled_at_ms: now_ms,
+            resume,
         };
         true
     }
@@ -442,22 +520,61 @@ impl FundingSession {
 
     /// Whether the session ended in a way its deposit can come back from,
     /// within the late watch window: it expired, or its conversion was
-    /// refused while the funds stayed on the account.
+    /// refused or held while the funds stayed on the account.
     fn recoverable_since(&self, now_ms: u64) -> bool {
         match &self.stage {
             FundingStage::Failed {
                 reason,
                 settled_at_ms,
+                resume,
             } => {
-                let recoverable = match reason {
-                    FundingFailure::Expired => true,
-                    FundingFailure::Other { code, .. } => code == CONVERSION_REFUSED,
-                    _ => false,
-                };
+                let recoverable = *reason == FundingFailure::Expired
+                    || *resume == Some(FundingResume::Conversion);
                 recoverable && now_ms.saturating_sub(*settled_at_ms) <= LATE_WATCH_MS
             }
             _ => false,
         }
+    }
+
+    /// Pick a failed session up where its funds are, as getcash's "try
+    /// again" does: a refused or held conversion is tried again by its route
+    /// with its refusals cleared, an unclaimed or timed-out credit goes on
+    /// from its progress. The route and quote stay as they were.
+    pub fn retry(&mut self, now_ms: u64) -> Result<(), RetryRefusal> {
+        let FundingStage::Failed {
+            resume: Some(resume),
+            ..
+        } = self.stage
+        else {
+            return Err(RetryRefusal::NotResumable);
+        };
+        self.stage = match resume {
+            FundingResume::Conversion => {
+                let deposited = self
+                    .deposit
+                    .as_ref()
+                    .map_or(0, |deposit| deposit.held(deposit.asset));
+                if deposited == 0 {
+                    return Err(RetryRefusal::NothingHeld);
+                }
+                FundingStage::Converting {
+                    deposited,
+                    refusals: 0,
+                    submission: None,
+                }
+            }
+            FundingResume::Credit { progress } => FundingStage::Crediting {
+                progress: CreditProgress {
+                    claim: progress.claim.map(|claim| Claim {
+                        since_ms: now_ms,
+                        ..claim
+                    }),
+                    started_ms: now_ms,
+                    ..progress
+                },
+            },
+        };
+        Ok(())
     }
 
     /// Balance of the deposit's asset at which it counts as delivered, as
@@ -589,18 +706,33 @@ impl FundingSession {
         match step {
             ConversionStep::Submitted(submitted) => *submission = Some(submitted),
             ConversionStep::Dropped => *submission = None,
-            ConversionStep::Refused { reason } => {
+            ConversionStep::Refused { reason, psm } => {
                 *submission = None;
-                *refusals = refusals.saturating_add(1);
-                if *refusals >= MAX_CONVERSION_REFUSALS {
-                    return self.fail(
-                        FundingFailure::Other {
-                            code: CONVERSION_REFUSED.into(),
-                            message: reason,
-                        },
-                        now_ms,
-                    );
+                if psm != Some(PsmRefusal::WillNotServe) {
+                    *refusals = refusals.saturating_add(1);
+                    if *refusals < MAX_CONVERSION_REFUSALS {
+                        return true;
+                    }
                 }
+                let (code, message) = match psm {
+                    Some(PsmRefusal::WillNotServe) => (
+                        CONVERSION_HELD,
+                        format!("the PSM will not mint this deposit as quoted: {reason}"),
+                    ),
+                    Some(PsmRefusal::Unavailable) => (
+                        CONVERSION_HELD,
+                        format!("the PSM refused the mint {MAX_CONVERSION_REFUSALS} times, last: {reason}"),
+                    ),
+                    None => (CONVERSION_REFUSED, reason),
+                };
+                return self.fail_resumable(
+                    FundingFailure::Other {
+                        code: code.into(),
+                        message,
+                    },
+                    Some(FundingResume::Conversion),
+                    now_ms,
+                );
             }
             ConversionStep::Landed { landed } => {
                 self.stage = FundingStage::Converted { landed };
@@ -619,98 +751,190 @@ impl FundingSession {
     }
 }
 
-/// A top-up attempt that is running.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CreditAttempt {
-    /// Which attempt, from 0.
-    pub attempt: u8,
-    /// When it was registered, in Unix milliseconds.
-    pub since_ms: u64,
-    /// When the first attempt was registered, in Unix milliseconds.
-    pub started_ms: u64,
-}
-
 impl FundingSession {
-    /// The deposit and landed CASH of a session awaiting or being credited,
-    /// with the attempt running, if any.
-    pub fn crediting(&self) -> Option<(&FundingDeposit, u128, Option<CreditAttempt>)> {
+    /// The deposit of a session awaiting or being credited, with what its
+    /// top-ups have claimed so far, `None` before the first.
+    pub fn crediting(&self) -> Option<(&FundingDeposit, Option<CreditProgress>)> {
         let deposit = self.deposit.as_ref()?;
         match self.stage {
-            FundingStage::Converted { landed } => Some((deposit, landed, None)),
-            FundingStage::Crediting {
-                landed,
-                attempt,
-                since_ms,
-                started_ms,
-            } => Some((
-                deposit,
-                landed,
-                Some(CreditAttempt {
-                    attempt,
-                    since_ms,
-                    started_ms,
-                }),
-            )),
+            FundingStage::Converted { .. } => Some((deposit, None)),
+            FundingStage::Crediting { progress } => Some((deposit, Some(progress))),
             _ => None,
         }
     }
 
-    /// Advance a session being credited by one step. Returns whether it
-    /// changed.
+    /// Advance a session being credited by one step, as getcash settles its
+    /// claim. Returns whether it changed.
     pub fn advance_credit(&mut self, step: CreditStep, now_ms: u64) -> bool {
-        let (landed, started_ms) = match self.stage {
-            FundingStage::Converted { landed } => (landed, now_ms),
-            FundingStage::Crediting {
-                landed, started_ms, ..
-            } => (landed, started_ms),
+        let progress = match self.stage {
+            FundingStage::Converted { .. } => CreditProgress {
+                credited: 0,
+                attempt: 0,
+                claim: None,
+                started_ms: now_ms,
+            },
+            FundingStage::Crediting { progress } => progress,
             _ => return false,
         };
+        let credited_with = |claimed: u128| progress.credited.saturating_add(claimed);
         match step {
-            CreditStep::Registered { attempt } => {
+            CreditStep::Sized { amount } => {
                 self.stage = FundingStage::Crediting {
-                    landed,
-                    attempt,
-                    since_ms: now_ms,
-                    started_ms,
+                    progress: CreditProgress {
+                        claim: Some(Claim {
+                            amount,
+                            since_ms: now_ms,
+                            registered: false,
+                        }),
+                        ..progress
+                    },
                 };
                 true
             }
-            CreditStep::Credited { credited } => {
+            CreditStep::Registered => {
+                let Some(claim) = progress.claim.filter(|claim| !claim.registered) else {
+                    return false;
+                };
+                self.stage = FundingStage::Crediting {
+                    progress: CreditProgress {
+                        claim: Some(Claim {
+                            since_ms: now_ms,
+                            registered: true,
+                            ..claim
+                        }),
+                        ..progress
+                    },
+                };
+                true
+            }
+            CreditStep::Claimed { claimed } => {
                 self.stage = FundingStage::Delivered {
-                    credited,
+                    credited: credited_with(claimed),
                     settled_at_ms: now_ms,
                 };
                 true
             }
-            CreditStep::Abandoned { reason } => self.fail(
+            CreditStep::Short { claimed } => {
+                let progress = CreditProgress {
+                    credited: credited_with(claimed),
+                    attempt: progress.attempt.saturating_add(1),
+                    claim: None,
+                    ..progress
+                };
+                if progress.attempt < MAX_CLAIM_ATTEMPTS {
+                    self.stage = FundingStage::Crediting { progress };
+                    return true;
+                }
+                self.settle_credit(progress, now_ms)
+            }
+            CreditStep::Drained => self.settle_credit(progress, now_ms),
+            // Between attempts nothing is in flight, so what earlier ones
+            // claimed is delivered rather than the session failing.
+            CreditStep::TimedOut if progress.claim.is_none() && progress.credited > 0 => {
+                self.settle_credit(progress, now_ms)
+            }
+            CreditStep::TimedOut => self.fail_resumable(
                 FundingFailure::Other {
-                    code: "credit_failed".into(),
+                    code: "credit_timeout".into(),
+                    message: "the top-up did not finish in time".into(),
+                },
+                Some(FundingResume::Credit { progress }),
+                now_ms,
+            ),
+            CreditStep::Refused { reason } => self.fail_resumable(
+                FundingFailure::Other {
+                    code: "credit_refused".into(),
                     message: reason,
                 },
+                Some(FundingResume::Credit {
+                    progress: CreditProgress {
+                        claim: None,
+                        ..progress
+                    },
+                }),
                 now_ms,
             ),
         }
+    }
+
+    /// End crediting with what the top-ups claimed: delivered, partly if
+    /// they fell short, or failed with the CASH still on People, to be
+    /// retried from `progress`.
+    fn settle_credit(&mut self, progress: CreditProgress, now_ms: u64) -> bool {
+        if progress.credited > 0 {
+            self.stage = FundingStage::Delivered {
+                credited: progress.credited,
+                settled_at_ms: now_ms,
+            };
+            return true;
+        }
+        self.fail_resumable(
+            FundingFailure::Other {
+                code: CREDIT_UNCLAIMED.into(),
+                message: "the host claimed no CASH from the deposit account".into(),
+            },
+            Some(FundingResume::Credit { progress }),
+            now_ms,
+        )
     }
 }
 
 /// What one pass of crediting found or did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CreditStep {
-    /// The host accepted top-up `attempt`.
-    Registered {
-        /// Which attempt, from 0.
-        attempt: u8,
+    /// The next top-up was sized from what the account holds, to be kept
+    /// before it is registered.
+    Sized {
+        /// CASH it claims, in payment balance units.
+        amount: u128,
     },
-    /// The top-up credited the user's balance.
-    Credited {
-        /// Amount credited, in payment balance units.
-        credited: u128,
+    /// The host accepted the sized top-up.
+    Registered,
+    /// The running top-up claimed all it asked for, and it is final.
+    Claimed {
+        /// Amount it claimed, in payment balance units.
+        claimed: u128,
     },
-    /// Crediting cannot succeed; the CASH stays on the account on People.
-    Abandoned {
+    /// The running top-up claimed less than it asked for, or nothing; the
+    /// next attempt claims what is left.
+    Short {
+        /// Amount it claimed, in payment balance units.
+        claimed: u128,
+    },
+    /// Less is left on the account than a top-up can claim.
+    Drained,
+    /// The running top-up, or crediting as a whole, took too long.
+    TimedOut,
+    /// The host will not take the deposit account as a top-up source.
+    Refused {
         /// Why.
         reason: String,
     },
+}
+
+/// How the PSM refused a mint, as getcash classes its dispatch errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PsmRefusal {
+    /// Minting is stopped or the PSM is at its debt ceiling, which may
+    /// pass: counted, the third holds the funds.
+    Unavailable,
+    /// The fee is above the quote's or the amount is outside what the PSM
+    /// takes, which retrying the same mint cannot cure: holds at once.
+    WillNotServe,
+}
+
+impl PsmRefusal {
+    /// The class of the PSM pallet error named `error`, `None` for one that
+    /// is not a refusal.
+    pub fn of(error: &str) -> Option<Self> {
+        match error {
+            "MintingStopped" | "AllSwapsStopped" | "ExceedsMaxPsmDebt" => Some(Self::Unavailable),
+            "FeeTooHigh" | "BelowMinimumSwap" | "AmountTooSmallAfterConversion" => {
+                Some(Self::WillNotServe)
+            }
+            _ => None,
+        }
+    }
 }
 
 /// What one pass of a conversion found or did.
@@ -719,13 +943,14 @@ pub enum ConversionStep {
     /// The conversion transaction is about to be submitted.
     Submitted(ConversionSubmission),
     /// The submitted transaction can no longer convert anything: its era
-    /// ended unincluded, or it was included and failed. The next pass
-    /// submits again.
+    /// ended unincluded. The next pass submits again.
     Dropped,
-    /// A dry run refused the conversion.
+    /// A dry run or the transaction pool refused the conversion.
     Refused {
         /// Why, as the chain reported it.
         reason: String,
+        /// How the PSM refused it, when it was the PSM.
+        psm: Option<PsmRefusal>,
     },
     /// CASH arrived on People.
     Landed {
@@ -838,9 +1063,11 @@ pub enum FundingSessionError {
 /// The bound exists because [`CoreStorageKey::FundingSessions`] is one SCALE
 /// blob rewritten on every change; the host keeps the full history.
 pub fn retained(sessions: impl IntoIterator<Item = FundingSession>) -> Vec<FundingSession> {
-    let (mut open, mut settled): (Vec<_>, Vec<_>) = sessions
-        .into_iter()
-        .partition(|session| !session.is_terminal());
+    // A failed session whose funds a retry can still reach is kept like an
+    // open one, so history cannot push it out.
+    let (mut open, mut settled): (Vec<_>, Vec<_>) = sessions.into_iter().partition(|session| {
+        !session.is_terminal() || matches!(session.stage, FundingStage::Failed { resume: Some(_), .. })
+    });
     settled.sort_by_key(|session| core::cmp::Reverse(session.settled_at_ms()));
     settled.truncate(SETTLED_HISTORY_LIMIT);
     open.append(&mut settled);
@@ -948,6 +1175,7 @@ mod tests {
             stage: FundingStage::Failed {
                 reason: FundingFailure::Expired,
                 settled_at_ms,
+                resume: None,
             },
             ..session(FundingDirection::In)
         }
@@ -1085,25 +1313,28 @@ mod tests {
         }
     }
 
+    fn refuse(session: &mut FundingSession, psm: Option<PsmRefusal>) -> FundingStage {
+        session.advance_conversion(
+            ConversionStep::Refused {
+                reason: "no pool".into(),
+                psm,
+            },
+            NOW,
+        );
+        session.stage.clone()
+    }
+
     // A dry run that keeps refusing will not start passing, so the third
-    // refusal ends the session rather than retrying forever, and a refusal
-    // clears any submission so the next attempt starts clean.
+    // refusal ends the session rather than retrying forever, with the
+    // deposit left where a retry can convert it; a refusal clears any
+    // submission so the next attempt starts clean.
     #[test]
     fn a_conversion_ends_on_its_third_refusal() {
         let mut session = converting();
         session.advance_conversion(ConversionStep::Submitted(SUBMISSION), NOW);
-        let refused = |session: &mut FundingSession| {
-            session.advance_conversion(
-                ConversionStep::Refused {
-                    reason: "no pool".into(),
-                },
-                NOW,
-            );
-            session.stage.clone()
-        };
 
         assert_eq!(
-            [refused(&mut session), refused(&mut session), refused(&mut session)],
+            [refuse(&mut session, None), refuse(&mut session, None), refuse(&mut session, None)],
             [
                 FundingStage::Converting {
                     deposited: 50,
@@ -1121,8 +1352,68 @@ mod tests {
                         message: "no pool".into(),
                     },
                     settled_at_ms: NOW,
+                    resume: Some(FundingResume::Conversion),
                 },
             ]
+        );
+    }
+
+    // getcash holds the funds on the first refusal the PSM will never get
+    // past, such as a fee above the quote, and on the third it may get past;
+    // both leave the deposit for a retry, which starts the count again.
+    #[test]
+    fn the_psm_holds_the_deposit_as_getcash_holds_it() {
+        let held = |message: &str| FundingStage::Failed {
+            reason: FundingFailure::Other {
+                code: "conversion_held".into(),
+                message: message.into(),
+            },
+            settled_at_ms: NOW,
+            resume: Some(FundingResume::Conversion),
+        };
+        let mut will_not = converting();
+        let mut unavailable = converting();
+        let unavailable_stages = [
+            refuse(&mut unavailable, Some(PsmRefusal::Unavailable)),
+            refuse(&mut unavailable, Some(PsmRefusal::Unavailable)),
+            refuse(&mut unavailable, Some(PsmRefusal::Unavailable)),
+        ];
+        let held_deposit = FundingDeposit {
+            holdings: vec![DepositHolding {
+                asset: DepositAsset::Asset(1984),
+                balance: 50,
+            }],
+            ..converting().deposit.expect("deposit")
+        };
+        unavailable.deposit = Some(held_deposit);
+        let retried = (unavailable.retry(NOW + 1), unavailable.stage.clone());
+
+        assert_eq!(
+            (refuse(&mut will_not, Some(PsmRefusal::WillNotServe)), unavailable_stages, retried),
+            (
+                held("the PSM will not mint this deposit as quoted: no pool"),
+                [
+                    FundingStage::Converting {
+                        deposited: 50,
+                        refusals: 1,
+                        submission: None,
+                    },
+                    FundingStage::Converting {
+                        deposited: 50,
+                        refusals: 2,
+                        submission: None,
+                    },
+                    held("the PSM refused the mint 3 times, last: no pool"),
+                ],
+                (
+                    Ok(()),
+                    FundingStage::Converting {
+                        deposited: 50,
+                        refusals: 0,
+                        submission: None,
+                    }
+                ),
+            )
         );
     }
 
@@ -1221,6 +1512,7 @@ mod tests {
             stage: FundingStage::Failed {
                 reason: FundingFailure::Expired,
                 settled_at_ms,
+                resume: None,
             },
             ..open.clone()
         };
@@ -1279,6 +1571,7 @@ mod tests {
             stage: FundingStage::Failed {
                 reason: FundingFailure::Expired,
                 settled_at_ms: NOW,
+                resume: None,
             },
             ..quoted.clone()
         };
@@ -1340,29 +1633,216 @@ mod tests {
         );
     }
 
+    fn landed() -> FundingSession {
+        let mut session = converting();
+        session.advance_conversion(ConversionStep::Landed { landed: 49 }, NOW);
+        session
+    }
+
+    fn credit(session: &mut FundingSession, steps: impl IntoIterator<Item = CreditStep>) -> FundingStage {
+        for step in steps {
+            session.advance_credit(step, NOW);
+        }
+        session.stage.clone()
+    }
+
     // Delivered is the one inbound success: it ends the session for
     // subscribers and history, and the credited amount is what they see.
     #[test]
     fn a_credited_session_is_delivered() {
-        let mut session = converting();
-        session.advance_conversion(ConversionStep::Landed { landed: 49 }, NOW);
-        session.advance_credit(CreditStep::Registered { attempt: 0 }, NOW);
-        let crediting = session.crediting().map(|(_, landed, running)| (landed, running));
-        session.advance_credit(CreditStep::Credited { credited: 40 }, NOW + 1);
+        let mut session = landed();
+        session.advance_credit(CreditStep::Sized { amount: 40 }, NOW);
+        session.advance_credit(CreditStep::Registered, NOW);
+        let crediting = session.crediting().map(|(_, progress)| progress);
+        session.advance_credit(CreditStep::Claimed { claimed: 40 }, NOW + 1);
 
         assert_eq!(
             (crediting, session.wire_item(), session.settled_at_ms()),
             (
-                Some((
-                    49,
-                    Some(CreditAttempt {
-                        attempt: 0,
+                Some(Some(CreditProgress {
+                    credited: 0,
+                    attempt: 0,
+                    claim: Some(Claim {
+                        amount: 40,
                         since_ms: NOW,
-                        started_ms: NOW,
-                    })
-                )),
+                        registered: true,
+                    }),
+                    started_ms: NOW,
+                })),
                 HostFundingStatusSubscribeItem::Delivered { credited: 40 },
                 Some(NOW + 1),
+            )
+        );
+    }
+
+    // getcash adds up what each claim took: a short claim leaves the rest
+    // for the next attempt, a final one delivers the total, and after the
+    // last attempt whatever was claimed is delivered, short as it is.
+    #[test]
+    fn short_claims_add_up_and_the_last_attempt_settles_for_them() {
+        let short = |claimed| CreditStep::Short { claimed };
+
+        assert_eq!(
+            [
+                credit(&mut landed(), [CreditStep::Sized { amount: 40 }, CreditStep::Registered, short(10)]),
+                credit(&mut landed(), [CreditStep::Sized { amount: 40 }, CreditStep::Registered, short(10), CreditStep::Sized { amount: 30 }, CreditStep::Registered, CreditStep::Claimed { claimed: 30 }]),
+                credit(&mut landed(), [CreditStep::Sized { amount: 40 }, CreditStep::Registered, short(10), CreditStep::Sized { amount: 30 }, CreditStep::Registered, short(0), CreditStep::Sized { amount: 30 }, CreditStep::Registered, short(5)]),
+                credit(&mut landed(), [CreditStep::Sized { amount: 40 }, CreditStep::Registered, short(10), CreditStep::Drained]),
+            ],
+            [
+                FundingStage::Crediting {
+                    progress: CreditProgress {
+                        credited: 10,
+                        attempt: 1,
+                        claim: None,
+                        started_ms: NOW,
+                    },
+                },
+                FundingStage::Delivered {
+                    credited: 40,
+                    settled_at_ms: NOW,
+                },
+                FundingStage::Delivered {
+                    credited: 15,
+                    settled_at_ms: NOW,
+                },
+                FundingStage::Delivered {
+                    credited: 10,
+                    settled_at_ms: NOW,
+                },
+            ]
+        );
+    }
+
+    // Between attempts nothing is in flight, so running out of time there
+    // delivers what was claimed; with a top-up in flight it fails, to be
+    // watched again on a retry.
+    #[test]
+    fn running_out_of_time_between_attempts_delivers_what_was_claimed() {
+        let short = CreditStep::Short { claimed: 10 };
+        let sized = CreditStep::Sized { amount: 30 };
+
+        assert_eq!(
+            [
+                credit(&mut landed(), [CreditStep::Sized { amount: 40 }, CreditStep::Registered, short.clone(), CreditStep::TimedOut]),
+                credit(&mut landed(), [CreditStep::Sized { amount: 40 }, CreditStep::Registered, short, sized, CreditStep::TimedOut]),
+            ],
+            [
+                FundingStage::Delivered {
+                    credited: 10,
+                    settled_at_ms: NOW,
+                },
+                FundingStage::Failed {
+                    reason: FundingFailure::Other {
+                        code: "credit_timeout".into(),
+                        message: "the top-up did not finish in time".into(),
+                    },
+                    settled_at_ms: NOW,
+                    resume: Some(FundingResume::Credit {
+                        progress: CreditProgress {
+                            credited: 10,
+                            attempt: 1,
+                            claim: Some(Claim {
+                                amount: 30,
+                                since_ms: NOW,
+                                registered: false,
+                            }),
+                            started_ms: NOW,
+                        },
+                    }),
+                },
+            ]
+        );
+    }
+
+    // A failed session whose funds a retry can still reach must outlive the
+    // history bound, or the host could lose track of where they are.
+    #[test]
+    fn history_keeps_a_failed_session_that_still_holds_funds() {
+        let held = FundingSession {
+            intent: "fs_held".into(),
+            stage: FundingStage::Failed {
+                reason: FundingFailure::Expired,
+                settled_at_ms: NOW - 1,
+                resume: Some(FundingResume::Conversion),
+            },
+            ..session(FundingDirection::In)
+        };
+        let history = (0..SETTLED_HISTORY_LIMIT as u64).map(|n| expired(&format!("fs_{n}"), NOW + n));
+
+        assert!(
+            retained(history.chain([held.clone()]))
+                .iter()
+                .any(|session| session.intent == held.intent)
+        );
+    }
+
+    // CASH no top-up claimed is still on People, so a failed credit is
+    // retried as getcash re-arms it: after an unclaimed last attempt with a
+    // fresh attempt and id, after a timeout with the same claim watched
+    // again, and after a refused source by registering the attempt again.
+    #[test]
+    fn a_failed_credit_is_retried_from_where_it_stopped() {
+        let short = CreditStep::Short { claimed: 0 };
+        let retried = |mut session: FundingSession| {
+            let retried = session.retry(NOW + 5);
+            (retried, session.stage)
+        };
+        let progress = |attempt, claim| FundingStage::Crediting {
+            progress: CreditProgress {
+                credited: 0,
+                attempt,
+                claim,
+                started_ms: NOW + 5,
+            },
+        };
+        let mut unclaimed = landed();
+        let unclaimed_stage = credit(
+            &mut unclaimed,
+            [CreditStep::Sized { amount: 40 }, CreditStep::Registered, short.clone(), CreditStep::Sized { amount: 40 }, CreditStep::Registered, short.clone(), CreditStep::Sized { amount: 40 }, CreditStep::Registered, short],
+        );
+        let mut timed_out = landed();
+        credit(&mut timed_out, [CreditStep::Sized { amount: 40 }, CreditStep::Registered, CreditStep::TimedOut]);
+        let mut refused = landed();
+        credit(&mut refused, [CreditStep::Refused { reason: "no".into() }]);
+
+        assert_eq!(
+            (
+                unclaimed_stage,
+                [retried(unclaimed), retried(timed_out), retried(refused), retried(landed())],
+            ),
+            (
+                FundingStage::Failed {
+                    reason: FundingFailure::Other {
+                        code: "credit_unclaimed".into(),
+                        message: "the host claimed no CASH from the deposit account".into(),
+                    },
+                    settled_at_ms: NOW,
+                    resume: Some(FundingResume::Credit {
+                        progress: CreditProgress {
+                            credited: 0,
+                            attempt: 3,
+                            claim: None,
+                            started_ms: NOW,
+                        },
+                    }),
+                },
+                [
+                    (Ok(()), progress(3, None)),
+                    (
+                        Ok(()),
+                        progress(
+                            0,
+                            Some(Claim {
+                                amount: 40,
+                                since_ms: NOW + 5,
+                                registered: true,
+                            })
+                        )
+                    ),
+                    (Ok(()), progress(0, None)),
+                    (Err(RetryRefusal::NotResumable), landed().stage),
+                ],
             )
         );
     }

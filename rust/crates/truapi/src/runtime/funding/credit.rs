@@ -2,10 +2,11 @@
 //!
 //! The host's top-up claims the CASH on the deposit account on People, given
 //! the account's secret key. Each attempt has its own id, so a retried call
-//! for the same attempt is answered `AlreadyExists` and never claims twice.
-//! A claim that takes nothing, or never finishes, moves on to the next
-//! attempt; after the last one the session fails with the CASH still on the
-//! account, where the same key can claim it later.
+//! for the same attempt is answered `AlreadyExists` and never claims twice,
+//! and each is sized from what the account holds when it starts. A claim
+//! that falls short moves on to the next attempt; after the last, crediting
+//! settles for what was claimed, or fails with the CASH still on the account
+//! when nothing was, for a retry or the same key to claim later.
 
 use core::time::Duration;
 
@@ -16,17 +17,15 @@ use truapi::latest::{
 };
 
 use super::FundingSigner;
-use crate::host_logic::funding::{CreditAttempt, CreditStep, FundingDeposit};
+use crate::host_logic::funding::{CreditProgress, CreditStep, FundingDeposit};
 use crate::platform::{ProductContext, TopUpPlatform};
 
-/// Smallest amount a top-up claims, in CASH units: the landed CASH is
+/// Smallest amount a top-up claims, in CASH units: what the account holds is
 /// claimed rounded down to it.
 pub const CLAIM_UNIT: u128 = 10_000;
-/// Top-up attempts before crediting gives up.
-const MAX_ATTEMPTS: u8 = 3;
-/// How long one attempt may run before the next replaces it.
+/// How long one registered top-up may run before crediting times out.
 const ATTEMPT_WINDOW_MS: u64 = 90 * 60 * 1_000;
-/// How long crediting may take in all before it gives up, so a claim that
+/// How long crediting may take in all before it times out, so a claim that
 /// never finalizes or a host that keeps answering busy cannot hold a session
 /// open for good.
 const CREDIT_DEADLINE_MS: u64 = 4 * ATTEMPT_WINDOW_MS;
@@ -44,82 +43,79 @@ pub struct Credit<'a> {
 }
 
 impl Credit<'_> {
-    /// Decide the next step for a session whose CASH `landed` on `deposit`'s
-    /// account, given the attempt running and when it started.
+    /// Decide the next step for a session crediting `deposit`'s CASH, given
+    /// its `progress` so far. `held` is the account's CASH on People, read
+    /// when the next top-up has yet to be sized.
+    ///
+    /// A sized top-up is kept before it is registered, so one registered
+    /// just before a restart is registered again for the same amount under
+    /// the same id rather than sized from what is left. What the host
+    /// reports is applied before any time limit, so a claim that finished
+    /// late still counts.
     pub async fn plan(
         &self,
         deposit: &FundingDeposit,
-        landed: u128,
-        running: Option<CreditAttempt>,
+        progress: Option<CreditProgress>,
+        held: Option<u128>,
         now_ms: u64,
     ) -> Result<Option<CreditStep>, GenericError> {
-        let amount = landed - landed % CLAIM_UNIT;
-        if amount == 0 {
-            return Ok(Some(CreditStep::Abandoned {
-                reason: "less CASH landed than a top-up can claim".into(),
-            }));
-        }
-        let Some(CreditAttempt {
-            attempt,
-            since_ms,
-            started_ms,
-        }) = running
-        else {
-            return self.register(deposit, amount, 0).await;
+        let attempt = progress.map_or(0, |progress| progress.attempt);
+        let past_deadline =
+            progress.is_some_and(|progress| now_ms.saturating_sub(progress.started_ms) > CREDIT_DEADLINE_MS);
+        let claim = match progress.and_then(|progress| progress.claim) {
+            None if past_deadline => return Ok(Some(CreditStep::TimedOut)),
+            None => {
+                let Some(held) = held else {
+                    return Ok(None);
+                };
+                let amount = held - held % CLAIM_UNIT;
+                return Ok(Some(if amount == 0 {
+                    CreditStep::Drained
+                } else {
+                    CreditStep::Sized { amount }
+                }));
+            }
+            Some(claim) if !claim.registered && past_deadline => return Ok(Some(CreditStep::TimedOut)),
+            Some(claim) if !claim.registered => return self.register(deposit, attempt, claim.amount).await,
+            Some(claim) => claim,
         };
-        if now_ms.saturating_sub(started_ms) > CREDIT_DEADLINE_MS {
-            return Ok(Some(CreditStep::Abandoned {
-                reason: "crediting did not finish in time".into(),
-            }));
-        }
         let status = self.status(deposit, attempt).await;
-        let overdue = now_ms.saturating_sub(since_ms) > ATTEMPT_WINDOW_MS;
-        match status {
-            Some(Ok(HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true })) => {
-                Ok(Some(CreditStep::Credited { credited: amount }))
-            }
+        let terminal = match status {
+            Some(Ok(HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true })) => Some(CreditStep::Claimed {
+                claimed: claim.amount,
+            }),
             Some(Ok(HostPaymentTopUpStatusSubscribeItem::ClaimedPartially { actual_claimed })) => {
-                Ok(Some(CreditStep::Credited {
-                    credited: actual_claimed,
-                }))
+                Some(CreditStep::Short {
+                    claimed: actual_claimed,
+                })
             }
-            Some(Ok(HostPaymentTopUpStatusSubscribeItem::NotClaimed)) => {
-                self.next_attempt(deposit, amount, attempt).await
-            }
-            Some(Ok(
-                HostPaymentTopUpStatusSubscribeItem::Detecting
-                | HostPaymentTopUpStatusSubscribeItem::Claiming,
-            )) if overdue => self.next_attempt(deposit, amount, attempt).await,
+            Some(Ok(HostPaymentTopUpStatusSubscribeItem::NotClaimed)) => Some(CreditStep::Short { claimed: 0 }),
+            _ => None,
+        };
+        if terminal.is_some() {
+            return Ok(terminal);
+        }
+        // As getcash, an attempt the host has not finished in its window
+        // times out whatever it last reported.
+        if past_deadline || now_ms.saturating_sub(claim.since_ms) > ATTEMPT_WINDOW_MS {
+            return Ok(Some(CreditStep::TimedOut));
+        }
+        match status {
+            // Registered again under the same id; recording that changes
+            // nothing, so the attempt's window keeps running.
             Some(Err(HostPaymentTopUpStatusSubscribeError::NotFound)) => {
-                self.register(deposit, amount, attempt).await
+                self.register(deposit, attempt, claim.amount).await
             }
-            Some(Ok(_)) | Some(Err(HostPaymentTopUpStatusSubscribeError::Unknown { .. })) | None => {
-                Ok(None)
-            }
+            _ => Ok(None),
         }
-    }
-
-    async fn next_attempt(
-        &self,
-        deposit: &FundingDeposit,
-        amount: u128,
-        attempt: u8,
-    ) -> Result<Option<CreditStep>, GenericError> {
-        let next = attempt + 1;
-        if next >= MAX_ATTEMPTS {
-            return Ok(Some(CreditStep::Abandoned {
-                reason: "no top-up claimed the CASH".into(),
-            }));
-        }
-        self.register(deposit, amount, next).await
     }
 
     /// Ask the host to claim `amount` from the deposit account as `attempt`.
     async fn register(
         &self,
         deposit: &FundingDeposit,
-        amount: u128,
         attempt: u8,
+        amount: u128,
     ) -> Result<Option<CreditStep>, GenericError> {
         let keypair = self
             .signer
@@ -140,9 +136,9 @@ impl Credit<'_> {
         };
         match self.top_up.top_up(self.product, request).await {
             Ok(()) | Err(HostPaymentTopUpError::AlreadyExists) => {
-                Ok(Some(CreditStep::Registered { attempt }))
+                Ok(Some(CreditStep::Registered))
             }
-            Err(HostPaymentTopUpError::InvalidSource) => Ok(Some(CreditStep::Abandoned {
+            Err(HostPaymentTopUpError::InvalidSource) => Ok(Some(CreditStep::Refused {
                 reason: "the host refused the deposit account as a top-up source".into(),
             })),
             Err(HostPaymentTopUpError::SourceBusy | HostPaymentTopUpError::Unknown { .. }) => {
@@ -186,7 +182,7 @@ mod tests {
     use futures::stream::{self, BoxStream};
 
     use super::*;
-    use crate::host_logic::funding::{ConversionRoute, DepositAsset};
+    use crate::host_logic::funding::{Claim, ConversionRoute, DepositAsset};
     use crate::platform::async_trait;
 
     const NOW: u64 = 1_700_000_000_000;
@@ -281,7 +277,8 @@ mod tests {
     fn plan(
         host: &Host,
         key: u8,
-        running: Option<CreditAttempt>,
+        progress: Option<CreditProgress>,
+        held: Option<u128>,
         now_ms: u64,
     ) -> Option<CreditStep> {
         let product = ProductContext {
@@ -294,105 +291,143 @@ mod tests {
             signer: &keys,
             product: &product,
         };
-        block_on(credit.plan(&deposit(), 1_987_654, running, now_ms)).expect("planned")
+        block_on(credit.plan(&deposit(), progress, held, now_ms)).expect("planned")
     }
 
-    // The first top-up is the one getcash would make: the landed CASH rounded
-    // down to the claim unit, identified by the account, so a top-up the host
-    // already holds is not made twice.
+    fn claim(attempt: u8, amount: u128, registered: bool) -> Option<CreditProgress> {
+        Some(CreditProgress {
+            credited: 0,
+            attempt,
+            claim: Some(Claim {
+                amount,
+                since_ms: NOW,
+                registered,
+            }),
+            started_ms: NOW,
+        })
+    }
+
+    // The first top-up is the one getcash would make: what the account holds
+    // rounded down to the claim unit, kept before it is registered, then
+    // registered under the account's id, so a top-up the host already holds
+    // is not made twice.
     #[test]
-    fn landed_cash_is_claimed_once_under_the_accounts_id() {
+    fn landed_cash_is_sized_then_claimed_once_under_the_accounts_id() {
         let fresh = Host::new(Ok(()), None);
         let known = Host::new(Err(HostPaymentTopUpError::AlreadyExists), None);
         let account = deposit().account;
+        let sized = claim(0, 1_980_000, false);
 
         assert_eq!(
             (
-                plan(&fresh, 1, None, NOW),
+                plan(&fresh, 1, None, Some(1_987_654), NOW),
+                plan(&fresh, 1, sized, Some(5), NOW),
                 fresh.requests(),
-                plan(&known, 1, None, NOW),
+                plan(&known, 1, sized, None, NOW),
             ),
             (
-                Some(CreditStep::Registered { attempt: 0 }),
+                Some(CreditStep::Sized { amount: 1_980_000 }),
+                Some(CreditStep::Registered),
                 vec![(1_980_000, account)],
-                Some(CreditStep::Registered { attempt: 0 }),
+                Some(CreditStep::Registered),
             )
         );
     }
 
-    // Only a finalized claim credits; one that is claimed but unfinalized is
-    // waited for rather than retried, since a fresh attempt would find
-    // nothing to claim, until crediting as a whole runs out of time.
+    // What the host reports decides the step, even past a time limit, so a
+    // claim that finished late still counts: a final claim of everything, a
+    // short one whose remainder the next attempt claims. An attempt the host
+    // has not finished in its window times out rather than starting another
+    // top-up that could claim alongside it.
     #[test]
-    fn only_a_finalized_claim_credits_the_balance() {
+    fn each_top_up_status_is_settled_as_getcash_settles_it() {
+        let status = |item| Host::new(Ok(()), Some(Ok(item)));
+        let finalized = status(HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true });
+        let unfinalized = status(HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false });
+        let detecting = status(HostPaymentTopUpStatusSubscribeItem::Detecting);
         let overdue = NOW + ATTEMPT_WINDOW_MS + 1;
-        let unfinalized = Host::new(
-            Ok(()),
-            Some(Ok(HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false })),
-        );
-        let finalized = Host::new(
-            Ok(()),
-            Some(Ok(HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true })),
-        );
-        let partial = Host::new(
-            Ok(()),
-            Some(Ok(HostPaymentTopUpStatusSubscribeItem::ClaimedPartially {
-                actual_claimed: 1_000_000,
-            })),
-        );
+        let running = claim(0, 1_980_000, true);
 
         assert_eq!(
             [
-                plan(&unfinalized, 1, Some(CreditAttempt { attempt: 0, since_ms: NOW, started_ms: NOW }), overdue),
+                plan(&finalized, 1, running, None, NOW + CREDIT_DEADLINE_MS + 1),
                 plan(
-                    &unfinalized,
+                    &status(HostPaymentTopUpStatusSubscribeItem::ClaimedPartially {
+                        actual_claimed: 1_000_000,
+                    }),
                     1,
-                    Some(CreditAttempt { attempt: 0, since_ms: NOW, started_ms: NOW }),
-                    NOW + CREDIT_DEADLINE_MS + 1,
+                    running,
+                    None,
+                    NOW,
                 ),
-                plan(&finalized, 1, Some(CreditAttempt { attempt: 0, since_ms: NOW, started_ms: NOW }), NOW),
-                plan(&partial, 1, Some(CreditAttempt { attempt: 0, since_ms: NOW, started_ms: NOW }), NOW),
+                plan(&status(HostPaymentTopUpStatusSubscribeItem::NotClaimed), 1, running, None, NOW),
+                plan(&detecting, 1, running, None, NOW),
+                plan(&detecting, 1, running, None, overdue),
+                plan(&unfinalized, 1, running, None, NOW),
+                plan(&unfinalized, 1, running, None, overdue),
             ],
             [
+                Some(CreditStep::Claimed { claimed: 1_980_000 }),
+                Some(CreditStep::Short { claimed: 1_000_000 }),
+                Some(CreditStep::Short { claimed: 0 }),
                 None,
-                Some(CreditStep::Abandoned {
-                    reason: "crediting did not finish in time".into(),
-                }),
-                Some(CreditStep::Credited {
-                    credited: 1_980_000
-                }),
-                Some(CreditStep::Credited {
-                    credited: 1_000_000
-                }),
+                Some(CreditStep::TimedOut),
+                None,
+                Some(CreditStep::TimedOut),
             ]
         );
     }
 
-    // A claim that took nothing, or is stuck, gets a fresh attempt under a
-    // new id, up to the last, after which the CASH stays on the account.
+    // A top-up the host lost is registered again with the same amount under
+    // the same id, never re-sized from what is left after it may have
+    // claimed part.
     #[test]
-    fn an_unclaimed_top_up_is_retried_under_a_new_id_until_the_last() {
-        let not_claimed = Host::new(Ok(()), Some(Ok(HostPaymentTopUpStatusSubscribeItem::NotClaimed)));
-        let stuck = Host::new(Ok(()), Some(Ok(HostPaymentTopUpStatusSubscribeItem::Detecting)));
+    fn a_lost_top_up_is_registered_again_as_it_was() {
+        let lost = Host::new(Ok(()), Some(Err(HostPaymentTopUpStatusSubscribeError::NotFound)));
+
+        assert_eq!(
+            (plan(&lost, 1, claim(0, 1_980_000, true), Some(10_000), NOW), lost.requests()),
+            (Some(CreditStep::Registered), vec![(1_980_000, deposit().account)])
+        );
+    }
+
+    // A later attempt claims what is left on the account, read again, under
+    // its own id; with less left than a top-up claims there is nothing more
+    // to try, and without a reading nothing is sized.
+    #[test]
+    fn a_later_attempt_claims_what_is_left_under_its_own_id() {
+        let host = Host::new(Ok(()), None);
         let account = deposit().account;
         let second_id = sp_crypto_hashing::blake2_256(&[account.as_slice(), &1u32.to_le_bytes()].concat());
+        let next = Some(CreditProgress {
+            credited: 1_000_000,
+            attempt: 1,
+            claim: None,
+            started_ms: NOW,
+        });
+        let sized = next.map(|progress| CreditProgress {
+            claim: Some(Claim {
+                amount: 980_000,
+                since_ms: NOW,
+                registered: false,
+            }),
+            ..progress
+        });
 
         assert_eq!(
             (
-                plan(&not_claimed, 1, Some(CreditAttempt { attempt: 0, since_ms: NOW, started_ms: NOW }), NOW),
-                not_claimed.requests(),
-                plan(&stuck, 1, Some(CreditAttempt { attempt: 1, since_ms: NOW, started_ms: NOW }), NOW),
-                plan(&stuck, 1, Some(CreditAttempt { attempt: 1, since_ms: NOW, started_ms: NOW }), NOW + ATTEMPT_WINDOW_MS + 1),
-                plan(&not_claimed, 1, Some(CreditAttempt { attempt: 2, since_ms: NOW, started_ms: NOW }), NOW),
+                plan(&host, 1, next, Some(987_654), NOW),
+                plan(&host, 1, next, Some(CLAIM_UNIT - 1), NOW),
+                plan(&host, 1, next, None, NOW),
+                plan(&host, 1, sized, None, NOW),
+                host.requests(),
             ),
             (
-                Some(CreditStep::Registered { attempt: 1 }),
-                vec![(1_980_000, second_id)],
+                Some(CreditStep::Sized { amount: 980_000 }),
+                Some(CreditStep::Drained),
                 None,
-                Some(CreditStep::Registered { attempt: 2 }),
-                Some(CreditStep::Abandoned {
-                    reason: "no top-up claimed the CASH".into(),
-                }),
+                Some(CreditStep::Registered),
+                vec![(980_000, second_id)],
             )
         );
     }
@@ -403,6 +438,9 @@ mod tests {
     fn only_the_deposit_accounts_key_is_handed_to_the_host() {
         let host = Host::new(Ok(()), None);
 
-        assert_eq!((plan(&host, 2, None, NOW), host.requests()), (None, Vec::new()));
+        assert_eq!(
+            (plan(&host, 2, claim(0, 1_980_000, false), None, NOW), host.requests()),
+            (None, Vec::new())
+        );
     }
 }
