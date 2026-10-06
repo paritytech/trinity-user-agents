@@ -62,6 +62,8 @@
       status: settled.dataset.status,
       outcome: settled.dataset.outcome || undefined,
       message: settled.querySelector("div.break-all")?.textContent?.trim() || undefined,
+      // The entry's JSON, which carries what the message abbreviates, such as full addresses.
+      detail: settled.querySelector("pre")?.textContent?.trim().slice(0, 4000) || undefined,
     });
   }
 

@@ -208,7 +208,7 @@
                 guard let result = value as? [String: Any] else {
                     throw HostPlaygroundE2EError("runOne returned \(String(describing: value))")
                 }
-                return result.filter { ["id", "status", "outcome", "message", "durationMs"].contains($0.key) }
+                return result.filter { ["id", "status", "outcome", "message", "detail", "durationMs"].contains($0.key) }
             } catch {
                 let elapsed = ContinuousClock.now - started
                 return [
