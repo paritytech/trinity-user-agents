@@ -57,7 +57,8 @@ under `peopl.paseo` on Paseo.
 `account.createHonourProof` creates one ring proof over the Honour subject and point
 contexts. It requires a registered full People member key and a `context` grant for
 a foreign key. Both paired hosts must support this method. Products construct the
-transaction message and submit the vote separately.
+transaction message and submit the vote separately. The example fails if the host
+refuses proof creation.
 
 Product scripts and `truapi-host dev` use the same web API permission checks from `js/container`. Dev loads the container through a blocking script tag in your existing browser. Scripts run in Bun and retain filesystem, environment and process access.
 

@@ -205,6 +205,7 @@ pub trait Account: Send + Sync {
     ///   subject: `0x${"01".repeat(32)}`, point: 0,
     ///   message: `0x${"02".repeat(32)}`,
     /// });
+    /// assert(result.isOk(), "createHonourProof failed:", result);
     /// console.log(result);
     /// ```
     #[wire(id = 11)]

@@ -4,6 +4,7 @@ use crate::host_internal::sso_wire::SsoRequest;
 use crate::runtime::signing_host::sso_service::SigningHostSsoService;
 use crate::runtime::sso_service::Dispatch;
 use parity_scale_codec::{DecodeAll, Encode};
+use std::sync::Mutex;
 use truapi::latest::{HostAccountCreateHonourProofRequest, HostAccountCreateHonourProofResponse};
 use truapi::versioned::account::{
     HostAccountCreateHonourProofRequest as Request, HostAccountCreateProofError,
@@ -298,6 +299,64 @@ fn honour_proof_round_trips_through_the_sso_dispatcher() {
 }
 
 struct NonMemberResolver;
+
+struct DisconnectingResolver {
+    authority: Mutex<Option<std::sync::Weak<SigningHostRole>>>,
+    ring: ResolvedRing,
+}
+
+#[async_trait::async_trait]
+impl RingResolver for DisconnectingResolver {
+    async fn members_pallet_index(&self, _chain_id: &[u8; 32]) -> Result<u8, RingVrfError> {
+        Ok(42)
+    }
+
+    async fn validate(&self, _location: &v01::RingLocation) -> Result<[u8; 32], RingVrfError> {
+        Ok(*PersonhoodCollection::People.identifier())
+    }
+
+    async fn resolve(
+        &self,
+        _location: &v01::RingLocation,
+        _candidates: &[MemberCandidate],
+    ) -> Result<ResolvedRing, RingVrfError> {
+        self.authority
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .upgrade()
+            .unwrap()
+            .clear_local_session();
+        Ok(self.ring.clone())
+    }
+}
+
+#[test]
+fn honour_proof_rejects_disconnect_during_ring_lookup() {
+    let platform = Arc::new(StubPlatform::default());
+    cache_grant(&platform, "peopl.dot", r#"{"dim2":["context"]}"#);
+    let resolver = Arc::new(DisconnectingResolver {
+        authority: Mutex::new(None),
+        ring: full_person_ring_resolver().ring.clone(),
+    });
+    let authority = SigningHostRole::new_with_ring_resolver(platform, resolver.clone());
+    *resolver.authority.lock().unwrap() = Some(Arc::downgrade(&authority));
+    futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let session = authority.current_session().unwrap();
+    register_full_person_key(&authority, &session, &full_person_ring_location());
+    assert!(
+        futures::executor::block_on(authority.create_honour_proof(
+            &CallContext::default(),
+            &session,
+            ProductRequest {
+                calling_product_id: "dim2.dot".to_string(),
+                payload: request()
+            },
+        ))
+        .is_err()
+    );
+}
 
 #[async_trait::async_trait]
 impl RingResolver for NonMemberResolver {
