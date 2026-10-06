@@ -369,6 +369,12 @@ impl SigningHost {
                 reason: err.to_string(),
             }
         })?;
+        // The AutoSigning allocation hands this secret to the calling
+        // product; under the funding product it would open every deposit
+        // account.
+        if super::is_funding_product(&product_id) {
+            return Err(AuthorityError::Rejected);
+        }
         derive_product_subtree_keypair(&root, &product_id)
             .map(|keypair| keypair.secret.to_bytes())
             .map_err(product_authority_error)
@@ -4060,7 +4066,8 @@ mod tests {
     }
 
     // Every product path, the SSO responder's included, derives keys through
-    // these two calls, so refusing here keeps the funding accounts host-only.
+    // these calls, AutoSigning's subtree secret among them, so refusing here
+    // keeps the funding accounts host-only.
     #[test]
     fn no_request_derives_a_funding_key() {
         let (_services, authority) = signing_runtime();
@@ -4092,8 +4099,13 @@ mod tests {
                     true,
                 ))
                 .map(|_| ()),
+                authority.product_subtree_secret("fund.dot").map(|_| ()),
             ),
-            (Err(AuthorityError::Rejected), Err(AuthorityError::Rejected))
+            (
+                Err(AuthorityError::Rejected),
+                Err(AuthorityError::Rejected),
+                Err(AuthorityError::Rejected)
+            )
         );
     }
 
