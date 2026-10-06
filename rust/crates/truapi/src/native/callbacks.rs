@@ -156,6 +156,27 @@ pub trait HostCallbacks: Send + Sync {
     /// [`CoreStorageKey`].
     async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection>;
 
+    /// Atomically compare exact decoded bytes (absent is distinct from empty)
+    /// and replace the slot. Serialize with every write and clear to the same
+    /// physical storage namespace, across runtime/callback instances, through
+    /// durable persistence completion; release storage gates before awaiting
+    /// errors or refresh work.
+    /// On successful persistence with `notify_on_success`, enqueue
+    /// `core_storage_changed` before completion even if the caller is cancelled.
+    /// There must be no cancellation point between persistence and enqueue.
+    async fn compare_exchange_core_storage(
+        &self,
+        key: Vec<u8>,
+        expected: Option<Vec<u8>>,
+        replacement: Vec<u8>,
+        notify_on_success: bool,
+    ) -> Result<bool, HostRejection>;
+
+    /// Queue a deferred stored-policy refresh for all core groups sharing this
+    /// store and exact product, including the writer. Return immediately without
+    /// waiting for or reentering a core.
+    fn core_storage_changed(&self, key: Vec<u8>);
+
     /// Open a JSON-RPC connection for a chain. Return a host-assigned
     /// connection id, or `None` when unsupported.
     fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection>;

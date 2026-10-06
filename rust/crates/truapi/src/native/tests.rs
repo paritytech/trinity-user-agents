@@ -208,6 +208,8 @@ pub struct EventCallbacks {
         Option<futures::channel::oneshot::Receiver<Result<PermissionDecision, HostRejection>>>,
     >,
     pub core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+    /// Keys reported through `core_storage_changed`, in arrival order.
+    pub storage_changes: Mutex<Vec<Vec<u8>>>,
     /// Disclosure consent is distinct from boolean action confirmation.
     pub permission_confirmation_result: PermissionDecision,
     /// Counts prompts across the execution's separate connections.
@@ -257,6 +259,7 @@ impl EventCallbacks {
             remote_permission_result: Ok(PermissionDecision::Deny),
             remote_permission_reply: Mutex::new(None),
             core_storage: Mutex::default(),
+            storage_changes: Mutex::default(),
             permission_confirmation_result: PermissionDecision::Deny,
             remote_permission_calls: std::sync::atomic::AtomicUsize::new(0),
             remote_permission_products: Mutex::new(Vec::new()),
@@ -382,6 +385,28 @@ impl HostCallbacks for EventCallbacks {
     async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection> {
         self.core_storage.lock().unwrap().remove(&key);
         Ok(())
+    }
+    async fn compare_exchange_core_storage(
+        &self,
+        key: Vec<u8>,
+        expected: Option<Vec<u8>>,
+        replacement: Vec<u8>,
+        notify_on_success: bool,
+    ) -> Result<bool, HostRejection> {
+        let mut storage = self.core_storage.lock().unwrap();
+        if storage.get(&key) != expected.as_ref() {
+            return Ok(false);
+        }
+        let notification = notify_on_success.then(|| key.clone());
+        storage.insert(key, replacement);
+        drop(storage);
+        if let Some(key) = notification {
+            self.core_storage_changed(key);
+        }
+        Ok(true)
+    }
+    fn core_storage_changed(&self, key: Vec<u8>) {
+        self.storage_changes.lock().unwrap().push(key);
     }
     fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
         self.chain_connects
@@ -681,6 +706,7 @@ pub fn native_product_execution(
         .expect("host runtime config should be valid");
     host.open_product_execution(
         callbacks,
+        None,
         None,
         None,
         native_execution_config(product_id, ProductExecutionKind::App),
@@ -1039,6 +1065,7 @@ fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
     let execution = host
         .open_product_execution(
             Arc::new(EventCallbacks::new()),
+            None,
             None,
             None,
             native_execution_config("chat-product.dot", ProductExecutionKind::Worker),
@@ -1911,7 +1938,11 @@ fn runtime_config_rejects_non_https_host_icon() {
 /// `AlreadyRunning` rather than silently leaking a worker thread.
 #[test]
 fn start_ws_bridge_twice_returns_already_running() {
-    struct Noop;
+    #[derive(Default)]
+    struct Noop {
+        storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+        storage_changes: Mutex<Vec<Vec<u8>>>,
+    }
     #[async_trait::async_trait]
     impl HostCallbacks for Noop {
         async fn pick_chat_files(&self, _: crate::platform::NativeChatFilePickRequest) -> Result<Vec<crate::platform::NativeChatPickedFile>, HostRejection> { unavailable_chat_files() }
@@ -1988,19 +2019,43 @@ fn start_ws_bridge_twice_returns_already_running() {
         fn auth_state_changed(&self, _state: AuthState) {}
         async fn core_storage_read(
             &self,
-            _key: Vec<u8>,
+            key: Vec<u8>,
         ) -> Result<Option<Vec<u8>>, HostRejection> {
-            Ok(None)
+            Ok(self.storage.lock().unwrap().get(&key).cloned())
         }
         async fn core_storage_write(
             &self,
-            _key: Vec<u8>,
-            _value: Vec<u8>,
+            key: Vec<u8>,
+            value: Vec<u8>,
         ) -> Result<(), HostRejection> {
+            self.storage.lock().unwrap().insert(key, value);
             Ok(())
         }
-        async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
+        async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection> {
+            self.storage.lock().unwrap().remove(&key);
             Ok(())
+        }
+        async fn compare_exchange_core_storage(
+            &self,
+            key: Vec<u8>,
+            expected: Option<Vec<u8>>,
+            replacement: Vec<u8>,
+            notify_on_success: bool,
+        ) -> Result<bool, HostRejection> {
+            let mut storage = self.storage.lock().unwrap();
+            if storage.get(&key) != expected.as_ref() {
+                return Ok(false);
+            }
+            let notification = notify_on_success.then(|| key.clone());
+            storage.insert(key, replacement);
+            drop(storage);
+            if let Some(key) = notification {
+                self.core_storage_changed(key);
+            }
+            Ok(true)
+        }
+        fn core_storage_changed(&self, key: Vec<u8>) {
+            self.storage_changes.lock().unwrap().push(key);
         }
         fn chain_connect(&self, _genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
             Ok(None)
@@ -2092,7 +2147,7 @@ fn start_ws_bridge_twice_returns_already_running() {
         }
     }
 
-    let execution = native_product_execution(Arc::new(Noop), "dotli.dot");
+    let execution = native_product_execution(Arc::new(Noop::default()), "dotli.dot");
     let _first = execution
         .start_ws_bridge(0)
         .expect("first start must succeed");
@@ -2119,6 +2174,8 @@ fn pending_permission_decision_does_not_stall_bridge() {
     /// `device_permission` stays pending until the test sends on
     /// `release`; every other callback is a trivial success.
     struct GatedPermissionCallbacks {
+        storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+        storage_changes: Mutex<Vec<Vec<u8>>>,
         permission_entered: Arc<AtomicBool>,
         release: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<()>>,
     }
@@ -2206,19 +2263,43 @@ fn pending_permission_decision_does_not_stall_bridge() {
         fn auth_state_changed(&self, _state: AuthState) {}
         async fn core_storage_read(
             &self,
-            _key: Vec<u8>,
+            key: Vec<u8>,
         ) -> Result<Option<Vec<u8>>, HostRejection> {
-            Ok(None)
+            Ok(self.storage.lock().unwrap().get(&key).cloned())
         }
         async fn core_storage_write(
             &self,
-            _key: Vec<u8>,
-            _value: Vec<u8>,
+            key: Vec<u8>,
+            value: Vec<u8>,
         ) -> Result<(), HostRejection> {
+            self.storage.lock().unwrap().insert(key, value);
             Ok(())
         }
-        async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
+        async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection> {
+            self.storage.lock().unwrap().remove(&key);
             Ok(())
+        }
+        async fn compare_exchange_core_storage(
+            &self,
+            key: Vec<u8>,
+            expected: Option<Vec<u8>>,
+            replacement: Vec<u8>,
+            notify_on_success: bool,
+        ) -> Result<bool, HostRejection> {
+            let mut storage = self.storage.lock().unwrap();
+            if storage.get(&key) != expected.as_ref() {
+                return Ok(false);
+            }
+            let notification = notify_on_success.then(|| key.clone());
+            storage.insert(key, replacement);
+            drop(storage);
+            if let Some(key) = notification {
+                self.core_storage_changed(key);
+            }
+            Ok(true)
+        }
+        fn core_storage_changed(&self, key: Vec<u8>) {
+            self.storage_changes.lock().unwrap().push(key);
         }
         fn chain_connect(&self, _genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
             Ok(None)
@@ -2314,6 +2395,8 @@ fn pending_permission_decision_does_not_stall_bridge() {
     let permission_entered = Arc::new(AtomicBool::new(false));
     let execution = native_product_execution(
         Arc::new(GatedPermissionCallbacks {
+            storage: Default::default(),
+            storage_changes: Default::default(),
             permission_entered: permission_entered.clone(),
             release: tokio::sync::Mutex::new(release_rx),
         }),
@@ -2465,6 +2548,7 @@ fn closing_an_execution_releases_its_callbacks_while_the_host_lives() {
             callbacks,
             None,
             None,
+            None,
             native_execution_config("first.dot", ProductExecutionKind::App),
         )
         .expect("open execution");
@@ -2495,6 +2579,7 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
     let executions = [(1, "first.dot"), (2, "second.dot")].map(|(index, product_id)| {
         host.open_product_execution(
             callbacks[index].clone(),
+            None,
             None,
             None,
             native_execution_config(product_id, ProductExecutionKind::App),
@@ -2573,6 +2658,7 @@ fn two_executions_share_one_bridge_through_the_native_api() {
             Arc::new(EventCallbacks::new()),
             None,
             None,
+            None,
             native_execution_config("shared.dot", ProductExecutionKind::App),
         )
         .expect("App execution should open");
@@ -2581,6 +2667,7 @@ fn two_executions_share_one_bridge_through_the_native_api() {
         .open_product_execution(
             chat_host.clone(),
             Some(chat_host),
+            None,
             None,
             native_execution_config("shared.dot", ProductExecutionKind::Worker),
         )
@@ -2787,6 +2874,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
                 callbacks.clone(),
                 None,
                 None,
+                None,
                 native_execution_config("fetch.dot", ProductExecutionKind::Worker),
             )
             .unwrap();
@@ -2860,6 +2948,7 @@ fn native_remote_authorization_reuses_stored_product_decisions() {
                 callbacks.clone(),
                 None,
                 None,
+                None,
                 native_execution_config(product_id, ProductExecutionKind::App),
             )
             .unwrap()
@@ -2915,6 +3004,7 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
                 callbacks.clone(),
                 None,
                 None,
+                None,
                 native_execution_config("fetch.dot", ProductExecutionKind::App),
             )
             .unwrap();
@@ -2960,6 +3050,7 @@ fn a_native_status_read_follows_the_os_gate() {
             Arc::new(EventCallbacks::refusing(
                 v01::HostDevicePermissionRequest::Camera,
             )),
+            None,
             None,
             None,
             native_execution_config("gated.dot", ProductExecutionKind::App),

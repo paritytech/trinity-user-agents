@@ -182,6 +182,7 @@ actor ChatRustRuntime: ChatRuntimeProtocol {
         // is what releases the chat context.
         chatSurface.unbind()
 
+        await executionModel?.media.close()
         await destroyEngineResources()
 
         if let executionModel {
@@ -210,7 +211,7 @@ private extension ChatRustRuntime {
         let scriptsFactory = RustRuntimeScriptsFactory(bootstrapScript: bootstrapScript)
         let jsEngine = try await bootEngine(
             scripts: scriptsFactory.makeScripts(),
-            osPermissionAsker: model.osPermissionAsker
+            media: model.media
         )
         try checkNotDisposed()
 
@@ -227,13 +228,11 @@ private extension ChatRustRuntime {
 
     func bootEngine(
         scripts: [JSEngineScript],
-        osPermissionAsker: OSPermissionAsking
+        media: NativeMediaBackend
     ) async throws -> JSEngineProtocol {
         let jsEngine = engineFactory()
         do {
-            await jsEngine.registerJSDeviceCapabilityHandler(
-                osPermissionAsker.makeDeviceCapabilityHandler()
-            )
+            await jsEngine.registerJSDeviceCapabilityHandler { _ in .denied }
             try checkNotDisposed()
             try await jsEngine.initialize(with: scripts)
             guard await jsEngine.getState() == .ready else {
@@ -243,6 +242,16 @@ private extension ChatRustRuntime {
         } catch {
             await jsEngine.destroy()
             throw error
+        }
+        await media.watchEngine {
+            switch await jsEngine.getState() {
+            case .destroyed, .error: return false
+            default: return true
+            }
+        }
+        guard !disposed else {
+            await jsEngine.destroy()
+            throw CancellationError()
         }
 
         let monitor = JSEngineMonitor(

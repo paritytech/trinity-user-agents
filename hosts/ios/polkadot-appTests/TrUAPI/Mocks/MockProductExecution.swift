@@ -70,7 +70,7 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     func setPermissionAuthorizationStatus(
         request _: PermissionAuthorizationRequest,
         status _: PermissionAuthorizationStatus
-    ) throws {}
+    ) async throws {}
 
     func notifyThemeChanged(theme _: HostThemeSubscribeItem) {}
     func notifyLocaleChanged(locale _: HostLocaleSubscribeItem) {}

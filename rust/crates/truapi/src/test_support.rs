@@ -180,6 +180,9 @@ pub struct StubPlatform {
     /// Pause disclosure consent to exercise session changes while the UI awaits.
     pub identity_disclosure_confirmation_gate:
         parking_lot::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+    pub calling_confirmed: bool,
+    pub calling_error: Option<&'static str>,
+    pub calling_reviews: Arc<Mutex<Vec<crate::platform::CallingReview>>>,
     pub sign_payload_confirmed: bool,
     /// Every `SignPayload` review passed to `confirm_user_action`, in order.
     /// Empty proves an AutoSigning grant suppressed the prompt.
@@ -209,6 +212,7 @@ pub struct StubPlatform {
     /// Every `ResourceAllocation` review passed to `confirm_user_action`, in order.
     pub resource_allocation_reviews: Arc<Mutex<Vec<ResourceAllocationReview>>>,
     pub session_blob: Option<Vec<u8>>,
+    pub session_storage: Mutex<Option<Option<Vec<u8>>>>,
     pub session_error: Option<&'static str>,
     pub session_clears: Arc<Mutex<usize>>,
     pub session_writes: Arc<Mutex<Vec<Vec<u8>>>>,
@@ -307,6 +311,7 @@ pub struct StubPlatform {
     /// reason, standing in for a host that drops the operation and still
     /// reports an error.
     pub end_operation_error: Option<&'static str>,
+    pub core_storage_changes: Arc<Mutex<Vec<CoreStorageKey>>>,
     /// When set, product/core storage reads fail with this reason.
     pub local_storage_error: Option<&'static str>,
     /// When set, only `PermissionAuthorization` reads fail. Narrower than
@@ -1161,7 +1166,8 @@ impl PlatformCoreStorage for StubPlatform {
                     reason: reason.to_string(),
                 });
             }
-            return Ok(self.session_blob.clone());
+            return Ok(self.session_storage.lock().expect("session storage mutex poisoned")
+                .as_ref().unwrap_or(&self.session_blob).clone());
         }
         if let Some(reason) = self.local_storage_error {
             return Err(v01::GenericError {
@@ -1202,10 +1208,13 @@ impl PlatformCoreStorage for StubPlatform {
             return Err(v01::GenericError { reason: "receiving storage unavailable".to_owned() });
         }
         if let CoreStorageKey::AuthSession = key {
+            let mut storage = self.session_storage.lock().expect("session storage mutex poisoned");
+            *storage = Some(Some(value.clone()));
             self.session_writes
                 .lock()
                 .expect("session write list mutex poisoned")
                 .push(value);
+            drop(storage);
             let hook = self
                 .on_auth_session_write
                 .lock()
@@ -1231,6 +1240,8 @@ impl PlatformCoreStorage for StubPlatform {
     async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
         self.check_coinage_storage(&key)?;
         if let CoreStorageKey::AuthSession = key {
+            let mut storage = self.session_storage.lock().expect("session storage mutex poisoned");
+            *storage = Some(None);
             *self
                 .session_clears
                 .lock()
@@ -1247,6 +1258,60 @@ impl PlatformCoreStorage for StubPlatform {
             .expect("local storage mutex poisoned")
             .remove(&core_storage_test_key(key));
         Ok(())
+    }
+
+    async fn compare_exchange_core_storage(&self, key: CoreStorageKey, expected: Option<Vec<u8>>, replacement: Vec<u8>, notify_on_success: bool) -> Result<bool, v01::GenericError> {
+        self.check_coinage_storage(&key)?;
+        if self.core_read_failures.lock().contains(&core_storage_test_key(key.clone())) {
+            return Err(v01::GenericError { reason: "injected core read failure".into() });
+        }
+        if self.core_write_failures.lock().contains(&core_storage_test_key(key.clone())) {
+            return Err(v01::GenericError { reason: "injected core write failure".into() });
+        }
+        if let CoreStorageKey::AuthSession = key {
+        if let Some(reason) = self.session_error {
+            return Err(v01::GenericError { reason: reason.into() });
+        }
+        {
+            let mut storage = self.session_storage.lock().expect("session storage mutex poisoned");
+            if storage.as_ref().unwrap_or(&self.session_blob) != &expected {
+                return Ok(false);
+            }
+            *storage = Some(Some(replacement.clone()));
+            self.session_writes.lock().expect("session write list mutex poisoned")
+                .push(replacement);
+            if notify_on_success {
+                self.core_storage_changed(key);
+            }
+        }
+        let hook = self.on_auth_session_write.lock()
+            .expect("auth session write hook mutex poisoned").clone();
+        if let Some(hook) = hook {
+            hook();
+        }
+        return Ok(true);
+    }
+    if let Some(reason) = self.local_storage_error {
+        return Err(v01::GenericError { reason: reason.into() });
+    }
+    if let (CoreStorageKey::PermissionAuthorization { .. }, Some(reason)) =
+        (&key, self.permission_storage_error)
+    {
+        return Err(v01::GenericError { reason: reason.into() });
+    }
+    let encoded = core_storage_test_key(key.clone());
+    let mut storage = self.local_storage.lock().expect("local storage mutex poisoned");
+    if storage.get(&encoded) != expected.as_ref() {
+        return Ok(false);
+    }
+    storage.insert(encoded, replacement);
+    if notify_on_success {
+        self.core_storage_changed(key);
+    }
+    Ok(true) }
+
+    fn core_storage_changed(&self, key: CoreStorageKey) {
+        self.core_storage_changes.lock().expect("storage changes mutex poisoned").push(key);
     }
 }
 
@@ -2176,6 +2241,13 @@ impl UserConfirmation for StubPlatform {
                     self.main_purse_chat_payment_error,
                     self.main_purse_chat_payment_confirmed,
                 )
+            }
+            UserConfirmationReview::Calling(review) => {
+                self.calling_reviews
+                    .lock()
+                    .expect("calling review list mutex poisoned")
+                    .push(review);
+                (self.calling_error, self.calling_confirmed)
             }
             UserConfirmationReview::ResourceAllocation(review) => {
                 self.resource_allocation_reviews

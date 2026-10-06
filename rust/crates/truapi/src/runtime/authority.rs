@@ -28,9 +28,15 @@ use truapi::{CallContext, CallError, CancellationReason};
 use crate::host_internal::extrinsic::LocalTransactionError;
 use crate::host_internal::sso_messages::{PaymentTopUpRequest, ProductRequest, RingVrfError};
 use crate::host_internal::transaction::ExtrinsicPayloadError;
+use crate::host_logic::media_protocol::{
+    CLOCK_SKEW, MAX_ADVERTISEMENT_LIFETIME, MAX_PACKET_BYTES, UnsignedAdvertisement,
+};
 use crate::host_logic::raw_signing::RawPayloadError;
 use crate::host_logic::session::{SessionInfo, SessionState};
-use crate::host_logic::statement_store::statement_public_key_from_secret;
+use crate::host_logic::statement_store::{
+    StatementField, statement_fields_from_v01, statement_public_key_from_secret,
+};
+use crate::unix_time::current_unix_secs;
 
 /// Secret key allocated for Bulletin preimage submission.
 ///
@@ -715,6 +721,25 @@ pub trait ProductAuthority: Send + Sync {
         payload: Vec<u8>,
     ) -> Result<[u8; 64], AuthorityError>;
 
+    /// Certify a core-owned endpoint with the canonical product's Index(0) key.
+    /// This private domain is never reachable through product raw signing.
+    async fn certify_media_endpoint(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        unsigned: UnsignedAdvertisement,
+    ) -> Result<[u8; 64], AuthorityError>;
+
+    /// Sign private Media transport with existing identity/session allowance.
+    /// `expires_at` is UTC seconds, not an encoded Statement Store expiry.
+    fn sign_media_statement(
+        &self,
+        session: &AuthoritySession,
+        payload: Vec<u8>,
+        topics: Vec<[u8; 32]>,
+        expires_at: u64,
+    ) -> Result<Vec<u8>, AuthorityError>;
+
     /// Derive product-scoped entropy for a connected session.
     fn derive_entropy(
         &self,
@@ -731,6 +756,39 @@ pub trait ProductAuthority: Send + Sync {
     /// can reach — a handle keyed on anything public would be recoverable by
     /// hashing candidate accounts.
     fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;
+}
+
+/// Bound the private transport independently of the eventual network submit.
+/// No channel is set: multiple live packets on one inbox must not replace one another.
+pub(super) fn media_statement_fields(
+    payload: Vec<u8>,
+    topics: Vec<[u8; 32]>,
+    expires_at: u64,
+) -> Result<Vec<StatementField>, AuthorityError> {
+    let now = current_unix_secs();
+    let latest = now
+        .checked_add(MAX_ADVERTISEMENT_LIFETIME)
+        .and_then(|time| time.checked_add(CLOCK_SKEW))
+        .ok_or(AuthorityError::Rejected)?;
+    if payload.is_empty()
+        || payload.len() > MAX_PACKET_BYTES
+        || topics.is_empty()
+        || topics.len() > 4
+        || expires_at <= now
+        || expires_at > latest
+        || expires_at > u32::MAX as u64
+    {
+        return Err(AuthorityError::Rejected);
+    }
+    statement_fields_from_v01(truapi::v01::Statement {
+        expiry: Some(expires_at << 32),
+        topics,
+        data: Some(payload),
+        proof: None,
+        decryption_key: None,
+        channel: None,
+    })
+    .map_err(|_| AuthorityError::Rejected)
 }
 
 /// Build the neutral authority-session snapshot for `session`.

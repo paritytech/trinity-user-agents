@@ -90,4 +90,22 @@ sealed interface TrUAPIConfirmation {
     class ProductSubtree(
         override val requesterProductId: String,
     ) : TrUAPIConfirmation.Prompt
+
+    class Calling(
+        override val requesterProductId: String,
+        val network: String,
+        val account: String,
+    ) : TrUAPIConfirmation.Prompt
+
+    class ChatAuthority(override val requesterProductId: String) : TrUAPIConfirmation.Prompt
+
+    class MainPurseChatPayment(
+        override val requesterProductId: String,
+        val recipient: String,
+        val amountCents: ULong,
+        val maxDebitCents: ULong,
+        val chain: String,
+        val assetInstance: String,
+        val operationId: String,
+    ) : TrUAPIConfirmation.Prompt
 }

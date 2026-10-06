@@ -406,11 +406,16 @@ class MyStorage : HostStorage {
     override suspend fun clear(key: String) { map.remove(key) }
 }
 
-// Core-owned storage: keyed by SCALE-encoded CoreStorageKey bytes. Back it with
-// real persistence (e.g. EncryptedSharedPreferences); an in-memory map is shown
-// for brevity.
+// Core-owned storage: the bytes remain opaque. Back it with real persistence;
+// writes/clears must finish durably before returning. The SDK serializes all
+// callbacks and implements cancellation-safe CAS plus cross-core refreshes.
+// Every adapter sharing a physical store/prefix MUST use the same identifier.
+// This process-wide in-memory store is shown only for brevity.
 class MyCoreStorage : HostCoreStorage {
-    private val map = HashMap<String, ByteArray>()
+    override val storageIdentifier = "example-process-memory"
+    private companion object {
+        val map = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+    }
     private fun k(key: ByteArray) = key.joinToString("") { "%02x".format(it) }
     override suspend fun read(key: ByteArray) = map[k(key)]
     override suspend fun write(key: ByteArray, value: ByteArray) { map[k(key)] = value }

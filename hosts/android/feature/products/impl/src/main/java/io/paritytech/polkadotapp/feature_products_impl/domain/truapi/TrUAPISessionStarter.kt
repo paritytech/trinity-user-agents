@@ -64,9 +64,14 @@ class TrUAPISessionStarter @Inject constructor(
 
         return bridge
             .attach(runtime, productId, chainDirectory.resolve(), navigation, ProductExecutionKind.APP) { bootstrap ->
-                provider.addWebViewSetup(installBootstrap(bootstrap))
+                val install = installBootstrap(bootstrap)
+                provider.addWebViewSetup { webView ->
+                    install(webView)
+                    bridge.attachMediaView(webView)
+                }
             }
             .mapCatching { execution ->
+                provider.bindTrUAPILifecycle(bridge)
                 provider.useTrUAPIPermissions(productId, execution)
                 provider.loadInitialContent()
             }

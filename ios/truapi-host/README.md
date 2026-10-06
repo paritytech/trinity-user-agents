@@ -497,6 +497,21 @@ An account id must be exactly 32 bytes. Anything else is rejected where the bind
 > storage, chain, theme, `cancelNotification`) run inline on the dispatcher thread and must return promptly without
 > blocking.
 
+Core storage backends declare a stable `storageIdentifier` for their physical
+store and namespace. Reuse that identifier across adapters and independent host
+runtimes sharing the same store; different stores need different identifiers.
+Backing operations finish their persistence before returning and must be safe
+for concurrent access to different keys. The SDK owns process-wide per-slot
+serialization and exact-byte compare/exchange, including cancellation-safe
+policy-change enqueueing. Initial unanswered snapshots never emit revocation.
+It refreshes the exact permission scope in every live core sharing that store,
+including the writer's shared runtime. Authorized refreshes do not invalidate
+ongoing consent; denied, unanswered or unreadable policy fences only its exact
+scope. The async
+`setPermissionAuthorizationStatus` waits for this fanout only after its native
+setter returns. `refreshPermissionAuthorization` is a read-only host admin call;
+neither operation exposes storage, SDP, ICE, or media tracks to products.
+
 ```swift
 import Foundation
 import WebKit
@@ -511,11 +526,24 @@ final class MyStorage: HostStorageBackend, @unchecked Sendable {
 }
 
 final class MyCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
+    // This example owns a new in-memory store. Persistent adapters instead use
+    // the same stable identifier for every adapter into their physical store.
+    let storageIdentifier = UUID().uuidString
+    private let lock = NSLock()
     private var values: [Data: Data] = [:]
 
-    func read(key: Data) throws -> Data? { values[key] }
-    func write(key: Data, value: Data) throws { values[key] = value }
-    func clear(key: Data) throws { values.removeValue(forKey: key) }
+    func read(key: Data) throws -> Data? {
+        lock.lock(); defer { lock.unlock() }
+        return values[key]
+    }
+    func write(key: Data, value: Data) throws {
+        lock.lock(); defer { lock.unlock() }
+        values[key] = value
+    }
+    func clear(key: Data) throws {
+        lock.lock(); defer { lock.unlock() }
+        values.removeValue(forKey: key)
+    }
 }
 
 final class MyBridge: HostBridge, @unchecked Sendable {
@@ -645,7 +673,7 @@ try TrUAPIHost.installProductScripts(
 webView.load(URLRequest(url: productURL))
 
 // Settings changes apply to subsequent permission-checked operations.
-try execution.setPermissionAuthorizationStatus(
+try await execution.setPermissionAuthorizationStatus(
     request: .remote(RemotePermissionRequest(permission: .remote(domains: ["api.example.com"]))),
     status: .denied
 )
@@ -682,20 +710,21 @@ endpoint exemption.
 
 Forwarded WebSocket events and XHR failures before sending are synthetic, with `isTrusted` set to `false`.
 
-WebRTC uses the same private transport. Each peer connection asks Rust for permission at its first network method, such
-as `createOffer`, and shares that decision across later methods on the connection. Allow once permits one connection.
-New connections check the current permission without requiring a page reload.
-
-To disable WebRTC, call `execution.setPermissionAuthorizationStatus` with a remote `.webRtc` request and `.denied`
-before loading each product. This overrides saved grants and trusted-product auto-grants, which otherwise skip
-`remotePermission` callbacks.
+Real-time audio, camera and screen sharing use the canonical TrUAPI Media API.
+Pass a trusted `NativeMediaCallbacks` implementation when opening the execution.
+Its server-local `NativeMedia*` DTOs are converted by value in Rust; the callback
+owns WebRTC, capture and native compositor views. Product JavaScript never receives
+peer connections, media streams, SDP, ICE or native backend handles. Calling consent
+is scoped to the exact product, network and account, independently of microphone,
+camera and system screen-sharing consent.
 
 The installer adds the bootstrap and container scripts before loading. It preserves the host's website data store and
 navigation delegate. Hosts that assemble their own script lists can keep using `LocalhostBridgeBootstrap.script`
 followed by `ContainerScriptBundle.load()`, with the container injected into every frame.
 
-`Worker`, `WebTransport` and `getDisplayMedia` screen capture are unavailable. Workers would provide a separate realm
-with unguarded network APIs; WebTransport has no permission wrapper, and screen capture has no product permission.
+`Worker`, `WebTransport` and direct `getDisplayMedia` screen capture are unavailable
+to product pages. Screen sharing is selected through the trusted Media backend's
+ReplayKit extension, not a product-owned capture API.
 
 Redirects and stylesheet/font loads retain native WebKit behavior. Redirect destinations are not separately authorized
 by the fetch/XHR wrappers; direct DOM resource loads remain outside those wrappers. There is no content-rule

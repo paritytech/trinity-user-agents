@@ -33,6 +33,9 @@ import java.time.format.FormatStyle
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -112,6 +115,7 @@ import uniffi.truapi.ReceivingAuthority
 import uniffi.truapi.ReceivingWatch
 import uniffi.truapi.ReceivingRegistration
 import uniffi.truapi.ReceivingEvent
+import uniffi.truapi.NativeMediaCallbacks
 
 /** Package metadata. */
 object TrUAPIHost {
@@ -141,6 +145,13 @@ interface HostStorage {
  * [HostRejection] on failure.
  */
 interface HostCoreStorage {
+    /**
+     * Stable physical-store namespace, including any account/tenant prefix.
+     * Distinct adapters accessing the same physical slots MUST use the same value.
+     * All access to those slots must go through the SDK's coordinated callbacks.
+     */
+    val storageIdentifier: String
+
     @Throws(HostRejection::class)
     suspend fun read(key: ByteArray): ByteArray?
 
@@ -561,7 +572,11 @@ private class NativeCoinageCallbackAdapter(private val bridge: NativeCoinageHost
  * [HostCallbacks] interface. Keeps the public API stable even if uniffi-bindgen
  * renames generated symbols.
  */
-private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallbacks {
+private class HostCallbackAdapter(
+    private val bridge: HostBridge,
+    private val storageGroup: Any,
+) : HostCallbacks {
+    private val coreStorage = bridge.coreStorage
     // The core declares this and `authStateChanged` infallible, so uniffi has
     // no error type to convert a throw into and panics -- which aborts under
     // `panic = "abort"`. Neither may let a host exception reach the FFI.
@@ -637,13 +652,46 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     }
 
     override suspend fun coreStorageRead(key: ByteArray): ByteArray? =
-        withHostRejection { bridge.coreStorage.read(key) }
+        withHostRejection { CoreStorageAccess.serialized(coreStorage, key) { coreStorage.read(key) } }
 
     override suspend fun coreStorageWrite(key: ByteArray, value: ByteArray) =
-        withHostRejection { bridge.coreStorage.write(key, value) }
+        withHostRejection { CoreStorageAccess.serialized(coreStorage, key) { coreStorage.write(key, value) } }
 
     override suspend fun coreStorageClear(key: ByteArray) =
-        withHostRejection { bridge.coreStorage.clear(key) }
+        withHostRejection { CoreStorageAccess.serialized(coreStorage, key) { coreStorage.clear(key) } }
+
+    override suspend fun compareExchangeCoreStorage(
+        key: ByteArray,
+        expected: ByteArray?,
+        replacement: ByteArray,
+        notifyOnSuccess: Boolean,
+    ): Boolean = withContext(NonCancellable + Dispatchers.IO) {
+        withHostRejection {
+            CoreStorageAccess.serialized(coreStorage, key) {
+                val current = coreStorage.read(key)
+                if (current == null && expected != null || current != null && (expected == null || !current.contentEquals(expected))) {
+                    false
+                } else {
+                    coreStorage.write(key, replacement)
+                    if (notifyOnSuccess) enqueueCoreStorageChange(key)
+                    true
+                }
+            }
+        }
+    }
+
+    private fun enqueueCoreStorageChange(key: ByteArray) {
+        CoreStorageAccess.changed(coreStorage, storageGroup, key) {
+            onCoreLog("host.permission_refresh.failed", "Permission refresh failed")
+        }
+    }
+
+    // Infallible, nonblocking, and never reenters a core from the FFI callback.
+    override fun coreStorageChanged(key: ByteArray) {
+        runCatching { enqueueCoreStorageChange(key) }.onFailure {
+            onCoreLog("host.permission_refresh.failed", "Permission refresh failed")
+        }
+    }
 
     override fun chainConnect(genesisHash: ByteArray): UInt? =
         withHostRejection { bridge.chainConnect(genesisHash) }
@@ -921,7 +969,8 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
 ) : AutoCloseable {
     // Co-owns the adapter alongside the generated FfiConverter handle map,
     // which is what actually keeps the callback object alive for the runtime.
-    private val callbackRetainer: HostCallbacks = HostCallbackAdapter(bridge)
+    private val storageGroup = Any()
+    private val callbackRetainer: HostCallbacks = HostCallbackAdapter(bridge, storageGroup)
     private val nativeWalletRetainer: NativeCoinageCallbacks? =
         nativeWallet?.let { NativeCoinageCallbackAdapter(it) }
     private val inner: NativeTrUApiHostRuntime =
@@ -957,6 +1006,8 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      * Pass [chat] to install the host's Chat adapter; hosts without the Chat
      * modality omit it. Pass [pocket] to install the card collection, and omit
      * that where the host has no Pocket surface.
+     * Pass [media] only for a complete trusted capture/RTC/compositor backend.
+     * Its generated typed callbacks are host-only and retained until execution close.
      */
     @Throws(NativeRuntimeConfigException::class)
     fun openProductExecution(
@@ -964,8 +1015,9 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         configuration: ProductExecutionConfig,
         chat: ChatHostBridge? = null,
         pocket: PocketHostBridge? = null,
+        media: NativeMediaCallbacks? = null,
     ): TrUAPIProductExecution {
-        val adapter = HostCallbackAdapter(bridge)
+        val adapter = HostCallbackAdapter(bridge, storageGroup)
         val chatAdapter = chat?.let { ChatCallbackAdapter(it) }
         val pocketAdapter = pocket?.let { PocketCallbackAdapter(it) }
         val execution =
@@ -973,9 +1025,12 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
                 adapter,
                 chatAdapter,
                 pocketAdapter,
+                media,
                 configuration,
             )
-        return TrUAPIProductExecution(execution, adapter, chatAdapter, pocketAdapter)
+        return TrUAPIProductExecution(execution, adapter, chatAdapter, pocketAdapter, media, storageGroup).also {
+            CoreStorageAccess.register(it, bridge.coreStorage.storageIdentifier, storageGroup, execution.productContext().productId)
+        }
     }
 
     /** All durable registrations; inspect syncPending before synchronizing. */
@@ -1225,8 +1280,11 @@ class TrUAPIProductExecution internal constructor(
     private val callbackRetainer: HostCallbacks,
     private val chatRetainer: NativeChatCallbacks?,
     private val pocketRetainer: NativePocketCallbacks?,
+    private val mediaRetainer: NativeMediaCallbacks?,
+    private val storageGroup: Any,
 ) : AutoCloseable {
     private val shutDown = AtomicBoolean(false)
+    internal val isClosed: Boolean get() = shutDown.get()
 
     /**
      * Register this execution against the host runtime's shared localhost
@@ -1333,9 +1391,31 @@ class TrUAPIProductExecution internal constructor(
     suspend fun authorizeRemotePermission(request: RemotePermissionRequest): Boolean =
         inner.authorizeRemotePermission(request)
 
+    /** Current core-derived Calling scope for trusted permission settings. */
+    @Throws(HostRejection::class)
+    suspend fun callingPermissionAuthorizationRequest(): PermissionAuthorizationRequest =
+        inner.callingPermissionAuthorizationRequest()
+
+    /** Re-read shared policy and fence this core's exact affected Media scope, without prompting. */
+    @Throws(HostRejection::class)
+    suspend fun refreshPermissionAuthorization(request: PermissionAuthorizationRequest) {
+        inner.refreshPermissionAuthorization(request)
+    }
+
+    /**
+     * Wait for already-enqueued cross-core permission refreshes from this runtime.
+     * Call only after a policy setter returns, outside host lifecycle/storage locks.
+     * A failed refresh has already fenced its affected core scope and is reported here.
+     */
+    @Throws(HostRejection::class)
+    suspend fun awaitCoreStorageChanges() {
+        CoreStorageAccess.awaitChanges(storageGroup)
+    }
+
     /**
      * Update a stored permission authorization status. Passing `NotDetermined`
-     * clears the stored value so the next product request prompts again.
+     * records a fresh Ask generation so the next product request prompts again.
+     * UI callers may then await [awaitCoreStorageChanges] outside their own locks.
      */
     @Throws(HostRejection::class)
     fun setPermissionAuthorizationStatus(
@@ -1389,6 +1469,7 @@ class TrUAPIProductExecution internal constructor(
         // as well as guarded: a concurrent close could otherwise free the
         // handle between the guard and the call.
         if (shutDown.compareAndSet(false, true)) {
+            CoreStorageAccess.unregister(this)
             inner.shutdown()
         }
         inner.close()

@@ -701,6 +701,7 @@ mod tests {
     struct MemStorage {
         inner: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
         writes: Mutex<usize>,
+        changes: parking_lot::Mutex<Vec<CoreStorageKey>>,
     }
 
     impl MemStorage {
@@ -742,6 +743,27 @@ mod tests {
                 .expect("storage mutex poisoned")
                 .remove(&key.encode());
             Ok(())
+        }
+
+        async fn compare_exchange_core_storage(
+            &self, key: CoreStorageKey, expected: Option<Vec<u8>>,
+            replacement: Vec<u8>, notify_on_success: bool,
+        ) -> Result<bool, GenericError> {
+            let encoded = key.encode();
+            let mut storage = self.inner.lock().expect("storage mutex poisoned");
+            if storage.get(&encoded) != expected.as_ref() {
+                return Ok(false);
+            }
+            storage.insert(encoded, replacement);
+            *self.writes.lock().expect("write counter mutex poisoned") += 1;
+            if notify_on_success {
+                self.core_storage_changed(key);
+            }
+            Ok(true)
+        }
+
+        fn core_storage_changed(&self, key: CoreStorageKey) {
+            self.changes.lock().push(key);
         }
     }
 
@@ -792,6 +814,17 @@ mod tests {
 
         async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
             self.0.clear_core_storage(key).await
+        }
+
+        async fn compare_exchange_core_storage(
+            &self, key: CoreStorageKey, expected: Option<Vec<u8>>,
+            replacement: Vec<u8>, notify_on_success: bool,
+        ) -> Result<bool, GenericError> {
+            self.0.compare_exchange_core_storage(key, expected, replacement, notify_on_success).await
+        }
+
+        fn core_storage_changed(&self, key: CoreStorageKey) {
+            self.0.core_storage_changed(key);
         }
     }
 

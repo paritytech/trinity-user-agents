@@ -9,6 +9,7 @@ pub mod entropy;
 pub mod jam_peer_transport;
 pub mod local_storage;
 pub mod locale;
+pub mod media;
 pub mod notifications;
 pub mod payment;
 pub mod permissions;
@@ -32,6 +33,7 @@ pub use entropy::Entropy;
 pub use jam_peer_transport::JamPeerTransport;
 pub use local_storage::LocalStorage;
 pub use locale::Locale;
+pub use media::Media;
 pub use notifications::Notifications;
 pub use payment::Payment;
 pub use permissions::Permissions;
@@ -57,6 +59,7 @@ pub trait TrUApi:
     + JamPeerTransport
     + LocalStorage
     + Locale
+    + Media
     + Notifications
     + Payment
     + Permissions
@@ -85,6 +88,7 @@ impl<T> TrUApi for T where
         + JamPeerTransport
         + LocalStorage
         + Locale
+        + Media
         + Notifications
         + Payment
         + Permissions

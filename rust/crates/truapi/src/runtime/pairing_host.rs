@@ -4,6 +4,7 @@
 //! host, keeps the active inter-host session, and sends authority requests to
 //! that signing host over the SSO channel in [`sso_channel`].
 
+mod media;
 mod sso_channel;
 
 use std::collections::HashMap;
@@ -44,6 +45,7 @@ use crate::host_internal::extrinsic::build_local_transaction;
 use crate::host_internal::sso_messages::{PaymentTopUpRequest, ProductRequest, RingVrfError};
 use crate::host_internal::transaction::sign_extrinsic_payload;
 use crate::host_logic::entropy::derive_product_entropy_from_source;
+use crate::host_logic::media_protocol::UnsignedAdvertisement;
 use crate::host_logic::product_account::{
     SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_product_keypair_from_subtree_secret,
     derive_ring_vrf_entropy_from_domain,
@@ -2875,6 +2877,25 @@ impl ProductAuthority for PairingHost {
             payload,
         )
         .await
+    }
+
+    async fn certify_media_endpoint(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        unsigned: UnsignedAdvertisement,
+    ) -> Result<[u8; 64], AuthorityError> {
+        self.certify_paired_media_endpoint(cx, session, unsigned).await
+    }
+
+    fn sign_media_statement(
+        &self,
+        session: &AuthoritySession,
+        payload: Vec<u8>,
+        topics: Vec<[u8; 32]>,
+        expires_at: u64,
+    ) -> Result<Vec<u8>, AuthorityError> {
+        self.sign_paired_media_statement(session, payload, topics, expires_at)
     }
 
     fn derive_entropy(

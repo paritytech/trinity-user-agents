@@ -12,6 +12,13 @@ import java.util.Locale
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import uniffi.truapi.HostLocaleSubscribeItem
+import android.Manifest
+import android.content.pm.PackageManager
+import android.webkit.WebView
+import io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackend
+import io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackendFactory
+import io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaConsent
+import uniffi.truapi.DevicePermissionStatus
 import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
@@ -90,6 +97,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val pocketCardStore: PocketCardStore,
     @param:ApplicationContext private val context: Context,
     private val appLanguageProvider: AppLanguageProvider,
+    private val mediaFactory: NativeMediaBackendFactory,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -124,6 +132,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
     private fun currentLocale() =
         HostLocaleSubscribeItem(cachedLanguageTag.get(), ZoneId.systemDefault().id)
+    private var mediaBackend: NativeMediaBackend? = null
 
     init {
         // Tear the execution down with the owning scope: otherwise a closed
@@ -207,7 +216,22 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         }
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
-            confirmationLauncher.decide(review, requesterFallback = callingProductId.value)
+            if (review is UserConfirmationReview.Calling) {
+                review.v1.productId == callingProductId.value &&
+                    NativeMediaConsent.calling(context, review.v1.productId, review.v1.network, review.v1.account)
+            } else {
+                confirmationLauncher.decide(review, requesterFallback = callingProductId.value)
+            }
+
+        override suspend fun devicePermissionStatus(request: HostDevicePermissionRequest): DevicePermissionStatus {
+            val permission = when (request) {
+                HostDevicePermissionRequest.CAMERA -> Manifest.permission.CAMERA
+                HostDevicePermissionRequest.MICROPHONE -> Manifest.permission.RECORD_AUDIO
+                else -> return DevicePermissionStatus.NOT_APPLICABLE
+            }
+            return if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED)
+                DevicePermissionStatus.GRANTED else DevicePermissionStatus.NOT_DETERMINED
+        }
 
         override suspend fun devicePermission(
             product: ProductExecutionConfig,
@@ -222,6 +246,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             product: ProductExecutionConfig,
             request: RemotePermission,
         ): TrUAPIPermissionDecision {
+            // Calling consent is scoped by the core's typed network/account review.
+            if (request == RemotePermission.Calling || request == RemotePermission.WebRtc)
+                return TrUAPIPermissionDecision.DENY
             return hostApiInteractor
                 .requestRemotePermissionDecision(callingProductId, request.toDomain())
                 .getOrElse { throw it }
@@ -278,10 +305,13 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             cachedChains.set(chains)
             cachedLanguageTag.set(appLanguageProvider.languageTag.first())
             val pocket = ProductPocketHostBridge(productId, pocketCardStore, scope)
+            val media = mediaFactory.create(productId.value)
+            mediaBackend = media
             val opened = runtime.openProductExecution(
                 bridge = buildBridge(productId, navigationPolicy),
                 configuration = ProductExecutionConfig(productId.value, kind),
                 pocket = pocket,
+                media = media,
             )
             execution = opened
             pocketBridge = pocket
@@ -346,6 +376,28 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         execution?.notifyThemeChanged(theme)
     }
 
+    fun viewportChanged() {
+        mediaBackend?.viewportChanged()
+    }
+
+    /** Composites native media over [webView]; register through `addWebViewSetup` so a replacement WebView is attached too. */
+    fun attachMediaView(webView: WebView) {
+        mediaBackend?.attach(webView)
+    }
+
+    /** Fails media closed after the product's renderer died, leaving the execution to the WebView replacement. */
+    fun releaseMedia() {
+        mediaBackend?.close()
+        mediaBackend = null
+    }
+
+    /** Settings use the same callbacks/storage and process runtime, without a second backend. */
+    fun openPermissionExecution(runtime: TrUAPIHostRuntime, productId: ProductId): TrUAPIProductExecution =
+        runtime.openProductExecution(
+            buildBridge(productId, NavigationPolicy.DeeplinkNavigation { error("Navigation unavailable in permission settings") }),
+            ProductExecutionConfig(productId.value, ProductExecutionKind.APP),
+        )
+
     /**
      * Tears down the execution and its chain connections; the shared runtime
      * stays up for other products. Idempotent. Detaches the provider before
@@ -353,6 +405,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
      * being disposed.
      */
     fun stop() {
+        releaseMedia()
         val opened = execution ?: return
         execution = null
         localeJob?.cancel()
@@ -422,6 +475,7 @@ private fun RemotePermission.toDomain(): RemotePermissionRequest = when (this) {
     RemotePermission.PreimageSubmit -> RemotePermissionRequest.PreimageSubmit
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
     is RemotePermission.JamPeers -> RemotePermissionRequest.JamPeers(genesis.toHexString(withPrefix = true))
+    RemotePermission.Calling -> error("Calling requires a scoped core review")
 }
 
 private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this) {

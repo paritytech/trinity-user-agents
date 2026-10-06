@@ -1,5 +1,7 @@
 //! Product-facing platform capability adapters.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::platform::PermissionAuthorizationStatus;
 use futures::StreamExt;
 use parity_scale_codec::{Decode, Encode};
@@ -51,11 +53,72 @@ use truapi::versioned::worker::{
     HostWorkerEndOperationResponse,
 };
 use truapi::{CallContext, CallError, Subscription, v01, v02};
+use crate::platform::{PermissionAuthorizationRequest, PermissionDecision};
 
 use crate::host_internal::product_manifest::Granted;
 use crate::host_logic::dotns::{NavigateDecision, parse_navigate};
 use crate::host_logic::features::feature_supported;
+use crate::host_internal::permissions::PermissionAuthorizationSnapshot;
 use crate::runtime::{PERMISSION_DENIED_REASON, ProductRuntimeHost};
+
+impl ProductRuntimeHost {
+    /// Resolve a host settings slot without prompting, advertising or starting Media.
+    pub(crate) async fn calling_permission_authorization_request(
+        &self,
+    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+        let (_, identity) = crate::runtime::media_identity::resolve_identity(
+            &self.services,
+            self.authority.as_ref(),
+            &self.product,
+            &CallContext::default(),
+        )
+        .await
+        .map_err(|_| v01::GenericError {
+            reason: "Calling identity is unavailable".into(),
+        })?;
+        Ok(PermissionAuthorizationRequest::Calling {
+            network: identity.network,
+            account: identity.account,
+        })
+    }
+
+    async fn commit_permission_answer(
+        &self,
+        product_id: &str,
+        request: &PermissionAuthorizationRequest,
+        snapshot: &PermissionAuthorizationSnapshot,
+        decision: PermissionDecision,
+        revision: &AtomicU64,
+        current: &(impl Fn() -> bool + Sync),
+    ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+        let _guard = self.services.media_permission_gate.lock().await;
+        if !current() {
+            return Ok(PermissionAuthorizationStatus::NotDetermined);
+        }
+        let service = self.permissions_service();
+        // Recheck the live OS overlay, without rebasing the captured generation.
+        if service.authorization_status(request).await?
+            != PermissionAuthorizationStatus::NotDetermined
+        {
+            return Ok(PermissionAuthorizationStatus::NotDetermined);
+        }
+        if !current() {
+            return Ok(PermissionAuthorizationStatus::NotDetermined);
+        }
+        // No await between these final guards and CAS dispatch. Cancellation
+        // after dispatch does not roll back an accepted product decision.
+        self.services.advance_media_permission_revision()?;
+        revision.store(self.services.media_permission_revision(), Ordering::Release);
+        let status = service.record_permission_decision_if_unchanged(snapshot, decision, false).await?;
+        if status == PermissionAuthorizationStatus::NotDetermined {
+            return Ok(status);
+        }
+        if status != PermissionAuthorizationStatus::Authorized {
+            self.services.notify_media_permission_revoked(product_id, request);
+        }
+        Ok(status)
+    }
+}
 
 #[truapi::async_trait]
 impl System for ProductRuntimeHost {
@@ -196,12 +259,44 @@ impl Permissions for ProductRuntimeHost {
     #[instrument(skip_all, fields(runtime.method = "permissions.request_device_permission"))]
     async fn request_device_permission(
         &self,
-        _cx: &CallContext,
+        cx: &CallContext,
         request: HostDevicePermissionRequest,
     ) -> Result<HostDevicePermissionResponse, CallError<HostDevicePermissionError>> {
         let HostDevicePermissionRequest::V1(inner) = request;
+        let product_id = self.product_id();
         let service = self.permissions_service();
-        match service.check_or_prompt_device(inner).await {
+        let request = PermissionAuthorizationRequest::Device(inner);
+        let session = self.authority.current_session();
+        let revision = {
+            let _guard = self.services.media_permission_gate.lock().await;
+            AtomicU64::new(self.services.media_permission_revision())
+        };
+        let current = || {
+            self.services.media_permission_revision() == revision.load(Ordering::Acquire)
+                && self.authority.current_session() == session
+                && !cx.cancel().is_cancelled()
+        };
+        let decision = service.check_or_prompt_device_fenced(inner, |snapshot, decision| {
+            let current = &current;
+            let revision = &revision;
+            let request = &request;
+            let product_id = &product_id;
+            async move {
+                self.commit_permission_answer(product_id, request, &snapshot, decision, revision, current).await
+            }
+        }).await;
+        let _guard = self.services.media_permission_gate.lock().await;
+        if !current() {
+            return Err(CallError::Denied);
+        }
+        let decision = match decision {
+            Ok(_) => service.authorization_status(&request).await,
+            Err(error) => Err(error),
+        };
+        if !current() {
+            return Err(CallError::Denied);
+        }
+        match decision {
             Ok(decision) => Ok(HostDevicePermissionResponse::V1(
                 v01::HostDevicePermissionResponse {
                     granted: decision == PermissionAuthorizationStatus::Authorized,
@@ -216,12 +311,66 @@ impl Permissions for ProductRuntimeHost {
     #[instrument(skip_all, fields(runtime.method = "permissions.request_remote_permission"))]
     async fn request_remote_permission(
         &self,
-        _cx: &CallContext,
+        cx: &CallContext,
         request: RemotePermissionRequest,
     ) -> Result<RemotePermissionResponse, CallError<RemotePermissionError>> {
         let RemotePermissionRequest::V1(inner) = request;
+        let product_id = self.product_id();
         let service = self.permissions_service();
-        match service.check_or_prompt_remote(inner).await {
+        let decision = if matches!(inner.permission, v01::RemotePermission::Calling) {
+            let (session, identity) = crate::runtime::media_identity::resolve_identity(
+                &self.services,
+                self.authority.as_ref(),
+                &self.product,
+                cx,
+            )
+            .await
+            .map_err(|_| CallError::Denied)?;
+            let request = PermissionAuthorizationRequest::Calling {
+                network: identity.network,
+                account: identity.account,
+            };
+            let revision = {
+                let _guard = self.services.media_permission_gate.lock().await;
+                AtomicU64::new(self.services.media_permission_revision())
+            };
+            let current = || {
+                self.services.media_permission_revision() == revision.load(Ordering::Acquire)
+                    && self.authority.current_session().as_ref() == Some(&session)
+                    && !cx.cancel().is_cancelled()
+            };
+            let decision = service
+                .check_or_prompt_calling(identity.network, identity.account, |snapshot, status| {
+                    let request = &request;
+                    let current = &current;
+                    let revision = &revision;
+                    let product_id = &product_id;
+                    async move {
+                        let decision = match status {
+                            PermissionAuthorizationStatus::Authorized => PermissionDecision::AllowAlways,
+                            PermissionAuthorizationStatus::Denied => PermissionDecision::Deny,
+                            PermissionAuthorizationStatus::NotDetermined => return Ok(status),
+                        };
+                        self.commit_permission_answer(product_id, request, &snapshot, decision, revision, current).await
+                    }
+                })
+                .await;
+            let _guard = self.services.media_permission_gate.lock().await;
+            if !current() {
+                return Err(CallError::Denied);
+            }
+            let decision = match decision {
+                Ok(_) => service.authorization_status(&request).await,
+                Err(error) => Err(error),
+            };
+            if !current() {
+                return Err(CallError::Denied);
+            }
+            decision
+        } else {
+            service.check_or_prompt_remote(inner).await
+        };
+        match decision {
             Ok(decision) => Ok(RemotePermissionResponse::V1(
                 v01::RemotePermissionResponse {
                     granted: decision == PermissionAuthorizationStatus::Authorized,

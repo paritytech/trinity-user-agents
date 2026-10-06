@@ -66,6 +66,11 @@ impl StatementStoreRpc {
         }
     }
 
+    /// Trusted network namespace shared by host-owned signaling and authority.
+    pub(crate) fn genesis_hash(&self) -> [u8; 32] {
+        self.people_chain_genesis_hash
+    }
+
     /// Open a People-chain RPC client already scoped to its genesis hash, for
     /// allowance paths that key the chain-context cache by it.
     pub async fn chain_client(

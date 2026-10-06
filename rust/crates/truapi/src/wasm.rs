@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::platform::{
     ChainProvider, ChatPlatform, ContactsPlatform, HopProvider, HostInfo, JsonRpcConnection,
-    PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
+    MediaPlatform, PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
     ProductExecutionKind, ProfilePlatform, ProviderError, RuntimeConfigValidationError,
 };
 #[cfg(feature = "wasm-signing-host")]
@@ -282,9 +282,9 @@ impl<T> Drop for JsSubscriptionStream<T> {
     }
 }
 
-fn invoke_js_subscription<T>(
+fn invoke_js_subscription_args<T>(
     fn_: &Function,
-    payload: Option<JsValue>,
+    args: &[JsValue],
     parse_item: fn(JsValue) -> Result<T, String>,
 ) -> BoxStream<'static, Result<T, v01::GenericError>>
 where
@@ -300,19 +300,13 @@ where
         let _ = tx.unbounded_send(Err(parse_generic_error(value)));
     }) as Box<dyn FnMut(JsValue)>);
 
-    let call_result = match payload {
-        Some(arg) => fn_.call3(
-            &JsValue::NULL,
-            &arg,
-            send_item.as_ref().unchecked_ref(),
-            send_error.as_ref().unchecked_ref(),
-        ),
-        None => fn_.call2(
-            &JsValue::NULL,
-            send_item.as_ref().unchecked_ref(),
-            send_error.as_ref().unchecked_ref(),
-        ),
-    };
+    let arguments = Array::new();
+    for arg in args {
+        arguments.push(arg);
+    }
+    arguments.push(send_item.as_ref());
+    arguments.push(send_error.as_ref());
+    let call_result = fn_.apply(&JsValue::NULL, &arguments);
 
     let dispose = match call_result {
         Ok(value) if value.is_null() || value.is_undefined() => None,
@@ -333,6 +327,144 @@ where
 
     Box::pin(JsSubscriptionStream {
         rx,
+        _send_item: SendWrapper::new(send_item),
+        _send_error: SendWrapper::new(send_error),
+        dispose,
+    })
+}
+
+struct JsMediaQueue<T> {
+    items: std::collections::VecDeque<T>,
+    terminal: Option<v01::GenericError>,
+    closed: bool,
+}
+
+struct JsMediaSubscriptionStream<T> {
+    queue: Arc<std::sync::Mutex<JsMediaQueue<T>>>,
+    waker: Arc<futures::task::AtomicWaker>,
+    _send_item: SendWrapper<Closure<dyn FnMut(JsValue)>>,
+    _send_error: SendWrapper<Closure<dyn FnMut(JsValue)>>,
+    dispose: Option<SendWrapper<Function>>,
+}
+
+impl<T> JsMediaSubscriptionStream<T> {
+    fn close(&mut self) {
+        {
+            let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
+            queue.closed = true;
+            queue.items.clear();
+        }
+        if let Some(dispose) = self.dispose.take() {
+            let _ = dispose.call0(&JsValue::NULL);
+        }
+    }
+}
+
+impl<T> Stream for JsMediaSubscriptionStream<T> {
+    type Item = Result<T, v01::GenericError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.waker.register(cx.waker());
+        let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(error) = queue.terminal.take() {
+            drop(queue);
+            self.close();
+            return Poll::Ready(Some(Err(error)));
+        }
+        if let Some(item) = queue.items.pop_front() {
+            return Poll::Ready(Some(Ok(item)));
+        }
+        if queue.closed { Poll::Ready(None) } else { Poll::Pending }
+    }
+}
+
+impl<T> Drop for JsMediaSubscriptionStream<T> {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+/// Host-private Media streams have bounded buffering and finite diagnostics.
+/// The generated adapter supplies positional SCALE/native arguments, including
+/// the trusted product and runtime identity; none become product frames.
+fn invoke_js_media_subscription<T>(
+    fn_: &Function,
+    args: &[JsValue],
+    parse_item: fn(JsValue) -> Result<T, String>,
+) -> BoxStream<'static, Result<T, v01::GenericError>>
+where
+    T: Send + 'static,
+{
+    let queue = Arc::new(std::sync::Mutex::new(JsMediaQueue {
+        items: std::collections::VecDeque::new(),
+        terminal: None,
+        closed: false,
+    }));
+    let waker = Arc::new(futures::task::AtomicWaker::new());
+    let item_queue = queue.clone();
+    let item_waker = waker.clone();
+    let send_item = Closure::wrap(Box::new(move |value: JsValue| {
+        let mut queue = item_queue.lock().unwrap_or_else(|p| p.into_inner());
+        if queue.closed { return; }
+        let item = if queue.items.len() >= 128 {
+            Err("media event overflow")
+        } else {
+            parse_item(value).map_err(|_| "media backend failure")
+        };
+        match item {
+            Ok(item) => queue.items.push_back(item),
+            Err(reason) => {
+                queue.items.clear();
+                queue.closed = true;
+                queue.terminal = Some(generic(reason.to_string()));
+            }
+        }
+        drop(queue);
+        item_waker.wake();
+    }) as Box<dyn FnMut(JsValue)>);
+    let error_queue = queue.clone();
+    let error_waker = waker.clone();
+    let send_error = Closure::wrap(Box::new(move |value: JsValue| {
+        let mut queue = error_queue.lock().unwrap_or_else(|p| p.into_inner());
+        if queue.closed { return; }
+        // Preserve only the bridge's finite overflow signal, never arbitrary
+        // host exception text that could include SDP/candidates.
+        let reason = if parse_generic_error(value).reason == "media event overflow" {
+            "media event overflow"
+        } else {
+            "media backend failure"
+        };
+        queue.items.clear();
+        queue.closed = true;
+        queue.terminal = Some(generic(reason.to_string()));
+        drop(queue);
+        error_waker.wake();
+    }) as Box<dyn FnMut(JsValue)>);
+    let arguments = Array::new();
+    for arg in args { arguments.push(arg); }
+    arguments.push(send_item.as_ref());
+    arguments.push(send_error.as_ref());
+    let dispose = match fn_.apply(&JsValue::NULL, &arguments) {
+        Ok(value) => match value.dyn_into::<Function>() {
+            Ok(dispose) => Some(SendWrapper::new(dispose)),
+            Err(_) => {
+                let mut queue = queue.lock().unwrap_or_else(|p| p.into_inner());
+                queue.items.clear();
+                queue.closed = true;
+                queue.terminal = Some(generic("media backend failure".to_string()));
+                None
+            }
+        },
+        Err(_) => {
+            let mut queue = queue.lock().unwrap_or_else(|p| p.into_inner());
+            queue.items.clear();
+            queue.closed = true;
+            queue.terminal = Some(generic("media backend failure".to_string()));
+            None
+        }
+    };
+    Box::pin(JsMediaSubscriptionStream {
+        queue, waker,
         _send_item: SendWrapper::new(send_item),
         _send_error: SendWrapper::new(send_error),
         dispose,
@@ -978,6 +1110,7 @@ struct WasmPlatformAdapters {
     identity_backend_host: Option<Arc<dyn IdentityBackendHost>>,
     #[cfg(feature = "wasm-signing-host")]
     native_wallet: Option<Arc<dyn CoinageWalletHost>>,
+    media_platform: Option<Arc<dyn MediaPlatform>>,
 }
 
 /// Build the platform and the optional capability adapters supplied by the host.
@@ -991,6 +1124,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     let has_identity_backend = bridge.has_identity_backend();
     #[cfg(feature = "wasm-signing-host")]
     let has_native_wallet = bridge.has_coinage_wallet();
+    let has_media = bridge.has_media();
     let platform = Arc::new(WasmPlatform::new(bridge));
     let chat = has_chat.then(|| platform.clone() as Arc<dyn ChatPlatform>);
     let contacts = has_contacts.then(|| platform.clone() as Arc<dyn ContactsPlatform>);
@@ -1002,6 +1136,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
         has_identity_backend.then(|| platform.clone() as Arc<dyn IdentityBackendHost>);
     #[cfg(feature = "wasm-signing-host")]
     let native_wallet = has_native_wallet.then(|| platform.clone() as Arc<dyn CoinageWalletHost>);
+    let media = has_media.then(|| platform.clone() as Arc<dyn MediaPlatform>);
     WasmPlatformAdapters {
         platform,
         chat_platform: chat,
@@ -1013,6 +1148,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
         identity_backend_host: identity_backend,
         #[cfg(feature = "wasm-signing-host")]
         native_wallet,
+        media_platform: media,
     }
 }
 
@@ -1030,6 +1166,7 @@ fn connection_adapters_from_js(
         status_host,
         pocket_platform,
         profile_platform,
+        media_platform,
         ..
     } = wasm_platform(Arc::new(JsBridge::from_js(callbacks)?));
     Ok(Some(crate::host_core::ConnectionAdapters {
@@ -1041,6 +1178,7 @@ fn connection_adapters_from_js(
         permission_grants: Arc::default(),
         pocket_platform,
         profile_platform,
+        media_platform,
         chat: Arc::new(crate::runtime::ActionChannel::chat()),
         renderer: Arc::new(crate::runtime::ActionChannel::renderer()),
     }))
@@ -1188,6 +1326,7 @@ impl WasmPairingHostRuntime {
             status_host,
             pocket_platform,
             profile_platform,
+            media_platform,
             ..
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
@@ -1209,6 +1348,9 @@ impl WasmPairingHostRuntime {
         }
         if let Some(profile_platform) = profile_platform {
             runtime.set_profile_platform(profile_platform);
+        }
+        if let Some(media_platform) = media_platform {
+            runtime.set_media_platform(media_platform);
         }
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
         Ok(Self {
@@ -1342,6 +1484,20 @@ impl WasmPairingHostRuntime {
         ))
     }
 
+    /// Resolve the current Calling slot as a SCALE-encoded
+    /// `PermissionAuthorizationRequest`, without prompting or opening Media.
+    #[wasm_bindgen(js_name = callingPermissionAuthorizationRequest)]
+    pub async fn calling_permission_authorization_request(
+        &self,
+        product_id: String,
+    ) -> Result<Vec<u8>, JsValue> {
+        self.runtime
+            .calling_permission_authorization_request(&product_id)
+            .await
+            .map(|request| request.encode())
+            .map_err(generic_error_to_js)
+    }
+
     /// Read a permission authorization status for a product.
     ///
     /// A device capability resolves the host application's OS gate as well as
@@ -1400,6 +1556,18 @@ impl WasmPairingHostRuntime {
             .set_permission_authorization_status(&product_id, request, status)
             .await
             .map_err(generic_error_to_js)
+    }
+
+    /// Re-read a product's stored authorization after another core changes it.
+    #[wasm_bindgen(js_name = refreshPermissionAuthorization)]
+    pub async fn refresh_permission_authorization(
+        &self,
+        product_id: String,
+        payload: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        let request = decode_permission_authorization_request(&payload)?;
+        self.runtime.refresh_permission_authorization(&product_id, request)
+            .await.map_err(generic_error_to_js)
     }
 
     /// Clear one product's durable and in-memory capability state.
@@ -1462,6 +1630,13 @@ pub fn describe_core_storage_key_for_wasm(encoded: Vec<u8>) -> Result<JsValue, J
             &value,
             &JsValue::from_str("productId"),
             &JsValue::from_str(&product_id),
+        )?;
+    }
+    if let Some(request) = description.permission_request {
+        Reflect::set(
+            &value,
+            &JsValue::from_str("permissionRequest"),
+            &Uint8Array::from(request.encode().as_slice()),
         )?;
     }
     Ok(value.into())
@@ -1596,6 +1771,7 @@ impl WasmSigningHostRuntime {
             profile_platform,
             identity_backend_host,
             native_wallet,
+            media_platform,
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
             wasm_bindgen_futures::spawn_local(fut);
@@ -1620,6 +1796,9 @@ impl WasmSigningHostRuntime {
         }
         if let Some(profile_platform) = profile_platform {
             runtime.set_profile_platform(profile_platform);
+        }
+        if let Some(media_platform) = media_platform {
+            runtime.set_media_platform(media_platform);
         }
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
         Ok(Self {
@@ -1695,6 +1874,20 @@ impl WasmSigningHostRuntime {
             .map_err(generic_error_to_js)
     }
 
+    /// Resolve the current Calling slot as a SCALE-encoded
+    /// `PermissionAuthorizationRequest`, without prompting or opening Media.
+    #[wasm_bindgen(js_name = callingPermissionAuthorizationRequest)]
+    pub async fn calling_permission_authorization_request(
+        &self,
+        product_id: String,
+    ) -> Result<Vec<u8>, JsValue> {
+        self.runtime
+            .calling_permission_authorization_request(&product_id)
+            .await
+            .map(|request| request.encode())
+            .map_err(generic_error_to_js)
+    }
+
     /// Read one permission authorization status for a product.
     #[wasm_bindgen(js_name = permissionAuthorizationStatus)]
     pub async fn permission_authorization_status(
@@ -1745,6 +1938,18 @@ impl WasmSigningHostRuntime {
             .set_permission_authorization_status(&product_id, request, status)
             .await
             .map_err(generic_error_to_js)
+    }
+
+    /// Re-read a product's stored authorization after another core changes it.
+    #[wasm_bindgen(js_name = refreshPermissionAuthorization)]
+    pub async fn refresh_permission_authorization(
+        &self,
+        product_id: String,
+        payload: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        let request = decode_permission_authorization_request(&payload)?;
+        self.runtime.refresh_permission_authorization(&product_id, request)
+            .await.map_err(generic_error_to_js)
     }
 
     /// Activate a wallet-local session from raw BIP-39 entropy.
@@ -1999,6 +2204,7 @@ impl WasmProductRuntime {
             status_host,
             pocket_platform,
             profile_platform,
+            media_platform,
             ..
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
@@ -2021,6 +2227,9 @@ impl WasmProductRuntime {
         if let Some(contacts_platform) = contacts_platform {
             pairing.set_contacts_platform(contacts_platform);
         }
+        if let Some(media_platform) = media_platform {
+            pairing.set_media_platform(media_platform);
+        }
         install_worker_demand_observer(pairing.worker_ledger(), &callbacks)?;
         let core = pairing.product_runtime(product, frame_sink);
         Ok(Self::from_parts(core, channel.dispose))
@@ -2033,6 +2242,12 @@ impl WasmProductRuntime {
         self.inner.core.notify_contacts_changed();
     }
 
+    /// Trusted connection identity; bind host adapters before dispatching frames.
+    #[wasm_bindgen(getter, js_name = runtimeId)]
+    pub fn runtime_id(&self) -> u64 {
+        self.inner.core.runtime_id()
+    }
+
     /// Push a SCALE-encoded protocol frame into the dispatcher. Responses
     /// (and subscription items) flow back through the `emitFrame`
     /// callback.
@@ -2043,6 +2258,18 @@ impl WasmProductRuntime {
             .receive_frame(frame)
             .await
             .map_err(|err| JsValue::from_str(&err.to_string()))
+    }
+
+    /// Resolve this connection's current Calling slot as a SCALE-encoded
+    /// `PermissionAuthorizationRequest`, without prompting or opening Media.
+    #[wasm_bindgen(js_name = callingPermissionAuthorizationRequest)]
+    pub async fn calling_permission_authorization_request(&self) -> Result<Vec<u8>, JsValue> {
+        self.inner
+            .core
+            .calling_permission_authorization_request()
+            .await
+            .map(|request| request.encode())
+            .map_err(generic_error_to_js)
     }
 
     /// Read a permission authorization status without prompting.
@@ -2095,7 +2322,7 @@ impl WasmProductRuntime {
     }
 
     /// Update a stored permission authorization status. Passing
-    /// `"NotDetermined"` clears the stored value so the next product request
+    /// `"NotDetermined"` resets the decision so the next product request
     /// prompts again.
     #[wasm_bindgen(js_name = setPermissionAuthorizationStatus)]
     pub async fn set_permission_authorization_status(
@@ -2110,6 +2337,17 @@ impl WasmProductRuntime {
             .set_permission_authorization_status(request, status)
             .await
             .map_err(generic_error_to_js)
+    }
+
+    /// Re-read stored authorization without prompting, OS queries or writes.
+    #[wasm_bindgen(js_name = refreshPermissionAuthorization)]
+    pub async fn refresh_permission_authorization(
+        &self,
+        payload: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        let request = decode_permission_authorization_request(&payload)?;
+        self.inner.core.refresh_permission_authorization(request)
+            .await.map_err(generic_error_to_js)
     }
 
     /// Tear down the bridge. Invokes the JS-side `dispose` callback so the
