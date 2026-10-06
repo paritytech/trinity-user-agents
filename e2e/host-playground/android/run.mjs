@@ -333,7 +333,15 @@ async function readyPage(adb, forwards, page) {
   // and destroys the context an evaluation was running in, so both are retried
   // until the playground shows its buttons.
   const deadline = Date.now() + READY_TIMEOUT_MS;
+  let nextDeepLink = Date.now() + DEEP_LINK_RETRY_MS;
   for (;;) {
+    // A paused page behind another product never becomes ready, so bring the
+    // product back to the front while waiting.
+    if (Date.now() >= nextDeepLink) {
+      log(`reopening ${PRODUCT_DEEP_LINK}`);
+      await adb.shell(`am start -a android.intent.action.VIEW -d ${PRODUCT_DEEP_LINK} ${PACKAGE}`, { allowFailure: true });
+      nextDeepLink = Date.now() + DEEP_LINK_RETRY_MS;
+    }
     const ready = await page
       .evaluate(`(() => { ${pageRunner}; return window.__hostPlaygroundE2E.ready(); })()`)
       .catch((error) => {
@@ -344,6 +352,20 @@ async function readyPage(adb, forwards, page) {
     if (Date.now() >= deadline) throw new Error(`host-playground rendered no tests within ${READY_TIMEOUT_MS / 1000} s`);
     await sleep(500);
   }
+}
+
+/**
+ * Tests that leave the product for another one. The page that started them is
+ * paused before it can record a result, so they pass when the destination opens.
+ */
+const NAVIGATION_DESTINATIONS = { "navigate-polkadot": "truapi-playground.paseo" };
+
+/** Whether a WebView page showing `host` exists in the app. */
+async function pageShowing(adb, forwards, host) {
+  for (const port of forwards.values()) {
+    if ((await listTargets(port)).some((target) => target.type === "page" && target.url.includes(host))) return true;
+  }
+  return false;
 }
 
 async function runTest(page, id) {
@@ -427,7 +449,11 @@ async function main() {
     for (const id of suite.tests) {
       page = await readyPage(adb, forwards, page);
       log(`running ${id}`);
-      const result = await runTest(page, id);
+      let result = await runTest(page, id);
+      const destination = NAVIGATION_DESTINATIONS[id];
+      if (destination && result.status !== "success" && (await pageShowing(adb, forwards, destination))) {
+        result = { ...result, status: "success", outcome: "navigated", message: `${destination} opened` };
+      }
       log(`${id}: ${result.status}${result.outcome ? ` (${result.outcome})` : ""}`);
       run.results.push(result);
       if (classify(result) === "failed") await screenshot(adb, join(out, `failed-${id}.png`));
