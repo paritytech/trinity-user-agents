@@ -66,6 +66,26 @@ uniffi::custom_type!(Bytes32, Vec<u8>, {
     try_lift: |bytes| Ok(bytes.as_slice().try_into()?),
 });
 
+/// A 64-byte value, such as an sr25519 secret key, passed as plain bytes on
+/// FFI surfaces.
+pub type Bytes64 = [u8; 64];
+
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+uniffi::custom_type!(Bytes64, Vec<u8>, {
+    remote,
+    lower: |bytes| bytes.to_vec(),
+    try_lift: |bytes| Ok(bytes.as_slice().try_into()?),
+});
+
+// Swift and Kotlin have no 128-bit integer, so amounts cross FFI surfaces as
+// decimal strings.
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+uniffi::custom_type!(u128, String, {
+    remote,
+    lower: |amount| amount.to_string(),
+    try_lift: |amount| Ok(amount.parse()?),
+});
+
 /// Latest-version protocol payload types, unwrapped from their versioned
 /// envelopes. Runtime code should use these instead of per-version modules.
 pub mod latest {

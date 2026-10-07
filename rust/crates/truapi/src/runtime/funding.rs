@@ -65,6 +65,57 @@ impl FundingRegistry {
         self.lock_sessions().get(intent).cloned()
     }
 
+    /// Every session the core keeps, for the host's progress and history
+    /// views: those in flight first, then the ended ones, each newest first.
+    pub fn sessions(&self) -> Vec<FundingSession> {
+        let mut sessions: Vec<_> = self.lock_sessions().values().cloned().collect();
+        sessions.sort_by_key(|session| {
+            (
+                session.is_terminal(),
+                core::cmp::Reverse(session.settled_at_ms().unwrap_or(session.opened_at_ms)),
+            )
+        });
+        sessions
+    }
+
+    /// Record that the host has written ended session `intent` into its own
+    /// history, so it is no longer handed over and can age out. Returns
+    /// whether the session was ended and not yet acknowledged.
+    pub async fn acknowledge(
+        &self,
+        storage: &(impl CoreStorage + ?Sized),
+        now_ms: u64,
+        intent: &str,
+    ) -> Result<bool, FundingSessionError> {
+        let intent = intent.to_string();
+        self.commit(storage, now_ms, move |sessions| {
+            let acknowledged = sessions
+                .get_mut(&intent)
+                .filter(|session| session.is_terminal() && !session.acknowledged)
+                .map(|session| session.acknowledged = true)
+                .is_some();
+            (acknowledged, Vec::new())
+        })
+        .await
+    }
+
+    /// Cancel open session `intent`. Returns whether it was still open.
+    pub async fn cancel(
+        &self,
+        storage: &(impl CoreStorage + ?Sized),
+        now_ms: u64,
+        intent: &str,
+    ) -> Result<bool, FundingSessionError> {
+        let intent = intent.to_string();
+        self.commit(storage, now_ms, move |sessions| {
+            let cancelled = sessions
+                .get_mut(&intent)
+                .is_some_and(|session| session.cancel(now_ms));
+            (cancelled, if cancelled { vec![intent] } else { Vec::new() })
+        })
+        .await
+    }
+
     /// Watch one session, receiving its current stage immediately. A terminal
     /// session yields that one item and then ends.
     pub fn subscribe(
@@ -247,12 +298,14 @@ impl RuntimeServices {
                     services.platform.as_ref(),
                     current_unix_millis(),
                     |sessions| {
-                        let open = sessions
+                        // Ended sessions the host has not recorded are handed
+                        // over again, so its history gets every outcome.
+                        let pending = sessions
                             .values()
-                            .filter(|session| !session.is_terminal())
+                            .filter(|session| session.needs_handoff())
                             .map(|session| session.intent.clone())
                             .collect();
-                        ((), open)
+                        ((), pending)
                     },
                 )
                 .await;
@@ -261,6 +314,21 @@ impl RuntimeServices {
                 Err(error) => tracing::warn!(%error, "loading funding sessions failed"),
             }
         }));
+    }
+
+    /// Record that the host wrote ended session `intent` into its own
+    /// history. Returns whether it was ended and not yet acknowledged.
+    pub async fn acknowledge_funding_session(&self, intent: &str) -> Result<bool, FundingSessionError> {
+        self.funding()
+            .acknowledge(self.platform.as_ref(), current_unix_millis(), intent)
+            .await
+    }
+
+    /// Cancel open session `intent`. Returns whether it was still open.
+    pub async fn cancel_funding(&self, intent: &str) -> Result<bool, FundingSessionError> {
+        self.funding()
+            .cancel(self.platform.as_ref(), current_unix_millis(), intent)
+            .await
     }
 
     /// Open a session and show the host's funding overlay for it: the one
@@ -430,6 +498,32 @@ mod tests {
                 reason: FundingFailure::Expired,
                 settled_at_ms: NOW,
             })
+        );
+    }
+
+    // The host's list shows what is in flight first, then what ended, each
+    // newest first.
+    #[test]
+    fn sessions_list_in_flight_first_then_ended_newest_first() {
+        let storage = stub_platform();
+        let registry = FundingRegistry::default();
+        let ended = |intent, settled_at_ms| {
+            let mut session = session(intent, settled_at_ms - 1);
+            session.fail(FundingFailure::Expired, settled_at_ms);
+            session
+        };
+        for session in [
+            ended("fs_old", NOW - 2),
+            session("fs_live_old", NOW - 5),
+            ended("fs_new", NOW - 1),
+            session("fs_live_new", NOW),
+        ] {
+            insert(&registry, storage.as_ref(), session);
+        }
+
+        assert_eq!(
+            registry.sessions().into_iter().map(|session| session.intent).collect::<Vec<_>>(),
+            ["fs_live_new", "fs_live_old", "fs_new", "fs_old"]
         );
     }
 

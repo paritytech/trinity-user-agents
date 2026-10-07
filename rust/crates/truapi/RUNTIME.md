@@ -403,6 +403,17 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   Balance card opens sessions with `open_funding`. The core owns the sessions,
   persists them, expires them, and answers Funding calls `Unsupported` while no
   overlay is installed.
+  Native hosts reach this through `NativeTrUApiHostRuntime`:
+  `set_funding_callbacks` (the overlay), `set_top_up_callbacks` with
+  `notify_top_up_status` (the top-up engine), `open_funding`,
+  `funding_session`, `funding_sessions`, `cancel_funding` and
+  `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
+  `funding_sessions` lists sessions in flight first, then ended ones, each
+  newest first. An ended session is handed to the host through
+  `funding_session_changed` each time funding resumes until the host calls
+  `acknowledge_funding_session`, so its history writes every outcome once;
+  the core keeps the 50 newest recorded sessions and every unrecorded one
+  within the 200 newest ended.
 - `TopUpPlatform`: claim a top-up source's funds into the user's balance and
   stream each top-up's status. Installed with `set_top_up_platform`. The core
   requires a session and checks the source keys; the host owns claiming,

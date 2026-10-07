@@ -15,11 +15,19 @@ use crate::platform::{CoreStorage, CoreStorageKey};
 
 /// How long a session may stay open before it expires.
 const SESSION_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
-/// How many settled sessions the core keeps, most recently settled first.
+/// How many ended sessions the host has recorded the core keeps, most
+/// recently ended first.
 const SETTLED_HISTORY_LIMIT: usize = 50;
+/// How far back, counting every ended session newest first, those the host
+/// has not recorded yet are kept.
+const UNACKNOWLEDGED_LIMIT: usize = 200;
 
 /// What the core knows about one session, independent of any host surface.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct FundingSession {
     /// Identifier handed back to the caller and used to re-attach.
     pub intent: String,
@@ -37,10 +45,17 @@ pub struct FundingSession {
     pub opened_at_ms: u64,
     /// When the session expires if still open, in Unix milliseconds.
     pub deadline_ms: u64,
+    /// Whether the host has recorded the session's outcome in its own
+    /// history. An ended session is handed to the host until it has.
+    pub acknowledged: bool,
 }
 
 /// Stage of a session, as the core persists it.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum FundingStage {
     /// In flight.
     Open,
@@ -70,7 +85,20 @@ impl FundingSession {
             stage: FundingStage::Open,
             opened_at_ms: now_ms,
             deadline_ms: now_ms.saturating_add(SESSION_WINDOW_MS),
+            acknowledged: false,
         }
+    }
+
+    /// Whether the host still has to hear of the session when funding
+    /// resumes: it is in flight, or it ended and the host has not recorded
+    /// the outcome.
+    pub fn needs_handoff(&self) -> bool {
+        !self.is_terminal() || !self.acknowledged
+    }
+
+    /// End an open session as cancelled. Returns whether it changed.
+    pub fn cancel(&mut self, now_ms: u64) -> bool {
+        self.fail(FundingFailure::Cancelled, now_ms)
     }
 
     /// Whether the session has ended.
@@ -135,8 +163,8 @@ pub enum FundingSessionError {
     },
 }
 
-/// The sessions worth keeping: every open one, then the most recently settled
-/// ones up to a fixed bound.
+/// The sessions worth keeping: every open one, then the most recently ended
+/// ones up to fixed bounds, longer for those the host has not recorded.
 ///
 /// The bound exists because [`CoreStorageKey::FundingSessions`] is one SCALE
 /// blob rewritten on every change; the host keeps the full history.
@@ -145,8 +173,22 @@ pub fn retained(sessions: impl IntoIterator<Item = FundingSession>) -> Vec<Fundi
         .into_iter()
         .partition(|session| !session.is_terminal());
     settled.sort_by_key(|session| core::cmp::Reverse(session.settled_at_ms()));
-    settled.truncate(SETTLED_HISTORY_LIMIT);
-    open.append(&mut settled);
+    // One the host has not recorded yet is kept further back, so a host that
+    // was away still receives it, but not without bound.
+    let mut recorded = 0;
+    let mut kept: Vec<_> = settled
+        .into_iter()
+        .enumerate()
+        .filter(|(newest, session)| {
+            if !session.acknowledged {
+                return *newest < UNACKNOWLEDGED_LIMIT;
+            }
+            recorded += 1;
+            recorded <= SETTLED_HISTORY_LIMIT
+        })
+        .map(|(_, session)| session)
+        .collect();
+    open.append(&mut kept);
     open
 }
 
@@ -263,10 +305,12 @@ mod tests {
     }
 
     #[test]
-    fn open_sessions_come_first_and_settled_history_keeps_the_newest() {
+    fn open_sessions_come_first_and_recorded_history_keeps_the_newest() {
         let open = session(FundingDirection::Out);
-        let settled = (0..SETTLED_HISTORY_LIMIT + 1)
-            .map(|index| expired(&format!("fs_s{index}"), NOW + index as u64));
+        let settled = (0..SETTLED_HISTORY_LIMIT + 1).map(|index| FundingSession {
+            acknowledged: true,
+            ..expired(&format!("fs_s{index}"), NOW + index as u64)
+        });
 
         let kept: Vec<String> = retained(settled.chain([open]))
             .into_iter()
@@ -279,6 +323,50 @@ mod tests {
             std::iter::once("fs_1".to_string())
                 .chain(newest_first)
                 .collect::<Vec<_>>()
+        );
+    }
+
+    // A host that was away must still receive every outcome for its own
+    // history, so one it has not recorded outlives the recorded ones, though
+    // not without bound.
+    #[test]
+    fn history_keeps_what_the_host_has_not_recorded() {
+        let ended = |index: usize, acknowledged| FundingSession {
+            acknowledged,
+            ..expired(&format!("fs_s{index}"), NOW + index as u64)
+        };
+        let oldest_unrecorded = ended(0, false);
+        let recorded = (1..=SETTLED_HISTORY_LIMIT + 1).map(|index| ended(index, true));
+        let unrecorded = (100..100 + UNACKNOWLEDGED_LIMIT).map(|index| ended(index, false));
+
+        let kept = retained(recorded.chain(unrecorded).chain([oldest_unrecorded.clone()]));
+
+        assert_eq!(
+            (
+                kept.iter().filter(|session| session.acknowledged).count(),
+                kept.iter().filter(|session| !session.acknowledged).count(),
+                kept.contains(&oldest_unrecorded),
+            ),
+            (SETTLED_HISTORY_LIMIT, UNACKNOWLEDGED_LIMIT, false)
+        );
+    }
+
+    // Cancel ends an open session once; an ended one keeps its outcome.
+    #[test]
+    fn a_session_is_cancelled_once() {
+        let mut open = session(FundingDirection::In);
+        let mut ended = expired("fs_2", NOW);
+
+        assert_eq!(
+            (open.cancel(NOW + 1), open.wire_item(), ended.cancel(NOW + 1)),
+            (
+                true,
+                HostFundingStatusSubscribeItem::Failed {
+                    reason: FundingFailure::Cancelled,
+                    moved: 0,
+                },
+                false
+            )
         );
     }
 

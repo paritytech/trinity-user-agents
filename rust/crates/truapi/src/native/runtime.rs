@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::platform::{
     CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
@@ -25,7 +25,8 @@ use crate::subscription::Spawner;
 use crate::{PairedSsoPeer, ResponderExit, SigningHostRuntime};
 
 use super::callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativePocketCallbacks,
+    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeFundingCallbacks,
+    NativePocketCallbacks, NativeTopUpCallbacks,
 };
 use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -35,7 +36,8 @@ use super::errors::{HostRejection, NativeCoreDatabaseError};
 use super::executor::shared_native_executor;
 use super::events::NativeEventBus;
 use super::platform::{
-    CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, PocketCallbackPlatform,
+    CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, FundingCallbackPlatform,
+    PocketCallbackPlatform, TopUpCallbackPlatform,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
@@ -51,6 +53,9 @@ pub struct NativeTrUApiHostRuntime {
     ws_bridge: Arc<SharedWsBridge>,
     /// The one Worker execution per product; opening another replaces it.
     worker_executions: Mutex<HashMap<String, Weak<NativeProductExecution>>>,
+    /// The host's top-up engine, once installed, which later statuses are
+    /// pushed through.
+    top_up: OnceLock<Arc<TopUpCallbackPlatform>>,
 }
 
 impl NativeTrUApiHostRuntime {
@@ -116,6 +121,7 @@ impl NativeTrUApiHostRuntime {
                 callbacks.on_core_log(marker.to_string(), detail.to_string());
             }))),
             worker_executions: Mutex::new(HashMap::new()),
+            top_up: OnceLock::new(),
         }))
     }
 
@@ -235,6 +241,74 @@ impl From<v01::GenericError> for NativePairingError {
 #[derive(uniffi::Object)]
 pub struct NativeAnnouncedPairing {
     inner: AnnouncedPairing,
+}
+
+#[uniffi::export]
+impl NativeTrUApiHostRuntime {
+    /// Install the host's funding overlay. Set-once; answers whether this
+    /// call installed it. Call it before opening any product execution.
+    pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
+        self.runtime
+            .set_funding_platform(Arc::new(FundingCallbackPlatform { funding: callbacks }))
+    }
+
+    /// Install the host's top-up engine. Set-once; answers whether this call
+    /// installed it. Report each later status with
+    /// [`Self::notify_top_up_status`].
+    pub fn set_top_up_callbacks(&self, callbacks: Arc<dyn NativeTopUpCallbacks>) -> bool {
+        let platform = Arc::new(TopUpCallbackPlatform::new(callbacks));
+        self.runtime.set_top_up_platform(platform.clone()) && self.top_up.set(platform).is_ok()
+    }
+
+    /// Report a later status of `product_id`'s top-up `id` to the products
+    /// and core following it.
+    pub fn notify_top_up_status(
+        &self,
+        product_id: String,
+        id: crate::Bytes32,
+        status: v01::HostPaymentTopUpStatusSubscribeItem,
+    ) {
+        if let Some(platform) = self.top_up.get() {
+            platform.notify_status(product_id, id, status);
+        }
+    }
+
+    /// Open a funding session on the host's own behalf, as the Balance
+    /// card does, and show the overlay. Answers the session id, or `None`
+    /// when the user dismissed it.
+    pub async fn open_funding(
+        &self,
+        direction: v01::FundingDirection,
+        amount: Option<u128>,
+    ) -> Result<Option<String>, HostRejection> {
+        Ok(self.runtime.open_funding(direction, amount).await?)
+    }
+
+    /// Session `intent` as the core holds it, for the host's status and
+    /// history views.
+    pub fn funding_session(
+        &self,
+        intent: String,
+    ) -> Option<crate::host_logic::funding::FundingSession> {
+        self.runtime.funding_session(&intent)
+    }
+
+    /// Every funding session the core keeps, in flight first, then ended,
+    /// each newest first.
+    pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
+        self.runtime.funding_sessions()
+    }
+
+    /// Record that the host wrote ended session `intent` into its own
+    /// history; until then it is handed over again on each resume.
+    pub async fn acknowledge_funding_session(&self, intent: String) -> Result<bool, HostRejection> {
+        Ok(self.runtime.acknowledge_funding_session(&intent).await?)
+    }
+
+    /// Cancel open funding session `intent`.
+    pub async fn cancel_funding(&self, intent: String) -> Result<bool, HostRejection> {
+        Ok(self.runtime.cancel_funding(&intent).await?)
+    }
 }
 
 #[uniffi::export]

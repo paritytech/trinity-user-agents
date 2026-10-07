@@ -2290,6 +2290,39 @@ fn funding_services() -> Arc<RuntimeServices> {
     )
 }
 
+// A host's history writes one row per outcome, so an ended session it has
+// not recorded is announced again each time funding resumes, until the host
+// acknowledges it.
+#[test]
+fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
+    let services = funding_services();
+    let platform = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+    assert!(services.funding().install_platform(platform.clone()));
+    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::Out, None))
+        .expect("opened")
+        .intent;
+    assert!(futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"));
+    let announced_on_resume = || {
+        platform.announced.lock().expect("announced mutex poisoned").clear();
+        services.resume_funding();
+        for _ in 0..200 {
+            let announced = platform.announced.lock().expect("announced mutex poisoned").clone();
+            if !announced.is_empty() {
+                return announced;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Vec::new()
+    };
+
+    let before = announced_on_resume();
+    let acknowledged =
+        futures::executor::block_on(services.acknowledge_funding_session(&intent)).expect("acknowledged");
+    let after = announced_on_resume();
+
+    assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
+}
+
 fn funding_host(
     services: &Arc<RuntimeServices>,
     product_id: &str,
