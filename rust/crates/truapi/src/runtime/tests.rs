@@ -2059,10 +2059,9 @@ impl crate::platform::PocketPlatform for RecordingPocketPlatform {
     }
 }
 
-fn pocket_host(
+fn pocket_dot_host(
     kind: crate::platform::ProductExecutionKind,
-    pocket: Option<Arc<RecordingPocketPlatform>>,
-    with_session: bool,
+    configure: impl FnOnce(&mut crate::host_core::ConnectionAdapters),
 ) -> ProductRuntimeHost {
     let (host_config, _) = runtime_config("pocket.dot");
     let product = ProductContext::new_with_execution("pocket.dot".to_string(), kind)
@@ -2078,9 +2077,19 @@ fn pocket_host(
     );
     let pairing_host = PairingHost::new(services.clone(), host_config);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    adapters.pocket_platform =
-        pocket.map(|pocket| pocket as Arc<dyn crate::platform::PocketPlatform>);
-    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
+    configure(&mut adapters);
+    ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
+}
+
+fn pocket_host(
+    kind: crate::platform::ProductExecutionKind,
+    pocket: Option<Arc<RecordingPocketPlatform>>,
+    with_session: bool,
+) -> ProductRuntimeHost {
+    let host = pocket_dot_host(kind, |adapters| {
+        adapters.pocket_platform =
+            pocket.map(|pocket| pocket as Arc<dyn crate::platform::PocketPlatform>);
+    });
     if with_session {
         install_pairing_session(&host, session_info());
     }
@@ -2199,23 +2208,10 @@ fn expanded_card_host(
     kind: crate::platform::ProductExecutionKind,
     expanded_card: Option<Arc<RecordingExpandedCardHost>>,
 ) -> ProductRuntimeHost {
-    let (host_config, _) = runtime_config("pocket.dot");
-    let product = ProductContext::new_with_execution("pocket.dot".to_string(), kind)
-        .expect("test expanded card product context is valid");
-    let platform: Arc<dyn Platform> = stub_platform();
-    let services = RuntimeServices::new(
-        platform,
-        host_config.host.host_info.clone(),
-        host_config.people_chain_genesis_hash,
-        host_config.bulletin_chain_genesis_hash,
-        host_config.asset_hub_chain_genesis_hash,
-        test_spawner(),
-    );
-    let pairing_host = PairingHost::new(services.clone(), host_config);
-    let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    adapters.expanded_card =
-        expanded_card.map(|card| card as Arc<dyn crate::platform::ExpandedCardHost>);
-    ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
+    pocket_dot_host(kind, |adapters| {
+        adapters.expanded_card =
+            expanded_card.map(|card| card as Arc<dyn crate::platform::ExpandedCardHost>);
+    })
 }
 
 fn set_face_shown(
@@ -2287,6 +2283,8 @@ fn expanded_card_without_an_adapter_is_unsupported() {
     ));
 }
 
+/// Each host outcome must reach the product as the answer it branches on;
+/// `Unsupported` in particular has to stay distinguishable from a failure.
 #[test]
 fn expanded_card_host_outcomes_map_to_wire_answers() {
     use crate::platform::ExpandedCardFaceOutcome;
