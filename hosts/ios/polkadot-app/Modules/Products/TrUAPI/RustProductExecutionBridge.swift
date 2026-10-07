@@ -209,18 +209,11 @@ private extension RustProductExecutionBridge {
         themeObservation = Task { @MainActor [weak self] in
             for await theme in themeManager.observeTheme() {
                 guard let self else { return }
-                let item = Self.makeThemeItem(from: theme)
+                let item = theme.hostThemeSubscribeItem
                 cachedTheme.withLock { $0 = item }
                 execution?.notifyThemeChanged(theme: item)
             }
         }
-    }
-
-    static func makeThemeItem(from theme: Theme) -> HostThemeSubscribeItem {
-        HostThemeSubscribeItem(
-            name: .custom(theme.id),
-            variant: theme.colors.bgSurfaceMain.isLight ? .light : .dark
-        )
     }
 }
 
