@@ -2,8 +2,6 @@ use truapi::v01;
 
 use crate::platform::ChatFieldError;
 
-
-
 /// Native-friendly rejection error returned by callback methods that map onto
 /// [`truapi::v01::GenericError`].
 ///
@@ -49,6 +47,36 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostLocalStorageReadEr
             "host callback threw an undeclared error; reporting it as a rejection"
         );
         v01::HostLocalStorageReadError::Unknown { reason: err.reason }
+    }
+}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostPaymentError {
+    fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        tracing::warn!(
+            reason = %err.reason,
+            "host callback threw an undeclared error; reporting it as a rejection"
+        );
+        v01::HostPaymentError::Unknown { reason: err.reason }
+    }
+}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostPaymentTopUpError {
+    fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        tracing::warn!(
+            reason = %err.reason,
+            "host callback threw an undeclared error; reporting it as a rejection"
+        );
+        v01::HostPaymentTopUpError::Unknown { reason: err.reason }
+    }
+}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostPaymentBalanceSubscribeError {
+    fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        tracing::warn!(
+            reason = %err.reason,
+            "host callback threw an undeclared error; reporting it as a rejection"
+        );
+        v01::HostPaymentBalanceSubscribeError::Unknown { reason: err.reason }
     }
 }
 

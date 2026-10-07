@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "6bbd5f74cd21b881";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "43d42b028db6fb7f";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -374,6 +374,12 @@ pub const PAYMENT_STATUS_SUBSCRIBE: MethodIds = MethodIds {
     method_id: 3,
 };
 
+/// Wire discriminants for `payment_top_up_status_subscribe`.
+pub const PAYMENT_TOP_UP_STATUS_SUBSCRIBE: MethodIds = MethodIds {
+    trait_id: 9,
+    method_id: 4,
+};
+
 /// Wire discriminants for `permissions_request_device_permission`.
 pub const PERMISSIONS_REQUEST_DEVICE_PERMISSION: MethodIds = MethodIds {
     trait_id: 10,
@@ -551,18 +557,6 @@ pub const GAME_REMIND_NEXT_GAME: MethodIds = MethodIds {
 /// Wire discriminants for `game_cancel_next_game`.
 pub const GAME_CANCEL_NEXT_GAME: MethodIds = MethodIds {
     trait_id: 21,
-    method_id: 1,
-};
-
-/// Wire discriminants for `funding_request`.
-pub const FUNDING_REQUEST: MethodIds = MethodIds {
-    trait_id: 22,
-    method_id: 0,
-};
-
-/// Wire discriminants for `funding_status_subscribe`.
-pub const FUNDING_STATUS_SUBSCRIBE: MethodIds = MethodIds {
-    trait_id: 22,
     method_id: 1,
 };
 
@@ -791,6 +785,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Subscription(PAYMENT_STATUS_SUBSCRIBE),
     },
     WireEntry {
+        method: "payment_top_up_status_subscribe",
+        kind: WireKind::Subscription(PAYMENT_TOP_UP_STATUS_SUBSCRIBE),
+    },
+    WireEntry {
         method: "permissions_request_device_permission",
         kind: WireKind::Request(PERMISSIONS_REQUEST_DEVICE_PERMISSION),
     },
@@ -909,13 +907,5 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "game_cancel_next_game",
         kind: WireKind::Request(GAME_CANCEL_NEXT_GAME),
-    },
-    WireEntry {
-        method: "funding_request",
-        kind: WireKind::Request(FUNDING_REQUEST),
-    },
-    WireEntry {
-        method: "funding_status_subscribe",
-        kind: WireKind::Subscription(FUNDING_STATUS_SUBSCRIBE),
     },
 ];

@@ -39,6 +39,14 @@ import type {
   HostFundingStatusSubscribeItem,
   HostLocalStorageChangeItem,
   HostLocaleSubscribeItem,
+  HostPaymentBalanceSubscribeError,
+  HostPaymentBalanceSubscribeItem,
+  HostPaymentRequest,
+  HostPaymentStatusSubscribeError,
+  HostPaymentStatusSubscribeItem,
+  HostPaymentTopUpRequest,
+  HostPaymentTopUpStatusSubscribeError,
+  HostPaymentTopUpStatusSubscribeItem,
   HostPocketListSubscribeItem,
   HostPocketRemoveCardRequest,
   HostPushNotificationRequest,
@@ -1157,6 +1165,27 @@ export interface AuthPresenter {
 }
 
 /**
+ * Host-implemented balance view: the user's spendable payment balance.
+ * Optional: a host that omits it leaves balance subscriptions answered
+ * `Unsupported`.
+ *
+ * The host decides whether `product` may see the balance, asking the user
+ * if it needs to.
+ */
+export interface BalancePlatform {
+  /**
+   * Emit the balance of `purse` (``undefined`` for the main purse) now and on
+   * every change, or `PermissionDenied` when the user does not share it.
+   */
+  subscribeBalance(
+    product: ProductContext,
+    purse: number | undefined,
+  ): AsyncIterable<
+    Result<HostPaymentBalanceSubscribeItem, HostPaymentBalanceSubscribeError>
+  >;
+}
+
+/**
  * JSON-RPC provider factory for chain access.
  *
  * The platform provides a way to get a JSON-RPC connection for a given chain.
@@ -1581,6 +1610,37 @@ export interface PairingHostAdmin {
 }
 
 /**
+ * Host-implemented payment engine: pays from the user's balance to an
+ * account, once the user approves. Optional: a host that omits it leaves
+ * payment requests answered `Unsupported`.
+ *
+ * The host owns the approval sheet, the transfer and its persistence, and
+ * scopes ids to `product`.
+ */
+export interface PaymentPlatform {
+  /**
+   * Ask the user to approve `request`. Returns once the user has decided:
+   * `Ok` when they authorized it and the host took it on; the payment's
+   * outcome arrives through its status.
+   */
+  requestPayment(
+    product: ProductContext,
+    request: HostPaymentRequest,
+  ): Promise<void>;
+
+  /**
+   * Emit a payment's current status and every later one, ending after a
+   * terminal status.
+   */
+  subscribePaymentStatus(
+    product: ProductContext,
+    id: Uint8Array,
+  ): AsyncIterable<
+    Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>
+  >;
+}
+
+/**
  * Live OS permission state, read without prompting.
  *
  * A product-scoped grant is persisted once and never expires, but the OS
@@ -1752,6 +1812,38 @@ export interface ThemeHost {
    * named themes report `ThemeName::Default`.
    */
   subscribeTheme(): AsyncIterable<Result<HostThemeSubscribeItem, GenericError>>;
+}
+
+/**
+ * Host-implemented top-up engine: claims a source's funds into the user's
+ * balance through the host's coinage onboarding. Optional: a host that omits
+ * it leaves top-ups answered `Unsupported`.
+ *
+ * The core validates the source keys before calling. The host owns retries,
+ * partial claims and persistence, and scopes ids to `product`.
+ */
+export interface TopUpPlatform {
+  /**
+   * Start a top-up. Returns once the host has accepted it.
+   */
+  topUp(
+    product: ProductContext,
+    request: HostPaymentTopUpRequest,
+  ): Promise<void>;
+
+  /**
+   * Emit a top-up's current status and every later one, ending after a
+   * terminal status.
+   */
+  subscribeTopUpStatus(
+    product: ProductContext,
+    id: Uint8Array,
+  ): AsyncIterable<
+    Result<
+      HostPaymentTopUpStatusSubscribeItem,
+      HostPaymentTopUpStatusSubscribeError
+    >
+  >;
 }
 
 /**

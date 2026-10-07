@@ -255,7 +255,10 @@ impl NativeEventBus {
     }
 
     /// Send one Pocket stream item to every live subscriber, dropping closed ones.
-    pub fn send_pocket_cards(&self, item: Result<v01::HostPocketListSubscribeItem, v01::GenericError>) {
+    pub fn send_pocket_cards(
+        &self,
+        item: Result<v01::HostPocketListSubscribeItem, v01::GenericError>,
+    ) {
         self.pocket_card_changes
             .lock()
             .expect("native Pocket card subscribers mutex poisoned")

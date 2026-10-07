@@ -1784,7 +1784,7 @@ where
         });
     }
     {
-        let host = host;
+        let host = host.clone();
         dispatcher.on_request(wire_table::PAYMENT_TOP_UP, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -1808,6 +1808,38 @@ where
                         Err(err) => Err(downgrade_call_error(err, target_version)),
                     };
                 result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_subscription(wire_table::PAYMENT_TOP_UP_STATUS_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::payment::HostPaymentTopUpStatusSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::payment::HostPaymentTopUpStatusSubscribeError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        return Err(subscription_interrupt(error));
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                let stream = host.top_up_status_subscribe(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::payment::HostPaymentTopUpStatusSubscribeItem, truapi::CallError<versioned::payment::HostPaymentTopUpStatusSubscribeError>>| {
+                        item.map(|item| {
+                            <versioned::payment::HostPaymentTopUpStatusSubscribeItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
             })
         });
     }

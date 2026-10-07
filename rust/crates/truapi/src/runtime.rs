@@ -1096,8 +1096,6 @@ fn transaction_call_error<E>(
     }))
 }
 
-const PAYMENTS_NOT_IMPLEMENTED: &str = "Payments are not supported in dot.li";
-
 impl ProductRuntimeHost {
     /// Chat access policy for this connection; see [`chat_platform_for`].
     pub fn native_chat_platform(

@@ -66,6 +66,17 @@ uniffi::custom_type!(Bytes32, Vec<u8>, {
     try_lift: |bytes| Ok(bytes.as_slice().try_into()?),
 });
 
+/// A 64-byte value, such as an sr25519 secret key, passed as plain bytes on
+/// FFI surfaces.
+pub type Bytes64 = [u8; 64];
+
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+uniffi::custom_type!(Bytes64, Vec<u8>, {
+    remote,
+    lower: |bytes| bytes.to_vec(),
+    try_lift: |bytes| Ok(bytes.as_slice().try_into()?),
+});
+
 // Swift and Kotlin have no 128-bit integer, so amounts cross FFI surfaces as
 // decimal strings.
 #[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
@@ -92,8 +103,8 @@ pub mod latest {
         HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
         HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
         HostPlatform, HostSignPayloadData, HostWorkerOperationError, ImageFit, ImageProps,
-        ImageSource, Modifier, OperationStartedResult, PocketCard, ProductAccountId,
-        ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission,
+        ImageSource, Modifier, OperationStartedResult, PaymentTopUpSource, PocketCard,
+        ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission,
         RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
         RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
         RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, RingLocation,
@@ -208,6 +219,33 @@ pub mod latest {
     /// Failure watching a funding session.
     pub type HostFundingStatusSubscribeError =
         LatestOf<versioned::funding::HostFundingStatusSubscribeError>;
+
+    /// Payment balance subscription item.
+    pub type HostPaymentBalanceSubscribeItem =
+        LatestOf<versioned::payment::HostPaymentBalanceSubscribeItem>;
+    /// Payment balance subscription failure.
+    pub type HostPaymentBalanceSubscribeError =
+        LatestOf<versioned::payment::HostPaymentBalanceSubscribeError>;
+    /// Payment request.
+    pub type HostPaymentRequest = LatestOf<versioned::payment::HostPaymentRequest>;
+    /// Payment request failure.
+    pub type HostPaymentError = LatestOf<versioned::payment::HostPaymentError>;
+    /// Progress of a payment.
+    pub type HostPaymentStatusSubscribeItem =
+        LatestOf<versioned::payment::HostPaymentStatusSubscribeItem>;
+    /// Failure following a payment.
+    pub type HostPaymentStatusSubscribeError =
+        LatestOf<versioned::payment::HostPaymentStatusSubscribeError>;
+    /// Payment top-up request.
+    pub type HostPaymentTopUpRequest = LatestOf<versioned::payment::HostPaymentTopUpRequest>;
+    /// Payment top-up failure.
+    pub type HostPaymentTopUpError = LatestOf<versioned::payment::HostPaymentTopUpError>;
+    /// Progress of a payment top-up.
+    pub type HostPaymentTopUpStatusSubscribeItem =
+        LatestOf<versioned::payment::HostPaymentTopUpStatusSubscribeItem>;
+    /// Failure following a payment top-up.
+    pub type HostPaymentTopUpStatusSubscribeError =
+        LatestOf<versioned::payment::HostPaymentTopUpStatusSubscribeError>;
     /// The calling product's Pocket cards.
     pub type HostPocketListSubscribeItem = LatestOf<versioned::pocket::HostPocketListSubscribeItem>;
     /// Pocket card removal request.

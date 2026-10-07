@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::platform::{
     CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
@@ -25,26 +25,26 @@ use crate::subscription::Spawner;
 use crate::{PairedSsoPeer, ResponderExit, SigningHostRuntime};
 
 use super::callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeFundingCallbacks,
-    NativeGameCallbacks,
-    NativePocketCallbacks,
+    HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
+    NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
+    NativeTopUpCallbacks,
 };
 use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
     ProductExecutionConfig,
 };
 use super::errors::{HostRejection, NativeCoreDatabaseError};
-use super::executor::shared_native_executor;
 use super::events::NativeEventBus;
+use super::executor::shared_native_executor;
+#[cfg(doc)]
+use super::parse_pairing_deeplink;
 use super::platform::{
-    CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, FundingCallbackPlatform,
-    GameCallbackPlatform,
-    PocketCallbackPlatform,
+    BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
+    FundingCallbackPlatform, GameCallbackPlatform, PaymentCallbackPlatform, PocketCallbackPlatform,
+    TopUpCallbackPlatform,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
-#[cfg(doc)]
-use super::parse_pairing_deeplink;
 
 /// Process-owned native TrUAPI runtime shared by all executable connections.
 #[derive(uniffi::Object)]
@@ -55,6 +55,13 @@ pub struct NativeTrUApiHostRuntime {
     ws_bridge: Arc<SharedWsBridge>,
     /// The one Worker execution per product; opening another replaces it.
     worker_executions: Mutex<HashMap<String, Weak<NativeProductExecution>>>,
+    /// The host's top-up engine, once installed, which later statuses are
+    /// pushed through.
+    top_up: OnceLock<Arc<TopUpCallbackPlatform>>,
+    /// The payment engine statuses are pushed to, once installed.
+    payments: OnceLock<Arc<PaymentCallbackPlatform>>,
+    /// The balance view changes are pushed to, once installed.
+    balance: OnceLock<Arc<BalanceCallbackPlatform>>,
 }
 
 impl NativeTrUApiHostRuntime {
@@ -72,11 +79,12 @@ impl NativeTrUApiHostRuntime {
             }
         })?;
         let directory = &runtime_config.database_directory;
-        let core_db = futures::executor::block_on(Db::open(core_db_config(directory))).map_err(
-            |err| NativeRuntimeConfigError::DatabaseUnavailable {
-                reason: format!("{}: {err}", directory.display()),
-            },
-        )?;
+        let core_db =
+            futures::executor::block_on(Db::open(core_db_config(directory))).map_err(|err| {
+                NativeRuntimeConfigError::DatabaseUnavailable {
+                    reason: format!("{}: {err}", directory.display()),
+                }
+            })?;
         let events = Arc::new(NativeEventBus::default());
         let platform = Arc::new(CallbackPlatform {
             callbacks: callbacks.clone(),
@@ -120,6 +128,9 @@ impl NativeTrUApiHostRuntime {
                 callbacks.on_core_log(marker.to_string(), detail.to_string());
             }))),
             worker_executions: Mutex::new(HashMap::new()),
+            top_up: OnceLock::new(),
+            payments: OnceLock::new(),
+            balance: OnceLock::new(),
         }))
     }
 
@@ -291,6 +302,63 @@ impl NativeTrUApiHostRuntime {
     /// Cancel open funding session `intent`.
     pub async fn cancel_funding(&self, intent: String) -> Result<bool, HostRejection> {
         Ok(self.runtime.cancel_funding(&intent).await?)
+    }
+
+    /// Install the host's top-up engine. Set-once; answers whether this call
+    /// installed it. Report each later status with
+    /// [`Self::notify_top_up_status`].
+    pub fn set_top_up_callbacks(&self, callbacks: Arc<dyn NativeTopUpCallbacks>) -> bool {
+        let platform = Arc::new(TopUpCallbackPlatform::new(callbacks));
+        self.runtime.set_top_up_platform(platform.clone()) && self.top_up.set(platform).is_ok()
+    }
+
+    /// Report a later status of `product_id`'s top-up `id` to the products
+    /// following it.
+    pub fn notify_top_up_status(
+        &self,
+        product_id: String,
+        id: crate::Bytes32,
+        status: v01::HostPaymentTopUpStatusSubscribeItem,
+    ) {
+        if let Some(platform) = self.top_up.get() {
+            platform.notify_status(product_id, id, status);
+        }
+    }
+
+    /// Install the host's payment engine. Set-once; answers whether this
+    /// call installed it. Report each later status with
+    /// [`Self::notify_payment_status`].
+    pub fn set_payment_callbacks(&self, callbacks: Arc<dyn NativePaymentCallbacks>) -> bool {
+        let platform = Arc::new(PaymentCallbackPlatform::new(callbacks));
+        self.runtime.set_payment_platform(platform.clone()) && self.payments.set(platform).is_ok()
+    }
+
+    /// Report a later status of `product_id`'s payment `id` to the products
+    /// following it.
+    pub fn notify_payment_status(
+        &self,
+        product_id: String,
+        id: crate::Bytes32,
+        status: v01::HostPaymentStatusSubscribeItem,
+    ) {
+        if let Some(platform) = self.payments.get() {
+            platform.notify_status(product_id, id, status);
+        }
+    }
+
+    /// Install the host's balance view. Set-once; answers whether this call
+    /// installed it. Report each change with [`Self::notify_balance`].
+    pub fn set_balance_callbacks(&self, callbacks: Arc<dyn NativeBalanceCallbacks>) -> bool {
+        let platform = Arc::new(BalanceCallbackPlatform::new(callbacks));
+        self.runtime.set_balance_platform(platform.clone()) && self.balance.set(platform).is_ok()
+    }
+
+    /// Report the new balance of `purse` (`None` for the main purse), a
+    /// decimal string of CASH units, to the products following it.
+    pub fn notify_balance(&self, purse: Option<u32>, available: u128) {
+        if let Some(platform) = self.balance.get() {
+            platform.notify_balance(purse, available);
+        }
     }
 }
 
