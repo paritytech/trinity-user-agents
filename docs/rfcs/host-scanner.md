@@ -79,6 +79,8 @@ pub enum HostScannerScanError {
     CameraUnavailable,
     /// Another scan is already open.
     Busy,
+    /// The calling execution is not on screen, and is not a Worker handling a tap.
+    NotVisible,
     /// No formats, a format named twice, or a prefix or hint that breaks its limit.
     InvalidRequest { reason: String },
     Unknown { reason: String },
@@ -100,6 +102,7 @@ What each answer means for the product:
 | `Dismissed` | Can offer the scan again. |
 | `CameraUnavailable` | Stops offering it until the user changes a setting. |
 | `Busy` | Waits for the other scan to end. |
+| `NotVisible` | Offers the scan from its own screen, or from a tap on its card. |
 | `InvalidRequest` | Fixes the call. Nothing was shown. |
 | `Unsupported` | Uses its own camera code. This host will never have a scanner. |
 
@@ -116,6 +119,19 @@ direction.
 product opens it, a pairing link starts sign-in, and a payment link opens a payment screen. A product's scan skips all
 of that and returns the text. If the product wants to follow a scanned link, it calls `navigate_to`, which keeps its own
 rules.
+
+**A pairing request never reaches a product.** A pairing link lets whoever answers it first pair with the device that
+showed it, so it is a credential. The core refuses any code it would itself accept as a pairing request, whatever the
+request's formats and prefix, including the bare handshake without the `pair` link around it. In the viewfinder it is
+treated like any code that is not for this product. The prefix stays optional, because a barcode such as an EAN-13
+grocery code has no prefix to give, and a required prefix would not help anyway: a product could pass
+`polkadotapp://pair?` as its prefix.
+
+**Only for what the user is looking at.** The viewfinder opens over whatever is on screen, so the call has to come
+from there. An App or Widget may scan only while it is the screen the user sees; the host checks that. A Worker has no
+screen of its own, so it may scan only within 5 seconds of the core delivering it a tap from the user, on its card face
+or in a chat message. Anything else is answered `NotVisible` and no viewfinder opens. A product therefore cannot open
+the viewfinder from the background, or open it again each time the user closes it.
 
 **No permission.** The product never touches the camera, and the user pointing the viewfinder at a code is the consent.
 The OS still asks the host application for camera access the first time. The `Camera` permission and `getUserMedia` do
@@ -139,6 +155,10 @@ test supplies, so a product can test its scan flow without a camera.
 - A prefix is the only content filter. A product that needs finer checks reads the text itself and calls again.
 - The prefix ignores ASCII letter case, because QR codes often store URLs in capitals. A product that cares about case
   checks the text itself.
+- A product that gives no prefix can receive any code the user points the viewfinder at, apart from a pairing request.
+  The title names the product, so pointing the camera is the user's choice, as with the contact picker.
+- A Worker's 5-second window follows browsers' transient user activation. A Worker that needs longer between the tap
+  and the scan is doing work the user is not waiting on, and should not scan.
 - Raw bytes are not returned. They can be added later as an optional field without breaking existing callers.
 - Web hosts have no scanner yet, so a product keeps its own `getUserMedia` fallback there. A bundled decoder can come
   later without changing this API.
@@ -150,10 +170,4 @@ test supplies, so a product can test its scan flow without a camera.
   - Accepting or rejecting each code live. It needs a two-way exchange that no product needs yet.
   - The host following scanned links. The user would leave the product mid-scan.
   - A `Camera` grant on `scan`. The product never receives camera data.
-
-## Open questions
-
-Any execution can call `scan`, including a Worker behind a Pocket card the user is not looking at. The title always
-names the product and the user can close the viewfinder, which matches the contact picker today. But a product could
-open the viewfinder again every time the user closes it, and while it is open other products get `Busy`. Should the
-host open the viewfinder only for a product that is on screen, or only right after the user taps something in it?
+  - A required prefix. Barcodes have no prefix to give, and a product could pass a pairing link's start as its prefix.
