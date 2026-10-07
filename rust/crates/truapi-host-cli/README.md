@@ -783,7 +783,10 @@ Scripts under `js/scripts/` include:
   the session from them. `provide-cancel` also cancels it. The phase runs the
   host twice on the same storage, so the provider resumes an inbound session
   after a restart. Every overlay request and session change is recorded in
-  `TRUAPI_FUNDING_LOG`, which the cases read.
+  `TRUAPI_FUNDING_LOG`, which the cases read. CI runs this phase on every
+  change to the core, the CLI or the client, with a fixed development signer
+  in `HOST_CLI_SIGNER_MNEMONIC` so the host needs no account provisioned on
+  chain.
 
   Contacts are served on every phase, from `TRUAPI_CONTACTS`
   (`alice=0x<32-byte account>;bob=0x…`) or, unset, from a two-name development
