@@ -78,6 +78,11 @@ pub struct RuntimeServices {
     /// Values from confirmed in-core submissions, served to `lookup_subscribe`
     /// until the host's content backend has them. Byte-bounded, oldest-first.
     preimage_cache: Mutex<PreimageCache>,
+    /// Preimages a test host kept instead of submitting. Unbounded, unlike
+    /// `preimage_cache`: nothing else holds them, so evicting one would leave
+    /// its key unresolvable for the rest of the run.
+    #[cfg(feature = "test-host")]
+    local_preimages: Mutex<std::collections::HashMap<[u8; 32], Vec<u8>>>,
     /// Confirmed submissions served to new subscriptions until the remote
     /// Statement Store reports them.
     statement_cache: Mutex<StatementCache>,
@@ -133,6 +138,8 @@ impl RuntimeServices {
             bulletin,
             chain_context: crate::runtime::statement_allowance::ChainContextCache::default(),
             preimage_cache: Mutex::new(PreimageCache::default()),
+            #[cfg(feature = "test-host")]
+            local_preimages: Mutex::new(std::collections::HashMap::new()),
             statement_cache: Mutex::new(StatementCache::default()),
             spawner,
             device_encryption_key: futures::lock::Mutex::new(()),
@@ -302,8 +309,26 @@ impl RuntimeServices {
             .insert(key, value);
     }
 
+    /// Keep a preimage a test host did not submit, for the rest of the run.
+    #[cfg(feature = "test-host")]
+    pub fn keep_local_preimage(&self, key: [u8; 32], value: Vec<u8>) {
+        self.local_preimages
+            .lock()
+            .expect("local preimage store mutex poisoned")
+            .insert(key, value);
+    }
+
     /// Return a cached preimage value for `key`, if present.
     pub fn cached_preimage(&self, key: &[u8; 32]) -> Option<Vec<u8>> {
+        #[cfg(feature = "test-host")]
+        if let Some(value) = self
+            .local_preimages
+            .lock()
+            .expect("local preimage store mutex poisoned")
+            .get(key)
+        {
+            return Some(value.clone());
+        }
         self.preimage_cache
             .lock()
             .expect("preimage cache mutex poisoned")

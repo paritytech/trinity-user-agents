@@ -84,20 +84,37 @@ private extension BoundProductChatMessaging {
 /// of going through the shared worker's native api. Bound while the chat
 /// surface is alive and cleared on dispose, matching
 /// ``ProductsNativeApi/bindMessaging(_:)``.
+/// The surface is one product's, and a product outlives any one runtime bound
+/// to it: every emission of the product list builds fresh runtimes, and the one
+/// that is kept is not always the one that was just built. A binding therefore
+/// names its owner, and only that owner can clear it, so a runtime dropped
+/// without ever starting cannot take the live one's chat down with it.
 final class ProductChatSurface: BoundProductChatMessaging, @unchecked Sendable {
     let messageDeliveryDelay: MessageDeliveryDelay = .immediate
 
-    private let messaging = OSAllocatedUnfairLock<ProductsNativeApi.MessagingSupport?>(initialState: nil)
+    private struct Binding {
+        let support: ProductsNativeApi.MessagingSupport
+        let owner: ObjectIdentifier
+    }
+
+    private let bound = OSAllocatedUnfairLock<Binding?>(initialState: nil)
 
     var currentMessaging: ProductsNativeApi.MessagingSupport? {
-        messaging.withLock { $0 }
+        bound.withLock { $0?.support }
     }
 
-    func bind(_ support: ProductsNativeApi.MessagingSupport) {
-        messaging.withLock { $0 = support }
+    func bind(_ support: ProductsNativeApi.MessagingSupport, owner: AnyObject) {
+        bound.withLock { $0 = Binding(support: support, owner: ObjectIdentifier(owner)) }
     }
 
-    func unbind() {
-        messaging.withLock { $0 = nil }
+    /// Clears the binding only while `owner` still holds it.
+    func unbind(owner: AnyObject) {
+        let owner = ObjectIdentifier(owner)
+
+        bound.withLock { binding in
+            guard binding?.owner == owner else { return }
+
+            binding = nil
+        }
     }
 }

@@ -11,6 +11,8 @@
 //! same seam browser hosts use for their confirmation modals; a headless host
 //! implements it with its approval policy.
 
+use crate::runtime::AccountHolder;
+use crate::runtime::signing_host::wallet_account_holder;
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
@@ -37,6 +39,7 @@ use crate::host_logic::sso::pairing::{
 };
 use crate::host_logic::statement_store::{build_signed_statement, parse_new_statements_result};
 use crate::runtime::services::RuntimeServices;
+use crate::runtime::sso_account_holder_service::withdrawals;
 use crate::runtime::sso_remote::{fresh_statement_expiry, sso_message_id};
 use crate::runtime::sso_service::{Dispatch, SsoWithdrawals};
 use crate::runtime::statement_store_rpc;
@@ -253,10 +256,9 @@ async fn establish_pairing_session(
         .ok_or_else(|| "signing host has no active local session".to_string())?;
     let device_enc_pub_key = x25519_public_key(services.device_encryption_secret().await?);
     let (session, statement) = {
-        let material = signing_host
-            .wallet
-            .pairing_material(&wallet_session)
-            .map_err(|error| error.to_string())?;
+        let material =
+            wallet_account_holder::pairing_material(&signing_host.wallet, &wallet_session)
+                .map_err(|error| error.to_string())?;
         let session = responder_session_from_identity(&material.identity, peer)?;
         let success = v2::EncryptedResponse::Success(Box::new(v2::Success {
             identity_account_id: material.identity.statement_public_key,
@@ -308,9 +310,7 @@ pub async fn resume_pairing(
         .wallet
         .current_session()
         .ok_or_else(|| "signing host has no active local session".to_string())?;
-    let identity = signing_host
-        .wallet
-        .responder_identity(&wallet_session)
+    let identity = wallet_account_holder::responder_identity(&signing_host.wallet, &wallet_session)
         .map_err(|error| error.to_string())?;
     let session = responder_session_from_identity(&identity, peer)?;
     serve_session(
@@ -337,9 +337,7 @@ pub async fn disconnect_paired_host(
         .wallet
         .current_session()
         .ok_or_else(|| "signing host has no active local session".to_string())?;
-    let identity = signing_host
-        .wallet
-        .responder_identity(&wallet_session)
+    let identity = wallet_account_holder::responder_identity(&signing_host.wallet, &wallet_session)
         .map_err(|error| error.to_string())?;
     let session = responder_session_from_identity(&identity, peer)?;
     let message_id = sso_message_id();
@@ -432,9 +430,7 @@ pub async fn notify_pairing_allowance_allocation(
         .wallet
         .current_session()
         .ok_or_else(|| "signing host has no active local session".to_string())?;
-    let identity = signing_host
-        .wallet
-        .responder_identity(&wallet_session)
+    let identity = wallet_account_holder::responder_identity(&signing_host.wallet, &wallet_session)
         .map_err(|error| error.to_string())?;
     let session = responder_session_from_identity(&identity, peer)?;
 
@@ -515,7 +511,7 @@ async fn serve_session(
     );
     // Boxed as a trait object so the hosts that await a session need not
     // lay out this future or prove it `Send`.
-    serve_pages(pages, service.withdrawals(), |incoming| {
+    serve_pages(pages, withdrawals(&service), |incoming| {
         serve_statement(
             services,
             &signing_host,
@@ -877,8 +873,6 @@ fn response_cli_summary(
 #[cfg(test)]
 mod tests {
     use super::super::LocalActivation;
-    use super::super::wallet_account_holder::SSO_ENCRYPTION_DOMAIN;
-    use super::super::wallet_account_holder::WalletKeys;
     use super::*;
     use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
     use crate::host_internal::sso_messages::{
@@ -888,7 +882,7 @@ mod tests {
     use crate::host_internal::sso_wire::ResponseOutcome;
     use crate::host_logic::product_account::derive_ring_vrf_domain_entropy;
     use crate::host_logic::product_account::{
-        derive_identity_keypair, derive_root_keypair_from_entropy,
+        derive_identity_keypair, derive_product_subtree_keypair, derive_root_keypair_from_entropy,
     };
     use crate::host_logic::sso::pairing::derive_x25519_keypair_from_entropy;
     use crate::runtime::allowances::current_unix_secs;
@@ -901,9 +895,11 @@ mod tests {
         const CHAT_ENTROPY: [u8; 16] = [0xAB; 16];
         const SUFFIX: &str = "paseo";
 
-        let (_, served) = WalletKeys::new(CHAT_ENTROPY.to_vec(), SUFFIX.to_string())
-            .responder_identity()
-            .expect("responder identity derives");
+        let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
+        let session = signing_host.wallet.current_session().unwrap();
+        let served = wallet_account_holder::pairing_material(&signing_host.wallet, &session)
+            .unwrap()
+            .chat_private_key;
         let registration = crate::host_logic::attestation::build_lite_registration(
             &CHAT_ENTROPY,
             SUFFIX,
@@ -916,7 +912,7 @@ mod tests {
 
         assert_eq!(
             &registration.identifier_key[1..33],
-            &crate::host_logic::sso::pairing::x25519_public_key(served),
+            &crate::host_logic::sso::pairing::x25519_public_key(*served),
             "the advertised chat key is not the one served over pairing"
         );
     }
@@ -1056,10 +1052,15 @@ mod tests {
         // because it is catching a hang, not asserting latency.
         let allocation = futures::executor::block_on(async {
             let session = signing_host.account_holder().current_session().unwrap();
+            let call = CallContext::default();
             futures::select! {
-                result = signing_host.wallet.allocate_statement_store_allowance(
-                    &session,
-                    product_id,
+                result = signing_host.account_holder().ensure_allowance(
+                    crate::runtime::AccountInvocation {
+                        call: &call,
+                        session: &session,
+                        caller: crate::runtime::AccountCaller::Remote { product_id: Some(product_id) },
+                    },
+                    crate::runtime::allowances::AllowanceResource::StatementStore,
                     OnExistingAllowancePolicy::Ignore,
                 )
                 .fuse() => result,
@@ -1070,7 +1071,10 @@ mod tests {
         })
         .expect("an existing allowance is returned");
 
-        assert_eq!(allocation.secret, allowance.secret.to_bytes().to_vec());
+        let crate::runtime::AccountGrant::StatementStore { key, .. } = allocation else {
+            panic!("expected a statement-store allowance");
+        };
+        assert_eq!(key.secret, allowance.secret.to_bytes());
 
         let sent = platform.sent_rpc.lock().expect("rpc list mutex poisoned");
         let methods: Vec<String> = sent
@@ -1108,19 +1112,20 @@ mod tests {
             .unwrap()
             .identity_account_id
             .unwrap();
-        let (identity, _) = WalletKeys::new(ENTROPY.to_vec(), NETWORK_SUFFIX.to_string())
-            .responder_identity()
-            .unwrap();
+        let identity = wallet_account_holder::responder_identity(
+            &signing_host.wallet,
+            &signing_host.wallet.current_session().unwrap(),
+        )
+        .unwrap();
         assert_eq!(identity.statement_public_key, local_identity);
         // The statement identity is the network's `uid.<suffix>` account, the
         // one the pairing host resolves a username for; a `.dot` account has
         // no lite record on a test network.
         assert_ne!(
-            WalletKeys::new(ENTROPY.to_vec(), "dot".to_string())
-                .responder_identity()
+            derive_identity_keypair(&ENTROPY, "dot")
                 .unwrap()
-                .0
-                .statement_public_key,
+                .public
+                .to_bytes(),
             local_identity
         );
 
@@ -1153,7 +1158,7 @@ mod tests {
 
         // The regression this guards: advertising the SSO channel key as the
         // device key makes every device sharing an identity indistinguishable.
-        let (_, sso_public) = derive_x25519_keypair_from_entropy(&ENTROPY, SSO_ENCRYPTION_DOMAIN);
+        let (_, sso_public) = derive_x25519_keypair_from_entropy(&ENTROPY, b"sso");
         assert_ne!(advertised, sso_public);
     }
 
@@ -1425,9 +1430,15 @@ mod tests {
             statement_account_id: [0x53; 32],
             encryption_public_key: x25519_public_key([0x64; 32]),
         };
-        let (identity, _) = WalletKeys::new(ENTROPY.to_vec(), NETWORK_SUFFIX.to_string())
-            .responder_identity()
-            .unwrap();
+        let statement = derive_identity_keypair(&ENTROPY, NETWORK_SUFFIX).unwrap();
+        let (encryption_secret_key, encryption_public_key) =
+            derive_x25519_keypair_from_entropy(&ENTROPY, b"sso");
+        let identity = ResponderIdentity {
+            statement_secret: statement.secret.to_bytes(),
+            statement_public_key: statement.public.to_bytes(),
+            encryption_secret_key,
+            encryption_public_key,
+        };
         let mut expected = establish_responder_session_info(
             &identity,
             peer.statement_account_id,
@@ -1437,7 +1448,7 @@ mod tests {
         let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
         let selected = signing_host.wallet.current_session().unwrap();
         let resumed = responder_session_from_identity(
-            &signing_host.wallet.responder_identity(&selected).unwrap(),
+            &wallet_account_holder::responder_identity(&signing_host.wallet, &selected).unwrap(),
             peer,
         )
         .unwrap();
@@ -1710,9 +1721,13 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform);
-        let expected_secret = WalletKeys::new(ENTROPY.to_vec(), NETWORK_SUFFIX.to_string())
-            .product_subtree_secret("myapp.dot")
-            .expect("product subtree secret derives");
+        let expected_secret = derive_product_subtree_keypair(
+            &derive_root_keypair_from_entropy(&ENTROPY).unwrap(),
+            "myapp.dot",
+        )
+        .unwrap()
+        .secret
+        .to_bytes();
         let expected_ring_vrf_domain_entropy =
             derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot")
                 .expect("ring-VRF domain entropy derives");
@@ -1751,9 +1766,13 @@ mod tests {
         });
         let (_, signing_host) = signing_fixture(platform.clone());
         let session = signing_host.account_holder().current_session();
-        let expected_secret = WalletKeys::new(ENTROPY.to_vec(), NETWORK_SUFFIX.to_string())
-            .product_subtree_secret("myapp.dot")
-            .unwrap();
+        let expected_secret = derive_product_subtree_keypair(
+            &derive_root_keypair_from_entropy(&ENTROPY).unwrap(),
+            "myapp.dot",
+        )
+        .unwrap()
+        .secret
+        .to_bytes();
         let expected_domain = derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot").unwrap();
         let service = SsoAccountHolderService::new(
             signing_host.account_holder().clone(),

@@ -5,9 +5,10 @@ use std::sync::Arc;
 use parity_scale_codec::Encode;
 
 use super::HostRejection;
+use crate::SsoAccountHolderSession;
 use crate::host_internal::sso_messages::decode_remote_message;
+use crate::runtime::SsoAccountHolderService;
 use crate::runtime::sso_service::Dispatch;
-use crate::runtime::{AuthoritySession, SsoAccountHolderService, WalletAccountHolder};
 
 /// Result for a caller that owns the authenticated SSO transport.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -26,14 +27,13 @@ pub enum SsoRequestOutcome {
 /// The wallet activation authenticated by an external SSO transport.
 #[derive(uniffi::Object)]
 pub struct NativeSsoAccountHolderSession {
-    wallet: Arc<WalletAccountHolder>,
-    session: AuthoritySession,
+    session: SsoAccountHolderSession,
 }
 
 impl NativeSsoAccountHolderSession {
     /// Retain the activation verified by the native runtime factory.
-    pub fn new(wallet: Arc<WalletAccountHolder>, session: AuthoritySession) -> Self {
-        Self { wallet, session }
+    pub fn new(session: SsoAccountHolderSession) -> Self {
+        Self { session }
     }
 }
 
@@ -41,11 +41,8 @@ impl NativeSsoAccountHolderSession {
 impl NativeSsoAccountHolderSession {
     /// Open an independent request and withdrawal scope for one authenticated peer.
     pub fn open_service(&self) -> Result<Arc<NativeSsoAccountHolderService>, HostRejection> {
-        self.wallet
-            .require_current_session(&self.session)
-            .map_err(reject)?;
         Ok(Arc::new(NativeSsoAccountHolderService {
-            service: SsoAccountHolderService::new(self.wallet.clone(), self.session.clone()),
+            service: self.session.open_service().map_err(reject)?,
         }))
     }
 }

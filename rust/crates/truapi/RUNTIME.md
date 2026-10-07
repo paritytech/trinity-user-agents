@@ -49,7 +49,7 @@ Shared RuntimeServices: platform, chain access and RPC clients
 Host Platform: storage, prompts, chain transport and navigation
 ```
 
-`HostAccounts<H>` uses the original `HostOperation` captured before product permission and review. It retains and uses delegated keys or wallet-issued authorization; `AccountHolder` owns wallet execution and grant issuance. The native wallet and shared host use the same ring registry. `host_logic` provides pure crypto, codecs and derivation rather than another execution layer.
+`HostAccounts<H>` uses the original `HostOperation` captured before product permission and review. It retains and uses delegated keys or wallet-issued authorization; `AccountHolder` owns wallet execution and grant issuance. Wallet lifecycle and secret helpers remain internal. The native wallet and shared host use the same ring registry. `host_logic` provides pure crypto, codecs and derivation rather than another execution layer.
 
 `runtime.rs` owns the product runtime and shared helpers. The trait adapters
 are grouped by surface under `runtime/capabilities/`; cross-capability fixtures

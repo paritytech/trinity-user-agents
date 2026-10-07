@@ -21,7 +21,6 @@ use crate::host_internal::sso_messages::{
 };
 use crate::host_internal::sso_wire::SsoRequest;
 use crate::host_logic::entropy::derive_product_entropy_from_source;
-use crate::host_logic::session::SessionInfo;
 use futures::{
     StreamExt,
     stream::{self, BoxStream},
@@ -69,7 +68,7 @@ impl SsoAccountHolderClient {
     ) -> Result<R::Response, AuthorityError> {
         self.require_current_session(invocation.session)?;
         self.service.approve(invocation).await?;
-        let session = self.require_current_session(invocation.session)?;
+        let session = require_current_session(&self.service.session_state(), invocation.session)?;
         let cx = match invocation.caller {
             AccountCaller::Local { .. } => super::remote_authority_context(invocation.call),
             AccountCaller::Remote { .. } => invocation.call.clone(),
@@ -90,11 +89,8 @@ impl AccountHolder for SsoAccountHolderClient {
         self.service.current_session()
     }
 
-    fn require_current_session(
-        &self,
-        session: &AuthoritySession,
-    ) -> Result<SessionInfo, AuthorityError> {
-        require_current_session(&self.service.session_state(), session)
+    fn require_current_session(&self, session: &AuthoritySession) -> Result<(), AuthorityError> {
+        require_current_session(&self.service.session_state(), session).map(|_| ())
     }
 
     async fn product_subtree_public_key<'a>(
@@ -105,7 +101,7 @@ impl AccountHolder for SsoAccountHolderClient {
     {
         self.require_current_session(invocation.session)?;
         self.service.approve(&invocation).await?;
-        let session = self.require_current_session(invocation.session)?;
+        let session = require_current_session(&self.service.session_state(), invocation.session)?;
         Ok(Box::pin(async move {
             self.service
                 .call(
@@ -323,7 +319,7 @@ impl AccountHolder for SsoAccountHolderClient {
         product_id: &str,
         context: &[u8],
     ) -> Result<[u8; 32], AuthorityError> {
-        let session = self.require_current_session(session)?;
+        let session = require_current_session(&self.service.session_state(), session)?;
         if session.sso.is_none() {
             return Err(AuthorityError::Disconnected);
         }
@@ -340,7 +336,7 @@ impl AccountHolder for SsoAccountHolderClient {
     }
 
     fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
-        let session = self.require_current_session(session)?;
+        let session = require_current_session(&self.service.session_state(), session)?;
         let source = session
             .root_entropy_source
             .ok_or_else(|| AuthorityError::Unavailable {
@@ -359,7 +355,7 @@ impl AccountHolder for SsoAccountHolderClient {
     ) -> Result<BoxStream<'a, Result<AccountGrantOutcome, AuthorityError>>, AuthorityError> {
         self.require_current_session(invocation.session)?;
         self.service.approve(&invocation).await?;
-        let session = self.require_current_session(invocation.session)?;
+        let session = require_current_session(&self.service.session_state(), invocation.session)?;
         let request = ResourceAllocationRequest {
             calling_product_id: invocation
                 .caller

@@ -27,7 +27,7 @@ struct RustRuntimeEnvironment {
 
         /// Start the localhost ws-bridge and return the bootstrap script to
         /// inject. Called from the runtime's `start`; opening the execution
-        /// (``makeSPAExecution``/``makeChatExecution``) stays side-effect free.
+        /// (``makeSPAExecution``/``makeWorkerExecution``) stays side-effect free.
         /// The local session is activated once on the shared runtime, not here.
         func startBridge() throws -> String {
             let endpoint = try execution.startWsBridge(bindPort: 0)
@@ -46,13 +46,24 @@ struct RustRuntimeEnvironment {
         try makeExecution(productId: productId, routers: routers, kind: .app)
     }
 
-    /// Open a chat execution for `productId`. Mirrors ``makeSPAExecution``.
-    func makeChatExecution(
+    /// Open `productId`'s one Worker execution. The core keeps a single Worker
+    /// execution per product and closes the previous one when another opens, so
+    /// every modality is served from this one: both bridges are handed over
+    /// here rather than attached afterwards, because the worker may list its
+    /// cards or post a chat message as soon as it connects.
+    func makeWorkerExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
-        chatMessaging: any ProductChatMessaging
+        chatMessaging: any ProductChatMessaging,
+        pocket: any PocketHostBridge
     ) throws -> ExecutionModel {
-        try makeExecution(productId: productId, routers: routers, kind: .worker, chatMessaging: chatMessaging)
+        try makeExecution(
+            productId: productId,
+            routers: routers,
+            kind: .worker,
+            chatMessaging: chatMessaging,
+            pocket: pocket
+        )
     }
 }
 
@@ -61,7 +72,8 @@ private extension RustRuntimeEnvironment {
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
         kind: ProductExecutionKind,
-        chatMessaging: (any ProductChatMessaging)? = nil
+        chatMessaging: (any ProductChatMessaging)? = nil,
+        pocket: (any PocketHostBridge)? = nil
     ) throws -> ExecutionModel {
         let chainConnections = TrUAPIChainConnectionPool(
             engineResolver: { [chainRegistry] genesisHash in
@@ -89,6 +101,7 @@ private extension RustRuntimeEnvironment {
             bridge: bridge,
             configuration: ProductExecutionConfig(productId: productId, executionKind: kind),
             chat: chatBridge,
+            pocket: pocket,
             game: gameReminders == nil ? nil : bridge
         )
 

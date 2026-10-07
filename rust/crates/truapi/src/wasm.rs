@@ -917,6 +917,19 @@ pub struct WasmPairingHostRuntime {
 
 #[wasm_bindgen]
 impl WasmPairingHostRuntime {
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For a test host whose wallet answers allowances in-page: the Bulletin
+    /// allowance it hands out was never authorized on chain, so a real `store`
+    /// would be refused at dry-run. The product gets the content key back and
+    /// reads the value from the core's lookup cache, as after a landed
+    /// submission. A refused Bulletin allowance still refuses the submission.
+    #[cfg(feature = "test-host")]
+    #[wasm_bindgen(js_name = setSubmitPreimagesLocally)]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.runtime.set_submit_preimages_locally(local);
+    }
+
     /// Build a shared runtime from host-level platform callbacks and host config.
     #[wasm_bindgen(constructor)]
     pub fn new(
@@ -1214,6 +1227,11 @@ impl WasmSigningHostRuntime {
     /// paths without an on-chain personhood identity. Nothing is allocated, so
     /// a green run says the product handles a grant, not that a host would
     /// have given one.
+    ///
+    /// Preimage submissions then stay in the core: the Bulletin allowance was
+    /// never authorized on chain, so a real `store` would be refused. The
+    /// product gets the content key back and reads the value from the core's
+    /// lookup cache, as after a landed submission.
     #[cfg(feature = "test-host")]
     #[wasm_bindgen(js_name = setGrantAllowancesUnchecked)]
     pub fn set_grant_allowances_unchecked(&self, granted: bool) {
@@ -1246,6 +1264,19 @@ impl WasmSigningHostRuntime {
     #[wasm_bindgen(js_name = setWithheldResources)]
     pub fn set_withheld_resources(&self, tags: Vec<String>) {
         self.runtime.set_withheld_resources(tags);
+    }
+
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For a test host whose wallet answers allowances in-page: the Bulletin
+    /// allowance it hands out was never authorized on chain, so a real `store`
+    /// would be refused at dry-run. The product gets the content key back and
+    /// reads the value from the core's lookup cache, as after a landed
+    /// submission. A refused Bulletin allowance still refuses the submission.
+    #[cfg(feature = "test-host")]
+    #[wasm_bindgen(js_name = setSubmitPreimagesLocally)]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.runtime.set_submit_preimages_locally(local);
     }
 
     /// Build a shared signing runtime from host callbacks and host config.
