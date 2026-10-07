@@ -222,6 +222,13 @@ class ManifestParserTest {
         assertEquals(true, faceShownOf("""{"id":"a","title":"A","preview":"a.json"}"""))
     }
 
+    // iOS decodes the field as an optional boolean, so a null there is an absent field; both hosts
+    // must publish the same cards from one manifest.
+    @Test
+    fun `a card with a null faceShown opens with its face shown, as when the field is absent`() {
+        assertEquals(true, faceShownOf("""{"id":"a","title":"A","preview":"a.json","faceShown":null}"""))
+    }
+
     @Test
     fun `a card can ask to open with its face away`() {
         assertEquals(false, faceShownOf("""{"id":"a","title":"A","preview":"a.json","faceShown":false}"""))
