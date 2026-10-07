@@ -9,6 +9,7 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     private(set) var closeCallCount = 0
     private(set) var chainResponses: [(UInt32, String)] = []
     private(set) var chainClosed: [UInt32] = []
+    private(set) var themeChanges: [HostThemeSubscribeItem] = []
 
     /// Status returned by `permissionAuthorizationStatus`; defaults to
     /// `.notDetermined` so existing tests are unaffected.
@@ -72,7 +73,10 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         status _: PermissionAuthorizationStatus
     ) throws {}
 
-    func notifyThemeChanged(theme _: HostThemeSubscribeItem) {}
+    func notifyThemeChanged(theme: HostThemeSubscribeItem) {
+        themeChanges.append(theme)
+    }
+
     func notifyLocaleChanged(locale _: HostLocaleSubscribeItem) {}
     func notifyStorageChanged(key _: String, value _: Data?) {}
     func notifyPreimageChanged(key _: Data, value _: Data?) {}
