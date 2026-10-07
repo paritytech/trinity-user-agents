@@ -381,7 +381,7 @@ fn json_u32(value: &Value, field: &'static str) -> Result<u32, StatementAllowanc
 /// takeover revokes somebody's allowance. Registration limits itself to one
 /// revocation per call, so it has to know which kind it was handed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Preselected {
+enum Preselected {
     /// A slot observed free; claiming it revokes nothing.
     Free(u32),
     /// A live slot the caller judged replaceable.
@@ -389,8 +389,7 @@ pub enum Preselected {
 }
 
 impl Preselected {
-    /// The chosen slot sequence.
-    pub fn seq(self) -> u32 {
+    fn seq(self) -> u32 {
         match self {
             Self::Free(seq) | Self::Takeover(seq) => seq,
         }
@@ -421,26 +420,16 @@ pub enum RegistrationOutcome {
     },
 }
 
-/// Target and slot-selection inputs for one statement-store registration.
-pub struct RegistrationParams<'a> {
-    /// Account that should receive the statement-store registration.
-    pub target: &'a [u8; 32],
-    /// Statement-store period for which the registration is requested.
-    pub period: u32,
-    /// Runtime-wide suffix used for product-scoped aliases and proofs.
-    pub network_suffix: &'a [u8],
-    /// Ring parameters used to build the membership proof.
-    pub ring: &'a RingParams,
-    /// Whether an existing registration for this period may be reused.
-    pub reuse_existing: bool,
-    /// A slot the caller's own scan already selected, used for the first attempt
-    /// so the scan is not repeated. The duplicate-submit retry rescans, so this
-    /// only ever shortcuts the first submission.
-    pub preselected: Option<Preselected>,
-    /// Slots the caller has already claimed in this batch and must not lose.
-    /// A multi-target pass would otherwise take a slot back off a target it
-    /// registered moments earlier and never settle.
-    pub protected: &'a [u32],
+struct RegistrationParams<'a> {
+    target: &'a [u8; 32],
+    period: u32,
+    network_suffix: &'a [u8],
+    ring: &'a RingParams,
+    reuse_existing: bool,
+    // Reuse the caller's first scan; duplicate submissions still need a fresh scan.
+    preselected: Option<Preselected>,
+    // A batch must not revoke allowances it just registered for earlier targets.
+    protected: &'a [u32],
 }
 
 /// Result of a long-term storage claim attempt.
@@ -513,12 +502,8 @@ pub struct CollectionCandidate {
     pub entropy: [u8; 32],
 }
 
-/// Find the newest ring in `collection` (scanning up to `lookback` back from the
-/// current index) that includes our member key. Reads the ring exponent once and
-/// stops at the first match. Every read is pinned to one finalized block so the
-/// snapshot is internally consistent; the pinned hash is recorded on the
-/// returned [`RingParams`].
-pub async fn find_including_ring(
+// Pin all reads to one finalized block so the membership snapshot is consistent.
+async fn find_including_ring(
     rpc: &RpcClient,
     metadata: &Metadata,
     collection: PersonhoodCollection,
@@ -594,9 +579,7 @@ pub async fn find_including_rings(
     }
 }
 
-/// Register statement-store allowance for `target`, proving membership in the
-/// already-located `ring`, at UTC-day `period`.
-pub async fn register_statement_account(
+async fn register_statement_account(
     rpc: &RpcClient,
     metadata: &Metadata,
     chain_state: &ChainState,

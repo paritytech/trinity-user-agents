@@ -2642,9 +2642,14 @@ impl ProductAuthority for PairingHost {
         );
         super::remote_authority_call(&cx, async {
             self.require_current_operation(operation)?;
-            let outcomes = self
-                .remote_allocate_resources(&cx, &session, product.product_id.clone(), request)
-                .await?;
+            let outcomes = sso_channel::remote_allocate_resources(
+                self,
+                &cx,
+                &session,
+                product.product_id.clone(),
+                request,
+            )
+            .await?;
             self.cache_allowance_outcomes(
                 &cx,
                 &session,
@@ -2727,8 +2732,14 @@ impl ProductAuthority for PairingHost {
         product_id: String,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
         let (session, lifecycle_epoch) = self.operation_session(operation)?;
-        self.remote_statement_store_allowance_key(cx, &session, lifecycle_epoch, product_id)
-            .await
+        sso_channel::remote_statement_store_allowance_key(
+            self,
+            cx,
+            &session,
+            lifecycle_epoch,
+            product_id,
+        )
+        .await
     }
 
     async fn bulletin_allowance_key(
@@ -2738,7 +2749,7 @@ impl ProductAuthority for PairingHost {
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
         let (session, lifecycle_epoch) = self.operation_session(operation)?;
-        self.remote_bulletin_allowance_key(cx, &session, lifecycle_epoch, product_id)
+        sso_channel::remote_bulletin_allowance_key(self, cx, &session, lifecycle_epoch, product_id)
             .await
     }
 
@@ -2749,8 +2760,14 @@ impl ProductAuthority for PairingHost {
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
         let (session, lifecycle_epoch) = self.operation_session(operation)?;
-        self.remote_refresh_bulletin_allowance_key(cx, &session, lifecycle_epoch, product_id)
-            .await
+        sso_channel::remote_refresh_bulletin_allowance_key(
+            self,
+            cx,
+            &session,
+            lifecycle_epoch,
+            product_id,
+        )
+        .await
     }
 }
 
@@ -2911,8 +2928,7 @@ impl AccountHolder for PairingHost {
                     signed_transaction: None,
                 });
             }
-            self.remote_sign_raw(&cx, &session, request, watermarked)
-                .await
+            sso_channel::remote_sign_raw(self, &cx, &session, request, watermarked).await
         })
         .await
     }
