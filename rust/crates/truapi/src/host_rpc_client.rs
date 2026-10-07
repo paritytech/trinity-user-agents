@@ -34,7 +34,7 @@ use crate::subscription::Spawner;
 /// queued, would otherwise park the caller forever. Subxt reads the failure as
 /// a dead subscription and rebuilds, which is the recovery path.
 #[cfg(not(test))]
-const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Shortened in tests so a suite can wait out a host that answers nothing.
 #[cfg(test)]
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(1);
