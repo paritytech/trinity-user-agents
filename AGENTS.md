@@ -18,6 +18,10 @@ rust/crates/
                          its `platform` module holds the chain-access traits
   truapi-verifiable/     ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
   truapi-host-cli/       CLI pairing/signing hosts; Bun scripts share the container web API gates
+  wasm-worker-probe/     runs a wasm32 Worker product against a host's product-frame endpoint
+                         under wasmi (fuel, memory cap, lifecycle), with a frame transcript
+  wasm-worker-probe-guest/ the counter bot that product is: Chat and Renderer over TrUAPI
+                         frames from Rust, no JavaScript; builds for wasm32-unknown-unknown
 js/packages/
   truapi/                  @parity/truapi TS package; generated TS lives under ignored paths
   truapi-host/            @parity/truapi-host: WASM-backed host runtime. Subpath entries:

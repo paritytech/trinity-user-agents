@@ -97,6 +97,7 @@ web-sys = "0.3"
 web-time = "1"
 webpki-roots = "0.26"
 x25519-dalek = { version = "2", default-features = false }
+wasmi = "2"
 zeroize = { version = "1", default-features = false }
 
 [workspace.lints.rust]

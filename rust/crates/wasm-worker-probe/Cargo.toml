@@ -1,0 +1,28 @@
+[package]
+name = "wasm-worker-probe"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+description = "Runs a wasm32 Worker product against a TrUAPI host's product-frame endpoint: wasmi sandbox, fuel and memory bounds, lifecycle calls, and a transcript of every frame"
+publish = false
+
+[[bin]]
+name = "wasm-worker-probe"
+path = "src/main.rs"
+
+[dependencies]
+truapi = { path = "../truapi" }
+anyhow = { workspace = true }
+clap = { workspace = true, features = ["derive", "env"] }
+futures = { workspace = true }
+parity-scale-codec = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "io-util", "io-std", "fs"] }
+tokio-tungstenite = { workspace = true, features = ["connect"] }
+wasmi = { workspace = true }
+
+[dev-dependencies]
+wasm-worker-probe-guest = { path = "../wasm-worker-probe-guest" }
+
+[lints]
+workspace = true
