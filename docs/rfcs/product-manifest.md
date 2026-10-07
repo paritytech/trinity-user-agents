@@ -200,13 +200,12 @@ Publishers MUST set `kind` to match the subname label the manifest is written un
 
 #### Funding configuration
 
-`includes.funding` is the one surface that carries a configuration object rather than a flag: it tells the Host what the provider moves and where to get quotes.
+`includes.funding` is the one surface that carries a configuration object rather than a flag: it tells the Host what the provider moves. The provider's worker answers quotes, calling its own API directly or, when that needs the provider's key, through the onramp adapter `backend` names.
 
 ```typescript
 type FundingConfig = {
   routes: FundingRoute[];        // What the provider moves, and how.
-  quote: QuoteSource;            // Where the Host gets a live quote.
-  backend?: string;              // Onramp adapter id for calls that need the provider's key.
+  backend?: string;              // Onramp adapter id for the worker's calls that need the provider's key.
 };
 
 type FundingRoute = {
@@ -216,18 +215,14 @@ type FundingRoute = {
   countries?: string[];          // ISO 3166-1 alpha-2 codes the route serves. Omitted means not declared.
   requiresAccount?: boolean;     // The user needs an account with the provider, such as one past its KYC.
 };
-
-type QuoteSource =
-  | { via: 'worker' }            // The Host asks the provider's worker.
-  | { via: 'url'; url: string }; // The Host calls this https URL, through the onramp adapter when `backend` is set.
 ```
 
 - **One mode per route.** A provider serving card and bank publishes two routes.
-- **Unrecognised values are ignored, not fatal**, so later revisions can add modes, directions and quote sources without a new `$v`. A route is ignored when its `mode` is unrecognised or it has no recognised direction or no assets; an unrecognised direction is dropped from a route that has others. An unrecognised `quote.via`, or a non-https `quote.url`, leaves the provider unquotable. Either way a worker left with no usable route or no quote source serves no Funding, and its other surfaces are unaffected.
+- **Unrecognised values are ignored, not fatal**, so later revisions can add modes and directions without a new `$v`. A route is ignored when its `mode` is unrecognised or it has no recognised direction or no assets; an unrecognised direction is dropped from a route that has others. A worker left with no usable route serves no Funding, and its other surfaces are unaffected.
 - **The quote is authoritative.** A Host MAY leave out a route whose `countries` omit the user's country without quoting it; a declared country can still be refused, and a route without `countries` is checked by its quote. Limits, fees and timing come only from the quote, which the Funding runtime contract defines.
-- **`backend` is an onramp adapter id, never a key.** The adapter holds the provider's key.
+- **`backend` is an onramp adapter id, never a key.** The adapter holds the provider's key, attaches it to the worker's call and returns the provider's answer to the worker.
 
-A provider serving inbound card payments in EUR and USD in three countries, and crypto deposits and withdrawals of USDT and DOT, quoted by its worker:
+A provider serving inbound card payments in EUR and USD in three countries, and crypto deposits and withdrawals of USDT and DOT:
 
 ```json
 {
@@ -240,8 +235,7 @@ A provider serving inbound card payments in EUR and USD in three countries, and 
       "routes": [
         { "mode": "CARD", "directions": ["In"], "assets": ["EUR", "USD"], "countries": ["DE", "FR", "US"], "requiresAccount": true },
         { "mode": "CRYPTO", "directions": ["In", "Out"], "assets": ["USDT", "DOT"] }
-      ],
-      "quote": { "via": "worker" }
+      ]
     }
   }
 }
@@ -553,7 +547,7 @@ A conforming Host implementation should produce well-defined behaviour for each 
 - Executable subname owned by a different account than the base name (when strict provenance is enabled) → skip that executable.
 - Unrecognised key in `includes` → ignored; the other surfaces still serve.
 - Funding route with an unrecognised `mode`, no recognised direction, or no assets → route ignored; other routes still apply. An unrecognised direction alongside recognised ones is dropped.
-- No usable funding route, unrecognised `quote.via`, or non-https `quote.url` → the worker does not serve Funding; the manifest still validates.
+- No usable funding route → the worker does not serve Funding; the manifest still validates.
 - `backend` naming an onramp adapter the Host does not know → the Host does not offer the provider.
 
 ## Drawbacks
