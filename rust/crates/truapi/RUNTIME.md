@@ -424,15 +424,19 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   renders with no chain read. A provider whose manifest no longer serves
   Funding drops out.
   `get_funding_quote(intent, ask)` prices an ask (rail, asset, amount,
-  country) with every candidate serving that rail and asset: core sends each
-  candidate's worker a `Quote` item on `serveSubscribe`, holding the worker
+  country) with every funding provider, whatever its manifest says it serves,
+  since a provider can serve more or less than it last published: core sends
+  each provider's worker a `Quote` item on `serveSubscribe`, holding the worker
   while it waits, and the worker answers with `answerQuote`, from its own API
   directly or through the onramp adapter when that needs the provider's key.
   Each provider's row is `Pending`, then `Quoted` or `Unavailable`, and a
-  provider that does not answer within 10 seconds is unavailable. A route whose
-  declared countries leave out the user's is unavailable without asking, and a
-  provider's answer is reused for the same ask for 30 seconds. Natively the
-  rows arrive through `funding_quote_changed`.
+  provider that does not answer within 10 seconds is unavailable. A provider's
+  answer is reused for the same ask for 30 seconds. What an answer shows (a
+  quote or an out-of-range amount: served; a refused country: not served
+  there) is stored under `FundingSupport` and folded into `funding_candidates`
+  for 12 hours, as routes the manifest did not declare and as `unsupported`
+  entries the host can filter by the user's country. Natively the rows arrive
+  through `funding_quote_changed`.
   `select_funding_provider` hands a session to the provider the user chose,
   which must be one of those candidates, on the quote it was chosen by, which
   must be one core offered for the session and not yet expired; the provider

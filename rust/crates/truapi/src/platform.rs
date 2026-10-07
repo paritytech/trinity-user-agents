@@ -1473,6 +1473,10 @@ pub enum CoreStorageKey {
     /// when, cached for the same lifetime as [`Self::ProductManifest`].
     #[codec(index = 15)]
     PublishedProducts,
+    /// What funding providers' quote answers showed about what they serve,
+    /// each record trusted for twelve hours.
+    #[codec(index = 16)]
+    FundingSupport,
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1529,6 +1533,7 @@ pub fn describe_core_storage_key(
         CoreStorageKey::FundingSessions => ("FundingSessions", None),
         CoreStorageKey::WorkerManifest { product_id } => ("WorkerManifest", Some(product_id)),
         CoreStorageKey::PublishedProducts => ("PublishedProducts", None),
+        CoreStorageKey::FundingSupport => ("FundingSupport", None),
     };
     Ok(CoreStorageKeyDescription { kind, product_id })
 }
@@ -2605,6 +2610,7 @@ mod tests {
                 Some("ramp"),
             ),
             (CoreStorageKey::PublishedProducts, "PublishedProducts", None),
+            (CoreStorageKey::FundingSupport, "FundingSupport", None),
         ] {
             let description = describe_core_storage_key(&key.encode()).expect("valid key");
             assert_eq!(description.kind, kind);

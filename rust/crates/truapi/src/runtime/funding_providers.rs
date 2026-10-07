@@ -16,13 +16,17 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use truapi::latest::FundingDirection;
 
+use futures::lock::Mutex as AsyncMutex;
+use parity_scale_codec::{Decode, Encode};
+
 use super::browse::published_products;
 use super::product_manifest::worker_manifest;
 use super::services::RuntimeServices;
 use crate::host_logic::worker_manifest::WorkerManifest;
 use crate::host_logic::funding::FundingSessionError;
-use crate::host_logic::funding_providers::{FundingCandidate, FundingProviderEntry};
-use crate::platform::{ProductContext, ProductExecutionKind};
+use crate::host_logic::funding_providers::{FundingCandidate, FundingProviderEntry, LearnedSupport};
+use crate::platform::{CoreStorageKey, ProductContext, ProductExecutionKind};
+use crate::unix_time::current_unix_millis;
 
 /// The host's funding providers and what each one serves.
 #[derive(Default)]
@@ -38,25 +42,71 @@ pub struct FundingProviders {
     refreshing: Mutex<HashSet<String>>,
     /// Whether the browse list is being read.
     discovering: AtomicBool,
+    /// What providers' quote answers showed about what they serve, newest
+    /// per ask, persisted under [`CoreStorageKey::FundingSupport`].
+    learned: Mutex<Vec<LearnedSupport>>,
+    /// Whether the persisted records were loaded.
+    learned_loaded: AtomicBool,
+    /// Held while the records are written, so writes land in order.
+    learned_writes: AsyncMutex<()>,
 }
 
 impl FundingProviders {
     /// Every provider serving `direction`: the host's in its order, then
-    /// those published to browse that the host does not list.
+    /// those published to browse that the host does not list. What their
+    /// recent quote answers showed is folded into what their manifests say.
     pub fn candidates(&self, direction: FundingDirection) -> Vec<FundingCandidate> {
+        let learned = lock(&self.learned).clone();
+        let now_ms = current_unix_millis();
+        self.providers()
+            .into_iter()
+            .filter_map(|(provider_id, manifest)| {
+                FundingCandidate::for_direction(&provider_id, manifest.as_ref(), &learned, direction, now_ms)
+            })
+            .collect()
+    }
+
+    /// Every provider a quote is asked of, whatever its manifest says it
+    /// serves, since a provider can serve more or less than it last
+    /// published: the host's, and those published to browse whose manifest
+    /// serves Funding.
+    pub fn quote_targets(&self) -> Vec<String> {
+        let entries = lock(&self.entries).len();
+        self.providers()
+            .into_iter()
+            .enumerate()
+            .filter(|(index, (_, manifest))| {
+                *index < entries || manifest.as_ref().is_some_and(|manifest| manifest.funding.is_some())
+            })
+            .map(|(_, (provider_id, _))| provider_id)
+            .collect()
+    }
+
+    /// The host's providers in its order, then the browse ones it does not
+    /// list, each with the manifest the core goes by.
+    fn providers(&self) -> Vec<(String, Option<WorkerManifest>)> {
         let entries = lock(&self.entries).clone();
         let discovered = lock(&self.discovered).clone();
-        let offered = entries.iter().filter_map(|entry| {
-            FundingCandidate::for_direction(&entry.product_id, &self.manifest(entry)?, direction)
-        });
-        let published = discovered
+        let offered = entries
             .iter()
-            .filter(|product_id| entries.iter().all(|entry| &entry.product_id != *product_id))
-            .filter_map(|product_id| {
-                let manifest = lock(&self.live).get(product_id).cloned().flatten()?;
-                FundingCandidate::for_direction(product_id, &manifest, direction)
+            .map(|entry| (entry.product_id.clone(), self.manifest(entry)));
+        let published = discovered
+            .into_iter()
+            .filter(|product_id| entries.iter().all(|entry| &entry.product_id != product_id))
+            .map(|product_id| {
+                let manifest = lock(&self.live).get(&product_id).cloned().flatten();
+                (product_id, manifest)
             });
         offered.chain(published).collect()
+    }
+
+    /// Record what an answer showed, replacing what was known for the same
+    /// ask and dropping what is no longer trusted.
+    fn learn(&self, support: LearnedSupport) {
+        let mut learned = lock(&self.learned);
+        let now_ms = support.learned_at_ms;
+        learned.retain(|known| known.is_fresh(now_ms) && !known.same_ask(&support));
+        learned.push(support);
     }
 
     /// Whether `provider_id` serves `direction`.
@@ -124,7 +174,13 @@ impl RuntimeServices {
     /// and the browse list with the manifests of what it lists. A read that
     /// fails keeps what the core had, since it says nothing about the
     /// provider.
-    fn refresh_funding_providers(self: &Arc<Self>) {
+    pub fn refresh_funding_providers(self: &Arc<Self>) {
+        if !self.funding_providers.learned_loaded.swap(true, Ordering::AcqRel) {
+            let services = self.clone();
+            (self.spawner)(Box::pin(async move {
+                services.load_learned_support().await;
+            }));
+        }
         let entries = lock(&self.funding_providers.entries).clone();
         for entry in entries {
             if !lock(&self.funding_providers.refreshing).insert(entry.product_id.clone()) {
@@ -164,6 +220,46 @@ impl RuntimeServices {
         for product_id in published {
             if lock(&providers.refreshing).insert(product_id.clone()) {
                 self.read_provider_manifest(&product_id).await;
+            }
+        }
+    }
+
+    /// Record what a provider's answer showed about what it serves, and
+    /// persist the records.
+    pub fn learn_funding_support(self: &Arc<Self>, support: LearnedSupport) {
+        self.funding_providers.learn(support);
+        let services = self.clone();
+        (self.spawner)(Box::pin(async move {
+            // Each write takes the records as they are once it holds the
+            // lock, so the last one to land is the newest.
+            let _write = services.funding_providers.learned_writes.lock().await;
+            let records = lock(&services.funding_providers.learned).clone();
+            if let Err(error) = services
+                .platform
+                .write_core_storage(CoreStorageKey::FundingSupport, records.encode())
+                .await
+            {
+                tracing::warn!(reason = %error.reason, "storing what funding providers serve failed");
+            }
+        }));
+    }
+
+    /// Load what earlier answers showed, keeping what is still trusted and
+    /// anything learned since the load began.
+    async fn load_learned_support(&self) {
+        let stored = match self.platform.read_core_storage(CoreStorageKey::FundingSupport).await {
+            Ok(Some(bytes)) => Vec::<LearnedSupport>::decode(&mut bytes.as_slice()).unwrap_or_default(),
+            Ok(None) => Vec::new(),
+            Err(error) => {
+                tracing::warn!(reason = %error.reason, "reading what funding providers serve failed");
+                return;
+            }
+        };
+        let now_ms = current_unix_millis();
+        let mut learned = lock(&self.funding_providers.learned);
+        for support in stored.into_iter().filter(|support| support.is_fresh(now_ms)) {
+            if learned.iter().all(|known| !known.same_ask(&support)) {
+                learned.push(support);
             }
         }
     }

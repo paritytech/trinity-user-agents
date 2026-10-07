@@ -2789,6 +2789,11 @@ fn a_session_is_handed_only_to_an_offered_provider_serving_its_direction() {
 /// Answer every quote ask `provider_id`'s workers receive with `quote`,
 /// on a thread of its own, as the provider's worker would.
 fn answer_quotes(services: &Arc<RuntimeServices>, provider_id: &str, quote: v01::FundingQuote) -> Arc<Mutex<usize>> {
+    answer_asks(services, provider_id, v01::FundingQuoteAnswer::Quoted { quote })
+}
+
+/// Answer every quote ask `provider_id`'s workers receive with `answer`.
+fn answer_asks(services: &Arc<RuntimeServices>, provider_id: &str, answer: v01::FundingQuoteAnswer) -> Arc<Mutex<usize>> {
     let asks = Arc::new(Mutex::new(0));
     let counted = asks.clone();
     let registry = services.funding().clone();
@@ -2799,11 +2804,7 @@ fn answer_quotes(services: &Arc<RuntimeServices>, provider_id: &str, quote: v01:
             while let Some(item) = served.next().await {
                 if let v01::HostFundingServeSubscribeItem::Quote { ask_id, .. } = item {
                     *counted.lock().expect("asks mutex poisoned") += 1;
-                    registry.answer_quote(
-                        &provider_id,
-                        &ask_id,
-                        v01::FundingQuoteAnswer::Quoted { quote: quote.clone() },
-                    );
+                    registry.answer_quote(&provider_id, &ask_id, answer.clone());
                 }
             }
         });
@@ -2895,51 +2896,108 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
     );
 }
 
-// A route that declares countries leaving out the user's is unavailable
-// without asking its worker; an answer is reused for the same ask, so editing
-// back to an amount does not ask the provider again.
+// A manifest can lag behind its provider, so every provider is asked
+// whatever its routes say, and what the answers show is kept: a provider that
+// quotes a rail it never declared becomes a candidate for it, one that refuses
+// the user's country is marked unsupported there, and both survive a restart.
+// An answer is reused for the same ask, so editing back to an amount does not
+// ask the providers again.
 #[test]
-fn quotes_skip_undeclared_countries_and_reuse_recent_answers() {
-    let services = funding_services();
-    assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
-        crate::platform::FundingPresentOutcome::Started,
-    )));
-    let germany_only = RAMP_MANIFEST.replace(
-        r#""assets":["EUR"]}"#,
-        r#""assets":["EUR"],"countries":["DE"]}"#,
-    );
-    offer_provider(&services, "ramp.dot", &germany_only);
+fn quotes_ask_every_provider_and_learn_what_it_serves() {
+    let storage = stub_platform();
+    let start = || {
+        let services = funding_services_over(storage.clone());
+        assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+            crate::platform::FundingPresentOutcome::Started,
+        )));
+        let germany_only = RAMP_MANIFEST.replace(
+            r#""assets":["EUR"]}"#,
+            r#""assets":["EUR"],"countries":["DE"]}"#,
+        );
+        let crypto_only = RAMP_MANIFEST.replace(
+            r#"{"mode":"CARD","directions":["In"],"assets":["EUR"]},"#,
+            "",
+        );
+        services
+            .set_funding_providers(vec![
+                crate::host_logic::funding_providers::FundingProviderEntry {
+                    product_id: "ramp.dot".to_string(),
+                    worker_manifest: Some(germany_only),
+                },
+                crate::host_logic::funding_providers::FundingProviderEntry {
+                    product_id: "chain.dot".to_string(),
+                    worker_manifest: Some(crypto_only),
+                },
+            ])
+            .expect("providers offered");
+        services
+    };
+    let services = start();
     let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, Some(1_000)))
         .expect("opened")
         .intent;
-    let asks = answer_quotes(&services, "ramp.dot", card_quote("q1"));
-    let last_state = |country| {
+    let refused = answer_asks(
+        &services,
+        "ramp.dot",
+        v01::FundingQuoteAnswer::Refused {
+            reason: v01::FundingQuoteRefusal::CountryUnsupported,
+        },
+    );
+    let quoted = answer_quotes(&services, "chain.dot", card_quote("q1"));
+    let ask = || {
         futures::executor::block_on(
             services
-                .get_funding_quote_within(&intent, card_ask(country), Duration::from_secs(5))
+                .get_funding_quote_within(&intent, card_ask(Some("US")), Duration::from_secs(5))
                 .collect::<Vec<_>>(),
         )
-        .last()
-        .map(|row| row.state.clone())
     };
 
-    let outside = last_state(Some("US"));
-    let first = last_state(Some("DE"));
-    let again = last_state(Some("DE"));
+    ask();
+    ask();
+    let candidate = |services: &Arc<RuntimeServices>, provider: &str| {
+        services
+            .funding_candidates(v01::FundingDirection::In)
+            .into_iter()
+            .find(|candidate| candidate.provider_id == provider)
+    };
+    let card = crate::host_logic::worker_manifest::FundingMode::Card;
+    let serves_card_eur = |services: &Arc<RuntimeServices>| {
+        candidate(services, "chain.dot").is_some_and(|candidate| {
+            candidate
+                .routes
+                .iter()
+                .any(|route| route.mode == card && route.assets.contains(&"EUR".to_string()))
+        })
+    };
+    let us_unsupported = |services: &Arc<RuntimeServices>| {
+        candidate(services, "ramp.dot").is_some_and(|candidate| {
+            candidate.unsupported
+                == vec![crate::host_logic::funding_providers::FundingUnsupported {
+                    rail: v01::FundingRail::Card,
+                    asset: "EUR".to_string(),
+                    country: Some("US".to_string()),
+                }]
+        })
+    };
+    let before_restart = (serves_card_eur(&services), us_unsupported(&services));
+    let restarted = start();
+    let mut after_restart = (false, false);
+    for _ in 0..200 {
+        after_restart = (serves_card_eur(&restarted), us_unsupported(&restarted));
+        if after_restart == (true, true) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
 
-    use crate::platform::{FundingQuoteState, FundingQuoteUnavailable};
     assert_eq!(
-        (outside, first.clone(), again, *asks.lock().expect("asks mutex poisoned")),
         (
-            Some(FundingQuoteState::Unavailable {
-                reason: FundingQuoteUnavailable::Refused {
-                    reason: v01::FundingQuoteRefusal::CountryUnsupported,
-                },
-            }),
-            Some(FundingQuoteState::Quoted { quote: card_quote("q1") }),
-            first,
-            1,
-        )
+            *refused.lock().expect("asks mutex poisoned"),
+            *quoted.lock().expect("asks mutex poisoned"),
+            before_restart,
+            after_restart,
+        ),
+        (1, 1, (true, true), (true, true))
     );
 }
 

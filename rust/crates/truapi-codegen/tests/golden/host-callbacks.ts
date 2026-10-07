@@ -228,7 +228,12 @@ export type CoreStorageKey =
    * The products published to browse on this network, as last read, and
    * when, cached for the same lifetime as `Self::ProductManifest`.
    */
-  | { tag: "PublishedProducts"; value?: undefined };
+  | { tag: "PublishedProducts"; value?: undefined }
+  /**
+   * What funding providers' quote answers showed about what they serve,
+   * each record trusted for twelve hours.
+   */
+  | { tag: "FundingSupport"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -859,6 +864,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         productId: string;
       }>,
       PublishedProducts: S._void,
+      FundingSupport: S._void,
     }),
 );
 

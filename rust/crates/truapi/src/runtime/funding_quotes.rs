@@ -1,11 +1,14 @@
 //! Live quotes for a funding session, asked of each candidate's worker.
 //!
 //! The host asks once per amount, rail and asset; the core sends the ask to
-//! every candidate serving that rail and asset, on `serveSubscribe`, holding
-//! its worker while it waits. The worker prices it from its own API, through
-//! the onramp adapter when that needs the provider's key, and answers with
-//! `answerQuote`. Each provider's row resolves on its own: a provider that does
-//! not answer in time is unavailable, so a slow one never holds the list.
+//! every funding provider, on `serveSubscribe`, whatever its manifest says it
+//! serves, since a provider can serve more or less than it last published.
+//! The worker prices it from its own API, through the onramp adapter when that
+//! needs the provider's key, and answers with `answerQuote`. Each provider's
+//! row resolves on its own: a provider that does not answer in time is
+//! unavailable, so a slow one never holds the list. What an answer shows about
+//! what the provider serves is kept for twelve hours and folded into the
+//! candidates.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -15,13 +18,11 @@ use core::time::Duration;
 use futures::future::{self, Either};
 use futures::stream::{self, BoxStream, StreamExt};
 use parity_scale_codec::Encode;
-use truapi::latest::{
-    FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal, FundingRail,
-};
+use truapi::latest::{FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal};
 
 use super::services::RuntimeServices;
 use crate::platform::{FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable};
-use crate::host_logic::worker_manifest::FundingMode;
+use crate::host_logic::funding_providers::LearnedSupport;
 use crate::unix_time::current_unix_millis;
 
 /// How long a provider has to answer an ask.
@@ -101,11 +102,10 @@ impl FundingQuotes {
 }
 
 impl RuntimeServices {
-    /// Ask every candidate for session `intent` that serves `ask`'s rail and
-    /// asset for a price. Each provider's row is first `Pending`, then
-    /// `Quoted` or `Unavailable`; a route whose declared countries leave out
-    /// the user's is unavailable without asking. The ask's direction is the
-    /// session's. Empty for a session the core does not know or that ended.
+    /// Ask every funding provider to price `ask` for session `intent`. Each
+    /// provider's row is first `Pending`, then `Quoted` or `Unavailable`. The
+    /// ask's direction is the session's. Empty for a session the core does
+    /// not know or that ended.
     pub fn get_funding_quote(
         self: &Arc<Self>,
         intent: &str,
@@ -129,63 +129,32 @@ impl RuntimeServices {
             direction: session.direction,
             ..ask
         };
-        let mode = match ask.rail {
-            FundingRail::Card => FundingMode::Card,
-            FundingRail::Bank => FundingMode::Bank,
-            FundingRail::Crypto => FundingMode::Crypto,
-        };
-        let mut rows = Vec::new();
-        for candidate in self.funding_candidates(session.direction) {
-            let routes: Vec<_> = candidate
-                .routes
-                .iter()
-                .filter(|route| route.mode == mode && route.assets.contains(&ask.asset))
-                .collect();
-            if routes.is_empty() {
-                continue;
-            }
-            let provider_id = candidate.provider_id;
-            let outside_countries = ask.country.as_ref().is_some_and(|country| {
-                routes.iter().all(|route| {
-                    route
-                        .countries
-                        .as_ref()
-                        .is_some_and(|countries| !countries.contains(country))
-                })
-            });
-            if outside_countries {
-                let row = FundingQuoteRow {
-                    provider_id,
-                    state: FundingQuoteState::Unavailable {
-                        reason: FundingQuoteUnavailable::Refused {
-                            reason: FundingQuoteRefusal::CountryUnsupported,
-                        },
-                    },
+        self.refresh_funding_providers();
+        let rows: Vec<_> = self
+            .funding_providers
+            .quote_targets()
+            .into_iter()
+            .map(|provider_id| {
+                let pending = FundingQuoteRow {
+                    provider_id: provider_id.clone(),
+                    state: FundingQuoteState::Pending,
                 };
-                rows.push(stream::once(future::ready(row)).boxed());
-                continue;
-            }
-            let pending = FundingQuoteRow {
-                provider_id: provider_id.clone(),
-                state: FundingQuoteState::Pending,
-            };
-            let services = self.clone();
-            let intent = intent.to_string();
-            let ask = ask.clone();
-            rows.push(
+                let services = self.clone();
+                let intent = intent.to_string();
+                let ask = ask.clone();
                 stream::once(future::ready(pending))
                     .chain(stream::once(async move {
                         services.quote_one(&intent, &provider_id, ask, deadline).await
                     }))
-                    .boxed(),
-            );
-        }
+                    .boxed()
+            })
+            .collect();
         stream::select_all(rows).boxed()
     }
 
     /// Ask one provider, holding its worker while it answers.
     async fn quote_one(
-        &self,
+        self: &Arc<Self>,
         intent: &str,
         provider_id: &str,
         ask: FundingQuoteAsk,
@@ -208,7 +177,19 @@ impl RuntimeServices {
                 };
                 self.worker_ledger.release(provider_id);
                 if let Some(answer) = &answer {
-                    quotes.remember(provider_id, &ask, current_unix_millis(), answer.clone());
+                    let now_ms = current_unix_millis();
+                    quotes.remember(provider_id, &ask, now_ms, answer.clone());
+                    if let Some(supported) = shows_support(answer) {
+                        self.learn_funding_support(LearnedSupport {
+                            provider_id: provider_id.to_string(),
+                            direction: ask.direction,
+                            rail: ask.rail,
+                            asset: ask.asset.clone(),
+                            country: ask.country.clone(),
+                            supported,
+                            learned_at_ms: now_ms,
+                        });
+                    }
                 }
                 answer
             }
@@ -229,6 +210,22 @@ impl RuntimeServices {
             provider_id: provider_id.to_string(),
             state,
         }
+    }
+}
+
+/// What an answer shows about whether the provider serves the ask: a quote,
+/// or a refusal of only the amount, means it does; refusing the country means
+/// it does not there; anything else may pass and shows nothing.
+fn shows_support(answer: &FundingQuoteAnswer) -> Option<bool> {
+    match answer {
+        FundingQuoteAnswer::Quoted { .. } => Some(true),
+        FundingQuoteAnswer::Refused { reason } => match reason {
+            FundingQuoteRefusal::BelowMinimum { .. } | FundingQuoteRefusal::AboveMaximum { .. } => {
+                Some(true)
+            }
+            FundingQuoteRefusal::CountryUnsupported => Some(false),
+            FundingQuoteRefusal::Unavailable | FundingQuoteRefusal::Other { .. } => None,
+        },
     }
 }
 
