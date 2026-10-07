@@ -1709,9 +1709,11 @@ export interface ProductStorage {
  * The host draws the viewfinder and titles it with the requesting product's
  * id. Only `request.hint` is product text. It hands every code the camera
  * reads to the core's `ScanFilter` and acts on its verdict, and never follows
- * a scanned link itself. The core drops
- * the returned future when the product cancels, and the host closes the
- * viewfinder then.
+ * a scanned link itself. The core drops the returned future when the product
+ * cancels, and the host closes the viewfinder then. The next scan can arrive
+ * before that close has finished, so close any viewfinder still open before
+ * opening another. A JS host is not told about a cancel, because a promise
+ * cannot be withdrawn.
  */
 export interface ScannerPlatform {
   /**

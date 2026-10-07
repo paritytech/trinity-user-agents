@@ -7928,10 +7928,12 @@ fn a_second_scan_waits_its_turn_and_a_cancel_frees_the_viewfinder() {
     );
 
     cancel.cancel();
-    assert_eq!(
+    // The handler reports its own error; the dispatcher answers `Cancelled`
+    // only when the product sent a Cancel frame.
+    assert!(matches!(
         unwrap_scan(futures::executor::block_on(first)),
-        Err(CallError::Cancelled)
-    );
+        Err(CallError::Domain(v01::HostScannerScanError::Unknown { .. }))
+    ));
     assert!(scanner.abandoned.load(Ordering::SeqCst));
 
     let next_cx = CallContext::default();
@@ -7989,6 +7991,13 @@ fn cancelling_a_contact_pick_stops_waiting_on_the_picker() {
 
     cancel.cancel();
 
-    assert_eq!(futures::executor::block_on(pick), Err(CallError::Cancelled));
+    // The handler reports its own error; the dispatcher answers `Cancelled`
+    // only when the product sent a Cancel frame.
+    assert!(matches!(
+        futures::executor::block_on(pick),
+        Err(CallError::Domain(HostContactsPickError::V1(
+            v01::HostContactsPickError::Unknown { .. }
+        )))
+    ));
     assert!(abandoned.load(Ordering::SeqCst));
 }

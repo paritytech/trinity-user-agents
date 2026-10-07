@@ -273,7 +273,7 @@ where
 /// withdrawn call stops waiting, so an answer given after the withdrawal
 /// authorizes nothing. The error is the one `remote_authority_call` answers,
 /// so each caller maps it into its method's own domain error.
-pub(crate) async fn until_cancelled<T>(
+async fn until_cancelled<T>(
     cx: &CallContext,
     wait: impl Future<Output = T>,
 ) -> Result<T, AuthorityError> {
@@ -1398,7 +1398,11 @@ impl Contacts for ProductRuntimeHost {
         let generation = self.services.contact_handles.generation();
         let outcome = match until_cancelled(cx, platform.pick_contact(&self.product))
             .await
-            .map_err(|_cancelled| CallError::Cancelled)?
+            .map_err(|cancelled| {
+                CallError::Domain(wrap(v01::HostContactsPickError::Unknown {
+                    reason: cancelled.to_string(),
+                }))
+            })?
             .map_err(unknown)?
         {
             crate::platform::HostContactPick::Picked { account } => {

@@ -40,7 +40,11 @@ impl Scanner for ProductRuntimeHost {
 
         let answer = until_cancelled(cx, platform.scan_code(&self.product, &request))
             .await
-            .map_err(|_cancelled| CallError::Cancelled)?
+            .map_err(|cancelled| {
+                domain(latest::HostScannerScanError::Unknown {
+                    reason: cancelled.to_string(),
+                })
+            })?
             .map_err(|error| {
                 domain(latest::HostScannerScanError::Unknown {
                     reason: error.reason,

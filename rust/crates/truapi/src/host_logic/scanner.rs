@@ -4,6 +4,7 @@
 //! filter codes in the viewfinder with [`ScanFilter`], so every host accepts
 //! the same codes.
 
+use std::collections::BTreeSet;
 use std::sync::Mutex;
 
 use truapi::latest::{CodeFormat, HostScannerScanRequest};
@@ -42,6 +43,7 @@ fn breaks_the_line(character: char) -> bool {
             character,
             '\u{2028}'
                 | '\u{2029}'
+                | '\u{061C}'
                 | '\u{200E}'
                 | '\u{200F}'
                 | '\u{202A}'..='\u{202E}'
@@ -80,7 +82,7 @@ pub struct ScanFilter {
 #[derive(Default)]
 struct FilterState {
     accepted: bool,
-    last_refused: Option<(CodeFormat, String)>,
+    refused: BTreeSet<(u8, String)>,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), uniffi::export)]
@@ -104,12 +106,11 @@ impl ScanFilter {
             state.accepted = true;
             return ScanVerdict::Accept;
         }
-        let code = Some((format, text));
-        if state.last_refused == code {
-            return ScanVerdict::Ignore;
+        if state.refused.insert((format as u8, text)) {
+            ScanVerdict::NotForThisProduct
+        } else {
+            ScanVerdict::Ignore
         }
-        state.last_refused = code;
-        ScanVerdict::NotForThisProduct
     }
 }
 
@@ -163,6 +164,7 @@ mod tests {
             "\u{202E}reversed",
             "\u{2066}isolate",
             "\u{200F}mark",
+            "\u{061C}arabic letter mark",
         ] {
             assert!(
                 validate_request(&qr(None, Some(refused))).is_err(),
@@ -233,27 +235,20 @@ mod tests {
     }
 
     #[test]
-    fn the_filter_names_a_wrong_code_once_while_it_stays_in_view() {
-        // One message per wrong code, not one per camera frame.
+    fn the_filter_names_each_wrong_code_once_per_scan() {
+        // A poster with two codes on it is read alternately, frame after frame.
+        // The user should hear about each once, not on every frame.
         let filter = ScanFilter::new(receipts());
         let poster = "https://elsewhere.example".to_owned();
         let pairing = "polkadotapp://pair?handshake=00".to_owned();
-        assert_eq!(
-            filter.observe(CodeFormat::Qr, poster.clone()),
-            ScanVerdict::NotForThisProduct
-        );
-        assert_eq!(
-            filter.observe(CodeFormat::Qr, poster.clone()),
-            ScanVerdict::Ignore
-        );
-        assert_eq!(
-            filter.observe(CodeFormat::Qr, pairing),
-            ScanVerdict::NotForThisProduct
-        );
-        assert_eq!(
-            filter.observe(CodeFormat::Qr, poster),
-            ScanVerdict::NotForThisProduct
-        );
+        for (code, expected) in [
+            (&poster, ScanVerdict::NotForThisProduct),
+            (&pairing, ScanVerdict::NotForThisProduct),
+            (&poster, ScanVerdict::Ignore),
+            (&pairing, ScanVerdict::Ignore),
+        ] {
+            assert_eq!(filter.observe(CodeFormat::Qr, code.clone()), expected);
+        }
     }
 
     #[test]
