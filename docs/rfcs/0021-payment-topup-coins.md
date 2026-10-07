@@ -35,7 +35,7 @@ enum PaymentTopUpSource {
 
 `host_payment_top_up` is unchanged; the host validates each key, claims the coins, and credits the target purse. Spent or sniped coins are skipped. No user consent required (top-ups are always in the user's favour).
 
-A `PartialPayment { credited: Balance }` variant is added to `HostPaymentTopUpError` so the caller knows how much was credited when some coins could not be claimed.
+When some coins cannot be claimed, the top-up ends in `PaymentTopUpStatus::ClaimedPartially { actual_claimed }` (RFC 0006), so the caller knows how much was credited.
 
 ## Drawbacks
 
