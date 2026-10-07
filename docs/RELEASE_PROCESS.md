@@ -65,7 +65,10 @@ overwrite the previous release's explorer snapshot.
 
 ### 3. Open a release PR
 
-Commit the resulting diff and open a PR using the **release** template:
+Commit the resulting diff and open a PR using the **release** template. Name the
+branch anything except `release/release-*`: that prefix belongs to the iOS app
+release pipeline, and `ios-release-distribution.yml` selects the builds it sends
+to App Store Connect by it.
 
 ```
 https://github.com/paritytech/trinity-user-agents/compare/main...<your-branch>?template=release.md
