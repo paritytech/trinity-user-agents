@@ -3,11 +3,9 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -15,12 +13,12 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.retryWhen
 import timber.log.Timber
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.RenderContext
+import uniffi.truapi.RendererNode
 import javax.inject.Inject
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -37,7 +35,7 @@ class TrUAPIPocketFaceStreams @Inject constructor(
     private val publishedCards: PublishedPocketCards,
 ) : PocketFaceStreams {
     @OptIn(ExperimentalCoroutinesApi::class)
-    override fun renderFaces(key: PocketCardKey): Flow<JsWidget> = flow {
+    override fun renderFaces(key: PocketCardKey): Flow<RendererNode> = flow {
         // A card whose product publishes no Pocket worker has nothing to stream, and the reference
         // below is what starts one: the pinned card is on the default tab, so taking it would boot a
         // worker for the personhood product every time the tab is opened.
@@ -85,10 +83,9 @@ class TrUAPIPocketFaceStreams @Inject constructor(
             .logFailure("truapi.renderer.action '$actionId' for ${key.cardId.value}")
     }
 
-    private fun TrUAPIProductExecution.faces(key: PocketCardKey): Flow<JsWidget> =
+    private fun TrUAPIProductExecution.faces(key: PocketCardKey): Flow<RendererNode> =
         render(ProductRendererRenderRequest(key.renderContext(), payload = ByteArray(0)))
             .retryWhileConnecting(CONNECT_ATTEMPTS, CONNECT_RETRY_DELAY)
-            .map { it.toJsWidget() }
 
     private fun PocketCardKey.renderContext() = RenderContext.PocketCard(cardId.value)
 

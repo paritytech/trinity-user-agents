@@ -67,47 +67,74 @@ Top up the user's payment balance from a product-controlled funding source. This
 ```rust
 fn host_payment_top_up(
     amount: Balance,
-    source: PaymentTopUpSource
+    source: PaymentTopUpSource,
+    id: PaymentTopUpId
 ) -> Result<(), PaymentTopUpErr>
+
+fn host_payment_top_up_status_subscribe(
+    id: PaymentTopUpId
+) -> Subscription<PaymentTopUpStatus, PaymentTopUpStatusErr>
 
 enum PaymentTopUpSource {
     /// Fund from one of the calling product's scoped accounts
     ProductAccount(DerivationIndex),
     /// Fund from a one-time account represented by its private key.
     /// This is a standard account holding public funds -- not a coin key.
-    PrivateKey(Ed25519PrivateKey)
+    PrivateKey(Sr25519SecretKey)
 }
 
+/// Caller-chosen, 32 bytes. Reusing one is refused, which makes a retry safe.
+type PaymentTopUpId = [u8; 32];
+
 enum PaymentTopUpErr {
-    /// The source account does not hold sufficient funds
-    InsufficientFunds,
-    /// The source account was not found or is invalid
+    /// The source key is malformed, or the source was not found
     InvalidSource,
+    /// A top-up with this id already exists
+    AlreadyExists,
+    /// Another top-up from the same source is still running
+    SourceBusy,
+    Unknown(GenericErr)
+}
+
+/// `Claimed { finalized: true }`, `ClaimedPartially` and `NotClaimed` are
+/// terminal and stay readable after the top-up ends.
+enum PaymentTopUpStatus {
+    Detecting,
+    Claiming,
+    Claimed { finalized: bool },
+    ClaimedPartially { actual_claimed: Balance },
+    NotClaimed,
+}
+
+enum PaymentTopUpStatusErr {
+    NotFound,
     Unknown(GenericErr)
 }
 ```
+
+`host_payment_top_up` returns once the host accepts the top-up; the claim runs on, and its outcome arrives through the status subscription.
 
 `PaymentTopUpSource::PrivateKey` refers to a regular account (e.g. holding DOT or pUSD) whose private key the product possesses -- for instance, a one-time deposit account. This is not a coinage coin key.
 
 #### 3. Request Payment
 
-Request a payment from the user's available balance to a destination account. The host should prompt the user to authorize the payment. Returns a `PaymentId` for tracking.
+Request a payment from the user's available balance to a destination account. The host should prompt the user to authorize the payment. The caller chooses the `PaymentId` the payment is followed by.
 
 ```rust
 fn host_payment_request(
     amount: Balance,
-    destination: AccountId
-) -> Result<PaymentReceipt, PaymentRequestErr>
-
-type PaymentId = str;
-
-struct PaymentReceipt {
+    destination: AccountId,
     id: PaymentId
-}
+) -> Result<(), PaymentRequestErr>
+
+/// Caller-chosen, 32 bytes. Reusing one is refused, which makes a retry safe.
+type PaymentId = [u8; 32];
 
 enum PaymentRequestErr {
+    /// A payment with this id already exists
+    AlreadyExists,
     /// User denied the payment request
-    Denied,
+    Rejected,
     /// User's available balance is not sufficient for the requested amount
     InsufficientBalance,
     Unknown(GenericErr)
@@ -118,11 +145,11 @@ A successful response means the user has authorized the payment and the host has
 
 #### 4. Payment Status Subscription
 
-Subscribe to status updates for a previously requested payment. The subscription emits status changes until the payment reaches a terminal state (`Completed` or `Failed`).
+Subscribe to status updates for a previously requested payment. The subscription emits status changes until the payment reaches a terminal state (`Completed`, `Failed` or `PartiallyClaimed`), which stays readable after the payment ends.
 
 ```rust
 fn host_payment_status_subscribe(
-    payment_id: PaymentId,
+    id: PaymentId,
     callback: fn(PaymentStatus)
 ) -> Result<Subscriber, PaymentStatusErr>
 
@@ -132,7 +159,9 @@ enum PaymentStatus {
     /// Payment has been settled successfully
     Completed,
     /// Payment has failed
-    Failed(str)
+    Failed(str),
+    /// Only this amount reached the destination, less than requested
+    PartiallyClaimed(Balance)
 }
 
 enum PaymentStatusErr {
@@ -150,7 +179,7 @@ enum PaymentStatusErr {
 
 3. **Payment ID scoping**: A `PaymentId` is scoped to the product that created it. A product cannot query or subscribe to payment status for another product's payments.
 
-4. **Terminal status delivery**: Once a payment reaches `Completed` or `Failed`, the host must deliver that status to any active subscriber and may then close the subscription. The host should make a best effort to deliver terminal status even across session restarts.
+4. **Terminal status delivery**: Once a payment reaches `Completed`, `Failed` or `PartiallyClaimed`, the host must deliver that status to any active subscriber and may then close the subscription. The host should make a best effort to deliver terminal status even across session restarts.
 
 5. **Top-up idempotency**: If the same top-up is submitted multiple times (e.g. due to a retry), the host should ensure funds are only transferred once where possible. However, this is a best-effort guarantee -- products should implement their own idempotency checks for critical flows.
 

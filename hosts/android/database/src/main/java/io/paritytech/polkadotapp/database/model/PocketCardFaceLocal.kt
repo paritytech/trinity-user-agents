@@ -16,5 +16,5 @@ import androidx.room.Entity
 class PocketCardFaceLocal(
     val productId: String,
     val cardId: String,
-    val faceJson: String,
+    val face: ByteArray,
 )
