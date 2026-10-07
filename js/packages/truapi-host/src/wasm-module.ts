@@ -65,6 +65,8 @@ export interface WorkerPairingHostRuntime extends PermissionAuthorizationRuntime
   activateStoredSession(): Promise<void>;
   activateExternalSession(blob: Uint8Array): Promise<void>;
   resetSessionState(): Promise<void>;
+  /** Only on a core built with `test-host`. */
+  setSubmitPreimagesLocally?(local: boolean): void;
   /**
    * Take one reference on the product's worker. The first one reports
    * `"Start"` through the runtime's `workerDemandChanged` callback.

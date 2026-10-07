@@ -28,6 +28,7 @@
 		A526CB302EBBA06D00D2987B /* PolkadotUI in Frameworks */ = {isa = PBXBuildFile; productRef = A526CB2F2EBBA06D00D2987B /* PolkadotUI */; };
 		A57CAF662F45ECB70066D722 /* StructuredConcurrency in Frameworks */ = {isa = PBXBuildFile; productRef = A57CAF652F45ECB70066D722 /* StructuredConcurrency */; };
 		A57CAF682F45ED940066D722 /* StructuredConcurrency in Frameworks */ = {isa = PBXBuildFile; productRef = A57CAF672F45ED940066D722 /* StructuredConcurrency */; };
+		C5C7E5710000000000000001 /* StructuredConcurrencyTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */; };
 		A5A948F02F4CA925001E514C /* Coinage in Frameworks */ = {isa = PBXBuildFile; productRef = A5A948EF2F4CA925001E514C /* Coinage */; };
 		A5A948F22F4CA925001E5150 /* ExtrinsicServiceExt in Frameworks */ = {isa = PBXBuildFile; productRef = A5A948F12F4CA925001E5150 /* ExtrinsicServiceExt */; };
 		A5B2502E2F47481900E46E09 /* KeyDerivation in Frameworks */ = {isa = PBXBuildFile; productRef = A5B2502D2F47481900E46E09 /* KeyDerivation */; };
@@ -370,6 +371,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C5C7E5710000000000000001 /* StructuredConcurrencyTestSupport in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -540,6 +542,9 @@
 				A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */,
 			);
 			name = "polkadot-appTests";
+			packageProductDependencies = (
+				C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */,
+			);
 			productName = "polkadot-appTests";
 			productReference = A5EDAAE32E93ECB0005DDA62 /* polkadot-appTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -1848,6 +1853,10 @@
 		A57CAF672F45ED940066D722 /* StructuredConcurrency */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = StructuredConcurrency;
+		};
+		C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StructuredConcurrencyTestSupport;
 		};
 		A5A948EF2F4CA925001E514C /* Coinage */ = {
 			isa = XCSwiftPackageProductDependency;

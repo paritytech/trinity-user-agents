@@ -6,6 +6,8 @@ import android.content.Intent
 import dagger.hilt.android.AndroidEntryPoint
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
+import io.paritytech.polkadotapp.common.utils.canScheduleExactAlarms
+import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
 import io.paritytech.polkadotapp.feature_videogame_impl.service.VideoGameStateReader
 import io.paritytech.polkadotapp.feature_videogame_impl.service.isInWaitingRoom
@@ -26,6 +28,9 @@ class VideoGameReminderBroadcastReceiver : BroadcastReceiver() {
 
     @Inject
     lateinit var videoGameStateReader: VideoGameStateReader
+
+    @Inject
+    lateinit var productGameReminder: RealProductGameReminder
 
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
@@ -51,9 +56,21 @@ class VideoGameReminderBroadcastReceiver : BroadcastReceiver() {
                         }
                     }
 
+                    is VideoGameNotificationType.ProductGameStartsSoon -> {
+                        publishProductGameStartsSoon(context, ProductId.fromStoredValue(type.productId))
+                    }
+
                     null -> Unit
                 }
             }
         }
+    }
+
+    // In the foreground the pill and the auto-open take over. An inexact alarm may fire late; a game still
+    // scheduled wants its notification then.
+    private fun publishProductGameStartsSoon(context: Context, productId: ProductId) {
+        if (appLifecycleObserver.getCurrentState() == AppLifecycleState.FOREGROUND) return
+        val game = productGameReminder.scheduledFor(productId) ?: return
+        notificationPublisher.publishProductGameStartsSoonNotification(game.product(), ringAlarm = context.canScheduleExactAlarms())
     }
 }

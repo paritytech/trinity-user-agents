@@ -2,6 +2,7 @@
 
 mod account;
 mod chain;
+mod game;
 mod payment;
 mod platform;
 mod preimage;

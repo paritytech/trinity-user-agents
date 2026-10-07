@@ -11,7 +11,7 @@ use crate::{wire, wire_trait};
 ///
 /// The host draws the whole flow. The host decides `Delivered` from its own
 /// on-chain observation and `Released` from the user's authorization to send.
-#[wire_trait(id = 21)]
+#[wire_trait(id = 22)]
 #[crate::async_trait]
 pub trait Funding: Send + Sync {
     /// Open the funding modality for a direction and, optionally, an amount.

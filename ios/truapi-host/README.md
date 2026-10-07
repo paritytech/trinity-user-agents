@@ -286,6 +286,43 @@ the host keeps its own record of which devices it has already seen. It arrives
 on the thread answering the handshake, so hand the device off rather than
 announcing it inline. Defaults to a no-op for a host that answers no pairing.
 
+## Game
+
+A host that can hold reminders implements `GameHostBridge`, passed as `game:`
+to `openProductExecution`. Hosts without the bridge pass nothing and Game
+calls answer unsupported, as they do for every product but the game product,
+`dim2`.
+
+```swift
+final class MyGameBridge: GameHostBridge, @unchecked Sendable {
+    private let reminders: ReminderStore
+
+    init(reminders: ReminderStore) { self.reminders = reminders }
+
+    func scheduleReminder(startsAt: UInt64) async throws {
+        try await reminders.hold(startsAt: startsAt)
+    }
+
+    func cancelReminder() async throws {
+        reminders.drop()
+    }
+}
+
+let execution = try runtime.openProductExecution(
+    bridge: bridge,
+    configuration: ProductExecutionConfig(productId: "dim2.dot", executionKind: .worker),
+    game: MyGameBridge(reminders: reminderStore)
+)
+```
+
+The host holds one reminder per product: a `scheduleReminder` replaces the
+reminder the same product already holds. The core asks for no per-product
+consent: the host asks the OS for what it needs, rings an alarm where the OS
+allows one and delivers an ordinary notification otherwise, may add the game to
+the user's calendar, keeps the reminder across app kill and device reboot, and
+drops it once the game has started. A `scheduleReminder` that throws reaches
+the product as a host failure carrying its reason.
+
 ## Architecture
 
 ```text

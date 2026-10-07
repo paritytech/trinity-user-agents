@@ -319,6 +319,15 @@ resting on the product's word. The report lands at
 `explorer/diagnosis-reports/pocket/signing-host-cli.md` and feeds the explorer's
 Pocket compatibility matrix.
 
+`Game` (`remind_next_game`, `cancel_next_game`) serves only the game product,
+`dim2` on every network, and answers `Unsupported` to any other. The battery
+runs as another product, so it skips the `Game` service, and so does the
+playground's Diagnosis, since dot.li serves no `Game` surface. Both CLI host
+roles still install an in-memory `CliGameHost` that never rings anything. The
+`truapi` runtime tests cover the product gate, the start-time check, a call
+withdrawn before it reaches the host, the absence of any permission prompt, and
+host failures.
+
 To run the playground locally in a plain browser tab, against a signing host on
 your own machine:
 
@@ -506,19 +515,25 @@ branch to this repository to get one.
 ### Android builds that reach testers
 
 Two workflows deliver through Firebase App Distribution, which reaches a named
-tester group rather than anyone holding a link. That matters beyond
-convenience: these builds carry configuration that should not be public, so
-attaching them to a release is not an option.
+tester group. The nightly also attaches its APKs to a public GitHub prerelease,
+so anything built into a nightly is public.
 
 `android-nightly.yml` runs daily at 22:00 UTC, two hours after the iOS
-nightly starts, so the two never overlap. Each announcement lists the pull
+nightly starts, so the two never overlap. It publishes both flavours on a
+GitHub prerelease, `app-gp-nightly.apk` and `app-vanilla-nightly.apk` (without
+Google Play services), and sends the gp one to Firebase App Distribution.
+Every run on `main` also refreshes the `nightly-android` release, so the latest
+build always downloads from the same two links:
+`https://github.com/paritytech/trinity-user-agents/releases/download/nightly-android/app-gp-nightly.apk`
+and the same path ending in `app-vanilla-nightly.apk`.
+Each announcement links both APKs and lists the pull
 requests the build carries, with breaking changes, the titles carrying `!`,
 listed first and marked `Breaking:`. Both nightlies skip a scheduled night
 when `main` has not moved past what their last successful run built. `android-debug-distribution.yml` runs
-when a pull request merges to `main`, and answers what `main` does right now.
-It builds the merge commit rather than the pull request's merge preview, which
-is computed while the request is open and would otherwise ship a tree missing
-whatever landed first.
+on every push to `main`, and answers what `main` does right now. It builds the
+pushed commit, the one that landed. A push rather than the pull request's merge
+event, because the Firebase identity is bound to `main`, and a pull request
+event's token never matches that binding.
 
 Both authenticate by federation. The run proves its identity with its OIDC
 token and receives a short lived credential, so no long lived key for that
@@ -547,7 +562,10 @@ Variables: `APPLICATION_ID`, `APPLICATION_NAME`, `CURRENCY_SYMBOL`,
 `LOG_COLLECTION_EMAIL`, `PRIVACY_POLICY_URL`, `TERMS_OF_USE_URL`,
 `SENTRY_ORG`, `SENTRY_PROJECT`, `GAME_RESULTS_FALLBACK_URL`,
 `REFERRAL_WEB_HOST`, `CONTACT_EMAIL`, `ANDROID_FIREBASE_GROUP`,
-`ANDROID_FIREBASE_DEBUG_GROUP`.
+`ANDROID_FIREBASE_DEBUG_GROUP`, and optionally `IOS_BUNDLE_ID`, the iOS app's
+bundle id the Android app names as the APNs topic for chat pushes to iOS
+contacts. It defaults to `io.parity.polkadotapp`, matching the iOS nightly;
+debug builds append `.develop` and safetynet `.safety`, as the iOS builds do.
 
 `GOOGLE_PROJECT_ID` carries an `L` suffix. It is interpolated into a Java
 `long` literal, and a twelve digit project number overflows an `int` without

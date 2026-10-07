@@ -8,6 +8,8 @@
 
             let interactor = AppFactoryResetInteractor(
                 resetService: AppFactoryResetService(
+                    tldProvider: DotNsTldProviderFacade.shared,
+                    remoteConfig: FirebaseFacade.shared,
                     mnemonicBackupHelper: MnemonicBackupHelper(),
                     logger: Logger.shared
                 )
