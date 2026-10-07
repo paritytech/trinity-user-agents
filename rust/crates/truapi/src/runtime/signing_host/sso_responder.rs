@@ -1052,7 +1052,7 @@ mod tests {
         // because it is catching a hang, not asserting latency.
         let allocation = futures::executor::block_on(async {
             let session = signing_host.account_holder().current_session().unwrap();
-            let call = CallContext::default();
+            let call = truapi::CallContext::default();
             futures::select! {
                 result = signing_host.account_holder().ensure_allowance(
                     crate::runtime::authority::AccountInvocation {
