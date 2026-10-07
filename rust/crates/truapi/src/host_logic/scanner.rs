@@ -61,12 +61,22 @@ fn breaks_the_line(character: char) -> bool {
 }
 
 /// Whether a code of `format` reading `text` answers `request`.
+///
+/// A pairing request never does, whatever the request asks for: whoever
+/// answers one pairs with the device that showed it.
 pub fn accepts(request: &HostScannerScanRequest, format: CodeFormat, text: &str) -> bool {
-    request.formats.contains(&format)
+    !is_pairing_request(text)
+        && request.formats.contains(&format)
         && request.prefix.as_deref().is_none_or(|prefix| {
             text.get(..prefix.len())
                 .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
         })
+}
+
+/// Whether the core would accept `text` as a pairing request, with or without
+/// the `pair` link around the handshake.
+fn is_pairing_request(text: &str) -> bool {
+    crate::host_logic::sso::pairing::decode_pairing_deeplink(text).is_ok()
 }
 
 /// What a host does with one code the camera read.
@@ -279,6 +289,29 @@ mod tests {
         ] {
             assert_eq!(filter.observe(CodeFormat::Qr, code.clone()), expected);
         }
+    }
+
+    #[test]
+    fn a_pairing_request_never_reaches_a_product() {
+        // Whoever answers a pairing link pairs with the device that showed it,
+        // so no request may receive one, not even one asking for its prefix.
+        let (config, _) = crate::test_support::runtime_config("greenmarket.dot");
+        let link = crate::host_logic::sso::pairing::build_pairing_deeplink(
+            "polkadotapp",
+            [1; 32],
+            [2; 32],
+            &config,
+        );
+        let other_scheme = link.replacen("polkadotapp", "otherwallet", 1);
+        let bare_handshake = link.split_once("?handshake=").unwrap().1.to_owned();
+        for text in [&link, &other_scheme, &bare_handshake] {
+            assert!(!accepts(&qr(None, None), CodeFormat::Qr, text), "{text}");
+            assert!(!accepts(&qr(Some("polkadotapp://pair?"), None), CodeFormat::Qr, text));
+        }
+        assert_eq!(
+            ScanFilter::new(qr(None, None)).observe(CodeFormat::Qr, link),
+            ScanVerdict::NotForThisProduct
+        );
     }
 
     #[test]
