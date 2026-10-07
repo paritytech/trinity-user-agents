@@ -64,7 +64,7 @@ class PocketViewModel @Inject constructor(
     @param:ApplicationContext private val context: Context
 ) : BaseViewModel() {
     private val selectedCardId = MutableStateFlow<String?>(null)
-    private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url) } }
+    private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url, underCard = true) } }
     private val collectiblesShown = MutableStateFlow(false)
     private val removalCandidate = MutableStateFlow<PocketCardUiModel.ProductCard?>(null)
 

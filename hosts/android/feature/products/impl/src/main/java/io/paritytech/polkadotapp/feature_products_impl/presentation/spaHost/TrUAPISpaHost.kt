@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
@@ -19,11 +20,14 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductReg
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPISessionStarter
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import uniffi.truapi.ProductExecutionKind
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -38,7 +42,7 @@ class TrUAPISpaHost @Inject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
 ) : SpaHost {
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
-    override fun createSession(initialUrl: String): SpaHostSession {
+    override fun createSession(initialUrl: String, underCard: Boolean): SpaHostSession {
         lateinit var webViewProvider: BrowserWebViewProvider
 
         val webViewNavigation = NavigationPolicy.InlineNavigation(
@@ -58,7 +62,15 @@ class TrUAPISpaHost @Inject constructor(
             dotNsTldProvider = dotNsTldProvider,
         )
 
-        val bridge = sessionStarter.start(webViewProvider, initialUrl, scope, hostApiNavigation)
+        val cardFaceRequests = if (underCard) CardFaceRequests() else null
+        val bridge = sessionStarter.start(
+            webViewProvider,
+            initialUrl,
+            scope,
+            hostApiNavigation,
+            kind = if (underCard) ProductExecutionKind.WIDGET else ProductExecutionKind.APP,
+            card = cardFaceRequests,
+        )
 
         val currentUrlFlow = MutableStateFlow(initialUrl)
         webViewProvider.addOnPageStartedListener { url ->
@@ -82,7 +94,15 @@ class TrUAPISpaHost @Inject constructor(
             titleFlow.value = webViewProvider.getWebViewOrNull()?.title.orEmpty()
         }
 
-        return TrUAPISpaHostSession(webViewFlow, currentUrlFlow, loadProgressFlow, titleFlow, webViewProvider, bridge)
+        return TrUAPISpaHostSession(
+            webViewFlow,
+            currentUrlFlow,
+            loadProgressFlow,
+            titleFlow,
+            webViewProvider,
+            bridge,
+            cardFaceRequests?.requests ?: emptyFlow(),
+        )
     }
 
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
@@ -102,6 +122,7 @@ private class TrUAPISpaHostSession(
     override val title: StateFlow<String>,
     private val provider: BrowserWebViewProvider,
     private val bridge: ProductTrUAPIHostBridge,
+    override val faceShownRequests: Flow<FaceShownRequest>,
 ) : SpaHostSession {
     override fun pauseConnections() {
         provider.pauseConnections()
