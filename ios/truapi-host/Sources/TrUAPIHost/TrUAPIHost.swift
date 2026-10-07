@@ -399,16 +399,6 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
     func listRooms() async throws -> [ChatRoom] {
         try await withHostRejection { try await bridge.listRooms() }
     }
-
-    private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
-        do {
-            return try await operation()
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
-    }
 }
 
 /// Adapter that bridges the public `PocketHostBridge` to the generated UniFFI
@@ -426,16 +416,6 @@ private final class PocketCallbackAdapter: NativePocketCallbacks, @unchecked Sen
 
     func removeCard(cardId: String) throws -> NativePocketRemoval {
         try withHostRejection { try bridge.removeCard(cardId: cardId) }
-    }
-
-    private func withHostRejection<T>(_ operation: () throws -> T) throws -> T {
-        do {
-            return try operation()
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
     }
 }
 
@@ -455,16 +435,6 @@ private final class GameCallbackAdapter: NativeGameCallbacks, @unchecked Sendabl
     func cancelReminder() async throws {
         try await withHostRejection { try await bridge.cancelReminder() }
     }
-
-    private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
-        do {
-            return try await operation()
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
-    }
 }
 
 /// Adapter that bridges the public `ContactsHostBridge` to the generated
@@ -477,23 +447,11 @@ private final class ContactsCallbackAdapter: NativeContactsCallbacks, @unchecked
     }
 
     func contacts(lookup: HostContactLookup) throws -> HostContactMatches {
-        do {
-            return try bridge.contacts(lookup: lookup)
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
+        try withHostRejection { try bridge.contacts(lookup: lookup) }
     }
 
     func pickContact(productId: String) async throws -> HostContactPick {
-        do {
-            return try await bridge.pickContact(productId: productId)
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
+        try await withHostRejection { try await bridge.pickContact(productId: productId) }
     }
 }
 
@@ -678,26 +636,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     func endOperation(productId: String, id: UInt32) async throws {
         try await withHostRejection {
             try await bridge.endOperation(productId: productId, id: id)
-        }
-    }
-
-    private func withHostRejection<T>(_ operation: () throws -> T) throws -> T {
-        do {
-            return try operation()
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
-    }
-
-    private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
-        do {
-            return try await operation()
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
         }
     }
 
@@ -1166,6 +1104,26 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
 
     public func notifyChatRoomsChanged(rooms: [ChatRoom]) {
         inner.notifyChatRoomsChanged(rooms: rooms)
+    }
+}
+
+private func withHostRejection<T>(_ operation: () throws -> T) throws -> T {
+    do {
+        return try operation()
+    } catch let error as HostRejection {
+        throw error
+    } catch {
+        throw HostRejection.Rejected(reason: hostRejectionReason(error))
+    }
+}
+
+private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
+    do {
+        return try await operation()
+    } catch let error as HostRejection {
+        throw error
+    } catch {
+        throw HostRejection.Rejected(reason: hostRejectionReason(error))
     }
 }
 
