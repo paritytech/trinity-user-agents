@@ -144,6 +144,16 @@ impl PersonhoodSigner for WalletPersonhoodSigner<'_> {
     }
 }
 
+/// Secrets exported only while preparing an encrypted pairing answer.
+pub struct PairingMaterial {
+    /// Identity retained by the authenticated transport.
+    pub identity: ResponderIdentity,
+    /// Chat identity shared with the paired host.
+    pub chat_private_key: Zeroizing<[u8; 32]>,
+    /// Product entropy shared with the paired host.
+    pub product_entropy_source: Zeroizing<[u8; 32]>,
+}
+
 /// Validated activation material, installed only after host grants are invalidated.
 pub struct PreparedWalletActivation {
     keys: WalletKeys,
@@ -355,18 +365,53 @@ impl WalletAccountHolder {
             .require_session(self.session_state.current(), session)
     }
 
-    /// Capture one wallet for grouped derivations across asynchronous work.
-    pub fn current_keys(&self) -> Result<(AuthoritySession, WalletKeys), AuthorityError> {
-        let state = self
-            .lifecycle
-            .lock()
-            .expect("wallet lifecycle mutex poisoned");
-        let session = self
-            .session_state
-            .current()
-            .ok_or(AuthorityError::Disconnected)?;
-        let keys = state.keys.clone().ok_or(AuthorityError::Disconnected)?;
-        Ok((state.session(&session), keys))
+    /// Verify both keys of an externally owned SSO transport.
+    pub fn require_sso_identity(
+        &self,
+        session: &AuthoritySession,
+        statement_public_key: [u8; 32],
+        encryption_public_key: [u8; 32],
+    ) -> Result<(), AuthorityError> {
+        self.with_keys(session, |keys| {
+            let (identity, _) = keys.responder_identity().map_err(product_authority_error)?;
+            if identity.statement_public_key != statement_public_key
+                || identity.encryption_public_key != encryption_public_key
+            {
+                return Err(AuthorityError::Unavailable {
+                    reason: "SSO transport identity does not match the active wallet".to_string(),
+                });
+            }
+            Ok(())
+        })
+    }
+
+    /// Export the selected wallet's SSO transport identity.
+    pub fn responder_identity(
+        &self,
+        session: &AuthoritySession,
+    ) -> Result<ResponderIdentity, AuthorityError> {
+        self.with_keys(session, |keys| {
+            Ok(keys
+                .responder_identity()
+                .map_err(product_authority_error)?
+                .0)
+        })
+    }
+
+    /// Export the selected wallet's material for an encrypted pairing answer.
+    pub fn pairing_material(
+        &self,
+        session: &AuthoritySession,
+    ) -> Result<PairingMaterial, AuthorityError> {
+        self.with_keys(session, |keys| {
+            let (identity, chat_private_key) =
+                keys.responder_identity().map_err(product_authority_error)?;
+            Ok(PairingMaterial {
+                identity,
+                chat_private_key: Zeroizing::new(chat_private_key),
+                product_entropy_source: Zeroizing::new(keys.root_entropy_source()),
+            })
+        })
     }
 
     /// Validate and derive activation material without changing the active wallet.
@@ -418,8 +463,7 @@ impl WalletAccountHolder {
     }
 }
 
-/// Opaque wallet snapshot; derived keys share one root even if activation changes.
-#[derive(Clone)]
+/// Active wallet entropy and purpose-specific key derivation.
 pub struct WalletKeys {
     entropy: Zeroizing<Vec<u8>>,
     network_suffix: String,

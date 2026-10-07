@@ -30,20 +30,18 @@ use tracing::{instrument, warn};
 use truapi::v01;
 use truapi::{CallContext, CancellationReason};
 
-use crate::truapi_core::TrUApiCore;
 use crate::frame::ProtocolMessage;
-use crate::host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome};
 use crate::host_logic::worker::WorkerLedger;
-use crate::runtime::sso_service::Dispatch;
 use crate::runtime::{
-    ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
-    LocalActivation, PairedSsoPeer, PairingHostRole, ProductAuthority, ProductRuntimeHost,
-    ResponderExit, RuntimeServices, SigningHostRole, SigningHostSsoService, disconnect_paired_host,
-    establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
-    respond_to_pairing, resume_pairing,
+    ActionChannel, AuthorityError, AuthoritySession, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+    DevicePairingObserver, HostGrantStore, LocalActivation, PairedSsoPeer, PairingHostRole,
+    ProductAuthority, ProductRuntimeHost, ResponderExit, RuntimeServices, SigningHostRole,
+    SsoRequestService, WalletAccountHolder, disconnect_paired_host, establish_pairing,
+    notify_pairing_allowance_allocation, notify_pairing_failed, respond_to_pairing, resume_pairing,
 };
 use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
 use crate::transport::Transport;
+use crate::truapi_core::TrUApiCore;
 
 /// Outgoing frame sink owned by a host adapter.
 ///
@@ -183,6 +181,7 @@ fn product_context(product_id: &str) -> Result<ProductContext, v01::GenericError
 pub struct PairingHostRuntime {
     services: Arc<RuntimeServices>,
     pairing_host: Arc<PairingHostRole>,
+    sso: Arc<SsoRequestService>,
 }
 
 impl PairingHostRuntime {
@@ -238,11 +237,14 @@ impl PairingHostRuntime {
         if let Some(contacts_platform) = contacts_platform {
             services.install_contacts_platform(contacts_platform);
         }
-        let pairing_host = PairingHostRole::new(services.clone(), config);
-        pairing_host.clone().start_session_store_sync(spawner);
+        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+        let sso = SsoRequestService::new(services.clone(), config, grants.clone());
+        let pairing_host = PairingHostRole::new(services.clone(), sso.clone(), grants);
+        sso.clone().start_session_store_sync(spawner);
         Self {
             services,
             pairing_host,
+            sso,
         }
     }
 
@@ -327,7 +329,7 @@ impl PairingHostRuntime {
     /// Disconnect the active account-authority session.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.disconnect_session"))]
     pub async fn disconnect_session(&self) {
-        self.pairing_host.disconnect().await;
+        self.sso.disconnect().await;
     }
 
     /// Log out and discard the old pairing keypair.
@@ -336,7 +338,7 @@ impl PairingHostRuntime {
     /// presents a new deeplink suitable for another signing host.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
     pub async fn logout(&self) -> Result<(), v01::GenericError> {
-        self.pairing_host
+        self.sso
             .logout_and_reset_pairing()
             .await
             .map_err(|reason| v01::GenericError { reason })
@@ -396,7 +398,7 @@ impl PairingHostRuntime {
     /// running their own P2P chat channel for the paired identity.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.session_chat_identity_key"))]
     pub fn session_chat_identity_key(&self) -> Option<[u8; 32]> {
-        self.pairing_host
+        self.sso
             .session_state()
             .current()?
             .identity_chat_private_key
@@ -406,7 +408,7 @@ impl PairingHostRuntime {
     /// running their own statement-store traffic against the advertised account.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_statement_key"))]
     pub fn device_statement_key(&self) -> Option<[u8; 64]> {
-        Some(self.pairing_host.session_state().current()?.sso?.ss_secret)
+        Some(self.sso.session_state().current()?.sso?.ss_secret)
     }
 
     /// Read this device's X25519 encryption secret, for hosts running device
@@ -434,7 +436,7 @@ impl PairingHostRuntime {
     /// without sending a peer-disconnect notice.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.reset_session_state"))]
     pub async fn reset_session_state(&self) {
-        self.pairing_host.reset_session_state().await;
+        self.sso.reset_session_state().await;
     }
 
     /// Start or join the pairing-host login flow for one product.
@@ -444,7 +446,7 @@ impl PairingHostRuntime {
         product_id: &str,
     ) -> Result<v01::HostRequestLoginResponse, v01::GenericError> {
         let product = product_context(product_id)?;
-        match self.pairing_host.request_login(&product).await {
+        match self.sso.request_login(&product).await {
             Ok(truapi::versioned::account::HostRequestLoginResponse::V1(response)) => Ok(response),
             Err(error) => Err(v01::GenericError {
                 reason: pairing_login_error_reason(error),
@@ -456,7 +458,7 @@ impl PairingHostRuntime {
     /// active.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.cancel_pairing"))]
     pub fn cancel_pairing(&self) {
-        self.pairing_host.cancel_login();
+        self.sso.cancel_login();
     }
 
     /// Activate a canonical session blob supplied by an external encrypted
@@ -466,7 +468,7 @@ impl PairingHostRuntime {
     /// connected-session installation have completed.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_external_session"))]
     pub async fn activate_external_session(&self, blob: &[u8]) -> Result<(), v01::GenericError> {
-        self.pairing_host
+        self.sso
             .activate_external_session(blob)
             .await
             .map_err(|reason| v01::GenericError { reason })
@@ -479,7 +481,7 @@ impl PairingHostRuntime {
     /// immediately use the restored authority session.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_stored_session"))]
     pub async fn activate_stored_session(&self) -> Result<(), v01::GenericError> {
-        self.pairing_host
+        self.sso
             .activate_stored_session()
             .await
             .map_err(|reason| v01::GenericError { reason })
@@ -489,7 +491,7 @@ impl PairingHostRuntime {
     /// have changed and should be re-read.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.notify_session_store_changed"))]
     pub fn notify_session_store_changed(&self) {
-        self.pairing_host.notify_session_store_changed();
+        self.sso.notify_session_store_changed();
     }
 
     /// Read a stored permission authorization status for a product without prompting.
@@ -997,27 +999,22 @@ impl SigningHostRuntime {
             .map_err(|reason| v01::GenericError { reason })
     }
 
-    /// Answer one decrypted SSO remote message with this signing host.
-    ///
-    /// Session control stays with the caller: `Disconnected` is reported as an
-    /// outcome, never handled here. A `Cancel` withdraws the request it names,
-    /// even while that request is still being answered by another call, and a
-    /// withdrawn request is answered `Ignored`.
-    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
-    pub async fn answer_sso_request(
+    /// Bind an external SSO transport to the wallet matching both of its keys.
+    pub fn open_sso_session(
         &self,
-        message: RemoteMessage,
-    ) -> SsoRequestOutcome {
-        let service = SigningHostSsoService::new(self.signing_host.clone());
-        match service.answer(message).await {
-            Dispatch::Response(answer) => SsoRequestOutcome::Response {
-                message: answer.message.encode(),
-            },
-            Dispatch::Disconnected => SsoRequestOutcome::Disconnected,
-            Dispatch::NotARequest(_) | Dispatch::Withdraw(_) | Dispatch::Withdrawn => {
-                SsoRequestOutcome::Ignored
-            }
-        }
+        own_statement_account_id: [u8; 32],
+        own_encryption_public_key: [u8; 32],
+    ) -> Result<(Arc<WalletAccountHolder>, AuthoritySession), AuthorityError> {
+        let wallet = self.signing_host.account_holder().clone();
+        let session = wallet
+            .current_session()
+            .ok_or(AuthorityError::Disconnected)?;
+        wallet.require_sso_identity(
+            &session,
+            own_statement_account_id,
+            own_encryption_public_key,
+        )?;
+        Ok((wallet, session))
     }
 }
 
@@ -1954,7 +1951,7 @@ mod tests {
             },
             "the boot reconcile did not report the empty session store",
         );
-        runtime.pairing_host.session_state().set_session(session);
+        runtime.sso.session_state().set_session(session);
     }
 
     fn assert_send<T: Send>(_: T) {}
@@ -3571,104 +3568,6 @@ mod tests {
             block_on(db.write(|tx| Ok(tx.query_row("SELECT 42", [], |row| row.get(0))?)))
                 .expect("installed database serves writes");
         assert_eq!(answer, 42);
-    }
-
-    #[test]
-    fn answer_sso_request_distinguishes_disconnect_from_ignorable_messages() {
-        use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, Response, v1};
-        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
-
-        const ENTROPY: [u8; 32] = [0xab; 32];
-
-        let config = SigningHostConfig::new(
-            HostInfo {
-                name: "Polkadot Mobile".to_string(),
-                icon: None,
-                version: None,
-                platform: truapi::latest::HostPlatform::Unknown,
-            },
-            PlatformInfo::default(),
-            [0; 32],
-            [0xbb; 32],
-            [0xcc; 32],
-            "paseo".to_string(),
-        )
-        .expect("signing host config is valid");
-        let runtime =
-            SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
-        futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
-            .expect("activation succeeds");
-
-        let disconnected = RemoteMessage {
-            message_id: "m1".to_string(),
-            data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
-        };
-        let outcome = futures::executor::block_on(runtime.answer_sso_request(disconnected));
-        assert!(matches!(outcome, SsoRequestOutcome::Disconnected));
-
-        let response_variant = RemoteMessage {
-            message_id: "m2".to_string(),
-            data: RemoteMessageData::V1(v1::RemoteMessage::SignRawWithLegacyAccountResponse(
-                Response {
-                    responding_to: "m2".to_string(),
-                    payload: Ok(vec![]),
-                },
-            )),
-        };
-        let outcome = futures::executor::block_on(runtime.answer_sso_request(response_variant));
-        assert!(matches!(outcome, SsoRequestOutcome::Ignored));
-    }
-
-    #[test]
-    fn answer_sso_request_returns_a_correlated_response() {
-        use crate::host_internal::sso_messages::{
-            ProductSubtreeRequest, RemoteMessage, RemoteMessageData, v1,
-        };
-        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
-
-        const ENTROPY: [u8; 32] = [0xab; 32];
-
-        let config = SigningHostConfig::new(
-            HostInfo {
-                name: "Polkadot Mobile".to_string(),
-                icon: None,
-                version: None,
-                platform: truapi::latest::HostPlatform::Unknown,
-            },
-            PlatformInfo::default(),
-            [0; 32],
-            [0xbb; 32],
-            [0xcc; 32],
-            "paseo".to_string(),
-        )
-        .expect("signing host config is valid");
-        let runtime =
-            SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
-        futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
-            .expect("activation succeeds");
-
-        let request = RemoteMessage {
-            message_id: "m3".to_string(),
-            data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeRequest(
-                ProductSubtreeRequest {
-                    product_id: "browse.dot".to_string(),
-                },
-            )),
-        };
-        let outcome = futures::executor::block_on(runtime.answer_sso_request(request));
-        let SsoRequestOutcome::Response { message } = outcome else {
-            panic!("expected a response outcome");
-        };
-        let response =
-            RemoteMessage::decode(&mut message.as_slice()).expect("valid response encoding");
-        assert_eq!(response.message_id, "m3:response");
-        let RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(payload)) =
-            response.data
-        else {
-            panic!("expected a product subtree response payload");
-        };
-        assert_eq!(payload.responding_to, "m3");
-        assert!(payload.payload.is_ok());
     }
 
     #[test]

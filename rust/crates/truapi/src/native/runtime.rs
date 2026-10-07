@@ -14,10 +14,7 @@ use super::renderer::observe_renderer;
 use super::renderer::{NativeRendererObserver, NativeRendererSubscription};
 use super::ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError};
 use crate::host_internal::permissions::TemporaryPermissions;
-use crate::host_internal::sso_messages::SsoRequestOutcome;
-use crate::host_internal::sso_messages::{
-    RemoteMessage, RemoteMessageData, decode_remote_message, v1,
-};
+use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1};
 use crate::runtime::AnnouncedPairing;
 use crate::runtime::sso_remote::sso_message_id;
 use crate::store::{Db, core_db_config};
@@ -553,27 +550,21 @@ impl NativeTrUApiHostRuntime {
             .map_err(Into::into)
     }
 
-    /// Answer one decrypted SSO remote message from a wallet-managed
-    /// statement-store session.
-    ///
-    /// `message` is one SCALE-encoded `RemoteMessage` exactly as decrypted from
-    /// the session statement. The bytes are deliberately opaque at this
-    /// boundary: the wallet forwards wire encodings verbatim and never
-    /// constructs them. Session control and transport stay with the wallet —
-    /// `Disconnected` is reported, never handled here. Confirmation-gated
-    /// requests await `confirm_user_action`, so this can take arbitrarily long.
-    ///
-    /// A `Cancel` withdraws the request it names and returns at once. It
-    /// reaches a running request only if the wallet passes it on as it
-    /// arrives; queued behind that request it arrives too late to stop it.
-    /// The withdrawn request, and the `Cancel` itself, answer `Ignored`.
-    pub async fn handle_sso_request(
+    /// Bind externally owned SSO transport to its current wallet activation.
+    pub fn open_sso_session(
         &self,
-        message: Vec<u8>,
-    ) -> Result<SsoRequestOutcome, HostRejection> {
-        let message =
-            decode_remote_message(&message).map_err(|reason| HostRejection::Rejected { reason })?;
-        Ok(self.runtime.answer_sso_request(message).await)
+        own_statement_account_id: Bytes32,
+        own_encryption_public_key: Bytes32,
+    ) -> Result<Arc<super::sso::NativeSsoAccountHolderSession>, HostRejection> {
+        let (wallet, session) = self
+            .runtime
+            .open_sso_session(own_statement_account_id, own_encryption_public_key)
+            .map_err(|error| HostRejection::Rejected {
+                reason: error.to_string(),
+            })?;
+        Ok(Arc::new(super::sso::NativeSsoAccountHolderSession::new(
+            wallet, session,
+        )))
     }
 
     /// Build the SCALE-encoded `Disconnected` message a wallet posts over a

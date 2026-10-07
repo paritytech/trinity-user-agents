@@ -2,7 +2,7 @@ use super::*;
 use crate::host_internal::permissions::set_account_access_status;
 use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1};
 use crate::platform::{PermissionAuthorizationStatus, SignRawReview};
-use crate::runtime::signing_host::SigningHostSsoService;
+use crate::runtime::SsoAccountHolderService;
 use crate::runtime::sso_service::Dispatch;
 use truapi::latest::{HostAccountListRingVrfKeysRequest, RingVrfKeyDisclosure};
 
@@ -134,7 +134,7 @@ fn remote_vrf_cannot_reuse_a_native_auto_signing_grant() {
         )
         .unwrap();
     let local = futures::executor::block_on(AccountHolder::sign_vrf(
-        authority.account_holder(),
+        authority.account_holder().as_ref(),
         AccountInvocation {
             call: &CallContext::default(),
             session: &session,
@@ -145,8 +145,12 @@ fn remote_vrf_cannot_reuse_a_native_auto_signing_grant() {
         },
         vrf_request("myapp.dot"),
     ));
-    let Dispatch::Response(answer) = futures::executor::block_on(
-        SigningHostSsoService::new(authority).answer(RemoteMessage::request(
+    let Ok(Dispatch::Response(answer)) = futures::executor::block_on(
+        SsoAccountHolderService::new(
+            authority.account_holder().clone(),
+            authority.account_holder().current_session().unwrap(),
+        )
+        .answer(RemoteMessage::request(
             "remote-vrf".to_string(),
             ProductRequest {
                 calling_product_id: "myapp.dot".to_string(),
@@ -206,7 +210,10 @@ fn remote_account_access_neither_reuses_nor_changes_native_permissions() {
                 .unwrap();
             }
             let storage_before = platform.local_storage.lock().unwrap().clone();
-            let service = SigningHostSsoService::new(authority);
+            let service = SsoAccountHolderService::new(
+                authority.account_holder().clone(),
+                authority.account_holder().current_session().unwrap(),
+            );
             let mut outcomes = Vec::new();
             for request_id in ["first", "second"] {
                 let request = if operation == "alias" {
@@ -236,7 +243,7 @@ fn remote_account_access_neither_reuses_nor_changes_native_permissions() {
                         },
                     )
                 };
-                let Dispatch::Response(answer) =
+                let Ok(Dispatch::Response(answer)) =
                     futures::executor::block_on(service.answer(request))
                 else {
                     panic!("expected an account response")
@@ -301,11 +308,16 @@ fn remote_published_access_is_independent_of_native_refusals() {
             },
             request.payload.clone(),
         ));
-        let Dispatch::Response(answer) =
-            futures::executor::block_on(SigningHostSsoService::new(authority).answer(
-                RemoteMessage::request("remote-published-access".to_string(), request),
-            ))
-        else {
+        let Ok(Dispatch::Response(answer)) = futures::executor::block_on(
+            SsoAccountHolderService::new(
+                authority.account_holder().clone(),
+                authority.account_holder().current_session().unwrap(),
+            )
+            .answer(RemoteMessage::request(
+                "remote-published-access".to_string(),
+                request,
+            )),
+        ) else {
             panic!("expected a ring-VRF response")
         };
         let RemoteMessageData::V1(v1::RemoteMessage::RingVrfSignResponse(response)) =

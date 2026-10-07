@@ -8,7 +8,6 @@ mod local_activation;
 pub mod ring_vrf;
 mod sso_replay;
 mod sso_responder;
-mod sso_service;
 mod wallet_account_holder;
 
 use std::collections::HashMap;
@@ -23,7 +22,6 @@ pub use sso_responder::{
     disconnect_paired_host, establish_pairing, notify_pairing_allowance_allocation,
     notify_pairing_failed, respond_to_pairing, resume_pairing,
 };
-pub use sso_service::SigningHostSsoService;
 #[cfg(not(target_arch = "wasm32"))]
 pub use wallet_account_holder::TrackedStatementRenewalTarget;
 pub use wallet_account_holder::{StatementRenewalTarget, WalletAccountHolder};
@@ -37,14 +35,12 @@ use super::{RuntimeServices, connected_session_ui_info};
 use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
 use crate::host_logic::session::SessionState;
 use crate::runtime::auth_state::AuthStateMachine;
-use crate::runtime::sso_service::SsoWithdrawals;
 use crate::runtime::statement_allowance;
 #[cfg(test)]
 use ring_vrf::RingResolver;
 use sso_replay::SsoReplayLocks;
-use wallet_account_holder::{
-    AccountGrant, AllowanceAllocationError, StatementStoreAllocation, current_unix_secs,
-};
+pub use wallet_account_holder::{AccountGrant, AllowanceAllocationError};
+use wallet_account_holder::{StatementStoreAllocation, current_unix_secs};
 
 /// The network suffix the unit tests configure their signing host for. `dot`
 /// keeps the `peopl.dot` handles the RFC examples use meaningful; the
@@ -119,15 +115,13 @@ pub struct SigningHost {
     local_grants: Mutex<LocalGrantState>,
     /// Serializes replay-ledger updates within each wallet and peer scope.
     sso_replay_locks: SsoReplayLocks,
-    /// Paired-host requests the pairing host can still withdraw.
-    sso_withdrawals: SsoWithdrawals,
     #[cfg(not(target_arch = "wasm32"))]
     renewal_loop_started: std::sync::atomic::AtomicBool,
 }
 
 impl SigningHost {
     /// Wallet shared by native account operations and incoming SSO.
-    pub fn account_holder(&self) -> &WalletAccountHolder {
+    pub fn account_holder(&self) -> &Arc<WalletAccountHolder> {
         &self.wallet
     }
 
@@ -142,7 +136,6 @@ impl SigningHost {
             auth_state: AuthStateMachine::new(platform.clone()),
             local_grants: Mutex::new(LocalGrantState::default()),
             sso_replay_locks: SsoReplayLocks::default(),
-            sso_withdrawals: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
             renewal_loop_started: std::sync::atomic::AtomicBool::new(false),
         })
@@ -204,7 +197,6 @@ impl SigningHost {
             auth_state: AuthStateMachine::new(platform.clone()),
             local_grants: Mutex::new(LocalGrantState::default()),
             sso_replay_locks: SsoReplayLocks::default(),
-            sso_withdrawals: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
             renewal_loop_started: std::sync::atomic::AtomicBool::new(false),
         })
@@ -217,10 +209,6 @@ impl SigningHost {
 
     fn sso_replay_locks(&self) -> &SsoReplayLocks {
         &self.sso_replay_locks
-    }
-
-    fn sso_withdrawals(&self) -> &SsoWithdrawals {
-        &self.sso_withdrawals
     }
 
     fn retain_wallet_authorization(

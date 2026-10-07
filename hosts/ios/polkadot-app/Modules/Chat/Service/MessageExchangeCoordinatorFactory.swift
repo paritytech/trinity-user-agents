@@ -8,6 +8,7 @@ import Keystore_iOS
 import Operation_iOS
 import Products
 import Individuality
+import StatementStore
 
 protocol MessageExchangeCoordinatorMaking {
     func makeChatCoordinator() throws -> MessageExchangeChatCoordinating
@@ -113,10 +114,32 @@ extension MessageExchangeCoordinatorFactory: MessageExchangeCoordinatorMaking {
     func makeTrUAPIHostCoordinator(
         runtimeProvider: TrUAPIHostRuntimeProviding
     ) throws -> MessageExchangeSignInHostCoordinating {
-        try SSOTruAPICoordinator(
-            ownKeyId: Chat.Contact.Own.sso(),
-            serviceFactory: makeSSOServiceFactory(),
-            runtimeProvider: runtimeProvider
+        let ownKeyId = try Chat.Contact.Own.sso()
+        let signer = try ChatSignerManager(entropyManager: entropyManager)
+            .makeSigner(for: ownKeyId.signKeyId)
+        let encryptor = try ChatEncryptionManager(entropyManager: entropyManager)
+            .makeEncryptorFactory(ownEncryptionKeyId: ownKeyId.encryptionKeyId)
+        let runtime = try runtimeProvider.sharedRuntime()
+        let session = try runtime.openSsoSession(
+            ownStatementAccountId: signer.accountId,
+            ownEncryptionPublicKey: encryptor.localPublicKey
+        )
+
+        return SSOTruAPICoordinator(
+            ownKeyId: ownKeyId,
+            serviceFactory: MessageExchangeServiceFactory(
+                messageExchangeModeProvider: FixedMessageExchangeModeProvider(mode: .identity),
+                signManager: ClosureSignerManager { _ in signer },
+                encryptionManager: ClosureEncryptionManager { _ in encryptor },
+                deviceEncryptionKeyFactory: nil,
+                messageRouteSelector: { _ in .identity },
+                maxStatementSize: Constants.maxSSOStatementSize,
+                operationQueue: operationQueue,
+                logger: logger
+            ),
+            runtimeProvider: runtimeProvider,
+            runtime: runtime,
+            session: session
         )
     }
 
