@@ -26,7 +26,7 @@ class TransferPlanner(
         vouchers: List<RecyclerVoucher>
     ): Result<TransferPlan> {
         return runCatching {
-            breakdownAmount.breakdown(amount)
+            require(breakdownAmount.remainderAfterBreakdown(amount).isZero()) { "Amount $amount cannot be broken down into coins" }
 
             val strategyType = tryGetExactMatchPlan(amount, coins)
                 ?: tryGetSingleSplitPlan(amount, coins)

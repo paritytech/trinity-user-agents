@@ -14,6 +14,7 @@ struct RustRuntimeEnvironment {
     let runtime: TrUAPIHostRuntime
     let chainRegistry: ChainRegistryProtocol
     let notificationScheduler: ProductNotificationScheduling
+    let gameReminders: ProductGameReminderScheduling?
     let ipfsFetcher: IpfsFetching
     let hostProvider: ProductHostProviding
     let themeManager: ThemeManagerProtocol
@@ -89,7 +90,8 @@ private extension RustRuntimeEnvironment {
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(productId: productId, executionKind: kind),
-            chat: chatBridge
+            chat: chatBridge,
+            game: gameReminders == nil ? nil : bridge
         )
 
         bridge.attach(execution)
@@ -105,7 +107,7 @@ private extension RustRuntimeEnvironment {
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
         chainConnections: TrUAPIChainConnecting,
-        osPermissionAsker: OSPermissionAsking
+        osPermissionAsker: OSPermissionAsker
     ) -> RustProductExecutionBridge.Dependencies {
         RustProductExecutionBridge.Dependencies(
             productId: productId,
@@ -116,6 +118,8 @@ private extension RustRuntimeEnvironment {
             ),
             osPermissionAsker: osPermissionAsker,
             notificationScheduler: notificationScheduler,
+            gameReminders: gameReminders,
+            reminderPermissionAsker: osPermissionAsker,
             navigationRouter: routers.navigationRouter,
             chainRegistry: chainRegistry,
             chainConnections: chainConnections,

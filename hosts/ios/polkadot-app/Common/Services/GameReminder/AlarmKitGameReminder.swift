@@ -9,6 +9,7 @@ import Individuality
 final class AlarmKitGameReminder: GameStartReminderServicing {
     private let alarmManger: AlarmManager
     private let settingsManager: SettingsManagerProtocol
+    private let keys: GameReminderStorageKeys
     private let logger: LoggerProtocol
     private let taskLock = NSLock()
     private var lastTask: Task<Void, Never>?
@@ -16,18 +17,20 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
     init(
         alarmManger: AlarmManager,
         settingsManager: SettingsManagerProtocol,
+        keys: GameReminderStorageKeys = .game,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.alarmManger = alarmManger
         self.settingsManager = settingsManager
+        self.keys = keys
         self.logger = logger
     }
 
-    func scheduleReminder(gameDate: Date, gameIndex: GamePallet.GameIndex, timingSeconds: Int) {
+    func scheduleReminder(gameDate: Date, target: GameReminderTarget, timingSeconds: Int) {
         enqueue { [weak self] in
             await self?.performScheduleReminder(
                 gameDate: gameDate,
-                gameIndex: gameIndex,
+                target: target,
                 timingSeconds: timingSeconds
             )
         }
@@ -57,7 +60,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
 
     private func performScheduleReminder(
         gameDate: Date,
-        gameIndex: GamePallet.GameIndex,
+        target: GameReminderTarget,
         timingSeconds: Int
     ) async {
         guard alarmManger.authorizationState == .authorized else {
@@ -73,8 +76,8 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
             return
         }
 
-        let storedFireDate = settingsManager.integer(for: .gameAlarmFireDate)
-        let storedAlarmId = settingsManager.string(for: .gameAlarmId).flatMap(UUID.init(uuidString:))
+        let storedFireDate = settingsManager.integer(for: keys.alarmFireDate)
+        let storedAlarmId = settingsManager.string(for: keys.alarmId).flatMap(UUID.init(uuidString:))
 
         if storedFireDate == Int(fireDate.timeIntervalSinceReferenceDate),
            let storedAlarmId,
@@ -90,9 +93,9 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         let newAlarmId = UUID()
 
         do {
-            try await schedule(id: newAlarmId, at: fireDate, timingSeconds: timingSeconds, gameIndex: gameIndex)
-            settingsManager.set(string: newAlarmId.uuidString, for: .gameAlarmId)
-            settingsManager.set(value: Int(fireDate.timeIntervalSinceReferenceDate), for: .gameAlarmFireDate)
+            try await schedule(id: newAlarmId, at: fireDate, timingSeconds: timingSeconds, target: target)
+            settingsManager.set(string: newAlarmId.uuidString, for: keys.alarmId)
+            settingsManager.set(value: Int(fireDate.timeIntervalSinceReferenceDate), for: keys.alarmFireDate)
             logger.debug("Alarm scheduled \(newAlarmId) for \(fireDate)")
         } catch {
             logger.error("Failed to schedule AlarmKit alarm: \(error)")
@@ -101,14 +104,14 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
 
     private func performCancelReminder(alarmId: UUID?) {
         guard let alarmId = alarmId ?? settingsManager
-            .string(for: .gameAlarmId)
+            .string(for: keys.alarmId)
             .flatMap(UUID.init(uuidString:))
         else {
             return
         }
 
-        settingsManager.removeValue(for: .gameAlarmId)
-        settingsManager.removeValue(for: .gameAlarmFireDate)
+        settingsManager.removeValue(for: keys.alarmId)
+        settingsManager.removeValue(for: keys.alarmFireDate)
 
         do {
             try alarmManger.cancel(id: alarmId)
@@ -132,7 +135,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         id newAlarmId: UUID,
         at date: Date,
         timingSeconds: Int,
-        gameIndex: GamePallet.GameIndex
+        target: GameReminderTarget
     ) async throws {
         let attributes = AlarmAttributes(
             presentation: AlarmPresentation(
@@ -152,7 +155,12 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
 
         let playIntent = GameAlarmPlayIntent()
         playIntent.alarmID = newAlarmId.uuidString
-        playIntent.gameIndex = Int(gameIndex)
+        switch target {
+        case let .game(gameIndex):
+            playIntent.gameIndex = Int(gameIndex)
+        case let .product(productId):
+            playIntent.productId = productId
+        }
 
         _ = try await alarmManger.schedule(
             id: newAlarmId,

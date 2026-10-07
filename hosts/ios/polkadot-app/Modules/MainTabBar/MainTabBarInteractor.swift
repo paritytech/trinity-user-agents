@@ -19,11 +19,13 @@ final class MainTabBarInteractor {
     private let urlHandlingService: URLHandlingServiceProtocol
     private let deferredLinkHandler: DeferredLinkHandling
     private let extensionWidgetStreamProvider: ChatExtensionWidgetStreaming
+    private let productGamePills: ProductGamePillProviding?
     private let browserCoordinator: SPABrowserCoordinating
     private let tabBarLabelsStore: any TabBarLabelsProviding
 
     private var availabilityObserver: NSObjectProtocol?
     private var extensionWidgetSubscription: Task<Void, Never>?
+    private var productGamePillSubscription: Task<Void, Never>?
     private var chainStatusSubscription: Task<Void, Never>?
     private var tabBarLabelsSubscription: Task<Void, Never>?
 
@@ -35,6 +37,7 @@ final class MainTabBarInteractor {
         deferredLinkHandler: DeferredLinkHandling,
         mnemonicBackupHelper: MnemonicBackupHelperProtocol,
         browserCoordinator: SPABrowserCoordinating,
+        productGamePills: ProductGamePillProviding?,
         notificationCenter: NotificationCenter = .default,
         logger: LoggerProtocol = Logger.shared,
         eventCenter: EventCenterProtocol = EventCenter.shared,
@@ -51,6 +54,7 @@ final class MainTabBarInteractor {
         self.urlHandlingService = urlHandlingService
         self.deferredLinkHandler = deferredLinkHandler
         self.browserCoordinator = browserCoordinator
+        self.productGamePills = productGamePills
         self.extensionWidgetStreamProvider = extensionWidgetStreamProvider ?? ChatExtensionWidgetStreamProvider(
             registry: serviceCoordinator.chatExtensionsRegistry,
             logger: logger
@@ -60,6 +64,7 @@ final class MainTabBarInteractor {
 
     deinit {
         unsubscribeFromExtensionWidgets()
+        productGamePillSubscription?.cancel()
         serviceCoordinator.throttle()
         removeBackupObservers()
         chainStatusSubscription?.cancel()
@@ -74,6 +79,7 @@ extension MainTabBarInteractor: MainTabBarInteractorInputProtocol {
         subscribeToBackupAvailability()
         subscribeToBackupStatusChanges()
         subscribeToExtensionWidgets()
+        subscribeToProductGamePill()
         evaluateBackupRequirement()
         deferredLinkHandler.register(urlHandlingService)
         subscribeToSPATabs()
@@ -164,6 +170,25 @@ private extension MainTabBarInteractor {
                 }
             } catch {
                 self?.logger.error("Extension widget stream failed: \(error)")
+            }
+        }
+    }
+
+    func subscribeToProductGamePill() {
+        guard let productGamePills, productGamePillSubscription == nil else {
+            return
+        }
+
+        productGamePillSubscription = Task { @MainActor [weak self, productGamePills, logger] in
+            do {
+                let pillStream = productGamePills.pillStream()
+                productGamePills.start()
+
+                for try await pill in pillStream {
+                    self?.presenter?.didReceiveProductGamePill(pill)
+                }
+            } catch {
+                logger.error("Product game pill stream failed: \(error)")
             }
         }
     }

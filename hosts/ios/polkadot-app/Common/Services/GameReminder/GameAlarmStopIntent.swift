@@ -13,11 +13,16 @@ struct GameAlarmPlayIntent: LiveActivityIntent {
     @Parameter(title: "Game Index")
     var gameIndex: Int?
 
+    @Parameter(title: "Product ID")
+    var productId: String?
+
     @MainActor
     func perform() async throws -> some IntentResult {
-        let url = AppConfig.DeepLink.game(intendedGameIndex: gameIndex)
-
-        await UIApplication.shared.open(url)
+        if let productId {
+            ProductOpener().open(productId: productId)
+        } else {
+            await UIApplication.shared.open(AppConfig.DeepLink.game(intendedGameIndex: gameIndex))
+        }
 
         if let alarmIDString = alarmID,
            let alarmUUID = UUID(uuidString: alarmIDString) {

@@ -553,6 +553,7 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="video_game_about_to_start_reminder_message">The game is about to start! Join and get ready for fun and rewards!</string>
     <string name="video_game_start_reminder_title">Game starting now!</string>
     <string name="video_game_start_reminder_message">The game is starting! Jump in!</string>
+    <string name="video_game_calendar_event_title">%1$s game</string>
 
     <string name="video_game_alert_setting_title">Alert</string>
     <string name="video_game_alert_offset_seconds">%d sec before</string>

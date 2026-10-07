@@ -1,5 +1,6 @@
 import UIKit
 import PolkadotUI
+import Products
 
 @MainActor
 final class MainTabBarWireframe: MainTabBarWireframeProtocol {
@@ -28,6 +29,10 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
             return
         }
         view?.controller.present(signInView.controller, animated: true)
+    }
+
+    func openProduct(productId: ProductId) {
+        ProductOpener(navigator: moduleNavigator).open(productId: productId)
     }
 
     #if FEATURE_INPUT

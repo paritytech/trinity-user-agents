@@ -39,6 +39,8 @@ pub struct JsBridge {
     pub clear_core_storage: Function,
     pub feature_supported: Function,
     pub supported_chains: Function,
+    pub schedule_game_reminder: Function,
+    pub cancel_game_reminder: Function,
     pub subscribe_locale: Function,
     pub navigate_to: Function,
     pub push_notification: Function,
@@ -60,6 +62,7 @@ pub struct JsBridge {
     pub confirm_user_action: Function,
     pub chat_present: bool,
     pub contacts_present: bool,
+    pub game_present: bool,
     pub permission_status_present: bool,
     pub pocket_present: bool,
 }
@@ -86,6 +89,10 @@ impl JsBridge {
             clear_core_storage: get_function(callbacks, "clearCoreStorage")?,
             feature_supported: get_function(callbacks, "featureSupported")?,
             supported_chains: get_function(callbacks, "supportedChains")?,
+            schedule_game_reminder: get_optional_function(callbacks, "scheduleGameReminder")?
+                .unwrap_or_else(|| missing_callback("scheduleGameReminder")),
+            cancel_game_reminder: get_optional_function(callbacks, "cancelGameReminder")?
+                .unwrap_or_else(|| missing_callback("cancelGameReminder")),
             subscribe_locale: get_function(callbacks, "subscribeLocale")?,
             navigate_to: get_function(callbacks, "navigateTo")?,
             push_notification: get_function(callbacks, "pushNotification")?,
@@ -114,6 +121,8 @@ impl JsBridge {
                 && get_optional_function(callbacks, "subscribeChatRooms")?.is_some(),
             contacts_present: get_optional_function(callbacks, "contacts")?.is_some()
                 && get_optional_function(callbacks, "pickContact")?.is_some(),
+            game_present: get_optional_function(callbacks, "scheduleGameReminder")?.is_some()
+                && get_optional_function(callbacks, "cancelGameReminder")?.is_some(),
             permission_status_present: get_optional_function(callbacks, "devicePermissionStatus")?
                 .is_some(),
             pocket_present: get_optional_function(callbacks, "subscribePocketCards")?.is_some()
@@ -129,6 +138,11 @@ impl JsBridge {
     /// Whether the host supplied every `contacts` callback.
     pub fn has_contacts(&self) -> bool {
         self.contacts_present
+    }
+
+    /// Whether the host supplied every `game` callback.
+    pub fn has_game(&self) -> bool {
+        self.game_present
     }
 
     /// Whether the host supplied every `permission_status` callback.
@@ -338,6 +352,37 @@ impl crate::platform::Features for WasmPlatform {
             bytes,
             "supportedChains response did not decode",
         )
+        .map_err(generic)
+    }
+}
+
+#[crate::platform::async_trait]
+impl crate::platform::GamePlatform for WasmPlatform {
+    async fn schedule_game_reminder(
+        &self,
+        product: &crate::platform::ProductContext,
+        starts_at: u64,
+    ) -> Result<(), v01::GenericError> {
+        invoke_unit(
+            &self.bridge.schedule_game_reminder,
+            vec![
+                Uint8Array::from(product.encode().as_slice()).into(),
+                js_sys::BigInt::from(starts_at).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
+    }
+
+    async fn cancel_game_reminder(
+        &self,
+        product: &crate::platform::ProductContext,
+    ) -> Result<(), v01::GenericError> {
+        invoke_unit(
+            &self.bridge.cancel_game_reminder,
+            vec![Uint8Array::from(product.encode().as_slice()).into()],
+        )
+        .await
         .map_err(generic)
     }
 }

@@ -239,6 +239,7 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
 }
 
 extension ServiceCoordinator {
+    @MainActor
     // swiftlint:disable:next function_body_length
     static func createDefault(spaFlowState: SPAFlowState) -> ServiceCoordinatorProtocol? {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
@@ -315,6 +316,10 @@ extension ServiceCoordinator {
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
 
+        let gameReminders = ProductGameReminderCenter.makeDefault()
+        RootDependencyLocator.setDependency(gameReminders as ProductGameReminderScheduling)
+        RootDependencyLocator.setDependency(gameReminders as ProductGamePillProviding)
+
         guard
             let signInHostCoordinator = createSignInHostCoordinator(
                 factory: chatCoordinatorFactory,
@@ -367,6 +372,7 @@ extension ServiceCoordinator {
         let (chatExtensionsRegistry, productWorkerFacade) = createChatExtensionsRegistry(
             accountManager: accountManager,
             truapiRuntimeProvider: truapiRuntimeProvider,
+            gameReminders: gameReminders,
             syncStore: syncServiceResult.syncStore,
             personDataStore: syncServiceResult.personDataStore,
             syncService: syncServiceResult.service,

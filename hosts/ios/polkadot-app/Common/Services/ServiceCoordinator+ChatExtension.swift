@@ -9,10 +9,12 @@ import Operation_iOS
 import ChainRegistry
 
 extension ServiceCoordinator {
+    @MainActor
     // swiftlint:disable:next function_parameter_count
     static func createChatExtensionsRegistry(
         accountManager: ProductsAccountManaging,
         truapiRuntimeProvider: TrUAPIHostRuntimeProviding,
+        gameReminders: ProductGameReminderScheduling,
         syncStore: DetermineStateSyncStore,
         personDataStore: DetermineStatePersonDataStore,
         syncService: DetermineStateSyncServicing,
@@ -49,6 +51,7 @@ extension ServiceCoordinator {
             hostProvider: spaFlowState.hostProvider,
             runtimeProvider: truapiRuntimeProvider,
             workerManager: workerFacade.manager,
+            gameReminders: gameReminders,
             themeManager: MainActor.assumeIsolated { ThemeManager.shared }
         )
 

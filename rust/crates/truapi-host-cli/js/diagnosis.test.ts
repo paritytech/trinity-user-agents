@@ -50,12 +50,17 @@ describe("generated-example battery", () => {
   });
 
   test("classifies only the committed unsupported CLI services as expected", () => {
-    const unsupported = new Set(["Coin Payment", "Payment"]);
+    const unsupported = new Map([
+      ["Coin Payment", "Coin Payment service not yet wired up by hosts"],
+      ["Payment", "Payment service not yet wired up by hosts"],
+      [
+        "Game",
+        "Game serves only the game product; the truapi runtime tests cover it",
+      ],
+    ]);
 
     for (const service of services) {
-      const expected = unsupported.has(service.name)
-        ? `${service.name} service not yet wired up by hosts`
-        : undefined;
+      const expected = unsupported.get(service.name);
       expect(
         knownUnsupportedReason(service.name, `${service.name}/example`),
       ).toBe(expected);
