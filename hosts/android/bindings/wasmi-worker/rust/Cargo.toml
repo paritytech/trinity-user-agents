@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Embedded wasmi sandbox for Worker products: one bounded guest instance per handle, driven turn by turn from Kotlin over JNI"
 
 [lib]
+name = "wasmi_worker_java"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

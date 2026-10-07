@@ -113,6 +113,7 @@ rust/crates/
   truapi-host-cli/       Headless pairing and signing hosts for scripts, batteries and local development
   wasm-worker-probe/     Runs a wasm32 Worker product against a host under wasmi; see its README
   wasm-worker-probe-guest/ The counter bot that product is, written in Rust over TrUAPI frames
+hosts/android/bindings/wasmi-worker/ Embedded Worker sandbox, packaged as libwasmi_worker_java.so
 js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`

@@ -12,6 +12,8 @@ The core generates part of its Rust sources at build time from rustdoc JSON, whi
 
 JDK 21. `export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"` if `java` is not on PATH.
 
+For Rust JNI modules, keep Cargo's `[lib].name`, Gradle's `cargo.libname`, and `System.loadLibrary` aligned. The Gradle plugin can finish a native build while silently omitting a differently named `.so`; inspect the final APK's `lib/<abi>/` entries, not just the build result.
+
 ## How to work on this codebase
 
 1. **Plan first** with `/architect`. Loads `.claude/docs/architecture/*.md` on demand. Output is a plan that names modules touched, seams used, layer placement, and north-star alignment.
