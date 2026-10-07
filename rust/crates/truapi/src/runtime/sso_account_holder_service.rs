@@ -33,7 +33,6 @@ pub struct SsoAccountHolderService {
 }
 
 /// Withdrawals shared with this peer's transport reader.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn withdrawals(service: &SsoAccountHolderService) -> &SsoWithdrawals {
     &service.withdrawals
 }
