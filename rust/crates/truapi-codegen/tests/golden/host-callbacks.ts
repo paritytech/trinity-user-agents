@@ -202,7 +202,12 @@ export type CoreStorageKey =
    * core honours it for a bounded lifetime, which is what makes a revoked
    * trust grant eventually take effect.
    */
-  | { tag: "ProductManifest"; value: { productId: string } };
+  | { tag: "ProductManifest"; value: { productId: string } }
+  /**
+   * A product's Worker executable manifest as last read from dotNS, and when,
+   * cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "WorkerManifest"; value: { productId: string } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -755,6 +760,9 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         peerEncryptionPublicKey: Uint8Array;
       }>,
       ProductManifest: S.Struct({ productId: S.str }) as S.Codec<{
+        productId: string;
+      }>,
+      WorkerManifest: S.Struct({ productId: S.str }) as S.Codec<{
         productId: string;
       }>,
     }),
