@@ -413,17 +413,27 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   one and delivers a notification otherwise, may add a calendar event, and
   keeps the reminder across app kill and reboot. A schedule the host cannot
   hold fails as a host failure carrying its reason.
+- `ScannerPlatform`: open the host's QR and barcode viewfinder for a product
+  and report how it ended. The core checks the request first, answering
+  `Unsupported` without a scanner, `InvalidRequest` for a request over its
+  limits, and `Busy` while another scan is open, since the device has one
+  viewfinder. It then calls the host and checks the code again, so a code the
+  request does not accept reaches the product as `Unknown`. A cancelled call
+  drops the host's future, which is the host's signal to close the viewfinder.
+  The host filters codes with the core's `ScanFilter` and never follows a
+  scanned link.
 
 `Platform` is a blanket-implemented supertrait that combines the capability
 traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,
-`PocketPlatform` and `GamePlatform`, which `OptionalPlatform` lists instead: a
+`PocketPlatform`, `GamePlatform` and `ScannerPlatform`, which `OptionalPlatform`
+lists instead: a
 host supplies each only when it can serve it. Codegen reads `OptionalPlatform`
 to emit each listed capability as an optional group on the host-callback
 surface.
 
 Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
-omitting `ContactsPlatform`, `PocketPlatform` or `GamePlatform` does the same
-for Contacts, Pocket or Game calls.
+omitting `ContactsPlatform`, `PocketPlatform`, `GamePlatform` or
+`ScannerPlatform` does the same for Contacts, Pocket, Game or Scanner calls.
 Omitting `PermissionStatusHost` leaves device grants resolving from stored
 state alone, which is what a host with no OS permission model does anyway.
 Serving it gates both halves of the surface: a device permission request and a
