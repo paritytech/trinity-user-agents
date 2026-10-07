@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.productBotM
 
 import io.paritytech.polkadotapp.common.presentation.navigation.ReturnableRouter
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRouter
 import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCardPayload
@@ -33,10 +32,5 @@ interface ProductsRouter : ReturnableRouter, SigningRouter {
     /** Approval sheet for a card the user was offered through a Pocket deeplink. */
     fun openPocketAddCard(payload: PocketAddCardPayload)
 
-    /**
-     * Opens the product behind a card the user followed a link to, in a sheet, with the card named
-     * in its launch URL. Tapping the same card on the Pocket tab expands it in place instead; a
-     * deeplink has no card on screen to expand, and lands on the product's page directly.
-     */
-    fun openPocketCard(key: PocketCardKey)
+    fun openPocket()
 }

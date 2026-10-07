@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.withLoading
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -39,7 +40,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
@@ -60,6 +63,7 @@ class PocketViewModel @Inject constructor(
     private val idShareImageRenderer: IdShareImageRenderer,
     private val sharingManager: SharingManager,
     private val dispatchers: CoroutineDispatchers,
+    private val cardOpenRequests: PocketCardOpenRequests,
     spaHost: SpaHost,
     @param:ApplicationContext private val context: Context
 ) : BaseViewModel() {
@@ -218,6 +222,21 @@ class PocketViewModel @Inject constructor(
 
     /** The product page under the expanded card, live only while that card is open. */
     val expandedProductSession = expandedProduct.session
+
+    // A tab shown for the first time has no product cards until the collection loads.
+    init {
+        combine(cards, cardOpenRequests.requested) { held, requested ->
+            held.filterIsInstance<PocketCardUiModel.ProductCard>().firstOrNull { it.key == requested }
+        }
+            .filterNotNull()
+            .onEach(::openRequestedCard)
+            .launchIn(this)
+    }
+
+    private fun openRequestedCard(card: PocketCardUiModel.ProductCard) {
+        cardOpenRequests.consume(card.key)
+        selectCard(card)
+    }
 
     fun selectCard(card: PocketCardUiModel) {
         selectedCardId.value = card.id
