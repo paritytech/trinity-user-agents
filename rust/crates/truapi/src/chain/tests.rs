@@ -18,7 +18,9 @@ use crate::chain_runtime::{ChainRuntime, RuntimeFailureKind};
 use crate::host_internal::extrinsic::tests::{
     bulletin_chain_state, bulletin_runtime_call, system_events,
 };
-use crate::test_support::{ScriptedProvider, notification_sender, test_spawner, wait_for_sent};
+use crate::test_support::{
+    ScriptedProvider, notification_sender, test_spawner, wait_for_sent, wait_until,
+};
 
 const GENESIS: H256 = H256([0xab; 32]);
 const FOLLOW_ID: &str = "follow-1";
@@ -40,6 +42,10 @@ struct Node {
     /// for, as a pruned or light node does.
     unservable_bodies: HashSet<H256>,
     validation: Validation,
+    /// Answer `chainHead_v1_follow` with nothing at all, as the iOS engine
+    /// does while the socket is down: the subscribe is queued and dropped on
+    /// reconnect, so no response and no error ever arrives.
+    silent_follow: bool,
     /// Follow events announcing the blocks the submitted extrinsic lands in;
     /// the chainHead backend reports an inclusion only once it saw the block.
     follow_events: Vec<Value>,
@@ -64,6 +70,7 @@ impl Node {
             unservable_heights: HashSet::new(),
             unservable_bodies: HashSet::new(),
             validation: Validation::Valid,
+            silent_follow: false,
             follow_events: Vec::new(),
             watch_events: Vec::new(),
             next_operation: 0,
@@ -155,6 +162,7 @@ impl Node {
             }
             "chain_subscribeFinalizedHeads" => vec![response(json!(FINALIZED_SUBSCRIPTION))],
             "chain_subscribeNewHeads" => vec![response(json!(BEST_SUBSCRIPTION))],
+            "chainHead_v1_follow" if self.silent_follow => Vec::new(),
             "chainHead_v1_follow" => vec![
                 response(json!(FOLLOW_ID)),
                 follow_event(json!({
@@ -693,4 +701,50 @@ fn head_events_need_no_runtime_metadata() {
         vec![HeadEvent::Best(node.lock().unwrap().block(5))]
     );
     assert_eq!(method_count(&provider, "Metadata_metadata_at_version"), 0);
+}
+
+/// One bounded transaction build, reporting why it failed. Bounded on a
+/// thread because the failure under test is a caller that never returns.
+fn try_build(chain: &ChainRuntime) -> Result<(), String> {
+    let chain = chain.clone();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let outcome = block_on(async {
+            let client = chain
+                .online_client(GENESIS.as_bytes())
+                .await
+                .map_err(|error| format!("{error:?}"))?;
+            client
+                .at_current_block()
+                .await
+                .map_err(|error| format!("{error:?}"))?;
+            Ok(())
+        });
+        let _ = sender.send(outcome);
+    });
+    receiver
+        .recv_timeout(TIMEOUT)
+        .unwrap_or_else(|_| Err("timed out".to_owned()))
+}
+
+#[test]
+fn transactions_build_again_once_the_socket_is_back() {
+    // While the iOS host's socket is down the queued `chainHead_v1_follow` is
+    // dropped without a response and the host synthesizes `{"event":"stop"}`
+    // on the live follow. Building must recover by itself once it is back.
+    let (node, provider, chain) = serve(Node::new(3, 5));
+
+    try_build(&chain).expect("first block selection");
+
+    node.lock().unwrap().silent_follow = true;
+    notification_sender(&provider)
+        .unbounded_send(follow_event(json!({"event": "stop"})))
+        .unwrap();
+    try_build(&chain).expect_err("the host answers the follow with nothing");
+
+    node.lock().unwrap().silent_follow = false;
+    wait_until(
+        || try_build(&chain).is_ok(),
+        "transactions never built again once the socket was back",
+    );
 }

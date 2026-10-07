@@ -8,6 +8,7 @@
 use core::mem;
 use core::pin::Pin;
 use core::task::{Context, Poll};
+use core::time::Duration;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,6 +24,20 @@ use subxt_rpcs::{Error as RpcError, UserError};
 use tracing::instrument;
 
 use crate::subscription::Spawner;
+
+/// How long a request waits for its response frame.
+///
+/// Responses are prompt on every host: they carry a call's return value or a
+/// subscription's id, never the subscription's events, which are free to take
+/// as long as a cold light client needs. A host that accepts a request and
+/// then answers nothing, as one does when its socket dies with the request
+/// queued, would otherwise park the caller forever. Subxt reads the failure as
+/// a dead subscription and rebuilds, which is the recovery path.
+#[cfg(not(test))]
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Shortened in tests so a suite can wait out a host that answers nothing.
+#[cfg(test)]
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(1);
 
 const MAX_BUFFERED_SUBSCRIPTIONS: usize = 64;
 const MAX_BUFFERED_ITEMS_PER_SUBSCRIPTION: usize = 256;
@@ -344,7 +359,7 @@ impl HostRpcClientInner {
         params: Option<Box<RawValue>>,
     ) -> Result<Box<RawValue>, RpcError> {
         let id = self.next_request_id();
-        let (tx, rx) = oneshot::channel();
+        let (tx, mut rx) = oneshot::channel();
         {
             let mut pending = self.pending.lock().unwrap();
             if self.closed.load(Ordering::Relaxed) {
@@ -358,8 +373,16 @@ impl HostRpcClientInner {
             return Err(error);
         }
 
-        rx.await
-            .map_err(|_| client_error("json-rpc request was cancelled"))?
+        let timeout = futures_timer::Delay::new(RESPONSE_TIMEOUT).fuse();
+        pin_mut!(timeout);
+
+        futures::select! {
+            result = rx => result.map_err(|_| client_error("json-rpc request was cancelled"))?,
+            () = timeout => {
+                self.pending.lock().unwrap().remove(&id);
+                Err(client_error("json-rpc request timed out"))
+            }
+        }
     }
 
     async fn subscribe(
@@ -1149,6 +1172,33 @@ mod tests {
         assert!(
             subscribe_failed,
             "a subscribe on a closed client should fail"
+        );
+    }
+
+    /// A host that accepts a request and answers nothing leaves the caller
+    /// bounded. Its socket dying with a subscribe queued is that host, and
+    /// waiting on it forever is what wedges every later chain operation.
+    #[test]
+    fn a_request_the_host_never_answers_fails_rather_than_hanging() {
+        let client =
+            HostRpcClient::new(TrackingConnection::new(), thread_per_subscription_spawner());
+        let rpc_client = RpcClient::new(client.clone());
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done_tx.send(block_on(rpc_client.request::<Value>("any", rpc_params![])));
+        });
+        let outcome = done_rx
+            .recv_timeout(RESPONSE_TIMEOUT + std::time::Duration::from_secs(5))
+            .expect("an unanswered request should fail rather than hang");
+
+        assert!(
+            outcome.is_err(),
+            "an unanswered request should fail, got {outcome:?}"
+        );
+        assert!(
+            client.inner.pending.lock().unwrap().is_empty(),
+            "a timed-out request should leave no pending correlation entry"
         );
     }
 
