@@ -39,6 +39,7 @@ use crate::host_logic::sso::pairing::{
 };
 use crate::host_logic::statement_store::{build_signed_statement, parse_new_statements_result};
 use crate::runtime::services::RuntimeServices;
+use crate::runtime::sso_account_holder_service::withdrawals;
 use crate::runtime::sso_remote::{fresh_statement_expiry, sso_message_id};
 use crate::runtime::sso_service::{Dispatch, SsoWithdrawals};
 use crate::runtime::statement_store_rpc;
@@ -510,7 +511,7 @@ async fn serve_session(
     );
     // Boxed as a trait object so the hosts that await a session need not
     // lay out this future or prove it `Send`.
-    serve_pages(pages, service.withdrawals(), |incoming| {
+    serve_pages(pages, withdrawals(&service), |incoming| {
         serve_statement(
             services,
             &signing_host,
