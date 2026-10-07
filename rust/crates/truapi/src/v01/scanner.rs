@@ -2,10 +2,6 @@ use parity_scale_codec::{Decode, Encode};
 
 /// Code formats the host scanner reads: the set both platform decoders share.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Enum)
-)]
 pub enum CodeFormat {
     /// QR code.
     Qr,
@@ -15,7 +11,8 @@ pub enum CodeFormat {
     DataMatrix,
     /// PDF417 code.
     Pdf417,
-    /// EAN-13. A UPC-A code arrives as EAN-13 with a leading zero.
+    /// EAN-13. Hosts report a UPC-A code as EAN-13 with a leading zero, before
+    /// matching it against the request.
     Ean13,
     /// EAN-8.
     Ean8,
@@ -29,6 +26,8 @@ pub enum CodeFormat {
     Code93,
     /// Interleaved 2 of 5, including ITF-14.
     Itf,
+    /// Codabar.
+    Codabar,
 }
 
 /// Request to open the host's scanner.
@@ -36,16 +35,16 @@ pub enum CodeFormat {
 /// The host draws the viewfinder and writes its title, naming the product.
 /// Only `hint` is product text, shown as one plain line under the title.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Record)
-)]
 pub struct HostScannerScanRequest {
     /// Formats the product accepts. At least one.
     pub formats: Vec<CodeFormat>,
-    /// Exact, case-sensitive start the text must have. At most 256 bytes.
+    /// Start the text must have, compared ignoring ASCII letter case, since QR
+    /// codes often carry URLs in capitals. At most 256 bytes of UTF-8.
     pub prefix: Option<String>,
-    /// What to point the camera at. At most 80 characters, one line.
+    /// What to point the camera at, shown as the product's words. At most 80
+    /// Unicode scalar values (`[...hint].length` in TypeScript). No control
+    /// characters, line or paragraph separators, or bidirectional formatting
+    /// characters.
     pub hint: Option<String>,
 }
 
@@ -57,7 +56,8 @@ pub struct HostScannerScanRequest {
 pub enum ScanOutcome {
     /// The user scanned a code the request accepts.
     Scanned {
-        /// The code's content, as the platform decoder reports it.
+        /// The code's content as text. Codes whose content is not text are
+        /// skipped while scanning.
         text: String,
         /// The code's format.
         format: CodeFormat,

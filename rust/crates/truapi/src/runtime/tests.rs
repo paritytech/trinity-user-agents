@@ -28,7 +28,6 @@ use truapi::versioned::chain::{
 use truapi::versioned::entropy::{
     HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse,
 };
-use truapi::versioned::scanner::HostScannerScanRequest;
 use truapi::versioned::game::{
     HostCancelNextGameError, HostCancelNextGameRequest, HostCancelNextGameResponse,
     HostRemindNextGameError, HostRemindNextGameRequest, HostRemindNextGameResponse,
@@ -51,6 +50,7 @@ use truapi::versioned::resource_allocation::{
     HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
     HostRequestResourceAllocationResponse,
 };
+use truapi::versioned::scanner::HostScannerScanRequest;
 use truapi::versioned::signing::{
     HostCreateTransactionError, HostCreateTransactionRequest, HostCreateTransactionResponse,
     HostCreateTransactionWithLegacyAccountError, HostCreateTransactionWithLegacyAccountRequest,
