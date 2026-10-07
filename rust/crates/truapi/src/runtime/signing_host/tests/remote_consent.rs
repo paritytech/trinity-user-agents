@@ -7,115 +7,86 @@ use crate::runtime::sso_service::Dispatch;
 use truapi::latest::{HostAccountListRingVrfKeysRequest, RingVrfKeyDisclosure};
 
 #[test]
-fn direct_local_signing_without_authorization_requires_wallet_review() {
-    let platform = Arc::new(StubPlatform::default());
-    let (_, authority) = signing_runtime_with_platform(platform.clone());
-    futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-    let session = authority.account_holder().current_session().unwrap();
-    let product = ProductContext::new("myapp.dot".to_string()).unwrap();
-    let request = truapi::latest::HostSignRawRequest {
-        account: product_account(0),
-        payload: truapi::latest::RawPayload::Bytes {
-            bytes: b"local approval".to_vec(),
-        },
-    };
-    let signed = futures::executor::block_on(authority.account_holder().sign_raw(
-        AccountInvocation {
-            call: &CallContext::default(),
+fn wallet_signing_requires_the_callers_authorization() {
+    for remote in [false, true] {
+        let platform = Arc::new(StubPlatform {
+            resource_allocation_confirmed: true,
+            ..StubPlatform::default()
+        });
+        let (services, authority) = signing_runtime_with_platform(platform.clone());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+        let session = authority.account_holder().current_session().unwrap();
+        auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
+        let product = ProductContext::new("myapp.dot".to_string()).unwrap();
+        let call = CallContext::default();
+        let invocation = || AccountInvocation {
+            call: &call,
             session: &session,
-            caller: AccountCaller::Local {
-                product: &product,
-                authorization: None,
-                outbound_review: None,
+            caller: if remote {
+                AccountCaller::Remote {
+                    product_id: Some(&product.product_id),
+                }
+            } else {
+                AccountCaller::Local {
+                    product: &product,
+                    authorization: None,
+                    outbound_review: None,
+                }
             },
-        },
-        SignRawAuthorityRequest::Product(request.clone()),
-        true,
-    ));
-    assert_eq!(
-        (signed, platform.sign_raw_reviews.lock().unwrap().clone()),
-        (
-            Err(AuthorityError::Rejected),
-            vec![SignRawReview::Product {
-                calling_product_id: Some("myapp.dot".to_string()),
-                request,
-                watermarked: true,
-            }],
-        ),
-    );
-}
-
-#[test]
-fn direct_remote_signing_cannot_bypass_wallet_review_with_a_native_grant() {
-    let platform = Arc::new(StubPlatform {
-        resource_allocation_confirmed: true,
-        ..StubPlatform::default()
-    });
-    let (services, authority) = signing_runtime_with_platform(platform.clone());
-    futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-    let session = authority.account_holder().current_session().unwrap();
-    auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
-    let request = truapi::latest::HostSignRawRequest {
-        account: product_account(0),
-        payload: truapi::latest::RawPayload::Bytes {
-            bytes: b"remote approval".to_vec(),
-        },
-    };
-    let signed = futures::executor::block_on(authority.account_holder().sign_raw(
-        AccountInvocation {
-            call: &CallContext::default(),
-            session: &session,
-            caller: AccountCaller::Remote {
-                product_id: Some("myapp.dot"),
+        };
+        let request = truapi::latest::HostSignRawRequest {
+            account: product_account(0),
+            payload: truapi::latest::RawPayload::Bytes {
+                bytes: b"approval".to_vec(),
             },
-        },
-        SignRawAuthorityRequest::Product(request.clone()),
-        true,
-    ));
-    let statement = futures::executor::block_on(
-        authority
-            .account_holder()
-            .sign_statement_store_product_payload(
-                AccountInvocation {
-                    call: &CallContext::default(),
-                    session: &session,
-                    caller: AccountCaller::Remote {
-                        product_id: Some("myapp.dot"),
-                    },
-                },
-                product_account(0),
-                b"remote statement".to_vec(),
+        };
+        let signed = futures::executor::block_on(authority.account_holder().sign_raw(
+            invocation(),
+            SignRawAuthorityRequest::Product(request.clone()),
+            true,
+        ));
+        assert_eq!(
+            (signed, platform.sign_raw_reviews.lock().unwrap().clone()),
+            (
+                Err(AuthorityError::Rejected),
+                vec![SignRawReview::Product {
+                    calling_product_id: Some(product.product_id.clone()),
+                    request,
+                    watermarked: true,
+                }]
             ),
-    );
-    assert_eq!(
-        (
-            statement,
-            platform
-                .statement_store_product_sign_reviews
-                .lock()
-                .unwrap()
-                .clone()
-        ),
-        (
-            Err(AuthorityError::Rejected),
-            vec![crate::platform::StatementStoreProductSignReview {
-                calling_product_id: Some("myapp.dot".to_string()),
-                account: product_account(0),
-                payload: b"remote statement".to_vec()
-            }]
-        ),
-    );
-    assert_eq!(
-        (signed, platform.sign_raw_reviews.lock().unwrap().clone()),
-        (
-            Err(AuthorityError::Rejected),
-            vec![SignRawReview::Product {
-                calling_product_id: Some("myapp.dot".to_string()),
-                request,
-                watermarked: true,
-            }],
-        ),
-    );
+            "remote: {remote}",
+        );
+        if remote {
+            let statement = futures::executor::block_on(
+                authority
+                    .account_holder()
+                    .sign_statement_store_product_payload(
+                        invocation(),
+                        product_account(0),
+                        b"statement".to_vec(),
+                    ),
+            );
+            assert_eq!(
+                (
+                    statement,
+                    platform
+                        .statement_store_product_sign_reviews
+                        .lock()
+                        .unwrap()
+                        .clone()
+                ),
+                (
+                    Err(AuthorityError::Rejected),
+                    vec![crate::platform::StatementStoreProductSignReview {
+                        calling_product_id: Some(product.product_id),
+                        account: product_account(0),
+                        payload: b"statement".to_vec(),
+                    }]
+                ),
+            );
+        }
+    }
 }
 
 #[test]

@@ -528,18 +528,7 @@ impl AccountHolder for WalletAccountHolder {
         self.with_keys(session, |keys| {
             keys.product_keypair(&request.account).map(|_| ())
         })?;
-        let granted = match invocation.caller {
-            AccountCaller::Local { authorization, .. } => {
-                self.auto_signing_status(
-                    session,
-                    calling_product_id,
-                    &request.account,
-                    authorization,
-                )? == AutoSigningGrant::Active
-            }
-            AccountCaller::Remote { .. } => false,
-        };
-        if !granted {
+        if !self.invocation_auto_signing(&invocation, &request.account)? {
             let confirmed = until_cancelled(
                 invocation.call,
                 self.services
