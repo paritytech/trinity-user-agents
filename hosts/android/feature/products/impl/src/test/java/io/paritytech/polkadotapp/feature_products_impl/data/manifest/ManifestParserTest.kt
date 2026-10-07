@@ -202,6 +202,34 @@ class ManifestParserTest {
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"A"}]}"""))
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"","preview":"a.json"}]}"""))
         publishesNoCards(worker("""{}"""))
+        publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":"no"}]}"""))
+        publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":0}]}"""))
+    }
+
+    private fun faceShownOf(cardJson: String): Boolean? {
+        val worker = parser.parseExecutable(
+            """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":false,"pocket":true},
+               "pocket":{"cards":[$cardJson]}}""",
+            ExecutableKind.WORKER,
+            host("worker.coinflip.dot"),
+        ).getOrNull() as? ProductExecutable.Worker
+
+        return worker?.pocketCards?.singleOrNull()?.faceShown
+    }
+
+    @Test
+    fun `a card that does not say faceShown opens with its face shown`() {
+        assertEquals(true, faceShownOf("""{"id":"a","title":"A","preview":"a.json"}"""))
+    }
+
+    @Test
+    fun `a card can ask to open with its face away`() {
+        assertEquals(false, faceShownOf("""{"id":"a","title":"A","preview":"a.json","faceShown":false}"""))
+    }
+
+    @Test
+    fun `a card can state that its face is shown`() {
+        assertEquals(true, faceShownOf("""{"id":"a","title":"A","preview":"a.json","faceShown":true}"""))
     }
 
     /**

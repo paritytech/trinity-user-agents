@@ -31,6 +31,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,6 +46,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -66,6 +68,8 @@ class PocketViewModel @Inject constructor(
     private val selectedCardId = MutableStateFlow<String?>(null)
     private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url, underCard = true) } }
     private val collectiblesShown = MutableStateFlow(false)
+    private val _openingFaceShown = MutableStateFlow<Boolean?>(null)
+    private var openingFaceLookup: Job? = null
     private val removalCandidate = MutableStateFlow<PocketCardUiModel.ProductCard?>(null)
 
     private val digitalDollarAmounts = interactor.observeDigitalDollarBalance()
@@ -219,9 +223,25 @@ class PocketViewModel @Inject constructor(
     /** The product page under the expanded card, live only while that card is open. */
     val expandedProductSession = expandedProduct.session
 
+    /** Whether the selected card opens with its face shown; null until its product has answered. */
+    val openingFaceShown: StateFlow<Boolean?> = _openingFaceShown
+
     fun selectCard(card: PocketCardUiModel) {
         selectedCardId.value = card.id
-        if (card is PocketCardUiModel.ProductCard) warmUpProduct(card)
+        if (card is PocketCardUiModel.ProductCard) {
+            warmUpProduct(card)
+            lookUpOpeningFace(card)
+        }
+    }
+
+    private fun lookUpOpeningFace(card: PocketCardUiModel.ProductCard) {
+        openingFaceLookup?.cancel()
+        openingFaceLookup = launch { _openingFaceShown.value = interactor.faceShownOnOpen(card.key) }
+    }
+
+    private fun forgetOpeningFace() {
+        openingFaceLookup?.cancel()
+        _openingFaceShown.value = null
     }
 
     /**
@@ -245,6 +265,7 @@ class PocketViewModel @Inject constructor(
 
     fun dismissCard() {
         expandedProduct.close()
+        forgetOpeningFace()
         selectedCardId.value = null
     }
 
@@ -323,6 +344,7 @@ class PocketViewModel @Inject constructor(
 
     private fun closeExpandedCard() {
         expandedProduct.release()
+        forgetOpeningFace()
         selectedCardId.value = null
     }
 
