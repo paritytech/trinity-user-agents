@@ -66,6 +66,7 @@ import uniffi.truapi.NativePocketCallbacks
 import uniffi.truapi.NativePocketRemoval
 import uniffi.truapi.NativeRendererObserver
 import uniffi.truapi.DevicePermissionStatus
+import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
 import uniffi.truapi.NativeAnnouncedPairing
@@ -200,6 +201,17 @@ interface HostBridge {
     suspend fun devicePermissionStatus(
         request: HostDevicePermissionRequest,
     ): DevicePermissionStatus = DevicePermissionStatus.NOT_APPLICABLE
+
+    /**
+     * Show or hide the face above this execution's expanded card. Answers
+     * [ExpandedCardFaceOutcome.NOT_PRESENTED] when the product is not under its
+     * card and [ExpandedCardFaceOutcome.USER_MOVING] while the user drags it.
+     *
+     * Defaults to [ExpandedCardFaceOutcome.UNSUPPORTED], so an app without cards
+     * says so instead of pretending it moved one.
+     */
+    suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
+        ExpandedCardFaceOutcome.UNSUPPORTED
 
     /**
      * Prompt for a remote permission bundle [product] requested on the main
@@ -486,6 +498,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override suspend fun devicePermissionStatus(
         request: HostDevicePermissionRequest,
     ): DevicePermissionStatus = withHostRejection { bridge.devicePermissionStatus(request) }
+
+    override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
+        withHostRejection { bridge.setExpandedCardFaceShown(shown) }
 
     override suspend fun remotePermission(
         product: ProductExecutionConfig,
