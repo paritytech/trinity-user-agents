@@ -24,60 +24,39 @@ fn wallet(suffix: &str) -> WalletAccountHolder {
 }
 
 #[test]
-fn internal_allowances_offer_both_reserved_person_handles_widest_first() {
-    let wallet = wallet("dot");
-    let session = wallet.current_session().unwrap();
-    let signer = futures::executor::block_on(wallet.personhood_signer(&session)).unwrap();
-    let members = PersonhoodCollection::ALL
-        .map(|collection| (collection, signer.member(collection).unwrap()));
-    let expected = [
-        (PersonhoodCollection::People, 0),
-        (PersonhoodCollection::LitePeople, 1),
-    ]
-    .map(|(collection, index)| {
-        let entropy = derive_ring_vrf_entropy(
-            &[7; 32],
-            "peopl.dot",
-            &truapi::latest::DerivationIndex::Index(index),
-        )
-        .unwrap();
-        (collection, signer.vrf.member(&entropy).unwrap())
-    });
-    assert_eq!(members, expected);
-}
-
-#[test]
-fn reserved_identities_follow_the_configured_network_suffix() {
-    let wallet = wallet("paseo");
-    let session = wallet.current_session().unwrap();
-    let signer = futures::executor::block_on(wallet.personhood_signer(&session)).unwrap();
-    for (collection, index) in PersonhoodCollection::ALL.into_iter().zip([0, 1]) {
-        let entropy = derive_ring_vrf_entropy(
-            &[7; 32],
-            "peopl.paseo",
-            &truapi::latest::DerivationIndex::Index(index),
-        )
-        .unwrap();
+fn reserved_identities_follow_the_network_and_collection_order() {
+    for suffix in ["dot", "paseo"] {
+        let wallet = wallet(suffix);
+        let session = wallet.current_session().unwrap();
+        let signer = futures::executor::block_on(wallet.personhood_signer(&session)).unwrap();
+        let members = PersonhoodCollection::ALL
+            .map(|collection| (collection, signer.member(collection).unwrap()));
+        let expected = [
+            (PersonhoodCollection::People, 0),
+            (PersonhoodCollection::LitePeople, 1),
+        ]
+        .map(|(collection, index)| {
+            let entropy = derive_ring_vrf_entropy(
+                &[7; 32],
+                &format!("peopl.{suffix}"),
+                &truapi::latest::DerivationIndex::Index(index),
+            )
+            .unwrap();
+            (collection, signer.vrf.member(&entropy).unwrap())
+        });
         assert_eq!(
-            signer.member(collection).unwrap(),
-            signer.vrf.member(&entropy).unwrap()
-        );
-        let other = derive_ring_vrf_entropy(
-            &[7; 32],
-            "peopl.dot",
-            &truapi::latest::DerivationIndex::Index(index),
-        )
-        .unwrap();
-        assert_ne!(
-            signer.member(collection).unwrap(),
-            signer.vrf.member(&other).unwrap()
+            (members, session.identity_account_id),
+            (
+                expected,
+                Some(
+                    derive_identity_keypair(&[7; 32], suffix)
+                        .unwrap()
+                        .public
+                        .to_bytes()
+                )
+            ),
         );
     }
-    let expected = derive_identity_keypair(&[7; 32], "paseo")
-        .unwrap()
-        .public
-        .to_bytes();
-    assert_eq!(session.identity_account_id, Some(expected));
 }
 
 #[test]
