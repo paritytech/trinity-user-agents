@@ -43,6 +43,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketCardSharedElement
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -71,6 +72,11 @@ fun ProductPocketCardDetails(
     }
 
     val fold = rememberExpandedCardFoldState()
+    LaunchedEffect(session, fold) {
+        session?.faceShownRequests?.collect { request ->
+            launch { request.reply.complete(fold.showFace(request.shown)) }
+        }
+    }
 
     Column(modifier = modifier.fillMaxSize()) {
         PolkadotTopBar(
@@ -128,7 +134,8 @@ private fun FoldableCard(
             .draggable(
                 orientation = Orientation.Vertical,
                 state = rememberDraggableState { delta -> fold.drag(delta) },
-                onDragStopped = { fold.settle() },
+                onDragStarted = { fold.beginDrag() },
+                onDragStopped = { fold.endDrag() },
             ),
         content = { content() },
     )
