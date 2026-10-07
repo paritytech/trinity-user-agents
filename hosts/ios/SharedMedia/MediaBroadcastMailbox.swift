@@ -7,6 +7,14 @@ import Darwin
 /// broadcast extension. No socket, URL scheme, or product-readable file handle.
 final class MediaBroadcastMailbox {
     enum Failure: Error { case unavailable }
+
+    struct Frame {
+        let buffer: CVPixelBuffer
+        let sequence: Int64
+        let timeStampNs: Int64
+        let rotation: Int64
+    }
+
     static let capacity = 4096 * 4096 * 4 + 4096
     private let descriptor: Int32
     private let memory: UnsafeMutableRawPointer
@@ -123,7 +131,7 @@ final class MediaBroadcastMailbox {
         }
     }
 
-    func frame(after sequence: Int64, generation: Int64) throws -> (CVPixelBuffer, Int64, Int64, Int64)? {
+    func frame(after sequence: Int64, generation: Int64) throws -> Frame? {
         try locked {
             guard get(0) == generation, get(1) == 2 else { throw Failure.unavailable }
             guard get(2) != 0, get(2) != sequence else { return nil }
@@ -157,7 +165,7 @@ final class MediaBroadcastMailbox {
                 }
                 offset += inputStride * rows
             }
-            return (output, get(2), get(6), get(7))
+            return Frame(buffer: output, sequence: get(2), timeStampNs: get(6), rotation: get(7))
         }
     }
 }
