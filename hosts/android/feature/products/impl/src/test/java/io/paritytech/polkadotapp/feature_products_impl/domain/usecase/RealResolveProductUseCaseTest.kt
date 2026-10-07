@@ -35,6 +35,8 @@ class RealResolveProductUseCaseTest {
     private val debugPocketCards = object : DebugPocketCards {
         override fun get(productId: ProductId): DebugPocketCard? = debugCard
         override fun set(productId: ProductId, card: DebugPocketCard?) = Unit
+        override fun appUrl(productId: ProductId): String? = null
+        override fun setAppUrl(productId: ProductId, appUrl: String?) = Unit
     }
 
     private fun useCase() = RealResolveProductUseCase(

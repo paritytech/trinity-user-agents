@@ -28,11 +28,14 @@ interface ProductBotManagementInteractor {
 
     suspend fun getDebugCard(productId: ProductId): DebugPocketCard?
 
+    suspend fun getAppUrl(productId: ProductId): String?
+
     suspend fun upsertProduct(
         productId: ProductId,
         workerUrl: String,
         name: String,
         card: DebugPocketCard?,
+        appUrl: String?,
     ): Result<ProductId>
 
     suspend fun updateProduct(
@@ -40,6 +43,7 @@ interface ProductBotManagementInteractor {
         workerUrl: String,
         name: String,
         card: DebugPocketCard?,
+        appUrl: String?,
     ): Result<Unit>
 
     suspend fun deleteProduct(productId: ProductId): Result<Unit>
@@ -78,15 +82,21 @@ class RealProductBotManagementInteractor @Inject constructor(
         debugPocketCards.get(productId)
     }
 
+    override suspend fun getAppUrl(productId: ProductId): String? = withContext(dispatchers.io) {
+        debugPocketCards.appUrl(productId)
+    }
+
     override suspend fun upsertProduct(
         productId: ProductId,
         workerUrl: String,
         name: String,
         card: DebugPocketCard?,
+        appUrl: String?,
     ): Result<ProductId> {
         return runCatching {
             productRepository.upsertManualProduct(productId, name, workerUrl)
             debugPocketCards.set(productId, card)
+            debugPocketCards.setAppUrl(productId, appUrl)
             resolveProductUseCase.invalidate(productId) // force next resolve to read the new URL
             integrationRepository.install(productId, IntegrationType.Chat)
             botStateController.setActive(productId.toChatExtensionId())
@@ -99,10 +109,12 @@ class RealProductBotManagementInteractor @Inject constructor(
         workerUrl: String,
         name: String,
         card: DebugPocketCard?,
+        appUrl: String?,
     ): Result<Unit> {
         return runCatching {
             productRepository.upsertManualProduct(productId, name, workerUrl)
             debugPocketCards.set(productId, card)
+            debugPocketCards.setAppUrl(productId, appUrl)
             // The card rides on the resolved worker, so a changed one is only seen after this.
             resolveProductUseCase.invalidate(productId)
         }
