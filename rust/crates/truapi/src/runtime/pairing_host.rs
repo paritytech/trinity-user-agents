@@ -278,6 +278,15 @@ pub struct PairingHost {
 }
 
 impl PairingHost {
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.submit_preimages_locally
+            .store(local, core::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Build a pairing host over the shared runtime services.
     pub fn new(services: Arc<RuntimeServices>, host_config: PairingHostConfig) -> Arc<Self> {
         if services.asset_hub_chain_genesis_hash().is_none() {
@@ -2623,17 +2632,6 @@ fn login_error_reason(err: &CallError<HostRequestLoginError>) -> String {
         CallError::Denied => "login denied".to_string(),
         CallError::MalformedFrame { reason } => reason.clone(),
         CallError::Cancelled => "login cancelled".to_string(),
-    }
-}
-
-impl PairingHost {
-    /// Keep preimage submissions in the core instead of the Bulletin chain.
-    ///
-    /// For test hosts only, with the `test-host` feature enabled.
-    #[cfg(feature = "test-host")]
-    pub fn set_submit_preimages_locally(&self, local: bool) {
-        self.submit_preimages_locally
-            .store(local, core::sync::atomic::Ordering::Relaxed);
     }
 }
 
