@@ -11,6 +11,7 @@
 //! same seam browser hosts use for their confirmation modals; a headless host
 //! implements it with its approval policy.
 
+use crate::runtime::AccountHolder;
 use crate::runtime::signing_host::wallet_account_holder;
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
@@ -24,7 +25,6 @@ use parity_scale_codec::Encode;
 use tracing::{debug, instrument, warn};
 
 use super::sso_replay::{ReplayExecution, SsoReplayScope, execute_once};
-use super::wallet_account_holder::WalletKeys;
 use super::{SigningHost, SigningHostSsoService};
 use crate::host_internal::sso_messages::{
     IncomingSsoRequest, RemoteMessage, RemoteMessageData, SsoResponseCode,
@@ -246,33 +246,35 @@ async fn establish_pairing_session(
     deeplink: &str,
 ) -> Result<EstablishedPairing, String> {
     let peer = PairedSsoPeer::from_deeplink(deeplink)?;
-    let (_, keys) = wallet_account_holder::current_keys(&signing_host.wallet)
-        .map_err(|err| format!("signing host has no active local session: {err}"))?;
-    let root_public_key = keys
-        .root_public_key()
-        .map_err(|err| format!("root account derivation failed: {err}"))?;
-    let (identity, identity_chat_private_key) = keys
-        .responder_identity()
-        .map_err(|err| format!("responder identity derivation failed: {err}"))?;
+    let wallet_session = signing_host
+        .wallet
+        .current_session()
+        .ok_or_else(|| "signing host has no active local session".to_string())?;
     let device_enc_pub_key = x25519_public_key(services.device_encryption_secret().await?);
-    let session = responder_session_from_identity(&identity, peer)?;
-
-    let success = v2::EncryptedResponse::Success(Box::new(v2::Success {
-        identity_account_id: identity.statement_public_key,
-        root_account_id: root_public_key,
-        identity_chat_private_key,
-        sso_enc_pub_key: identity.encryption_public_key,
-        device_enc_pub_key,
-        root_entropy_source: keys.root_entropy_source(),
-    }));
-    submit_handshake_answer(
-        services,
-        &session,
-        peer,
-        &success,
-        "sso-responder handshake",
-    )
-    .await?;
+    let (session, statement) = {
+        let material =
+            wallet_account_holder::pairing_material(&signing_host.wallet, &wallet_session)
+                .map_err(|error| error.to_string())?;
+        let session = responder_session_from_identity(&material.identity, peer)?;
+        let success = v2::EncryptedResponse::Success(Box::new(v2::Success {
+            identity_account_id: material.identity.statement_public_key,
+            root_account_id: wallet_session.public_key,
+            identity_chat_private_key: *material.chat_private_key,
+            sso_enc_pub_key: material.identity.encryption_public_key,
+            device_enc_pub_key,
+            root_entropy_source: *material.product_entropy_source,
+        }));
+        let statement = prepare_handshake_answer(&session, peer, &success)?;
+        (session, statement)
+    };
+    wallet_account_holder::require_current_session(&signing_host.wallet, &wallet_session)
+        .map_err(|error| error.to_string())?;
+    services
+        .statement_store
+        .submit(statement, "sso-responder handshake")
+        .await?;
+    wallet_account_holder::require_current_session(&signing_host.wallet, &wallet_session)
+        .map_err(|error| error.to_string())?;
     debug!("answered pairing handshake");
     // The submit is the earliest point the peer could read the answer.
     if let Some(observer) = services.device_pairing_observer() {
@@ -282,7 +284,7 @@ async fn establish_pairing_session(
     Ok(EstablishedPairing {
         session,
         replay_scope: SsoReplayScope {
-            root_public_key,
+            root_public_key: wallet_session.public_key,
             peer_statement_account_id: peer.statement_account_id,
             peer_encryption_public_key: peer.encryption_public_key,
         },
@@ -295,18 +297,19 @@ pub async fn resume_pairing(
     signing_host: Arc<SigningHost>,
     peer: PairedSsoPeer,
 ) -> Result<ResponderExit, String> {
-    let (_, keys) = wallet_account_holder::current_keys(&signing_host.wallet)
-        .map_err(|err| format!("signing host has no active local session: {err}"))?;
-    let root_public_key = keys
-        .root_public_key()
-        .map_err(|err| format!("root account derivation failed: {err}"))?;
-    let session = responder_session(&keys, peer)?;
+    let wallet_session = signing_host
+        .wallet
+        .current_session()
+        .ok_or_else(|| "signing host has no active local session".to_string())?;
+    let identity = wallet_account_holder::responder_identity(&signing_host.wallet, &wallet_session)
+        .map_err(|error| error.to_string())?;
+    let session = responder_session_from_identity(&identity, peer)?;
     serve_session(
         services,
         signing_host,
         session,
         SsoReplayScope {
-            root_public_key,
+            root_public_key: wallet_session.public_key,
             peer_statement_account_id: peer.statement_account_id,
             peer_encryption_public_key: peer.encryption_public_key,
         },
@@ -320,9 +323,13 @@ pub async fn disconnect_paired_host(
     signing_host: Arc<SigningHost>,
     peer: PairedSsoPeer,
 ) -> Result<(), String> {
-    let (_, keys) = wallet_account_holder::current_keys(&signing_host.wallet)
-        .map_err(|err| format!("signing host has no active local session: {err}"))?;
-    let session = responder_session(&keys, peer)?;
+    let wallet_session = signing_host
+        .wallet
+        .current_session()
+        .ok_or_else(|| "signing host has no active local session".to_string())?;
+    let identity = wallet_account_holder::responder_identity(&signing_host.wallet, &wallet_session)
+        .map_err(|error| error.to_string())?;
+    let session = responder_session_from_identity(&identity, peer)?;
     let message_id = sso_message_id();
     let message = RemoteMessage {
         message_id: message_id.clone(),
@@ -334,17 +341,12 @@ pub async fn disconnect_paired_host(
         vec![message],
         fresh_statement_expiry(),
     )?;
+    wallet_account_holder::require_current_session(&signing_host.wallet, &wallet_session)
+        .map_err(|error| error.to_string())?;
     services
         .statement_store
         .submit_sso(statement, "sso-responder disconnect")
         .await
-}
-
-fn responder_session(keys: &WalletKeys, peer: PairedSsoPeer) -> Result<SsoSessionInfo, String> {
-    let (identity, _) = keys
-        .responder_identity()
-        .map_err(|err| format!("responder identity derivation failed: {err}"))?;
-    responder_session_from_identity(&identity, peer)
 }
 
 fn responder_session_from_identity(
@@ -366,16 +368,24 @@ async fn submit_handshake_answer(
     response: &v2::EncryptedResponse,
     context: &'static str,
 ) -> Result<(), String> {
+    let statement = prepare_handshake_answer(session, peer, response)?;
+    services.statement_store.submit(statement, context).await
+}
+
+fn prepare_handshake_answer(
+    session: &SsoSessionInfo,
+    peer: PairedSsoPeer,
+    response: &v2::EncryptedResponse,
+) -> Result<Vec<u8>, String> {
     let handshake = encrypt_v2_handshake_response(peer.encryption_public_key, response)?;
     let topic = bootstrap_topic(peer.statement_account_id, peer.encryption_public_key);
-    let statement = build_signed_statement(
+    build_signed_statement(
         session,
         topic,
         topic,
         handshake.encode(),
         fresh_statement_expiry(),
-    )?;
-    services.statement_store.submit(statement, context).await
+    )
 }
 
 /// The identity and peer a pairing notice went out under.
@@ -404,13 +414,16 @@ pub async fn notify_pairing_allowance_allocation(
     deeplink: &str,
 ) -> Result<AnnouncedPairing, String> {
     let peer = PairedSsoPeer::from_deeplink(deeplink)?;
-    let (_, keys) = wallet_account_holder::current_keys(&signing_host.wallet)
-        .map_err(|err| format!("signing host has no active local session: {err}"))?;
-    let (identity, _) = keys
-        .responder_identity()
-        .map_err(|err| format!("responder identity derivation failed: {err}"))?;
+    let wallet_session = signing_host
+        .wallet
+        .current_session()
+        .ok_or_else(|| "signing host has no active local session".to_string())?;
+    let identity = wallet_account_holder::responder_identity(&signing_host.wallet, &wallet_session)
+        .map_err(|error| error.to_string())?;
     let session = responder_session_from_identity(&identity, peer)?;
 
+    wallet_account_holder::require_current_session(&signing_host.wallet, &wallet_session)
+        .map_err(|error| error.to_string())?;
     let pending = v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation);
     submit_handshake_answer(
         &services,
@@ -853,7 +866,6 @@ mod tests {
         derive_identity_keypair, derive_product_subtree_keypair, derive_root_keypair_from_entropy,
     };
     use crate::host_logic::sso::pairing::derive_x25519_keypair_from_entropy;
-    use crate::runtime::AccountHolder;
 
     /// The key a host advertises on chain must be the one it serves over
     /// pairing. These derive independently, so a test that asks only one of
@@ -863,9 +875,11 @@ mod tests {
         const CHAT_ENTROPY: [u8; 16] = [0xAB; 16];
         const SUFFIX: &str = "paseo";
 
-        let (_, served) = WalletKeys::new(CHAT_ENTROPY.to_vec(), SUFFIX.to_string())
-            .responder_identity()
-            .expect("responder identity derives");
+        let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
+        let session = signing_host.wallet.current_session().unwrap();
+        let served = wallet_account_holder::pairing_material(&signing_host.wallet, &session)
+            .unwrap()
+            .chat_private_key;
         let registration = crate::host_logic::attestation::build_lite_registration(
             &CHAT_ENTROPY,
             SUFFIX,
@@ -878,7 +892,7 @@ mod tests {
 
         assert_eq!(
             &registration.identifier_key[1..33],
-            &crate::host_logic::sso::pairing::x25519_public_key(served),
+            &crate::host_logic::sso::pairing::x25519_public_key(*served),
             "the advertised chat key is not the one served over pairing"
         );
     }
@@ -1070,19 +1084,20 @@ mod tests {
             .unwrap()
             .identity_account_id
             .unwrap();
-        let (identity, _) = WalletKeys::new(ENTROPY.to_vec(), NETWORK_SUFFIX.to_string())
-            .responder_identity()
-            .unwrap();
+        let identity = wallet_account_holder::responder_identity(
+            &signing_host.wallet,
+            &signing_host.wallet.current_session().unwrap(),
+        )
+        .unwrap();
         assert_eq!(identity.statement_public_key, local_identity);
         // The statement identity is the network's `uid.<suffix>` account, the
         // one the pairing host resolves a username for; a `.dot` account has
         // no lite record on a test network.
         assert_ne!(
-            WalletKeys::new(ENTROPY.to_vec(), "dot".to_string())
-                .responder_identity()
+            derive_identity_keypair(&ENTROPY, "dot")
                 .unwrap()
-                .0
-                .statement_public_key,
+                .public
+                .to_bytes(),
             local_identity
         );
 
@@ -1353,17 +1368,25 @@ mod tests {
             statement_account_id: [0x53; 32],
             encryption_public_key: x25519_public_key([0x64; 32]),
         };
-        let (identity, _) = WalletKeys::new(ENTROPY.to_vec(), NETWORK_SUFFIX.to_string())
-            .responder_identity()
-            .unwrap();
+        let statement = derive_identity_keypair(&ENTROPY, NETWORK_SUFFIX).unwrap();
+        let (encryption_secret_key, encryption_public_key) =
+            derive_x25519_keypair_from_entropy(&ENTROPY, b"sso");
+        let identity = ResponderIdentity {
+            statement_secret: statement.secret.to_bytes(),
+            statement_public_key: statement.public.to_bytes(),
+            encryption_secret_key,
+            encryption_public_key,
+        };
         let mut expected = establish_responder_session_info(
             &identity,
             peer.statement_account_id,
             peer.encryption_public_key,
         )
         .unwrap();
-        let resumed = responder_session(
-            &WalletKeys::new(ENTROPY.to_vec(), NETWORK_SUFFIX.to_string()),
+        let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
+        let selected = signing_host.wallet.current_session().unwrap();
+        let resumed = responder_session_from_identity(
+            &wallet_account_holder::responder_identity(&signing_host.wallet, &selected).unwrap(),
             peer,
         )
         .unwrap();

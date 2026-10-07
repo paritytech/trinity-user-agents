@@ -38,7 +38,7 @@ impl SigningHostSsoService {
     }
 
     /// The signing session captured before dispatching one request.
-    pub fn current_session(&self) -> Option<AuthoritySession> {
+    fn current_session(&self) -> Option<AuthoritySession> {
         self.signing_host.account_holder().current_session()
     }
 
