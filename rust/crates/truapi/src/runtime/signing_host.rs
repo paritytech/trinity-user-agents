@@ -276,53 +276,6 @@ impl SigningHost {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl SigningHost {
-    /// Record statement-store accounts to keep renewed across periods.
-    pub async fn track_statement_renewal_targets(
-        &self,
-        targets: Vec<StatementRenewalTarget>,
-    ) -> Result<(), String> {
-        self.wallet.track_statement_renewal_targets(targets).await
-    }
-
-    /// Every statement account the ledger currently tracks.
-    pub async fn statement_renewal_targets(
-        &self,
-    ) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
-        self.wallet.statement_renewal_targets().await
-    }
-
-    /// Root public key the active identity records its fixed entries under.
-    pub fn statement_renewal_owner_key(&self) -> Result<[u8; 32], String> {
-        self.wallet.statement_renewal_owner_key()
-    }
-
-    /// Stop renewing one fixed statement account.
-    pub async fn untrack_statement_renewal_account(
-        &self,
-        account_id: &[u8; 32],
-    ) -> Result<bool, String> {
-        self.wallet
-            .untrack_statement_renewal_account(account_id)
-            .await
-    }
-
-    /// Run one statement-store renewal pass over the tracked targets.
-    pub async fn renew_statement_allowances(
-        &self,
-    ) -> Result<crate::runtime::statement_allowance::renewal::StatementRenewalReport, String> {
-        self.wallet.renew_statement_allowances().await
-    }
-
-    /// The most recent pass the in-process loop ran.
-    ///
-    /// A direct call to [`Self::renew_statement_allowances`] returns its own
-    /// report, so only the loop needs somewhere to leave one.
-    pub fn last_statement_renewal_report(
-        &self,
-    ) -> Option<crate::runtime::statement_allowance::renewal::StatementRenewalReport> {
-        self.wallet.last_statement_renewal_report()
-    }
-
     /// Start the periodic statement-store renewal loop. Idempotent.
     pub fn start_statement_allowance_renewal(self: &Arc<Self>) {
         const CLOCK_FAILURE_TICK_DELAY: core::time::Duration =

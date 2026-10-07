@@ -1028,6 +1028,7 @@ impl SigningHostRuntime {
         targets: Vec<crate::runtime::StatementRenewalTarget>,
     ) -> Result<(), v01::GenericError> {
         self.signing_host
+            .account_holder()
             .track_statement_renewal_targets(targets)
             .await
             .map_err(|reason| v01::GenericError { reason })
@@ -1042,6 +1043,7 @@ impl SigningHostRuntime {
         &self,
     ) -> Result<Vec<crate::runtime::TrackedStatementRenewalTarget>, v01::GenericError> {
         self.signing_host
+            .account_holder()
             .statement_renewal_targets()
             .await
             .map_err(|reason| v01::GenericError { reason })
@@ -1056,6 +1058,7 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.statement_renewal_owner_key"))]
     pub fn statement_renewal_owner_key(&self) -> Result<truapi::Bytes32, v01::GenericError> {
         self.signing_host
+            .account_holder()
             .statement_renewal_owner_key()
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -1067,6 +1070,7 @@ impl SigningHostRuntime {
         account_id: &[u8; 32],
     ) -> Result<bool, v01::GenericError> {
         self.signing_host
+            .account_holder()
             .untrack_statement_renewal_account(account_id)
             .await
             .map_err(|reason| v01::GenericError { reason })
@@ -1082,6 +1086,7 @@ impl SigningHostRuntime {
     ) -> Result<crate::statement_allowance::renewal::StatementRenewalReport, v01::GenericError>
     {
         self.signing_host
+            .account_holder()
             .renew_statement_allowances()
             .await
             .map_err(|reason| v01::GenericError { reason })
@@ -1111,7 +1116,9 @@ impl SigningHostRuntime {
     pub fn last_statement_renewal_report(
         &self,
     ) -> Option<crate::statement_allowance::renewal::StatementRenewalReport> {
-        self.signing_host.last_statement_renewal_report()
+        self.signing_host
+            .account_holder()
+            .last_statement_renewal_report()
     }
 }
 
