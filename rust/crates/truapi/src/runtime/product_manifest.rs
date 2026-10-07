@@ -707,10 +707,13 @@ async fn root_manifest(
     platform: &dyn Platform,
     target: &str,
 ) -> Option<String> {
-    cached_record(services, platform, ManifestRecord::Root, target)
-        .await
-        .ok()
-        .flatten()
+    cached_dotns_json(platform, manifest_cache_key(target), || async {
+        fetch_root_manifest(&services.chain, asset_hub(services)?, target).await
+    })
+    .await
+    .inspect_err(|reason| warn!(%target, %reason, "root manifest lookup failed"))
+    .ok()
+    .flatten()
 }
 
 /// `product_id`'s Worker manifest, cached as [`root_manifest`] caches the root
@@ -722,8 +725,12 @@ pub async fn worker_manifest(
     platform: &dyn Platform,
     product_id: &str,
 ) -> Result<Option<WorkerManifest>, String> {
-    let Some(json) = cached_record(services, platform, ManifestRecord::Worker, product_id).await?
-    else {
+    let json = cached_dotns_json(platform, worker_manifest_cache_key(product_id), || async {
+        fetch_worker_manifest(&services.chain, asset_hub(services)?, product_id).await
+    })
+    .await
+    .inspect_err(|reason| warn!(%product_id, %reason, "worker manifest lookup failed"))?;
+    let Some(json) = json else {
         return Ok(None);
     };
     Ok(WorkerManifest::parse(&json)
@@ -739,31 +746,21 @@ pub fn worker_manifest_cache_key(product_id: &str) -> CoreStorageKey {
     }
 }
 
-/// Which manifest a product publishes.
-#[derive(Clone, Copy)]
-enum ManifestRecord {
-    /// The root manifest on the base name.
-    Root,
-    /// The Worker executable manifest on the worker subname.
-    Worker,
-}
-
-/// `target`'s `record`, from its cache entry when that is younger than
-/// [`MANIFEST_TTL_SECS`] and from dotNS otherwise.
+/// The JSON `fetch` reads from dotNS, from its entry under `key` when that is
+/// younger than [`MANIFEST_TTL_SECS`]. Whatever `fetch` answers, including
+/// that there is nothing published, is cached for that lifetime.
 ///
-/// A failed lookup is not cached. It says nothing about the product, only that
-/// the chain could not be read, and holding that for a day would turn one blip
-/// into a day of withdrawn grants or missing providers.
-async fn cached_record(
-    services: &RuntimeServices,
+/// A failed lookup is not cached. It says nothing about what is published,
+/// only that the chain could not be read, and holding that for a day would
+/// turn one blip into a day of withdrawn grants or missing providers.
+pub async fn cached_dotns_json<F>(
     platform: &dyn Platform,
-    record: ManifestRecord,
-    target: &str,
-) -> Result<Option<String>, String> {
-    let key = match record {
-        ManifestRecord::Root => manifest_cache_key(target),
-        ManifestRecord::Worker => worker_manifest_cache_key(target),
-    };
+    key: CoreStorageKey,
+    fetch: impl FnOnce() -> F,
+) -> Result<Option<String>, String>
+where
+    F: Future<Output = Result<Option<String>, String>>,
+{
     let now = current_unix_secs();
     // `fetched_at_secs <= now` is part of the freshness test, not an assumption.
     // Without it a `saturating_sub` on a future stamp yields 0, which is below
@@ -779,16 +776,7 @@ async fn cached_record(
         return Ok(cached.json);
     }
 
-    let genesis_hash = services
-        .asset_hub_chain_genesis_hash()
-        .ok_or_else(|| "the host has no Asset Hub to read dotNS from".to_string())?;
-    let fetched = match record {
-        ManifestRecord::Root => fetch_root_manifest(&services.chain, genesis_hash, target).await,
-        ManifestRecord::Worker => {
-            fetch_worker_manifest(&services.chain, genesis_hash, target).await
-        }
-    };
-    let json = fetched.inspect_err(|reason| warn!(%target, %reason, "manifest lookup failed"))?;
+    let json = fetch().await?;
     let _ = platform
         .write_core_storage(
             key,
@@ -800,4 +788,11 @@ async fn cached_record(
         )
         .await;
     Ok(json)
+}
+
+/// The Asset Hub dotNS is read from, or why there is none.
+fn asset_hub(services: &RuntimeServices) -> Result<[u8; 32], String> {
+    services
+        .asset_hub_chain_genesis_hash()
+        .ok_or_else(|| "the host has no Asset Hub to read dotNS from".to_string())
 }
