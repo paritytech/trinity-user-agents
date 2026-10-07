@@ -2766,12 +2766,12 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
             Some(SsoRequestOutcome::Ignored)
         );
         assert_eq!(
-            futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
-            SsoRequestOutcome::Ignored
-        );
-        assert_eq!(
             futures::executor::block_on(other_peer.handle_sso_request(request.clone())).unwrap(),
             response(Ok(public_key))
+        );
+        assert_eq!(
+            futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
+            SsoRequestOutcome::Ignored
         );
         assert_eq!(service.handle_sso_control(request.clone()).unwrap(), None);
         assert!(futures::executor::block_on(service.handle_sso_request(vec![0xff; 3])).is_err());

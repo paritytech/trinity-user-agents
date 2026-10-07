@@ -3489,7 +3489,7 @@ mod tests {
             let (host_config, mut product) = runtime_config("myapp.dot");
             product.execution_kind = crate::platform::ProductExecutionKind::Worker;
             let runtime = ProductRuntime::from_platform_with_config(
-                platform,
+                platform.clone(),
                 host_config,
                 product,
                 test_spawner(),
@@ -3503,6 +3503,13 @@ mod tests {
 
             if dispose {
                 runtime.dispose();
+                wait_until(
+                    || {
+                        *platform.ended_operations.lock().unwrap()
+                            == vec![("myapp.dot".to_string(), 1)]
+                    },
+                    "disposing the runtime must end its host operations while controls still exist",
+                );
             }
             drop(runtime);
             assert_eq!(
@@ -3512,44 +3519,6 @@ mod tests {
 
             drop(control);
             assert_eq!(services.worker_ledger.count("myapp.dot"), 0);
-        }
-    }
-
-    #[test]
-    fn dispose_ends_the_operations_the_host_is_still_holding() {
-        let platform = Arc::new(StubPlatform::default());
-        let sink = Arc::new(RecordingSink::default());
-        let (host_config, mut product) = runtime_config("myapp.dot");
-        product.execution_kind = crate::platform::ProductExecutionKind::Worker;
-        let runtime = ProductRuntime::from_platform_with_config(
-            platform.clone(),
-            host_config,
-            product,
-            test_spawner(),
-            sink,
-        );
-
-        begin_worker_operation(&runtime);
-
-        runtime.dispose();
-
-        // Teardown ends the operation off the disposing thread.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        loop {
-            let ended = platform
-                .ended_operations
-                .lock()
-                .expect("ended operations mutex poisoned")
-                .clone();
-            if ended == vec![("myapp.dot".to_string(), 1)] {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the host's own record of the operation is closed, not left to \
-                 accumulate; saw {ended:?}"
-            );
-            std::thread::yield_now();
         }
     }
 

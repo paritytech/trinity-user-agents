@@ -2176,113 +2176,53 @@ mod tests {
     }
 
     #[test]
-    fn auto_signing_grant_does_not_cross_root_identity_replacement() {
-        let platform = Arc::new(StubPlatform {
-            resource_allocation_confirmed: true,
-            sign_vrf_confirmed: false,
-            ..StubPlatform::default()
-        });
-        let (services, authority) = signing_runtime_with_platform(platform.clone());
-        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-            .expect("first activation succeeds");
-        let runtime = product_runtime(services, authority.clone());
-        futures::executor::block_on(ResourceAllocation::request(
-            &runtime,
-            &CallContext::default(),
-            HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
-                resources: vec![v01::AllocatableResource::AutoSigning],
-            }),
-        ))
-        .expect("AutoSigning allocation succeeds");
+    fn auto_signing_grant_does_not_survive_wallet_replacement() {
+        for disconnect in [false, true] {
+            let platform = Arc::new(StubPlatform {
+                resource_allocation_confirmed: true,
+                ..StubPlatform::default()
+            });
+            let (services, authority) = signing_runtime_with_platform(platform);
+            futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+                .unwrap();
+            auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
+            let product = ProductContext::new("myapp.dot".to_string()).unwrap();
+            assert!(
+                authority
+                    .accounts()
+                    .wallet_authorization(
+                        &authority.accounts().current_operation().unwrap(),
+                        &product
+                    )
+                    .unwrap()
+                    .is_some()
+            );
 
-        futures::executor::block_on(authority.activate_local_session([0xCD; 16].to_vec()))
-            .expect("replacement activation succeeds");
-        let replacement = authority
-            .account_holder()
-            .current_session()
-            .expect("replacement session");
-        let error = futures::executor::block_on(authority.account_holder().sign_vrf(
-            AccountInvocation {
-                call: &CallContext::default(),
-                session: &replacement,
-                caller: AccountCaller::Local {
-                    product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
-                },
-            },
-            vrf_request("myapp.dot"),
-        ))
-        .expect_err("replacement root must receive its own confirmation");
-        assert_eq!(error, AuthorityError::Rejected);
-        assert_eq!(
-            platform
-                .sign_vrf_reviews
-                .lock()
-                .expect("VRF signing review list mutex poisoned")
-                .len(),
-            1,
-        );
-    }
-
-    #[test]
-    fn auto_signing_grant_does_not_cross_disconnect_and_same_wallet_reactivation() {
-        let platform = Arc::new(StubPlatform {
-            resource_allocation_confirmed: true,
-            sign_vrf_confirmed: false,
-            ..StubPlatform::default()
-        });
-        let (services, authority) = signing_runtime_with_platform(platform.clone());
-        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-            .expect("first activation succeeds");
-        let runtime = product_runtime(services, authority.clone());
-        futures::executor::block_on(ResourceAllocation::request(
-            &runtime,
-            &CallContext::default(),
-            HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
-                resources: vec![v01::AllocatableResource::AutoSigning],
-            }),
-        ))
-        .expect("AutoSigning allocation succeeds");
-
-        futures::executor::block_on(authority.disconnect());
-        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-            .expect("same wallet reactivation succeeds");
-        let reactivated = authority
-            .account_holder()
-            .current_session()
-            .expect("reactivated session");
-        let error = futures::executor::block_on(authority.account_holder().sign_vrf(
-            AccountInvocation {
-                call: &CallContext::default(),
-                session: &reactivated,
-                caller: AccountCaller::Local {
-                    product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
-                },
-            },
-            vrf_request("myapp.dot"),
-        ))
-        .expect_err("reactivated wallet must receive its own confirmation");
-        assert_eq!(error, AuthorityError::Rejected);
-        assert_eq!(
-            platform
-                .sign_vrf_reviews
-                .lock()
-                .expect("VRF signing review list mutex poisoned")
-                .len(),
-            1,
-        );
+            let entropy = if disconnect {
+                futures::executor::block_on(authority.disconnect());
+                ENTROPY.to_vec()
+            } else {
+                vec![0xCD; 16]
+            };
+            futures::executor::block_on(authority.activate_local_session(entropy)).unwrap();
+            assert_eq!(
+                authority
+                    .accounts()
+                    .wallet_authorization(
+                        &authority.accounts().current_operation().unwrap(),
+                        &product
+                    )
+                    .map(|authorization| authorization.is_some()),
+                Ok(false),
+                "disconnect: {disconnect}",
+            );
+        }
     }
 
     #[test]
     fn stale_auto_signing_completion_cannot_grant_same_wallet_reactivation() {
-        let platform = Arc::new(StubPlatform {
-            sign_vrf_confirmed: false,
-            ..StubPlatform::default()
-        });
-        let (_services, authority) = signing_runtime_with_platform(platform.clone());
+        let (_services, authority) =
+            signing_runtime_with_platform(Arc::new(StubPlatform::default()));
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("first activation succeeds");
         let stale = authority
@@ -2307,29 +2247,18 @@ mod tests {
             },
         ))
         .expect_err("completion captured from the old activation is stale");
-        assert_eq!(error, AuthorityError::Disconnected);
-
-        let error = futures::executor::block_on(authority.account_holder().sign_vrf(
-            AccountInvocation {
-                call: &CallContext::default(),
-                session: &current,
-                caller: AccountCaller::Local {
-                    product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
-                },
-            },
-            vrf_request("myapp.dot"),
-        ))
-        .expect_err("stale allocation must not grant the replacement activation");
-        assert_eq!(error, AuthorityError::Rejected);
         assert_eq!(
-            platform
-                .sign_vrf_reviews
-                .lock()
-                .expect("VRF signing review list mutex poisoned")
-                .len(),
-            1,
+            (
+                error,
+                authority
+                    .accounts()
+                    .wallet_authorization(
+                        &authority.accounts().current_operation().unwrap(),
+                        &ProductContext::new("myapp.dot".to_string()).unwrap(),
+                    )
+                    .map(|authorization| authorization.is_some()),
+            ),
+            (AuthorityError::Disconnected, Ok(false)),
         );
     }
 
@@ -2337,7 +2266,6 @@ mod tests {
     fn auto_signing_grant_does_not_cross_runtime_instance() {
         let platform = Arc::new(StubPlatform {
             resource_allocation_confirmed: true,
-            sign_vrf_confirmed: false,
             ..StubPlatform::default()
         });
         let (services, granting_authority) = signing_runtime_with_platform(platform.clone());
@@ -2353,7 +2281,7 @@ mod tests {
         ))
         .expect("AutoSigning allocation succeeds");
 
-        let (_replacement_services, replacement) = signing_runtime_with_platform(platform.clone());
+        let (_replacement_services, replacement) = signing_runtime_with_platform(platform);
         futures::executor::block_on(replacement.activate_local_session(ENTROPY.to_vec()))
             .expect("replacement runtime activates with the same root");
         let authorization = granting_authority
@@ -2371,30 +2299,18 @@ mod tests {
             "myapp.dot",
             authorization,
         );
-        let session = replacement
-            .account_holder()
-            .current_session()
-            .expect("replacement session");
-        let error = futures::executor::block_on(replacement.account_holder().sign_vrf(
-            AccountInvocation {
-                call: &CallContext::default(),
-                session: &session,
-                caller: AccountCaller::Local {
-                    product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
-                },
-            },
-            vrf_request("myapp.dot"),
-        ))
-        .expect_err("a separate runtime must receive its own confirmation");
         assert_eq!(
             (
                 retained,
-                error,
-                platform.sign_vrf_reviews.lock().unwrap().len()
+                replacement
+                    .accounts()
+                    .wallet_authorization(
+                        &replacement.accounts().current_operation().unwrap(),
+                        &ProductContext::new("myapp.dot".to_string()).unwrap(),
+                    )
+                    .map(|authorization| authorization.is_some()),
             ),
-            (Err(AuthorityError::Rejected), AuthorityError::Rejected, 1),
+            (Err(AuthorityError::Rejected), Ok(false)),
         );
     }
 
