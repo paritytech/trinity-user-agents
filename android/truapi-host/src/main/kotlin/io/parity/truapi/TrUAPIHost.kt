@@ -89,6 +89,9 @@ import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import uniffi.truapi.NativeContactsCallbacks
+import uniffi.truapi.HostScan
+import uniffi.truapi.HostScannerScanRequest
+import uniffi.truapi.NativeScannerCallbacks
 
 /** Package metadata. */
 object TrUAPIHost {
@@ -671,6 +674,24 @@ private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : 
         withHostRejection { bridge.pickContact(productId) }
 }
 
+/**
+ * Draws the host's viewfinder when a product scans a code.
+ *
+ * Title the viewfinder with [productId] and show `request.hint` under it as the
+ * product's words. Hand every code the camera reads to a `ScanFilter` built from
+ * [request] and act on its verdict. Never follow a scanned link. Close the
+ * viewfinder when the coroutine is cancelled.
+ */
+interface ScannerHostBridge {
+    @Throws(HostRejection::class)
+    suspend fun scanCode(productId: String, request: HostScannerScanRequest): HostScan
+}
+
+private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : NativeScannerCallbacks {
+    override suspend fun scanCode(productId: String, request: HostScannerScanRequest): HostScan =
+        withHostRejection { bridge.scanCode(productId, request) }
+}
+
 private class PocketCallbackAdapter(private val bridge: PocketHostBridge) : NativePocketCallbacks {
     override fun listCards(): List<PocketCard> = withHostRejection { bridge.listCards() }
 
@@ -730,6 +751,22 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         val adapter = ContactsCallbackAdapter(contacts)
         contactsRetainer = adapter
         return inner.setContactsCallbacks(adapter)
+    }
+
+    // Co-owns the scanner adapter for as long as the runtime holds it.
+    private var scannerRetainer: NativeScannerCallbacks? = null
+
+    /**
+     * Install the host's scanner, which draws the viewfinder.
+     *
+     * Set-once, so the viewfinder cannot change hands under a running product.
+     * Returns whether this call installed it. Call it before opening any
+     * product execution.
+     */
+    fun setScanner(scanner: ScannerHostBridge): Boolean {
+        val adapter = ScannerCallbackAdapter(scanner)
+        scannerRetainer = adapter
+        return inner.setScannerCallbacks(adapter)
     }
 
     /**

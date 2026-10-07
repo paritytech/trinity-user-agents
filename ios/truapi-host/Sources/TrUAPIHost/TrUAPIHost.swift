@@ -303,6 +303,18 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
     func pickContact(productId: String) async throws -> HostContactPick
 }
 
+/// Draws the host's viewfinder when a product scans a code. Installed once on
+/// ``TrUAPIHostRuntime/setScanner(_:)``. A runtime without one answers
+/// `scanner.scan` with `Unsupported`.
+///
+/// Title the viewfinder with `productId` and show `request.hint` under it as
+/// the product's words. Hand every code the camera reads to a `ScanFilter`
+/// built from `request` and act on its verdict. Never follow a scanned link.
+/// Close the viewfinder when the task is cancelled.
+public protocol ScannerHostBridge: AnyObject, Sendable {
+    func scanCode(productId: String, request: HostScannerScanRequest) async throws -> HostScan
+}
+
 public extension HostBridge {
     /// Default no-op logger. Override to plumb into your logging framework.
     func onCoreLog(marker: String, detail: String) {}
@@ -452,6 +464,22 @@ private final class ContactsCallbackAdapter: NativeContactsCallbacks, @unchecked
 
     func pickContact(productId: String) async throws -> HostContactPick {
         try await withHostRejection { try await bridge.pickContact(productId: productId) }
+    }
+}
+
+/// Adapter that bridges the public `ScannerHostBridge` to the generated UniFFI
+/// `NativeScannerCallbacks` protocol.
+private final class ScannerCallbackAdapter: NativeScannerCallbacks, @unchecked Sendable {
+    private let bridge: ScannerHostBridge
+
+    init(bridge: ScannerHostBridge) {
+        self.bridge = bridge
+    }
+
+    func scanCode(productId: String, request: HostScannerScanRequest) async throws -> HostScan {
+        try await withHostRejection {
+            try await bridge.scanCode(productId: productId, request: request)
+        }
     }
 }
 
@@ -678,6 +706,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private let notificationCenter: NotificationCenter
     private let foregroundObserver: NSObjectProtocol
     private var contactsRetainer: NativeContactsCallbacks?
+    private var scannerRetainer: NativeScannerCallbacks?
 
     public convenience init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
         try self.init(bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default)
@@ -724,6 +753,18 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         let adapter = ContactsCallbackAdapter(bridge: contacts)
         contactsRetainer = adapter
         return inner.setContactsCallbacks(callbacks: adapter)
+    }
+
+    /// Install the host's scanner, which draws the viewfinder.
+    ///
+    /// Set-once, so the viewfinder cannot change hands under a running product.
+    /// Answers whether this call installed it. Call it before opening any
+    /// product execution.
+    @discardableResult
+    public func setScanner(_ scanner: ScannerHostBridge) -> Bool {
+        let adapter = ScannerCallbackAdapter(bridge: scanner)
+        scannerRetainer = adapter
+        return inner.setScannerCallbacks(callbacks: adapter)
     }
 
     /// Tell the core the host's contacts changed. Call it whenever a contact

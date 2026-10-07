@@ -26,7 +26,7 @@ use crate::{PairedSsoPeer, ResponderExit, SigningHostRuntime};
 
 use super::callbacks::{
     HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
-    NativePocketCallbacks,
+    NativePocketCallbacks, NativeScannerCallbacks,
 };
 use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -37,7 +37,7 @@ use super::executor::shared_native_executor;
 use super::events::NativeEventBus;
 use super::platform::{
     CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, GameCallbackPlatform,
-    PocketCallbackPlatform,
+    PocketCallbackPlatform, ScannerCallbackPlatform,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
@@ -274,6 +274,17 @@ impl NativeTrUApiHostRuntime {
             .set_contacts_platform(Arc::new(ContactsCallbackPlatform {
                 contacts: callbacks,
             }))
+    }
+
+    /// Install the host's scanner, which draws the viewfinder.
+    ///
+    /// Set-once, so the viewfinder cannot change hands under a running
+    /// product. Answers whether this call installed it. Call it before opening
+    /// any product execution; a runtime without one answers `scanner.scan`
+    /// with `Unsupported`.
+    pub fn set_scanner_callbacks(&self, callbacks: Arc<dyn NativeScannerCallbacks>) -> bool {
+        self.runtime
+            .set_scanner_platform(Arc::new(ScannerCallbackPlatform { scanner: callbacks }))
     }
 
     /// Tell the core the host's contacts changed. Call it whenever a contact

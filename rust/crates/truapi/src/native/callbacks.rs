@@ -325,3 +325,23 @@ pub trait NativeContactsCallbacks: Send + Sync {
         product_id: String,
     ) -> Result<crate::platform::HostContactPick, HostRejection>;
 }
+
+/// Native scanner adapter. A host that can draw a viewfinder passes an
+/// implementation to [`NativeTrUApiHostRuntime::set_scanner_callbacks`]; one
+/// without leaves `scanner.scan` answering `Unsupported`.
+///
+/// Title the viewfinder with `product_id` and show `request.hint` under it as
+/// the product's words. Hand every code the camera reads to a
+/// [`crate::host_logic::scanner::ScanFilter`] built from `request`, and never
+/// follow a scanned link. Dropping the returned future cancels the foreign
+/// task; close the viewfinder when that happens.
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeScannerCallbacks: Send + Sync {
+    /// Open the viewfinder on behalf of `product_id` and report how it ended.
+    async fn scan_code(
+        &self,
+        product_id: String,
+        request: truapi::latest::HostScannerScanRequest,
+    ) -> Result<crate::platform::HostScan, HostRejection>;
+}
