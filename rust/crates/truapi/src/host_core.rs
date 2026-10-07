@@ -827,12 +827,29 @@ impl SigningHostRuntime {
             })
     }
 
-    /// Cancel open funding session `intent`. Returns whether it was still
-    /// open.
+    /// Cancel funding session `intent` at the user's request: it ends if no
+    /// provider serves it, otherwise its provider is asked to stop. Returns
+    /// whether the cancel was taken.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.cancel_funding"))]
     pub async fn cancel_funding(&self, intent: &str) -> Result<bool, v01::GenericError> {
         self.services
             .cancel_funding(intent)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
+    /// Hand open funding session `intent` to the provider the user chose,
+    /// by product id. Returns whether it was open and not yet assigned.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.select_funding_provider"))]
+    pub async fn select_funding_provider(
+        &self,
+        intent: &str,
+        provider_id: &str,
+    ) -> Result<bool, v01::GenericError> {
+        self.services
+            .select_funding_provider(intent, provider_id)
             .await
             .map_err(|err| v01::GenericError {
                 reason: err.to_string(),

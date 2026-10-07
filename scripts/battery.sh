@@ -255,20 +255,37 @@ pocket_phase() {
 
 funding_phase() {
   local log="$LOG_DIR/funding-host-cli.log"
-  echo "battery: funding phase (host transcript $LOG_DIR/funding-host-transcript.jsonl)"
+  echo "battery: funding phase (host transcripts $LOG_DIR/funding-host-transcript*.jsonl)"
   # Overlay requests and session changes as the host saw them. The cases read
   # it so a pass cannot rest on the product's word alone.
   export TRUAPI_FUNDING_LOG="$ROOT/$LOG_DIR/funding-host-transcript.jsonl"
-  # One outcome per request the cases make, in order; see funding-e2e.ts.
-  export TRUAPI_FUNDING_OUTCOMES="deliver:900,release:500,fail,dismiss"
+  # One outcome per request the cases make, in order; see funding-e2e.ts and
+  # funding-provider-e2e.ts.
+  export TRUAPI_FUNDING_OUTCOMES="deliver:900,release:500,fail,dismiss,provide,provide,provide-cancel"
+  # The scripted top-up and payment engines' record, kept across the restart.
+  export TRUAPI_FUNDING_LEDGER="$ROOT/$LOG_DIR/funding-host-ledger.jsonl"
+  export TRUAPI_FUNDING_STATE="$ROOT/$LOG_DIR/funding-battery-state.json"
+  rm -f "$TRUAPI_FUNDING_LOG" "$TRUAPI_FUNDING_LEDGER" "$TRUAPI_FUNDING_STATE"
+  # Run as a Worker, so the script can also serve the sessions it asks for as
+  # the provider; then once more on the same storage, as a restarted host.
+  local rc=0
+  funding_run start "$log" || rc=$?
+  [ "$rc" = 0 ] || return "$rc"
+  export TRUAPI_FUNDING_LOG="$ROOT/$LOG_DIR/funding-host-transcript-resumed.jsonl"
   rm -f "$TRUAPI_FUNDING_LOG"
-  "$HOST" signing-host \
+  funding_run resume "$LOG_DIR/funding-host-cli-resumed.log"
+}
+
+funding_run() {
+  local stage="$1" log="$2"
+  TRUAPI_FUNDING_STAGE="$stage" "$HOST" signing-host \
     --product-id "$PRODUCT_ID" \
+    --execution-kind worker \
     --script "$FUNDING_SCRIPT" \
     --auto-accept \
     ${HOST_ARGS[@]+"${HOST_ARGS[@]}"} > >(tee "$log") 2>&1 &
   local host_pid=$! rc=0
-  start_watchdog "$host_pid" "funding phase"
+  start_watchdog "$host_pid" "funding phase ($stage)"
   wait "$host_pid" || rc=$?
   stop_watchdog
   return "$rc"

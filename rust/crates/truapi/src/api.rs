@@ -7,6 +7,7 @@ pub mod coin_payment;
 pub mod contacts;
 pub mod entropy;
 pub mod funding;
+pub mod funding_provider;
 pub mod game;
 pub mod local_storage;
 pub mod locale;
@@ -30,6 +31,7 @@ pub use coin_payment::CoinPayment;
 pub use contacts::Contacts;
 pub use entropy::Entropy;
 pub use funding::Funding;
+pub use funding_provider::FundingProvider;
 pub use game::Game;
 pub use local_storage::LocalStorage;
 pub use locale::Locale;
@@ -56,6 +58,7 @@ pub trait TrUApi:
     + Entropy
     + Funding
     + Game
+    + FundingProvider
     + LocalStorage
     + Locale
     + Notifications
@@ -84,6 +87,7 @@ impl<T> TrUApi for T where
         + Entropy
         + Funding
         + Game
+        + FundingProvider
         + LocalStorage
         + Locale
         + Notifications

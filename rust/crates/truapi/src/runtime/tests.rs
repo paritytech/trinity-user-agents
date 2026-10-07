@@ -2604,6 +2604,15 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
         Ok(self.outcome)
     }
 
+    async fn present_provider_frame(
+        &self,
+        _provider: &ProductContext,
+        _intent: String,
+        _route: String,
+    ) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
+        Ok(truapi::latest::FundingFrameOutcome::Closed)
+    }
+
     fn funding_session_changed(
         &self,
         intent: String,
@@ -8095,6 +8104,168 @@ fn payment_host(services: &Arc<RuntimeServices>, product_id: &str, with_session:
         install_pairing_session(&host, session_info());
     }
     host
+}
+
+fn funding_services_over(platform: Arc<dyn Platform>) -> Arc<RuntimeServices> {
+    let (host_config, _) = runtime_config("funding.dot");
+    RuntimeServices::new(
+        platform,
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+    )
+}
+
+/// A provider's worker connection, signed in.
+fn provider_worker(services: &Arc<RuntimeServices>, provider_id: &str) -> ProductRuntimeHost {
+    let (host_config, _) = runtime_config(provider_id);
+    let product = ProductContext::new_with_execution(
+        provider_id.to_string(),
+        crate::platform::ProductExecutionKind::Worker,
+    )
+    .expect("test provider context is valid");
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let host = ProductRuntimeHost::from_services(
+        services.clone(),
+        crate::host_core::ConnectionAdapters::from_services(services),
+        pairing_host,
+        product,
+    );
+    install_pairing_session(&host, session_info());
+    host
+}
+
+fn first_served(
+    host: &ProductRuntimeHost,
+) -> Option<Result<v01::HostFundingServeSubscribeItem, CallError<truapi::versioned::funding_provider::HostFundingServeSubscribeError>>> {
+    futures::executor::block_on(
+        futures::executor::block_on(truapi::api::FundingProvider::serve_subscribe(
+            host,
+            &CallContext::default(),
+            truapi::versioned::funding_provider::HostFundingServeSubscribeRequest::V1,
+        ))
+        .next(),
+    )
+    .map(|item| item.map(|truapi::versioned::funding_provider::HostFundingServeSubscribeItem::V1(item)| item))
+}
+
+fn report_funding(
+    host: &ProductRuntimeHost,
+    intent: &str,
+    update: v01::FundingUpdate,
+) -> Result<(), CallError<truapi::versioned::funding_provider::HostFundingReportError>> {
+    futures::executor::block_on(truapi::api::FundingProvider::report(
+        host,
+        &CallContext::default(),
+        truapi::versioned::funding_provider::HostFundingReportRequest::V1(
+            v01::HostFundingReportRequest {
+                intent: intent.to_string(),
+                update,
+            },
+        ),
+    ))
+    .map(|_| ())
+}
+
+fn wait_for_stage(
+    services: &RuntimeServices,
+    intent: &str,
+) -> Option<v01::HostFundingStatusSubscribeItem> {
+    for _ in 0..200 {
+        let session = services.funding().get(intent)?;
+        if session.is_terminal() {
+            return Some(session.wire_item());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    None
+}
+
+// The provider's worker takes a session from assignment to delivered, and a
+// restart in between loses nothing: the restarted worker is handed the
+// session again with its last update, and the host still decides delivery
+// from the claim of the top-up the provider named.
+#[test]
+fn a_provider_worker_delivers_a_session_across_a_restart() {
+    let storage = stub_platform();
+    let start = |storage: &Arc<crate::test_support::StubPlatform>| {
+        let services = funding_services_over(storage.clone());
+        assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+            crate::platform::FundingPresentOutcome::Started,
+        )));
+        assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+        services.resume_funding();
+        services
+    };
+    let before = start(&storage);
+    let intent = futures::executor::block_on(before.open_funding(
+        None,
+        v01::FundingDirection::In,
+        Some(1_000),
+    ))
+    .expect("opened")
+    .intent;
+    assert!(futures::executor::block_on(before.select_funding_provider(&intent, "ramp.dot")).expect("selected"));
+    let worker = provider_worker(&before, "ramp.dot");
+    let assigned = first_served(&worker);
+    let crediting = v01::FundingUpdate::Crediting { top_up_id: [7; 32], amount: 1_000 };
+    report_funding(&worker, &intent, v01::FundingUpdate::Converting).expect("converting");
+    report_funding(&worker, &intent, crediting.clone()).expect("crediting");
+
+    let after = start(&storage);
+    let restarted = provider_worker(&after, "ramp.dot");
+    let replayed = first_served(&restarted);
+    report_funding(&restarted, &intent, v01::FundingUpdate::Delivered).expect("delivered");
+
+    let assignment = |last_update| {
+        Some(Ok(v01::HostFundingServeSubscribeItem::Assigned {
+            session: v01::FundingAssignment {
+                intent: intent.clone(),
+                direction: v01::FundingDirection::In,
+                amount: Some(1_000),
+                expires_at: after.funding().get(&intent).expect("kept").deadline_ms,
+                last_update,
+            },
+        }))
+    };
+    assert_eq!(
+        (assigned, replayed, wait_for_stage(&after, &intent)),
+        (
+            assignment(None),
+            assignment(Some(crediting)),
+            Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1_000 }),
+        )
+    );
+}
+
+// Only the assigned provider's worker may serve or report on a session.
+#[test]
+fn only_the_assigned_provider_worker_reports() {
+    let services = funding_services();
+    assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+        crate::platform::FundingPresentOutcome::Started,
+    )));
+    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, None))
+        .expect("opened")
+        .intent;
+    assert!(futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot")).expect("selected"));
+    let app = funding_host(&services, "ramp.dot", true);
+    let other = provider_worker(&services, "other.dot");
+
+    assert!(matches!(
+        (
+            report_funding(&app, &intent, v01::FundingUpdate::AwaitingPayment),
+            report_funding(&other, &intent, v01::FundingUpdate::AwaitingPayment),
+        ),
+        (
+            Err(CallError::Denied),
+            Err(CallError::Domain(truapi::versioned::funding_provider::HostFundingReportError::V1(
+                v01::HostFundingReportError::NotFound
+            ))),
+        )
+    ));
 }
 
 #[derive(Default)]

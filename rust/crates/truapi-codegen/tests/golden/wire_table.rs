@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "43d42b028db6fb7f";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "7bdda5ea47dde1c3";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -560,6 +560,36 @@ pub const GAME_CANCEL_NEXT_GAME: MethodIds = MethodIds {
     method_id: 1,
 };
 
+/// Wire discriminants for `funding_request`.
+pub const FUNDING_REQUEST: MethodIds = MethodIds {
+    trait_id: 22,
+    method_id: 0,
+};
+
+/// Wire discriminants for `funding_status_subscribe`.
+pub const FUNDING_STATUS_SUBSCRIBE: MethodIds = MethodIds {
+    trait_id: 22,
+    method_id: 1,
+};
+
+/// Wire discriminants for `funding_provider_serve_subscribe`.
+pub const FUNDING_PROVIDER_SERVE_SUBSCRIBE: MethodIds = MethodIds {
+    trait_id: 23,
+    method_id: 0,
+};
+
+/// Wire discriminants for `funding_provider_report`.
+pub const FUNDING_PROVIDER_REPORT: MethodIds = MethodIds {
+    trait_id: 23,
+    method_id: 1,
+};
+
+/// Wire discriminants for `funding_provider_present_frame`.
+pub const FUNDING_PROVIDER_PRESENT_FRAME: MethodIds = MethodIds {
+    trait_id: 23,
+    method_id: 2,
+};
+
 /// The full wire table. Trait ids and per-trait method ordering are
 /// part of the wire protocol; only ever append within a trait.
 /// Removed methods leave their slot empty.
@@ -907,5 +937,25 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "game_cancel_next_game",
         kind: WireKind::Request(GAME_CANCEL_NEXT_GAME),
+    },
+    WireEntry {
+        method: "funding_request",
+        kind: WireKind::Request(FUNDING_REQUEST),
+    },
+    WireEntry {
+        method: "funding_status_subscribe",
+        kind: WireKind::Subscription(FUNDING_STATUS_SUBSCRIBE),
+    },
+    WireEntry {
+        method: "funding_provider_serve_subscribe",
+        kind: WireKind::Subscription(FUNDING_PROVIDER_SERVE_SUBSCRIBE),
+    },
+    WireEntry {
+        method: "funding_provider_report",
+        kind: WireKind::Request(FUNDING_PROVIDER_REPORT),
+    },
+    WireEntry {
+        method: "funding_provider_present_frame",
+        kind: WireKind::Request(FUNDING_PROVIDER_PRESENT_FRAME),
     },
 ];
