@@ -1,9 +1,10 @@
 use super::*;
 use crate::platform::HostInfo;
-use crate::runtime::RuntimeServices;
+use crate::runtime::{AccountHolder, RuntimeServices};
 use crate::test_support::{StubPlatform, test_spawner};
 use truapi::latest::HostPlatform;
 
+use crate::runtime::signing_host::wallet_account_holder;
 fn wallet(suffix: &str) -> WalletAccountHolder {
     let services = RuntimeServices::new(
         Arc::new(StubPlatform::default()),
@@ -20,7 +21,10 @@ fn wallet(suffix: &str) -> WalletAccountHolder {
     );
     let registry = crate::runtime::RingVrfRegistryStore::new(services.platform.clone());
     let wallet = WalletAccountHolder::new(services, suffix.to_string(), registry);
-    wallet.install(wallet.prepare_activation(vec![7; 32], None).unwrap());
+    wallet_account_holder::install(
+        &wallet,
+        wallet_account_holder::prepare_activation(&wallet, vec![7; 32], None).unwrap(),
+    );
     wallet
 }
 
@@ -111,7 +115,10 @@ fn wallet_replacement_during_revision_read_prevents_allowance_submission() {
     );
     futures::pin_mut!(registration);
     assert!(registration.as_mut().now_or_never().is_none());
-    wallet.install(wallet.prepare_activation(vec![7; 32], None).unwrap());
+    wallet_account_holder::install(
+        &wallet,
+        wallet_account_holder::prepare_activation(&wallet, vec![7; 32], None).unwrap(),
+    );
     release.send(()).unwrap();
     let result = futures::executor::block_on(registration)
         .map(|_| ())
@@ -156,7 +163,7 @@ fn wallet_lock_after_a_full_pgas_batch_prevents_the_next_batch() {
     );
     futures::pin_mut!(scan);
     assert!(scan.as_mut().now_or_never().is_none());
-    wallet.clear();
+    wallet_account_holder::clear(&wallet);
     release.send(()).unwrap();
     let result = futures::executor::block_on(scan)
         .map_err(|error| AllowanceAllocationError::from(error).into_authority_error());
@@ -241,7 +248,10 @@ fn wallet_replacement_after_the_first_renewal_submission_stops_the_pass() {
     let renewal = renew_targets(&context, 7, &targets, &lock);
     futures::pin_mut!(renewal);
     assert!(renewal.as_mut().now_or_never().is_none());
-    wallet.install(wallet.prepare_activation(vec![8; 32], None).unwrap());
+    wallet_account_holder::install(
+        &wallet,
+        wallet_account_holder::prepare_activation(&wallet, vec![8; 32], None).unwrap(),
+    );
     release.send(()).unwrap();
     let result = futures::executor::block_on(renewal)
         .map_err(|error| AllowanceAllocationError::from(error).into_authority_error());

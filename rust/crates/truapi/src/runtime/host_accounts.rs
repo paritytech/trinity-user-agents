@@ -43,6 +43,8 @@ pub struct HostAccounts<H: AccountHolder> {
     ring_vrf_registry: Arc<RingVrfRegistryStore>,
     #[cfg(feature = "test-host")]
     resource_controls: Arc<super::test_resource_controls::TestResourceControls>,
+    #[cfg(feature = "test-host")]
+    submit_preimages_locally: core::sync::atomic::AtomicBool,
 }
 
 impl<H: AccountHolder> HostAccounts<H> {
@@ -66,7 +68,25 @@ impl<H: AccountHolder> HostAccounts<H> {
             ring_vrf_registry,
             #[cfg(feature = "test-host")]
             resource_controls,
+            #[cfg(feature = "test-host")]
+            submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// Keep test submissions in memory when no on-chain allowance exists.
+    #[cfg(feature = "test-host")]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.submit_preimages_locally
+            .store(local, core::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Unchecked allowances cannot authorize a real Bulletin submission.
+    #[cfg(feature = "test-host")]
+    pub fn submits_preimages_locally(&self) -> bool {
+        self.resource_controls.grants_allowances_unchecked()
+            || self
+                .submit_preimages_locally
+                .load(core::sync::atomic::Ordering::Relaxed)
     }
 
     /// Selected account holder identity.

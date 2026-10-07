@@ -68,24 +68,15 @@ fn withholding_nothing_leaves_every_resource_granted() {
     assert_eq!(
         (
             allocate(&runtime, vec![v01::AllocatableResource::AutoSigning]),
-            activation.account_holder().auto_signing_status(
-                &activation.account_holder().current_session().unwrap(),
-                "myapp.dot",
-                &product_account(0),
-                activation
-                    .accounts()
-                    .wallet_authorization(
-                        &activation.accounts().current_operation().unwrap(),
-                        &ProductContext::new("myapp.dot".to_string()).unwrap()
-                    )
-                    .unwrap()
-                    .as_ref()
-            ),
+            activation
+                .accounts()
+                .wallet_authorization(
+                    &activation.accounts().current_operation().unwrap(),
+                    &ProductContext::new("myapp.dot".to_string()).unwrap()
+                )
+                .map(|authorization| authorization.is_some()),
         ),
-        (
-            vec![v01::AllocationOutcome::Allocated],
-            Ok(crate::runtime::authority::AutoSigningGrant::Absent)
-        ),
+        (vec![v01::AllocationOutcome::Allocated], Ok(false)),
     );
 }
 

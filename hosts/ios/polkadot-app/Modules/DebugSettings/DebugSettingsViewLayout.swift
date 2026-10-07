@@ -76,6 +76,16 @@ final class DebugSettingsViewLayout: UIView {
             button.applyMainStyle()
             button.imageWithTitleView?.title = "Open TrUAPI Playground"
         }
+
+        let pocketFacePreviewButton: RoundedButton = .create { button in
+            button.applyMainStyle()
+            button.imageWithTitleView?.title = "Pocket Face Preview"
+        }
+
+        let pocketCardsButton: RoundedButton = .create { button in
+            button.applyMainStyle()
+            button.imageWithTitleView?.title = "Pocket Cards"
+        }
     #endif
 
     let truApiRuntimeSwitch = UISwitch()
@@ -169,7 +179,7 @@ final class DebugSettingsViewLayout: UIView {
         ]
 
         #if DEBUG
-            rows.append(openTrUAPIPlaygroundButton)
+            rows.append(contentsOf: [openTrUAPIPlaygroundButton, pocketFacePreviewButton, pocketCardsButton])
         #endif
 
         rows.append(contentsOf: [strategyDebugRow, truApiRuntimeRow, hostPlacedRow])

@@ -804,6 +804,114 @@
         }
       }
     },
+    "pocket.add.card.confirm": {
+      "comment": "Button that adds the offered card to the Pocket.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add"
+          }
+        }
+      }
+    },
+    "pocket.add.card.failed": {
+      "comment": "Shown when adding an approved card did not succeed.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not add the card"
+          }
+        }
+      }
+    },
+    "pocket.add.card.title": {
+      "comment": "Title of the sheet asking the user to approve a product's card.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add to Pocket"
+          }
+        }
+      }
+    },
+    "pocket.card.remove": {
+      "comment": "Button that removes a product card the user added.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove from Pocket"
+          }
+        }
+      }
+    },
+    "pocket.card.remove.confirm.message": {
+      "comment": "Body of the prompt asking to confirm removing a card.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The product that placed it can offer it again later."
+          }
+        }
+      }
+    },
+    "pocket.card.remove.confirm.title": {
+      "comment": "Title of the prompt asking to confirm removing a card.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove this card?"
+          }
+        }
+      }
+    },
+    "pocket.deeplink.malformed": {
+      "comment": "Shown for a link under the reserved host target that is not a Pocket link.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This Pocket link is not valid"
+          }
+        }
+      }
+    },
+    "pocket.deeplink.no.pocket": {
+      "comment": "Shown when a Pocket link names a product that publishes none.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This product has no Pocket cards"
+          }
+        }
+      }
+    },
+    "pocket.deeplink.unknown.card": {
+      "comment": "Shown when a Pocket link names a card the product does not publish.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This product has no such card"
+          }
+        }
+      }
+    },
     "product.browser.accessibility.minimize": {
       "extractionState": "manual",
       "localizations": {

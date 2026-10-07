@@ -174,7 +174,13 @@ enum MainTabBarViewFactory {
             moduleNavigator: moduleNavigator
         )
         #if FEATURE_PRODUCTS
+            // The Pocket handler goes first: it owns the reserved `-` target,
+            // which the SPA handler would otherwise open as a product page.
             let productHandlers: [URLHandlingServiceProtocol] = [
+                PocketOpenService.makeDefault(
+                    flowState: flowState.flowState,
+                    moduleNavigator: moduleNavigator
+                ),
                 ProductSPAOpenService(
                     moduleNavigator: moduleNavigator,
                     hostProvider: hostProvider

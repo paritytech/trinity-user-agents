@@ -44,9 +44,7 @@ impl SsoAccountHolderService {
 
     /// Require the activation that authenticated this peer.
     pub fn require_current_session(&self) -> Result<(), AuthorityError> {
-        self.wallet
-            .require_current_session(&self.session)
-            .map(|_| ())
+        self.wallet.require_current_session(&self.session)
     }
 
     /// Withdrawals shared with this peer's transport reader.

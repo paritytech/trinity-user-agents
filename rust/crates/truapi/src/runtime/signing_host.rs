@@ -11,6 +11,20 @@ mod sso_replay;
 mod sso_responder;
 mod wallet_account_holder;
 
+pub use wallet_account_holder::{
+    derive_subtree_public_key as wallet_derive_subtree_public_key,
+    require_sso_identity as wallet_require_sso_identity,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use wallet_account_holder::{
+    last_statement_renewal_report as wallet_last_statement_renewal_report,
+    renew_statement_allowances as wallet_renew_statement_allowances,
+    statement_renewal_owner_key as wallet_statement_renewal_owner_key,
+    statement_renewal_targets as wallet_statement_renewal_targets,
+    track_statement_renewal_targets as wallet_track_statement_renewal_targets,
+    untrack_statement_renewal_account as wallet_untrack_statement_renewal_account,
+};
+
 use std::sync::Arc;
 
 pub use local_activation::LocalActivation;
@@ -31,7 +45,8 @@ use super::allowances::current_unix_secs;
 use super::authority::AuthorityError;
 use super::ring_vrf_registry::RingVrfRegistryStore;
 use super::{
-    HostAccounts, HostGrantStore, HostSession, RuntimeServices, connected_session_ui_info,
+    AccountHolder, HostAccounts, HostGrantStore, HostSession, RuntimeServices,
+    connected_session_ui_info,
 };
 use crate::host_logic::session::SessionState;
 use crate::runtime::auth_state::AuthStateMachine;
@@ -98,11 +113,11 @@ impl SigningHost {
         let accounts = HostAccounts::new(
             services.clone(),
             wallet.clone(),
-            wallet.session_state(),
+            wallet_account_holder::session_state(&wallet),
             grants.clone(),
             registry,
             #[cfg(feature = "test-host")]
-            wallet.resource_controls().clone(),
+            wallet_account_holder::resource_controls(&wallet).clone(),
         );
         Arc::new(Self {
             #[cfg(any(not(target_arch = "wasm32"), test))]
@@ -120,15 +135,14 @@ impl SigningHost {
     /// Answer resource allocation as granted without performing it in test hosts.
     #[cfg(feature = "test-host")]
     pub fn set_grant_allowances_unchecked(&self, granted: bool) {
-        self.wallet
-            .resource_controls()
+        wallet_account_holder::resource_controls(&self.wallet)
             .set_grant_allowances_unchecked(granted);
     }
 
     /// Replace resource tags refused by this test host.
     #[cfg(feature = "test-host")]
     pub fn set_withheld_resources(&self, tags: Vec<String>) {
-        self.wallet.resource_controls().set_withheld_resources(tags);
+        wallet_account_holder::resource_controls(&self.wallet).set_withheld_resources(tags);
     }
 
     /// The shared services this role was built over, for tests that also need
@@ -166,7 +180,7 @@ impl SigningHost {
             crate::test_support::test_spawner(),
         );
         let registry = RingVrfRegistryStore::new(platform.clone());
-        let wallet = Arc::new(WalletAccountHolder::new_with_ring_resolver(
+        let wallet = Arc::new(wallet_account_holder::new_with_ring_resolver(
             services.clone(),
             network_suffix.to_string(),
             ring_resolver,
@@ -193,7 +207,7 @@ impl SigningHost {
     fn clear_local_session(&self) {
         let mut state = self.grants.lifecycle();
         state.clear_memory();
-        self.wallet.clear();
+        wallet_account_holder::clear(&self.wallet);
     }
 }
 
@@ -216,7 +230,7 @@ impl SigningHost {
                     let Some(host) = weak_host.upgrade() else {
                         return;
                     };
-                    host.wallet.renewal_tick().await;
+                    wallet_account_holder::renewal_tick(&host.wallet).await;
                 }
                 let delay = match current_unix_secs() {
                     Ok(now) => statement_allowance::renewal::next_tick_delay(now),
@@ -232,14 +246,14 @@ impl SigningHost {
 impl HostSession for SigningHost {
     /// Shared session holder for connection-status subscriptions.
     fn session_state(&self) -> Arc<SessionState> {
-        self.wallet.session_state()
+        wallet_account_holder::session_state(&self.wallet)
     }
 
     async fn request_login(
         &self,
         _product: &ProductContext,
     ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
-        if let Some(session) = self.wallet.session_state().current() {
+        if let Some(session) = wallet_account_holder::session_state(&self.wallet).current() {
             self.auth_state
                 .connected(&connected_session_ui_info(&session));
             Ok(HostRequestLoginResponse::AlreadyConnected)
@@ -268,6 +282,8 @@ mod tests {
     mod allowance_keys;
     mod auto_signing;
     mod cross_product_account;
+    #[cfg(feature = "test-host")]
+    mod local_preimages;
     mod raw_signing;
     mod remote_consent;
     #[cfg(feature = "test-host")]
@@ -299,7 +315,6 @@ mod tests {
         derive_root_keypair_from_entropy, index_bytes,
     };
     use crate::platform::{HostInfo, Platform, PlatformInfo, ProductContext, SigningHostConfig};
-    use crate::runtime::authority::AutoSigningGrant;
     use crate::test_support::{StubPlatform, test_spawner};
     use truapi::api::{Account, Entropy, ResourceAllocation, Signing};
     use truapi::latest::{
@@ -2120,42 +2135,27 @@ mod tests {
             .unwrap();
         authority.clear_product_state("myapp.dot").unwrap();
         let current_session = authority.account_holder().current_session().unwrap();
-        let own = authority.account_holder().auto_signing_status(
-            &current_session,
-            "myapp.dot",
-            &product_account(0),
-            authority
-                .accounts()
-                .wallet_authorization(
-                    &authority.accounts().current_operation().unwrap(),
-                    &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                )
-                .unwrap()
-                .as_ref(),
-        );
-        let other = authority.account_holder().auto_signing_status(
-            &current_session,
-            "other.dot",
-            &v01::ProductAccountId {
-                dot_ns_identifier: "other.dot".to_string(),
-                derivation_index: v01::DerivationIndex::Index(0),
-            },
-            authority
-                .accounts()
-                .wallet_authorization(
-                    &authority.accounts().current_operation().unwrap(),
-                    &ProductContext::new("other.dot".to_string()).unwrap(),
-                )
-                .unwrap()
-                .as_ref(),
-        );
+        let own = authority
+            .accounts()
+            .wallet_authorization(
+                &authority.accounts().current_operation().unwrap(),
+                &ProductContext::new("myapp.dot".to_string()).unwrap(),
+            )
+            .map(|authorization| authorization.is_some());
+        let other = authority
+            .accounts()
+            .wallet_authorization(
+                &authority.accounts().current_operation().unwrap(),
+                &ProductContext::new("other.dot".to_string()).unwrap(),
+            )
+            .map(|authorization| authorization.is_some());
         assert_eq!(
             (
                 current_session,
                 own,
                 other,
                 authority.grants.lifecycle().retain_wallet_authorization(
-                    &authority.wallet.session_state(),
+                    &authority.session_state(),
                     &operation,
                     "myapp.dot",
                     authorization,
@@ -2163,8 +2163,8 @@ mod tests {
             ),
             (
                 operation.session.clone(),
-                Ok(AutoSigningGrant::Absent),
-                Ok(AutoSigningGrant::Active),
+                Ok(false),
+                Ok(true),
                 Err(AuthorityError::Disconnected)
             ),
         );
@@ -2361,7 +2361,7 @@ mod tests {
             .unwrap();
         let operation = replacement.accounts().current_operation().unwrap();
         let retained = replacement.grants.lifecycle().retain_wallet_authorization(
-            &replacement.wallet.session_state(),
+            &replacement.session_state(),
             &operation,
             "myapp.dot",
             authorization,

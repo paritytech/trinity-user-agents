@@ -1,5 +1,9 @@
 //! Wallet account execution and consent.
 
+use super::allowance::{
+    allocate_bulletin_allowance, allocate_smart_contract_allowance,
+    allocate_statement_store_allowance,
+};
 use super::{AllowanceAllocationError, WalletAccountHolder, product_authority_error};
 use crate::host_internal::extrinsic::Sr25519Signer;
 use crate::host_internal::extrinsic::{build_signed_transaction, local_transaction_metadata};
@@ -41,27 +45,27 @@ use truapi::latest::{
     HostAccountRingVrfSignRequest, ProductAccountId, RingLocation, RingLocationJunction,
 };
 
-impl WalletAccountHolder {
-    /// Derive the product's hard-subtree public key from the active session root.
-    /// Returns `None` when no session is active.
-    pub fn derive_subtree_public_key(
-        &self,
-        product_id: &str,
-    ) -> Result<Option<[u8; 32]>, AuthorityError> {
-        let product_id = normalize_product_identifier(product_id).map_err(|err| {
-            AuthorityError::Unavailable {
-                reason: err.to_string(),
-            }
+/// Derive the product's hard-subtree public key from the active session root.
+/// Returns `None` when no session is active.
+pub fn derive_subtree_public_key(
+    wallet: &WalletAccountHolder,
+    product_id: &str,
+) -> Result<Option<[u8; 32]>, AuthorityError> {
+    let product_id =
+        normalize_product_identifier(product_id).map_err(|err| AuthorityError::Unavailable {
+            reason: err.to_string(),
         })?;
-        let Some(session) = self.current_session() else {
-            return Ok(None);
-        };
-        self.with_keys(&session, |keys| {
+    let Some(session) = wallet.current_session() else {
+        return Ok(None);
+    };
+    wallet
+        .with_keys(&session, |keys| {
             keys.product_subtree_public_key(&product_id)
         })
         .map(Some)
-    }
+}
 
+impl WalletAccountHolder {
     fn transaction_keypair(
         keys: &super::WalletKeys,
         request: &CreateTransactionAuthorityRequest,
@@ -115,7 +119,7 @@ impl WalletAccountHolder {
         session: &AuthoritySession,
         owner: &str,
     ) -> Result<(), RingVrfError> {
-        if owner != personhood_product_id(self.network_suffix()) {
+        if owner != personhood_product_id(&self.network_suffix) {
             return Ok(());
         }
         let chains = self
@@ -295,18 +299,26 @@ impl WalletAccountHolder {
             Err(RingVrfError::Rejected)
         }
     }
-
-
 }
 
 #[async_trait::async_trait]
 impl AccountHolder for WalletAccountHolder {
     fn current_session(&self) -> Option<AuthoritySession> {
-        WalletAccountHolder::current_session(self)
+        let state = self
+            .lifecycle
+            .lock()
+            .expect("wallet lifecycle mutex poisoned");
+        let session = self.session_state.current()?;
+        state.keys.as_ref()?;
+        Some(state.session(&session))
     }
 
     fn require_current_session(&self, session: &AuthoritySession) -> Result<(), AuthorityError> {
-        WalletAccountHolder::require_current_session(self, session).map(|_| ())
+        self.lifecycle
+            .lock()
+            .expect("wallet lifecycle mutex poisoned")
+            .require_session(self.session_state.current(), session)
+            .map(|_| ())
     }
 
     async fn allocate_grants<'a>(
@@ -362,13 +374,13 @@ impl AccountHolder for WalletAccountHolder {
                     let product_id = product_id.as_str();
                     let grant = match resource {
                         api::AllocatableResource::StatementStoreAllowance => {
-                            let allocation = self
-                                .allocate_statement_store_allowance(
-                                    invocation.session,
-                                    product_id,
-                                    policy,
-                                )
-                                .await?;
+                            let allocation = allocate_statement_store_allowance(
+                                self,
+                                invocation.session,
+                                product_id,
+                                policy,
+                            )
+                            .await?;
                             AccountGrant::StatementStore {
                                 key: StatementStoreAllowanceKey::from_secret_bytes(
                                     allocation.secret,
@@ -378,7 +390,8 @@ impl AccountHolder for WalletAccountHolder {
                         }
                         api::AllocatableResource::BulletinAllowance => {
                             AccountGrant::Bulletin(BulletinAllowanceKey::from_secret_bytes(
-                                self.allocate_bulletin_allowance(
+                                allocate_bulletin_allowance(
+                                    self,
                                     invocation.session,
                                     product_id,
                                     policy,
@@ -387,7 +400,8 @@ impl AccountHolder for WalletAccountHolder {
                             )?)
                         }
                         api::AllocatableResource::SmartContractAllowance(index) => {
-                            self.allocate_smart_contract_allowance(
+                            allocate_smart_contract_allowance(
+                                self,
                                 invocation.session,
                                 product_id,
                                 index,
@@ -456,34 +470,34 @@ impl AccountHolder for WalletAccountHolder {
     ) -> Result<AccountGrant, AuthorityError> {
         match resource {
             AllowanceResource::StatementStore => {
-                let allocation = self
-                    .allocate_statement_store_allowance(
-                        invocation.session,
-                        invocation
-                            .caller
-                            .product_id()
-                            .ok_or(AuthorityError::Rejected)?,
-                        policy,
-                    )
-                    .await
-                    .map_err(AllowanceAllocationError::into_authority_error)?;
+                let allocation = allocate_statement_store_allowance(
+                    self,
+                    invocation.session,
+                    invocation
+                        .caller
+                        .product_id()
+                        .ok_or(AuthorityError::Rejected)?,
+                    policy,
+                )
+                .await
+                .map_err(AllowanceAllocationError::into_authority_error)?;
                 Ok(AccountGrant::StatementStore {
                     key: StatementStoreAllowanceKey::from_secret_bytes(allocation.secret)?,
                     period: Some(allocation.period),
                 })
             }
             AllowanceResource::Bulletin => {
-                let secret = self
-                    .allocate_bulletin_allowance(
-                        invocation.session,
-                        invocation
-                            .caller
-                            .product_id()
-                            .ok_or(AuthorityError::Rejected)?,
-                        policy,
-                    )
-                    .await
-                    .map_err(AllowanceAllocationError::into_authority_error)?;
+                let secret = allocate_bulletin_allowance(
+                    self,
+                    invocation.session,
+                    invocation
+                        .caller
+                        .product_id()
+                        .ok_or(AuthorityError::Rejected)?,
+                    policy,
+                )
+                .await
+                .map_err(AllowanceAllocationError::into_authority_error)?;
                 Ok(AccountGrant::Bulletin(
                     BulletinAllowanceKey::from_secret_bytes(secret)?,
                 ))

@@ -7,7 +7,7 @@ use tracing::{debug, info, warn};
 
 use super::{WalletAccountHolder, WalletKeys};
 use crate::runtime::allowances::current_unix_secs;
-use crate::runtime::authority::{AuthorityError, AuthoritySession};
+use crate::runtime::authority::{AccountHolder, AuthorityError, AuthoritySession};
 use crate::runtime::statement_allowance::renewal::{
     RenewalChainContext, ResolvedRenewalTarget, StatementRenewalReport, renew_targets,
 };
@@ -112,7 +112,7 @@ impl RenewalState {
 
     /// The most recent pass the loop ran. `None` until one has run, which a host
     /// should read as "not yet" rather than as healthy.
-    pub fn last_report(&self) -> Option<StatementRenewalReport> {
+    fn last_report(&self) -> Option<StatementRenewalReport> {
         self.last_report.lock().ok().and_then(|last| last.clone())
     }
 }
@@ -206,53 +206,56 @@ fn resolve_target(
     }
 }
 
+/// Record `targets` in the ledger under the active identity.
+pub async fn track_statement_renewal_targets(
+    wallet: &WalletAccountHolder,
+    targets: Vec<StatementRenewalTarget>,
+) -> Result<(), String> {
+    let session = wallet
+        .current_session()
+        .ok_or_else(|| AuthorityError::Disconnected.to_string())?;
+    track_statement_renewal_targets_for(wallet, &session, targets).await
+}
+
+/// Keep an allocation's renewal record bound to its original wallet.
+pub async fn track_statement_renewal_targets_for(
+    wallet: &WalletAccountHolder,
+    session: &AuthoritySession,
+    targets: Vec<StatementRenewalTarget>,
+) -> Result<(), String> {
+    let targets = targets
+        .into_iter()
+        .map(StatementRenewalTarget::normalized)
+        .collect::<Result<Vec<_>, _>>()?;
+    let _guard = wallet.renewal.ledger_lock().lock().await;
+    wallet
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
+    let mut entries = read_entries(wallet.services.platform.as_ref()).await?;
+    wallet
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
+    let mut changed = false;
+    for target in targets {
+        let entry = TrackedStatementRenewalTarget::new(target, session.public_key);
+        if !entries.contains(&entry) {
+            entries.push(entry);
+            changed = true;
+        }
+    }
+    if changed {
+        wallet
+            .require_current_session(session)
+            .map_err(|error| error.to_string())?;
+        write_entries(wallet.services.platform.as_ref(), &entries).await?;
+        wallet
+            .require_current_session(session)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 impl WalletAccountHolder {
-    /// Record `targets` in the ledger under the active identity.
-    pub async fn track_statement_renewal_targets(
-        &self,
-        targets: Vec<StatementRenewalTarget>,
-    ) -> Result<(), String> {
-        let session = self
-            .current_session()
-            .ok_or_else(|| AuthorityError::Disconnected.to_string())?;
-        self.track_statement_renewal_targets_for(&session, targets)
-            .await
-    }
-
-    /// Keep an allocation's renewal record bound to its original wallet.
-    pub async fn track_statement_renewal_targets_for(
-        &self,
-        session: &AuthoritySession,
-        targets: Vec<StatementRenewalTarget>,
-    ) -> Result<(), String> {
-        let targets = targets
-            .into_iter()
-            .map(StatementRenewalTarget::normalized)
-            .collect::<Result<Vec<_>, _>>()?;
-        let _guard = self.renewal.ledger_lock().lock().await;
-        self.require_current_session(session)
-            .map_err(|error| error.to_string())?;
-        let mut entries = read_entries(self.services.platform.as_ref()).await?;
-        self.require_current_session(session)
-            .map_err(|error| error.to_string())?;
-        let mut changed = false;
-        for target in targets {
-            let entry = TrackedStatementRenewalTarget::new(target, session.public_key);
-            if !entries.contains(&entry) {
-                entries.push(entry);
-                changed = true;
-            }
-        }
-        if changed {
-            self.require_current_session(session)
-                .map_err(|error| error.to_string())?;
-            write_entries(self.services.platform.as_ref(), &entries).await?;
-            self.require_current_session(session)
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(())
-    }
-
     // A stale owner must not prune entries tracked by a newer wallet.
     async fn owned_targets(
         &self,
@@ -284,56 +287,171 @@ impl WalletAccountHolder {
             pruned,
         ))
     }
+}
 
-    /// List tracked entries without requiring wallet unlock.
-    pub async fn statement_renewal_targets(
-        &self,
-    ) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
-        list_entries(self.services.platform.as_ref(), self.renewal.ledger_lock()).await
+/// List tracked entries without requiring wallet unlock.
+pub async fn statement_renewal_targets(
+    wallet: &WalletAccountHolder,
+) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
+    list_entries(
+        wallet.services.platform.as_ref(),
+        wallet.renewal.ledger_lock(),
+    )
+    .await
+}
+
+/// Identify which fixed ledger entries belong to the active wallet.
+pub fn statement_renewal_owner_key(wallet: &WalletAccountHolder) -> Result<[u8; 32], String> {
+    wallet
+        .current_session()
+        .map(|session| session.public_key)
+        .ok_or_else(|| AuthorityError::Disconnected.to_string())
+}
+
+/// Stop renewing one fixed statement account for the active identity.
+pub async fn untrack_statement_renewal_account(
+    wallet: &WalletAccountHolder,
+    account_id: &[u8; 32],
+) -> Result<bool, String> {
+    let session = wallet
+        .current_session()
+        .ok_or_else(|| AuthorityError::Disconnected.to_string())?;
+    let _guard = wallet.renewal.ledger_lock().lock().await;
+    wallet
+        .require_current_session(&session)
+        .map_err(|error| error.to_string())?;
+    let mut entries = read_entries(wallet.services.platform.as_ref()).await?;
+    wallet
+        .require_current_session(&session)
+        .map_err(|error| error.to_string())?;
+    let original_len = entries.len();
+    entries.retain(|entry| {
+        entry.owner != Some(session.public_key)
+            || !matches!(
+                &entry.target,
+                StatementRenewalTarget::Account {
+                    account_id: existing,
+                    ..
+                } if existing == account_id
+            )
+    });
+    if entries.len() == original_len {
+        return Ok(false);
     }
+    wallet
+        .require_current_session(&session)
+        .map_err(|error| error.to_string())?;
+    write_entries(wallet.services.platform.as_ref(), &entries).await?;
+    wallet
+        .require_current_session(&session)
+        .map_err(|error| error.to_string())?;
+    Ok(true)
+}
 
-    /// Identify which fixed ledger entries belong to the active wallet.
-    pub fn statement_renewal_owner_key(&self) -> Result<[u8; 32], String> {
-        self.current_session()
-            .map(|session| session.public_key)
-            .ok_or_else(|| AuthorityError::Disconnected.to_string())
-    }
-
-    /// Stop renewing one fixed statement account for the active identity.
-    pub async fn untrack_statement_renewal_account(
-        &self,
-        account_id: &[u8; 32],
-    ) -> Result<bool, String> {
-        let session = self
-            .current_session()
-            .ok_or_else(|| AuthorityError::Disconnected.to_string())?;
-        let _guard = self.renewal.ledger_lock().lock().await;
-        self.require_current_session(&session)
-            .map_err(|error| error.to_string())?;
-        let mut entries = read_entries(self.services.platform.as_ref()).await?;
-        self.require_current_session(&session)
-            .map_err(|error| error.to_string())?;
-        let original_len = entries.len();
-        entries.retain(|entry| {
-            entry.owner != Some(session.public_key)
-                || !matches!(
-                    &entry.target,
-                    StatementRenewalTarget::Account {
-                        account_id: existing,
-                        ..
-                    } if existing == account_id
-                )
+/// One renewal pass: resolve the ledger against the active session and renew
+/// every target for the current period.
+pub async fn renew_statement_allowances(
+    wallet: &WalletAccountHolder,
+) -> Result<StatementRenewalReport, String> {
+    let session = wallet
+        .current_session()
+        .ok_or_else(|| AuthorityError::Disconnected.to_string())?;
+    let period = statement_allowance::slot::current_period(
+        current_unix_secs().map_err(|err| err.to_string())?,
+    );
+    let (targets, pruned) = wallet.owned_targets(&session).await?;
+    wallet
+        .require_current_session(&session)
+        .map_err(|err| err.to_string())?;
+    let resolved = wallet
+        .with_keys::<_, AuthorityError>(&session, |keys| Ok(resolve_targets(keys, &targets)))
+        .map_err(|error| error.to_string())?;
+    if resolved.is_empty() {
+        return Ok(StatementRenewalReport {
+            period,
+            outcomes: Vec::new(),
+            pruned,
+            slots_exhausted: false,
         });
-        if entries.len() == original_len {
-            return Ok(false);
-        }
-        self.require_current_session(&session)
-            .map_err(|error| error.to_string())?;
-        write_entries(self.services.platform.as_ref(), &entries).await?;
-        self.require_current_session(&session)
-            .map_err(|error| error.to_string())?;
-        Ok(true)
     }
+
+    let signer = wallet
+        .personhood_signer(&session)
+        .await
+        .map_err(|error| error.to_string())?;
+    let rpc = statement_allowance::rpc::RpcClient::new(
+        wallet
+            .services
+            .statement_store
+            .client("statement-allowance renewal")
+            .await
+            .map_err(|err| err.to_string())?,
+    );
+    let metadata = fetch_metadata(&rpc).await.map_err(|err| err.to_string())?;
+    let chain_state = fetch_chain_state(&rpc)
+        .await
+        .map_err(|err| err.to_string())?;
+    let network_suffix = statement_allowance::slot::read_network_suffix(&rpc)
+        .await
+        .map_err(|err| err.to_string())?;
+    // Every ring back to index 0, because a membership that stopped being
+    // re-included still proves against the ring that holds it.
+    let memberships = find_including_rings(
+        &rpc,
+        &metadata,
+        &signer,
+        &super::PersonhoodCollection::ALL,
+        u32::MAX,
+    )
+    .await
+    .map_err(|err| err.to_string())?;
+    if memberships.is_empty() {
+        return Err(
+        "signing account is not a member of any personhood ring; cannot renew statement-store allowances"
+            .to_string(),
+    );
+    }
+    let context = RenewalChainContext {
+        rpc: &rpc,
+        metadata: &metadata,
+        chain_state: &chain_state,
+        network_suffix: &network_suffix,
+        signer: &signer,
+        collections: &super::PersonhoodCollection::ALL,
+        memberships: &memberships,
+    };
+    wallet
+        .require_current_session(&session)
+        .map_err(|err| err.to_string())?;
+    let mut report = renew_targets(
+        &context,
+        period,
+        &resolved,
+        wallet.renewal.registration_lock(),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    wallet
+        .require_current_session(&session)
+        .map_err(|err| err.to_string())?;
+    report.pruned = pruned;
+    Ok(report)
+}
+
+/// Renew the active wallet and record the periodic pass result.
+pub async fn renewal_tick(wallet: &WalletAccountHolder) {
+    if wallet.current_session().is_none() {
+        debug!("skipping statement-store renewal tick; no active session");
+        return;
+    }
+    absorb_tick(&wallet.renewal, renew_statement_allowances(wallet).await);
+}
+
+/// Most recent result from the host's periodic renewal loop.
+pub fn last_statement_renewal_report(
+    wallet: &WalletAccountHolder,
+) -> Option<StatementRenewalReport> {
+    wallet.renewal.last_report()
 }
 
 /// Skip unusable entries so they cannot prevent renewal of other targets.
@@ -351,92 +469,6 @@ fn resolve_targets(
             }
         })
         .collect()
-}
-
-impl WalletAccountHolder {
-    /// One renewal pass: resolve the ledger against the active session and renew
-    /// every target for the current period.
-    pub async fn renew_statement_allowances(&self) -> Result<StatementRenewalReport, String> {
-        let session = self
-            .current_session()
-            .ok_or_else(|| AuthorityError::Disconnected.to_string())?;
-        let period = statement_allowance::slot::current_period(
-            current_unix_secs().map_err(|err| err.to_string())?,
-        );
-        let (targets, pruned) = self.owned_targets(&session).await?;
-        self.require_current_session(&session)
-            .map_err(|err| err.to_string())?;
-        let resolved = self
-            .with_keys::<_, AuthorityError>(&session, |keys| Ok(resolve_targets(keys, &targets)))
-            .map_err(|error| error.to_string())?;
-        if resolved.is_empty() {
-            return Ok(StatementRenewalReport {
-                period,
-                outcomes: Vec::new(),
-                pruned,
-                slots_exhausted: false,
-            });
-        }
-
-        let signer = self
-            .personhood_signer(&session)
-            .await
-            .map_err(|error| error.to_string())?;
-        let rpc = statement_allowance::rpc::RpcClient::new(
-            self.services
-                .statement_store
-                .client("statement-allowance renewal")
-                .await
-                .map_err(|err| err.to_string())?,
-        );
-        let metadata = fetch_metadata(&rpc).await.map_err(|err| err.to_string())?;
-        let chain_state = fetch_chain_state(&rpc)
-            .await
-            .map_err(|err| err.to_string())?;
-        let network_suffix = statement_allowance::slot::read_network_suffix(&rpc)
-            .await
-            .map_err(|err| err.to_string())?;
-        // Every ring back to index 0, because a membership that stopped being
-        // re-included still proves against the ring that holds it.
-        let memberships = find_including_rings(
-            &rpc,
-            &metadata,
-            &signer,
-            &super::PersonhoodCollection::ALL,
-            u32::MAX,
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-        if memberships.is_empty() {
-            return Err(
-            "signing account is not a member of any personhood ring; cannot renew statement-store allowances"
-                .to_string(),
-        );
-        }
-        let context = RenewalChainContext {
-            rpc: &rpc,
-            metadata: &metadata,
-            chain_state: &chain_state,
-            network_suffix: &network_suffix,
-            signer: &signer,
-            collections: &super::PersonhoodCollection::ALL,
-            memberships: &memberships,
-        };
-        self.require_current_session(&session)
-            .map_err(|err| err.to_string())?;
-        let mut report = renew_targets(
-            &context,
-            period,
-            &resolved,
-            self.renewal.registration_lock(),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-        self.require_current_session(&session)
-            .map_err(|err| err.to_string())?;
-        report.pruned = pruned;
-        Ok(report)
-    }
 }
 
 /// Preserve the last completed pass when a later tick fails.
@@ -463,28 +495,13 @@ fn absorb_tick(state: &RenewalState, result: Result<StatementRenewalReport, Stri
     }
 }
 
-impl WalletAccountHolder {
-    /// Renew the active wallet and record the periodic pass result.
-    pub async fn renewal_tick(&self) {
-        if self.current_session().is_none() {
-            debug!("skipping statement-store renewal tick; no active session");
-            return;
-        }
-        absorb_tick(&self.renewal, self.renew_statement_allowances().await);
-    }
-
-    /// Most recent result from the host's periodic renewal loop.
-    pub fn last_statement_renewal_report(&self) -> Option<StatementRenewalReport> {
-        self.renewal.last_report()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::host_logic::product_account::derive_sr25519_hard_path;
     use crate::platform::HostInfo;
     use crate::runtime::RuntimeServices;
+    use crate::runtime::signing_host::wallet_account_holder;
     use crate::test_support::{StubPlatform, test_spawner};
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
@@ -510,7 +527,10 @@ mod tests {
         );
         let registry = crate::runtime::RingVrfRegistryStore::new(services.platform.clone());
         let wallet = WalletAccountHolder::new(services, "paseo".to_string(), registry);
-        wallet.install(wallet.prepare_activation(vec![entropy; 32], None).unwrap());
+        wallet_account_holder::install(
+            &wallet,
+            wallet_account_holder::prepare_activation(&wallet, vec![entropy; 32], None).unwrap(),
+        );
         wallet
     }
 
@@ -525,28 +545,37 @@ mod tests {
                 account_id: [9; 32],
                 label: "wallet B device".to_string(),
             };
-            futures::executor::block_on(
-                wallet.track_statement_renewal_targets(vec![target.clone()]),
-            )
+            futures::executor::block_on(track_statement_renewal_targets(
+                &wallet,
+                vec![target.clone()],
+            ))
             .unwrap();
             let owner = wallet.current_session().unwrap().public_key;
-            wallet.install(wallet.prepare_activation(vec![7; 32], None).unwrap());
+            wallet_account_holder::install(
+                &wallet,
+                wallet_account_holder::prepare_activation(&wallet, vec![7; 32], None).unwrap(),
+            );
             let selected = wallet.current_session().unwrap();
             let guard = waiting_on_lock
                 .then(|| futures::executor::block_on(wallet.renewal.ledger_lock().lock()));
-            let renewal = wallet.renew_statement_allowances();
+            let renewal = renew_statement_allowances(&wallet);
             futures::pin_mut!(renewal);
             assert!(renewal.as_mut().now_or_never().is_none());
-            wallet.install(wallet.prepare_activation(vec![8; 32], None).unwrap());
+            wallet_account_holder::install(
+                &wallet,
+                wallet_account_holder::prepare_activation(&wallet, vec![8; 32], None).unwrap(),
+            );
             drop(guard);
             if waiting_on_lock {
-                futures::executor::block_on(
-                    wallet.track_statement_renewal_targets(vec![target.clone()]),
-                )
+                futures::executor::block_on(track_statement_renewal_targets(
+                    &wallet,
+                    vec![target.clone()],
+                ))
                 .unwrap();
             }
             let result = futures::executor::block_on(renewal);
-            let tracked = futures::executor::block_on(wallet.track_statement_renewal_targets_for(
+            let tracked = futures::executor::block_on(track_statement_renewal_targets_for(
+                &wallet,
                 &selected,
                 vec![StatementRenewalTarget::Account {
                     account_id: [8; 32],
@@ -672,8 +701,8 @@ mod tests {
 
         futures::executor::block_on(async {
             let (first, second) = futures::join!(
-                wallet.track_statement_renewal_targets(vec![product("a.dot")]),
-                wallet.track_statement_renewal_targets(vec![product("b.dot")]),
+                track_statement_renewal_targets(&wallet, vec![product("a.dot")]),
+                track_statement_renewal_targets(&wallet, vec![product("b.dot")]),
             );
             first.unwrap();
             second.unwrap();
@@ -779,15 +808,14 @@ mod tests {
 
         futures::executor::block_on(async {
             // A foreign entry, so the pass prunes and therefore writes.
-            other_wallet
-                .track_statement_renewal_targets(vec![device])
+            track_statement_renewal_targets(&other_wallet, vec![device])
                 .await
                 .unwrap();
 
             let session = wallet.current_session().unwrap();
             let (pruned, tracked) = futures::join!(
                 wallet.owned_targets(&session),
-                wallet.track_statement_renewal_targets(vec![product("a.dot")]),
+                track_statement_renewal_targets(&wallet, vec![product("a.dot")]),
             );
             pruned.unwrap();
             tracked.unwrap();
@@ -815,12 +843,10 @@ mod tests {
         };
 
         futures::executor::block_on(async {
-            other_wallet
-                .track_statement_renewal_targets(vec![device])
+            track_statement_renewal_targets(&other_wallet, vec![device])
                 .await
                 .unwrap();
-            wallet
-                .track_statement_renewal_targets(vec![product("a.dot")])
+            track_statement_renewal_targets(&wallet, vec![product("a.dot")])
                 .await
                 .unwrap();
 
@@ -852,8 +878,7 @@ mod tests {
         };
 
         futures::executor::block_on(async {
-            other_wallet
-                .track_statement_renewal_targets(vec![device])
+            track_statement_renewal_targets(&other_wallet, vec![device])
                 .await
                 .unwrap();
 
@@ -874,8 +899,7 @@ mod tests {
         let wallet = wallet_for(storage.clone(), 7);
 
         futures::executor::block_on(async {
-            wallet
-                .track_statement_renewal_targets(vec![product("a.dot")])
+            track_statement_renewal_targets(&wallet, vec![product("a.dot")])
                 .await
                 .unwrap();
             let after_seeding = storage.writes();
@@ -941,23 +965,24 @@ mod tests {
         let owner = wallet.current_session().unwrap().public_key;
 
         futures::executor::block_on(async {
-            wallet
-                .track_statement_renewal_targets(vec![
-                    StatementRenewalTarget::WalletSso,
-                    product("a.dot"),
-                ])
-                .await
-                .unwrap();
-            wallet
-                .track_statement_renewal_targets(vec![
+            track_statement_renewal_targets(
+                &wallet,
+                vec![StatementRenewalTarget::WalletSso, product("a.dot")],
+            )
+            .await
+            .unwrap();
+            track_statement_renewal_targets(
+                &wallet,
+                vec![
                     product("a.dot"),
                     StatementRenewalTarget::Account {
                         account_id: [9; 32],
                         label: "device".to_string(),
                     },
-                ])
-                .await
-                .unwrap();
+                ],
+            )
+            .await
+            .unwrap();
 
             assert_eq!(
                 read_targets(storage.as_ref(), owner).await.unwrap(),
@@ -984,16 +1009,15 @@ mod tests {
         };
 
         futures::executor::block_on(async {
-            wallet
-                .track_statement_renewal_targets(vec![
-                    StatementRenewalTarget::WalletSso,
-                    device.clone(),
-                ])
-                .await
-                .unwrap();
+            track_statement_renewal_targets(
+                &wallet,
+                vec![StatementRenewalTarget::WalletSso, device.clone()],
+            )
+            .await
+            .unwrap();
 
             assert_eq!(
-                wallet.statement_renewal_targets().await.unwrap(),
+                statement_renewal_targets(&wallet).await.unwrap(),
                 vec![
                     TrackedStatementRenewalTarget {
                         target: StatementRenewalTarget::WalletSso,
@@ -1024,17 +1048,15 @@ mod tests {
         };
 
         futures::executor::block_on(async {
-            other_wallet
-                .track_statement_renewal_targets(vec![device.clone()])
+            track_statement_renewal_targets(&other_wallet, vec![device.clone()])
                 .await
                 .unwrap();
-            wallet
-                .track_statement_renewal_targets(vec![product("a.dot")])
+            track_statement_renewal_targets(&wallet, vec![product("a.dot")])
                 .await
                 .unwrap();
             let writes_before = storage.writes();
 
-            let listed = wallet.statement_renewal_targets().await.unwrap();
+            let listed = statement_renewal_targets(&wallet).await.unwrap();
 
             assert_eq!(
                 listed,
@@ -1066,8 +1088,8 @@ mod tests {
 
         futures::executor::block_on(async {
             let (tracked, listed) = futures::join!(
-                wallet.track_statement_renewal_targets(vec![product("a.dot")]),
-                wallet.statement_renewal_targets(),
+                track_statement_renewal_targets(&wallet, vec![product("a.dot")]),
+                statement_renewal_targets(&wallet),
             );
             tracked.unwrap();
 
@@ -1094,7 +1116,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(
-                wallet.statement_renewal_targets().await.unwrap(),
+                statement_renewal_targets(&wallet).await.unwrap(),
                 Vec::new()
             );
         });
@@ -1144,8 +1166,7 @@ mod tests {
                 .write_core_storage(CoreStorageKey::StatementRenewalTargets, vec![0xff; 3])
                 .await
                 .unwrap();
-            wallet
-                .track_statement_renewal_targets(vec![product("a.dot")])
+            track_statement_renewal_targets(&wallet, vec![product("a.dot")])
                 .await
                 .unwrap();
 
@@ -1218,18 +1239,15 @@ mod tests {
         };
 
         futures::executor::block_on(async {
-            wallet
-                .track_statement_renewal_targets(vec![
-                    StatementRenewalTarget::WalletSso,
-                    first,
-                    second.clone(),
-                ])
-                .await
-                .unwrap();
+            track_statement_renewal_targets(
+                &wallet,
+                vec![StatementRenewalTarget::WalletSso, first, second.clone()],
+            )
+            .await
+            .unwrap();
 
             assert!(
-                wallet
-                    .untrack_statement_renewal_account(&[8; 32])
+                untrack_statement_renewal_account(&wallet, &[8; 32])
                     .await
                     .unwrap()
             );
@@ -1255,13 +1273,12 @@ mod tests {
         };
 
         futures::executor::block_on(async {
-            wallet
-                .track_statement_renewal_targets(vec![first])
+            track_statement_renewal_targets(&wallet, vec![first])
                 .await
                 .unwrap();
             let (removed, tracked) = futures::join!(
-                wallet.untrack_statement_renewal_account(&[8; 32]),
-                wallet.track_statement_renewal_targets(vec![second.clone()]),
+                untrack_statement_renewal_account(&wallet, &[8; 32]),
+                track_statement_renewal_targets(&wallet, vec![second.clone()]),
             );
             assert!(removed.unwrap());
             tracked.unwrap();
@@ -1283,8 +1300,7 @@ mod tests {
         };
 
         futures::executor::block_on(async {
-            wallet
-                .track_statement_renewal_targets(vec![device.clone(), product("a.dot")])
+            track_statement_renewal_targets(&wallet, vec![device.clone(), product("a.dot")])
                 .await
                 .unwrap();
 
@@ -1313,12 +1329,10 @@ mod tests {
         };
 
         futures::executor::block_on(async {
-            wallet
-                .track_statement_renewal_targets(vec![device.clone()])
+            track_statement_renewal_targets(&wallet, vec![device.clone()])
                 .await
                 .unwrap();
-            other_wallet
-                .track_statement_renewal_targets(vec![device.clone()])
+            track_statement_renewal_targets(&other_wallet, vec![device.clone()])
                 .await
                 .unwrap();
 
@@ -1347,18 +1361,15 @@ mod tests {
         };
 
         futures::executor::block_on(async {
-            wallet
-                .track_statement_renewal_targets(vec![device.clone()])
+            track_statement_renewal_targets(&wallet, vec![device.clone()])
                 .await
                 .unwrap();
-            other_wallet
-                .track_statement_renewal_targets(vec![device.clone()])
+            track_statement_renewal_targets(&other_wallet, vec![device.clone()])
                 .await
                 .unwrap();
 
             assert!(
-                wallet
-                    .untrack_statement_renewal_account(&[9; 32])
+                untrack_statement_renewal_account(&wallet, &[9; 32])
                     .await
                     .unwrap()
             );

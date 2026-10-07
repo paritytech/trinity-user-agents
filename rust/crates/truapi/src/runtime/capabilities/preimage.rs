@@ -148,6 +148,17 @@ impl<H: crate::runtime::AccountHolder> Preimage for ProductRuntimeHost<H> {
             .await
             .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
 
+        // A test host's allowance was never authorized on chain, so a Bulletin
+        // `store` signed with it would always be refused. The value is kept in
+        // the core under its content key, and the product reads it back through
+        // the same lookup a landed submission answers.
+        #[cfg(feature = "test-host")]
+        if self.accounts.submits_preimages_locally() {
+            let key = preimage_key(&value);
+            self.connection.services.keep_local_preimage(key, value);
+            return Ok(RemotePreimageSubmitResponse::V1(key.to_vec()));
+        }
+
         let key = match bulletin
             .submit_preimage(
                 cx,
