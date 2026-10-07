@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // The prompt-content contract for the reviews where wording is
 // safety-relevant: whether an approval is final at the terminal or verified

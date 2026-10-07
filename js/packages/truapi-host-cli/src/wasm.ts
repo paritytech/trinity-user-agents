@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // Boots the Rust core under plain node: no Worker, no DOM, no fetch.
 //

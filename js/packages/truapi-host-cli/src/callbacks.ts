@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // The typed host callbacks, implemented for a terminal host: every required
 // group plus the optional permission-status probe. The optional `chat`,

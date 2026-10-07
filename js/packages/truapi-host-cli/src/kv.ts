@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // Node KeyValueStore implementations backing the core's storage callbacks.
 // Lifted from the earlier @dotli/host-node package (feat/host-core lineage),

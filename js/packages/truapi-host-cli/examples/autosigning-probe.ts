@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // PROBE: does RFC-0010 `AutoSigning` actually silence the host's per-call
 // `confirmUserAction`, and is the resulting signature fast enough for

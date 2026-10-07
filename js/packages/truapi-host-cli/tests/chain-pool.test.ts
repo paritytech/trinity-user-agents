@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, it, expect } from "bun:test";
 import { createChainPool, type SocketLike } from "../src/chain-pool.js";

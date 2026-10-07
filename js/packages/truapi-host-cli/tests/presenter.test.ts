@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // The prompt-routing contract. Inside embedded contexts (a git remote
 // helper) the standard streams belong to someone else, so prompts must reach

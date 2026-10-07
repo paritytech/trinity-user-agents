@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // The shim's contract, measured against the core (tier 8): an operation's
 // events must never reach the consumer before the start-response that names

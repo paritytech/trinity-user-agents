@@ -2,7 +2,7 @@
   "name": "@parity/truapi-host-cli",
   "version": "0.1.0",
   "description": "Terminal host for the TrUAPI Rust/WASM core: pairing QR, confirm prompts, owner-only file storage, and pooled chain connections for CLI products.",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "author": "Parity Technologies <admin@parity.io>",
   "repository": {
     "type": "git",

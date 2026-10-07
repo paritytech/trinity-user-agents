@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 
 // Integration: the REAL wasm core, booted in-process, driven by the real
 // product client over the loopback wire. No network, no phone:
