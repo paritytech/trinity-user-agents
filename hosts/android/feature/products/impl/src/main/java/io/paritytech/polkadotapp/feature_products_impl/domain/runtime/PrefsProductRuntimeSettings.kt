@@ -14,7 +14,15 @@ class PrefsProductRuntimeSettings(
         prefs.edit().putBoolean(KEY_TRUAPI_ENABLED, enabled).apply()
     }
 
+    override fun isWasmiWorkerRuntimeEnabled(): Boolean =
+        isDebugBuild && prefs.getBoolean(KEY_WASMI_WORKER_ENABLED, false)
+
+    override fun setWasmiWorkerRuntimeEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_WASMI_WORKER_ENABLED, enabled).apply()
+    }
+
     private companion object {
         const val KEY_TRUAPI_ENABLED = "truapi_runtime_enabled"
+        const val KEY_WASMI_WORKER_ENABLED = "wasmi_worker_runtime_enabled"
     }
 }

@@ -71,6 +71,7 @@ dependencies {
     implementation(libs.nova.substrate.serialization)
 
     implementation(project(":bindings:truapi-host"))
+    implementation(project(":bindings:wasmi-worker"))
     implementation(project(":bindings:sr25519-vrf"))
 
     implementation(project(":common"))

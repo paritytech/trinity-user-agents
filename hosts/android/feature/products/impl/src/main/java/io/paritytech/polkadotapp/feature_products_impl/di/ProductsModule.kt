@@ -131,7 +131,11 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.Execu
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealExecuteTopUpUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealTopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.OkHttpWorkerBridgeConnector
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.SandboxWorkerGuestFactory
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerBridgeConnector
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerGuestFactory
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductServingHostResolver
@@ -201,6 +205,12 @@ internal interface ProductsModule {
 
     @Binds
     fun bindPocketCollection(impl: PocketCardStore): PocketCollection
+
+    @Binds
+    fun bindWorkerBridgeConnector(impl: OkHttpWorkerBridgeConnector): WorkerBridgeConnector
+
+    @Binds
+    fun bindWorkerGuestFactory(impl: SandboxWorkerGuestFactory): WorkerGuestFactory
 
     @Binds
     fun bindPocketFaceSource(impl: RealPocketFaceSource): PocketFaceSource

@@ -10,4 +10,13 @@ interface ProductRuntimeSettings {
     fun isTrUAPIRuntimeEnabled(): Boolean
 
     fun setTrUAPIRuntimeEnabled(enabled: Boolean)
+
+    /**
+     * Runs TrUAPI product workers under the embedded wasmi sandbox instead of a hidden WebView.
+     * Debug-only and off by default; read when a worker boots, so flipping it affects the next
+     * boot. The worker executable must then be an ABI-compatible wasm module, not JavaScript.
+     */
+    fun isWasmiWorkerRuntimeEnabled(): Boolean
+
+    fun setWasmiWorkerRuntimeEnabled(enabled: Boolean)
 }

@@ -21,7 +21,6 @@ sealed class WasmiSandboxError(message: String) : Exception(message) {
  * guest.
  */
 class WasmiSandbox private constructor(private var handle: Long) {
-
     fun turn(turn: WasmiTurn): Result<List<ByteArray>> {
         val current = handle
         if (current == DESTROYED) return Result.failure(WasmiSandboxError.Destroyed)
