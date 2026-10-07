@@ -413,8 +413,9 @@ export function createBrowserMediaBackend(
       productId.length > 0 &&
       options.indicatorMount.ownerDocument === doc &&
       options.indicatorMount.isConnected &&
+      // Screen capture is optional. Mobile Safari can call and render
+      // host-composited video without exposing getDisplayMedia.
       typeof devices?.getUserMedia === "function" &&
-      typeof devices.getDisplayMedia === "function" &&
       typeof devices.getSupportedConstraints === "function" &&
       devices.getSupportedConstraints().echoCancellation === true &&
       typeof win.MediaStream === "function" &&
@@ -803,6 +804,10 @@ export function createBrowserMediaBackend(
     return Promise.race([capture, op.cancelled]);
   }
   function chooseScreen(op: Operation): Promise<void> {
+    const devices = win.navigator.mediaDevices;
+    if (typeof devices.getDisplayMedia !== "function") {
+      return Promise.reject(failure("DeviceUnavailable"));
+    }
     const session = op.session!;
     // Browser screen pickers require activation in this host realm. Never rely
     // on activation surviving async core consent or an iframe postMessage.
@@ -819,7 +824,7 @@ export function createBrowserMediaBackend(
           button.disabled = true;
           let captured: Promise<MediaStream>;
           try {
-            captured = win.navigator.mediaDevices.getDisplayMedia(
+            captured = devices.getDisplayMedia(
               webIdl<DisplayMediaStreamOptions>({ video: true, audio: false }),
             );
           } catch {
