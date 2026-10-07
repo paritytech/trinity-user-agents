@@ -56,6 +56,7 @@ class RealVideoGameReminderScheduler @Inject constructor(
     override fun scheduleGameStart(gameStartMillis: Timestamp) =
         scheduleStartAlarm(VideoGameNotificationType.GameStartsSoon, gameStartMillis)
 
+    // Fires ahead of the start by the alarm offset the user picks for the native game.
     override fun scheduleProductGameStart(productId: ProductId, gameStartMillis: Timestamp) = scheduleStartAlarm(
         VideoGameNotificationType.ProductGameStartsSoon(productId.value),
         gameStartMillis,

@@ -5,7 +5,7 @@ package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 interface ProductGameOsAccess {
     suspend fun requestNotifications(): Result<Unit>
 
-    suspend fun requestExactAlarms(): Boolean
+    suspend fun requestExactAlarms()
 
     suspend fun requestCalendar(): Boolean
 }

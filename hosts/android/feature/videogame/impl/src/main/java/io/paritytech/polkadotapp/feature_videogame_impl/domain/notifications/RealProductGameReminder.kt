@@ -14,9 +14,8 @@ import javax.inject.Singleton
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 
-// A game start a product asked to be reminded of; [ringAlarm] says whether exact alarms were allowed at schedule time.
 @Serializable
-data class ScheduledProductGame(val productId: String, val startsAtMillis: Long, val ringAlarm: Boolean)
+data class ScheduledProductGame(val productId: String, val startsAtMillis: Long)
 
 private val PRODUCT_GAME_START_GRACE = 30.seconds
 
@@ -24,6 +23,10 @@ private val PRODUCT_GAME_START_GRACE = 30.seconds
 internal fun ScheduledProductGame.isLiveAt(nowMillis: Long) =
     nowMillis - startsAtMillis < PRODUCT_GAME_START_GRACE.inWholeMilliseconds
 
+// Owns the scheduled games: only this class writes them. The alarm receiver reads one to post its
+// notification, ProductGameAutoOpener and the pill view model observe them, the boot receiver calls
+// restore. The notification is cancelled here on every add and remove, by ProductGameNotificationAutoCanceller
+// on foreground, and by its own tap. requestLock is always taken before lock.
 @Singleton
 class RealProductGameReminder @Inject constructor(
     private val preferences: VideoGameSettingsPreferences,
@@ -50,8 +53,8 @@ class RealProductGameReminder @Inject constructor(
     override suspend fun schedule(productId: ProductId, startsAtMillis: Long): Result<Unit> = requestLock.withLock {
         val leadMillis = startsAtMillis - now()
         osAccess.requestNotifications().map {
-            val ringAlarm = osAccess.requestExactAlarms()
-            lock.withLock { add(ScheduledProductGame(productId.value, startsAtMillis, ringAlarm)) }
+            osAccess.requestExactAlarms()
+            lock.withLock { add(ScheduledProductGame(productId.value, startsAtMillis)) }
             if (leadMillis >= CALENDAR_MIN_LEAD.inWholeMilliseconds && osAccess.requestCalendar()) {
                 calendar.addGame(startsAtMillis)
             }
@@ -73,9 +76,9 @@ class RealProductGameReminder @Inject constructor(
         }
     }
 
-    // Only removes [game] if still scheduled, so a schedule made meanwhile survives.
+    // Only if [game] is still scheduled, so a schedule made meanwhile survives.
     suspend fun clear(game: ScheduledProductGame) {
-        lock.withLock { remove(game) }
+        lock.withLock { if (game in currentlyScheduled()) remove(game) }
     }
 
     private fun add(game: ScheduledProductGame) {
@@ -85,9 +88,7 @@ class RealProductGameReminder @Inject constructor(
     }
 
     private fun remove(game: ScheduledProductGame) {
-        val scheduled = currentlyScheduled()
-        if (game !in scheduled) return
-        save(scheduled - game)
+        save(currentlyScheduled() - game)
         scheduler.cancelProductGameStart(game.product())
         notificationPublisher.cancelProductGameStartsSoonNotification(game.product())
     }

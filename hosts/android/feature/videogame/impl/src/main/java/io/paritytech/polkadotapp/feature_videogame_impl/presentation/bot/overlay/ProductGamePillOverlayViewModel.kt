@@ -24,10 +24,9 @@ internal class ProductGamePillOverlayViewModel @Inject constructor(
 ) : BaseViewModel(), GamePillViewModel {
     private class Countdown(val game: ScheduledProductGame, val secondsLeft: Long)
 
-    // The soonest start inside the countdown window, if any; games are stored soonest first.
     private val countdown: StateFlow<Countdown?> =
         combine(reminder.scheduled, currentTimestampFlow()) { games, now ->
-            games.firstNotNullOfOrNull { game -> game.countdownAt(now) }
+            games.mapNotNull { game -> game.countdownAt(now) }.minByOrNull { it.game.startsAtMillis }
         }.stateInBackground(SharingStarted.WhileSubscribed(), null)
 
     override val pillState: StateFlow<VideoGamePillState> = countdown

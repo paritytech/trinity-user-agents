@@ -37,12 +37,11 @@ class RealProductGameOsAccess @Inject constructor(
     }
 
     // A refusal is remembered until the user allows it in system settings, so it is not asked again.
-    override suspend fun requestExactAlarms(): Boolean {
-        if (context.canScheduleExactAlarms()) return true
-        if (preferences.getBoolean(KEY_EXACT_ALARM_REFUSED, false)) return false
-        val allowed = foregroundPrompt.ask { activity -> ExactAlarmAccessExecutor(activity).execute().getOrNull() } ?: return false
+    override suspend fun requestExactAlarms() {
+        if (context.canScheduleExactAlarms()) return
+        if (preferences.getBoolean(KEY_EXACT_ALARM_REFUSED, false)) return
+        val allowed = foregroundPrompt.ask { activity -> ExactAlarmAccessExecutor(activity).execute().getOrNull() } ?: return
         preferences.putBoolean(KEY_EXACT_ALARM_REFUSED, !allowed)
-        return allowed
     }
 
     // READ as well: deduping an added event queries the calendar.

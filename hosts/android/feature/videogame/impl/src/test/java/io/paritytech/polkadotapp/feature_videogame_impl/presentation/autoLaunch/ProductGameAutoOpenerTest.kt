@@ -29,8 +29,8 @@ class ProductGameAutoOpenerTest {
 
     private val game = ProductId.fromStoredValue("game.dot")
     private val other = ProductId.fromStoredValue("acme.dot")
-    private val scheduledGame = ScheduledProductGame(game.value, startsAtMillis = 60_000, ringAlarm = true)
-    private val scheduledOther = ScheduledProductGame(other.value, startsAtMillis = 120_000, ringAlarm = true)
+    private val scheduledGame = ScheduledProductGame(game.value, startsAtMillis = 60_000)
+    private val scheduledOther = ScheduledProductGame(other.value, startsAtMillis = 120_000)
 
     @Test
     fun `opens the soonest product at its start while in the foreground and clears it`() = runTest {
