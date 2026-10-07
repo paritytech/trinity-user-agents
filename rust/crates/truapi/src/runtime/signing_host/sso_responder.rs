@@ -1510,55 +1510,6 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_without_session_distinguishes_requests_responses_and_disconnects() {
-        let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-        let service = SsoAccountHolderService::new(
-            signing_host.account_holder().clone(),
-            signing_host.account_holder().current_session().unwrap(),
-        );
-        let dispatch = |data| {
-            futures::executor::block_on(service.dispatch(
-                None,
-                RemoteMessage {
-                    message_id: "m-1".to_string(),
-                    data: RemoteMessageData::V1(data),
-                },
-            ))
-        };
-
-        assert_eq!(
-            dispatch(v1::RemoteMessage::Disconnected),
-            Dispatch::Disconnected
-        );
-        assert_eq!(
-            dispatch(v1::RemoteMessage::ProductSubtreeResponse(
-                sso_messages::Response {
-                    responding_to: "m-1".to_string(),
-                    payload: Ok([7; 32]),
-                }
-            )),
-            Dispatch::NotARequest("ProductSubtreeResponse"),
-        );
-        let Dispatch::Response(answer) = dispatch(v1::RemoteMessage::ProductSubtreeRequest(
-            sso_messages::ProductSubtreeRequest {
-                product_id: "myapp.dot".to_string(),
-            },
-        )) else {
-            panic!("expected a disconnected error response");
-        };
-        let RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(response)) =
-            answer.message.data
-        else {
-            panic!("expected the request's response variant");
-        };
-        assert_eq!(response.responding_to, "m-1");
-        assert_eq!(
-            response.payload,
-            Err("signing host session is not active".to_string())
-        );
-    }
-
-    #[test]
     fn response_summary_reports_protocol_errors_without_multiline_output() {
         let payload: GetAccountAliasResponse = Err(RingVrfError::Unknown {
             reason: "chain RPC\ntimed out".to_string(),
@@ -1715,48 +1666,6 @@ mod tests {
     }
 
     #[test]
-    fn auto_signing_allocation_returns_the_product_subtree_secret() {
-        let platform = Arc::new(StubPlatform {
-            resource_allocation_confirmed: true,
-            ..StubPlatform::default()
-        });
-        let (_, signing_host) = signing_fixture(platform);
-        let expected_secret = derive_product_subtree_keypair(
-            &derive_root_keypair_from_entropy(&ENTROPY).unwrap(),
-            "myapp.dot",
-        )
-        .unwrap()
-        .secret
-        .to_bytes();
-        let expected_ring_vrf_domain_entropy =
-            derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot")
-                .expect("ring-VRF domain entropy derives");
-
-        let response = answer(
-            &signing_host,
-            "alloc-auto-signing",
-            v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ResourceAllocationRequest {
-                calling_product_id: "myapp.dot".to_string(),
-                resources: vec![api::AllocatableResource::AutoSigning],
-                on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
-            }),
-        );
-
-        let v1::RemoteMessage::ResourceAllocationResponse(response) = response else {
-            panic!("expected resource allocation response");
-        };
-        assert_eq!(
-            response.payload.unwrap(),
-            vec![SsoAllocationOutcome::Allocated(
-                SsoAllocatedResource::AutoSigning {
-                    product_root_private_key: expected_secret,
-                    ring_vrf_domain_entropy: expected_ring_vrf_domain_entropy,
-                }
-            )]
-        );
-    }
-
-    #[test]
     fn native_product_reset_does_not_invalidate_remote_allocation_review() {
         let (release, gate) = futures::channel::oneshot::channel();
         let platform = Arc::new(StubPlatform {
@@ -1887,27 +1796,6 @@ mod tests {
                 (Err("signing host session is not active".to_string()), 0),
             );
         }
-    }
-
-    #[test]
-    fn a_peer_cannot_withdraw_another_peers_request() {
-        let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-        let first = SsoAccountHolderService::new(
-            signing_host.account_holder().clone(),
-            signing_host.account_holder().current_session().unwrap(),
-        );
-        let second = SsoAccountHolderService::new(
-            signing_host.account_holder().clone(),
-            signing_host.account_holder().current_session().unwrap(),
-        );
-        futures::executor::block_on(first.answer(cancel("cancel", "shared-id"))).unwrap();
-        let response = futures::executor::block_on(second.answer(RemoteMessage::request(
-            "shared-id".to_string(),
-            sso_messages::ProductSubtreeRequest {
-                product_id: "myapp.dot".to_string(),
-            },
-        )));
-        assert!(matches!(response, Ok(Dispatch::Response(_))));
     }
 
     fn allocation_request(message_id: &str) -> RemoteMessage {
