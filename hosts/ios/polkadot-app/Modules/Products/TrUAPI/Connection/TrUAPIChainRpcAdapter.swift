@@ -224,6 +224,7 @@ private extension TrUAPIChainRpcAdapter {
         }
 
         guard let requestId else { return }
+        logger.debug("subscription subscribed [\(requestId)] remote id: \(remoteId)")
         emitResponse(id: requestId, result: remoteId)
     }
 
