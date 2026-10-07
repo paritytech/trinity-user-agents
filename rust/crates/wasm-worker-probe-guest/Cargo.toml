@@ -19,7 +19,6 @@ unified = []
 
 [dependencies]
 truapi-worker = { path = "../truapi-worker" }
-parity-scale-codec = { workspace = true }
 
 [lints]
 workspace = true

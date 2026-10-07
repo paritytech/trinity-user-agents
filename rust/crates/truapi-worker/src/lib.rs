@@ -38,6 +38,24 @@
 //! truapi_worker::export_worker!(Counter::default());
 //! ```
 //!
+//! # Using it from another repository
+//!
+//! A worker is its own crate, in any repository, with `crate-type =
+//! ["cdylib", "rlib"]`, built with `cargo build --target
+//! wasm32-unknown-unknown --release`. The `.wasm` it produces is the worker
+//! executable a host fetches; this crate is only a build dependency.
+//!
+//! Neither this crate nor `truapi` is on crates.io yet, so depend on it by git
+//! (`truapi-worker = { git = "<this repository>", rev = "<commit>" }`) or by
+//! path. It needs `truapi` without its default features, which is the
+//! protocol definitions alone: no generated sources, no host runtime. Pin a
+//! revision whose `truapi` speaks the same wire codec version as the hosts
+//! the worker runs on; the handshake refuses any other.
+//!
+//! A worker crate may `deny(unsafe_code)` but not `forbid` it: the exports
+//! [`export_worker!`] generates must live in that crate and carry
+//! `#[allow(unsafe_code)]`.
+//!
 //! # The sandbox ABI
 //!
 //! Exports: `alloc(len: i32) -> i32`, `free(ptr: i32, len: i32)`,
@@ -63,6 +81,9 @@ pub use calls::{
 };
 pub use frame::Frame;
 pub use instance::{Ctx, Instance, ProductWorker};
+/// The SCALE codec the protocol types are built on, for the helper types
+/// they use, such as `OptionBool` in `ButtonProps`.
+pub use parity_scale_codec;
 /// The protocol crate whose latest payload types a worker reads and builds.
 pub use truapi;
 
@@ -81,8 +102,9 @@ pub mod __abi;
 /// exports of the sandbox ABI. `free` and `on_frame` are `unsafe extern`
 /// because they take guest pointers from the host. Each is one call into the
 /// library's ABI module and carries `#[allow(unsafe_code)]`; the product crate
-/// writes no `unsafe` of its own. Use it once per final crate: a second use
-/// defines every export twice.
+/// writes no `unsafe` of its own, and may `deny(unsafe_code)` but not
+/// `forbid` it. Use it once per final crate: a second use defines every
+/// export twice.
 #[macro_export]
 macro_rules! export_worker {
     ($worker:expr $(,)?) => {

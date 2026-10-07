@@ -17,7 +17,7 @@
 //! Each `bump` action, from whichever body it was pressed in, increments the
 //! one count and redraws every open body.
 
-use parity_scale_codec::OptionBool;
+use truapi_worker::parity_scale_codec::OptionBool;
 use truapi_worker::truapi::latest::{
     ButtonProps, ChatCustomMessage, ChatMessageContent, ColumnProps, HostChatCreateRoomRequest,
     HostChatPostMessageRequest, HostChatRegisterBotRequest, HostRendererActionSubscribeItem,

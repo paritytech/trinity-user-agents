@@ -6265,7 +6265,6 @@ dependencies = [
 name = "wasm-worker-probe-guest"
 version = "0.0.0"
 dependencies = [
- "parity-scale-codec",
  "truapi-worker",
 ]
 
