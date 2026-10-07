@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost
 
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
@@ -51,6 +52,22 @@ class CardFaceRequestsTest {
         advanceTimeBy(900)
         assertEquals(null, outcome)
         advanceTimeBy(200)
+
+        assertEquals(ExpandedCardFaceOutcome.NOT_PRESENTED, outcome)
+    }
+
+    // A screen that is watching but busy must not hold the product's call open past the timeout.
+    @Test
+    fun `a watcher too busy to receive a request leaves it not presented`() = runTest {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            requests.requests.collect { awaitCancellation() }
+        }
+        backgroundScope.launch { requests.setFaceShown(true) }
+        advanceTimeBy(2_000)
+        var outcome: ExpandedCardFaceOutcome? = null
+        backgroundScope.launch { outcome = requests.setFaceShown(false) }
+
+        advanceTimeBy(1_100)
 
         assertEquals(ExpandedCardFaceOutcome.NOT_PRESENTED, outcome)
     }
