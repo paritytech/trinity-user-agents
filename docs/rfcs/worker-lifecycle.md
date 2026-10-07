@@ -29,7 +29,6 @@ Each host implements worker management on its own:
 ### References
 
 A worker runs while at least one reference holds it. Several references of one product hold a single worker.
-App and Widget executables hold no reference; their lifetime is their screen.
 
 References and how long each lasts:
 
@@ -47,6 +46,7 @@ References and how long each lasts:
   they expire.
 - When nothing holds a worker, the core stops it. Products must not rely on staying warm: state that must survive goes through host storage.
 - Signing out stops every worker and clears the tables below.
+- SPA and Widget executables hold no worker reference.
 
 ### Storage
 
