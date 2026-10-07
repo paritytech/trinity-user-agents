@@ -184,6 +184,23 @@ pub struct PairingHostRuntime {
 }
 
 impl PairingHostRuntime {
+    /// `product_id`'s Worker manifest from dotNS, cached for a day like the
+    /// root manifest. `Ok(None)` when the product publishes no Worker, or one
+    /// this core cannot use; `Err` when dotNS could not be read.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.worker_manifest"))]
+    pub async fn worker_manifest(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, v01::GenericError> {
+        crate::runtime::product_manifest::worker_manifest(
+            &self.services,
+            self.services.platform.as_ref(),
+            product_id,
+        )
+        .await
+        .map_err(|reason| v01::GenericError { reason })
+    }
+
     /// Build a long-lived pairing-host runtime around a platform implementation.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.new"))]
     pub fn new<P>(platform: Arc<P>, config: PairingHostConfig, spawner: Spawner) -> Self
@@ -564,6 +581,23 @@ pub struct SigningHostRuntime {
 }
 
 impl SigningHostRuntime {
+    /// `product_id`'s Worker manifest from dotNS, cached for a day like the
+    /// root manifest. `Ok(None)` when the product publishes no Worker, or one
+    /// this core cannot use; `Err` when dotNS could not be read.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.worker_manifest"))]
+    pub async fn worker_manifest(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, v01::GenericError> {
+        crate::runtime::product_manifest::worker_manifest(
+            &self.services,
+            self.services.platform.as_ref(),
+            product_id,
+        )
+        .await
+        .map_err(|reason| v01::GenericError { reason })
+    }
+
     /// Answer resource allocation as granted without performing it.
     ///
     /// For test hosts only, with the `test-host` feature enabled.
