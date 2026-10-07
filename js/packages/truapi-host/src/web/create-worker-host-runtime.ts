@@ -89,7 +89,24 @@ export interface WorkerPairingHostRuntime {
    * it waits for a wallet to answer over the statement-store channel instead.
    */
   activateLocalSession(secret: Uint8Array, liteUsername?: string): Promise<void>;
+  /**
+   * Answer resource allocation as granted without performing it.
+   *
+   * Test hosts only, on a core built with `test-host`. Nothing reaches a chain:
+   * preimage submissions stay in the core and are served back from its lookup
+   * cache, since the Bulletin allowance was never authorized on chain.
+   */
   setGrantAllowancesUnchecked(granted: boolean): Promise<void>;
+  /**
+   * Keep preimage submissions in the core instead of the Bulletin chain.
+   *
+   * Test hosts only, on a core built with `test-host`. For a host whose wallet
+   * answers allowances itself: that Bulletin allowance was never authorized on
+   * chain, so a real `store` is refused at dry-run. The product gets the content
+   * key back and reads the value from the core's lookup cache. A refused
+   * Bulletin allowance still refuses the submission.
+   */
+  setSubmitPreimagesLocally(local: boolean): Promise<void>;
   /**
    * Answer these resource tags as refused, replacing any earlier set.
    *
@@ -1494,6 +1511,13 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
         kind: "setGrantAllowancesUnchecked",
         requestId,
         granted,
+      }));
+    },
+    setSubmitPreimagesLocally(local: boolean): Promise<void> {
+      return sendSessionActivationRequest(state, (requestId) => ({
+        kind: "setSubmitPreimagesLocally",
+        requestId,
+        local,
       }));
     },
     setWithheldResources(tags: string[]): Promise<void> {

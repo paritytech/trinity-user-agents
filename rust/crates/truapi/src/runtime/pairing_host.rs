@@ -261,6 +261,11 @@ pub struct PairingHost {
     session_secret_storage: futures::lock::Mutex<()>,
     session_store_activation: futures::lock::Mutex<()>,
     session_lifecycle: Mutex<SessionLifecycle>,
+    /// Keep preimage submissions in the core instead of sending them to the
+    /// Bulletin chain. A test host whose wallet answers allowances in-page
+    /// holds no on-chain authorization to submit with.
+    #[cfg(feature = "test-host")]
+    submit_preimages_locally: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     external_session_activation_pause: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
     /// Change notifications the sync task has finished reconciling.
@@ -313,6 +318,8 @@ impl PairingHost {
             session_secret_storage: futures::lock::Mutex::new(()),
             session_store_activation: futures::lock::Mutex::new(()),
             session_lifecycle: Mutex::new(SessionLifecycle::default()),
+            #[cfg(feature = "test-host")]
+            submit_preimages_locally: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             external_session_activation_pause: Mutex::new(None),
             #[cfg(test)]
@@ -2619,10 +2626,27 @@ fn login_error_reason(err: &CallError<HostRequestLoginError>) -> String {
     }
 }
 
+impl PairingHost {
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.submit_preimages_locally
+            .store(local, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 #[async_trait::async_trait]
 impl ProductAuthority for PairingHost {
     fn current_session(&self) -> Option<AuthoritySession> {
         PairingHost::current_session(self)
+    }
+
+    #[cfg(feature = "test-host")]
+    fn submits_preimages_locally(&self) -> bool {
+        self.submit_preimages_locally
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn session_state(&self) -> Arc<SessionState> {

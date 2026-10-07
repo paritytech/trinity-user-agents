@@ -7682,3 +7682,27 @@ fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
         );
     }
 }
+
+/// A pairing test host keeps preimage submissions off the Bulletin chain only
+/// once told to, so a real pairing host never does.
+#[cfg(feature = "test-host")]
+#[test]
+fn a_pairing_host_keeps_preimages_local_only_when_told() {
+    use crate::runtime::ProductAuthority;
+
+    let (host_config, _) = runtime_config("myapp.dot");
+    let services = RuntimeServices::with_chat_platform(
+        Arc::new(StubPlatform::default()) as Arc<dyn Platform>,
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+        None,
+    );
+    let pairing_host = PairingHost::new(services, host_config);
+
+    assert!(!pairing_host.submits_preimages_locally());
+    pairing_host.set_submit_preimages_locally(true);
+    assert!(pairing_host.submits_preimages_locally());
+}

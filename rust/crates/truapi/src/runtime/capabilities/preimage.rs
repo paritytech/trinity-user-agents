@@ -137,6 +137,17 @@ impl Preimage for ProductRuntimeHost {
         .await
         .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
 
+        // A test host's allowance was never authorized on chain, so a Bulletin
+        // `store` signed with it would always be refused. The value stays in
+        // the lookup cache under its content key, which is the state a landed
+        // submission leaves, and the product reads it back the same way.
+        #[cfg(feature = "test-host")]
+        if self.authority.submits_preimages_locally() {
+            let key = preimage_key(&value).to_vec();
+            self.prime_preimage_cache(&key, value);
+            return Ok(RemotePreimageSubmitResponse::V1(key));
+        }
+
         let key = match bulletin
             .submit_preimage(cx, submission_deadline, &allowance, &value)
             .await
