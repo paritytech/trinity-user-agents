@@ -661,6 +661,15 @@ impl NativeTrUApiHostRuntime {
         .map_err(Into::into)
     }
 
+    /// `product_id`'s Worker manifest from dotNS, cached for a day. `None`
+    /// when the product publishes no Worker, or one the core cannot use.
+    pub async fn worker_manifest(
+        &self,
+        product_id: String,
+    ) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, HostRejection> {
+        Ok(self.runtime.worker_manifest(&product_id).await?)
+    }
+
     /// Reports the core database's SQLite version, schema version and file
     /// path.
     pub async fn core_database_status(

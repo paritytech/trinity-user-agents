@@ -14,7 +14,7 @@ use truapi::latest::FundingDirection;
 
 use super::product_manifest::worker_manifest;
 use super::services::RuntimeServices;
-use crate::host_internal::worker_manifest::WorkerManifest;
+use crate::host_logic::worker_manifest::WorkerManifest;
 use crate::host_logic::funding::FundingSessionError;
 use crate::host_logic::funding_providers::{FundingCandidate, FundingProviderEntry};
 use crate::platform::{ProductContext, ProductExecutionKind};
@@ -136,7 +136,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 mod tests {
     use super::*;
 
-    use crate::host_logic::funding_providers::FundingRoute;
+    use crate::host_logic::worker_manifest::{FundingMode, FundingRoute, RouteDirection};
 
     fn manifest(routes: &str) -> String {
         format!(
@@ -184,8 +184,8 @@ mod tests {
             (
                 vec!["card.dot".to_string(), "both.dot".to_string()],
                 vec![vec![FundingRoute {
-                    mode: crate::host_logic::funding_providers::FundingMode::Crypto,
-                    directions: vec![FundingDirection::Out],
+                    mode: FundingMode::Crypto,
+                    directions: vec![RouteDirection::Out],
                     assets: vec!["USDT".to_string()],
                     countries: None,
                     requires_account: false,

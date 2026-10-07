@@ -8,7 +8,9 @@
 
 use truapi::latest::FundingDirection;
 
-use crate::host_internal::worker_manifest::WorkerManifest;
+use crate::host_logic::worker_manifest::{
+    FundingQuoteSource, FundingRoute, RouteDirection, WorkerManifest,
+};
 
 /// A provider the host offers, as the host supplies it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,73 +24,6 @@ pub struct FundingProviderEntry {
     /// The Worker manifest JSON the host shipped for it, used until the core
     /// has read the live one. `None` waits for that read.
     pub worker_manifest: Option<String>,
-}
-
-/// A provider's funding configuration, with every value the core does not
-/// recognise already left out.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Record)
-)]
-pub struct FundingConfig {
-    /// What the provider moves and how; never empty.
-    pub routes: Vec<FundingRoute>,
-    /// Where the host gets a live quote.
-    pub quote: FundingQuoteSource,
-    /// Onramp adapter id for calls that need the provider's key.
-    pub backend: Option<String>,
-}
-
-/// One payment mode a provider serves.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Record)
-)]
-pub struct FundingRoute {
-    /// The payment mode.
-    pub mode: FundingMode,
-    /// Directions served; never empty.
-    pub directions: Vec<FundingDirection>,
-    /// Symbols the user pays with or receives; never empty.
-    pub assets: Vec<String>,
-    /// ISO 3166-1 alpha-2 codes the route serves, when declared. The quote
-    /// still decides.
-    pub countries: Option<Vec<String>>,
-    /// Whether the user needs an account with the provider.
-    pub requires_account: bool,
-}
-
-/// How the user pays or is paid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Enum)
-)]
-pub enum FundingMode {
-    /// A card payment.
-    Card,
-    /// A bank transfer.
-    Bank,
-    /// A crypto transfer.
-    Crypto,
-}
-
-/// Where a provider's quotes come from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Enum)
-)]
-pub enum FundingQuoteSource {
-    /// The provider's worker answers.
-    Worker,
-    /// The host calls this https URL.
-    Url {
-        /// The URL.
-        url: String,
-    },
 }
 
 /// A provider a session can be handed to, with only the routes that serve the
@@ -118,6 +53,10 @@ impl FundingCandidate {
         direction: FundingDirection,
     ) -> Option<Self> {
         let funding = manifest.funding.as_ref()?;
+        let direction = match direction {
+            FundingDirection::In => RouteDirection::In,
+            FundingDirection::Out => RouteDirection::Out,
+        };
         let routes: Vec<FundingRoute> = funding
             .routes
             .iter()

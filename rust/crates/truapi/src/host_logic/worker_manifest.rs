@@ -1,17 +1,13 @@
-//! Worker executable manifest parsing, v1 and v2.
+//! Worker executable manifests, v1 and v2, as the core reads them for every
+//! host.
 //!
-//! Pure: the JSON arrives from `crate::runtime::product_manifest`. Only the
+//! Parsing is pure: the JSON arrives from `crate::runtime::product_manifest`. Only the
 //! fields this core reads are modelled. A v2 manifest is the v1 one with
 //! `$v: 2` and an `includes.funding` configuration, read the way the RFC
 //! requires: a value this core does not recognise is ignored, never fatal, and
 //! a configuration left with nothing usable serves no Funding.
 
 use serde::Deserialize;
-use truapi::latest::FundingDirection;
-
-use crate::host_logic::funding_providers::{
-    FundingConfig, FundingMode, FundingQuoteSource, FundingRoute,
-};
 
 /// The executable kind a Worker manifest must declare.
 const WORKER_KIND: &str = "worker";
@@ -19,6 +15,10 @@ const WORKER_KIND: &str = "worker";
 /// What a product's `worker.<product_id>.<tld>` subname publishes, as far as
 /// this core reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct WorkerManifest {
     /// Module the host loads inside the worker.
     pub entrypoint: String,
@@ -31,6 +31,86 @@ pub struct WorkerManifest {
     /// How the worker serves Funding. `None` when it does not, including when
     /// its configuration has no usable route or quote source.
     pub funding: Option<FundingConfig>,
+}
+
+/// A provider's funding configuration, with every value the core does not
+/// recognise already left out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct FundingConfig {
+    /// What the provider moves and how; never empty.
+    pub routes: Vec<FundingRoute>,
+    /// Where the host gets a live quote.
+    pub quote: FundingQuoteSource,
+    /// Onramp adapter id for calls that need the provider's key.
+    pub backend: Option<String>,
+}
+
+/// One payment mode a provider serves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct FundingRoute {
+    /// The payment mode.
+    pub mode: FundingMode,
+    /// Directions served; never empty.
+    pub directions: Vec<RouteDirection>,
+    /// Symbols the user pays with or receives; never empty.
+    pub assets: Vec<String>,
+    /// ISO 3166-1 alpha-2 codes the route serves, when declared. The quote
+    /// still decides.
+    pub countries: Option<Vec<String>>,
+    /// Whether the user needs an account with the provider.
+    pub requires_account: bool,
+}
+
+/// How the user pays or is paid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum FundingMode {
+    /// A card payment.
+    Card,
+    /// A bank transfer.
+    Bank,
+    /// A crypto transfer.
+    Crypto,
+}
+
+/// Where a provider's quotes come from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum FundingQuoteSource {
+    /// The provider's worker answers.
+    Worker,
+    /// The host calls this https URL.
+    Url {
+        /// The URL.
+        url: String,
+    },
+}
+
+/// Which way a route moves value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum RouteDirection {
+    /// Into the user's balance.
+    In,
+    /// Out of the user's balance.
+    Out,
 }
 
 /// The manifest as published, before the RFC's ignore rules are applied.
@@ -141,8 +221,8 @@ impl PublishedRoute {
         let mut directions = Vec::new();
         for direction in &self.directions {
             let direction = match direction.as_str() {
-                "In" => FundingDirection::In,
-                "Out" => FundingDirection::Out,
+                "In" => RouteDirection::In,
+                "Out" => RouteDirection::Out,
                 _ => continue,
             };
             if !directions.contains(&direction) {
@@ -199,7 +279,7 @@ mod tests {
     fn card_in() -> FundingRoute {
         FundingRoute {
             mode: FundingMode::Card,
-            directions: vec![FundingDirection::In],
+            directions: vec![RouteDirection::In],
             assets: vec!["EUR".to_string()],
             countries: None,
             requires_account: false,
@@ -221,7 +301,7 @@ mod tests {
                     routes: vec![
                         FundingRoute {
                             mode: FundingMode::Card,
-                            directions: vec![FundingDirection::In],
+                            directions: vec![RouteDirection::In],
                             assets: vec!["EUR".to_string(), "USD".to_string()],
                             countries: Some(vec![
                                 "DE".to_string(),
@@ -232,7 +312,7 @@ mod tests {
                         },
                         FundingRoute {
                             mode: FundingMode::Crypto,
-                            directions: vec![FundingDirection::In, FundingDirection::Out],
+                            directions: vec![RouteDirection::In, RouteDirection::Out],
                             assets: vec!["USDT".to_string(), "DOT".to_string()],
                             countries: None,
                             requires_account: false,
@@ -317,7 +397,7 @@ mod tests {
                 card_in(),
                 FundingRoute {
                     mode: FundingMode::Crypto,
-                    directions: vec![FundingDirection::Out],
+                    directions: vec![RouteDirection::Out],
                     assets: vec!["DOT".to_string()],
                     countries: None,
                     requires_account: false,

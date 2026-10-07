@@ -5,7 +5,7 @@
 //! [RFC — Product Manifest Format][manifest]: derive the node under the
 //! network's own TLD, find the resolver through the registry, read the record.
 //! Parsing that JSON is [`crate::host_internal::product_manifest`]'s and
-//! [`crate::host_internal::worker_manifest`]'s job.
+//! [`crate::host_logic::worker_manifest`]'s job.
 //!
 //! [manifest]: ../../../../docs/rfcs/product-manifest.md
 
@@ -23,7 +23,7 @@ use crate::chain_runtime::ChainRuntime;
 use crate::dotns_views::{call_bytes32_string, network_tld, protocol_component, tld_node};
 use crate::host_internal::permissions::account_access_status;
 use crate::host_internal::product_manifest::{Granted, RootManifest, bare_product_label};
-use crate::host_internal::worker_manifest::WorkerManifest;
+use crate::host_logic::worker_manifest::WorkerManifest;
 use crate::host_internal::sso_messages::RingVrfError;
 use crate::host_logic::dotns_gateway::{
     DotnsTransport, DotnsViewError, call_bytes32, call_no_args, decode_address, decode_string,

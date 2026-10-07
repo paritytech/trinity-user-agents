@@ -9,4 +9,3 @@ pub mod product_manifest;
 pub mod sso_messages;
 pub mod sso_wire;
 pub mod transaction;
-pub mod worker_manifest;
