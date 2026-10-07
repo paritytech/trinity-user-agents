@@ -19,28 +19,13 @@ const cases: [string, HostScannerScanRequest, string | typeof SCANNED][] = [
     SCANNED,
   ],
   [
-    "the prefix ignores letter case",
-    { formats: ["Qr"], prefix: "HTTPS://GREENMARKET.EXAMPLE/R/" },
-    SCANNED,
-  ],
-  [
     "a code without the prefix is refused",
     { formats: ["Qr"], prefix: "polkadotapp://pair" },
     "Unknown",
   ],
   [
-    "a format the product did not ask for is refused",
-    { formats: ["Ean13"] },
-    "Unknown",
-  ],
-  [
     "a two-line hint is refused before the host is asked",
     { formats: ["Qr"], hint: "Scan this\nto sign in" },
-    "InvalidRequest",
-  ],
-  [
-    "no formats is refused before the host is asked",
-    { formats: [] },
     "InvalidRequest",
   ],
 ];

@@ -15,7 +15,9 @@ function hex(bytes: Uint8Array): `0x${string}` {
   return `0x${digits.join("")}`;
 }
 
-const suite = wasmIsBuilt("testing/truapi_server.js") ? describe : describe.skip;
+const suite = wasmIsBuilt("testing/truapi_server.js")
+  ? describe
+  : describe.skip;
 
 suite("createMockClient", () => {
   it("round-trips a product call to the mock host", async () => {
@@ -56,46 +58,29 @@ suite("createMockClient", () => {
     }
   });
 
-  it("answers a product's scan with the code the test configured", async () => {
-    // The browser joins for an optional capability are written by hand, so a
-    // missing one leaves every product scan `Unsupported` while unit tests
-    // pass. Only a call through the real core proves the scanner is reachable.
-    const { client, host, dispose } = await createMockClient({
-      mock: {
-        scanner: {
-          tag: "Scanned",
-          value: { text: "https://greenmarket.example/r/1", format: "Qr" },
-        },
-      },
-    });
+  it("serves a scanner only when the test configures one", async () => {
+    // The browser joins for an optional capability are written by hand, so
+    // only a call through the real core proves the scanner is reachable.
+    const receipt = {
+      tag: "Scanned",
+      value: { text: "https://greenmarket.example/r/1", format: "Qr" },
+    } as const;
+    const served = await createMockClient({ mock: { scanner: receipt } });
+    const bare = await createMockClient();
     try {
-      const first = await client.scanner.scan({
-        formats: ["Qr"],
-        prefix: "https://greenmarket.example/r/",
-      });
-      expect(first._unsafeUnwrap().outcome).toEqual({
-        tag: "Scanned",
-        value: { text: "https://greenmarket.example/r/1", format: "Qr" },
+      const scan = () => served.client.scanner.scan({ formats: ["Qr"] });
+      expect((await scan())._unsafeUnwrap().outcome).toEqual(receipt);
+      served.host.setScanAnswer({ tag: "Dismissed" });
+      expect((await scan())._unsafeUnwrap().outcome).toEqual({
+        tag: "Dismissed",
       });
 
-      // A "Scan another" flow: the next scan gets the next answer.
-      host.setScanAnswer({ tag: "Dismissed" });
-      const second = await client.scanner.scan({ formats: ["Qr"] });
-      expect(second._unsafeUnwrap().outcome).toEqual({ tag: "Dismissed" });
+      const unserved = await bare.client.scanner.scan({ formats: ["Qr"] });
+      expect(unserved._unsafeUnwrapErr().tag).toBe("Unsupported");
+      expect(() => bare.host.setScanAnswer({ tag: "Dismissed" })).toThrow();
     } finally {
-      dispose();
-    }
-  });
-
-  it("leaves scanning unsupported when the test configures no scanner", async () => {
-    // A suite that never mentions scanning sees what a web host answers.
-    const { client, host, dispose } = await createMockClient();
-    try {
-      const result = await client.scanner.scan({ formats: ["Qr"] });
-      expect(result._unsafeUnwrapErr().tag).toBe("Unsupported");
-      expect(() => host.setScanAnswer({ tag: "Dismissed" })).toThrow();
-    } finally {
-      dispose();
+      served.dispose();
+      bare.dispose();
     }
   });
 
@@ -151,7 +136,8 @@ suite("createMockClient", () => {
 
       // The core caches a decided authorization, so a product asking twice is
       // answered from that record and the second call never reaches the host.
-      const repeated = await client.permissions.requestDevicePermission("Camera");
+      const repeated =
+        await client.permissions.requestDevicePermission("Camera");
       expect(repeated._unsafeUnwrap().granted).toBe(false);
       expect(
         host.getPermissionLog(),
@@ -163,7 +149,8 @@ suite("createMockClient", () => {
       // the host afresh. Without this a suite can only ever observe the answer
       // its first request happened to settle on.
       host.grantPermission("Camera");
-      const granted = await client.permissions.requestDevicePermission("Camera");
+      const granted =
+        await client.permissions.requestDevicePermission("Camera");
       expect(granted._unsafeUnwrap().granted).toBe(true);
       expect(host.getPermissionLog()).toHaveLength(2);
     } finally {

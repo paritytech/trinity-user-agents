@@ -156,32 +156,30 @@ mod tests {
     const RECEIPTS: &str = "https://greenmarket.example/r/";
 
     #[test]
-    fn formats_are_required_and_named_once() {
-        // With no formats the host would decide what comes back, and the filter
-        // checks the list on every camera frame.
+    fn a_request_names_each_format_once_and_keeps_its_hint_to_one_plain_line() {
+        // With no formats the host would decide what comes back. The hint sits
+        // under the host's title, so text that breaks the line, flips its
+        // direction or hides itself could pass for host text. TypeScript counts
+        // a hint with `[...hint].length`, which agrees with the scalar count.
+        let qr = &[CodeFormat::Qr];
+        assert!(valid(
+            &[CodeFormat::Qr, CodeFormat::Ean13],
+            None,
+            Some("Point at the receipt")
+        ));
+        assert!(valid(
+            qr,
+            Some(&"a".repeat(MAX_PREFIX_BYTES)),
+            Some(&"é".repeat(MAX_HINT_CHARS))
+        ));
         assert!(!valid(&[], None, None));
         assert!(!valid(&[CodeFormat::Qr, CodeFormat::Qr], None, None));
-        assert!(valid(&[CodeFormat::Qr, CodeFormat::Ean13], None, None));
-    }
-
-    #[test]
-    fn limits_count_the_hint_in_scalars_and_the_prefix_in_bytes() {
-        // TypeScript products count a hint with `[...hint].length`, which agrees.
-        let qr = &[CodeFormat::Qr];
-        assert!(valid(qr, None, Some(&"é".repeat(MAX_HINT_CHARS))));
-        assert!(!valid(qr, None, Some(&"a".repeat(MAX_HINT_CHARS + 1))));
-        assert!(valid(qr, Some(&"a".repeat(MAX_PREFIX_BYTES)), None));
         assert!(!valid(
             qr,
             Some(&"é".repeat(MAX_PREFIX_BYTES / 2 + 1)),
             None
         ));
-    }
-
-    #[test]
-    fn the_hint_stays_one_plain_line() {
-        // The hint sits under the host's title, so text that breaks the line,
-        // flips its direction or hides itself could pass for host text.
+        assert!(!valid(qr, None, Some(&"a".repeat(MAX_HINT_CHARS + 1))));
         for refused in [
             "scan\nto sign in",
             "tab\there",
@@ -196,16 +194,8 @@ mod tests {
             "\u{FEFF}byte order mark",
             "\u{FFF9}annotation",
         ] {
-            assert!(
-                !valid(&[CodeFormat::Qr], None, Some(refused)),
-                "{refused:?}"
-            );
+            assert!(!valid(qr, None, Some(refused)), "{refused:?}");
         }
-        assert!(valid(
-            &[CodeFormat::Qr],
-            None,
-            Some("Point at the receipt's QR code")
-        ));
     }
 
     #[test]

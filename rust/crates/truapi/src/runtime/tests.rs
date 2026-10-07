@@ -7820,45 +7820,6 @@ fn card_tap() -> truapi::versioned::renderer::HostRendererActionSubscribeItem {
     )
 }
 
-#[test]
-fn a_worker_scans_only_right_after_the_user_taps_its_card() {
-    // A Worker has no screen of its own. Without a tap, the viewfinder would
-    // open over whatever the user is doing.
-    let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
-    let host = scanner_host_for(ProductExecutionKind::Worker, Some(scanner.clone()));
-    assert_eq!(
-        scan(&host),
-        Err(CallError::Domain(v01::HostScannerScanError::NotVisible))
-    );
-    assert!(scanner.asked().is_empty());
-
-    host.publish_renderer_action(card_tap()).unwrap();
-    assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
-    assert_eq!(scanner.asked().len(), 1);
-}
-
-#[test]
-fn a_tap_older_than_the_window_does_not_let_a_worker_scan() {
-    let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
-    let host = scanner_host_for(ProductExecutionKind::Worker, Some(scanner.clone()));
-    host.note_user_tap_at(crate::unix_time::current_unix_secs() - super::USER_TAP_WINDOW_SECS - 1);
-    assert_eq!(
-        scan(&host),
-        Err(CallError::Domain(v01::HostScannerScanError::NotVisible))
-    );
-    assert!(scanner.asked().is_empty());
-}
-
-#[test]
-fn a_page_the_host_says_is_off_screen_is_not_visible() {
-    // Only the host knows which page the user is looking at.
-    let host = scanner_host(Some(StubScannerPlatform::answering(HostScan::NotVisible)));
-    assert_eq!(
-        scan(&host),
-        Err(CallError::Domain(v01::HostScannerScanError::NotVisible))
-    );
-}
-
 fn scanned(text: &str, format: v01::CodeFormat) -> HostScan {
     HostScan::Scanned {
         text: text.into(),
@@ -7867,93 +7828,86 @@ fn scanned(text: &str, format: v01::CodeFormat) -> HostScan {
 }
 
 #[test]
-fn scanning_without_a_scanner_is_unsupported() {
-    // A product reads `Unsupported` as "use your own camera code"; a
-    // `HostFailure` would read as a real failure.
-    let host = scanner_host(None);
-    assert_eq!(scan(&host), Err(CallError::Unsupported));
+fn a_worker_scans_only_shortly_after_the_user_taps_its_card() {
+    // A Worker has no screen of its own. Without a recent tap, the viewfinder
+    // would open over whatever the user is doing.
+    let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
+    let host = scanner_host_for(ProductExecutionKind::Worker, Some(scanner.clone()));
+    let not_visible = Err(CallError::Domain(v01::HostScannerScanError::NotVisible));
+    assert_eq!(scan(&host), not_visible);
+
+    host.note_user_tap_at(crate::unix_time::current_unix_secs() - super::USER_TAP_WINDOW_SECS - 1);
+    assert_eq!(scan(&host), not_visible);
+    assert!(scanner.asked().is_empty());
+
+    host.publish_renderer_action(card_tap()).unwrap();
+    assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
 }
 
 #[test]
-fn a_scan_returns_the_code_and_names_the_product_without_a_session() {
-    // No session is installed: scanning reads no account, so it works signed out.
-    let scanner = StubScannerPlatform::answering(scanned(
-        "https://greenmarket.example/r/BAG6",
-        v01::CodeFormat::Qr,
-    ));
-    let host = scanner_host(Some(scanner.clone()));
-
-    assert_eq!(
-        scan(&host),
-        Ok(v01::ScanOutcome::Scanned {
-            text: "https://greenmarket.example/r/BAG6".into(),
-            format: v01::CodeFormat::Qr,
-        })
-    );
-    // The host titles the viewfinder with this id, so it must be the caller's.
-    assert_eq!(
-        scanner.asked(),
-        vec![("greenmarket.dot".to_owned(), receipt_request())]
-    );
+fn each_host_answer_reaches_the_product_as_its_own_result() {
+    // `Unsupported` tells a product to use its own camera code, a dismissal is
+    // worth offering again, and a code the request does not accept never
+    // reaches the product, even from a buggy host.
+    use v01::HostScannerScanError::{CameraUnavailable, NotVisible};
+    let receipt = "https://greenmarket.example/r/BAG6";
+    assert_eq!(scan(&scanner_host(None)), Err(CallError::Unsupported));
+    for (answer, expected) in [
+        (
+            scanned(receipt, v01::CodeFormat::Qr),
+            Ok(v01::ScanOutcome::Scanned {
+                text: receipt.into(),
+                format: v01::CodeFormat::Qr,
+            }),
+        ),
+        (HostScan::Dismissed, Ok(v01::ScanOutcome::Dismissed)),
+        (
+            HostScan::CameraUnavailable,
+            Err(CallError::Domain(CameraUnavailable)),
+        ),
+        (HostScan::NotVisible, Err(CallError::Domain(NotVisible))),
+    ] {
+        assert_eq!(
+            scan(&scanner_host(Some(StubScannerPlatform::answering(answer)))),
+            expected
+        );
+    }
+    for refused in [
+        scanned("polkadotapp://pair?handshake=00", v01::CodeFormat::Qr),
+        scanned(receipt, v01::CodeFormat::Code128),
+    ] {
+        let host = scanner_host(Some(StubScannerPlatform::answering(refused)));
+        assert!(matches!(
+            scan(&host),
+            Err(CallError::Domain(v01::HostScannerScanError::Unknown { .. }))
+        ));
+    }
 }
 
 #[test]
-fn a_dismissal_is_an_outcome_and_a_missing_camera_is_an_error() {
-    // The product offers a dismissed scan again, but not one with no camera.
-    let dismissed = scanner_host(Some(StubScannerPlatform::answering(HostScan::Dismissed)));
-    assert_eq!(scan(&dismissed), Ok(v01::ScanOutcome::Dismissed));
-
-    let no_camera = scanner_host(Some(StubScannerPlatform::answering(
-        HostScan::CameraUnavailable,
-    )));
-    assert_eq!(
-        scan(&no_camera),
-        Err(CallError::Domain(
-            v01::HostScannerScanError::CameraUnavailable
-        ))
-    );
-}
-
-#[test]
-fn an_invalid_request_never_reaches_the_host() {
-    // No viewfinder may open for a request the product could not make.
+fn the_host_is_told_the_product_and_never_sees_an_invalid_request() {
+    // The host titles the viewfinder with the product id, and no session is
+    // needed. A request the product could not make never opens a viewfinder.
     let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
     let host = scanner_host(Some(scanner.clone()));
-    let mut request = receipt_request();
-    request.hint = Some("Scan the code on your computer\nto sign in".into());
-
+    let mut invalid = receipt_request();
+    invalid.hint = Some("Scan the code on your computer\nto sign in".into());
     let result = unwrap_scan(futures::executor::block_on(Scanner::scan(
         &host,
         &CallContext::default(),
-        HostScannerScanRequest::V1(request),
+        HostScannerScanRequest::V1(invalid),
     )));
-
     assert!(matches!(
         result,
         Err(CallError::Domain(
             v01::HostScannerScanError::InvalidRequest { .. }
         ))
     ));
-    assert!(scanner.asked().is_empty());
-}
-
-#[test]
-fn a_host_answer_the_request_does_not_accept_never_reaches_the_product() {
-    // A buggy host must not hand a receipts product a pairing link, or the
-    // right text in a format it did not ask for.
-    for answer in [
-        scanned("polkadotapp://pair?handshake=00", v01::CodeFormat::Qr),
-        scanned(
-            "https://greenmarket.example/r/BAG6",
-            v01::CodeFormat::Code128,
-        ),
-    ] {
-        let host = scanner_host(Some(StubScannerPlatform::answering(answer)));
-        assert!(matches!(
-            scan(&host),
-            Err(CallError::Domain(v01::HostScannerScanError::Unknown { .. }))
-        ));
-    }
+    assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
+    assert_eq!(
+        scanner.asked(),
+        vec![("greenmarket.dot".to_owned(), receipt_request())]
+    );
 }
 
 #[test]

@@ -1800,30 +1800,6 @@ mod tests {
     }
 
     #[test]
-    fn the_scanner_answers_what_the_test_set() {
-        // A product's "Scan another" flow needs each scan to get its own answer.
-        let p = MockPlatform::new();
-        let request = latest::HostScannerScanRequest {
-            formats: vec![latest::CodeFormat::Qr],
-            prefix: None,
-            hint: None,
-        };
-        assert_eq!(
-            block_on(p.scan_code(&mock_product(), &request)),
-            Ok(HostScan::Dismissed)
-        );
-        let receipt = HostScan::Scanned {
-            text: "https://greenmarket.example/r/1".into(),
-            format: latest::CodeFormat::Qr,
-        };
-        p.set_scan_answer(receipt.clone());
-        assert_eq!(
-            block_on(p.scan_code(&mock_product(), &request)),
-            Ok(receipt)
-        );
-    }
-
-    #[test]
     fn theme_emits_configured_light() {
         let p = MockPlatform::with_config(MockConfig {
             theme: latest::ThemeVariant::Light,

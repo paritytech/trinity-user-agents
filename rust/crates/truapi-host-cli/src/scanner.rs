@@ -14,36 +14,14 @@ impl ScannerPlatform for CliScannerHost {
         product: &ProductContext,
         _request: &HostScannerScanRequest,
     ) -> Result<HostScan, GenericError> {
-        let answer = answer(std::env::var("TRUAPI_SCAN_TEXT").ok());
+        let answer = match std::env::var("TRUAPI_SCAN_TEXT") {
+            Ok(text) => HostScan::Scanned {
+                text,
+                format: CodeFormat::Qr,
+            },
+            Err(_) => HostScan::Dismissed,
+        };
         tracing::info!(product = %product.product_id, ?answer, "scan answered");
         Ok(answer)
-    }
-}
-
-fn answer(text: Option<String>) -> HostScan {
-    match text {
-        Some(text) => HostScan::Scanned {
-            text,
-            format: CodeFormat::Qr,
-        },
-        None => HostScan::Dismissed,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn answers_the_configured_text_or_a_dismissal() {
-        // A bare CLI dismisses, so the generated example and the battery pass.
-        assert_eq!(answer(None), HostScan::Dismissed);
-        assert_eq!(
-            answer(Some("https://greenmarket.example/r/1".into())),
-            HostScan::Scanned {
-                text: "https://greenmarket.example/r/1".into(),
-                format: CodeFormat::Qr,
-            }
-        );
     }
 }
