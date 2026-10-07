@@ -327,6 +327,11 @@ roles still install an in-memory `CliGameHost` that never rings anything. The
 withdrawn before it reaches the host, the absence of any permission prompt, and
 host failures.
 
+`Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
+"Host-drawn scanner"). No host serves it yet, so the runtime
+answers `Unsupported`, and the battery and the playground's Diagnosis both skip
+the service.
+
 To run the playground locally in a plain browser tab, against a signing host on
 your own machine:
 
