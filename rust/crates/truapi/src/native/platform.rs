@@ -972,10 +972,12 @@ impl crate::platform::BalancePlatform for BalanceCallbackPlatform {
         // Registered before the host answers, so a change it pushes in
         // between is not lost.
         let (sender, changes) = mpsc::unbounded();
-        self.followers
-            .lock()
-            .expect("balance followers mutex poisoned")
-            .push(BalanceFollower { purse, sender });
+        let mut followers = self.followers.lock().expect("balance followers mutex poisoned");
+        // Forget followers whose streams were dropped, so re-subscribing
+        // while the balance holds still does not grow the list.
+        followers.retain(|follower| !follower.sender.is_closed());
+        followers.push(BalanceFollower { purse, sender });
+        drop(followers);
         let balance = self.balance.clone();
         let product_id = product.product_id.clone();
         stream::once(async move { (balance.balance(product_id, purse).await, changes) })
@@ -1224,5 +1226,18 @@ mod status_relay_tests {
         let next = block_on(followed.next());
         let available = |available| Some(Ok(v01::HostPaymentBalanceSubscribeItem { available }));
         assert_eq!((first, next), (available(10), available(25)));
+    }
+
+    // Dropped subscriptions are forgotten on the next subscribe, so a product
+    // re-subscribing while the balance holds still keeps one follower.
+    #[test]
+    fn a_dropped_balance_follower_is_forgotten_on_resubscribe() {
+        use crate::platform::BalancePlatform;
+        let platform = BalanceCallbackPlatform::new(Arc::new(Shared(10)));
+        for _ in 0..3 {
+            drop(platform.subscribe_balance(&product(), None));
+        }
+        let _live = platform.subscribe_balance(&product(), None);
+        assert_eq!(platform.followers.lock().unwrap().len(), 1);
     }
 }
