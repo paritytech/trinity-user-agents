@@ -2690,7 +2690,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
     ))
     .expect("opened")
     .intent;
-    assert!(futures::executor::block_on(before.select_funding_provider(&intent, "ramp.dot")).expect("selected"));
+    assert!(futures::executor::block_on(before.select_funding_provider(&intent, "ramp.dot", None)).expect("selected"));
     let worker = provider_worker(&before, "ramp.dot");
     let assigned = first_served(&worker);
     let crediting = v01::FundingUpdate::Crediting { top_up_id: [7; 32], amount: 1_000 };
@@ -2710,6 +2710,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
                 amount: Some(1_000),
                 expires_at: after.funding().get(&intent).expect("kept").deadline_ms,
                 last_update,
+                quote: None,
             },
         }))
     };
@@ -2734,7 +2735,7 @@ fn only_the_assigned_provider_worker_reports() {
     let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, None))
         .expect("opened")
         .intent;
-    assert!(futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot")).expect("selected"));
+    assert!(futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", None)).expect("selected"));
     let app = funding_host(&services, "ramp.dot", true);
     let other = provider_worker(&services, "other.dot");
 
@@ -2772,7 +2773,7 @@ fn a_session_is_handed_only_to_an_offered_provider_serving_its_direction() {
     };
     let (inbound, outbound) = (open(v01::FundingDirection::In), open(v01::FundingDirection::Out));
     let select = |intent: &str, provider| {
-        futures::executor::block_on(services.select_funding_provider(intent, provider)).is_ok()
+        futures::executor::block_on(services.select_funding_provider(intent, provider, None)).is_ok()
     };
 
     assert_eq!(
@@ -2782,6 +2783,163 @@ fn a_session_is_handed_only_to_an_offered_provider_serving_its_direction() {
             select(&inbound, "ramp.dot"),
         ),
         (false, false, true)
+    );
+}
+
+/// Answer every quote ask `provider_id`'s workers receive with `quote`,
+/// on a thread of its own, as the provider's worker would.
+fn answer_quotes(services: &Arc<RuntimeServices>, provider_id: &str, quote: v01::FundingQuote) -> Arc<Mutex<usize>> {
+    let asks = Arc::new(Mutex::new(0));
+    let counted = asks.clone();
+    let registry = services.funding().clone();
+    let mut served = registry.serve(provider_id);
+    let provider_id = provider_id.to_string();
+    std::thread::spawn(move || {
+        futures::executor::block_on(async move {
+            while let Some(item) = served.next().await {
+                if let v01::HostFundingServeSubscribeItem::Quote { ask_id, .. } = item {
+                    *counted.lock().expect("asks mutex poisoned") += 1;
+                    registry.answer_quote(
+                        &provider_id,
+                        &ask_id,
+                        v01::FundingQuoteAnswer::Quoted { quote: quote.clone() },
+                    );
+                }
+            }
+        });
+    });
+    asks
+}
+
+fn card_quote(quote_id: &str) -> v01::FundingQuote {
+    v01::FundingQuote {
+        quote_id: quote_id.to_string(),
+        send_amount: 1_020,
+        receive_amount: 1_000,
+        provider_fee: 15,
+        network_fee: 5,
+        eta_secs: Some(60),
+        expires_at: None,
+    }
+}
+
+fn card_ask(country: Option<&str>) -> v01::FundingQuoteAsk {
+    v01::FundingQuoteAsk {
+        direction: v01::FundingDirection::In,
+        rail: v01::FundingRail::Card,
+        asset: "EUR".to_string(),
+        amount: 1_000,
+        country: country.map(str::to_string),
+    }
+}
+
+// Each provider's row resolves on its own: a provider that answers is
+// quoted, one that stays silent becomes unavailable at the deadline instead
+// of holding the list, and the user can only pick a quote the core offered.
+#[test]
+fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
+    let services = funding_services();
+    assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+        crate::platform::FundingPresentOutcome::Started,
+    )));
+    services
+        .set_funding_providers(
+            ["ramp.dot", "slow.dot"]
+                .map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+                    product_id: product_id.to_string(),
+                    worker_manifest: Some(RAMP_MANIFEST.to_string()),
+                })
+                .to_vec(),
+        )
+        .expect("providers offered");
+    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, Some(1_000)))
+        .expect("opened")
+        .intent;
+    answer_quotes(&services, "ramp.dot", card_quote("q1"));
+
+    let rows: Vec<_> = futures::executor::block_on(
+        services
+            .get_funding_quote_within(&intent, card_ask(None), Duration::from_millis(300))
+            .collect::<Vec<_>>(),
+    );
+    let select = |quote_id| {
+        futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", Some(quote_id)))
+    };
+    let unknown = select("q-never");
+    let chosen = select("q1");
+
+    use crate::platform::{FundingQuoteState, FundingQuoteUnavailable};
+    let final_state = |provider: &str| {
+        rows.iter()
+            .rev()
+            .find(|row| row.provider_id == provider)
+            .map(|row| row.state.clone())
+    };
+    assert_eq!(
+        (
+            rows.iter().filter(|row| row.state == FundingQuoteState::Pending).count(),
+            final_state("ramp.dot"),
+            final_state("slow.dot"),
+            unknown.is_err(),
+            chosen,
+            services.funding().get(&intent).and_then(|session| session.quote),
+        ),
+        (
+            2,
+            Some(FundingQuoteState::Quoted { quote: card_quote("q1") }),
+            Some(FundingQuoteState::Unavailable { reason: FundingQuoteUnavailable::Timeout }),
+            true,
+            Ok(true),
+            Some(card_quote("q1")),
+        )
+    );
+}
+
+// A route that declares countries leaving out the user's is unavailable
+// without asking its worker; an answer is reused for the same ask, so editing
+// back to an amount does not ask the provider again.
+#[test]
+fn quotes_skip_undeclared_countries_and_reuse_recent_answers() {
+    let services = funding_services();
+    assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+        crate::platform::FundingPresentOutcome::Started,
+    )));
+    let germany_only = RAMP_MANIFEST.replace(
+        r#""assets":["EUR"]}"#,
+        r#""assets":["EUR"],"countries":["DE"]}"#,
+    );
+    offer_provider(&services, "ramp.dot", &germany_only);
+    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, Some(1_000)))
+        .expect("opened")
+        .intent;
+    let asks = answer_quotes(&services, "ramp.dot", card_quote("q1"));
+    let last_state = |country| {
+        futures::executor::block_on(
+            services
+                .get_funding_quote_within(&intent, card_ask(country), Duration::from_secs(5))
+                .collect::<Vec<_>>(),
+        )
+        .last()
+        .map(|row| row.state.clone())
+    };
+
+    let outside = last_state(Some("US"));
+    let first = last_state(Some("DE"));
+    let again = last_state(Some("DE"));
+
+    use crate::platform::{FundingQuoteState, FundingQuoteUnavailable};
+    assert_eq!(
+        (outside, first.clone(), again, *asks.lock().expect("asks mutex poisoned")),
+        (
+            Some(FundingQuoteState::Unavailable {
+                reason: FundingQuoteUnavailable::Refused {
+                    reason: v01::FundingQuoteRefusal::CountryUnsupported,
+                },
+            }),
+            Some(FundingQuoteState::Quoted { quote: card_quote("q1") }),
+            first,
+            1,
+        )
     );
 }
 

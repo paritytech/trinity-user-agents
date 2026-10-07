@@ -1,6 +1,7 @@
 //! Unified [`FundingProvider`] trait.
 
 use crate::versioned::funding_provider::{
+    HostFundingAnswerQuoteError, HostFundingAnswerQuoteRequest, HostFundingAnswerQuoteResponse,
     HostFundingPresentFrameError, HostFundingPresentFrameRequest, HostFundingPresentFrameResponse,
     HostFundingReportError, HostFundingReportRequest, HostFundingReportResponse,
     HostFundingServeSubscribeError, HostFundingServeSubscribeItem,
@@ -78,6 +79,27 @@ pub trait FundingProvider: Send + Sync {
         _cx: &CallContext,
         _request: HostFundingPresentFrameRequest,
     ) -> Result<HostFundingPresentFrameResponse, CallError<HostFundingPresentFrameError>> {
+        Err(CallError::unavailable())
+    }
+
+    /// Answer a `Quote` the host sent on `serveSubscribe`, with the
+    /// provider's price or why it will not give one. The worker calls its own
+    /// API for it, through the onramp adapter when that needs the provider's
+    /// key.
+    ///
+    /// ```ts
+    /// const result = await truapi.fundingProvider.answerQuote({
+    ///   askId: "qa_example",
+    ///   answer: { tag: "Refused", value: { reason: { tag: "Unavailable", value: undefined } } },
+    /// });
+    /// console.log("quote answered:", result);
+    /// ```
+    #[wire(id = 3)]
+    async fn answer_quote(
+        &self,
+        _cx: &CallContext,
+        _request: HostFundingAnswerQuoteRequest,
+    ) -> Result<HostFundingAnswerQuoteResponse, CallError<HostFundingAnswerQuoteError>> {
         Err(CallError::unavailable())
     }
 }

@@ -18,6 +18,112 @@ pub struct FundingAssignment {
     /// The last update the provider reported, so a restarted worker resumes
     /// where it stopped.
     pub last_update: Option<FundingUpdate>,
+    /// The quote the user chose this provider on, when it was quoted.
+    pub quote: Option<FundingQuote>,
+}
+
+/// How the user pays or is paid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum FundingRail {
+    /// A card payment.
+    Card,
+    /// A bank transfer.
+    Bank,
+    /// A crypto transfer.
+    Crypto,
+}
+
+/// What the host asks a provider to price.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct FundingQuoteAsk {
+    /// Which way value moves.
+    pub direction: FundingDirection,
+    /// How the user pays or is paid.
+    pub rail: FundingRail,
+    /// Symbol the user pays with (In) or receives (Out), as the provider's
+    /// manifest names it.
+    pub asset: String,
+    /// Amount in the user's payment balance units: credited for In, debited
+    /// for Out.
+    pub amount: u128,
+    /// ISO 3166-1 alpha-2 code of the user's country, when the host knows it.
+    pub country: Option<String>,
+}
+
+/// A provider's price for an ask.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct FundingQuote {
+    /// The provider's id for this quote, handed back when the user picks it.
+    pub quote_id: String,
+    /// What the user pays, in the smallest unit of the ask's asset for In and
+    /// in balance units for Out.
+    pub send_amount: u128,
+    /// What the user receives, in balance units for In and in the smallest
+    /// unit of the ask's asset for Out.
+    pub receive_amount: u128,
+    /// The provider's fee, in the unit of `send_amount`.
+    pub provider_fee: u128,
+    /// Network fees, in the unit of `send_amount`.
+    pub network_fee: u128,
+    /// Expected seconds until the funds arrive, when the provider says.
+    pub eta_secs: Option<u64>,
+    /// When the provider stops honouring the quote, in Unix milliseconds.
+    pub expires_at: Option<u64>,
+}
+
+/// Why a provider will not price an ask.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum FundingQuoteRefusal {
+    /// Not offered in the user's country.
+    CountryUnsupported,
+    /// Below the provider's minimum, in the ask's balance units.
+    BelowMinimum {
+        /// The smallest amount the provider takes.
+        min: u128,
+    },
+    /// Above the provider's maximum, in the ask's balance units.
+    AboveMaximum {
+        /// The largest amount the provider takes.
+        max: u128,
+    },
+    /// The provider cannot serve the ask right now.
+    Unavailable,
+    /// Outcome not covered above.
+    Other {
+        /// Human-readable reason.
+        message: String,
+    },
+}
+
+/// A provider's answer to an ask.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum FundingQuoteAnswer {
+    /// The provider's price.
+    Quoted {
+        /// The quote.
+        quote: FundingQuote,
+    },
+    /// The provider will not price it.
+    Refused {
+        /// Why.
+        reason: FundingQuoteRefusal,
+    },
 }
 
 /// Progress a provider reports for a session it serves.
@@ -82,6 +188,14 @@ pub enum HostFundingServeSubscribeItem {
     Cancel {
         /// Session to cancel.
         intent: String,
+    },
+    /// The host asks for a price, answered with `answerQuote` and this
+    /// `ask_id`. An ask still unanswered when the stream opens is sent again.
+    Quote {
+        /// Id the answer names.
+        ask_id: String,
+        /// What to price.
+        ask: FundingQuoteAsk,
     },
 }
 
@@ -155,6 +269,27 @@ pub struct HostFundingPresentFrameResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostFundingPresentFrameError {
     /// No open session with this id is assigned to the caller.
+    NotFound,
+    /// Catch-all.
+    Unknown {
+        /// Human-readable failure reason.
+        reason: String,
+    },
+}
+
+/// Request to answer a quote ask.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostFundingAnswerQuoteRequest {
+    /// The ask being answered.
+    pub ask_id: String,
+    /// The answer.
+    pub answer: FundingQuoteAnswer,
+}
+
+/// Error from [`crate::api::FundingProvider::answer_quote`].
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostFundingAnswerQuoteError {
+    /// No open ask with this id was sent to the caller; it may have timed out.
     NotFound,
     /// Catch-all.
     Unknown {

@@ -19,7 +19,8 @@ use futures::channel::mpsc;
 use futures::lock::Mutex as AsyncMutex;
 use futures::stream::{self, BoxStream, StreamExt};
 use truapi::latest::{
-    FundingDirection, FundingUpdate, GenericError, HostFundingServeSubscribeItem,
+    FundingDirection, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingUpdate,
+    GenericError, HostFundingServeSubscribeItem,
     HostFundingStatusSubscribeItem, HostPaymentStatusSubscribeError,
     HostPaymentStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError,
     HostPaymentTopUpStatusSubscribeItem,
@@ -42,6 +43,13 @@ const SWEEP_RETRY: Duration = Duration::from_secs(30);
 type Subscribers = HashMap<String, Vec<mpsc::UnboundedSender<HostFundingStatusSubscribeItem>>>;
 type Servers = HashMap<String, Vec<mpsc::UnboundedSender<HostFundingServeSubscribeItem>>>;
 
+/// A quote ask sent to a provider and not yet answered.
+struct PendingAsk {
+    provider_id: String,
+    ask: FundingQuoteAsk,
+    answer: futures::channel::oneshot::Sender<FundingQuoteAnswer>,
+}
+
 /// Host-global funding sessions, their subscribers and the host surface.
 #[derive(Default)]
 pub struct FundingRegistry {
@@ -55,6 +63,8 @@ pub struct FundingRegistry {
     platform: OnceLock<Arc<dyn FundingPlatform>>,
     /// Each provider's open `serve_subscribe` streams, by product id.
     servers: Mutex<Servers>,
+    /// Quote asks waiting for their provider's answer, by ask id.
+    asks: Mutex<HashMap<String, PendingAsk>>,
     /// Sessions holding a reference on their provider's worker, with that
     /// provider.
     holding: Mutex<HashMap<String, String>>,
@@ -90,14 +100,15 @@ impl FundingRegistry {
         now_ms: u64,
         intent: &str,
         provider_id: &str,
+        quote: Option<FundingQuote>,
     ) -> Result<bool, FundingSessionError> {
         let intent = intent.to_string();
         let provider = provider_id.to_string();
         let assigned = self
             .commit(storage, now_ms, move |sessions| {
-                let assigned = sessions
-                    .get_mut(&intent)
-                    .and_then(|session| session.assign(&provider).then(|| session.assignment()));
+                let assigned = sessions.get_mut(&intent).and_then(|session| {
+                    session.assign(&provider, quote).then(|| session.assignment())
+                });
                 let changed = assigned.iter().map(|session| session.intent.clone()).collect();
                 (assigned, changed)
             })
@@ -123,6 +134,15 @@ impl FundingRegistry {
             .cloned()
             .collect();
         assigned.sort_by_key(|session| session.opened_at_ms);
+        let asks: Vec<HostFundingServeSubscribeItem> = self
+            .lock_asks()
+            .iter()
+            .filter(|(_, pending)| pending.provider_id == provider_id)
+            .map(|(ask_id, pending)| HostFundingServeSubscribeItem::Quote {
+                ask_id: ask_id.clone(),
+                ask: pending.ask.clone(),
+            })
+            .collect();
         let replay: Vec<_> = assigned
             .into_iter()
             .flat_map(|session| {
@@ -136,6 +156,7 @@ impl FundingRegistry {
                 })
                 .chain(cancel)
             })
+            .chain(asks)
             .collect();
         let (sender, receiver) = mpsc::unbounded();
         servers
@@ -143,6 +164,50 @@ impl FundingRegistry {
             .or_default()
             .push(sender);
         stream::iter(replay).chain(receiver).boxed()
+    }
+
+    /// Ask `provider_id` to price `ask`. The ask reaches the provider's open
+    /// streams now and any it opens while it is pending, so a worker that is
+    /// still starting receives it; the receiver yields the provider's answer.
+    pub fn ask_quote(
+        &self,
+        provider_id: &str,
+        ask: FundingQuoteAsk,
+    ) -> (String, futures::channel::oneshot::Receiver<FundingQuoteAnswer>) {
+        let ask_id = format!("qa_{}", nanoid::nanoid!(10));
+        let (answer, answered) = futures::channel::oneshot::channel();
+        self.lock_asks().insert(
+            ask_id.clone(),
+            PendingAsk {
+                provider_id: provider_id.to_string(),
+                ask: ask.clone(),
+                answer,
+            },
+        );
+        self.serve_item(
+            provider_id,
+            HostFundingServeSubscribeItem::Quote {
+                ask_id: ask_id.clone(),
+                ask,
+            },
+        );
+        (ask_id, answered)
+    }
+
+    /// Deliver `provider_id`'s answer to ask `ask_id`. Returns whether the
+    /// ask was pending and sent to that provider.
+    pub fn answer_quote(&self, provider_id: &str, ask_id: &str, answer: FundingQuoteAnswer) -> bool {
+        let mut asks = self.lock_asks();
+        if asks.get(ask_id).is_none_or(|pending| pending.provider_id != provider_id) {
+            return false;
+        }
+        asks.remove(ask_id)
+            .is_some_and(|pending| pending.answer.send(answer).is_ok())
+    }
+
+    /// Drop ask `ask_id` without an answer, as when it timed out.
+    pub fn withdraw_ask(&self, ask_id: &str) {
+        self.lock_asks().remove(ask_id);
     }
 
     /// Store `update` from `provider_id` on session `intent`.
@@ -465,6 +530,10 @@ impl FundingRegistry {
             .expect("funding subscribers mutex poisoned")
     }
 
+    fn lock_asks(&self) -> std::sync::MutexGuard<'_, HashMap<String, PendingAsk>> {
+        self.asks.lock().expect("funding quote asks mutex poisoned")
+    }
+
     fn lock_servers(&self) -> std::sync::MutexGuard<'_, Servers> {
         self.servers.lock().expect("funding servers mutex poisoned")
     }
@@ -570,12 +639,14 @@ impl RuntimeServices {
     }
 
     /// Hand open session `intent` to the provider the user chose, which must
-    /// be one of the host's providers serving its direction. Returns whether
-    /// it was open and not yet assigned.
+    /// be one of the host's providers serving its direction, on the quote the
+    /// user chose it by, which must be one the core offered for this session
+    /// and not yet expired. Returns whether it was open and not yet assigned.
     pub async fn select_funding_provider(
         self: &Arc<Self>,
         intent: &str,
         provider_id: &str,
+        quote_id: Option<&str>,
     ) -> Result<bool, FundingSessionError> {
         let provider = ProductContext::new_with_execution(
             provider_id.to_string(),
@@ -598,12 +669,23 @@ impl RuntimeServices {
                 ),
             });
         }
+        let quote = match quote_id {
+            None => None,
+            Some(quote_id) => Some(
+                self.funding_quotes
+                    .offered(intent, &provider.product_id, quote_id, current_unix_millis())
+                    .ok_or_else(|| FundingSessionError::UnknownQuote {
+                        quote_id: quote_id.to_string(),
+                    })?,
+            ),
+        };
         registry
             .select_provider(
                 self.platform.as_ref(),
                 current_unix_millis(),
                 intent,
                 &provider.product_id,
+                quote,
             )
             .await
     }
@@ -921,7 +1003,7 @@ mod tests {
         let registry = FundingRegistry::default();
         let served = |intent: &str, provider: &str| {
             let mut session = session(intent, NOW);
-            assert!(session.assign(provider));
+            assert!(session.assign(provider, None));
             session
         };
         for session in [

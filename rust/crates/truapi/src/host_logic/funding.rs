@@ -10,7 +10,7 @@
 use parity_scale_codec::{Decode, Encode};
 use tracing::warn;
 use truapi::latest::{
-    FundingAssignment, FundingDirection, FundingFailure, FundingUpdate,
+    FundingAssignment, FundingDirection, FundingFailure, FundingQuote, FundingUpdate,
     HostFundingStatusSubscribeItem,
 };
 
@@ -60,6 +60,8 @@ pub struct FundingSession {
     pub cancel_requested: bool,
     /// Every update the provider reported, oldest first.
     pub updates: Vec<FundingUpdateRecord>,
+    /// The quote the user chose the provider on, when it was quoted.
+    pub quote: Option<FundingQuote>,
 }
 
 /// One update a provider reported, and when the core stored it.
@@ -163,16 +165,18 @@ impl FundingSession {
             provider_id: None,
             cancel_requested: false,
             updates: Vec::new(),
+            quote: None,
         }
     }
 
-    /// Assign the session to the provider the user chose. Returns whether it
-    /// was open and not yet assigned.
-    pub fn assign(&mut self, provider_id: &str) -> bool {
+    /// Assign the session to the provider the user chose, on the quote they
+    /// chose it by. Returns whether it was open and not yet assigned.
+    pub fn assign(&mut self, provider_id: &str, quote: Option<FundingQuote>) -> bool {
         if self.is_terminal() || self.provider_id.is_some() {
             return false;
         }
         self.provider_id = Some(provider_id.to_string());
+        self.quote = quote;
         true
     }
 
@@ -184,6 +188,7 @@ impl FundingSession {
             amount: self.amount,
             expires_at: self.deadline_ms,
             last_update: self.last_update().cloned(),
+            quote: self.quote.clone(),
         }
     }
 
@@ -452,6 +457,13 @@ pub enum FundingSessionError {
         /// Why the id was refused.
         reason: String,
     },
+    /// The chosen quote is not one the core offered for this session, or it
+    /// expired.
+    #[display("unknown or expired funding quote {quote_id}")]
+    UnknownQuote {
+        /// The quote id the host named.
+        quote_id: String,
+    },
 }
 
 /// The sessions worth keeping: every open one, then the most recently ended
@@ -645,7 +657,7 @@ mod tests {
 
     fn served(direction: FundingDirection) -> FundingSession {
         let mut session = session(direction);
-        assert!(session.assign(PROVIDER));
+        assert!(session.assign(PROVIDER, None));
         session
     }
 
@@ -695,7 +707,7 @@ mod tests {
     fn a_session_is_assigned_once() {
         let mut session = served(FundingDirection::In);
 
-        assert!(!session.assign("other.dot"));
+        assert!(!session.assign("other.dot", None));
         assert_eq!(session.provider_id.as_deref(), Some(PROVIDER));
     }
 

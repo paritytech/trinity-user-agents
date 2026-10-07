@@ -27,7 +27,8 @@ pub mod mock;
 
 use truapi::latest::{
     AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
-    ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, FundingDirection, GenericError,
+    ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, FundingDirection, FundingQuote,
+    FundingQuoteRefusal, GenericError,
     HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
     HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
@@ -3344,6 +3345,57 @@ pub struct FundingPresentation {
     pub amount: Option<u128>,
 }
 
+/// One provider's place in the list a quote request fills in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct FundingQuoteRow {
+    /// The provider.
+    pub provider_id: String,
+    /// Where its quote stands.
+    pub state: FundingQuoteState,
+}
+
+/// Where a provider's quote stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum FundingQuoteState {
+    /// Asked, not answered yet.
+    Pending,
+    /// The provider's price.
+    Quoted {
+        /// The quote.
+        quote: FundingQuote,
+    },
+    /// The provider cannot be offered for this ask; the host shows it
+    /// disabled.
+    Unavailable {
+        /// Why.
+        reason: FundingQuoteUnavailable,
+    },
+}
+
+/// Why a provider cannot be offered for an ask.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum FundingQuoteUnavailable {
+    /// The provider refused to price it.
+    Refused {
+        /// Why.
+        reason: FundingQuoteRefusal,
+    },
+    /// The provider did not answer in time.
+    Timeout,
+}
+
 /// How the user left the funding overlay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
@@ -3381,6 +3433,17 @@ pub trait FundingPlatform: Send + Sync {
     /// pill.
     fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
         let _ = (intent, status);
+    }
+
+    /// Observe one provider's row of a quote list the host requested, for the
+    /// provider list. Each provider's row arrives `Pending`, then once more
+    /// with its quote or why it is unavailable.
+    fn funding_quote_changed(
+        &self,
+        intent: String,
+        row: FundingQuoteRow,
+    ) {
+        let _ = (intent, row);
     }
 }
 

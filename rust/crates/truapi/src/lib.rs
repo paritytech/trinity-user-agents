@@ -98,7 +98,8 @@ pub mod latest {
         ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
         ChatRoomRegistrationStatus, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome,
         ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect, EffectProps,
-        FundingAssignment, FundingDirection, FundingFailure, FundingFrameOutcome, FundingUpdate,
+        FundingAssignment, FundingDirection, FundingFailure, FundingFrameOutcome, FundingQuote,
+        FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal, FundingRail, FundingUpdate,
         GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
         HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
         HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
@@ -225,6 +226,12 @@ pub mod latest {
         LatestOf<versioned::funding_provider::HostFundingReportRequest>;
     /// Failure reporting progress.
     pub type HostFundingReportError = LatestOf<versioned::funding_provider::HostFundingReportError>;
+    /// A provider's answer to a quote ask.
+    pub type HostFundingAnswerQuoteRequest =
+        LatestOf<versioned::funding_provider::HostFundingAnswerQuoteRequest>;
+    /// Failure answering a quote ask.
+    pub type HostFundingAnswerQuoteError =
+        LatestOf<versioned::funding_provider::HostFundingAnswerQuoteError>;
     /// Request to show a provider screen.
     pub type HostFundingPresentFrameRequest =
         LatestOf<versioned::funding_provider::HostFundingPresentFrameRequest>;

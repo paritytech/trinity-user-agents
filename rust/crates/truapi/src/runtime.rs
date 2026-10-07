@@ -22,6 +22,7 @@ pub mod contacts;
 mod dotns_lookup;
 mod funding;
 mod funding_providers;
+mod funding_quotes;
 pub use funding::OpenFundingError;
 mod identity;
 pub mod login_failure;
@@ -110,6 +111,7 @@ use truapi::versioned::funding::{
     HostFundingStatusSubscribeItem, HostFundingStatusSubscribeRequest,
 };
 use truapi::versioned::funding_provider::{
+    HostFundingAnswerQuoteError, HostFundingAnswerQuoteRequest, HostFundingAnswerQuoteResponse,
     HostFundingPresentFrameError, HostFundingPresentFrameRequest, HostFundingPresentFrameResponse,
     HostFundingReportError, HostFundingReportRequest, HostFundingReportResponse,
     HostFundingServeSubscribeError, HostFundingServeSubscribeItem,
@@ -1645,6 +1647,27 @@ impl FundingProvider for ProductRuntimeHost {
             Err(ReportRefusal::NotFound) => Err(domain(v01::HostFundingReportError::NotFound)),
             Err(ReportRefusal::OutOfOrder) => Err(domain(v01::HostFundingReportError::OutOfOrder)),
             Err(ReportRefusal::DuplicateId) => Err(domain(v01::HostFundingReportError::DuplicateId)),
+        }
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "funding_provider.answer_quote"))]
+    async fn answer_quote(
+        &self,
+        _cx: &CallContext,
+        request: HostFundingAnswerQuoteRequest,
+    ) -> Result<HostFundingAnswerQuoteResponse, CallError<HostFundingAnswerQuoteError>> {
+        let HostFundingAnswerQuoteRequest::V1(request) = request;
+        self.funding_provider_access()?;
+        if self.services.funding().answer_quote(
+            &self.product.product_id,
+            &request.ask_id,
+            request.answer,
+        ) {
+            Ok(HostFundingAnswerQuoteResponse::V1)
+        } else {
+            Err(CallError::Domain(HostFundingAnswerQuoteError::V1(
+                v01::HostFundingAnswerQuoteError::NotFound,
+            )))
         }
     }
 

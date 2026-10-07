@@ -48,6 +48,8 @@ pub struct RuntimeServices {
     funding: Arc<crate::runtime::funding::FundingRegistry>,
     /// Funding providers the host offers, kept current against dotNS.
     pub funding_providers: crate::runtime::funding_providers::FundingProviders,
+    /// Recent funding quote answers and the quotes each session was offered.
+    pub funding_quotes: crate::runtime::funding_quotes::FundingQuotes,
     /// Host top-up engine, installed once at startup by a host that claims
     /// funds into the balance. Unset leaves every top-up `Unsupported`.
     top_up_platform: OnceLock<Arc<dyn crate::platform::TopUpPlatform>>,
@@ -128,6 +130,7 @@ impl RuntimeServices {
             pocket_platform: OnceLock::new(),
             funding: Default::default(),
             funding_providers: Default::default(),
+            funding_quotes: Default::default(),
             top_up_platform: OnceLock::new(),
             payment_platform: OnceLock::new(),
             contacts_platform: OnceLock::new(),

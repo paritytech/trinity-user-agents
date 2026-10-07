@@ -352,16 +352,23 @@ impl NativeTrUApiHostRuntime {
         self.runtime.funding_candidates(&intent)
     }
 
+    /// Ask the candidates for funding session `intent` to price `ask`. Each
+    /// provider's row arrives through `funding_quote_changed`.
+    pub fn get_funding_quote(&self, intent: String, ask: v01::FundingQuoteAsk) {
+        self.runtime.request_funding_quotes(&intent, ask);
+    }
+
     /// Hand open funding session `intent` to the provider the user chose, by
-    /// product id.
+    /// product id, on the quote it was chosen by when it was quoted.
     pub async fn select_funding_provider(
         &self,
         intent: String,
         provider_id: String,
+        quote_id: Option<String>,
     ) -> Result<bool, HostRejection> {
         Ok(self
             .runtime
-            .select_funding_provider(&intent, &provider_id)
+            .select_funding_provider(&intent, &provider_id, quote_id.as_deref())
             .await?)
     }
 }

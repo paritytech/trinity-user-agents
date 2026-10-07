@@ -32,15 +32,15 @@ use truapi::SigningHostRuntime;
 use truapi::host_logic::funding::FundingStage;
 use truapi::host_logic::funding_providers::FundingProviderEntry;
 use truapi::latest::{
-    FundingDirection, FundingFailure, FundingFrameOutcome, GenericError,
-    HostFundingStatusSubscribeItem, HostPaymentError, HostPaymentRequest,
+    FundingDirection, FundingFailure, FundingFrameOutcome, FundingQuoteAsk, FundingRail,
+    GenericError, HostFundingStatusSubscribeItem, HostPaymentError, HostPaymentRequest,
     HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
     HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
     HostPaymentTopUpStatusSubscribeItem,
 };
 use truapi::platform::{
-    CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, PaymentPlatform,
-    ProductContext, TopUpPlatform, async_trait,
+    CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, FundingQuoteRow,
+    FundingQuoteState, PaymentPlatform, ProductContext, TopUpPlatform, async_trait,
 };
 
 /// Worker manifest every scripted provider publishes: card in, and crypto in
@@ -80,6 +80,22 @@ pub async fn offer_scripted_providers(
     runtime
         .set_funding_providers(providers)
         .map_err(|error| anyhow::anyhow!("offering funding providers: {}", error.reason))
+}
+
+/// The ask a scripted session is quoted on: a card payment in EUR inbound,
+/// USDT outbound, as [`SCRIPTED_PROVIDER_MANIFEST`] serves them.
+fn scripted_ask(direction: FundingDirection, amount: Option<u128>) -> FundingQuoteAsk {
+    let (rail, asset) = match direction {
+        FundingDirection::In => (FundingRail::Card, "EUR"),
+        FundingDirection::Out => (FundingRail::Crypto, "USDT"),
+    };
+    FundingQuoteAsk {
+        direction,
+        rail,
+        asset: asset.to_string(),
+        amount: amount.unwrap_or(1_000),
+        country: None,
+    }
 }
 
 /// How long a started session stays in flight before it is settled, so a
@@ -177,6 +193,7 @@ impl CliFundingHost {
         runtime: Option<Weak<SigningHostRuntime>>,
         product: Option<&ProductContext>,
         intent: String,
+        ask: FundingQuoteAsk,
         cancel: bool,
     ) -> Result<FundingPresentOutcome, GenericError> {
         let (Some(runtime), Some(product)) =
@@ -194,8 +211,27 @@ impl CliFundingHost {
             "intent": intent,
             "providers": candidates,
         }));
+        let rows: Vec<FundingQuoteRow> = runtime.get_funding_quote(&intent, ask).collect().await;
+        let chosen = rows.iter().find_map(|row| match &row.state {
+            FundingQuoteState::Quoted { quote } if row.provider_id == product.product_id => {
+                Some(quote.quote_id.clone())
+            }
+            _ => None,
+        });
+        self.record(serde_json::json!({
+            "kind": "quotes",
+            "intent": intent,
+            "rows": rows.iter().map(|row| serde_json::json!({
+                "provider": row.provider_id,
+                "state": match &row.state {
+                    FundingQuoteState::Pending => "Pending".to_string(),
+                    FundingQuoteState::Quoted { quote } => format!("Quoted:{}", quote.quote_id),
+                    FundingQuoteState::Unavailable { reason } => format!("Unavailable:{reason:?}"),
+                },
+            })).collect::<Vec<_>>(),
+        }));
         runtime
-            .select_funding_provider(&intent, &product.product_id)
+            .select_funding_provider(&intent, &product.product_id, chosen.as_deref())
             .await?;
         if cancel {
             let runtime = Arc::downgrade(&runtime);
@@ -270,11 +306,13 @@ impl FundingPlatform for CliFundingHost {
         let runtime = self.runtime.get().cloned();
         let intent = session.intent;
         if matches!(outcome, Outcome::Provide | Outcome::ProvideThenCancel) {
+            let ask = scripted_ask(session.direction, session.amount);
             return self
                 .provide(
                     runtime,
                     product,
                     intent,
+                    ask,
                     outcome == Outcome::ProvideThenCancel,
                 )
                 .await;
