@@ -1379,7 +1379,7 @@ impl Contacts for ProductRuntimeHost {
     #[instrument(skip_all, fields(runtime.method = "contacts.pick"))]
     async fn pick(
         &self,
-        _cx: &CallContext,
+        cx: &CallContext,
         _request: HostContactsPickRequest,
     ) -> Result<HostContactsPickResponse, CallError<HostContactsPickError>> {
         let wrap = HostContactsPickError::V1;
@@ -1396,9 +1396,9 @@ impl Contacts for ProductRuntimeHost {
         // Read before the picker opens: a removal signalled while the user is
         // choosing must not be undone by caching their choice.
         let generation = self.services.contact_handles.generation();
-        let outcome = match platform
-            .pick_contact(&self.product)
+        let outcome = match until_cancelled(cx, platform.pick_contact(&self.product))
             .await
+            .map_err(|_cancelled| CallError::Cancelled)?
             .map_err(unknown)?
         {
             crate::platform::HostContactPick::Picked { account } => {

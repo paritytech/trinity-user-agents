@@ -7934,3 +7934,52 @@ fn a_second_scan_waits_its_turn_and_a_cancel_frees_the_viewfinder() {
     assert!(futures::FutureExt::now_or_never(&mut next).is_none());
     assert_eq!(scanner.asked().len(), 2);
 }
+
+/// A contact picker the user never answers, which records when the core stops
+/// waiting on it.
+struct ParkedContactsPlatform {
+    abandoned: Arc<AtomicBool>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::ContactsPlatform for ParkedContactsPlatform {
+    async fn contacts(
+        &self,
+        lookup: &crate::platform::HostContactLookup,
+    ) -> Result<crate::platform::HostContactMatches, truapi::latest::GenericError> {
+        Ok(crate::platform::HostContactMatches {
+            accounts: vec![None; lookup.handles.len()],
+        })
+    }
+
+    async fn pick_contact(
+        &self,
+        _product: &ProductContext,
+    ) -> Result<crate::platform::HostContactPick, truapi::latest::GenericError> {
+        let _abandoned = SetOnDrop(self.abandoned.clone());
+        futures::future::pending().await
+    }
+}
+
+#[test]
+fn cancelling_a_contact_pick_stops_waiting_on_the_picker() {
+    // The host closes its picker when the core drops the wait. Without that, a
+    // withdrawn pick leaves the picker on screen until the user acts.
+    let abandoned = Arc::new(AtomicBool::new(false));
+    let host = host_with_contacts(Arc::new(ParkedContactsPlatform {
+        abandoned: abandoned.clone(),
+    }));
+    let cancel = truapi::CancellationToken::default();
+    let cx = CallContext::with_parts("pick-withdrawn".into(), cancel.clone());
+    let mut pick = Box::pin(Contacts::pick(
+        &host,
+        &cx,
+        HostContactsPickRequest::V1(v01::HostContactsPickRequest {}),
+    ));
+    assert!(futures::FutureExt::now_or_never(&mut pick).is_none());
+
+    cancel.cancel();
+
+    assert_eq!(futures::executor::block_on(pick), Err(CallError::Cancelled));
+    assert!(abandoned.load(Ordering::SeqCst));
+}
