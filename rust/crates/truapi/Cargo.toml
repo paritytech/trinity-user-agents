@@ -33,6 +33,9 @@ default = ["runtime", "wasm-signing-host"]
 # Without it the crate is the protocol definitions alone, which is what
 # codegen reads and builds against.
 runtime = [
+    # `Size` is a SCALE `Compact`, which reads and writes as a plain JSON number
+    # only with codec's own serde support.
+    "parity-scale-codec/serde",
     "dep:truapi-provider",
     "dep:futures-timer",
     "dep:scale-decode",

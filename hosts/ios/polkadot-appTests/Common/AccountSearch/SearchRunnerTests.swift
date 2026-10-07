@@ -1,4 +1,5 @@
 import Foundation
+import StructuredConcurrencyTestSupport
 import Testing
 
 @testable import polkadot_app

@@ -262,8 +262,10 @@ private extension FirebaseApplicationService {
             case .environment:
                 #if UNSTABLE
                     "unstable"
-                #elseif NIGHTLY
+                #elseif SAFETYNET
                     "safetynet"
+                #elseif NIGHTLY
+                    "nightly"
                 #else
                     "release"
                 #endif

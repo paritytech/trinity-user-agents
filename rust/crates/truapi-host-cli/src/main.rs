@@ -21,6 +21,7 @@ mod chat;
 mod contacts;
 mod dotns_read;
 mod frame_server;
+mod game;
 mod network;
 mod platform;
 mod pocket;
@@ -1253,6 +1254,7 @@ async fn run_pairing_host(
     if let Some(pocket) = pocket_host {
         pairing_runtime.set_pocket_platform(pocket);
     }
+    pairing_runtime.set_game_platform(Arc::new(game::CliGameHost));
     pairing_runtime.set_contacts_platform(contacts::CliContactsHost::from_env(
         storage_platform.clone(),
     ));
@@ -1816,6 +1818,7 @@ fn build_signing_runtime(
     if let Some(pocket) = pocket {
         runtime.set_pocket_platform(pocket);
     }
+    runtime.set_game_platform(Arc::new(game::CliGameHost));
     runtime.set_core_db(core_db);
     runtime.start_statement_allowance_renewal();
     Ok((runtime, platform))
