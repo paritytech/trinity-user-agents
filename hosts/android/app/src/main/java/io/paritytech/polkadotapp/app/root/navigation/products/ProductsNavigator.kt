@@ -106,6 +106,21 @@ class ProductsNavigator @Inject constructor(
         performNavigation(R.id.action_global_to_truapiContactPickBottomSheet)
     }
 
+    override suspend fun closeTrUAPIContactPick() = closeIfShowing(R.id.truapiContactPickBottomSheet)
+
+    override suspend fun openTrUAPIProductScan() = withContext(dispatchers.main) {
+        performNavigation(R.id.action_global_to_truapiProductScanFragment)
+    }
+
+    override suspend fun closeTrUAPIProductScan() = closeIfShowing(R.id.truapiProductScanFragment)
+
+    private suspend fun closeIfShowing(destinationId: Int) = withContext(dispatchers.main) {
+        val controller = navigationHolder.navController
+        if (controller?.currentBackStackEntry?.destination?.id == destinationId) {
+            controller.popBackStack()
+        }
+    }
+
     override fun openPocketAddCard(payload: PocketAddCardPayload) = performNavigation(
         actionId = R.id.action_global_to_pocketAddCardBottomSheet,
         args = payload.toPayloadBundle(),

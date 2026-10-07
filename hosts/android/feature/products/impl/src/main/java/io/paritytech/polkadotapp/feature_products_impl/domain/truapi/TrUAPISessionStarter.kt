@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.net.Uri
 import androidx.core.net.toUri
-import uniffi.truapi.ProductExecutionKind
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -11,6 +10,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWeb
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import uniffi.truapi.ProductExecutionKind
 import javax.inject.Inject
 
 /**
@@ -25,6 +25,7 @@ class TrUAPISessionStarter @Inject constructor(
     private val chainDirectory: TrUAPIChainDirectory,
     private val dotNsTldProvider: DotNsTldProvider,
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
+    private val visibleProducts: VisibleProducts,
 ) {
     fun start(
         provider: BrowserWebViewProvider,
@@ -54,6 +55,7 @@ class TrUAPISessionStarter @Inject constructor(
             return runCatching { provider.loadInitialContent() }
         }
 
+        provider.addWebViewSetup { webView -> visibleProducts.track(productId.value, webView) }
         val runtime = runtimeProvider.runtime().getOrElse { return Result.failure(it) }
         // The bootstrap publishes the loopback port and its bearer token, so it goes to the
         // product's own origin only. A wildcard would hand the bridge endpoint to any page the
