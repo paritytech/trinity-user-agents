@@ -132,12 +132,23 @@ final class NativeMediaScreen {
                 while let self, !self.stopped, !Task.isCancelled {
                     do {
                         try self.mailbox.heartbeat(generation: self.generation)
-                        if let (buffer, next, time, rotation) = try self.mailbox.frame(after: sequence, generation: self.generation) {
-                            sequence = next
+                        if let frame = try self.mailbox.frame(after: sequence, generation: self.generation) {
+                            sequence = frame.sequence
                             let angle: RTCVideoRotation
-                            switch rotation { case 90: angle = ._90; case 180: angle = ._180; case 270: angle = ._270; default: angle = ._0 }
-                            self.video.capturer(self.capturer, didCapture: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer),
-                                rotation: angle, timeStampNs: time))
+                            switch frame.rotation {
+                            case 90: angle = ._90
+                            case 180: angle = ._180
+                            case 270: angle = ._270
+                            default: angle = ._0
+                            }
+                            self.video.capturer(
+                                self.capturer,
+                                didCapture: RTCVideoFrame(
+                                    buffer: RTCCVPixelBuffer(pixelBuffer: frame.buffer),
+                                    rotation: angle,
+                                    timeStampNs: frame.timeStampNs
+                                )
+                            )
                         }
                         try await Task.sleep(for: .milliseconds(40))
                     } catch {

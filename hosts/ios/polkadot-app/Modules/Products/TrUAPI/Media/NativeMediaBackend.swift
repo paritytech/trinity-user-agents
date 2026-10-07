@@ -353,6 +353,11 @@ private final class NativeMediaRuntime {
     private func requireSession(_ id: Data) throws {
         guard !closed, sessionId == id else { throw NativeMediaFailure.domain(.invalidState) }
     }
+}
+
+// MARK: - Consent and capture operations
+
+extension NativeMediaRuntime {
 
     private func consent(operationId: Data, request: NativeMediaConsentRequest) async throws -> NativeMediaBackendResponse {
         guard !cancelled.contains(operationId), promptOperation == nil else { throw NativeMediaFailure.cancelled }
@@ -550,6 +555,11 @@ private final class NativeMediaRuntime {
             if Self.captureOwner == owner { Self.captureOwner = nil }
         }
     }
+}
+
+// MARK: - Session observation and lifecycle
+
+extension NativeMediaRuntime {
 
     private func picture(_ source: NativeMediaPictureSource) throws -> RTCVideoTrack? {
         switch source {
