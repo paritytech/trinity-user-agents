@@ -156,23 +156,19 @@ private extension DefaultProductWorkerFactory {
     }
 
     func workerSource(for resolved: ResolvedProduct) -> ProductWorkerSource? {
-        if let worker = resolved.executables.worker {
-            guard worker.includesChat else { return nil }
-            return ProductWorkerSource(contentId: worker.identifier, entryRelativePath: worker.entrypoint)
-        }
-
-        return productFileProvider.manualScriptEntryPath(productId: resolved.id).map {
-            ProductWorkerSource(contentId: resolved.id, entryRelativePath: $0)
-        }
+        ProductWorkerSource.published(for: resolved, serving: .chat)
+            ?? ProductWorkerSource.installedByHand(for: resolved) {
+                productFileProvider.manualScriptEntryPath(productId: $0)
+            }
     }
 
     func warmWorkerArchive(of resolved: ResolvedProduct) async {
-        guard let worker = resolved.executables.worker, worker.includesChat else { return }
+        guard let published = ProductWorkerSource.published(for: resolved, serving: .chat) else { return }
 
         do {
-            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: worker.identifier)
+            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: published.contentId)
         } catch {
-            logger.error("Failed to warm the worker archive \(worker.identifier): \(error)")
+            logger.error("Failed to warm the worker archive \(published.contentId): \(error)")
         }
     }
 }

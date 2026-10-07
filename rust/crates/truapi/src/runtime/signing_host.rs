@@ -115,6 +115,8 @@ pub struct SigningHost {
     services: Arc<RuntimeServices>,
     wallet: Arc<WalletAccountHolder>,
     auth_state: AuthStateMachine,
+    #[cfg(feature = "test-host")]
+    submit_preimages_locally: core::sync::atomic::AtomicBool,
     /// Grant changes and wallet replacement share this lifecycle lock.
     local_grants: Mutex<LocalGrantState>,
     /// Serializes replay-ledger updates within each wallet and peer scope.
@@ -139,6 +141,8 @@ impl SigningHost {
             #[cfg(any(not(target_arch = "wasm32"), test))]
             services: services.clone(),
             wallet: Arc::new(WalletAccountHolder::new(services, network_suffix)),
+            #[cfg(feature = "test-host")]
+            submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
             auth_state: AuthStateMachine::new(platform.clone()),
             local_grants: Mutex::new(LocalGrantState::default()),
             sso_replay_locks: SsoReplayLocks::default(),
@@ -146,6 +150,13 @@ impl SigningHost {
             #[cfg(not(target_arch = "wasm32"))]
             renewal_loop_started: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    #[cfg(feature = "test-host")]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.submit_preimages_locally
+            .store(local, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// Answer resource allocation as granted without performing it in test hosts.
@@ -201,6 +212,8 @@ impl SigningHost {
                 network_suffix.to_string(),
                 ring_resolver,
             )),
+            #[cfg(feature = "test-host")]
+            submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
             auth_state: AuthStateMachine::new(platform.clone()),
             local_grants: Mutex::new(LocalGrantState::default()),
             sso_replay_locks: SsoReplayLocks::default(),
@@ -520,6 +533,14 @@ impl ProductAuthority for SigningHost {
         self.retain_statement_store_allowance(operation, &product_id, allocation)
     }
 
+    #[cfg(feature = "test-host")]
+    fn submits_preimages_locally(&self) -> bool {
+        self.wallet.grants_allowances_unchecked()
+            || self
+                .submit_preimages_locally
+                .load(core::sync::atomic::Ordering::Relaxed)
+    }
+
     fn forget_statement_store_allowance_key(&self, product_id: &str, public_key: [u8; 32]) {
         self.local_grants
             .lock()
@@ -586,6 +607,8 @@ mod tests {
     mod allowance_keys;
     mod auto_signing;
     mod cross_product_account;
+    #[cfg(feature = "test-host")]
+    mod local_preimages;
     mod raw_signing;
     mod remote_consent;
     #[cfg(feature = "test-host")]

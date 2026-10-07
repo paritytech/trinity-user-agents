@@ -186,6 +186,14 @@ pub struct PairingHostRuntime {
 }
 
 impl PairingHostRuntime {
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.pairing_host.set_submit_preimages_locally(local);
+    }
+
     /// Build a long-lived pairing-host runtime around a platform implementation.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.new"))]
     pub fn new<P>(platform: Arc<P>, config: PairingHostConfig, spawner: Spawner) -> Self
@@ -583,6 +591,14 @@ impl SigningHostRuntime {
     #[cfg(feature = "test-host")]
     pub fn set_grant_allowances_unchecked(&self, granted: bool) {
         self.signing_host.set_grant_allowances_unchecked(granted);
+    }
+
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.signing_host.set_submit_preimages_locally(local);
     }
 
     /// The product's hard-subtree public key, derived from the active session

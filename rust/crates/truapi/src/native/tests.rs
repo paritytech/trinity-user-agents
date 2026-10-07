@@ -2991,3 +2991,81 @@ fn a_native_status_read_follows_the_os_gate() {
         )
     );
 }
+
+/// A face kept and read back is the same face, so a card draws at a cold
+/// start exactly as its product last drew it.
+#[test]
+fn a_kept_face_reads_back_as_itself() {
+    let json = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/pocket_faces/devicehood.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("fixture");
+    let face = parse_renderer_node_json(json).expect("fixture reads");
+
+    let kept = encode_renderer_node(face.clone());
+
+    assert_eq!(decode_renderer_node(kept).expect("reads back"), face);
+}
+
+/// A face a real product ships, kept here as well as in the iOS host so the
+/// reader is measured against the protocol shape rather than against what
+/// this code happens to accept. One is enough for that, and the hosts keep
+/// the rest of the conformance set.
+#[test]
+fn reads_the_card_faces_the_hosts_conform_to() {
+    let json = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/pocket_faces/devicehood.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("fixture");
+
+    let node = parse_renderer_node_json(json).expect("devicehood must read as a renderer tree");
+
+    assert!(matches!(node, latest::RendererNode::Column { .. }));
+}
+
+/// A face deeper than the core will carry is refused rather than half-read,
+/// so no host draws one it could not read back.
+#[test]
+fn refuses_a_face_deeper_than_the_core_carries() {
+    let nest = |depth: usize| {
+        let mut json = String::new();
+        for _ in 0..depth {
+            json.push_str(r#"{"tag":"Box","value":{"modifiers":[],"props":{},"children":["#);
+        }
+        json.push_str(r#"{"tag":"Nil"}"#);
+        for _ in 0..depth {
+            json.push_str("]}}");
+        }
+        json
+    };
+
+    assert!(parse_renderer_node_json(nest(MAX_FACE_DEPTH as usize - 1)).is_ok());
+    assert!(matches!(
+        parse_renderer_node_json(nest(MAX_FACE_DEPTH as usize + 1)),
+        Err(NativeRendererError::TooDeep { .. })
+    ));
+}
+
+/// A title is drawn and an id is addressed, so they cannot share one rule:
+/// the emoji below carries a variation selector, which an id may not.
+#[test]
+fn a_card_title_accepts_what_a_card_id_refuses() {
+    assert_eq!(
+        screen_pocket_card_title("\u{2615}\u{fe0f} Coffee".to_string()).unwrap(),
+        "\u{2615}\u{fe0f} Coffee"
+    );
+    assert!(screen_pocket_card_id("\u{2615}\u{fe0f} Coffee".to_string()).is_err());
+}
+
+/// Both sides NFC-normalize, so a host that compares raw bytes against what
+/// the core stored would miss a card it holds.
+#[test]
+fn screening_normalizes_and_trims() {
+    assert_eq!(
+        screen_pocket_card_id("  cafe\u{301}  ".to_string()).unwrap(),
+        "caf\u{e9}"
+    );
+    assert!(screen_pocket_card_id("   ".to_string()).is_err());
+}
