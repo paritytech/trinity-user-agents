@@ -1,6 +1,6 @@
 ---
 title: "Worker Lifecycle"
-owner: "@johnthecat"
+owner: "@johnthecat, @pgherveou"
 status: draft
 ---
 
@@ -105,17 +105,11 @@ CREATE TABLE product_worker_operations (
 
 ### Sandbox
 
-Every worker runs in its own QuickJS sandbox, with heap and stack limits; repeated failures restart it with backoff.
-
-The environment is the one the web host's worker sandbox
-([`host-worker-sandbox`](https://github.com/paritytech/triangle-js-sdks/tree/main/packages/host-worker-sandbox/src))
-already provides, so one bundle runs on every host.
-
-On native hosts, workers need no localhost bridge: the sandbox exposes a global `truapi` object, a Rust type declared
-with [`#[rquickjs::class]`](https://docs.rs/rquickjs/latest/rquickjs/class/trait.JsClass.html) whose methods reach the
-core in process.
-
-Native hosts implement the sandbox in a new crate around rquickjs and the LLRT modules, which exposes the sandbox runtime to the core.
+- Every worker runs in its own QuickJS sandbox, with heap and stack limits.
+- The sandbox is similar to the web host's [`host-worker-sandbox`](https://github.com/paritytech/triangle-js-sdks/tree/main/packages/host-worker-sandbox/src).
+- Its implementation is based on [rquickjs](https://github.com/DelSkayn/rquickjs) and the LLRT modules, in a new crate the Rust core depends on.
+- Workers need no localhost bridge: the sandbox exposes a global `truapi` object, a Rust type declared with
+  [`#[rquickjs::class]`](https://docs.rs/rquickjs/latest/rquickjs/class/trait.JsClass.html) whose methods reach the core in process.
 
 ### Host interface
 
@@ -190,6 +184,9 @@ pub trait Worker: Send + Sync {
 - Until the worker replies, it keeps running its current bundle, so it can finish or save work in flight first.
 - When the worker replies, returns an error, or does not reply before the request times out, the core stops it and
   starts it again on the new bundle, whose hash becomes `content_hash`.
+
+> **Note:** host-initiated methods must return a subscription today, so a single request and reply for
+> `accept_new_update` needs codegen support.
 
 ## Trade-offs
 
