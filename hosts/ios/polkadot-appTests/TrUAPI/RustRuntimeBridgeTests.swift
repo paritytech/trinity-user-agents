@@ -151,11 +151,12 @@ struct RustRuntimeBridgeTests {
                 osAsker.statusToReturn = status
                 let guard_ = MockPermissionGuard()
                 let bridge = makeBridge(permissionGuard: guard_, osPermissionAsker: osAsker)
-                let expected: DevicePermissionStatus = switch status {
-                case .allowed: .granted
-                case .denied: .denied
-                case .notDetermined: .notDetermined
-                }
+                let expected: DevicePermissionStatus =
+                    switch status {
+                    case .allowed: .granted
+                    case .denied: .denied
+                    case .notDetermined: .notDetermined
+                    }
 
                 #expect(try await bridge.devicePermissionStatus(request: request) == expected)
                 #expect(osAsker.checkedCapabilities == [request.deviceCapabilityType])
@@ -197,11 +198,12 @@ struct RustRuntimeBridgeTests {
 
         let result = try await bridge.remotePermission(product: testProduct, request: .remote(domains: ["a.io"]))
 
-        let expected: TrUAPIPermissionDecision = switch decision {
-        case .allowOnce: .allowOnce
-        case .allowAlways: .allowAlways
-        case .deny: .deny
-        }
+        let expected: TrUAPIPermissionDecision =
+            switch decision {
+            case .allowOnce: .allowOnce
+            case .allowAlways: .allowAlways
+            case .deny: .deny
+            }
         #expect(result == expected)
         #expect(guard_.requestedBatchedPermissions == [.networkAccess(domain: "a.io")])
     }

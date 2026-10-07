@@ -19,7 +19,7 @@ enum WalletMainViewFactory {
         else {
             return nil
         }
-        let wireframe = WalletMainWireframe(personDataStore: context.personDataStore)
+        let wireframe = WalletMainWireframe()
 
         let networkStatusObserver = NetworkStatusObserver(
             networkStatusService: context.networkStatusService,
@@ -28,12 +28,6 @@ enum WalletMainViewFactory {
         )
 
         let interactor = WalletMainInteractor(
-            collectiblesURLProvider: CollectiblesURLProvider(
-                spaFlowState: context.flowState,
-                dotNsLabel: AppConfig.DotNs.dotNsCollectibles,
-                remoteConfig: FirebaseFacade.shared,
-                firebaseFallback: { FirebaseApplicationService.shared.asyncWaitCollectiblesFallbackURL() }
-            ),
             networkStatusObserver: networkStatusObserver
         )
 
@@ -56,8 +50,7 @@ enum WalletMainViewFactory {
             identityDetailsScene:
             IdentityDetailsViewFactory.createEmbeddedScene(
                 chainModel: chainAsset.chain,
-                wallet: wallet,
-                personDataStore: context.personDataStore
+                wallet: wallet
             )
         )
         presenter.view = view

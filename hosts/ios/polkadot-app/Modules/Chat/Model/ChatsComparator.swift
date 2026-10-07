@@ -42,8 +42,7 @@ extension Chat.Peer {
     /// so reading it would only make sorting depend on a singleton.
     var isPinnedToTop: Bool {
         if case let .chatExtension(extensionId, _) = self {
-            return extensionId == DIM2ChatExtension.identifier
-                || HostPlacedProducts.contains(productId: extensionId)
+            return HostPlacedProducts.contains(productId: extensionId)
         }
         return false
     }

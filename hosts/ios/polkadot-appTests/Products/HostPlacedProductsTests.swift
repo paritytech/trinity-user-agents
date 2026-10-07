@@ -38,6 +38,13 @@ struct HostPlacedProductsTests {
 
 @Suite("The host-placement switch")
 struct HostPlacementSettingTests {
+    @Test("With no stored choice the host places its products")
+    func unsetDefaultsToEnabled() {
+        let settings = InMemorySettingsManager()
+
+        #expect(settings.isHostPlacementEnabled)
+    }
+
     /// The override exists so a tester can see either arrangement, including both bots at once,
     /// without building a second configuration.
     @Test("An explicit switch off is respected")
@@ -68,15 +75,6 @@ struct HostPlacedChatPinningTests {
         let peer = Chat.Peer.chatExtension(hostPlaced.productId("paseo"), roomId: nil)
 
         #expect(peer.isPinnedToTop)
-    }
-
-    /// The native extension keeps its pin on the builds that still have it. It is a chat identity
-    /// of its own, not the product's, which is why the two can coexist and why only the build
-    /// default keeps them apart.
-    @Test("The native DIM2 extension stays pinned")
-    func nativeExtensionStaysPinned() {
-        #expect(Chat.Peer.chatExtension(DIM2ChatExtension.identifier, roomId: nil).isPinnedToTop)
-        #expect(!HostPlacedProducts.contains(productId: DIM2ChatExtension.identifier))
     }
 
     @Test("An ordinary product's bot is not pinned")

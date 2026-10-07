@@ -30,8 +30,6 @@ protocol ServiceCoordinatorProtocol: ApplicationServiceProtocol {
     var attachmentUploadService: AttachmentUploadingServicing { get }
     var attachmentDownloadService: AttachmentDownloadingServicing { get }
     var audioSessionManager: AudioSessionManaging { get }
-    var determineStateSyncService: DetermineStateSyncServicing { get }
-    var personDataStore: DetermineStatePersonDataStore { get }
     var coinageService: CoinageServicing { get }
     var coinageBackupSyncService: CoinageBackupSyncServicing { get }
     var accountManager: ProductsAccountManaging { get }
@@ -62,9 +60,6 @@ final class ServiceCoordinator {
     let durableTransactionEngine: DurableTxServices
     let w3sPaymentTracking: W3sPaymentTracking
     let audioSessionManager: AudioSessionManaging
-    let determineStateSyncService: DetermineStateSyncServicing
-    let personhoodBackgroundService: PersonhoodBackgroundService
-    let personDataStore: DetermineStatePersonDataStore
     let coinageBackupSyncService: CoinageBackupSyncServicing
     let messageExpansionService: CompactedMessageExpansionServicing
     let notificationBadgeSyncService: NotificationBadgeSyncService
@@ -104,9 +99,6 @@ final class ServiceCoordinator {
         durableTransactionEngine: DurableTxServices,
         w3sPaymentTracking: W3sPaymentTracking,
         audioSessionManager: AudioSessionManaging,
-        determineStateSyncService: DetermineStateSyncServicing,
-        personhoodBackgroundService: PersonhoodBackgroundService,
-        personDataStore: DetermineStatePersonDataStore,
         coinageBackupSyncService: CoinageBackupSyncServicing,
         messageExpansionService: CompactedMessageExpansionServicing,
         notificationBadgeSyncService: NotificationBadgeSyncService,
@@ -139,9 +131,6 @@ final class ServiceCoordinator {
         self.durableTransactionEngine = durableTransactionEngine
         self.w3sPaymentTracking = w3sPaymentTracking
         self.audioSessionManager = audioSessionManager
-        self.determineStateSyncService = determineStateSyncService
-        self.personhoodBackgroundService = personhoodBackgroundService
-        self.personDataStore = personDataStore
         self.coinageBackupSyncService = coinageBackupSyncService
         self.messageExpansionService = messageExpansionService
         self.notificationBadgeSyncService = notificationBadgeSyncService
@@ -163,11 +152,6 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
     func setup() {
         // Keep the cached TLD warm on each launch without blocking.
         tldProvider.refresh()
-
-        #if FEATURE_DIMS
-            determineStateSyncService.setup()
-            personhoodBackgroundService.setup()
-        #endif
 
         chatCoordinator.setup()
         productWorkerFacade.setup()
@@ -212,11 +196,6 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
     }
 
     func throttle() {
-        #if FEATURE_DIMS
-            determineStateSyncService.throttle()
-            personhoodBackgroundService.throttle()
-        #endif
-
         chatCoordinator.throttle()
         chatRequestCoordinator.throttle()
         fiatOnrampTrackingService.throttle()
@@ -342,15 +321,8 @@ extension ServiceCoordinator {
                 bulletInManager: allowanceManagerFacade.bulletInManager
             ),
             let attachmentDownloadService = createAttachmentDownloadService(),
-            let syncServiceResult = createDetermineStateSyncService(),
             let deviceSyncService = try? createDeviceSyncService(turnService: turnService, logger: logger)
         else {
-            return nil
-        }
-
-        guard let personhoodServices = createPersonhoodServices(
-            syncStateStore: syncServiceResult.syncStore
-        ) else {
             return nil
         }
 
@@ -367,11 +339,6 @@ extension ServiceCoordinator {
         let (chatExtensionsRegistry, productWorkerFacade) = createChatExtensionsRegistry(
             accountManager: accountManager,
             truapiRuntimeProvider: truapiRuntimeProvider,
-            syncStore: syncServiceResult.syncStore,
-            personDataStore: syncServiceResult.personDataStore,
-            syncService: syncServiceResult.service,
-            personhoodRegistrationService: personhoodServices.registrationService,
-            audioSessionManager: audioSessionManager,
             spaFlowState: spaFlowState
         )
         // Registered so the SPA screen, opened outside this assembly, resolves the
@@ -463,9 +430,6 @@ extension ServiceCoordinator {
             durableTransactionEngine: coinageServices.durableTransactionEngine,
             w3sPaymentTracking: coinageServices.w3sPaymentTracking,
             audioSessionManager: audioSessionManager,
-            determineStateSyncService: syncServiceResult.service,
-            personhoodBackgroundService: personhoodServices.backgroundService,
-            personDataStore: syncServiceResult.personDataStore,
             coinageBackupSyncService: coinageServices.backupSyncService,
             messageExpansionService: messageExpansionService,
             notificationBadgeSyncService: notificationBadgeSyncService,
@@ -542,27 +506,12 @@ private extension ServiceCoordinator {
             serviceFactory: ChatRequestServiceFactory(
                 remoteContactResolver: CompoundRemoteContactResolver(
                     resolvers: [
-                        playerContactOperation(chatChainId: AppConfig.Chains.usernameChain),
                         remoteAccountOperation(chatChainId: AppConfig.Chains.usernameChain)
                     ],
                     logger: Logger.shared
                 )
             ),
             logger: Logger.shared
-        )
-    }
-
-    static func playerContactOperation(chatChainId: ChainModel.Id) -> RemoteContactResolving {
-        let identifierService = ChatIdentifierService(
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            chain: chatChainId,
-            operationQueue: OperationManagerFacade.sharedDefaultQueue,
-            logger: Logger.shared
-        )
-
-        return PlayerContactOperationFactory(
-            gameVotesRepositoryFactory: GameVoteRepositoryFactory(),
-            identifierService: identifierService
         )
     }
 
@@ -655,64 +604,5 @@ private extension ServiceCoordinator {
         }
 
         return providers
-    }
-}
-
-// MARK: - DetermineStateSyncService Creation
-
-private extension ServiceCoordinator {
-    static func createDetermineStateSyncService() -> (
-        service: DetermineStateSyncService,
-        syncStore: DetermineStateSyncStore,
-        personDataStore: DetermineStatePersonDataStore
-    )? {
-        let logger = Logger.shared
-        let walletRepo: WalletManagerRepositoryProtocol = .shared
-        let vrfRepo: BandersnatchManagerRepositoryProtocol = .shared
-
-        guard
-            let mainAccountId = try? walletRepo.main().getRawPublicKey(),
-            let candidateAccountId = try? walletRepo.candidate().getRawPublicKey(),
-            let mobRuleAccountId = try? walletRepo.mobRuleAlias().getRawPublicKey(),
-            let scoreAccountId = try? walletRepo.scoreAlias().getRawPublicKey(),
-            let resourcesAccountId = try? walletRepo.resourcesAlias().getRawPublicKey()
-        else {
-            logger.error("Failed to get wallet account IDs for DetermineStateSyncService")
-            return nil
-        }
-
-        guard
-            let vrfManager = try? vrfRepo.fullPerson(),
-            let memberKey = try? vrfManager.getMemberKey()
-        else {
-            logger.error("Failed to get member key for DetermineStateSyncService")
-            return nil
-        }
-
-        let syncQueue = DispatchQueue(label: "io.polkadot.app.dims.service.queue")
-
-        let personDataStore = DetermineStatePersonDataStore(
-            candidateAccountId: candidateAccountId,
-            logger: logger
-        )
-
-        let syncStore = DetermineStateSyncStore(logger: logger)
-
-        let syncService = DetermineStateSyncService(
-            walletAccountId: mainAccountId,
-            candidateAccountId: candidateAccountId,
-            mobRuleAccountId: mobRuleAccountId,
-            scoreAccountId: scoreAccountId,
-            resourcesAccountId: resourcesAccountId,
-            memberKey: memberKey,
-            chainId: AppConfig.Chains.usernameChain,
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            observers: [syncStore, personDataStore],
-            operationQueue: OperationManagerFacade.sharedDefaultQueue,
-            proccessingQueue: syncQueue,
-            logger: logger
-        )
-
-        return (service: syncService, syncStore: syncStore, personDataStore: personDataStore)
     }
 }

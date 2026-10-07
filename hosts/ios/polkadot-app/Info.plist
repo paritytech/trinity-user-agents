@@ -2,12 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>BGTaskSchedulerPermittedIdentifiers</key>
-	<array>
-		<string>io.novatech.determine.state.refresh</string>
-		<string>io.novatech.person.registration.sync</string>
-		<string>io.novatech.person.self_include.submit</string>
-	</array>
 	<key>BrandAppGroup</key>
 	<string>group.$(APP_MAIN_BUNDLE)</string>
 	<key>BrandBundleRoot</key>

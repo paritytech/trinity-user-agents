@@ -4,13 +4,11 @@ import Keystore_iOS
 enum SettingsKey: String {
     case username = "username.v3"
     case usernameClaimed = "usernameClaimed.v3"
-    case isPerson = "isPerson.v3"
     case waitingRoomNotificationDate
     case gameStartNotificationDate
     case registrationStartNotificationDates
     case gameAboutToStartNotificationDate
     case registrationOpenNotificationDates
-    case voucherInUseDismissed = "voucherInUseDismissed.v3"
     case playerTooltipShown
     case swipeTooltipShown
     case selectedCurrencyCode

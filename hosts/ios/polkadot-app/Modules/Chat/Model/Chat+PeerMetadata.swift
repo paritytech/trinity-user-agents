@@ -25,7 +25,6 @@ extension Chat {
 
     struct PeerMetadata: Equatable {
         let name: String
-        let contactSource: Chat.Contact.Source
         let icon: Icon
         let input: PeerMetadataInput
         let moreActions: [Chat.PeerAction]
@@ -41,7 +40,6 @@ extension Chat.PeerMetadata {
     static var unknown: Chat.PeerMetadata {
         Chat.PeerMetadata(
             name: "Unknown",
-            contactSource: .chat,
             icon: .image(nil),
             input: .empty,
             moreActions: []

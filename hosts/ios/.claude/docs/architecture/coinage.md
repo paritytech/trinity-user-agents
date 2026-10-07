@@ -2,7 +2,7 @@
 
 ## Overview
 
-Coinage is the payment primitive for the Polkadot app — managing digital coins with derivation indices, values, and lifecycle states. Used for in-app payments, game rewards, and peer transfers.
+Coinage is the payment primitive for the Polkadot app — managing digital coins with derivation indices, values, and lifecycle states. Used for in-app payments and peer transfers.
 
 ## Key Components
 

@@ -7,6 +7,5 @@ extension Chat {
         let username: String
         let chatPublicKey: Chat.PublicKey
         let imageData: Data?
-        let source: Chat.Contact.Source
     }
 }
