@@ -182,6 +182,10 @@ pub struct SigningHost {
     /// shipping host has no way to set it.
     #[cfg(feature = "test-host")]
     grant_allowances_unchecked: std::sync::atomic::AtomicBool,
+    /// Keep preimage submissions in the core instead of the Bulletin chain,
+    /// also implied by `grant_allowances_unchecked`.
+    #[cfg(feature = "test-host")]
+    submit_preimages_locally: core::sync::atomic::AtomicBool,
     /// Resource tags answered as refused, whatever the rest of the host would
     /// say. A suite proving that its product handles a refusal needs one
     /// resource withheld while the others stay granted, which neither the
@@ -217,6 +221,8 @@ impl SigningHost {
             #[cfg(feature = "test-host")]
             grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
             #[cfg(feature = "test-host")]
+            submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
+            #[cfg(feature = "test-host")]
             withheld_resources: Mutex::new(HashSet::new()),
             session_state: SessionState::new(),
             auth_state: AuthStateMachine::new(platform.clone()),
@@ -235,6 +241,15 @@ impl SigningHost {
     pub fn grants_allowances_unchecked(&self) -> bool {
         self.grant_allowances_unchecked
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.submit_preimages_locally
+            .store(local, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// Answer resource allocation as granted without performing it.
@@ -324,6 +339,8 @@ impl SigningHost {
             network_suffix: network_suffix.to_string(),
             #[cfg(feature = "test-host")]
             grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(feature = "test-host")]
+            submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
             #[cfg(feature = "test-host")]
             withheld_resources: Mutex::new(HashSet::new()),
             session_state: SessionState::new(),
@@ -1552,6 +1569,15 @@ impl ProductAuthority for SigningHost {
         .map_err(sso_responder::AllowanceAllocationError::into_authority_error)
     }
 
+    #[cfg(feature = "test-host")]
+    fn submits_preimages_locally(&self) -> bool {
+        self.grant_allowances_unchecked
+            .load(std::sync::atomic::Ordering::Relaxed)
+            || self
+                .submit_preimages_locally
+                .load(core::sync::atomic::Ordering::Relaxed)
+    }
+
     fn forget_statement_store_allowance_key(&self, product_id: &str, public_key: [u8; 32]) {
         self.local_grants
             .lock()
@@ -1663,6 +1689,8 @@ mod tests {
     mod auto_signing;
     mod cross_product_account;
     mod raw_signing;
+    #[cfg(feature = "test-host")]
+    mod local_preimages;
     #[cfg(feature = "test-host")]
     mod withheld_resources;
 
