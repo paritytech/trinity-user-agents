@@ -28,6 +28,7 @@ mod pocket;
 mod product_config;
 mod qr_scanner;
 mod register_name;
+mod scanner;
 mod script_project;
 mod script_runner;
 mod sessions;
@@ -1255,6 +1256,7 @@ async fn run_pairing_host(
         pairing_runtime.set_pocket_platform(pocket);
     }
     pairing_runtime.set_game_platform(Arc::new(game::CliGameHost));
+    pairing_runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
     pairing_runtime.set_contacts_platform(contacts::CliContactsHost::from_env(
         storage_platform.clone(),
     ));
@@ -1819,6 +1821,7 @@ fn build_signing_runtime(
         runtime.set_pocket_platform(pocket);
     }
     runtime.set_game_platform(Arc::new(game::CliGameHost));
+    runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
     runtime.set_core_db(core_db);
     runtime.start_statement_allowance_renewal();
     Ok((runtime, platform))
