@@ -29,7 +29,6 @@ object FeatureFlags {
             FeatureOption.ALLOW_SHORT_EVIDENCE_VIDEO -> BuildConfig.ALLOW_SHORT_EVIDENCE_VIDEO
             FeatureOption.SAMPLE_BOT -> BuildConfig.SAMPLE_BOT
             FeatureOption.DIM1_BOT_BY_DEFAULT -> BuildConfig.DIM1_BOT_BY_DEFAULT
-            FeatureOption.DIM2_BOT_BY_DEFAULT -> BuildConfig.DIM2_BOT_BY_DEFAULT
             FeatureOption.PEER_BOT_BY_DEFAULT -> BuildConfig.PEER_BOT_BY_DEFAULT
         }
     }
@@ -43,7 +42,6 @@ enum class FeatureOption {
     SKIP_MOBRULE_CASE,
     SAMPLE_BOT,
     DIM1_BOT_BY_DEFAULT,
-    DIM2_BOT_BY_DEFAULT,
     PEER_BOT_BY_DEFAULT,
     DEBUG_MENU,
     BROWSE_TAB,

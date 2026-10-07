@@ -100,7 +100,7 @@ class RootViewModel @Inject constructor(
 
             launch { jwtAuthWarmUpService.warmUpToken() }
             launch { chatRequestServiceCoordinator.runChatRequestServices() }
-            launch { chatBotStateController.activateDefaultBots() }
+            launch { chatBotStateController.applyDefaultBotStates() }
             launch { rootInteractor.printAccountAddresses() }
             launch { checkDevReset() }
         }

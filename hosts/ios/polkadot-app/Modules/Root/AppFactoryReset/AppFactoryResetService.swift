@@ -8,27 +8,37 @@
     import AlarmKit
     import Products
 
+    /// The scene restart that follows keeps the process, so in-memory state derived from the wiped data
+    /// (the cached TLD, the applied remote config) is torn down here alongside the storage.
     final class AppFactoryResetService {
+        private let tldProvider: DotNsTldProviding
+        private let remoteConfig: AppliedConfigDiscarding
         private let mnemonicBackupHelper: MnemonicBackupHelperProtocol
         private let notificationCenter: UNUserNotificationCenter
         private let logger: LoggerProtocol
 
         init(
+            tldProvider: DotNsTldProviding,
+            remoteConfig: AppliedConfigDiscarding,
             mnemonicBackupHelper: MnemonicBackupHelperProtocol,
             notificationCenter: UNUserNotificationCenter = .current(),
             logger: LoggerProtocol
         ) {
+            self.tldProvider = tldProvider
+            self.remoteConfig = remoteConfig
             self.mnemonicBackupHelper = mnemonicBackupHelper
             self.notificationCenter = notificationCenter
             self.logger = logger
         }
 
-        func resetAllData() {
+        func resetAllData() async {
             if #available(iOS 26.0, *) {
                 clearAlarmKitAlarms()
             }
             deleteAllKeychainItems()
             eraseAllUserDefaults()
+            tldProvider.reset()
+            await remoteConfig.discardAppliedConfig()
             clearAllNotifications()
             deleteCloudBackup()
             deleteCoreDataDatabases()
@@ -93,7 +103,8 @@
             }
         }
 
-        // The stores are open at this point, so they go through the services.
+        /// Both stores share one directory and drop() deletes the whole directory, so every store is closed
+        /// before any is dropped; otherwise the first drop deletes the second store's file while it is open.
         func deleteCoreDataDatabases() {
             let stores: [(String, CoreDataServiceProtocol)] = [
                 ("UserData", UserDataStorageFacade.shared.databaseService),
@@ -103,10 +114,27 @@
             for (name, service) in stores {
                 do {
                     try service.close()
-                    try service.drop()
+                } catch {
+                    logger.error("Failed to close \(name): \(error)")
+                }
+            }
+
+            for (name, service) in stores {
+                do {
+                    try dropClosed(service)
                 } catch {
                     logger.error("Failed to wipe \(name): \(error)")
                 }
+            }
+        }
+
+        /// Any access reopens a closed store, so one that was touched after the close is closed again.
+        func dropClosed(_ service: CoreDataServiceProtocol) throws {
+            do {
+                try service.drop()
+            } catch CoreDataServiceError.unexpectedDropWhenOpen {
+                try service.close()
+                try service.drop()
             }
         }
 
