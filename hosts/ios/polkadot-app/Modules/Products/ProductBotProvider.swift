@@ -101,11 +101,12 @@ private extension ProductBotProvider {
     /// The TLD wait is bounded because every other product's bot is built after it, and a device
     /// that can never read the TLD must not cost the products that do not need it.
     func hostPlacedProducts() async -> [Product] {
-        guard settingsManager.isHostPlacementEnabled else { return [] }
+        let placed = HostPlacedProducts.placed(enabled: settingsManager.isHostPlacementEnabled)
+        guard !placed.isEmpty else { return [] }
 
         guard let tld = await tldProvider.tldRetrying(attempts: Self.tldAttempts) else { return [] }
 
-        return HostPlacedProducts.all.map {
+        return placed.map {
             Product(id: $0.productId(tld), name: $0.fallbackName)
         }
     }

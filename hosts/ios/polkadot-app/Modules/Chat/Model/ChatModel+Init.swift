@@ -38,3 +38,12 @@ extension Chat.LocalModel {
         )
     }
 }
+
+extension Chat.LocalModel {
+    /// The row ``HostPlacedRoomPlacer`` draws: a room with no icon and no message yet. A product's
+    /// own `createRoom` never leaves that shape behind once it has posted, and a product that
+    /// registers without an icon is adopted again only until its first message.
+    var isHostPlacedPlaceholder: Bool {
+        message == nil && roomMetadata != nil && roomMetadata?.icon == nil
+    }
+}

@@ -7,8 +7,9 @@ import Products
 /// an empty list while the worker downloads and boots. Pocket bundles a card's face for the same
 /// reason; Android's chat side uses `ProductChatExtension.defaultRoomMetadata`.
 ///
-/// The product's own `createRoom` finds this row by `(extensionId, roomId)`, answers `exists`, and
-/// replaces this name and nil icon with the ones the product gives.
+/// The product's own `createRoom` finds this row by `(extensionId, roomId)` and, while it is still
+/// this placeholder (no icon, no message), adopts it: writes the product's name and icon and
+/// answers `new`, so the product's first-boot welcome still runs.
 ///
 /// It does not cover a product that never resolves: `ContactsListInteractor` draws an extension
 /// row only while a bot is registered, and `ProductBotFactory` builds none without a worker.
@@ -33,12 +34,13 @@ struct HostPlacedRoomPlacer {
 
     /// Places every missing room. Safe to run on every launch.
     func placeRooms() async {
-        guard settingsManager.isHostPlacementEnabled else { return }
+        let placed = HostPlacedProducts.placed(enabled: settingsManager.isHostPlacementEnabled)
+        guard !placed.isEmpty else { return }
 
         // Bounded: this runs detached, so it must not outlive the reason it was started.
         guard let tld = await tldProvider.tldRetrying(attempts: Self.tldAttempts) else { return }
 
-        for hostPlaced in HostPlacedProducts.all {
+        for hostPlaced in placed {
             await place(hostPlaced, tld: tld)
         }
     }

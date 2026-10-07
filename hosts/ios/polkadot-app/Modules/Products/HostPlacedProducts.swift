@@ -18,14 +18,34 @@ struct HostPlacedProduct: Sendable {
 
     /// Reserved identity as a function of the network TLD, so one entry covers every chain.
     let productId: @Sendable (String) -> String
+
+    /// Placed only while ``SettingsManagerProtocol/isHostPlacementEnabled`` is on. True for a
+    /// product a native extension duplicates on `FEATURE_DIMS` builds (Jollity and WeeklyGame);
+    /// a product with no native twin is placed on every build.
+    let followsPlacementSwitch: Bool
 }
 
 enum HostPlacedProducts {
-    /// Whether the host places these is ``SettingsManagerProtocol/isHostPlacementEnabled``.
+    /// Which of these this build places is ``placed(enabled:)``.
     static let all: [HostPlacedProduct] = [
-        HostPlacedProduct(roomId: "jollity", fallbackName: "Jollity", productId: BuiltInProduct.dim2(for:)),
-        HostPlacedProduct(roomId: "humanity", fallbackName: "Humanity", productId: BuiltInProduct.personhood(for:))
+        HostPlacedProduct(
+            roomId: "jollity",
+            fallbackName: "Jollity",
+            productId: BuiltInProduct.dim2(for:),
+            followsPlacementSwitch: true
+        ),
+        HostPlacedProduct(
+            roomId: "humanity",
+            fallbackName: "Humanity",
+            productId: BuiltInProduct.personhood(for:),
+            followsPlacementSwitch: false
+        )
     ]
+
+    /// The products placed under the current ``SettingsManagerProtocol/isHostPlacementEnabled``.
+    static func placed(enabled: Bool) -> [HostPlacedProduct] {
+        all.filter { enabled || !$0.followsPlacementSwitch }
+    }
 
     /// Read against the candidate's own TLD, so it answers without the chain read that listing
     /// needs — the trick Pocket's `pinned(key:)` uses. An exact match, not a prefix test, so
