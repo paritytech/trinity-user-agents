@@ -44,15 +44,15 @@ pub enum CodeFormat {
     derive(uniffi::Record)
 )]
 pub struct HostScannerScanRequest {
-    /// Formats the product accepts. At least one.
+    /// Formats the product accepts. At least one, each named once.
     pub formats: Vec<CodeFormat>,
     /// Start the text must have, compared ignoring ASCII letter case, since QR
     /// codes often carry URLs in capitals. At most 256 bytes of UTF-8.
     pub prefix: Option<String>,
     /// What to point the camera at, shown as the product's words. At most 80
     /// Unicode scalar values (`[...hint].length` in TypeScript). No control
-    /// characters, line or paragraph separators, or bidirectional formatting
-    /// characters.
+    /// characters, line or paragraph separators, invisible characters, or
+    /// bidirectional formatting characters.
     pub hint: Option<String>,
 }
 

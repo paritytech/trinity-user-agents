@@ -57,7 +57,7 @@ pub enum CodeFormat {
 }
 
 pub struct HostScannerScanRequest {
-    /// Formats the product accepts. At least one.
+    /// Formats the product accepts. At least one, each named once.
     pub formats: Vec<CodeFormat>,
     /// Start the text must have, ignoring ASCII letter case. At most 256 bytes of UTF-8.
     pub prefix: Option<String>,
@@ -79,7 +79,7 @@ pub enum HostScannerScanError {
     CameraUnavailable,
     /// Another scan is already open.
     Busy,
-    /// No formats, or a prefix or hint that breaks its limit.
+    /// No formats, a format named twice, or a prefix or hint that breaks its limit.
     InvalidRequest { reason: String },
     Unknown { reason: String },
 }
@@ -109,7 +109,8 @@ One call scans one code. A product that wants several calls again. Cancelling th
 **The host owns the viewfinder.** The host writes the title itself and names the product by its id, for example "Scan
 for greenmarket.dot". The product cannot draw over the viewfinder or change the title. The hint is shown below the
 title as the product's own words, so the user can tell it apart from host text. To keep it to one plain line, a hint
-may not contain control characters, line or paragraph separators, or characters that change text direction.
+may not contain control characters, line or paragraph separators, invisible characters, or characters that change text
+direction.
 
 **The host does not act on what it scanned.** The host's own scanner treats some codes as links. A link to another
 product opens it, a pairing link starts sign-in, and a payment link opens a payment screen. A product's scan skips all

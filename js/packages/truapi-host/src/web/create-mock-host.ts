@@ -868,7 +868,8 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
   } = config;
 
-  let scanAnswer: HostScan = scanner ?? { tag: "Dismissed" };
+  // Present only when the mock serves a scanner, so `setScanAnswer` can tell.
+  const scan = scanner === undefined ? undefined : { answer: scanner };
   const storage = new Map<string, Uint8Array>();
   const preimages = new Map<string, Uint8Array>();
   const navigations: string[] = [];
@@ -1180,12 +1181,12 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async cancelGameReminder() {},
     },
 
-    ...(scanner === undefined
+    ...(scan === undefined
       ? {}
       : {
           scanner: {
             async scanCode() {
-              return scanAnswer;
+              return scan.answer;
             },
           },
         }),
@@ -1519,12 +1520,12 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
     getTheme: () => currentTheme,
     setScanAnswer: (answer) => {
-      if (scanner === undefined) {
+      if (scan === undefined) {
         throw new Error(
           "this mock serves no scanner: create it with a `scanner` answer",
         );
       }
-      scanAnswer = answer;
+      scan.answer = answer;
     },
     setTheme: (variant) => {
       currentTheme = variant;

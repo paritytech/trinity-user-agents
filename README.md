@@ -306,7 +306,7 @@ make e2e-signing-cli                # same direct signing-host phase
 make e2e-pairing-cli                # same paired pairing-host phase
 make e2e-chat-cli                   # chat content screening against a chat signing-host
 make e2e-pocket-cli                 # Pocket protocol check against a Pocket signing-host
-make e2e-scanner-cli                # scanner checks against a signing-host that scans a fixed code
+make e2e-scanner-cli                # scanner checks against both CLI host roles, scanning a fixed code
 ```
 
 The Pocket phase runs its product as a Worker execution, the only execution

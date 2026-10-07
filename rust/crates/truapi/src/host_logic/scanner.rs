@@ -19,6 +19,14 @@ pub fn validate_request(request: &HostScannerScanRequest) -> Result<(), String> 
     if request.formats.is_empty() {
         return Err("formats is empty".into());
     }
+    if request
+        .formats
+        .iter()
+        .enumerate()
+        .any(|(index, format)| request.formats[..index].contains(format))
+    {
+        return Err("formats names a format twice".into());
+    }
     if let Some(prefix) = &request.prefix
         && prefix.len() > MAX_PREFIX_BYTES
     {
@@ -35,8 +43,8 @@ pub fn validate_request(request: &HostScannerScanRequest) -> Result<(), String> 
     Ok(())
 }
 
-/// Characters that would let a hint break out of its line or flip its
-/// direction under the host's title.
+/// Characters that would let a hint break out of its line, flip its
+/// direction, or hide text under the host's title.
 fn breaks_the_line(character: char) -> bool {
     character.is_control()
         || matches!(
@@ -44,10 +52,11 @@ fn breaks_the_line(character: char) -> bool {
             '\u{2028}'
                 | '\u{2029}'
                 | '\u{061C}'
-                | '\u{200E}'
-                | '\u{200F}'
+                | '\u{200B}'..='\u{200F}'
                 | '\u{202A}'..='\u{202E}'
-                | '\u{2066}'..='\u{2069}'
+                | '\u{2060}'..='\u{2069}'
+                | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
         )
 }
 
@@ -146,6 +155,23 @@ mod tests {
     }
 
     #[test]
+    fn a_format_may_be_named_only_once() {
+        // The filter checks the list on every camera frame, so it stays as
+        // short as the formats themselves.
+        assert!(
+            validate_request(&request(vec![CodeFormat::Qr, CodeFormat::Qr], None, None)).is_err()
+        );
+        assert!(
+            validate_request(&request(
+                vec![CodeFormat::Qr, CodeFormat::Ean13],
+                None,
+                None
+            ))
+            .is_ok()
+        );
+    }
+
+    #[test]
     fn the_hint_is_counted_in_unicode_scalars() {
         // TypeScript products count with `[...hint].length`, which agrees with this.
         assert!(validate_request(&qr(None, Some(&"é".repeat(MAX_HINT_CHARS)))).is_ok());
@@ -165,6 +191,10 @@ mod tests {
             "\u{2066}isolate",
             "\u{200F}mark",
             "\u{061C}arabic letter mark",
+            "zero\u{200B}width",
+            "word\u{2060}joiner",
+            "\u{FEFF}byte order mark",
+            "\u{FFF9}annotation",
         ] {
             assert!(
                 validate_request(&qr(None, Some(refused))).is_err(),

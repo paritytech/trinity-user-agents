@@ -16,6 +16,12 @@ fn domain(error: latest::HostScannerScanError) -> CallError<HostScannerScanError
     CallError::Domain(HostScannerScanError::V1(error))
 }
 
+fn unknown(reason: impl ToString) -> CallError<HostScannerScanError> {
+    domain(latest::HostScannerScanError::Unknown {
+        reason: reason.to_string(),
+    })
+}
+
 #[truapi::async_trait]
 impl Scanner for ProductRuntimeHost {
     /// Checked in this order so a host without a scanner, or a request the
@@ -40,25 +46,17 @@ impl Scanner for ProductRuntimeHost {
 
         let answer = until_cancelled(cx, platform.scan_code(&self.product, &request))
             .await
-            .map_err(|cancelled| {
-                domain(latest::HostScannerScanError::Unknown {
-                    reason: cancelled.to_string(),
-                })
-            })?
-            .map_err(|error| {
-                domain(latest::HostScannerScanError::Unknown {
-                    reason: error.reason,
-                })
-            })?;
+            .map_err(unknown)?
+            .map_err(|error| unknown(error.reason))?;
 
         let outcome = match answer {
             HostScan::Scanned { text, format } if accepts(&request, format, &text) => {
                 latest::ScanOutcome::Scanned { text, format }
             }
             HostScan::Scanned { .. } => {
-                return Err(domain(latest::HostScannerScanError::Unknown {
-                    reason: "the host returned a code the request does not accept".into(),
-                }));
+                return Err(unknown(
+                    "the host returned a code the request does not accept",
+                ));
             }
             HostScan::Dismissed => latest::ScanOutcome::Dismissed,
             HostScan::CameraUnavailable => {
