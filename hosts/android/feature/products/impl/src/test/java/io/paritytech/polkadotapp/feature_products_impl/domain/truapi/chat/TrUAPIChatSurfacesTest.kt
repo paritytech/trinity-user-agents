@@ -10,10 +10,13 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreatePr
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.ChatCustomMessage
@@ -22,6 +25,7 @@ import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
+import kotlin.time.Duration.Companion.seconds
 
 class TrUAPIChatSurfacesTest {
     private val sent = mutableListOf<Pair<ProductChatIdParameter, ProductBotMessage>>()
@@ -41,8 +45,21 @@ class TrUAPIChatSurfacesTest {
     private val surfaces = TrUAPIChatSurfaces()
     private val bridge = surfaces.bridgeFor(PRODUCT)
 
+    // A Pocket card can boot the shared worker before the product's chat starts, and the worker
+    // makes its chat calls once, on start: refusing them would leave the chat empty for its life.
+    @Test
+    fun `a call made before the chat binds waits for it`() = runTest {
+        val created = async { bridge.createRoom("counter", "Counter", "") }
+        advanceTimeBy(5.seconds)
+        assertFalse(created.isCompleted)
+
+        surfaces.bind(PRODUCT, messaging)
+
+        assertEquals(ChatRoomRegistrationStatus.NEW, created.await())
+    }
+
     // The execution keeps its bridge while the worker runs; a worker that outlives its chat, or
-    // starts before it, must not write into rooms nobody is serving.
+    // whose chat never starts, must not write into rooms nobody is serving.
     @Test
     fun `a product whose chat is not bound has every chat call refused`() = runTest {
         assertRejected { bridge.createRoom("counter", "Counter", "") }

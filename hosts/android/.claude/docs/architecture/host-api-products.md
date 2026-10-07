@@ -357,7 +357,8 @@ Core side (`feature/products/impl/.../domain/truapi/`):
   under wasmi and passes `TrUAPIChatSurfaces.bridgeFor(productId)` as `chat` on the same execution as `pocket` (the core
   keeps one worker execution per product). `ProductChatExtension` then runs `TrUAPIChatHost.serve` instead of the
   native worker: it binds the room/message binding for the bridge, holds one `acquireWorker` reference, and attaches
-  `TrUAPIChatProductWorker`, which renders `RenderContext.ChatMessage` and sends presses as renderer actions. Every
+  `TrUAPIChatProductWorker`, which renders `RenderContext.ChatMessage` and sends presses as renderer actions. A Pocket
+  card can boot that worker before chat binds, so a chat call waits up to 30 s for the binding before it is refused. Every
   other chat product keeps the native worker, so one with Pocket cards runs two.
 - `TrUAPIPocketFaceStreams` takes one `acquireWorker` reference per collected face, opens `render` on
   `RenderContext.PocketCard`, retries the first `render` while the worker's client is still connecting, and publishes

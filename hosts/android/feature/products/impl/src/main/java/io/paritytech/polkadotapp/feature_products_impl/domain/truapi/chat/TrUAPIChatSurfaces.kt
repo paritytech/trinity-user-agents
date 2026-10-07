@@ -8,7 +8,11 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMess
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatIdParameter
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.ChatMessageContent
@@ -16,30 +20,44 @@ import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
-import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The chat each product's core worker is allowed to write to. A product's chat extension binds its
  * messaging while it serves the product on the core; the worker execution only ever holds the
- * [ChatHostBridge] from [bridgeFor], which reads the binding per call, so a worker that boots before
- * chat starts, or keeps running after it stops, is refused rather than writing into a chat nobody
- * serves.
+ * [ChatHostBridge] from [bridgeFor], which reads the binding per call.
+ *
+ * Another surface, a Pocket card, can boot the same worker before chat starts, and the worker makes
+ * its chat calls once, on start. So a call waits up to [bindWait] for the binding; one that still
+ * finds none, because the product's chat is not running, is refused rather than written into a chat
+ * nobody serves.
  */
 @Singleton
-class TrUAPIChatSurfaces @Inject constructor() {
-    private val bound = ConcurrentHashMap<ProductId, ProductChatMessaging>()
+class TrUAPIChatSurfaces(private val bindWait: Duration) {
+    @Inject
+    constructor() : this(BIND_WAIT)
+
+    private val bound = MutableStateFlow<Map<ProductId, ProductChatMessaging>>(emptyMap())
 
     fun bind(productId: ProductId, messaging: ProductChatMessaging) {
-        bound[productId] = messaging
+        bound.update { it + (productId to messaging) }
     }
 
     fun unbind(productId: ProductId, messaging: ProductChatMessaging) {
-        bound.remove(productId, messaging)
+        bound.update { if (it[productId] === messaging) it - productId else it }
     }
 
-    fun bridgeFor(productId: ProductId): ChatHostBridge = ProductChatHostBridge(productId) { bound[productId] }
+    fun bridgeFor(productId: ProductId): ChatHostBridge = ProductChatHostBridge(productId) {
+        bound.value[productId] ?: withTimeoutOrNull(bindWait) { bound.mapNotNull { it[productId] }.first() }
+    }
+
+    private companion object {
+        // Covers a chat extension that starts while a card has already booted the worker.
+        val BIND_WAIT = 30.seconds
+    }
 }
 
 /**
@@ -48,7 +66,7 @@ class TrUAPIChatSurfaces @Inject constructor() {
  */
 private class ProductChatHostBridge(
     private val productId: ProductId,
-    private val messaging: () -> ProductChatMessaging?,
+    private val messaging: suspend () -> ProductChatMessaging?,
 ) : ChatHostBridge {
     override suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus {
         Timber.d("truapi.chat.createRoom %s %s", productId.value, roomId)
@@ -87,7 +105,7 @@ private class ProductChatHostBridge(
             ChatRoom(roomId = room.roomId, participatingAs = ChatRoomParticipation.ROOM_HOST)
         }
 
-    private fun requireMessaging(): ProductChatMessaging =
+    private suspend fun requireMessaging(): ProductChatMessaging =
         messaging() ?: throw HostRejection.Rejected("chat is not served for ${productId.value} on this runtime")
 
     // A blank room has no chat id a render context could name.

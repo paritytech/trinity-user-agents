@@ -20,11 +20,13 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.time.Duration
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrUAPIChatHostTest {
     private val events = mutableListOf<String>()
-    private val surfaces = TrUAPIChatSurfaces()
+    // No wait: the acquire below asks synchronously whether the chat is already bound.
+    private val surfaces = TrUAPIChatSurfaces(bindWait = Duration.ZERO)
     private val bridge = surfaces.bridgeFor(PRODUCT)
 
     private val runtime = mockk<TrUAPIHostRuntime> {
