@@ -68,7 +68,7 @@ fn reserved_identities_follow_the_network_and_collection_order() {
 fn wallet_replacement_during_revision_read_prevents_allowance_submission() {
     use crate::runtime::statement_allowance::rpc::{RpcClient, testing::ScriptedRpc};
     use crate::runtime::statement_allowance::{
-        self as allocation, Preselected, RegistrationParams,
+        self as allocation, CollectionScan, PooledRegistrationParams, slot,
     };
     use futures::FutureExt;
     use parity_scale_codec::Encode;
@@ -98,18 +98,24 @@ fn wallet_replacement_during_revision_read_prevents_allowance_submission() {
     scripted.script_subscription([r#"{"inBlock":"0xb10c"}"#]);
     let release = scripted.pause_response(0);
     let rpc = RpcClient::new(subxt_rpcs::RpcClient::new(scripted.clone()));
-    let registration = allocation::register_statement_account(
+    let scans = [CollectionScan {
+        collection: ring.collection,
+        selection: slot::SlotSelection::Free(0),
+    }];
+    let memberships = [ring];
+    let registration = allocation::register_statement_account_pooled(
         &rpc,
         allocation::people_test_metadata(),
         &state,
         &signer,
-        RegistrationParams {
+        &scans,
+        &memberships,
+        PooledRegistrationParams {
             target: &[0x22; 32],
             period: 7,
             network_suffix: b"paseo",
-            ring: &ring,
             reuse_existing: true,
-            preselected: Some(Preselected::Free(0)),
+            allow_eviction: false,
             protected: &[],
         },
     );

@@ -229,8 +229,7 @@ pub fn pgas_alias(
     alias_in_context(signer, collection, &context, "PGAS claim slot")
 }
 
-/// The long-term-storage slot alias for the selected collection at `(period, counter)`.
-pub fn long_term_storage_alias(
+fn long_term_storage_alias(
     signer: &dyn PersonhoodSigner,
     collection: PersonhoodCollection,
     network_suffix: &[u8],
