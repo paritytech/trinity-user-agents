@@ -68,10 +68,10 @@ fun ProductPocketCardDetails(
     val fold = rememberExpandedCardFoldState()
 
     // The product is asked for only once the card has arrived, so its WebView is not built while the
-    // card is still travelling. The face folds away after the arrival, so the shared-element
-    // transition lands on the card's real bounds, and before the page loads, so building the WebView
-    // does not starve that animation. Applied once: a recreated screen must not fold away a face
-    // the user has pulled back.
+    // card is still travelling. The fold starts after the arrival, so the shared-element transition
+    // lands on the card's real bounds; showFace returns as the fold starts, so the page is requested
+    // while it animates. Applied once: a recreated screen must not fold away a face the user has
+    // pulled back.
     val arrival = LocalNavAnimatedVisibilityScope.current?.transition
     val arrived = arrival == null || arrival.currentState == EnterExitState.Visible
     var openingFaceApplied by rememberSaveable { mutableStateOf(false) }
