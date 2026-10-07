@@ -25,7 +25,7 @@ impl ExpandedCard for ProductRuntimeHost {
         if self.product.execution_kind != ProductExecutionKind::Widget {
             return Err(CallError::Denied);
         }
-        let Some(card) = self.expanded_card.clone() else {
+        let Some(card) = &self.expanded_card else {
             return Err(CallError::Unsupported);
         };
         let HostExpandedCardSetFaceShownRequest::V1(request) = request;

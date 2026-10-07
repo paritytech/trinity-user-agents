@@ -2158,23 +2158,6 @@ fn pocket_list_subscribe_forwards_the_host_list_and_interrupts_on_stream_errors(
     assert!(futures::executor::block_on(items.next()).is_none());
 }
 
-/// A product detects "no expanded cards here" by `Unsupported`; a
-/// `HostFailure` would read as a real failure.
-#[test]
-fn expanded_card_set_face_shown_is_unsupported_until_a_host_implements_it() {
-    let host = pocket_host(crate::platform::ProductExecutionKind::Widget, None, false);
-
-    let result = futures::executor::block_on(ExpandedCard::set_face_shown(
-        &host,
-        &CallContext::default(),
-        HostExpandedCardSetFaceShownRequest::V1(v01::HostExpandedCardSetFaceShownRequest {
-            shown: false,
-        }),
-    ));
-
-    assert!(matches!(result, Err(CallError::Unsupported)));
-}
-
 /// Records the visibility the host is asked for and answers a configured result.
 struct RecordingExpandedCardHost {
     answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
@@ -2293,7 +2276,8 @@ fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
 }
 
 /// A host with no adapter, like the browser, must read as "not supported", the
-/// answer a product uses to detect that no expanded cards exist.
+/// answer a product uses to detect that no expanded cards exist; a
+/// `HostFailure` would read as a real failure.
 #[test]
 fn expanded_card_without_an_adapter_is_unsupported() {
     let host = expanded_card_host(crate::platform::ProductExecutionKind::Widget, None);
