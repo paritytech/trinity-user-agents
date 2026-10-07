@@ -9,7 +9,7 @@
 use truapi::latest::FundingDirection;
 
 use crate::host_logic::worker_manifest::{
-    FundingQuoteSource, FundingRoute, RouteDirection, WorkerManifest,
+    FundingRoute, RouteDirection, WorkerManifest,
 };
 
 /// A provider the host offers, as the host supplies it.
@@ -38,8 +38,6 @@ pub struct FundingCandidate {
     pub provider_id: String,
     /// Routes serving the direction; never empty.
     pub routes: Vec<FundingRoute>,
-    /// Where the host gets a live quote.
-    pub quote: FundingQuoteSource,
     /// Onramp adapter id for calls that need the provider's key.
     pub backend: Option<String>,
 }
@@ -66,7 +64,6 @@ impl FundingCandidate {
         (!routes.is_empty()).then(|| Self {
             provider_id: provider_id.to_string(),
             routes,
-            quote: funding.quote.clone(),
             backend: funding.backend.clone(),
         })
     }

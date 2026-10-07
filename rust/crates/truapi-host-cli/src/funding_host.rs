@@ -45,7 +45,7 @@ use truapi::platform::{
 
 /// Worker manifest every scripted provider publishes: card in, and crypto in
 /// and out, quoted by its worker.
-const SCRIPTED_PROVIDER_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"]}],"quote":{"via":"worker"}}}}"#;
+const SCRIPTED_PROVIDER_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"]}]}}}"#;
 
 /// Offer each product named in `TRUAPI_FUNDING_PROVIDERS` (comma-separated)
 /// as a funding provider publishing [`SCRIPTED_PROVIDER_MANIFEST`], seeded
