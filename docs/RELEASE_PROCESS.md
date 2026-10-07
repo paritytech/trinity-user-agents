@@ -88,7 +88,9 @@ Separate multiple package/version targets with commas. The workflow validates
 each declared version against its package manifest and publishes every target
 whose version is not already on npm in the same automation run.
 Include every npm package whose version was bumped, including dependent
-packages bumped by Changesets. If a version is deliberately left unpublished,
+packages bumped by Changesets, but never a `private` package such as
+`@parity/truapi-debugger`: the publish is refused and the release job fails.
+If a version is deliberately left unpublished,
 record that exact `package@version` and a reason in
 [`.github/registry-drift-exceptions.json`](../.github/registry-drift-exceptions.json).
 For example, an entry could be
