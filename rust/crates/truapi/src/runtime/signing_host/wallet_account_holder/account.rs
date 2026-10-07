@@ -1,6 +1,6 @@
 //! Wallet account execution and consent.
 
-use super::WalletAccountHolder;
+use super::{WalletAccountHolder, require_current_session};
 use crate::host_internal::extrinsic::Sr25519Signer;
 use crate::host_internal::extrinsic::{build_signed_transaction, local_transaction_metadata};
 use crate::host_internal::sso_messages::RingVrfError;
@@ -32,27 +32,27 @@ use truapi::latest::{
 };
 use truapi::{CallContext, latest as api};
 
-impl WalletAccountHolder {
-    /// Derive the product's hard-subtree public key from the active session root.
-    /// Returns `None` when no session is active.
-    pub fn derive_subtree_public_key(
-        &self,
-        product_id: &str,
-    ) -> Result<Option<[u8; 32]>, AuthorityError> {
-        let product_id = normalize_product_identifier(product_id).map_err(|err| {
-            AuthorityError::Unavailable {
-                reason: err.to_string(),
-            }
+/// Derive the product's hard-subtree public key from the active session root.
+/// Returns `None` when no session is active.
+pub fn derive_subtree_public_key(
+    wallet: &WalletAccountHolder,
+    product_id: &str,
+) -> Result<Option<[u8; 32]>, AuthorityError> {
+    let product_id =
+        normalize_product_identifier(product_id).map_err(|err| AuthorityError::Unavailable {
+            reason: err.to_string(),
         })?;
-        let Some(session) = self.current_session() else {
-            return Ok(None);
-        };
-        self.with_keys(&session, |keys| {
+    let Some(session) = wallet.current_session() else {
+        return Ok(None);
+    };
+    wallet
+        .with_keys(&session, |keys| {
             keys.product_subtree_public_key(&product_id)
         })
         .map(Some)
-    }
+}
 
+impl WalletAccountHolder {
     fn transaction_keypair(
         keys: &super::WalletKeys,
         request: &CreateTransactionAuthorityRequest,
@@ -105,7 +105,7 @@ impl WalletAccountHolder {
         session: &AuthoritySession,
         owner: &str,
     ) -> Result<(), RingVrfError> {
-        if owner != personhood_product_id(self.network_suffix()) {
+        if owner != personhood_product_id(&self.network_suffix) {
             return Ok(());
         }
         let chains = self
@@ -142,7 +142,7 @@ impl WalletAccountHolder {
         })
         .collect::<Vec<_>>();
         if missing.is_empty() {
-            self.require_current_session(session)?;
+            require_current_session(self, session)?;
             return Ok(());
         }
         let pallet_index = self.ring_resolver.members_pallet_index(&chain_id).await?;
@@ -166,10 +166,10 @@ impl WalletAccountHolder {
                 .ring_vrf_registry
                 .prepare_update(session.public_key)
                 .await?;
-            self.require_current_session(session)?;
+            require_current_session(self, session)?;
             update.register(handle, ring, public_key)?;
             update.persist().await?;
-            self.require_current_session(session)?;
+            require_current_session(self, session)?;
         }
         Ok(())
     }
@@ -179,12 +179,12 @@ impl WalletAccountHolder {
         session: &AuthoritySession,
         handle: &api::ProductAccountId,
     ) -> Result<Option<api::RegisteredRingVrfKey>, RingVrfError> {
-        self.require_current_session(session)?;
+        require_current_session(self, session)?;
         let entry = self
             .ring_vrf_registry
             .entry(session.public_key, handle)
             .await?;
-        self.require_current_session(session)?;
+        require_current_session(self, session)?;
         Ok(entry)
     }
 
@@ -286,63 +286,70 @@ impl WalletAccountHolder {
         }
     }
 
-    /// Registered providers in the selected wallet.
-    pub async fn ring_vrf_providers(
-        &self,
-        ring: &api::RingLocation,
-    ) -> Result<Vec<api::ProductAccountId>, RingVrfError> {
-        let session = self.current_session().ok_or(RingVrfError::Unknown {
-            reason: "no active session".to_string(),
-        })?;
-        let result = self
-            .ring_vrf_registry
-            .providers(session.public_key, ring)
-            .await?;
-        self.require_current_session(&session)?;
-        Ok(result)
-    }
+}
 
-    /// Selected provider in the active wallet registry.
-    pub async fn selected_ring_vrf_provider(
-        &self,
-        ring: &api::RingLocation,
-    ) -> Result<Option<api::ProductAccountId>, RingVrfError> {
-        let session = self.current_session().ok_or(RingVrfError::Unknown {
-            reason: "no active session".to_string(),
-        })?;
-        let result = self
-            .ring_vrf_registry
-            .selected_provider(session.public_key, ring)
-            .await?;
-        self.require_current_session(&session)?;
-        Ok(result)
-    }
+/// Registered providers in the selected wallet.
+pub async fn ring_vrf_providers(
+    wallet: &WalletAccountHolder,
+    ring: &api::RingLocation,
+) -> Result<Vec<api::ProductAccountId>, RingVrfError> {
+    let session = wallet.current_session().ok_or(RingVrfError::Unknown {
+        reason: "no active session".to_string(),
+    })?;
+    let result = wallet
+        .ring_vrf_registry
+        .providers(session.public_key, ring)
+        .await?;
+    require_current_session(wallet, &session)?;
+    Ok(result)
+}
 
-    /// Persist selection under the wallet captured before storage preparation.
-    pub async fn select_ring_vrf_provider(
-        &self,
-        ring: api::RingLocation,
-        handle: api::ProductAccountId,
-    ) -> Result<(), RingVrfError> {
-        let session = self.current_session().ok_or(RingVrfError::Unknown {
-            reason: "no active session".to_string(),
-        })?;
-        let mut update = self
-            .ring_vrf_registry
-            .prepare_update(session.public_key)
-            .await?;
-        self.require_current_session(&session)?;
-        update.select_provider(ring, handle)?;
-        update.persist().await?;
-        self.require_current_session(&session)?;
-        Ok(())
-    }
+/// Selected provider in the active wallet registry.
+pub async fn selected_ring_vrf_provider(
+    wallet: &WalletAccountHolder,
+    ring: &api::RingLocation,
+) -> Result<Option<api::ProductAccountId>, RingVrfError> {
+    let session = wallet.current_session().ok_or(RingVrfError::Unknown {
+        reason: "no active session".to_string(),
+    })?;
+    let result = wallet
+        .ring_vrf_registry
+        .selected_provider(session.public_key, ring)
+        .await?;
+    require_current_session(wallet, &session)?;
+    Ok(result)
+}
+
+/// Persist selection under the wallet captured before storage preparation.
+pub async fn select_ring_vrf_provider(
+    wallet: &WalletAccountHolder,
+    ring: api::RingLocation,
+    handle: api::ProductAccountId,
+) -> Result<(), RingVrfError> {
+    let session = wallet.current_session().ok_or(RingVrfError::Unknown {
+        reason: "no active session".to_string(),
+    })?;
+    let mut update = wallet
+        .ring_vrf_registry
+        .prepare_update(session.public_key)
+        .await?;
+    require_current_session(wallet, &session)?;
+    update.select_provider(ring, handle)?;
+    update.persist().await?;
+    require_current_session(wallet, &session)?;
+    Ok(())
 }
 
 #[async_trait::async_trait]
 impl AccountHolder for WalletAccountHolder {
     fn current_session(&self) -> Option<AuthoritySession> {
-        WalletAccountHolder::current_session(self)
+        let state = self
+            .lifecycle
+            .lock()
+            .expect("wallet lifecycle mutex poisoned");
+        self.session_state
+            .current()
+            .map(|session| state.session(&session))
     }
 
     async fn product_subtree_public_key(
@@ -351,7 +358,7 @@ impl AccountHolder for WalletAccountHolder {
         session: &AuthoritySession,
         product_id: String,
     ) -> Result<[u8; 32], AuthorityError> {
-        self.require_current_session(session)?;
+        require_current_session(self, session)?;
         let product_id = normalize_product_identifier(&product_id).map_err(|err| {
             AuthorityError::Unavailable {
                 reason: err.to_string(),
@@ -370,7 +377,7 @@ impl AccountHolder for WalletAccountHolder {
             .caller
             .product_id()
             .ok_or(AuthorityError::Rejected)?;
-        self.require_current_session(session)?;
+        require_current_session(self, session)?;
         validate_vrf_transcript(&request).map_err(|reason| AuthorityError::Unknown { reason })?;
         self.with_keys(session, |keys| {
             keys.product_keypair(&request.account).map(|_| ())
@@ -412,7 +419,7 @@ impl AccountHolder for WalletAccountHolder {
         invocation: AccountInvocation<'_>,
         request: SignPayloadAuthorityRequest,
     ) -> Result<api::HostSignPayloadResponse, AuthorityError> {
-        self.require_current_session(invocation.session)?;
+        require_current_session(self, invocation.session)?;
         let granted = match &request {
             SignPayloadAuthorityRequest::Product(request) => {
                 self.invocation_auto_signing(&invocation, &request.account)?
@@ -457,7 +464,7 @@ impl AccountHolder for WalletAccountHolder {
         request: SignRawAuthorityRequest,
         watermarked: bool,
     ) -> Result<api::HostSignPayloadResponse, AuthorityError> {
-        self.require_current_session(invocation.session)?;
+        require_current_session(self, invocation.session)?;
         let granted = match &request {
             SignRawAuthorityRequest::Product(request) if watermarked => {
                 self.invocation_auto_signing(&invocation, &request.account)?
@@ -501,7 +508,7 @@ impl AccountHolder for WalletAccountHolder {
         invocation: AccountInvocation<'_>,
         request: CreateTransactionAuthorityRequest,
     ) -> Result<api::HostCreateTransactionResponse, AuthorityError> {
-        self.require_current_session(invocation.session)?;
+        require_current_session(self, invocation.session)?;
         let granted = match &request {
             CreateTransactionAuthorityRequest::Product(payload) => {
                 self.invocation_auto_signing(&invocation, &payload.signer)?
@@ -564,7 +571,7 @@ impl AccountHolder for WalletAccountHolder {
         request: HostAccountGetAliasRequest,
     ) -> Result<api::ContextualAlias, RingVrfError> {
         let session = invocation.session;
-        self.require_current_session(session)?;
+        require_current_session(self, session)?;
         // Aliases expose the same identity as `create_proof`, so both must enforce
         // the same RFC-0024 grant and context restrictions.
         let granted = match self
@@ -622,7 +629,7 @@ impl AccountHolder for WalletAccountHolder {
         request: HostAccountCreateProofRequest,
     ) -> Result<api::HostAccountCreateProofResponse, RingVrfError> {
         let session = invocation.session;
-        self.require_current_session(session)?;
+        require_current_session(self, session)?;
         let (key_handle, access) = self
             .require_ring_vrf_key_access(invocation.caller, &request.key_handle)
             .await?;
@@ -666,7 +673,7 @@ impl AccountHolder for WalletAccountHolder {
         request: HostAccountRegisterRingVrfKeyRequest,
     ) -> Result<[u8; 32], RingVrfError> {
         let session = invocation.session;
-        self.require_current_session(session)?;
+        require_current_session(self, session)?;
         self.ring_resolver.validate(&request.ring).await?;
 
         let handle = api::ProductAccountId {
@@ -689,10 +696,10 @@ impl AccountHolder for WalletAccountHolder {
             .ring_vrf_registry
             .prepare_update(session.public_key)
             .await?;
-        self.require_current_session(session)?;
+        require_current_session(self, session)?;
         update.register(handle, request.ring, public_key)?;
         update.persist().await?;
-        self.require_current_session(session)?;
+        require_current_session(self, session)?;
         Ok(public_key)
     }
 
@@ -702,7 +709,7 @@ impl AccountHolder for WalletAccountHolder {
         request: HostAccountListRingVrfKeysRequest,
     ) -> Result<Vec<api::RegisteredRingVrfKey>, RingVrfError> {
         let session = invocation.session;
-        self.require_current_session(session)?;
+        require_current_session(self, session)?;
         let owner =
             normalize_product_identifier(&request.owner).map_err(|err| RingVrfError::Unknown {
                 reason: err.to_string(),
@@ -726,7 +733,7 @@ impl AccountHolder for WalletAccountHolder {
             .ring_vrf_registry
             .owner_entries(session.public_key, &owner)
             .await?;
-        self.require_current_session(session)?;
+        require_current_session(self, session)?;
         if request.disclosure == api::RingVrfKeyDisclosure::Anonymized {
             for entry in &mut entries {
                 entry.public_key = None;
@@ -741,7 +748,7 @@ impl AccountHolder for WalletAccountHolder {
         request: HostAccountRingVrfSignRequest,
     ) -> Result<Vec<u8>, RingVrfError> {
         let session = invocation.session;
-        self.require_current_session(session)?;
+        require_current_session(self, session)?;
         let (key_handle, _access) = self
             .require_ring_vrf_key_access(invocation.caller, &request.key_handle)
             .await?;

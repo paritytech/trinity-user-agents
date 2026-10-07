@@ -254,18 +254,12 @@ fn direct_allocation_cannot_authorize_signing_without_wallet_approval() {
         &ProductContext::new("myapp.dot".to_string()).unwrap(),
         request.clone(),
     ));
-    let grant = authority.account_holder().auto_signing_status(
-        &operation.session,
-        "myapp.dot",
-        &product_account(0),
-        authority
-            .wallet_authorization(
-                &authority.current_operation().unwrap(),
-                &ProductContext::new("myapp.dot".to_string()).unwrap(),
-            )
-            .unwrap()
-            .as_ref(),
-    );
+    let grant = authority
+        .wallet_authorization(
+            &authority.current_operation().unwrap(),
+            &ProductContext::new("myapp.dot".to_string()).unwrap(),
+        )
+        .map(|authorization| authorization.is_some());
     assert_eq!(
         (
             result,
@@ -276,7 +270,7 @@ fn direct_allocation_cannot_authorize_signing_without_wallet_approval() {
             Err(AuthorityError::Unknown {
                 reason: "User rejected resource allocation".to_string()
             }),
-            Ok(crate::runtime::authority::AutoSigningGrant::Absent),
+            Ok(false),
             vec![crate::platform::ResourceAllocationReview {
                 calling_product_id: "myapp.dot".to_string(),
                 resources: request.resources,
@@ -298,7 +292,6 @@ fn cancelling_a_later_resource_keeps_the_first_native_authorization() {
     let (services, authority) = signing_runtime_with_platform(platform);
     futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
     let runtime = product_runtime(services, authority.clone());
-    let operation = authority.current_operation().unwrap();
     let cancel = truapi::CancellationToken::default();
     let cx = CallContext::with_parts("partial-allocation".to_string(), cancel.clone());
     let mut allocation = Box::pin(ResourceAllocation::request(
@@ -321,32 +314,20 @@ fn cancelling_a_later_resource_keeps_the_first_native_authorization() {
             .poll(&mut Context::from_waker(&futures::task::noop_waker())),
         Poll::Pending,
     );
-    let retained_before_cancel = authority.account_holder().auto_signing_status(
-        &operation.session,
-        "myapp.dot",
-        &product_account(0),
-        authority
-            .wallet_authorization(
-                &authority.current_operation().unwrap(),
-                &ProductContext::new("myapp.dot".to_string()).unwrap(),
-            )
-            .unwrap()
-            .as_ref(),
-    );
+    let retained_before_cancel = authority
+        .wallet_authorization(
+            &authority.current_operation().unwrap(),
+            &ProductContext::new("myapp.dot".to_string()).unwrap(),
+        )
+        .map(|authorization| authorization.is_some());
     cancel.cancel();
     let result = futures::executor::block_on(allocation);
-    let retained_after_cancel = authority.account_holder().auto_signing_status(
-        &operation.session,
-        "myapp.dot",
-        &product_account(0),
-        authority
-            .wallet_authorization(
-                &authority.current_operation().unwrap(),
-                &ProductContext::new("myapp.dot".to_string()).unwrap(),
-            )
-            .unwrap()
-            .as_ref(),
-    );
+    let retained_after_cancel = authority
+        .wallet_authorization(
+            &authority.current_operation().unwrap(),
+            &ProductContext::new("myapp.dot".to_string()).unwrap(),
+        )
+        .map(|authorization| authorization.is_some());
     assert_eq!(
         (result, retained_before_cancel, retained_after_cancel),
         (
@@ -356,8 +337,8 @@ fn cancelling_a_later_resource_keeps_the_first_native_authorization() {
                         .to_string(),
                 }
             ))),
-            Ok(crate::runtime::authority::AutoSigningGrant::Active),
-            Ok(crate::runtime::authority::AutoSigningGrant::Active),
+            Ok(true),
+            Ok(true),
         ),
     );
 }

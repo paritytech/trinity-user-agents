@@ -698,31 +698,24 @@ impl NativeProductExecution {
         &self,
         request: truapi::latest::RemotePermissionRequest,
     ) -> Result<bool, HostRejection> {
-        use truapi::api::Permissions;
-        use truapi::versioned::IntoLatest;
-
         if self.closed.load(Ordering::Acquire) {
             return Err(HostRejection::Rejected {
                 reason: "product execution is closed".to_string(),
             });
         }
-        let response = self
+        let granted = self
             .admin()
-            .product_runtime()
-            .authorize_remote_permission(
-                &truapi::CallContext::default(),
-                truapi::versioned::permissions::RemotePermissionRequest::V1(request),
-            )
+            .authorize_remote_permission(request)
             .await
             .map_err(|error| HostRejection::Rejected {
-                reason: format!("{error:?}"),
+                reason: error.reason,
             })?;
         if self.closed.load(Ordering::Acquire) {
             return Err(HostRejection::Rejected {
                 reason: "product execution is closed".to_string(),
             });
         }
-        Ok(response.into_latest().granted)
+        Ok(granted)
     }
 
     /// Read a product-scoped permission authorization without prompting.
@@ -958,15 +951,56 @@ impl Drop for NativeProductExecution {
 mod tests {
     use super::*;
     use crate::PairedSsoPeer;
+    use crate::frame::{Payload, ProtocolMessage, request_ids, subscription_ids};
     use crate::native::tests::*;
     use crate::platform::{
         PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
         ProductExecutionKind,
     };
     use futures::stream::StreamExt;
+    use parity_scale_codec::{Decode, Encode};
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
+    use std::sync::mpsc::{Receiver, Sender};
     use truapi::v01;
+
+    struct ProductFrames(Sender<ProtocolMessage>);
+
+    impl crate::FrameSink for ProductFrames {
+        fn emit_frame(&self, frame: Vec<u8>) {
+            let _ = self
+                .0
+                .send(ProtocolMessage::decode(&mut frame.as_slice()).unwrap());
+        }
+    }
+
+    fn product_connection(
+        execution: &NativeProductExecution,
+    ) -> (crate::ProductRuntime, Receiver<ProtocolMessage>) {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let runtime = execution.runtime.product_runtime_with(
+            execution.product.clone(),
+            execution.adapters(),
+            Arc::new(ProductFrames(sender)),
+        );
+        (runtime, receiver)
+    }
+
+    fn product_request(method: &str, value: Vec<u8>) -> Vec<u8> {
+        let ids = request_ids(method)
+            .or_else(|| subscription_ids(method))
+            .unwrap();
+        ProtocolMessage {
+            request_id: method.to_string(),
+            payload: Payload {
+                trait_id: ids.trait_id,
+                method_id: ids.method_id,
+                message_type: crate::frame::MESSAGE_TYPE_REQUEST,
+                value,
+            },
+        }
+        .encode()
+    }
 
     #[test]
     fn a_worker_write_reaches_a_storage_subscription_in_the_products_other_execution() {
@@ -1126,8 +1160,6 @@ mod tests {
 
     #[test]
     fn a_renderer_action_reaches_the_product_that_rendered_it() {
-        // The channel is execution-scoped, so the admin handle built from this
-        // execution reads what the execution published.
         let host = NativeTrUApiHostRuntime::with_runtime_config(
             Arc::new(EventCallbacks::new()),
             native_host_runtime_config(),
@@ -1143,12 +1175,12 @@ mod tests {
             )
             .expect("Worker execution should open");
 
-        let admin = execution.admin();
-        let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
-            admin.product_runtime().as_ref(),
-            &truapi::CallContext::with_request_id("renderer-1".to_string()),
-            truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
-        ));
+        let (connection, frames) = product_connection(&execution);
+        futures::executor::block_on(connection.receive_frame(product_request(
+            "renderer_action_subscribe",
+            truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1.encode(),
+        )))
+        .unwrap();
 
         let published = v01::HostRendererActionSubscribeItem {
             context: v01::RenderContext::ChatMessage {
@@ -1163,17 +1195,14 @@ mod tests {
             .publish_renderer_action(published.clone())
             .expect("a Worker execution may publish renderer actions");
 
-        let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
-        let delivered = match actions.poll_next_unpin(&mut cx) {
-            core::task::Poll::Ready(Some(item)) => item,
-            other => panic!("a published renderer action must be ready, got {other:?}"),
-        };
-        let Ok(truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(delivered)) =
-            delivered
-        else {
-            panic!("expected a renderer action item")
-        };
-        assert_eq!(delivered, published);
+        let delivered = frames
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        connection.dispose();
+        assert_eq!(
+            delivered.payload.value,
+            truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(published).encode(),
+        );
     }
 
     #[test]
@@ -1214,8 +1243,6 @@ mod tests {
 
     #[test]
     fn native_execution_shares_one_use_permissions_across_connections_only() {
-        use truapi::api::Permissions;
-
         let callbacks = Arc::new(EventCallbacks {
             remote_permission_result: Ok(PermissionDecision::AllowOnce),
             ..EventCallbacks::new()
@@ -1237,6 +1264,7 @@ mod tests {
         };
         let execution = open();
         let other = open();
+        let (connection, frames) = product_connection(&execution);
         futures::executor::block_on(async {
             let admin = execution.admin();
             let request = truapi::latest::RemotePermissionRequest {
@@ -1244,14 +1272,28 @@ mod tests {
                     domains: vec!["api.example.com".to_string()],
                 },
             };
-            let context = truapi::CallContext::default();
-            let sdk_request = || {
-                admin.product_runtime().request_remote_permission(
-                    &context,
-                    truapi::versioned::permissions::RemotePermissionRequest::V1(request.clone()),
-                )
+            let sdk_request = || async {
+                connection
+                    .receive_frame(product_request(
+                        "permissions_request_remote_permission",
+                        truapi::versioned::permissions::RemotePermissionRequest::V1(
+                            request.clone(),
+                        )
+                        .encode(),
+                    ))
+                    .await
+                    .unwrap();
+                let response = frames
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .unwrap();
+                Result::<
+                    truapi::versioned::permissions::RemotePermissionResponse,
+                    truapi::CallError<truapi::versioned::permissions::RemotePermissionError>,
+                >::decode(&mut response.payload.value.as_slice())
+                .unwrap()
+                .unwrap()
             };
-            let granted = sdk_request().await.unwrap();
+            let granted = sdk_request().await;
             let permission = PermissionAuthorizationRequest::Remote(request.clone());
             let other_status = other
                 .permission_authorization_status(permission.clone())
@@ -1275,7 +1317,7 @@ mod tests {
                 .await
                 .unwrap();
             let prompts_after_operations = callbacks.remote_permission_calls.load(Ordering::SeqCst);
-            sdk_request().await.unwrap();
+            sdk_request().await;
             execution.shutdown();
             let after_shutdown = admin
                 .permission_authorization_status(permission)

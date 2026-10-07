@@ -11,6 +11,7 @@
 //! same seam browser hosts use for their confirmation modals; a headless host
 //! implements it with its approval policy.
 
+use crate::runtime::signing_host::wallet_account_holder;
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
@@ -245,9 +246,7 @@ async fn establish_pairing_session(
     deeplink: &str,
 ) -> Result<EstablishedPairing, String> {
     let peer = PairedSsoPeer::from_deeplink(deeplink)?;
-    let (_, keys) = signing_host
-        .wallet
-        .current_keys()
+    let (_, keys) = wallet_account_holder::current_keys(&signing_host.wallet)
         .map_err(|err| format!("signing host has no active local session: {err}"))?;
     let root_public_key = keys
         .root_public_key()
@@ -296,9 +295,7 @@ pub async fn resume_pairing(
     signing_host: Arc<SigningHost>,
     peer: PairedSsoPeer,
 ) -> Result<ResponderExit, String> {
-    let (_, keys) = signing_host
-        .wallet
-        .current_keys()
+    let (_, keys) = wallet_account_holder::current_keys(&signing_host.wallet)
         .map_err(|err| format!("signing host has no active local session: {err}"))?;
     let root_public_key = keys
         .root_public_key()
@@ -323,9 +320,7 @@ pub async fn disconnect_paired_host(
     signing_host: Arc<SigningHost>,
     peer: PairedSsoPeer,
 ) -> Result<(), String> {
-    let (_, keys) = signing_host
-        .wallet
-        .current_keys()
+    let (_, keys) = wallet_account_holder::current_keys(&signing_host.wallet)
         .map_err(|err| format!("signing host has no active local session: {err}"))?;
     let session = responder_session(&keys, peer)?;
     let message_id = sso_message_id();
@@ -409,9 +404,7 @@ pub async fn notify_pairing_allowance_allocation(
     deeplink: &str,
 ) -> Result<AnnouncedPairing, String> {
     let peer = PairedSsoPeer::from_deeplink(deeplink)?;
-    let (_, keys) = signing_host
-        .wallet
-        .current_keys()
+    let (_, keys) = wallet_account_holder::current_keys(&signing_host.wallet)
         .map_err(|err| format!("signing host has no active local session: {err}"))?;
     let (identity, _) = keys
         .responder_identity()
@@ -847,7 +840,6 @@ fn response_cli_summary(
 #[cfg(test)]
 mod tests {
     use super::super::LocalActivation;
-    use super::super::wallet_account_holder::SSO_ENCRYPTION_DOMAIN;
     use super::super::wallet_account_holder::current_unix_secs;
     use super::*;
     use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
@@ -858,9 +850,10 @@ mod tests {
     use crate::host_internal::sso_wire::ResponseOutcome;
     use crate::host_logic::product_account::derive_ring_vrf_domain_entropy;
     use crate::host_logic::product_account::{
-        derive_identity_keypair, derive_root_keypair_from_entropy,
+        derive_identity_keypair, derive_product_subtree_keypair, derive_root_keypair_from_entropy,
     };
     use crate::host_logic::sso::pairing::derive_x25519_keypair_from_entropy;
+    use crate::runtime::AccountHolder;
 
     /// The key a host advertises on chain must be the one it serves over
     /// pairing. These derive independently, so a test that asks only one of
@@ -1026,7 +1019,7 @@ mod tests {
         let allocation = futures::executor::block_on(async {
             let session = signing_host.account_holder().current_session().unwrap();
             futures::select! {
-                result = signing_host.wallet.allocate_statement_store_allowance(
+                result = wallet_account_holder::allocate_statement_store_allowance(&signing_host.wallet,
                     &session,
                     product_id,
                     OnExistingAllowancePolicy::Ignore,
@@ -1122,7 +1115,7 @@ mod tests {
 
         // The regression this guards: advertising the SSO channel key as the
         // device key makes every device sharing an identity indistinguishable.
-        let (_, sso_public) = derive_x25519_keypair_from_entropy(&ENTROPY, SSO_ENCRYPTION_DOMAIN);
+        let (_, sso_public) = derive_x25519_keypair_from_entropy(&ENTROPY, b"sso");
         assert_ne!(advertised, sso_public);
     }
 
@@ -1634,13 +1627,13 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform);
-        let expected_secret = signing_host
-            .wallet
-            .current_keys()
-            .unwrap()
-            .1
-            .product_subtree_secret("myapp.dot")
-            .expect("product subtree secret derives");
+        let expected_secret = derive_product_subtree_keypair(
+            &derive_root_keypair_from_entropy(&ENTROPY).unwrap(),
+            "myapp.dot",
+        )
+        .unwrap()
+        .secret
+        .to_bytes();
         let expected_ring_vrf_domain_entropy =
             derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot")
                 .expect("ring-VRF domain entropy derives");
@@ -1679,13 +1672,13 @@ mod tests {
         });
         let (_, signing_host) = signing_fixture(platform.clone());
         let session = signing_host.account_holder().current_session();
-        let expected_secret = signing_host
-            .wallet
-            .current_keys()
-            .unwrap()
-            .1
-            .product_subtree_secret("myapp.dot")
-            .unwrap();
+        let expected_secret = derive_product_subtree_keypair(
+            &derive_root_keypair_from_entropy(&ENTROPY).unwrap(),
+            "myapp.dot",
+        )
+        .unwrap()
+        .secret
+        .to_bytes();
         let expected_domain = derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot").unwrap();
         let service = SigningHostSsoService::new(signing_host.clone());
         let answer = service.answer(allocation_request("remote-reset"));

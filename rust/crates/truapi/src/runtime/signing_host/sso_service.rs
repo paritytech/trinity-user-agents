@@ -1,5 +1,6 @@
 //! Incoming SSO account requests and wallet grant responses.
 
+use crate::runtime::signing_host::wallet_account_holder;
 use std::sync::Arc;
 
 use futures::StreamExt;
@@ -246,17 +247,15 @@ impl SigningHostSsoService {
         let mut failures = Vec::new();
         let payload = async {
             let count = request.resources.len();
-            let mut grants = match self
-                .signing_host
-                .wallet
-                .allocate_grants(
-                    cx.account_invocation(Some(&request.calling_product_id)),
-                    api::HostRequestResourceAllocationRequest {
-                        resources: request.resources,
-                    },
-                    request.on_existing,
-                )
-                .await
+            let mut grants = match wallet_account_holder::allocate_grants(
+                &self.signing_host.wallet,
+                cx.account_invocation(Some(&request.calling_product_id)),
+                api::HostRequestResourceAllocationRequest {
+                    resources: request.resources,
+                },
+                request.on_existing,
+            )
+            .await
             {
                 Ok(grants) => grants,
                 Err(AuthorityError::Rejected) => {

@@ -13,6 +13,21 @@ pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
 
+pub use account::{
+    derive_subtree_public_key, ring_vrf_providers, select_ring_vrf_provider,
+    selected_ring_vrf_provider,
+};
+pub use allowance::{
+    allocate_bulletin_allowance, allocate_grants, allocate_statement_store_allowance,
+};
+use allowance_renewal::track_statement_renewal_targets_for;
+#[cfg(not(target_arch = "wasm32"))]
+pub use allowance_renewal::{
+    last_statement_renewal_report, renew_statement_allowances, renewal_tick,
+    statement_renewal_owner_key, statement_renewal_targets, track_statement_renewal_targets,
+    untrack_statement_renewal_account,
+};
+
 use crate::runtime::WalletAuthorization;
 #[cfg(feature = "test-host")]
 use std::collections::HashSet;
@@ -42,7 +57,7 @@ use crate::runtime::statement_allowance::{proof, ring::RingParams};
 use crate::runtime::vrf::{self, Vrf};
 
 /// RFC-0022 domain for the responder's persistent SSO X25519 key.
-pub const SSO_ENCRYPTION_DOMAIN: &[u8] = b"sso";
+const SSO_ENCRYPTION_DOMAIN: &[u8] = b"sso";
 
 /// Owns the active wallet session and its zeroizable entropy.
 pub struct WalletAccountHolder {
@@ -150,6 +165,19 @@ pub struct PreparedWalletActivation {
     session: SessionInfo,
 }
 
+/// Inject a ring resolver for account-operation tests.
+#[cfg(test)]
+pub fn new_with_ring_resolver(
+    services: Arc<crate::runtime::RuntimeServices>,
+    network_suffix: String,
+    ring_resolver: Arc<dyn super::ring_vrf::RingResolver>,
+) -> WalletAccountHolder {
+    WalletAccountHolder {
+        ring_resolver,
+        ..WalletAccountHolder::new(services, network_suffix)
+    }
+}
+
 impl WalletAccountHolder {
     /// Start locked, with no wallet secrets.
     pub fn new(services: Arc<crate::runtime::RuntimeServices>, network_suffix: String) -> Self {
@@ -167,19 +195,6 @@ impl WalletAccountHolder {
             network_suffix,
             lifecycle: Mutex::new(WalletState::default()),
             session_state: SessionState::new(),
-        }
-    }
-
-    /// Inject a ring resolver for account-operation tests.
-    #[cfg(test)]
-    pub fn new_with_ring_resolver(
-        services: Arc<crate::runtime::RuntimeServices>,
-        network_suffix: String,
-        ring_resolver: Arc<dyn super::ring_vrf::RingResolver>,
-    ) -> Self {
-        Self {
-            ring_resolver,
-            ..Self::new(services, network_suffix)
         }
     }
 
@@ -201,7 +216,7 @@ impl WalletAccountHolder {
         session: &'a AuthoritySession,
     ) -> Result<WalletPersonhoodSigner<'a>, StatementAllowanceError> {
         let vrf = vrf::load().await.map_err(proof::vrf_error)?;
-        self.require_current_session(session)?;
+        require_current_session(self, session)?;
         Ok(WalletPersonhoodSigner {
             wallet: self,
             session,
@@ -209,96 +224,15 @@ impl WalletAccountHolder {
         })
     }
 
-    /// Whether allocation is answered as granted without performing it.
-    #[cfg(feature = "test-host")]
-    pub fn grants_allowances_unchecked(&self) -> bool {
-        self.grant_allowances_unchecked
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Answer resource allocation as granted without performing it.
-    #[cfg(feature = "test-host")]
-    pub fn set_grant_allowances_unchecked(&self, granted: bool) {
-        self.grant_allowances_unchecked
-            .store(granted, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// Replace refused resource tags; SmartContractAllowance covers every index.
-    #[cfg(feature = "test-host")]
-    pub fn set_withheld_resources(&self, tags: Vec<String>) {
-        *self
-            .withheld_resources
-            .lock()
-            .expect("withheld resource mutex poisoned") = tags.into_iter().collect();
-    }
-
-    /// Whether `resource` is answered as refused.
-    #[cfg(feature = "test-host")]
-    pub fn withholds(&self, resource: &truapi::latest::AllocatableResource) -> bool {
-        let tag = match resource {
-            truapi::latest::AllocatableResource::StatementStoreAllowance => {
-                "StatementStoreAllowance"
-            }
-            truapi::latest::AllocatableResource::BulletinAllowance => "BulletinAllowance",
-            truapi::latest::AllocatableResource::SmartContractAllowance(_) => {
-                "SmartContractAllowance"
-            }
-            truapi::latest::AllocatableResource::AutoSigning => "AutoSigning",
-        };
-        self.withheld_resources
-            .lock()
-            .expect("withheld resource mutex poisoned")
-            .contains(tag)
-    }
-
-    /// Withholding also applies to implicit native allowance access.
-    #[cfg(feature = "test-host")]
-    pub fn refuse_withheld(
-        &self,
-        resource: &truapi::latest::AllocatableResource,
-    ) -> Result<(), AuthorityError> {
-        if self.withholds(resource) {
-            return Err(AuthorityError::Rejected);
-        }
-        Ok(())
-    }
-
-    fn authorization_matches(
-        &self,
-        authorization: &WalletAuthorization,
-        session: &AuthoritySession,
-        product_id: &str,
-    ) -> bool {
-        authorization
-            .issuer
-            .ptr_eq(&Arc::downgrade(&self.session_state))
-            && authorization.validation_id == session.validation_id
-            && authorization.product_id == product_id
-    }
-
-    /// Reject a receipt issued for a different wallet, activation or product.
-    pub fn validate_authorization(
-        &self,
-        session: &AuthoritySession,
-        product_id: &str,
-        authorization: &WalletAuthorization,
-    ) -> Result<(), AuthorityError> {
-        self.require_current_session(session)?;
-        if !self.authorization_matches(authorization, session, product_id) {
-            return Err(AuthorityError::Rejected);
-        }
-        Ok(())
-    }
-
     /// Validate retained permission without accessing the host's grant cache.
-    pub fn auto_signing_status(
+    fn auto_signing_status(
         &self,
         session: &AuthoritySession,
         calling_product_id: &str,
         account: &ProductAccountId,
         authorization: Option<&WalletAuthorization>,
     ) -> Result<AutoSigningGrant, AuthorityError> {
-        self.require_current_session(session)?;
+        require_current_session(self, session)?;
         if crate::runtime::authority::is_blessed_owner(
             calling_product_id,
             &account.dot_ns_identifier,
@@ -323,99 +257,170 @@ impl WalletAccountHolder {
         )
     }
 
-    /// Network suffix used for reserved wallet identities.
-    pub fn network_suffix(&self) -> &str {
-        &self.network_suffix
-    }
-
-    /// Connection-status subscriptions for the active wallet.
-    pub fn session_state(&self) -> Arc<SessionState> {
-        self.session_state.clone()
-    }
-
-    /// Select the current wallet activation.
-    pub fn current_session(&self) -> Option<AuthoritySession> {
-        let state = self
-            .lifecycle
-            .lock()
-            .expect("wallet lifecycle mutex poisoned");
-        self.session_state
-            .current()
-            .map(|session| state.session(&session))
-    }
-
-    /// Require the same activation that was selected before an asynchronous operation.
-    pub fn require_current_session(
+    fn authorization_matches(
         &self,
+        authorization: &WalletAuthorization,
         session: &AuthoritySession,
-    ) -> Result<SessionInfo, AuthorityError> {
-        self.lifecycle
-            .lock()
-            .expect("wallet lifecycle mutex poisoned")
-            .require_session(self.session_state.current(), session)
+        product_id: &str,
+    ) -> bool {
+        authorization
+            .issuer
+            .ptr_eq(&Arc::downgrade(&self.session_state))
+            && authorization.validation_id == session.validation_id
+            && authorization.product_id == product_id
     }
+}
 
-    /// Capture one wallet for grouped derivations across asynchronous work.
-    pub fn current_keys(&self) -> Result<(AuthoritySession, WalletKeys), AuthorityError> {
-        let state = self
-            .lifecycle
-            .lock()
-            .expect("wallet lifecycle mutex poisoned");
-        let session = self
-            .session_state
-            .current()
-            .ok_or(AuthorityError::Disconnected)?;
-        let keys = state.keys.clone().ok_or(AuthorityError::Disconnected)?;
-        Ok((state.session(&session), keys))
-    }
+/// Whether allocation is answered as granted without performing it.
+#[cfg(feature = "test-host")]
+pub fn grants_allowances_unchecked(wallet: &WalletAccountHolder) -> bool {
+    wallet
+        .grant_allowances_unchecked
+        .load(std::sync::atomic::Ordering::Relaxed)
+}
 
-    /// Validate and derive activation material without changing the active wallet.
-    pub fn prepare_activation(
-        &self,
-        secret: Vec<u8>,
-        lite_username: Option<String>,
-    ) -> Result<PreparedWalletActivation, AuthorityError> {
-        let keys = WalletKeys::new(secret, self.network_suffix.clone());
-        let public_key = keys.root_public_key().map_err(product_authority_error)?;
-        let identity_account_id = keys.identity_keypair()?.public.to_bytes();
-        let identity_chat_private_key = derive_identity_chat_private_key(&keys.entropy);
-        Ok(PreparedWalletActivation {
-            keys,
-            session: SessionInfo {
-                public_key,
-                sso: None,
-                root_entropy_source: None,
-                identity_account_id: Some(identity_account_id),
-                identity_chat_private_key: Some(identity_chat_private_key),
-                device_enc_public_key: None,
-                lite_username,
-                full_username: None,
-            },
-        })
-    }
+/// Answer resource allocation as granted without performing it.
+#[cfg(feature = "test-host")]
+pub fn set_grant_allowances_unchecked(wallet: &WalletAccountHolder, granted: bool) {
+    wallet
+        .grant_allowances_unchecked
+        .store(granted, std::sync::atomic::Ordering::Relaxed);
+}
 
-    /// Install under the host's grant lock so session and grant changes are atomic.
-    pub fn install(&self, activation: PreparedWalletActivation) -> SessionInfo {
-        let mut state = self
-            .lifecycle
-            .lock()
-            .expect("wallet lifecycle mutex poisoned");
-        state.advance();
-        state.keys = Some(activation.keys);
-        self.session_state.set_session(activation.session.clone());
-        activation.session
-    }
+/// Replace refused resource tags; SmartContractAllowance covers every index.
+#[cfg(feature = "test-host")]
+pub fn set_withheld_resources(wallet: &WalletAccountHolder, tags: Vec<String>) {
+    *wallet
+        .withheld_resources
+        .lock()
+        .expect("withheld resource mutex poisoned") = tags.into_iter().collect();
+}
 
-    /// Clear under the host's grant lock, dropping the active wallet secrets.
-    pub fn clear(&self) {
-        let mut state = self
-            .lifecycle
-            .lock()
-            .expect("wallet lifecycle mutex poisoned");
-        state.advance();
-        state.keys.take();
-        self.session_state.clear_session();
+/// Whether `resource` is answered as refused.
+#[cfg(feature = "test-host")]
+pub fn withholds(
+    wallet: &WalletAccountHolder,
+    resource: &truapi::latest::AllocatableResource,
+) -> bool {
+    let tag = match resource {
+        truapi::latest::AllocatableResource::StatementStoreAllowance => "StatementStoreAllowance",
+        truapi::latest::AllocatableResource::BulletinAllowance => "BulletinAllowance",
+        truapi::latest::AllocatableResource::SmartContractAllowance(_) => "SmartContractAllowance",
+        truapi::latest::AllocatableResource::AutoSigning => "AutoSigning",
+    };
+    wallet
+        .withheld_resources
+        .lock()
+        .expect("withheld resource mutex poisoned")
+        .contains(tag)
+}
+
+/// Withholding also applies to implicit native allowance access.
+#[cfg(feature = "test-host")]
+pub fn refuse_withheld(
+    wallet: &WalletAccountHolder,
+    resource: &truapi::latest::AllocatableResource,
+) -> Result<(), AuthorityError> {
+    if withholds(wallet, resource) {
+        return Err(AuthorityError::Rejected);
     }
+    Ok(())
+}
+
+/// Reject a receipt issued for a different wallet, activation or product.
+pub fn validate_authorization(
+    wallet: &WalletAccountHolder,
+    session: &AuthoritySession,
+    product_id: &str,
+    authorization: &WalletAuthorization,
+) -> Result<(), AuthorityError> {
+    require_current_session(wallet, session)?;
+    if !wallet.authorization_matches(authorization, session, product_id) {
+        return Err(AuthorityError::Rejected);
+    }
+    Ok(())
+}
+
+/// Connection-status subscriptions for the active wallet.
+pub fn session_state(wallet: &WalletAccountHolder) -> Arc<SessionState> {
+    wallet.session_state.clone()
+}
+
+/// Reject work for a wallet activation that is no longer current.
+pub fn require_current_session(
+    wallet: &WalletAccountHolder,
+    session: &AuthoritySession,
+) -> Result<(), AuthorityError> {
+    wallet
+        .lifecycle
+        .lock()
+        .expect("wallet lifecycle mutex poisoned")
+        .require_session(wallet.session_state.current(), session)
+        .map(|_| ())
+}
+
+/// Capture one wallet for grouped derivations across asynchronous work.
+pub fn current_keys(
+    wallet: &WalletAccountHolder,
+) -> Result<(AuthoritySession, WalletKeys), AuthorityError> {
+    let state = wallet
+        .lifecycle
+        .lock()
+        .expect("wallet lifecycle mutex poisoned");
+    let session = wallet
+        .session_state
+        .current()
+        .ok_or(AuthorityError::Disconnected)?;
+    let keys = state.keys.clone().ok_or(AuthorityError::Disconnected)?;
+    Ok((state.session(&session), keys))
+}
+
+/// Validate and derive activation material without changing the active wallet.
+pub fn prepare_activation(
+    wallet: &WalletAccountHolder,
+    secret: Vec<u8>,
+    lite_username: Option<String>,
+) -> Result<PreparedWalletActivation, AuthorityError> {
+    let keys = WalletKeys::new(secret, wallet.network_suffix.clone());
+    let public_key = keys.root_public_key().map_err(product_authority_error)?;
+    let identity_account_id = keys.identity_keypair()?.public.to_bytes();
+    let identity_chat_private_key = derive_identity_chat_private_key(&keys.entropy);
+    Ok(PreparedWalletActivation {
+        keys,
+        session: SessionInfo {
+            public_key,
+            sso: None,
+            root_entropy_source: None,
+            identity_account_id: Some(identity_account_id),
+            identity_chat_private_key: Some(identity_chat_private_key),
+            device_enc_public_key: None,
+            lite_username,
+            full_username: None,
+        },
+    })
+}
+
+/// Install under the host's grant lock so session and grant changes are atomic.
+pub fn install(wallet: &WalletAccountHolder, activation: PreparedWalletActivation) -> SessionInfo {
+    let mut state = wallet
+        .lifecycle
+        .lock()
+        .expect("wallet lifecycle mutex poisoned");
+    state.advance();
+    state.keys = Some(activation.keys);
+    wallet.session_state.set_session(activation.session.clone());
+    activation.session
+}
+
+/// Clear under the host's grant lock, dropping the active wallet secrets.
+pub fn clear(wallet: &WalletAccountHolder) {
+    let mut state = wallet
+        .lifecycle
+        .lock()
+        .expect("wallet lifecycle mutex poisoned");
+    state.advance();
+    state.keys.take();
+    wallet.session_state.clear_session();
 }
 
 /// Opaque wallet snapshot; derived keys share one root even if activation changes.
@@ -439,8 +444,7 @@ impl WalletKeys {
         derive_root_keypair_from_entropy(&self.entropy).map(|root| root.public.to_bytes())
     }
 
-    /// Public product subtree for account discovery.
-    pub fn product_subtree_public_key(&self, product_id: &str) -> Result<[u8; 32], AuthorityError> {
+    fn product_subtree_public_key(&self, product_id: &str) -> Result<[u8; 32], AuthorityError> {
         let root =
             derive_root_keypair_from_entropy(&self.entropy).map_err(product_authority_error)?;
         derive_product_subtree_keypair(&root, product_id)
@@ -448,8 +452,7 @@ impl WalletKeys {
             .map_err(product_authority_error)
     }
 
-    /// Product subtree secret exported for delegated signing.
-    pub fn product_subtree_secret(&self, product_id: &str) -> Result<[u8; 64], AuthorityError> {
+    fn product_subtree_secret(&self, product_id: &str) -> Result<[u8; 64], AuthorityError> {
         let root =
             derive_root_keypair_from_entropy(&self.entropy).map_err(product_authority_error)?;
         let product_id = normalize_product_identifier(product_id).map_err(|err| {
@@ -462,8 +465,7 @@ impl WalletKeys {
             .map_err(product_authority_error)
     }
 
-    /// Product account used for local signing.
-    pub fn product_keypair(
+    fn product_keypair(
         &self,
         account: &ProductAccountId,
     ) -> Result<schnorrkel::Keypair, AuthorityError> {
@@ -483,14 +485,12 @@ impl WalletKeys {
         .map_err(product_authority_error)
     }
 
-    /// Reserved identity account for this wallet's network.
-    pub fn identity_keypair(&self) -> Result<schnorrkel::Keypair, AuthorityError> {
+    fn identity_keypair(&self) -> Result<schnorrkel::Keypair, AuthorityError> {
         derive_identity_keypair(&self.entropy, &self.network_suffix)
             .map_err(product_authority_error)
     }
 
-    /// Entropy for a registered product ring-VRF key.
-    pub fn ring_vrf_entropy(
+    fn ring_vrf_entropy(
         &self,
         handle: &ProductAccountId,
     ) -> Result<Zeroizing<[u8; 32]>, RingVrfError> {
@@ -505,11 +505,7 @@ impl WalletKeys {
         })
     }
 
-    /// Product domain entropy exported alongside an AutoSigning subtree.
-    pub fn ring_vrf_domain_entropy(
-        &self,
-        product_id: &str,
-    ) -> Result<[u8; 32], ProductAccountError> {
+    fn ring_vrf_domain_entropy(&self, product_id: &str) -> Result<[u8; 32], ProductAccountError> {
         derive_ring_vrf_domain_entropy(&self.entropy, product_id)
     }
 
@@ -525,11 +521,7 @@ impl WalletKeys {
     }
 
     /// RFC-0007 product-scoped entropy.
-    pub fn derive_entropy(
-        &self,
-        product_id: &str,
-        context: &[u8],
-    ) -> Result<[u8; 32], AuthorityError> {
+    fn derive_entropy(&self, product_id: &str, context: &[u8]) -> Result<[u8; 32], AuthorityError> {
         derive_product_entropy(&self.entropy, product_id, context).map_err(|err| {
             AuthorityError::Unknown {
                 reason: err.to_string(),
@@ -537,8 +529,7 @@ impl WalletKeys {
         })
     }
 
-    /// Product-independent secret for contact handles.
-    pub fn contacts_handle_key(&self) -> [u8; 32] {
+    fn contacts_handle_key(&self) -> [u8; 32] {
         crate::runtime::contacts::handle_key_from_root_source(&self.root_entropy_source())
     }
 
@@ -555,8 +546,7 @@ impl WalletKeys {
         derive_sr25519_hard_path(&self.entropy, &["allowance", "statement-store", product_id])
     }
 
-    /// Bulletin allowance account for a product.
-    pub fn bulletin_allowance_key(
+    fn bulletin_allowance_key(
         &self,
         product_id: &str,
     ) -> Result<schnorrkel::Keypair, ProductAccountError> {
@@ -582,7 +572,7 @@ impl WalletKeys {
 }
 
 /// Map unavailable wallet derivations to the account-operation error contract.
-pub fn product_authority_error(err: ProductAccountError) -> AuthorityError {
+fn product_authority_error(err: ProductAccountError) -> AuthorityError {
     AuthorityError::Unavailable {
         reason: err.to_string(),
     }
