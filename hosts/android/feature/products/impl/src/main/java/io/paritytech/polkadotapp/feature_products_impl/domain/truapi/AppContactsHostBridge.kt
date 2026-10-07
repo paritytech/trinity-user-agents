@@ -122,3 +122,4 @@ internal fun Flow<List<Contact>>.contactRemovals(): Flow<Unit> = flow {
         if (previous != null && !current.containsAll(previous)) emit(Unit)
     }
 }
+

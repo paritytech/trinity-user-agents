@@ -6,9 +6,7 @@ import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.inBackground
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.withLoading
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ContactPickOption
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ContactPickRequest
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIPrompt
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIContactPicks
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,12 +19,15 @@ import javax.inject.Inject
 @HiltViewModel
 class TrUAPIContactPickViewModel @Inject constructor(
     private val router: ProductsRouter,
-    private val prompt: TrUAPIPrompt<ContactPickRequest, ContactPickOption?>,
+    picks: TrUAPIContactPicks,
 ) : BaseViewModel(), TrUAPIContactPickContract {
-    private val choosing = MutableStateFlow(false)
+    // None after Android restores the sheet in a new process, and answered when the sheet
+    // appeared too late. Either way there is nobody to pick for.
+    private val prompt = picks.current?.takeUnless { it.isAnswered }
+    private val choosing = MutableStateFlow(prompt == null)
 
     init {
-        prompt.markShown()
+        if (prompt == null) launchUnit { router.closeTrUAPIContactPick() } else prompt.markShown()
     }
 
     override val state: StateFlow<LoadingState<TrUAPIContactPickUiState>> =
@@ -36,21 +37,21 @@ class TrUAPIContactPickViewModel @Inject constructor(
             .stateIn(this, SharingStarted.Eagerly, LoadingState.Loading)
 
     override fun onContactClicked(index: Int) = answer {
-        prompt.answer(prompt.question.options.getOrNull(index))
+        prompt?.let { it.answer(it.question.options.getOrNull(index)) }
     }
 
-    override fun onDismissClicked() = answer { prompt.dismiss() }
+    override fun onDismissClicked() = answer { prompt?.dismiss() }
 
     override fun onCleared() {
         // The core is still blocked if the sheet went away unanswered, so a
         // dismissal has to resolve as naming nobody.
-        prompt.dismiss()
+        prompt?.dismiss()
         super.onCleared()
     }
 
     private fun toUiState() = TrUAPIContactPickUiState(
-        productId = prompt.question.productId,
-        contacts = prompt.question.options.mapIndexed { index, option ->
+        productId = prompt?.question?.productId.orEmpty(),
+        contacts = prompt?.question?.options.orEmpty().mapIndexed { index, option ->
             TrUAPIContactPickRow(index = index, name = option.displayName)
         }.toImmutableList(),
     )
@@ -59,6 +60,6 @@ class TrUAPIContactPickViewModel @Inject constructor(
         if (choosing.value) return@launchUnit
         choosing.value = true
         choose()
-        router.back()
+        router.closeTrUAPIContactPick()
     }
 }

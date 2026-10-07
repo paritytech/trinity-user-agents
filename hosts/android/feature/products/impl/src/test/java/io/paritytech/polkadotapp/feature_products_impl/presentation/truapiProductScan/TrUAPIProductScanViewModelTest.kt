@@ -1,9 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.truapiProductScan
 
 import com.google.mlkit.vision.barcode.common.Barcode
+import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductScanRequest
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIProductScans
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIPrompt
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.Dispatchers
@@ -35,7 +37,8 @@ class TrUAPIProductScanViewModelTest {
     private fun scan(): Pair<TrUAPIPrompt<ProductScanRequest, HostScan>, TrUAPIProductScanViewModel> {
         val request = HostScannerScanRequest(listOf(CodeFormat.QR), "https://greenmarket.example/r/", null)
         val prompt = TrUAPIPrompt(ProductScanRequest("greenmarket.dot", request), HostScan.Dismissed as HostScan)
-        return prompt to TrUAPIProductScanViewModel(router, prompt, mockk(), mockk())
+        val scans = mockk<TrUAPIProductScans> { every { current } returns prompt }
+        return prompt to TrUAPIProductScanViewModel(router, scans, mockk(), mockk())
     }
 
     @Test
@@ -54,7 +57,7 @@ class TrUAPIProductScanViewModelTest {
 
         assertEquals(1, messages.size)
         assertEquals(HostScan.Scanned(receipt, CodeFormat.QR), prompt.await())
-        verify(exactly = 1) { router.back() }
+        coVerify(exactly = 1) { router.closeTrUAPIProductScan() }
     }
 
     @Test

@@ -26,6 +26,9 @@ class TrUAPIPrompt<Q, A>(val question: Q, private val unanswered: A) {
     /** Also the answer for a screen that goes away unanswered. */
     fun dismiss() = answer(unanswered)
 
+    /** True once the core has its answer, so a screen that appears late closes. */
+    val isAnswered get() = answer.isCompleted
+
     internal suspend fun awaitShown(timeoutMs: Long) = withTimeoutOrNull(timeoutMs) { shown.await() } != null
 
     internal suspend fun await(): A = answer.await()
@@ -52,7 +55,13 @@ abstract class TrUAPIPrompts<Q, A>(private val unanswered: A) {
         try {
             open()
             // Navigation can fail silently, and then no screen would ever answer.
-            if (prompt.awaitShown(SHOWN_TIMEOUT_MS)) prompt.await() else unanswered.also { prompt.dismiss() }
+            if (prompt.awaitShown(SHOWN_TIMEOUT_MS)) {
+                prompt.await()
+            } else {
+                prompt.dismiss()
+                close()
+                unanswered
+            }
         } catch (cancelled: CancellationException) {
             prompt.dismiss()
             withContext(NonCancellable) { close() }

@@ -114,11 +114,10 @@ class ProductsNavigator @Inject constructor(
 
     override suspend fun closeTrUAPIProductScan() = closeIfShowing(R.id.truapiProductScanFragment)
 
+    /** Removes the screen wherever it is in the back stack, even under another sheet. */
     private suspend fun closeIfShowing(destinationId: Int) = withContext(dispatchers.main) {
-        val controller = navigationHolder.navController
-        if (controller?.currentBackStackEntry?.destination?.id == destinationId) {
-            controller.popBackStack()
-        }
+        popBackstack(destinationId, inclusive = true)
+        Unit
     }
 
     override fun openPocketAddCard(payload: PocketAddCardPayload) = performNavigation(

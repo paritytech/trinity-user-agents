@@ -10,12 +10,14 @@ import com.google.mlkit.vision.barcode.ZoomSuggestionOptions
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 
-/** Decodes [formats] (ML Kit `Barcode.FORMAT_*`) and reports each code with the format it was read in. */
+/** Decodes [formats] (ML Kit `Barcode.FORMAT_*`) and reports every code in a frame with its format. */
 class QrCodeAnalyzer(
     private val formats: List<Int>,
-    private val listener: (format: Int, text: String) -> Unit,
+    private val listener: (codes: List<Pair<Int, String>>) -> Unit,
 ) : ImageAnalysis.Analyzer, AutoCloseable {
-    constructor(listener: (String) -> Unit) : this(listOf(Barcode.FORMAT_QR_CODE), { _, text -> listener(text) })
+    constructor(listener: (String) -> Unit) : this(listOf(Barcode.FORMAT_QR_CODE), { codes ->
+        codes.firstOrNull()?.let { (_, text) -> listener(text) }
+    })
 
     private var camera: Camera? = null
     private var scanner: BarcodeScanner? = null
@@ -41,8 +43,8 @@ class QrCodeAnalyzer(
 
         scanner.process(image)
             .addOnSuccessListener {
-                it.firstNotNullOfOrNull { barcode -> barcode.rawValue?.let { text -> barcode.format to text } }
-                    ?.let { (format, text) -> listener(format, text) }
+                val codes = it.mapNotNull { barcode -> barcode.rawValue?.let { text -> barcode.format to text } }
+                if (codes.isNotEmpty()) listener(codes)
             }
             .addOnCompleteListener {
                 imageProxy.close()
