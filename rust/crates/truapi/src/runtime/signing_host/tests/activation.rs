@@ -178,19 +178,12 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
     authority.clear_product_state("myapp.dot").unwrap();
     release.send(()).unwrap();
     let result = futures::executor::block_on(allocation);
-    let session = authority.account_holder().current_session().unwrap();
-    let status = authority.account_holder().auto_signing_status(
-        &session,
-        "myapp.dot",
-        &vrf_request("myapp.dot").account,
-        authority
-            .wallet_authorization(
-                &authority.current_operation().unwrap(),
-                &ProductContext::new("myapp.dot".to_string()).unwrap(),
-            )
-            .unwrap()
-            .as_ref(),
-    );
+    let status = authority
+        .wallet_authorization(
+            &authority.current_operation().unwrap(),
+            &ProductContext::new("myapp.dot".to_string()).unwrap(),
+        )
+        .map(|authorization| authorization.is_some());
     assert_eq!(
         (
             result.map(|_| ()),
@@ -205,7 +198,7 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
                     }
                 )
             )),
-            Ok(crate::runtime::authority::AutoSigningGrant::Absent),
+            Ok(false),
             1
         ),
     );

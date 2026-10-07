@@ -58,9 +58,18 @@ pub struct PairingHost {
     holder: Arc<super::SsoAccountHolderClient>,
     ring_resolver: Arc<dyn RingResolver>,
     ring_vrf_registry: Arc<RingVrfRegistryStore>,
+    #[cfg(feature = "test-host")]
+    submit_preimages_locally: core::sync::atomic::AtomicBool,
 }
 
 impl PairingHost {
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    #[cfg(feature = "test-host")]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.submit_preimages_locally
+            .store(local, core::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Compose account policy with the runtime's shared session and grants.
     pub fn new(
         services: Arc<RuntimeServices>,
@@ -82,6 +91,8 @@ impl PairingHost {
             holder: Arc::new(super::SsoAccountHolderClient::new(sso.clone())),
             sso,
             grants,
+            #[cfg(feature = "test-host")]
+            submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -802,6 +813,12 @@ impl ProductAuthority for PairingHost {
             })
         })
         .await
+    }
+
+    #[cfg(feature = "test-host")]
+    fn submits_preimages_locally(&self) -> bool {
+        self.submit_preimages_locally
+            .load(core::sync::atomic::Ordering::Relaxed)
     }
 
     fn session_state(&self) -> Arc<SessionState> {

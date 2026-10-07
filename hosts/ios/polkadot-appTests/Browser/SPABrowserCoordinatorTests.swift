@@ -97,19 +97,3 @@ private final class StubSPAControllerPool: SPAControllerPooling {
     func makeController(for _: SPATab) -> SPAViewProtocol? { view }
     func removeController(for _: UUID) {}
 }
-
-@MainActor
-private final class StubSPAView: SPAViewProtocol {
-    private(set) var navigatedPages: [ProductPage] = []
-    let controller = UIViewController()
-    var isSetup: Bool { true }
-
-    func navigate(to _: URL) {}
-    func navigate(to page: ProductPage) { navigatedPages.append(page) }
-    func updateTitle(_: String) {}
-    func reload() {}
-    func showLoading() {}
-    func hideLoading() {}
-    func showLoadFailure(_: ErrorContent) {}
-    func updateLoadProgress(_: DotNsLoadProgress) {}
-}

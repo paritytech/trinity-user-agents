@@ -10,6 +10,27 @@ mod sso_replay;
 mod sso_responder;
 mod wallet_account_holder;
 
+pub use wallet_account_holder::{
+    allocate_grants as wallet_allocate_grants,
+    require_current_session as wallet_require_current_session,
+    require_sso_identity as wallet_require_sso_identity,
+};
+pub use wallet_account_holder::{
+    derive_subtree_public_key as wallet_derive_subtree_public_key,
+    ring_vrf_providers as wallet_ring_vrf_providers,
+    select_ring_vrf_provider as wallet_select_ring_vrf_provider,
+    selected_ring_vrf_provider as wallet_selected_ring_vrf_provider,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use wallet_account_holder::{
+    last_statement_renewal_report as wallet_last_statement_renewal_report,
+    renew_statement_allowances as wallet_renew_statement_allowances,
+    statement_renewal_owner_key as wallet_statement_renewal_owner_key,
+    statement_renewal_targets as wallet_statement_renewal_targets,
+    track_statement_renewal_targets as wallet_track_statement_renewal_targets,
+    untrack_statement_renewal_account as wallet_untrack_statement_renewal_account,
+};
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -111,6 +132,8 @@ pub struct SigningHost {
     services: Arc<RuntimeServices>,
     wallet: Arc<WalletAccountHolder>,
     auth_state: AuthStateMachine,
+    #[cfg(feature = "test-host")]
+    submit_preimages_locally: core::sync::atomic::AtomicBool,
     /// Grant changes and wallet replacement share this lifecycle lock.
     local_grants: Mutex<LocalGrantState>,
     /// Serializes replay-ledger updates within each wallet and peer scope.
@@ -133,6 +156,8 @@ impl SigningHost {
             #[cfg(any(not(target_arch = "wasm32"), test))]
             services: services.clone(),
             wallet: Arc::new(WalletAccountHolder::new(services, network_suffix)),
+            #[cfg(feature = "test-host")]
+            submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
             auth_state: AuthStateMachine::new(platform.clone()),
             local_grants: Mutex::new(LocalGrantState::default()),
             sso_replay_locks: SsoReplayLocks::default(),
@@ -141,16 +166,23 @@ impl SigningHost {
         })
     }
 
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    #[cfg(feature = "test-host")]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.submit_preimages_locally
+            .store(local, core::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Answer resource allocation as granted without performing it in test hosts.
     #[cfg(feature = "test-host")]
     pub fn set_grant_allowances_unchecked(&self, granted: bool) {
-        self.wallet.set_grant_allowances_unchecked(granted);
+        wallet_account_holder::set_grant_allowances_unchecked(&self.wallet, granted);
     }
 
     /// Replace resource tags refused by this test host.
     #[cfg(feature = "test-host")]
     pub fn set_withheld_resources(&self, tags: Vec<String>) {
-        self.wallet.set_withheld_resources(tags);
+        wallet_account_holder::set_withheld_resources(&self.wallet, tags);
     }
 
     /// The shared services this role was built over, for tests that also need
@@ -189,11 +221,13 @@ impl SigningHost {
         );
         Arc::new(Self {
             services: services.clone(),
-            wallet: Arc::new(WalletAccountHolder::new_with_ring_resolver(
+            wallet: Arc::new(wallet_account_holder::new_with_ring_resolver(
                 services,
                 network_suffix.to_string(),
                 ring_resolver,
             )),
+            #[cfg(feature = "test-host")]
+            submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
             auth_state: AuthStateMachine::new(platform.clone()),
             local_grants: Mutex::new(LocalGrantState::default()),
             sso_replay_locks: SsoReplayLocks::default(),
@@ -204,7 +238,7 @@ impl SigningHost {
 
     /// Shared session holder for connection-status subscriptions.
     pub fn session_state(&self) -> Arc<SessionState> {
-        self.wallet.session_state()
+        wallet_account_holder::session_state(&self.wallet)
     }
 
     fn sso_replay_locks(&self) -> &SsoReplayLocks {
@@ -222,8 +256,12 @@ impl SigningHost {
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
         operation.require_revision(state.revision)?;
-        self.wallet
-            .validate_authorization(&operation.session, product_id, &authorization)?;
+        wallet_account_holder::validate_authorization(
+            &self.wallet,
+            &operation.session,
+            product_id,
+            &authorization,
+        )?;
         state
             .auto_signing_grants
             .insert(product_id.to_string(), authorization);
@@ -242,7 +280,7 @@ impl SigningHost {
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
         operation.require_revision(state.revision)?;
-        self.wallet.require_current_session(&operation.session)?;
+        wallet_account_holder::require_current_session(&self.wallet, &operation.session)?;
         state
             .statement_allowance_keys
             .insert(product_id.to_string(), (allocation.period, key.clone()));
@@ -270,7 +308,7 @@ impl SigningHost {
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
         state.clear_grants();
-        self.wallet.clear();
+        wallet_account_holder::clear(&self.wallet);
     }
 }
 
@@ -293,7 +331,7 @@ impl SigningHost {
                     let Some(host) = weak_host.upgrade() else {
                         return;
                     };
-                    host.wallet.renewal_tick().await;
+                    wallet_account_holder::renewal_tick(&host.wallet).await;
                 }
                 let delay = match current_unix_secs() {
                     Ok(now) => statement_allowance::renewal::next_tick_delay(now),
@@ -327,7 +365,7 @@ impl ProductAuthority for SigningHost {
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
         operation.require_revision(state.revision)?;
-        self.wallet.require_current_session(&operation.session)?;
+        wallet_account_holder::require_current_session(&self.wallet, &operation.session)?;
         Ok(())
     }
 
@@ -343,40 +381,39 @@ impl ProductAuthority for SigningHost {
         self.require_current_operation(operation)?;
         #[cfg(feature = "test-host")]
         let resources = request.resources.clone();
-        let mut grants = self
-            .wallet
-            .allocate_grants(
-                AccountInvocation {
-                    call: cx,
-                    session: &operation.session,
-                    caller: AccountCaller::Local {
-                        product,
-                        authorization: None,
-                    },
+        let mut grants = wallet_account_holder::allocate_grants(
+            &self.wallet,
+            AccountInvocation {
+                call: cx,
+                session: &operation.session,
+                caller: AccountCaller::Local {
+                    product,
+                    authorization: None,
                 },
-                request,
-                OnExistingAllowancePolicy::Increase,
-            )
-            .await
-            .map_err(|error| match error {
-                AuthorityError::Rejected => AuthorityError::Unknown {
-                    reason: "User rejected resource allocation".to_string(),
-                },
-                other => other,
-            })?;
+            },
+            request,
+            OnExistingAllowancePolicy::Increase,
+        )
+        .await
+        .map_err(|error| match error {
+            AuthorityError::Rejected => AuthorityError::Unknown {
+                reason: "User rejected resource allocation".to_string(),
+            },
+            other => other,
+        })?;
         let cx = super::remote_authority_context_with_default(
             cx,
             super::RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
         );
         let allocation = async {
             #[cfg(feature = "test-host")]
-            if self.wallet.grants_allowances_unchecked() {
+            if wallet_account_holder::grants_allowances_unchecked(&self.wallet) {
                 drop(grants);
                 return Ok(v01::HostRequestResourceAllocationResponse {
                     outcomes: resources
                         .iter()
                         .map(|resource| {
-                            if self.wallet.withholds(resource) {
+                            if wallet_account_holder::withholds(&self.wallet, resource) {
                                 v01::AllocationOutcome::Rejected
                             } else {
                                 v01::AllocationOutcome::Allocated
@@ -428,7 +465,7 @@ impl ProductAuthority for SigningHost {
         &self,
         _product: &ProductContext,
     ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
-        if let Some(session) = self.wallet.session_state().current() {
+        if let Some(session) = wallet_account_holder::session_state(&self.wallet).current() {
             self.auth_state
                 .connected(&connected_session_ui_info(&session));
             Ok(HostRequestLoginResponse::V1(
@@ -465,7 +502,7 @@ impl ProductAuthority for SigningHost {
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
         operation.require_revision(state.revision)?;
-        self.wallet.require_current_session(&operation.session)?;
+        wallet_account_holder::require_current_session(&self.wallet, &operation.session)?;
         Ok(state.auto_signing_grants.get(&product.product_id).cloned())
     }
 
@@ -478,8 +515,10 @@ impl ProductAuthority for SigningHost {
         self.require_current_operation(operation)?;
         let session = &operation.session;
         #[cfg(feature = "test-host")]
-        self.wallet
-            .refuse_withheld(&v01::AllocatableResource::StatementStoreAllowance)?;
+        wallet_account_holder::refuse_withheld(
+            &self.wallet,
+            &v01::AllocatableResource::StatementStoreAllowance,
+        )?;
         let period = statement_allowance::slot::current_period(
             current_unix_secs().map_err(AllowanceAllocationError::into_authority_error)?,
         );
@@ -489,7 +528,7 @@ impl ProductAuthority for SigningHost {
                 .lock()
                 .expect("local AutoSigning grant mutex poisoned");
             operation.require_revision(state.revision)?;
-            self.wallet.require_current_session(session)?;
+            wallet_account_holder::require_current_session(&self.wallet, session)?;
             if let Some(key) = state.statement_allowance_key(&product_id, period) {
                 return Ok(key.clone());
             }
@@ -497,7 +536,8 @@ impl ProductAuthority for SigningHost {
         let allocation = operation
             .run(
                 self,
-                self.wallet.allocate_statement_store_allowance(
+                wallet_account_holder::allocate_statement_store_allowance(
+                    &self.wallet,
                     session,
                     &product_id,
                     OnExistingAllowancePolicy::Ignore,
@@ -506,6 +546,14 @@ impl ProductAuthority for SigningHost {
             .await
             .map_err(AllowanceAllocationError::into_authority_error)?;
         self.retain_statement_store_allowance(operation, &product_id, allocation)
+    }
+
+    #[cfg(feature = "test-host")]
+    fn submits_preimages_locally(&self) -> bool {
+        wallet_account_holder::grants_allowances_unchecked(&self.wallet)
+            || self
+                .submit_preimages_locally
+                .load(core::sync::atomic::Ordering::Relaxed)
     }
 
     fn forget_statement_store_allowance_key(&self, product_id: &str, public_key: [u8; 32]) {
@@ -524,12 +572,15 @@ impl ProductAuthority for SigningHost {
         self.require_current_operation(operation)?;
         let session = &operation.session;
         #[cfg(feature = "test-host")]
-        self.wallet
-            .refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
+        wallet_account_holder::refuse_withheld(
+            &self.wallet,
+            &v01::AllocatableResource::BulletinAllowance,
+        )?;
         let secret = operation
             .run(
                 self,
-                self.wallet.allocate_bulletin_allowance(
+                wallet_account_holder::allocate_bulletin_allowance(
+                    &self.wallet,
                     session,
                     &product_id,
                     OnExistingAllowancePolicy::Ignore,
@@ -550,12 +601,15 @@ impl ProductAuthority for SigningHost {
         self.require_current_operation(operation)?;
         let session = &operation.session;
         #[cfg(feature = "test-host")]
-        self.wallet
-            .refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
+        wallet_account_holder::refuse_withheld(
+            &self.wallet,
+            &v01::AllocatableResource::BulletinAllowance,
+        )?;
         let secret = operation
             .run(
                 self,
-                self.wallet.allocate_bulletin_allowance(
+                wallet_account_holder::allocate_bulletin_allowance(
+                    &self.wallet,
                     session,
                     &product_id,
                     OnExistingAllowancePolicy::Increase,
@@ -574,6 +628,8 @@ mod tests {
     mod allowance_keys;
     mod auto_signing;
     mod cross_product_account;
+    #[cfg(feature = "test-host")]
+    mod local_preimages;
     mod raw_signing;
     mod remote_consent;
     #[cfg(feature = "test-host")]
@@ -604,7 +660,6 @@ mod tests {
         derive_root_keypair_from_entropy, index_bytes,
     };
     use crate::platform::{HostInfo, Platform, PlatformInfo, ProductContext, SigningHostConfig};
-    use crate::runtime::authority::AutoSigningGrant;
     use crate::test_support::{StubPlatform, test_spawner};
     use truapi::api::{Account, Entropy, ResourceAllocation, Signing};
     use truapi::latest::{
@@ -2396,33 +2451,18 @@ mod tests {
             authority.local_grants.lock().unwrap().auto_signing_grants["myapp.dot"].clone();
         authority.clear_product_state("myapp.dot").unwrap();
         let current_session = authority.account_holder().current_session().unwrap();
-        let own = authority.account_holder().auto_signing_status(
-            &current_session,
-            "myapp.dot",
-            &product_account(0),
-            authority
-                .wallet_authorization(
-                    &authority.current_operation().unwrap(),
-                    &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                )
-                .unwrap()
-                .as_ref(),
-        );
-        let other = authority.account_holder().auto_signing_status(
-            &current_session,
-            "other.dot",
-            &v01::ProductAccountId {
-                dot_ns_identifier: "other.dot".to_string(),
-                derivation_index: v01::DerivationIndex::Index(0),
-            },
-            authority
-                .wallet_authorization(
-                    &authority.current_operation().unwrap(),
-                    &ProductContext::new("other.dot".to_string()).unwrap(),
-                )
-                .unwrap()
-                .as_ref(),
-        );
+        let own = authority
+            .wallet_authorization(
+                &authority.current_operation().unwrap(),
+                &ProductContext::new("myapp.dot".to_string()).unwrap(),
+            )
+            .map(|authorization| authorization.is_some());
+        let other = authority
+            .wallet_authorization(
+                &authority.current_operation().unwrap(),
+                &ProductContext::new("other.dot".to_string()).unwrap(),
+            )
+            .map(|authorization| authorization.is_some());
         assert_eq!(
             (
                 current_session,
@@ -2432,8 +2472,8 @@ mod tests {
             ),
             (
                 operation.session.clone(),
-                Ok(AutoSigningGrant::Absent),
-                Ok(AutoSigningGrant::Active),
+                Ok(false),
+                Ok(true),
                 Err(AuthorityError::Disconnected)
             ),
         );
