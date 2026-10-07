@@ -28,6 +28,7 @@ mod pocket;
 mod product_config;
 mod qr_scanner;
 mod register_name;
+mod render_probe;
 mod script_project;
 mod script_runner;
 mod sessions;
@@ -332,9 +333,13 @@ impl ExecutionKind {
         }
     }
 
-    /// The chat host to install, if this kind serves chat at all.
-    fn chat_host(self) -> Option<Arc<chat::CliChatHost>> {
-        matches!(self, Self::Worker).then(chat::CliChatHost::from_env)
+    /// The chat host to install, if this kind serves chat at all. It opens a
+    /// render stream for each `Custom` message through `render_probe`.
+    fn chat_host(
+        self,
+        render_probe: Option<Arc<render_probe::RenderProbe>>,
+    ) -> Option<Arc<chat::CliChatHost>> {
+        matches!(self, Self::Worker).then(|| chat::CliChatHost::from_env(render_probe))
     }
 
     /// The Pocket host to install, if this kind serves Pocket and a card set
@@ -1241,7 +1246,7 @@ async fn run_pairing_host(
     )
     .context("invalid pairing host config")?;
     let storage_platform = platform.clone();
-    let chat_host = args.execution_kind.chat_host();
+    let chat_host = args.execution_kind.chat_host(None);
     let pocket_host = args.execution_kind.pocket_host();
     let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
     let pairing_runtime = Arc::new(PairingHostRuntime::with_chat_platform(
@@ -1380,6 +1385,10 @@ async fn run_signing_host(
     report_debugger(debugger.as_ref());
     let runtime_for_frames =
         tap_for_debugger(session.runtime_factory.clone(), debugger.map(|d| d.sink));
+    let runtime_for_frames = match &session.render_probe {
+        Some(probe) => probe.tap(runtime_for_frames),
+        None => runtime_for_frames,
+    };
 
     if let Some(script) = args.script {
         let product_id = product.current();
@@ -1531,6 +1540,9 @@ struct SigningHostSession {
     /// Set when this host serves a Pocket product. Held across runtime rebuilds
     /// so switching session keeps the card set it was seeded with.
     pocket: Option<Arc<pocket::CliPocketHost>>,
+    /// Set by `TRUAPI_RENDER_PROBE`: opens a render stream for each `Custom`
+    /// chat message and records the trees.
+    render_probe: Option<Arc<render_probe::RenderProbe>>,
 }
 
 #[derive(Default)]
@@ -1698,7 +1710,8 @@ async fn start_signing_host(
         signer = Some(explicit_signer);
     }
     let approval = approval_policy(args.auto_accept);
-    let chat = args.execution_kind.chat_host();
+    let render_probe = render_probe::RenderProbe::from_env();
+    let chat = args.execution_kind.chat_host(render_probe.clone());
     let pocket = args.execution_kind.pocket_host();
     let (runtime, platform) = build_signing_runtime(
         network,
@@ -1774,6 +1787,7 @@ async fn start_signing_host(
         ui,
         chat,
         pocket,
+        render_probe,
     })
 }
 

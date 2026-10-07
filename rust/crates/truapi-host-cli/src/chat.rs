@@ -30,6 +30,8 @@ use truapi::latest::{
 use truapi::platform::{ChatPlatform, ProductContext, async_trait};
 use truapi::v01::{ChatRoom, ChatRoomParticipation};
 
+use crate::render_probe::RenderProbe;
+
 /// Rooms, bots and posted messages for one process.
 #[derive(Default)]
 struct State {
@@ -49,18 +51,23 @@ struct State {
 pub struct CliChatHost {
     state: Mutex<State>,
     transcript: Option<PathBuf>,
+    /// Opens a render stream for each `Custom` message, when configured.
+    render_probe: Option<Arc<RenderProbe>>,
 }
 
 impl CliChatHost {
     /// Build a chat host, writing a transcript when `TRUAPI_CHAT_LOG` names a
-    /// path.
-    pub fn from_env() -> Arc<Self> {
-        Self::new(std::env::var_os("TRUAPI_CHAT_LOG").map(PathBuf::from))
+    /// path and opening render streams through `render_probe` when given.
+    pub fn from_env(render_probe: Option<Arc<RenderProbe>>) -> Arc<Self> {
+        Self::new(
+            std::env::var_os("TRUAPI_CHAT_LOG").map(PathBuf::from),
+            render_probe,
+        )
     }
 
     /// Build a chat host recording to `transcript`. The file is truncated at
     /// startup so a run never reads an earlier run's messages as its own.
-    fn new(transcript: Option<PathBuf>) -> Arc<Self> {
+    fn new(transcript: Option<PathBuf>, render_probe: Option<Arc<RenderProbe>>) -> Arc<Self> {
         if let Some(path) = transcript.as_ref()
             && let Err(error) = std::fs::write(path, b"")
         {
@@ -69,6 +76,7 @@ impl CliChatHost {
         Arc::new(Self {
             state: Mutex::new(State::default()),
             transcript,
+            render_probe,
         })
     }
 
@@ -210,6 +218,15 @@ impl ChatPlatform for CliChatHost {
         let message_id = format!("m{}", state.accepted);
         drop(state);
         self.record_message(&message_id, &request);
+        if let (Some(probe), ChatMessageContent::Custom(custom)) =
+            (self.render_probe.as_ref(), &request.payload)
+        {
+            probe.on_custom_message(
+                request.room_id.clone(),
+                message_id.clone(),
+                custom.message_type.clone(),
+            );
+        }
         Ok(HostChatPostMessageResponse { message_id })
     }
 
@@ -255,7 +272,7 @@ mod tests {
     #[test]
     fn a_message_needs_a_room_this_host_created() {
         let transcript = tempfile::NamedTempFile::new().expect("a temp transcript");
-        let host = CliChatHost::new(Some(transcript.path().to_path_buf()));
+        let host = CliChatHost::new(Some(transcript.path().to_path_buf()), None);
 
         let posted = futures::executor::block_on(host.post_chat_message(
             &product(),
@@ -280,7 +297,7 @@ mod tests {
     #[test]
     fn a_stored_message_is_recorded_as_the_host_received_it() {
         let transcript = tempfile::NamedTempFile::new().expect("a temp transcript");
-        let host = CliChatHost::new(Some(transcript.path().to_path_buf()));
+        let host = CliChatHost::new(Some(transcript.path().to_path_buf()), None);
         futures::executor::block_on(host.create_chat_room(&product(), room("support")))
             .expect("a new room is created");
 
@@ -315,7 +332,7 @@ mod tests {
 
     #[test]
     fn a_room_appears_in_the_list_a_subscriber_already_holds() {
-        let host = CliChatHost::new(None);
+        let host = CliChatHost::new(None, None);
         let mut rooms = host.subscribe_chat_rooms(&product());
 
         let snapshot = futures::executor::block_on(rooms.next())
