@@ -74,8 +74,7 @@ class ChatMessageUiMapper @Inject constructor(
                 customMessageRenderers = customMessageRenderers,
                 callContext = callContext
             )
-        }.sortedByDescending { it.timestamp }
-            .toImmutableList()
+        }.toImmutableList()
     }
 
     fun constructPopUpState(
