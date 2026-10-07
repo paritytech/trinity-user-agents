@@ -361,18 +361,18 @@ impl HostGrantStore {
             .allowance_persistence(session_state, session, lifecycle_epoch)
             .await?;
         if session.sso.is_none() {
-            storage
-                .retain_native_allowance(
-                    session_state,
-                    session,
-                    lifecycle_epoch,
-                    product_id,
-                    &AccountGrant::StatementStore {
-                        key: allowance.clone(),
-                        period,
-                    },
-                )
-                .await?;
+            native_allowances::retain_native_allowance(
+                &storage,
+                session_state,
+                session,
+                lifecycle_epoch,
+                product_id,
+                &AccountGrant::StatementStore {
+                    key: allowance.clone(),
+                    period,
+                },
+            )
+            .await?;
         } else {
             allowances::write_allowance_key(
                 &*self.storage,
@@ -453,13 +453,13 @@ impl HostGrantStore {
             return Ok(Some(allowance));
         }
         let (period, allowance) = if session.sso.is_none() {
-            let allowance = storage
-                .native_allowance(
-                    session.public_key,
-                    product_id,
-                    AllowanceResource::StatementStore,
-                )
-                .await?;
+            let allowance = native_allowances::native_allowance(
+                &storage,
+                session.public_key,
+                product_id,
+                AllowanceResource::StatementStore,
+            )
+            .await?;
             let Some(AccountGrant::StatementStore { key, period }) = allowance else {
                 return Ok(None);
             };
@@ -501,15 +501,15 @@ impl HostGrantStore {
             .allowance_persistence(session_state, session, lifecycle_epoch)
             .await?;
         if session.sso.is_none() {
-            storage
-                .retain_native_allowance(
-                    session_state,
-                    session,
-                    lifecycle_epoch,
-                    product_id,
-                    &AccountGrant::Bulletin(allowance.clone()),
-                )
-                .await?;
+            native_allowances::retain_native_allowance(
+                &storage,
+                session_state,
+                session,
+                lifecycle_epoch,
+                product_id,
+                &AccountGrant::Bulletin(allowance.clone()),
+            )
+            .await?;
         } else {
             allowances::write_allowance_key(
                 &*self.storage,
@@ -586,9 +586,13 @@ impl HostGrantStore {
             return Ok(Some(allowance));
         }
         let allowance = if session.sso.is_none() {
-            let allowance = storage
-                .native_allowance(session.public_key, product_id, AllowanceResource::Bulletin)
-                .await?;
+            let allowance = native_allowances::native_allowance(
+                &storage,
+                session.public_key,
+                product_id,
+                AllowanceResource::Bulletin,
+            )
+            .await?;
             let Some(AccountGrant::Bulletin(key)) = allowance else {
                 return Ok(None);
             };
@@ -1192,12 +1196,13 @@ impl HostGrantPersistence<'_> {
                 PendingDeletion::Core(key) => {
                     self.store.storage.clear_core_storage(key.clone()).await
                 }
-                PendingDeletion::NativeAllowance(deletion) => self
-                    .delete_native_allowances(deletion)
-                    .await
-                    .map_err(|error| GenericError {
-                        reason: error.to_string(),
-                    }),
+                PendingDeletion::NativeAllowance(deletion) => {
+                    native_allowances::delete_native_allowances(self, deletion)
+                        .await
+                        .map_err(|error| GenericError {
+                            reason: error.to_string(),
+                        })
+                }
             };
             match result {
                 Ok(()) => self

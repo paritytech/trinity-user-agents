@@ -31,7 +31,7 @@ final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
     private let storage: TrUAPILocalStoring
     private let keychain: KeystoreProtocol
 
-    init(storage: TrUAPILocalStoring, keychain: KeystoreProtocol) {
+    private init(storage: TrUAPILocalStoring, keychain: KeystoreProtocol) {
         self.storage = storage
         self.keychain = keychain
     }

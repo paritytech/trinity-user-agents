@@ -148,96 +148,96 @@ impl HostGrantPersistence<'_> {
                 .map_err(storage_error)
         }
     }
+}
 
-    /// Load only the stable wallet's validated resource grant.
-    pub async fn native_allowance(
-        &self,
-        owner: [u8; 32],
-        product_id: &str,
-        resource: AllowanceResource,
-    ) -> Result<Option<AccountGrant>, AuthorityError> {
-        self.read_native_allowances()
-            .await?
-            .iter()
-            .find(|entry| {
-                entry.owner == owner
-                    && entry.product_id == product_id
-                    && entry.grant.resource() == resource
-            })
-            .map(|entry| entry.grant.allowance())
-            .transpose()
-    }
+/// Load only the stable wallet's validated resource grant.
+pub async fn native_allowance(
+    storage: &HostGrantPersistence<'_>,
+    owner: [u8; 32],
+    product_id: &str,
+    resource: AllowanceResource,
+) -> Result<Option<AccountGrant>, AuthorityError> {
+    storage
+        .read_native_allowances()
+        .await?
+        .iter()
+        .find(|entry| {
+            entry.owner == owner
+                && entry.product_id == product_id
+                && entry.grant.resource() == resource
+        })
+        .map(|entry| entry.grant.allowance())
+        .transpose()
+}
 
-    /// Replace one resource, retaining the other owners and products.
-    pub async fn retain_native_allowance(
-        &self,
-        session_state: &crate::host_logic::session::SessionState,
-        session: &crate::host_logic::session::SessionInfo,
-        revision: u64,
-        product_id: &str,
-        allowance: &AccountGrant,
-    ) -> Result<(), AuthorityError> {
-        let grant = match allowance {
-            AccountGrant::StatementStore {
-                key,
-                period: Some(period),
-            } => StoredGrant::StatementStore {
-                period: *period,
-                secret: key.secret,
-            },
-            AccountGrant::Bulletin(key) => StoredGrant::Bulletin {
-                secret: *key.as_secret_bytes(),
-            },
-            _ => {
-                return Err(AuthorityError::Unavailable {
-                    reason: "native allowance requires its resource and allocation period"
-                        .to_string(),
-                });
-            }
-        };
-        if normalize_product_identifier(product_id).map_err(|_| invalid_records())? != product_id {
-            return Err(invalid_records());
+/// Replace one resource, retaining the other owners and products.
+pub async fn retain_native_allowance(
+    storage: &HostGrantPersistence<'_>,
+    session_state: &crate::host_logic::session::SessionState,
+    session: &crate::host_logic::session::SessionInfo,
+    revision: u64,
+    product_id: &str,
+    allowance: &AccountGrant,
+) -> Result<(), AuthorityError> {
+    let grant = match allowance {
+        AccountGrant::StatementStore {
+            key,
+            period: Some(period),
+        } => StoredGrant::StatementStore {
+            period: *period,
+            secret: key.secret,
+        },
+        AccountGrant::Bulletin(key) => StoredGrant::Bulletin {
+            secret: *key.as_secret_bytes(),
+        },
+        _ => {
+            return Err(AuthorityError::Unavailable {
+                reason: "native allowance requires its resource and allocation period".to_string(),
+            });
         }
-        grant.allowance()?;
-        let mut entries = self.read_native_allowances().await?;
-        if !self
-            .store
-            .session_secret_allocation_is_current(session_state, session, revision)
-        {
-            return Err(AuthorityError::Disconnected);
-        }
-        let owner = session.public_key;
-        entries.retain(|entry| {
-            entry.owner != owner
-                || entry.product_id != product_id
-                || entry.grant.resource() != grant.resource()
-        });
-        entries.push(StoredAllowance {
-            owner,
-            product_id: product_id.to_string(),
-            grant,
-        });
-        self.write_native_allowances(entries).await
+    };
+    if normalize_product_identifier(product_id).map_err(|_| invalid_records())? != product_id {
+        return Err(invalid_records());
     }
+    grant.allowance()?;
+    let mut entries = storage.read_native_allowances().await?;
+    if !storage
+        .store
+        .session_secret_allocation_is_current(session_state, session, revision)
+    {
+        return Err(AuthorityError::Disconnected);
+    }
+    let owner = session.public_key;
+    entries.retain(|entry| {
+        entry.owner != owner
+            || entry.product_id != product_id
+            || entry.grant.resource() != grant.resource()
+    });
+    entries.push(StoredAllowance {
+        owner,
+        product_id: product_id.to_string(),
+        grant,
+    });
+    storage.write_native_allowances(entries).await
+}
 
-    /// Apply a queued scope without destroying unrelated records on decode failure.
-    pub async fn delete_native_allowances(
-        &self,
-        deletion: &NativeAllowanceDeletion,
-    ) -> Result<(), AuthorityError> {
-        let entries = self.read_native_allowances().await?;
-        let before = entries.len();
-        let mut retained = Vec::with_capacity(before);
-        for entry in entries {
-            if !deletion.matches(&entry)? {
-                retained.push(entry);
-            }
+/// Apply a queued scope without destroying unrelated records on decode failure.
+pub async fn delete_native_allowances(
+    storage: &HostGrantPersistence<'_>,
+    deletion: &NativeAllowanceDeletion,
+) -> Result<(), AuthorityError> {
+    let entries = storage.read_native_allowances().await?;
+    let before = entries.len();
+    let mut retained = Vec::with_capacity(before);
+    for entry in entries {
+        if !deletion.matches(&entry)? {
+            retained.push(entry);
         }
-        if retained.len() != before {
-            self.write_native_allowances(retained).await?;
-        }
-        Ok(())
     }
+    if retained.len() != before {
+        storage.write_native_allowances(retained).await?;
+    }
+    Ok(())
 }
 
 fn invalid_records() -> AuthorityError {
@@ -278,7 +278,8 @@ mod tests {
         block_on(platform.write_core_storage(CoreStorageKey::NativeAllowanceKeys, valid.clone()))
             .unwrap();
         assert!(matches!(
-            block_on(guard.native_allowance(
+            block_on(native_allowance(
+                &guard,
                 [7; 32],
                 "myapp.dot",
                 AllowanceResource::StatementStore
@@ -306,7 +307,8 @@ mod tests {
                 platform.write_core_storage(CoreStorageKey::NativeAllowanceKeys, blob.clone()),
             )
             .unwrap();
-            let loaded = block_on(guard.native_allowance(
+            let loaded = block_on(native_allowance(
+                &guard,
                 [7; 32],
                 "myapp.dot",
                 AllowanceResource::StatementStore,
