@@ -463,6 +463,7 @@ impl WalletAccountHolder {
     }
 
     /// Permanently refuse activation under the host's grant lifecycle lock.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn retire(&self) {
         let mut state = self
             .lifecycle
