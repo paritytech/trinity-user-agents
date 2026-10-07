@@ -25,7 +25,7 @@ class TrUAPIPrompt<Q, A>(val question: Q, private val unanswered: A) {
     /** Also the answer for a screen that goes away unanswered. */
     fun dismiss() = answer(unanswered)
 
-    /** True once the core has its answer, so a screen that appears late closes. */
+    /** True once the core has its answer. */
     val isAnswered get() = answer.isCompleted
 
     internal suspend fun awaitShown(timeoutMs: Long) = withTimeoutOrNull(timeoutMs) { shown.await() } != null
@@ -40,7 +40,10 @@ class TrUAPIPrompt<Q, A>(val question: Q, private val unanswered: A) {
 abstract class TrUAPIPrompts<Q, A>(private val unanswered: A) {
     private val oneAtATime = Mutex()
 
-    /** The prompt the screen is showing, or the last one shown. */
+    /**
+     * The prompt the screen shows. A screen finding none (restored in a new process) or an
+     * answered one (shown after its prompt ended) has nothing to ask, and closes itself.
+     */
     @Volatile
     var current: TrUAPIPrompt<Q, A>? = null
         private set

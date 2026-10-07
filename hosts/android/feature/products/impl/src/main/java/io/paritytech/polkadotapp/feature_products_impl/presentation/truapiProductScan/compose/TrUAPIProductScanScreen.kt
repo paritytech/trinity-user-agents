@@ -39,10 +39,6 @@ import io.paritytech.polkadotapp.common.R as RCommon
 
 private const val NOT_FOR_THIS_PRODUCT_SHOWN_MS = 2_000L
 
-/**
- * The host's own scanner screen. Only the hint under the title is the product's words, and
- * codes are reported to the view model rather than in a dialog, so scanning never stops.
- */
 @Composable
 fun TrUAPIProductScanScreen(viewModel: TrUAPIProductScanViewModel) {
     BackHandler(onBack = viewModel::onCloseClicked)

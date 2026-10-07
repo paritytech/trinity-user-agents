@@ -29,8 +29,6 @@ class TrUAPIProductScanViewModel @Inject constructor(
     private val permissionAsker: PermissionAsker,
     private val cameraQrReader: CameraQrReader,
 ) : BaseViewModel() {
-    // None after Android restores the screen in a new process, and answered when the screen
-    // appeared too late. Either way there is nothing to scan for.
     private val prompt = scans.current?.takeUnless { it.isAnswered }
     private val filter = prompt?.let { ScanFilter(it.question.request) }
     private val answered = AtomicBoolean(prompt == null)
@@ -45,7 +43,6 @@ class TrUAPIProductScanViewModel @Inject constructor(
         prompt?.markShown()
     }
 
-    /** Closes the screen when it comes back on top after its prompt already ended. */
     fun onShown() {
         if (prompt?.isAnswered != false) close()
     }

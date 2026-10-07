@@ -43,8 +43,7 @@ class TrUAPIProductScanViewModelTest {
 
     @Test
     fun `a wrong code only shows the message and the matching one answers once`() = runTest {
-        // The camera keeps reading after a match, and a second answer would pop
-        // whatever screen sits under the scanner.
+        // The camera keeps reading after a match, and the product gets one answer.
         val (prompt, viewModel) = scan()
         val messages = mutableListOf<Unit>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
