@@ -44,6 +44,13 @@ pub struct RuntimeServices {
     /// Host Pocket adapter, installed once at startup by a host with a Pocket
     /// surface. Unset leaves every product Pocket call `Unsupported`.
     pocket_platform: OnceLock<Arc<dyn crate::platform::PocketPlatform>>,
+    /// Host top-up engine, installed once at startup by a host that claims
+    /// funds into the balance. Unset leaves every top-up `Unsupported`.
+    top_up_platform: OnceLock<Arc<dyn crate::platform::TopUpPlatform>>,
+    /// The host's payment engine, once installed.
+    payment_platform: OnceLock<Arc<dyn crate::platform::PaymentPlatform>>,
+    /// The host's balance view, once installed.
+    balance_platform: OnceLock<Arc<dyn crate::platform::BalancePlatform>>,
     /// Host contacts adapter, installed once at startup by a host with a
     /// contact picker. Unset leaves every product contacts call `Unsupported`.
     contacts_platform: OnceLock<Arc<dyn crate::platform::ContactsPlatform>>,
@@ -117,6 +124,9 @@ impl RuntimeServices {
             chat_platform: None,
             permission_status: OnceLock::new(),
             pocket_platform: OnceLock::new(),
+            top_up_platform: OnceLock::new(),
+            payment_platform: OnceLock::new(),
+            balance_platform: OnceLock::new(),
             contacts_platform: OnceLock::new(),
             contact_handles: Default::default(),
             device_pairing_observer: OnceLock::new(),
@@ -202,6 +212,39 @@ impl RuntimeServices {
         platform: Arc<dyn crate::platform::PocketPlatform>,
     ) -> bool {
         self.pocket_platform.set(platform).is_ok()
+    }
+
+    /// Install the host's top-up engine. Set-once; returns whether this call
+    /// installed it.
+    pub fn install_top_up_platform(&self, platform: Arc<dyn crate::platform::TopUpPlatform>) -> bool {
+        self.top_up_platform.set(platform).is_ok()
+    }
+
+    /// The host's top-up engine, when one is installed.
+    pub fn top_up_platform(&self) -> Option<Arc<dyn crate::platform::TopUpPlatform>> {
+        self.top_up_platform.get().cloned()
+    }
+
+    /// Install the host's payment engine. Set-once; returns whether this
+    /// call installed it.
+    pub fn install_payment_platform(&self, platform: Arc<dyn crate::platform::PaymentPlatform>) -> bool {
+        self.payment_platform.set(platform).is_ok()
+    }
+
+    /// The host's payment engine, when one is installed.
+    pub fn payment_platform(&self) -> Option<Arc<dyn crate::platform::PaymentPlatform>> {
+        self.payment_platform.get().cloned()
+    }
+
+    /// Install the host's balance view. Set-once; returns whether this call
+    /// installed it.
+    pub fn install_balance_platform(&self, platform: Arc<dyn crate::platform::BalancePlatform>) -> bool {
+        self.balance_platform.set(platform).is_ok()
+    }
+
+    /// The host's balance view, when one is installed.
+    pub fn balance_platform(&self) -> Option<Arc<dyn crate::platform::BalancePlatform>> {
+        self.balance_platform.get().cloned()
     }
 
     /// The host's Pocket adapter, when one is installed.

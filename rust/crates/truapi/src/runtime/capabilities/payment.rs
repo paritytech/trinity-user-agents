@@ -2,6 +2,7 @@
 //!
 //! Payment returns typed domain errors; CoinPayment returns Unsupported.
 
+use futures::StreamExt;
 use tracing::instrument;
 use truapi::api::{CoinPayment, Payment};
 use truapi::versioned::coin_payment::{
@@ -23,11 +24,13 @@ use truapi::versioned::payment::{
     HostPaymentBalanceSubscribeRequest, HostPaymentError, HostPaymentRequest, HostPaymentResponse,
     HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem,
     HostPaymentStatusSubscribeRequest, HostPaymentTopUpError, HostPaymentTopUpRequest,
-    HostPaymentTopUpResponse,
+    HostPaymentTopUpResponse, HostPaymentTopUpStatusSubscribeError,
+    HostPaymentTopUpStatusSubscribeItem, HostPaymentTopUpStatusSubscribeRequest,
 };
 use truapi::{CallContext, CallError, Subscription, v01};
 
-use crate::runtime::{PAYMENTS_NOT_IMPLEMENTED, ProductRuntimeHost};
+use crate::host_internal::extrinsic::sr25519_secret_from_bytes;
+use crate::runtime::ProductRuntimeHost;
 
 #[truapi::async_trait]
 impl CoinPayment for ProductRuntimeHost {
@@ -128,51 +131,141 @@ impl Payment for ProductRuntimeHost {
     async fn balance_subscribe(
         &self,
         _cx: &CallContext,
-        _request: HostPaymentBalanceSubscribeRequest,
+        request: HostPaymentBalanceSubscribeRequest,
     ) -> Subscription<HostPaymentBalanceSubscribeItem, CallError<HostPaymentBalanceSubscribeError>>
     {
-        Subscription::interrupted(CallError::Domain(HostPaymentBalanceSubscribeError::V1(
-            v01::HostPaymentBalanceSubscribeError::PermissionDenied,
-        )))
+        let HostPaymentBalanceSubscribeRequest::V1(request) = request;
+        let Some(platform) = self.services.balance_platform() else {
+            return Subscription::interrupted(CallError::Unsupported);
+        };
+        if self.authority.current_session().is_none() {
+            return Subscription::interrupted(CallError::Denied);
+        }
+        Subscription::new(Box::pin(
+            platform
+                .subscribe_balance(&self.product, request.purse)
+                .map(|item| {
+                    item.map(HostPaymentBalanceSubscribeItem::V1).map_err(|error| {
+                        CallError::Domain(HostPaymentBalanceSubscribeError::V1(error))
+                    })
+                }),
+        ))
     }
 
     #[instrument(skip_all, fields(runtime.method = "payment.request"))]
     async fn request(
         &self,
         _cx: &CallContext,
-        _request: HostPaymentRequest,
+        request: HostPaymentRequest,
     ) -> Result<HostPaymentResponse, CallError<HostPaymentError>> {
-        Err(CallError::Domain(HostPaymentError::V1(
-            v01::HostPaymentError::Unknown {
-                reason: PAYMENTS_NOT_IMPLEMENTED.to_string(),
-            },
-        )))
+        let HostPaymentRequest::V1(request) = request;
+        let platform = self
+            .services
+            .payment_platform()
+            .ok_or(CallError::Unsupported)?;
+        if self.authority.current_session().is_none() {
+            return Err(CallError::Denied);
+        }
+        platform
+            .request_payment(&self.product, request)
+            .await
+            .map(|()| HostPaymentResponse::V1)
+            .map_err(|error| CallError::Domain(HostPaymentError::V1(error)))
     }
 
     #[instrument(skip_all, fields(runtime.method = "payment.status_subscribe"))]
     async fn status_subscribe(
         &self,
         _cx: &CallContext,
-        _request: HostPaymentStatusSubscribeRequest,
+        request: HostPaymentStatusSubscribeRequest,
     ) -> Subscription<HostPaymentStatusSubscribeItem, CallError<HostPaymentStatusSubscribeError>>
     {
-        Subscription::interrupted(CallError::Domain(HostPaymentStatusSubscribeError::V1(
-            v01::HostPaymentStatusSubscribeError::Unknown {
-                reason: PAYMENTS_NOT_IMPLEMENTED.to_string(),
-            },
-        )))
+        let HostPaymentStatusSubscribeRequest::V1(request) = request;
+        let Some(platform) = self.services.payment_platform() else {
+            return Subscription::interrupted(CallError::Unsupported);
+        };
+        if self.authority.current_session().is_none() {
+            return Subscription::interrupted(CallError::Denied);
+        }
+        Subscription::new(Box::pin(
+            platform
+                .subscribe_payment_status(&self.product, request.id)
+                .map(|item| {
+                    item.map(HostPaymentStatusSubscribeItem::V1).map_err(|error| {
+                        CallError::Domain(HostPaymentStatusSubscribeError::V1(error))
+                    })
+                }),
+        ))
     }
 
     #[instrument(skip_all, fields(runtime.method = "payment.top_up"))]
     async fn top_up(
         &self,
         _cx: &CallContext,
-        _request: HostPaymentTopUpRequest,
+        request: HostPaymentTopUpRequest,
     ) -> Result<HostPaymentTopUpResponse, CallError<HostPaymentTopUpError>> {
-        Err(CallError::Domain(HostPaymentTopUpError::V1(
-            v01::HostPaymentTopUpError::Unknown {
-                reason: PAYMENTS_NOT_IMPLEMENTED.to_string(),
-            },
-        )))
+        let HostPaymentTopUpRequest::V1(request) = request;
+        let platform = self
+            .services
+            .top_up_platform()
+            .ok_or(CallError::Unsupported)?;
+        if self.authority.current_session().is_none() {
+            return Err(CallError::Denied);
+        }
+        let domain = |error| CallError::Domain(HostPaymentTopUpError::V1(error));
+        if !source_keys_are_valid(&request.source) {
+            return Err(domain(v01::HostPaymentTopUpError::InvalidSource));
+        }
+        platform
+            .top_up(&self.product, request)
+            .await
+            .map(|()| HostPaymentTopUpResponse::V1)
+            .map_err(domain)
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "payment.top_up_status_subscribe"))]
+    async fn top_up_status_subscribe(
+        &self,
+        _cx: &CallContext,
+        request: HostPaymentTopUpStatusSubscribeRequest,
+    ) -> Subscription<
+        HostPaymentTopUpStatusSubscribeItem,
+        CallError<HostPaymentTopUpStatusSubscribeError>,
+    > {
+        let HostPaymentTopUpStatusSubscribeRequest::V1(request) = request;
+        let Some(platform) = self.services.top_up_platform() else {
+            return Subscription::interrupted(CallError::Unsupported);
+        };
+        if self.authority.current_session().is_none() {
+            return Subscription::interrupted(CallError::Denied);
+        }
+        Subscription::new(Box::pin(
+            platform
+                .subscribe_top_up_status(&self.product, request.id)
+                .map(|item| {
+                    item.map(HostPaymentTopUpStatusSubscribeItem::V1).map_err(|error| {
+                        CallError::Domain(HostPaymentTopUpStatusSubscribeError::V1(error))
+                    })
+                }),
+        ))
+    }
+}
+
+/// Whether the secret keys a source carries are usable sr25519 keys. A product
+/// account carries none, and a coin source must name at least one coin.
+fn source_keys_are_valid(source: &v01::PaymentTopUpSource) -> bool {
+    match source {
+        v01::PaymentTopUpSource::ProductAccount { .. } => true,
+        v01::PaymentTopUpSource::PrivateKey { sr25519_secret_key } => {
+            sr25519_secret_from_bytes(sr25519_secret_key).is_ok()
+        }
+        v01::PaymentTopUpSource::Coins {
+            sr25519_secret_keys,
+        } => {
+            !sr25519_secret_keys.is_empty()
+                && sr25519_secret_keys
+                    .iter()
+                    .all(|key| sr25519_secret_from_bytes(key).is_ok())
+        }
     }
 }

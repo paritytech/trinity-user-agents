@@ -14,7 +14,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::platform::{ChatPlatform, ContactsPlatform, PermissionStatusHost, PocketPlatform};
+use crate::platform::{
+    BalancePlatform, ChatPlatform, ContactsPlatform, PaymentPlatform, PermissionStatusHost,
+    PocketPlatform, TopUpPlatform,
+};
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
     PermissionAuthorizationStatus, Platform, ProductContext, SigningHostConfig,
@@ -263,6 +266,29 @@ impl PairingHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_pocket_platform"))]
     pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
         self.services.install_pocket_platform(platform)
+    }
+
+    /// Install the host's [`TopUpPlatform`], which claims funds into the
+    /// balance. Set-once. Returns whether this call installed it.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_top_up_platform"))]
+    pub fn set_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
+        self.services.install_top_up_platform(platform)
+    }
+
+    /// Install the host's [`PaymentPlatform`], which pays from the user's
+    /// balance once the user approves. Set-once; returns whether this call
+    /// installed it.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_payment_platform"))]
+    pub fn set_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
+        self.services.install_payment_platform(platform)
+    }
+
+    /// Install the host's [`BalancePlatform`], which shares the user's
+    /// balance with products. Set-once; returns whether this call installed
+    /// it.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_balance_platform"))]
+    pub fn set_balance_platform(&self, platform: Arc<dyn BalancePlatform>) -> bool {
+        self.services.install_balance_platform(platform)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -685,6 +711,29 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_pocket_platform"))]
     pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
         self.services.install_pocket_platform(platform)
+    }
+
+    /// Install the host's [`TopUpPlatform`], which claims funds into the
+    /// balance. Set-once. Returns whether this call installed it.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_top_up_platform"))]
+    pub fn set_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
+        self.services.install_top_up_platform(platform)
+    }
+
+    /// Install the host's [`PaymentPlatform`], which pays from the user's
+    /// balance once the user approves. Set-once; returns whether this call
+    /// installed it.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_payment_platform"))]
+    pub fn set_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
+        self.services.install_payment_platform(platform)
+    }
+
+    /// Install the host's [`BalancePlatform`], which shares the user's
+    /// balance with products. Set-once; returns whether this call installed
+    /// it.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_balance_platform"))]
+    pub fn set_balance_platform(&self, platform: Arc<dyn BalancePlatform>) -> bool {
+        self.services.install_balance_platform(platform)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and

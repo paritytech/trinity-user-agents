@@ -7344,3 +7344,432 @@ fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
         );
     }
 }
+
+fn payment_services() -> Arc<RuntimeServices> {
+    let (host_config, _) = runtime_config("payments.dot");
+    RuntimeServices::new(
+        stub_platform(),
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+    )
+}
+
+fn payment_host(services: &Arc<RuntimeServices>, product_id: &str, with_session: bool) -> ProductRuntimeHost {
+    let (host_config, product) = runtime_config(product_id);
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let host = ProductRuntimeHost::from_services(
+        services.clone(),
+        crate::host_core::ConnectionAdapters::from_services(services),
+        pairing_host,
+        product,
+    );
+    if with_session {
+        install_pairing_session(&host, session_info());
+    }
+    host
+}
+
+#[derive(Default)]
+struct RecordingTopUpPlatform {
+    started: Mutex<Vec<(String, truapi::latest::HostPaymentTopUpRequest)>>,
+    followed: Mutex<Vec<(String, [u8; 32])>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::TopUpPlatform for RecordingTopUpPlatform {
+    async fn top_up(
+        &self,
+        product: &ProductContext,
+        request: truapi::latest::HostPaymentTopUpRequest,
+    ) -> Result<(), truapi::latest::HostPaymentTopUpError> {
+        self.started
+            .lock()
+            .expect("started mutex poisoned")
+            .push((product.product_id.clone(), request));
+        Ok(())
+    }
+
+    fn subscribe_top_up_status(
+        &self,
+        product: &ProductContext,
+        id: [u8; 32],
+    ) -> futures::stream::BoxStream<
+        'static,
+        Result<
+            truapi::latest::HostPaymentTopUpStatusSubscribeItem,
+            truapi::latest::HostPaymentTopUpStatusSubscribeError,
+        >,
+    > {
+        self.followed
+            .lock()
+            .expect("followed mutex poisoned")
+            .push((product.product_id.clone(), id));
+        Box::pin(futures::stream::iter([
+            Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claiming),
+            Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }),
+        ]))
+    }
+}
+
+fn top_up(
+    host: &ProductRuntimeHost,
+    source: v01::PaymentTopUpSource,
+) -> Result<
+    truapi::versioned::payment::HostPaymentTopUpResponse,
+    CallError<truapi::versioned::payment::HostPaymentTopUpError>,
+> {
+    futures::executor::block_on(truapi::api::Payment::top_up(
+        host,
+        &CallContext::default(),
+        truapi::versioned::payment::HostPaymentTopUpRequest::V1(v01::HostPaymentTopUpRequest {
+            into: None,
+            amount: 1_000,
+            source,
+            id: [7; 32],
+        }),
+    ))
+}
+
+fn product_account_source() -> v01::PaymentTopUpSource {
+    v01::PaymentTopUpSource::ProductAccount {
+        derivation_index: v01::DerivationIndex::Index(0),
+    }
+}
+
+#[test]
+fn a_top_up_reaches_the_host_engine_scoped_to_its_product() {
+    let services = payment_services();
+    let engine = Arc::new(RecordingTopUpPlatform::default());
+    assert!(services.install_top_up_platform(engine.clone()));
+
+    top_up(&payment_host(&services, "wallet.dot", true), product_account_source())
+        .expect("top-up accepted");
+
+    assert_eq!(
+        engine.started.lock().expect("started mutex poisoned").as_slice(),
+        [(
+            "wallet.dot".to_string(),
+            v01::HostPaymentTopUpRequest {
+                into: None,
+                amount: 1_000,
+                source: product_account_source(),
+                id: [7; 32],
+            },
+        )]
+    );
+}
+
+// A coin source with no coins can never claim anything, so it is refused in
+// the core rather than handed to the host.
+#[test]
+fn a_top_up_without_coins_is_refused_before_the_host_sees_it() {
+    let services = payment_services();
+    let engine = Arc::new(RecordingTopUpPlatform::default());
+    assert!(services.install_top_up_platform(engine.clone()));
+
+    let refused = top_up(
+        &payment_host(&services, "wallet.dot", true),
+        v01::PaymentTopUpSource::Coins {
+            sr25519_secret_keys: Vec::new(),
+        },
+    );
+
+    assert_eq!(
+        (
+            refused,
+            engine.started.lock().expect("started mutex poisoned").len()
+        ),
+        (
+            Err(CallError::Domain(
+                truapi::versioned::payment::HostPaymentTopUpError::V1(
+                    v01::HostPaymentTopUpError::InvalidSource
+                )
+            )),
+            0
+        )
+    );
+}
+
+#[test]
+fn top_up_status_is_forwarded_from_the_host_engine() {
+    let services = payment_services();
+    let engine = Arc::new(RecordingTopUpPlatform::default());
+    assert!(services.install_top_up_platform(engine.clone()));
+    let host = payment_host(&services, "wallet.dot", true);
+
+    let statuses = futures::executor::block_on(
+        futures::executor::block_on(truapi::api::Payment::top_up_status_subscribe(
+            &host,
+            &CallContext::default(),
+            truapi::versioned::payment::HostPaymentTopUpStatusSubscribeRequest::V1(
+                v01::HostPaymentTopUpStatusSubscribeRequest { id: [7; 32] },
+            ),
+        ))
+        .collect::<Vec<_>>(),
+    );
+
+    assert_eq!(
+        (
+            statuses,
+            engine.followed.lock().expect("followed mutex poisoned").clone()
+        ),
+        (
+            vec![
+                Ok(truapi::versioned::payment::HostPaymentTopUpStatusSubscribeItem::V1(
+                    v01::HostPaymentTopUpStatusSubscribeItem::Claiming
+                )),
+                Ok(truapi::versioned::payment::HostPaymentTopUpStatusSubscribeItem::V1(
+                    v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }
+                )),
+            ],
+            vec![("wallet.dot".to_string(), [7; 32])]
+        )
+    );
+}
+
+// The source key is spent by the host, so a key that is not a usable sr25519
+// secret is refused before any claim starts.
+#[test]
+fn a_top_up_with_a_malformed_key_is_refused_before_the_host_sees_it() {
+    let services = payment_services();
+    let engine = Arc::new(RecordingTopUpPlatform::default());
+    assert!(services.install_top_up_platform(engine.clone()));
+
+    let refused = top_up(
+        &payment_host(&services, "wallet.dot", true),
+        v01::PaymentTopUpSource::PrivateKey {
+            sr25519_secret_key: [0xff; 64],
+        },
+    );
+
+    assert_eq!(
+        (
+            refused,
+            engine.started.lock().expect("started mutex poisoned").len()
+        ),
+        (
+            Err(CallError::Domain(
+                truapi::versioned::payment::HostPaymentTopUpError::V1(
+                    v01::HostPaymentTopUpError::InvalidSource
+                )
+            )),
+            0
+        )
+    );
+}
+
+#[test]
+fn a_top_up_needs_a_session() {
+    let services = payment_services();
+    assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+
+    assert_eq!(
+        top_up(&payment_host(&services, "wallet.dot", false), product_account_source()),
+        Err(CallError::Denied)
+    );
+}
+
+#[derive(Default)]
+struct RecordingPaymentPlatform {
+    requested: Mutex<Vec<(String, truapi::latest::HostPaymentRequest)>>,
+    followed: Mutex<Vec<(String, [u8; 32])>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
+    async fn request_payment(
+        &self,
+        product: &ProductContext,
+        request: truapi::latest::HostPaymentRequest,
+    ) -> Result<(), truapi::latest::HostPaymentError> {
+        self.requested
+            .lock()
+            .expect("requested mutex poisoned")
+            .push((product.product_id.clone(), request));
+        Ok(())
+    }
+
+    fn subscribe_payment_status(
+        &self,
+        product: &ProductContext,
+        id: [u8; 32],
+    ) -> futures::stream::BoxStream<
+        'static,
+        Result<truapi::latest::HostPaymentStatusSubscribeItem, truapi::latest::HostPaymentStatusSubscribeError>,
+    > {
+        self.followed
+            .lock()
+            .expect("followed mutex poisoned")
+            .push((product.product_id.clone(), id));
+        Box::pin(futures::stream::iter([
+            Ok(v01::HostPaymentStatusSubscribeItem::Processing),
+            Ok(v01::HostPaymentStatusSubscribeItem::PartiallyClaimed { actual_claimed: 600 }),
+        ]))
+    }
+}
+
+fn payment_request() -> v01::HostPaymentRequest {
+    v01::HostPaymentRequest {
+        from: None,
+        amount: 1_000,
+        destination: [3; 32],
+        id: [9; 32],
+    }
+}
+
+fn request_payment(
+    host: &ProductRuntimeHost,
+) -> Result<truapi::versioned::payment::HostPaymentResponse, CallError<truapi::versioned::payment::HostPaymentError>> {
+    futures::executor::block_on(truapi::api::Payment::request(
+        host,
+        &CallContext::default(),
+        truapi::versioned::payment::HostPaymentRequest::V1(payment_request()),
+    ))
+}
+
+fn follow_payment(
+    host: &ProductRuntimeHost,
+) -> Vec<
+    Result<
+        truapi::versioned::payment::HostPaymentStatusSubscribeItem,
+        CallError<truapi::versioned::payment::HostPaymentStatusSubscribeError>,
+    >,
+> {
+    futures::executor::block_on(
+        futures::executor::block_on(truapi::api::Payment::status_subscribe(
+            host,
+            &CallContext::default(),
+            truapi::versioned::payment::HostPaymentStatusSubscribeRequest::V1(
+                v01::HostPaymentStatusSubscribeRequest { id: [9; 32] },
+            ),
+        ))
+        .collect::<Vec<_>>(),
+    )
+}
+
+// The host owns the approval sheet and the transfer; core hands it the
+// request as the product made it, and relays the status the host reports,
+// a partial payment included.
+#[test]
+fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
+    let services = payment_services();
+    let engine = Arc::new(RecordingPaymentPlatform::default());
+    assert!(services.install_payment_platform(engine.clone()));
+    let host = payment_host(&services, "wallet.dot", true);
+
+    assert_eq!(
+        (
+            request_payment(&host),
+            follow_payment(&host),
+            engine.requested.lock().expect("requested mutex poisoned").clone(),
+            engine.followed.lock().expect("followed mutex poisoned").clone(),
+        ),
+        (
+            Ok(truapi::versioned::payment::HostPaymentResponse::V1),
+            vec![
+                Ok(truapi::versioned::payment::HostPaymentStatusSubscribeItem::V1(
+                    v01::HostPaymentStatusSubscribeItem::Processing
+                )),
+                Ok(truapi::versioned::payment::HostPaymentStatusSubscribeItem::V1(
+                    v01::HostPaymentStatusSubscribeItem::PartiallyClaimed { actual_claimed: 600 }
+                )),
+            ],
+            vec![("wallet.dot".to_string(), payment_request())],
+            vec![("wallet.dot".to_string(), [9; 32])],
+        )
+    );
+}
+
+// Payments move the user's balance, so a product without a session cannot
+// reach the host's payments.
+#[test]
+fn no_product_pays_or_follows_payments_without_a_session() {
+    let services = payment_services();
+    let engine = Arc::new(RecordingPaymentPlatform::default());
+    assert!(services.install_payment_platform(engine.clone()));
+    let signed_out = payment_host(&services, "wallet.dot", false);
+
+    assert_eq!(
+        (
+            request_payment(&signed_out),
+            follow_payment(&signed_out),
+            engine.requested.lock().expect("requested mutex poisoned").len(),
+            engine.followed.lock().expect("followed mutex poisoned").len(),
+        ),
+        (Err(CallError::Denied), vec![Err(CallError::Denied)], 0, 0)
+    );
+}
+
+/// A balance view sharing one balance with every product but `private.dot`,
+/// and the products it was asked for.
+#[derive(Default)]
+struct RecordingBalancePlatform {
+    asked: Mutex<Vec<(String, Option<u32>)>>,
+}
+
+impl crate::platform::BalancePlatform for RecordingBalancePlatform {
+    fn subscribe_balance(
+        &self,
+        product: &crate::platform::ProductContext,
+        purse: Option<u32>,
+    ) -> futures::stream::BoxStream<
+        'static,
+        Result<v01::HostPaymentBalanceSubscribeItem, v01::HostPaymentBalanceSubscribeError>,
+    > {
+        self.asked
+            .lock()
+            .expect("asked mutex poisoned")
+            .push((product.product_id.clone(), purse));
+        let shared = if product.product_id == "private.dot" {
+            Err(v01::HostPaymentBalanceSubscribeError::PermissionDenied)
+        } else {
+            Ok(v01::HostPaymentBalanceSubscribeItem { available: 4_000_000 })
+        };
+        futures::stream::iter([shared]).boxed()
+    }
+}
+
+fn first_balance(
+    host: &ProductRuntimeHost,
+) -> Option<Result<v01::HostPaymentBalanceSubscribeItem, CallError<truapi::versioned::payment::HostPaymentBalanceSubscribeError>>> {
+    futures::executor::block_on(
+        futures::executor::block_on(truapi::api::Payment::balance_subscribe(
+            host,
+            &CallContext::default(),
+            truapi::versioned::payment::HostPaymentBalanceSubscribeRequest::V1(
+                v01::HostPaymentBalanceSubscribeRequest { purse: None },
+            ),
+        ))
+        .next(),
+    )
+    .map(|item| item.map(|truapi::versioned::payment::HostPaymentBalanceSubscribeItem::V1(item)| item))
+}
+
+// A product sees the balance the host shares with it, the host can refuse
+// one product, a product without a session is refused before the host is
+// asked, and a host with no balance view answers Unsupported.
+#[test]
+fn the_balance_comes_from_the_host_for_each_product() {
+    let services = payment_services();
+    let unsupported = first_balance(&payment_host(&services, "wallet.dot", true));
+    let platform = Arc::new(RecordingBalancePlatform::default());
+    assert!(services.install_balance_platform(platform.clone()));
+    let shared = first_balance(&payment_host(&services, "wallet.dot", true));
+    let refused = first_balance(&payment_host(&services, "private.dot", true));
+    let no_session = first_balance(&payment_host(&services, "wallet.dot", false));
+
+    let denied = |error| CallError::Domain(truapi::versioned::payment::HostPaymentBalanceSubscribeError::V1(error));
+    assert_eq!(
+        (unsupported, shared, refused, no_session, platform.asked.lock().expect("asked mutex poisoned").clone()),
+        (
+            Some(Err(CallError::Unsupported)),
+            Some(Ok(v01::HostPaymentBalanceSubscribeItem { available: 4_000_000 })),
+            Some(Err(denied(v01::HostPaymentBalanceSubscribeError::PermissionDenied))),
+            Some(Err(CallError::Denied)),
+            vec![("wallet.dot".to_string(), None), ("private.dot".to_string(), None)],
+        )
+    );
+}

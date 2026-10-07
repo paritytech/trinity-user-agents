@@ -33,7 +33,10 @@ use truapi::latest::{
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
     HostChatRegisterBotResponse, HostDevicePermissionRequest, HostFeatureSupportedRequest,
     HostFeatureSupportedResponse, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
-    HostNavigateToError, HostPlatform, HostPocketListSubscribeItem, HostPocketRemoveCardError,
+    HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
+    HostPaymentError, HostPaymentRequest, HostPaymentStatusSubscribeError,
+    HostPaymentStatusSubscribeItem, HostPaymentTopUpError, HostPaymentTopUpRequest,
+    HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem, HostPlatform, HostPocketListSubscribeItem, HostPocketRemoveCardError,
     HostPocketRemoveCardRequest, HostPushNotificationRequest, HostPushNotificationResponse,
     HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
     HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, HostWorkerBeginOperationResponse,
@@ -3248,6 +3251,75 @@ pub trait ChatPlatform: Send + Sync {
         &self,
         product: &ProductContext,
     ) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
+}
+
+/// Host-implemented balance view: the user's spendable payment balance.
+/// Optional: a host that omits it leaves balance subscriptions answered
+/// `Unsupported`.
+///
+/// The host decides whether `product` may see the balance, asking the user
+/// if it needs to.
+pub trait BalancePlatform: Send + Sync {
+    /// Emit the balance of `purse` (`None` for the main purse) now and on
+    /// every change, or `PermissionDenied` when the user does not share it.
+    fn subscribe_balance(
+        &self,
+        product: &ProductContext,
+        purse: Option<u32>,
+    ) -> BoxStream<'static, Result<HostPaymentBalanceSubscribeItem, HostPaymentBalanceSubscribeError>>;
+}
+
+/// Host-implemented top-up engine: claims a source's funds into the user's
+/// balance through the host's coinage onboarding. Optional: a host that omits
+/// it leaves top-ups answered `Unsupported`.
+///
+/// The core validates the source keys before calling. The host owns retries,
+/// partial claims and persistence, and scopes ids to `product`.
+#[async_trait]
+pub trait TopUpPlatform: Send + Sync {
+    /// Start a top-up. Returns once the host has accepted it.
+    async fn top_up(
+        &self,
+        product: &ProductContext,
+        request: HostPaymentTopUpRequest,
+    ) -> Result<(), HostPaymentTopUpError>;
+
+    /// Emit a top-up's current status and every later one, ending after a
+    /// terminal status.
+    fn subscribe_top_up_status(
+        &self,
+        product: &ProductContext,
+        id: [u8; 32],
+    ) -> BoxStream<
+        'static,
+        Result<HostPaymentTopUpStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError>,
+    >;
+}
+
+/// Host-implemented payment engine: pays from the user's balance to an
+/// account, once the user approves. Optional: a host that omits it leaves
+/// payment requests answered `Unsupported`.
+///
+/// The host owns the approval sheet, the transfer and its persistence, and
+/// scopes ids to `product`.
+#[async_trait]
+pub trait PaymentPlatform: Send + Sync {
+    /// Ask the user to approve `request`. Returns once the user has decided:
+    /// `Ok` when they authorized it and the host took it on; the payment's
+    /// outcome arrives through its status.
+    async fn request_payment(
+        &self,
+        product: &ProductContext,
+        request: HostPaymentRequest,
+    ) -> Result<(), HostPaymentError>;
+
+    /// Emit a payment's current status and every later one, ending after a
+    /// terminal status.
+    fn subscribe_payment_status(
+        &self,
+        product: &ProductContext,
+        id: [u8; 32],
+    ) -> BoxStream<'static, Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>>;
 }
 
 /// Host-implemented adapter through which product Pocket calls reach the

@@ -5,7 +5,8 @@ use crate::versioned::payment::{
     HostPaymentBalanceSubscribeRequest, HostPaymentError, HostPaymentRequest, HostPaymentResponse,
     HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem,
     HostPaymentStatusSubscribeRequest, HostPaymentTopUpError, HostPaymentTopUpRequest,
-    HostPaymentTopUpResponse,
+    HostPaymentTopUpResponse, HostPaymentTopUpStatusSubscribeError,
+    HostPaymentTopUpStatusSubscribeItem, HostPaymentTopUpStatusSubscribeRequest,
 };
 use crate::{CallContext, CallError, Subscription};
 use crate::{wire, wire_trait};
@@ -34,13 +35,15 @@ pub trait Payment: Send + Sync {
         Subscription::interrupted(CallError::unavailable())
     }
 
-    /// Request a payment from the user.
+    /// Request a payment from the user, followed by `id` through
+    /// `statusSubscribe`. Returns once the host has accepted it.
     ///
     /// ```ts
     /// // Fund the balance first so the request is not rejected for lack of funds.
     /// const topUp = await truapi.payment.topUp({
     ///   amount: 1000n,
     ///   source: { tag: "ProductAccount", value: { derivationIndex: { tag: "Index", value: 0 } } },
+    ///   id: "0x0000000000000000000000000000000000000000000000000000000000000002",
     /// });
     /// assert(topUp.isOk(), "topUp failed:", topUp);
     ///
@@ -48,9 +51,10 @@ pub trait Payment: Send + Sync {
     ///   amount: 1000n,
     ///   destination:
     ///     "0x0000000000000000000000000000000000000000000000000000000000000000",
+    ///   id: "0x0000000000000000000000000000000000000000000000000000000000000004",
     /// });
     /// assert(result.isOk(), "request failed:", result);
-    /// console.log("payment requested:", result.value);
+    /// console.log("payment requested");
     /// ```
     #[wire(id = 2)]
     async fn request(
@@ -61,7 +65,8 @@ pub trait Payment: Send + Sync {
         Err(CallError::unavailable())
     }
 
-    /// Subscribe to payment lifecycle updates for a specific payment.
+    /// Subscribe to payment lifecycle updates for a specific payment. Emits
+    /// the current status first, so a caller that reloads re-attaches.
     ///
     /// ```ts
     /// import { firstValueFrom, from } from "rxjs";
@@ -70,22 +75,21 @@ pub trait Payment: Send + Sync {
     /// const topUp = await truapi.payment.topUp({
     ///   amount: 1000n,
     ///   source: { tag: "ProductAccount", value: { derivationIndex: { tag: "Index", value: 0 } } },
+    ///   id: "0x0000000000000000000000000000000000000000000000000000000000000003",
     /// });
     /// assert(topUp.isOk(), "topUp failed:", topUp);
     ///
+    /// const id = "0x0000000000000000000000000000000000000000000000000000000000000005";
     /// const requested = await truapi.payment.request({
     ///   amount: 1000n,
     ///   destination:
     ///     "0x0000000000000000000000000000000000000000000000000000000000000000",
+    ///   id,
     /// });
     /// assert(requested.isOk(), "request failed:", requested);
     ///
     /// const status = await firstValueFrom(
-    ///   from(
-    ///     truapi.payment.statusSubscribe({
-    ///       request: { paymentId: requested.value.id },
-    ///     }),
-    ///   ),
+    ///   from(truapi.payment.statusSubscribe({ request: { id } })),
     /// );
     /// console.log("payment status received:", status);
     /// ```
@@ -99,12 +103,14 @@ pub trait Payment: Send + Sync {
         Subscription::interrupted(CallError::unavailable())
     }
 
-    /// Top up the user's payment balance.
+    /// Top up the user's payment balance, followed by `id` through
+    /// `topUpStatusSubscribe`.
     ///
     /// ```ts
     /// const result = await truapi.payment.topUp({
     ///   amount: 1000n,
     ///   source: { tag: "ProductAccount", value: { derivationIndex: { tag: "Index", value: 0 } } },
+    ///   id: "0x0000000000000000000000000000000000000000000000000000000000000001",
     /// });
     /// assert(result.isOk(), "topUp failed:", result);
     /// console.log("balance topped up");
@@ -116,5 +122,33 @@ pub trait Payment: Send + Sync {
         _request: HostPaymentTopUpRequest,
     ) -> Result<HostPaymentTopUpResponse, CallError<HostPaymentTopUpError>> {
         Err(CallError::unavailable())
+    }
+
+    /// Follow one top-up to its end.
+    ///
+    /// Emits the current status first, so a caller that reloads re-attaches.
+    ///
+    /// ```ts
+    /// import { firstValueFrom, from } from "rxjs";
+    ///
+    /// const status = await firstValueFrom(
+    ///   from(
+    ///     truapi.payment.topUpStatusSubscribe({
+    ///       request: { id: "0x0000000000000000000000000000000000000000000000000000000000000001" },
+    ///     }),
+    ///   ),
+    /// );
+    /// console.log("top-up status:", status);
+    /// ```
+    #[wire(id = 4)]
+    async fn top_up_status_subscribe(
+        &self,
+        _cx: &CallContext,
+        _request: HostPaymentTopUpStatusSubscribeRequest,
+    ) -> Subscription<
+        HostPaymentTopUpStatusSubscribeItem,
+        CallError<HostPaymentTopUpStatusSubscribeError>,
+    > {
+        Subscription::interrupted(CallError::unavailable())
     }
 }
