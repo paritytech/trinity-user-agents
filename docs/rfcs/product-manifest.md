@@ -199,19 +199,15 @@ Publishers MUST set `kind` to match the subname label the manifest is written un
 
 ### Worker manifest (v2)
 
-A v2 Worker manifest is the v1 `WorkerManifest` with `$v: 2` and one more surface in `includes`: `funding`, which carries a configuration object rather than a flag. Root, App and Widget manifests stay at `$v: 1`, and a Host that reads v2 MUST keep reading v1 Worker manifests, which never serve Funding.
+A v2 Worker manifest is the v1 [`WorkerManifest`](#executable-manifest-v1) with `$v: 2` and one more surface in `includes`: `funding`, which carries a configuration object rather than a flag. Root, App and Widget manifests stay at `$v: 1`, and a Host that reads v2 MUST keep reading v1 Worker manifests, which never serve Funding.
 
 ```typescript
-type WorkerManifestV2 = {
+type WorkerManifestV2 = Omit<CommonExecutableFields, '$v'> & {
   $v: 2;
-  appVersion: SemVer;
   kind: 'worker';
-  entrypoint: string;
-  includes: {
-    pocket?: boolean;
-    chat?: boolean;
-    input?: boolean;
-    funding?: FundingConfig;     // Present means the worker serves Funding.
+  entrypoint: string;                              // As in v1.
+  includes: WorkerManifest['includes'] & {         // The v1 surfaces, plus:
+    funding?: FundingConfig;                       // Present means the worker serves Funding.
   };
 };
 
