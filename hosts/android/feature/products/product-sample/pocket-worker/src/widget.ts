@@ -44,7 +44,6 @@ document.getElementById("hide-later")!.addEventListener("click", () => {
 });
 window.addEventListener("resize", () => {
   showHeight();
-  logLine(`resized: innerHeight ${window.innerHeight}`);
 });
 
 showHeight();
