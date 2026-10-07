@@ -3364,6 +3364,34 @@ pub trait PermissionStatusHost: Send + Sync {
     ) -> Result<DevicePermissionStatus, GenericError>;
 }
 
+/// What the host did with a request to show or hide the expanded card face.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum ExpandedCardFaceOutcome {
+    /// The face is now in the requested state, including when it already was.
+    Applied,
+    /// The Widget is not shown under its card right now.
+    NotPresented,
+    /// The user is moving the face, so the request had no effect.
+    UserMoving,
+    /// The host cannot move the face at all.
+    Unsupported,
+}
+
+/// Host control of the card face drawn above an opened card's Widget.
+///
+/// Installed per connection, like [`PermissionStatusHost`], because the host
+/// owns one drawer per product execution. Hosts without expanded cards install
+/// nothing and products are told `Unsupported`.
+#[async_trait]
+pub trait ExpandedCardHost: Send + Sync {
+    /// Show (`true`) or hide (`false`) the face above the calling Widget.
+    async fn set_expanded_card_face_shown(
+        &self,
+        shown: bool,
+    ) -> Result<ExpandedCardFaceOutcome, GenericError>;
+}
+
 /// Host store for a product's pending operations, which the host uses to keep
 /// the product's worker runtime alive. Reached only through the `Worker`
 /// protocol trait, so non-worker products never call these.

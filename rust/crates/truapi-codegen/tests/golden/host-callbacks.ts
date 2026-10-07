@@ -260,6 +260,15 @@ export type DevicePermissionStatus =
   | "NotApplicable";
 
 /**
+ * What the host did with a request to show or hide the expanded card face.
+ */
+export type ExpandedCardFaceOutcome =
+  | "Applied"
+  | "NotPresented"
+  | "UserMoving"
+  | "Unsupported";
+
+/**
  * One chain a host serves: a protocol chain role mapped to the concrete
  * chain of the host's configured environment.
  */
@@ -801,6 +810,14 @@ export const CreateTransactionReview: S.Codec<CreateTransactionReview> = S.lazy(
 export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
   (): S.Codec<DevicePermissionStatus> =>
     S.Status("Granted", "Denied", "NotDetermined", "NotApplicable"),
+);
+
+/**
+ * What the host did with a request to show or hide the expanded card face.
+ */
+export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
+  (): S.Codec<ExpandedCardFaceOutcome> =>
+    S.Status("Applied", "NotPresented", "UserMoving", "Unsupported"),
 );
 
 /**
@@ -1367,6 +1384,20 @@ export interface CoreStorage {
    * Clear a core-owned value by typed slot.
    */
   clearCoreStorage(key: CoreStorageKey): Promise<void>;
+}
+
+/**
+ * Host control of the card face drawn above an opened card's Widget.
+ *
+ * Installed per connection, like `PermissionStatusHost`, because the host
+ * owns one drawer per product execution. Hosts without expanded cards install
+ * nothing and products are told `Unsupported`.
+ */
+export interface ExpandedCardHost {
+  /**
+   * Show (`true`) or hide (`false`) the face above the calling Widget.
+   */
+  setExpandedCardFaceShown(shown: boolean): Promise<ExpandedCardFaceOutcome>;
 }
 
 /**
