@@ -105,6 +105,22 @@ class ExpandedCardFoldStateTest {
         assertEquals(100f, state.foldedPx, 0f)
     }
 
+    // The user owns the face until the released card has finished settling, not only while the finger is
+    // down: an APPLIED answer there would be dropped by the settle and the page would never know.
+    @Test
+    fun `a request while a released card settles is answered user moving and changes nothing`() =
+        runTest(SteppingFrameClock) {
+            state.beginDrag()
+            state.drag(-100f)
+            val release = async { state.endDrag() }
+            advanceTimeBy(FRAME_NANOS / 1_000_000)
+
+            assertEquals(FaceShownAnswer.USER_MOVING, state.showFace(shown = false))
+            release.await()
+
+            assertEquals(0f, state.foldedPx, 0f)
+        }
+
     // A page can ask as soon as it loads, before the card has been laid out and its height is known.
     @Test
     fun `a request before the card is measured waits and then applies`() = runTest(SteppingFrameClock) {
