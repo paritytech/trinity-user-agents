@@ -97,7 +97,7 @@ A v1 root manifest carrying no trust grants is well under 1 KB; an executable ma
 
 ### Versioning
 
-Every manifest carries `$v` as its first field — a numeric schema-version discriminator. This RFC defines `$v: 1` for every manifest, and `$v: 2` for the Worker executable manifest only (see [Worker manifest (v2)](#worker-manifest-v2)). Hosts MUST treat any manifest whose `$v` they do not recognise as an undiscoverable product: skip it, surface a diagnostic, and keep working.
+Every manifest carries `$v` as its first field — a numeric schema-version discriminator. This RFC defines `$v: 1`. Hosts MUST treat any manifest whose `$v` they do not recognise as an undiscoverable product: skip it, surface a diagnostic, and keep working.
 
 ### Root manifest (v1)
 
@@ -180,6 +180,7 @@ type WorkerManifest = CommonExecutableFields & {
     pocket?: boolean;
     chat?: boolean;
     input?: boolean;
+    funding?: FundingConfig;                       // Present means the worker serves Funding; see [Funding configuration](#funding-configuration).
   };
 };
 
@@ -189,7 +190,7 @@ type SemVer = [major: number, minor: number, patch: number, build?: string];
 
 - `app` — full-screen App. No extra fields beyond the common ones.
 - `widget` — `dimensions.height` is the list of grid-step heights the widget can render at; the Host picks one per layout. `width` defaults to `1` column. The grid unit and bounds belong to the Host's dashboard spec (see [Future Directions](#future-directions)). By convention `8` in `height` signals a full-screen widget; this RFC does not normalise that convention.
-- `worker` — background JS worker. `entrypoint` is the module the Host loads inside the worker. `includes` declares which surfaces it serves.
+- `worker` — background JS worker. `entrypoint` is the module the Host loads inside the worker. `includes` declares which surfaces it serves. Hosts MUST ignore an `includes` key they do not recognise, so a surface added later does not break them.
 
 **`appVersion` is a label, not a change signal.** Hosts detect a new deployment from the subname's `contenthash`, not from this field (see [Cache invalidation](#resolving-a-product)). `appVersion` names the release for the user — "update to 1.4.0", "you declined 1.3.2" — so publishers SHOULD keep it meaningful, but nothing about resolution or caching depends on it moving.
 
@@ -197,20 +198,11 @@ Publishers MUST set `kind` to match the subname label the manifest is written un
 
 **Why one Worker, not per modality.** A Worker is the product's single background process, carrying its full Host-API surface (signing, notifications, chain access, long-lived caches). Those capabilities do not split cleanly along the boundaries between Pocket, Chat, and Input, and one bundle per surface would duplicate that surface area and make the product's on-chain signing identity ambiguous. `includes` only advertises which user-facing affordances the same process serves; the executable remains a single artifact.
 
-### Worker manifest (v2)
+#### Funding configuration
 
-A v2 Worker manifest is the v1 [`WorkerManifest`](#executable-manifest-v1) with `$v: 2` and one more surface in `includes`: `funding`, which carries a configuration object rather than a flag. Root, App and Widget manifests stay at `$v: 1`, and a Host that reads v2 MUST keep reading v1 Worker manifests, which never serve Funding.
+`includes.funding` is the one surface that carries a configuration object rather than a flag: it tells the Host what the provider moves and where to get quotes.
 
 ```typescript
-type WorkerManifestV2 = Omit<CommonExecutableFields, '$v'> & {
-  $v: 2;
-  kind: 'worker';
-  entrypoint: string;                              // As in v1.
-  includes: WorkerManifest['includes'] & {         // The v1 surfaces, plus:
-    funding?: FundingConfig;                       // Present means the worker serves Funding.
-  };
-};
-
 type FundingConfig = {
   routes: FundingRoute[];        // What the provider moves, and how.
   quote: QuoteSource;            // Where the Host gets a live quote.
@@ -239,7 +231,7 @@ A provider serving inbound card payments in EUR and USD in three countries, and 
 
 ```json
 {
-  "$v": 2,
+  "$v": 1,
   "appVersion": [1, 2, 0],
   "kind": "worker",
   "entrypoint": "index.js",
@@ -559,9 +551,7 @@ A conforming Host implementation should produce well-defined behaviour for each 
 - Executable subname `contenthash` unset, non-IPFS codec, or undecodable → cannot launch that executable; surface a diagnostic.
 - Executable CID unreachable → cannot launch that executable; surface a diagnostic.
 - Executable subname owned by a different account than the base name (when strict provenance is enabled) → skip that executable.
-- `$v: 2` Worker manifest without `includes.funding` → validates; serves the same surfaces a v1 manifest with those flags would.
-- `$v: 2` App, Widget or root manifest → unknown version; treat as undiscoverable.
-- `includes.funding` on a `$v: 1` Worker manifest → fails the v1 schema; skip that executable.
+- Unrecognised key in `includes` → ignored; the other surfaces still serve.
 - Funding route with an unrecognised `mode`, no recognised direction, or no assets → route ignored; other routes still apply. An unrecognised direction alongside recognised ones is dropped.
 - No usable funding route, unrecognised `quote.via`, or non-https `quote.url` → the worker does not serve Funding; the manifest still validates.
 - `backend` naming an onramp adapter the Host does not know → the Host does not offer the provider.
@@ -571,7 +561,7 @@ A conforming Host implementation should produce well-defined behaviour for each 
 - **JSON over a binary codec.** Costs text-record budget that a binary format would not — accepted for parseability with off-the-shelf tooling.
 - **No oversized-manifest fallback.** A publisher who exceeds the dotNS text-record budget MUST shrink the payload.
 - **Multiple lookups per resolution.** A full resolution for a product with all three executable types costs ~11 dotNS reads plus up to 4 Bulletin fetches. Mitigate with parallelisation and caching.
-- **Schema evolution locks out older Hosts.** A new `$v` is invisible to Hosts that do not yet recognise it. A product that moves its Worker manifest to `$v: 2` to serve Funding hides its Pocket, Chat and Input surfaces from Hosts that read only v1, until they update. A co-versioning scheme is left to a follow-up RFC.
+- **Schema evolution locks out older Hosts.** A new `$v` is invisible to Hosts that do not yet recognise it. A co-versioning scheme is left to a follow-up RFC.
 
 ## Alternatives
 
