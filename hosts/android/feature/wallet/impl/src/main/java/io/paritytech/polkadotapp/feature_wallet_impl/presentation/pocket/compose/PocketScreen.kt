@@ -1,14 +1,10 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.Transition
 import androidx.compose.animation.core.updateTransition
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -17,13 +13,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
@@ -46,7 +39,6 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImag
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.PocketRank
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketViewModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
@@ -66,8 +58,6 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import io.paritytech.polkadotapp.common.R as RCommon
 
-private val CollectiblesSketchbookPeek = 80.dp
-
 @Composable
 fun PocketScreen() {
     val viewModel = hiltViewModel<PocketViewModel>()
@@ -86,9 +76,6 @@ fun PocketScreen() {
         onCardSelected = viewModel::selectCard,
         onCardDismissed = viewModel::dismissCard,
         onShareId = viewModel::onShareId,
-        onSketchbookSelected = viewModel::showCollectiblesSketchbook,
-        onSketchbookDismissed = viewModel::hideCollectiblesSketchbook,
-        onOpenCollectibles = viewModel::openCollectibles,
         onExpandedCardSettled = viewModel::hostExpandedProduct,
         onProductCardRemovalRequested = viewModel::requestRemoval,
         onRemovalConfirmed = viewModel::confirmRemoval,
@@ -105,9 +92,6 @@ private fun PocketScreenInternal(
     onCardSelected: (PocketCardUiModel) -> Unit,
     onCardDismissed: () -> Unit,
     onShareId: () -> Unit,
-    onSketchbookSelected: () -> Unit,
-    onSketchbookDismissed: () -> Unit,
-    onOpenCollectibles: () -> Unit,
     onExpandedCardSettled: (PocketCardUiModel.ProductCard) -> Unit,
     onProductCardRemovalRequested: (PocketCardUiModel.ProductCard) -> Unit,
     onRemovalConfirmed: () -> Unit,
@@ -134,10 +118,8 @@ private fun PocketScreenInternal(
                                     cards = cards,
                                     anchorCard = transition.extractAnchorCard(),
                                     listState = listState,
-                                    collectiblesAvailable = current.collectiblesAvailable,
                                     bindingsOf = bindingsOf,
                                     onCardSelected = onCardSelected,
-                                    onCollectiblesSelected = onSketchbookSelected,
                                     onProductCardRemovalRequested = onProductCardRemovalRequested
                                 )
 
@@ -159,13 +141,6 @@ private fun PocketScreenInternal(
                                     onSettled = onExpandedCardSettled,
                                     onBack = onCardDismissed,
                                     onShareId = onShareId,
-                                )
-                            }
-
-                            is PocketScreenState.Collectibles -> {
-                                PocketCollectibles(
-                                    onBack = onSketchbookDismissed,
-                                    onViewButtonClick = onOpenCollectibles
                                 )
                             }
                         }
@@ -235,10 +210,8 @@ private fun PocketList(
     cards: ImmutableList<PocketCardUiModel>,
     anchorCard: PocketCardUiModel?,
     listState: LazyListState,
-    collectiblesAvailable: Boolean,
     bindingsOf: (PocketCardUiModel.ProductCard) -> ProductFaceBindings,
     onCardSelected: (PocketCardUiModel) -> Unit,
-    onCollectiblesSelected: () -> Unit,
     onProductCardRemovalRequested: (PocketCardUiModel.ProductCard) -> Unit
 ) {
     val anchorIndex = cards.indexOfFirst { it.id == anchorCard?.id }
@@ -307,31 +280,6 @@ private fun PocketList(
                 }
             }
         }
-
-        AnimatedVisibility(
-            modifier = Modifier
-                .padding(horizontal = PolkadotTheme.spacings.mediumIncreased)
-                .align(Alignment.BottomCenter)
-                .layout { measurable, constraints ->
-                    val placeable = measurable.measure(constraints)
-                    val peek = navigationBarInsets.getBottom(this) + CollectiblesSketchbookPeek.roundToPx()
-                    layout(placeable.width, peek) {
-                        placeable.place(0, 0)
-                    }
-                }
-                .pocketCollectiblesImageSharedElement(),
-            visible = collectiblesAvailable,
-            enter = fadeIn(),
-            exit = fadeOut()
-        ) {
-            CollectiblesSketchbook(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onCollectiblesSelected),
-                blackAndWhite = true,
-                onViewButtonClick = {}
-            )
-        }
     }
 }
 
@@ -348,7 +296,7 @@ private fun PocketScreenPreview() {
             LocalPaymentAssetBrand provides PaymentAssetBrand.mocked
         ) {
             PocketScreenInternal(
-                screenState = PocketScreenState.List(collectiblesAvailable = true, removalCandidate = null),
+                screenState = PocketScreenState.List(removalCandidate = null),
                 cards = persistentListOf(
                     PocketCardUiModel.DigitalDollar(
                         amounts = LoadingState.Loaded(
@@ -357,7 +305,7 @@ private fun PocketScreenPreview() {
                         syncInProgress = false,
                         accountBackupPending = false,
                     ),
-                    PocketCardUiModel.IdCard("username.99", "15oF4u...zaC1Ap", PocketRank.Basic),
+                    PocketCardUiModel.IdCard("username.99", "15oF4u...zaC1Ap"),
                     PocketCardUiModel.ProductCard(
                         key = PocketCardKey(ProductId.fromStoredValue("peopl.dot"), PocketCardId("humanity")),
                         title = "Humanity",
@@ -376,9 +324,6 @@ private fun PocketScreenPreview() {
                 onCardSelected = {},
                 onCardDismissed = {},
                 onShareId = {},
-                onSketchbookSelected = {},
-                onSketchbookDismissed = {},
-                onOpenCollectibles = {},
                 onProductCardRemovalRequested = {},
                 onRemovalConfirmed = {},
                 onRemovalDismissed = {}

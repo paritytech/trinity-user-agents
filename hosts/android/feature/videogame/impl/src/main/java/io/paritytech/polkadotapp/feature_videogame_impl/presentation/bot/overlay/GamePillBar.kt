@@ -33,9 +33,8 @@ import io.paritytech.polkadotapp.common.R as RCommon
 @Composable
 internal fun GamePillBar(
     modifier: Modifier = Modifier,
-    state: VideoGamePillState.Shown,
-    showChevron: Boolean,
-    onClick: (() -> Unit)?,
+    secondsLeft: Long,
+    onClick: () -> Unit,
 ) {
     PolkadotSurface(
         modifier = modifier,
@@ -56,7 +55,7 @@ internal fun GamePillBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             NovaText(
-                text = stringResource(pillLabelRes(state)).uppercase(),
+                text = stringResource(RCommon.string.video_game_pill_waiting_countdown_label).uppercase(),
                 style = NovaGameTypography.pillText,
                 color = LegacyNovaStableColors.AmberAmber500,
             )
@@ -64,14 +63,9 @@ internal fun GamePillBar(
             HorizontalSpacer { small }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                pillChipText(state)?.let { chipText ->
-                    ChipCapsule(text = chipText)
-                }
-
-                if (showChevron) {
-                    HorizontalSpacer { small }
-                    ChevronUpBadge()
-                }
+                ChipCapsule(text = LocalTimeFormatter.current.formatCountdown(secondsLeft.seconds))
+                HorizontalSpacer { small }
+                ChevronUpBadge()
             }
         }
     }
@@ -115,24 +109,6 @@ private fun ChevronUpBadge() {
     }
 }
 
-private fun pillLabelRes(state: VideoGamePillState.Shown): Int = when (state) {
-    is VideoGamePillState.Shown.WaitingCountdown -> RCommon.string.video_game_pill_waiting_countdown_label
-    is VideoGamePillState.Shown.InProgress -> RCommon.string.video_game_pill_in_progress_label
-    VideoGamePillState.Shown.Review -> RCommon.string.video_game_pill_review_label
-}
-
-@Composable
-private fun pillChipText(state: VideoGamePillState.Shown): String? = when (state) {
-    is VideoGamePillState.Shown.WaitingCountdown ->
-        LocalTimeFormatter.current.formatCountdown(state.secondsLeft.seconds)
-    is VideoGamePillState.Shown.InProgress -> stringResource(
-        RCommon.string.video_game_pill_round_template,
-        state.currentRound,
-        state.totalRounds,
-    )
-    VideoGamePillState.Shown.Review -> null
-}
-
 private val PILL_BORDER_WIDTH = 3.dp
 private val CHEVRON_BADGE_SIZE = 28.dp
 private val CHEVRON_ICON_SIZE = 20.dp
@@ -149,39 +125,8 @@ private fun GamePillWaitingPreview() {
         ) {
             GamePillBar(
                 modifier = Modifier.padding(PolkadotTheme.spacings.mediumIncreased),
-                state = VideoGamePillState.Shown.WaitingCountdown(secondsLeft = 87),
-                showChevron = true,
+                secondsLeft = 87,
                 onClick = {},
-            )
-        }
-    }
-}
-
-@Preview
-@Composable
-private fun GamePillInProgressPreview() {
-    PolkadotTheme {
-        GamePillBar(
-            modifier = Modifier.padding(PolkadotTheme.spacings.mediumIncreased),
-            state = VideoGamePillState.Shown.InProgress(currentRound = 3, totalRounds = 12),
-            showChevron = true,
-            onClick = {},
-        )
-    }
-}
-
-@Preview
-@Composable
-private fun GamePillOnGameScreenPreview() {
-    PolkadotTheme {
-        CompositionLocalProvider(
-            LocalTimeFormatter provides TimeFormatter.mocked(LocalContext.current)
-        ) {
-            GamePillBar(
-                modifier = Modifier.padding(PolkadotTheme.spacings.mediumIncreased),
-                state = VideoGamePillState.Shown.WaitingCountdown(secondsLeft = 87),
-                showChevron = false,
-                onClick = null,
             )
         }
     }

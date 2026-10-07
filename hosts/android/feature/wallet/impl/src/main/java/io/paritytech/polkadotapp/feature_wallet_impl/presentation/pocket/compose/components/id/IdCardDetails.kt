@@ -26,7 +26,6 @@ import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
 import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
 import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.PocketRank
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.IdShareQrCard
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketCardSharedElement
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketContentSlide
@@ -132,7 +131,7 @@ private fun IdCardDetailsPreview() = CompositionLocalProvider(
 ) {
     PolkadotTheme {
         IdCardDetailsContent(
-            card = PocketCardUiModel.IdCard("username.99", "pizza", PocketRank.Member),
+            card = PocketCardUiModel.IdCard("username.99", "pizza"),
             onBack = {},
             onShareClick = {},
             cardIndex = 0

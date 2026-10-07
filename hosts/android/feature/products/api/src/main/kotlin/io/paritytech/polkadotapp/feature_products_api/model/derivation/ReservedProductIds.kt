@@ -13,8 +13,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 object ReservedProductIds {
     fun game(tld: DotNsTld): ProductId = reserved("dim2", tld)
 
-    fun proofOfInk(tld: DotNsTld): ProductId = reserved("poi", tld)
-
     fun funding(tld: DotNsTld): ProductId = reserved("fund", tld)
 
     fun lightPersonIdentity(tld: DotNsTld): ProductId = reserved("uid", tld)

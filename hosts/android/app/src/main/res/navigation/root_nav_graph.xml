@@ -51,11 +51,6 @@
         android:label="ThemeFragment" />
 
     <fragment
-        android:id="@+id/videoGameNotificationsFragment"
-        android:name="io.paritytech.polkadotapp.feature_videogame_impl.presentation.notifications.VideoGameNotificationsFragment"
-        android:label="VideoGameNotificationsFragment" />
-
-    <fragment
         android:id="@+id/debugMenuFragment"
         android:name="io.paritytech.polkadotapp.app.root.presentation.debug.DebugMenuFragment"
         android:label="DebugMenuFragment" />
@@ -126,34 +121,9 @@
         android:label="CrossProductProofBottomSheet" />
 
     <fragment
-        android:id="@+id/chatWithPlayersFragment"
-        android:name="io.paritytech.polkadotapp.feature_videogame_impl.presentation.chatWithPlayers.ChatWithPlayersFragment"
-        android:label="ChatWithPlayersFragment" />
-
-    <fragment
-        android:id="@+id/gameResultsFragment"
-        android:name="io.paritytech.polkadotapp.feature_videogame_impl.presentation.gameResults.GameResultsFragment"
-        android:label="GameResultsFragment" />
-
-    <fragment
-        android:id="@+id/collectiblesFragment"
-        android:name="io.paritytech.polkadotapp.feature_videogame_impl.presentation.collectibles.CollectiblesFragment"
-        android:label="CollectiblesFragment" />
-
-    <fragment
-        android:id="@+id/upgradeUsernameFragment"
-        android:name="io.paritytech.polkadotapp.feature_upgrade_username_impl.presentation.upgrade.UpgradeUsernameFragment"
-        android:label="UpgradeUsernameFragment" />
-
-    <fragment
         android:id="@+id/chatRequestsListFragment"
         android:name="io.paritytech.polkadotapp.feature_chats_impl.presentation.chatRequestsList.ChatRequestsListFragment"
         android:label="ChatRequestsListFragment" />
-
-    <fragment
-        android:id="@+id/evidenceDetailFragment"
-        android:name="io.paritytech.polkadotapp.feature_mobrules_impl.presentation.evidenceDetail.MediaEvidenceDetailFragment"
-        android:label="MediaEvidenceDetailFragment" />
 
 
     <fragment
@@ -219,38 +189,6 @@
         app:popUpToInclusive="true" />
 
     <action
-        android:id="@+id/action_global_to_video_game_play_graph"
-        app:destination="@id/video_game_play_graph"
-        app:enterAnim="@anim/game_pill_slide_up"
-        app:exitAnim="@anim/game_pill_hold"
-        app:popEnterAnim="@anim/game_pill_hold"
-        app:popExitAnim="@anim/game_pill_slide_down" />
-
-    <action
-        android:id="@+id/action_global_to_gameResultsFragment"
-        app:destination="@id/gameResultsFragment"
-        app:enterAnim="@anim/slide_in_bottom"
-        app:exitAnim="@anim/no_op"
-        app:popEnterAnim="@anim/no_op"
-        app:popExitAnim="@anim/slide_out_bottom" />
-
-    <action
-        android:id="@+id/action_global_to_collectiblesFragment"
-        app:destination="@id/collectiblesFragment"
-        app:enterAnim="@anim/slide_in_bottom"
-        app:exitAnim="@anim/no_op"
-        app:popEnterAnim="@anim/no_op"
-        app:popExitAnim="@anim/slide_out_bottom" />
-
-    <action
-        android:id="@+id/action_global_to_upgradeUsernameFragment"
-        app:destination="@id/upgradeUsernameFragment" />
-
-    <action
-        android:id="@+id/action_global_to_video_game_notifications"
-        app:destination="@id/videoGameNotificationsFragment" />
-
-    <action
         android:id="@+id/action_global_to_backup_graph"
         app:destination="@id/backup_graph" />
 
@@ -304,10 +242,6 @@
         android:id="@+id/action_global_to_deviceDetailsFragment"
         app:destination="@id/deviceDetailsFragment" />
 
-
-    <action
-        android:id="@+id/action_global_to_commit_to_tattoo_graph"
-        app:destination="@id/commit_to_tattoo_graph" />
 
     <action
         android:id="@+id/action_global_to_change_theme"
@@ -375,22 +309,6 @@
         app:destination="@id/crossProductProofBottomSheet" />
 
     <action
-        android:id="@+id/action_global_to_chatWithPlayersFragment"
-        app:destination="@id/chatWithPlayersFragment" />
-
-    <action
-        android:id="@+id/action_global_to_evidence_video_graph"
-        app:destination="@id/evidence_video_graph" />
-
-    <action
-        android:id="@+id/action_global_to_evidence_photo_graph"
-        app:destination="@id/evidence_photo_graph" />
-
-    <action
-        android:id="@+id/action_global_to_evidenceDetailFragment"
-        app:destination="@id/evidenceDetailFragment" />
-
-    <action
         android:id="@+id/action_global_to_product_settings_graph"
         app:destination="@id/product_settings_graph" />
 
@@ -400,10 +318,6 @@
     <include app:graph="@navigation/send_enter_amount_graph" />
     <include app:graph="@navigation/backup_graph" />
     <include app:graph="@navigation/scan_graph" />
-    <include app:graph="@navigation/commit_to_tattoo_graph" />
-    <include app:graph="@navigation/video_game_play_graph" />
-    <include app:graph="@navigation/evidence_video_graph" />
-    <include app:graph="@navigation/evidence_photo_graph" />
     <include app:graph="@navigation/fund_graph" />
     <include app:graph="@navigation/product_settings_graph" />
 
