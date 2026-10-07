@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 
 // The terminal presentation layer. A host IS the UI layer: the web host
 // answers the core with modals, this one answers with a QR and readline

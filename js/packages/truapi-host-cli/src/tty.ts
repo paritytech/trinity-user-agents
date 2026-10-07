@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 
 // Access to the controlling terminal, for prompting when the standard
 // streams belong to someone else (a git remote helper, a pipeline). A

@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 
 export const toHex = (bytes: Uint8Array): string =>
   `0x${Buffer.from(bytes).toString("hex")}`;

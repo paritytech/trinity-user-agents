@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 
 // WORKAROUND for a causal-ordering hazard in the chain-head relay, measured
 // to SURVIVE the Rust core (its TS-host-era header blamed a package that is

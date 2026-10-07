@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 
 // The CLI host: boots the Rust core in-process and owns everything the core
 // leaves to a host. That means rendering (via the presenter), owner-only

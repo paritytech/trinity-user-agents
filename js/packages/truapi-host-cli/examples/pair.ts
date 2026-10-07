@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 
 // Runnable pairing demo: renders a QR in your terminal, waits for a phone
 // scan, and round-trips a product localStorage value through the paired core.

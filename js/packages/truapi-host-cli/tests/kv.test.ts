@@ -1,5 +1,5 @@
 // Copyright 2026 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: MIT
 
 // The core routes a product's localStorage into this store, so its contents
 // are per-user secrets by default. These tests pin the permissions, because
