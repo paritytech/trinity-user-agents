@@ -332,7 +332,8 @@ host failures.
 "Host-drawn scanner"). Both CLI host roles answer it from `TRUAPI_SCAN_TEXT`,
 or with a dismissal when it is unset, so the battery runs it. The playground's
 Diagnosis skips it, since dot.li has no viewfinder and answers `Unsupported`.
-`make e2e-scanner-cli` runs the scanner phase: a signing host scans
+`make e2e-scanner-cli` runs the scanner phase on both CLI host roles, the
+pairing host unpaired since scanning needs no session. The host scans
 `https://greenmarket.example/r/BAG6`, and the cases check that a matching code
 reaches the product, that a code or format the product did not ask for never
 does, and that an invalid request is refused before the host is asked.

@@ -464,7 +464,7 @@ e2e-chat-cli: ## Run the Chat content-screening battery against a chat signing-h
 e2e-pocket-cli: ## Run the Pocket protocol battery against a Pocket signing-host CLI.
 	scripts/battery.sh --pocket-host
 
-e2e-scanner-cli: ## Run the scanner checks against a signing-host CLI that scans a fixed code.
+e2e-scanner-cli: ## Run the scanner checks against both CLI host roles, each scanning a fixed code.
 	scripts/battery.sh --scanner-host
 
 e2e-cross-product-storage: ## One product reads another's storage on the signing-host CLI, granted by a local product config.

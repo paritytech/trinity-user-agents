@@ -249,20 +249,30 @@ pocket_phase() {
 }
 
 scanner_phase() {
-  local log="$LOG_DIR/scanner-host-cli.log"
   echo "battery: scanner phase"
   # The code the CLI scans in every case. The cases refuse it on purpose too,
   # which only the core can do, since the CLI does not filter.
   export TRUAPI_SCAN_TEXT="https://greenmarket.example/r/BAG6"
-  "$HOST" signing-host \
-    --product-id "$PRODUCT_ID" \
-    --script "$SCANNER_SCRIPT" \
-    --auto-accept \
-    ${HOST_ARGS[@]+"${HOST_ARGS[@]}"} > >(tee "$log") 2>&1 &
-  local host_pid=$! rc=0
-  start_watchdog "$host_pid" "scanner phase"
-  wait "$host_pid" || rc=$?
-  stop_watchdog
+  local role rc=0
+  # Scanning needs no session, so the pairing host runs unpaired, from a fresh
+  # base path so no earlier session is restored.
+  for role in signing-host pairing-host; do
+    local log="$LOG_DIR/scanner-$role-cli.log" role_args=()
+    if [ "$role" = pairing-host ]; then
+      rm -rf "$LOG_DIR/scanner-pairing-host-state"
+      role_args=(--base-path "$LOG_DIR/scanner-pairing-host-state")
+    fi
+    "$HOST" "$role" \
+      --product-id "$PRODUCT_ID" \
+      --script "$SCANNER_SCRIPT" \
+      --auto-accept \
+      ${role_args[@]+"${role_args[@]}"} \
+      ${HOST_ARGS[@]+"${HOST_ARGS[@]}"} > >(tee "$log") 2>&1 &
+    local host_pid=$!
+    start_watchdog "$host_pid" "scanner phase ($role)"
+    wait "$host_pid" || rc=$?
+    stop_watchdog
+  done
   unset TRUAPI_SCAN_TEXT
   return "$rc"
 }
