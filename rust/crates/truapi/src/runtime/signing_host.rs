@@ -80,12 +80,21 @@ impl SigningHost {
     pub fn new(services: Arc<RuntimeServices>, network_suffix: String) -> Arc<Self> {
         let platform = services.platform.clone();
         let registry = RingVrfRegistryStore::new(platform.clone());
-        let grants = Arc::new(HostGrantStore::new(platform.clone()));
         let wallet = Arc::new(WalletAccountHolder::new(
             services.clone(),
             network_suffix,
             registry.clone(),
         ));
+        Self::with_wallet(services, wallet, registry)
+    }
+
+    fn with_wallet(
+        services: Arc<RuntimeServices>,
+        wallet: Arc<WalletAccountHolder>,
+        registry: Arc<RingVrfRegistryStore>,
+    ) -> Arc<Self> {
+        let platform = services.platform.clone();
+        let grants = Arc::new(HostGrantStore::new(platform.clone()));
         let accounts = HostAccounts::new(
             services.clone(),
             wallet.clone(),
@@ -157,32 +166,13 @@ impl SigningHost {
             crate::test_support::test_spawner(),
         );
         let registry = RingVrfRegistryStore::new(platform.clone());
-        let grants = Arc::new(HostGrantStore::new(platform.clone()));
         let wallet = Arc::new(WalletAccountHolder::new_with_ring_resolver(
             services.clone(),
             network_suffix.to_string(),
             ring_resolver,
             registry.clone(),
         ));
-        let accounts = HostAccounts::new(
-            services.clone(),
-            wallet.clone(),
-            wallet.session_state(),
-            grants.clone(),
-            registry,
-            #[cfg(feature = "test-host")]
-            wallet.resource_controls().clone(),
-        );
-        Arc::new(Self {
-            services,
-            wallet,
-            auth_state: AuthStateMachine::new(platform),
-            grants,
-            accounts,
-            sso_replay_locks: SsoReplayLocks::default(),
-            #[cfg(not(target_arch = "wasm32"))]
-            renewal_loop_started: std::sync::atomic::AtomicBool::new(false),
-        })
+        Self::with_wallet(services, wallet, registry)
     }
 
     fn sso_replay_locks(&self) -> &SsoReplayLocks {

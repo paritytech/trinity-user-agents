@@ -870,7 +870,7 @@ impl SigningHostRuntime {
         ring: &v01::RingLocation,
     ) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
         self.signing_host
-            .account_holder()
+            .accounts()
             .ring_vrf_providers(ring)
             .await
             .map_err(ring_vrf_admin_error)
@@ -882,7 +882,7 @@ impl SigningHostRuntime {
         ring: &v01::RingLocation,
     ) -> Result<Option<v01::ProductAccountId>, v01::GenericError> {
         self.signing_host
-            .account_holder()
+            .accounts()
             .selected_ring_vrf_provider(ring)
             .await
             .map_err(ring_vrf_admin_error)
@@ -895,7 +895,7 @@ impl SigningHostRuntime {
         handle: v01::ProductAccountId,
     ) -> Result<(), v01::GenericError> {
         self.signing_host
-            .account_holder()
+            .accounts()
             .select_ring_vrf_provider(ring, handle)
             .await
             .map_err(ring_vrf_admin_error)
