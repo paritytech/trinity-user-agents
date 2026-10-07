@@ -90,7 +90,7 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
         let current = try snapshot ?? fetchUnblockedContactsBlocking().map(\.accountId)
         var accountsByHandle: [Data: Data] = [:]
         for account in current {
-            accountsByHandle[try account.blake2b32WithKey(handleKey)] = account
+            try accountsByHandle[account.blake2b32WithKey(handleKey)] = account
         }
 
         lock.lock()

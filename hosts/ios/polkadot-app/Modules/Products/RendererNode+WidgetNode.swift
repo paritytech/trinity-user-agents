@@ -20,6 +20,7 @@ extension RendererNode {
         // into their parent. It has one slot to fill, and a box would overlay
         // several children, since it renders as a `ZStack`.
         //
+
         // The effect itself is dropped: `Rainbow` has no counterpart on
         // `CustomMessageWidgetNode`, so the children draw untinted.
         case let .effect(_, children):
@@ -66,7 +67,8 @@ private extension RendererNode {
     /// Nodes that draw themselves, with no children to lay out.
     func leafWidgetNode(resolver: any WidgetDesignTokenResolving) -> CustomMessageWidgetNode? {
         switch self {
-        case .nil, .string:
+        case .nil,
+             .string:
             return nil
 
         // `ImageProps` carries a source, but `CustomMessageWidgetNode` has no image

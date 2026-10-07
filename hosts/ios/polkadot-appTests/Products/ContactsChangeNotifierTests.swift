@@ -14,7 +14,7 @@ struct ContactsChangeNotifierTests {
 
         factory.deliver([makeContact(accountId: alice)])
 
-        #expect(removals.count == 0)
+        #expect(removals.isEmpty)
         _ = notifier
     }
 
@@ -25,7 +25,7 @@ struct ContactsChangeNotifierTests {
         factory.deliver([makeContact(accountId: alice)])
         factory.deliver([makeContact(accountId: alice), makeContact(accountId: bob)])
 
-        #expect(removals.count == 0)
+        #expect(removals.isEmpty)
         _ = notifier
     }
 
