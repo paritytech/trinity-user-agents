@@ -9,6 +9,8 @@ import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
+import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.parity.truapi.WebSocketChainProvider
@@ -39,24 +41,22 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import timber.log.Timber
-import uniffi.truapi.AuthState
 import uniffi.truapi.ExpandedCardFaceOutcome
-import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
-import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostPushNotificationRequest
-import uniffi.truapi.HostRejection
 import uniffi.truapi.HostThemeSubscribeItem
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.ThemeName
+import uniffi.truapi.AuthState
+import uniffi.truapi.HostChainSet
 import uniffi.truapi.UserConfirmationReview
+import uniffi.truapi.HostNavigateToException
+import uniffi.truapi.HostRejection
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
-import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
 import uniffi.truapi.ThemeVariant as NativeThemeVariant
+import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
 
 /**
  * Native platform callbacks ([io.parity.truapi.HostBridge]) for one product
