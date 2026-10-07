@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -40,7 +41,7 @@ class PocketFaceJsonDecoderTest {
               ]
             }}
             """.trimIndent()
-        ).getOrThrow()
+        ).getOrThrow().toJsWidget()
 
         val column = face as JsWidget.Column
         assertEquals(JsArrangement.SPACE_BETWEEN, column.verticalArrangement)
@@ -82,7 +83,7 @@ class PocketFaceJsonDecoderTest {
               {"tag":"Image","value":{"modifiers":[],"props":{"source":{"tag":"Bulletin","value":"bafy"}}}}
             ]}}
             """.trimIndent()
-        ).getOrThrow()
+        ).getOrThrow().toJsWidget()
 
         val effect = face as JsWidget.Effect
         assertEquals(JsEffect.RAINBOW, effect.effect)

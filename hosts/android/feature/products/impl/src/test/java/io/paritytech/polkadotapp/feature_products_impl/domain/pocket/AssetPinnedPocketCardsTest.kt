@@ -6,7 +6,6 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.test_shared.whenever
@@ -17,6 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.Mockito.mock
+import uniffi.truapi.RendererNode
 import java.io.File
 
 class AssetPinnedPocketCardsTest {
@@ -58,7 +58,7 @@ class AssetPinnedPocketCardsTest {
     fun `the face bundled for Humanity decodes against the vocabulary the app ships`() = runBlocking {
         assertTrue("missing $bundledHumanityFace", bundledHumanityFace.exists())
 
-        assertTrue(pinnedCards().single().face is JsWidget.Column)
+        assertTrue(pinnedCards().single().face is RendererNode.Column)
     }
 
     // The key already says which network its product is on, so naming a pinned card needs no chain
