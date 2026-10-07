@@ -19,6 +19,16 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
+      # The daily run is started by nobody, so there is no one to check.
+      # Narrower than write access: see the action for why, and
+      # IOS_SIGNING_ACTORS for who.
+      - name: Require an iOS signing actor
+        if: github.event_name != 'schedule'
+        uses: ./.github/actions/require-ios-signing-actor
+        with:
+          allowed: ${{ vars.IOS_SIGNING_ACTORS }}
+          actor: ${{ github.triggering_actor }}
+
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install
         with:

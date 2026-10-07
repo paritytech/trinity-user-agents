@@ -1,0 +1,6 @@
+# Vendored renderer assets. Git guesses text vs binary from the first 8 KB, and the relief atlas
+# opens on a uniform stretch of normals with no NUL byte in it, so it guessed wrong: a four
+# megabyte texture was being stored and diffed as text, one line-ending normalisation away from
+# corruption. Say it outright instead.
+*.bin binary
+*.hdr binary

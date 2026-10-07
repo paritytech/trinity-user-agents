@@ -5,11 +5,14 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -44,6 +47,15 @@ suspend fun <R> ChainConnectionRefCounter.withConnectionEnabled(
     return withConnectionEnabled(setOf(chainId), label, block)
 }
 
+/** Keeps [chainId] connected for as long as the returned flow is collected. */
+fun <T> Flow<T>.holdingConnection(
+    refCounter: ChainConnectionRefCounter,
+    chainId: ChainId,
+    label: String,
+): Flow<T> = flow {
+    refCounter.withConnectionEnabled(chainId, label) { emitAll(this@holdingConnection) }
+}
+
 interface EnabledChainConnectionReference {
     suspend fun release()
 }
@@ -51,7 +63,9 @@ interface EnabledChainConnectionReference {
 @Singleton
 class RealChainConnectionRefCounter @Inject constructor() : ChainConnectionRefCounter {
     private val mutex = Mutex()
-    private val refCounts = mutableMapOf<ChainId, MutableStateFlow<Int>>()
+
+    // Read outside the mutex by shouldConnectionBeEnabled, so a plain map could hand two callers different counters
+    private val refCounts = ConcurrentHashMap<ChainId, MutableStateFlow<Int>>()
 
     override fun shouldConnectionBeEnabled(chainId: ChainId): Flow<Boolean> {
         return getOrCreateRefCountFlow(chainId)

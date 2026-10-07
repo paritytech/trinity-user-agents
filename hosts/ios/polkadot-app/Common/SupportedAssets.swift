@@ -10,7 +10,7 @@ enum SupportedAssets {
         static let pgasAH = ChainAssetId(chainId: KnownChainId.previewAH, assetId: 4)
 
         static let dotUnstablePPL = ChainAssetId(chainId: KnownChainId.previewNetPeople, assetId: 0)
-    #elseif NIGHTLY
+    #elseif NIGHTLY || SAFETYNET
         static let pusdPPL = ChainAssetId(chainId: KnownChainId.paseoPeople, assetId: 1)
         static let pasPPL = ChainAssetId(chainId: KnownChainId.paseoPeople, assetId: 0)
 

@@ -5,16 +5,18 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.State
@@ -25,7 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
@@ -33,19 +35,23 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.presentation.notification.rememberAppNotifier
 import io.paritytech.polkadotapp.common.presentation.screens.ObserveViewModelEvents
-import io.paritytech.polkadotapp.common.presentation.search.SearchState
-import io.paritytech.polkadotapp.common.utils.SizedList
 import io.paritytech.polkadotapp.common.utils.randomBytes
-import io.paritytech.polkadotapp.common.utils.toSizedList
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.design.components.avatar.Mock
+import io.paritytech.polkadotapp.design.components.bottomsheet.NovaBottomSheetDragHandler
+import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonShape
+import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
+import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
+import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
+import io.paritytech.polkadotapp.design.components.icon.NovaIcons
+import io.paritytech.polkadotapp.design.components.icon.vectors.Scanner
+import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.topbar.PolkadotSearchField
@@ -53,24 +59,24 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.chatSearch.models.NoRowStatus
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.chatSearch.models.RecentChatUiModel
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.AddContactSearchResults
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.AddContactUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.AddContactViewModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.compose.components.AddContactSearchContent
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.models.UserSearchResultUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.rememberCompositionViewModelStoreOwner
+import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlin.random.Random
 import io.paritytech.polkadotapp.common.R as RCommon
 
-private val ScannerCornerRadius = 32.dp
-private val ScannerThumbnailSize = 64.dp
-private val ScannerThumbnailCornerRadius = 16.dp
-
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AddContactPanel(
     modifier: Modifier = Modifier,
-    scanner: @Composable (Modifier) -> Unit,
+    scannerShape: Shape,
+    scanner: @Composable (modifier: Modifier, recognitionArmed: Boolean) -> Unit,
 ) {
     val viewModel = hiltViewModel<AddContactViewModel>(viewModelStoreOwner = rememberCompositionViewModelStoreOwner())
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -93,13 +99,17 @@ fun AddContactPanel(
         )
     }
 
-    BackHandler(enabled = searchActive, onBack = actions.onCloseSearch)
+    val imeVisible = WindowInsets.isImeVisible
+    BackHandler(enabled = searchActive) {
+        if (imeVisible) focusManager.clearFocus() else actions.onCloseSearch()
+    }
 
     AddContactPanelInternal(
         modifier = modifier,
         state = state,
         searchActive = searchActive,
         actions = actions,
+        scannerShape = scannerShape,
         scanner = scanner,
     )
 }
@@ -110,33 +120,64 @@ private fun AddContactPanelInternal(
     state: AddContactUiState,
     searchActive: Boolean,
     actions: AddContactPanelActions,
-    scanner: @Composable (Modifier) -> Unit,
+    scannerShape: Shape,
+    scanner: @Composable (modifier: Modifier, recognitionArmed: Boolean) -> Unit,
 ) {
+    val searchProgress = animateFloatAsState(
+        targetValue = if (searchActive) 1f else 0f,
+        label = "SearchProgress"
+    )
+
     Column(modifier = modifier) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = PolkadotTheme.spacings.small),
+            contentAlignment = Alignment.Center,
+        ) {
+            NovaBottomSheetDragHandler()
+        }
+
         ScannerSearchArea(
             modifier = Modifier
                 .weight(1f, fill = false)
-                .squareUpToMaxHeight(),
+                .searchAreaSize { searchProgress.value },
             state = state,
             searchActive = searchActive,
+            searchProgress = searchProgress,
             actions = actions,
+            scannerShape = scannerShape,
             scanner = scanner,
         )
 
         VerticalSpacer { small }
 
-        PolkadotSearchField(
-            modifier = Modifier
-                .fillMaxWidth()
-                .onFocusChanged { if (it.hasFocus) actions.onSearchFocused() },
-            value = state.searchQuery,
-            onValueChange = actions.onSearchChange,
-            onClear = {
-                if (state.searchQuery.isEmpty()) actions.onCloseSearch() else actions.onSearchChange("")
-            },
-            placeholder = stringResource(RCommon.string.add_contact_search_placeholder),
-            showClear = searchActive,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AnimatedVisibility(visible = searchActive) {
+                Row {
+                    ScanButton(onClick = actions.onCloseSearch)
+                    HorizontalSpacer { small }
+                }
+            }
+
+            PolkadotSearchField(
+                modifier = Modifier
+                    .weight(1f)
+                    .onFocusChanged { if (it.hasFocus) actions.onSearchFocused() },
+                value = state.searchQuery,
+                onValueChange = actions.onSearchChange,
+                onClear = {
+                    if (state.searchQuery.isEmpty()) actions.onCloseSearch() else actions.onSearchChange("")
+                },
+                placeholder = stringResource(RCommon.string.add_contact_search_placeholder),
+                showClear = searchActive,
+                contentPadding = PaddingValues(PolkadotTheme.spacings.zero),
+                clearButtonSize = PolkadotIconButtonSize.small(),
+            )
+        }
     }
 }
 
@@ -145,14 +186,11 @@ private fun ScannerSearchArea(
     modifier: Modifier,
     state: AddContactUiState,
     searchActive: Boolean,
+    searchProgress: State<Float>,
     actions: AddContactPanelActions,
-    scanner: @Composable (Modifier) -> Unit,
+    scannerShape: Shape,
+    scanner: @Composable (modifier: Modifier, recognitionArmed: Boolean) -> Unit,
 ) {
-    val shrinkProgress = animateFloatAsState(
-        targetValue = if (searchActive) 1f else 0f,
-        label = "ScannerShrinkProgress"
-    )
-
     Box(modifier = modifier) {
         AnimatedVisibility(
             visible = searchActive,
@@ -161,73 +199,77 @@ private fun ScannerSearchArea(
         ) {
             AddContactSearchContent(
                 state = state,
-                bottomInset = ScannerThumbnailSize,
                 onSearchResultClick = actions.onSearchResultClick,
                 onRecentClick = actions.onRecentClick,
             )
         }
 
-        ShrinkingScanner(shrinkProgress = shrinkProgress, scanner = scanner)
-
-        if (searchActive) {
-            ScannerThumbnailClickArea(onClick = actions.onCloseSearch)
-        }
+        CollapsingScanner(
+            collapseProgress = searchProgress,
+            recognitionArmed = !searchActive,
+            shape = scannerShape,
+            scanner = scanner,
+        )
     }
 }
 
 // Scaled rather than resized, so the camera surface is not re-laid out on every animation frame.
 @Composable
-private fun BoxScope.ShrinkingScanner(
-    shrinkProgress: State<Float>,
-    scanner: @Composable (Modifier) -> Unit,
+private fun BoxScope.CollapsingScanner(
+    collapseProgress: State<Float>,
+    recognitionArmed: Boolean,
+    shape: Shape,
+    scanner: @Composable (modifier: Modifier, recognitionArmed: Boolean) -> Unit,
 ) {
     PolkadotSurface(
-        // Sized by the height: above the keyboard the area can be shorter than wide, and a width-sized square
-        // would overflow it and get centered, dropping the thumbnail below the area's bottom edge.
         modifier = Modifier
             .align(Alignment.BottomCenter)
-            .fillMaxHeight()
-            .aspectRatio(1f, matchHeightConstraintsFirst = true)
+            .largestSquare()
             .graphicsLayer {
-                val progress = shrinkProgress.value
-                val thumbnailScale = if (size.width > 0f) ScannerThumbnailSize.toPx() / size.width else 1f
-                val scale = lerp(1f, thumbnailScale, progress)
-                val cornerRadius = lerp(ScannerCornerRadius.toPx(), ScannerThumbnailCornerRadius.toPx(), progress)
+                val scale = 1f - collapseProgress.value
 
                 scaleX = scale
                 scaleY = scale
                 transformOrigin = TransformOrigin(0.5f, 1f)
-                // The clip is scaled together with the content, so it is set in pre-scale pixels.
-                shape = RoundedCornerShape(cornerRadius / scale)
+                this.shape = shape
                 clip = true
             },
         color = PolkadotTheme.colors.bg.surface.nested,
     ) {
-        scanner(Modifier.fillMaxSize())
+        scanner(Modifier.fillMaxSize(), recognitionArmed)
     }
 }
 
-// Sits above the scanner so a tap on the thumbnail always closes search, even where the scanner's own content
-// (e.g. the camera permission hint) would take it.
 @Composable
-private fun BoxScope.ScannerThumbnailClickArea(onClick: () -> Unit) {
-    PolkadotSurface(
-        modifier = Modifier
-            .align(Alignment.BottomCenter)
-            .size(ScannerThumbnailSize),
-        shape = RoundedCornerShape(ScannerThumbnailCornerRadius),
-        color = Color.Transparent,
+private fun ScanButton(onClick: () -> Unit) {
+    PolkadotIconButton(
+        icon = NovaIcons.Scanner,
         onClick = onClick,
-    ) {}
+        style = PolkadotButtonStyle.tertiary(),
+        size = PolkadotIconButtonSize.mediumIncreased(),
+        shape = PolkadotButtonShape.pill,
+        border = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.secondary),
+    )
 }
 
 // A width-sized square that gives up height when the column has less room, e.g. above the keyboard on short screens.
-private fun Modifier.squareUpToMaxHeight(): Modifier = layout { measurable, constraints ->
+private fun Modifier.searchAreaSize(searchProgress: () -> Float): Modifier = layout { measurable, constraints ->
     val width = constraints.maxWidth
-    val height = width.coerceAtMost(constraints.maxHeight)
+    val square = width.coerceAtMost(constraints.maxHeight)
+    val full = if (constraints.hasBoundedHeight) constraints.maxHeight else square
+    val height = lerp(square, full, searchProgress())
     val placeable = measurable.measure(Constraints.fixed(width, height))
 
     layout(width, height) {
+        placeable.place(0, 0)
+    }
+}
+
+private fun Modifier.largestSquare(): Modifier = layout { measurable, constraints ->
+    val side = minOf(constraints.maxWidth, constraints.maxHeight)
+    val placeable = measurable.measure(Constraints.fixed(side, side))
+
+    layout(side, side) {
         placeable.place(0, 0)
     }
 }
@@ -258,7 +300,8 @@ private fun AddContactPanelPreview(state: AddContactUiState, searchActive: Boole
                     onSearchResultClick = {},
                     onRecentClick = {},
                 ),
-                scanner = { modifier -> Box(modifier = modifier) },
+                scannerShape = PolkadotTheme.shapes.large,
+                scanner = { modifier, _ -> Box(modifier = modifier) },
             )
         }
     }
@@ -268,7 +311,7 @@ private fun AddContactPanelPreview(state: AddContactUiState, searchActive: Boole
 @Composable
 private fun AddContactPanelScannerPreview() {
     AddContactPanelPreview(
-        state = previewState(query = "", searchResult = SearchState.Initial),
+        state = previewState(query = "", results = AddContactSearchResults.Idle),
         searchActive = false,
     )
 }
@@ -277,7 +320,7 @@ private fun AddContactPanelScannerPreview() {
 @Composable
 private fun AddContactPanelNoRecentsPreview() {
     AddContactPanelPreview(
-        state = previewState(query = "", searchResult = SearchState.Initial),
+        state = previewState(query = "", results = AddContactSearchResults.Idle),
         searchActive = true,
     )
 }
@@ -285,20 +328,12 @@ private fun AddContactPanelNoRecentsPreview() {
 @Preview(widthDp = 380)
 @Composable
 private fun AddContactPanelRecentsPreview() {
-    val recents = listOf("mosticRiver.88", "delaware.01", "franz", "dmitry.01", "euclid.01").map { name ->
-        val accountId = Random.randomBytes(32).intoAccountId()
-        RecentChatUiModel(
-            chatId = ChatId.fromContact(accountId),
-            key = name,
-            title = name,
-            avatarModel = AvatarUiModel.Mock.fromName(name),
-            status = NoRowStatus,
-            isMenuOpen = false,
-        )
-    }
-
     AddContactPanelPreview(
-        state = previewState(query = "", searchResult = SearchState.Initial).copy(recents = recents.toImmutableList()),
+        state = previewState(
+            query = "",
+            results = AddContactSearchResults.Idle,
+            recents = previewRecents("mosticRiver.88", "delaware.01", "franz", "dmitry.01", "euclid.01"),
+        ),
         searchActive = true,
     )
 }
@@ -306,26 +341,53 @@ private fun AddContactPanelRecentsPreview() {
 @Preview(widthDp = 380)
 @Composable
 private fun AddContactPanelResultsPreview() {
-    val users = listOf("mosticRiver.88", "monster.01", "molecule", "mostwanted", "morales").map { name ->
-        UserSearchResultUiModel(
-            contactAccountId = Random.randomBytes(32).intoAccountId(),
-            username = name,
-            avatarModel = AvatarUiModel.Mock.fromName(name),
-        )
-    }
-
     AddContactPanelPreview(
-        state = previewState(query = "Mo", searchResult = SearchState.Loaded(users.toSizedList())),
+        state = previewState(
+            query = "Mo",
+            results = AddContactSearchResults.Sections(
+                recents = previewRecents("mosticRiver.88"),
+                allUsers = previewUsers("monster.01", "molecule", "mostwanted", "morales"),
+            ),
+        ),
         searchActive = true,
     )
 }
 
+@Preview(widthDp = 380)
+@Composable
+private fun AddContactPanelLoadingPreview() {
+    AddContactPanelPreview(
+        state = previewState(query = "Mo", results = AddContactSearchResults.Loading),
+        searchActive = true,
+    )
+}
+
+private fun previewRecents(vararg names: String) = names.map { name ->
+    RecentChatUiModel(
+        chatId = ChatId.fromContact(Random.randomBytes(32).intoAccountId()),
+        key = name,
+        title = name,
+        avatarModel = AvatarUiModel.Mock.fromName(name),
+        status = NoRowStatus,
+        isMenuOpen = false,
+    )
+}.toImmutableList()
+
+private fun previewUsers(vararg names: String) = names.map { name ->
+    UserSearchResultUiModel(
+        contactAccountId = Random.randomBytes(32).intoAccountId(),
+        username = name,
+        avatarModel = AvatarUiModel.Mock.fromName(name),
+    )
+}.toImmutableList()
+
 private fun previewState(
     query: String,
-    searchResult: SearchState<SizedList<UserSearchResultUiModel>>,
+    results: AddContactSearchResults,
+    recents: ImmutableList<RecentChatUiModel> = persistentListOf(),
 ) = AddContactUiState(
     searchQuery = query,
-    searchResult = searchResult,
+    results = results,
     loadingContactId = null,
-    recents = persistentListOf(),
+    recents = recents,
 )

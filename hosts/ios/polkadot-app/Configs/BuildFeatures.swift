@@ -14,4 +14,9 @@
 // Every flag is positive: `#if FEATURE_X` always reads "this build has X", and each `#if` site is
 // self-contained — its `#else` arm depends only on its own flag, never on another being set.
 //
-// The environment axis (UNSTABLE / NIGHTLY) is independent and unconstrained by these checks.
+// The environment axis (UNSTABLE / NIGHTLY / SAFETYNET) is independent of the feature flags and
+// unconstrained by the checks above. Exactly one environment flag may be set.
+
+#if (UNSTABLE && NIGHTLY) || (UNSTABLE && SAFETYNET) || (NIGHTLY && SAFETYNET)
+    #error("UNSTABLE, NIGHTLY and SAFETYNET are mutually exclusive — see Configs/base.*.xcconfig")
+#endif
