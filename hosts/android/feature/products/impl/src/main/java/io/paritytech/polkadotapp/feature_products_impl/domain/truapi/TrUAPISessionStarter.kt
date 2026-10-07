@@ -34,10 +34,11 @@ class TrUAPISessionStarter @Inject constructor(
         hostApiNavigation: NavigationPolicy,
         kind: ProductExecutionKind = ProductExecutionKind.APP,
         card: ExpandedCardFace? = null,
+        explicitProductId: ProductId? = null,
     ): ProductTrUAPIHostBridge {
         val bridge = hostBridgeFactory.create(scope)
         scope.launch {
-            attachAndLoad(bridge, provider, productUrl, hostApiNavigation, kind, card)
+            attachAndLoad(bridge, provider, productUrl, hostApiNavigation, kind, card, explicitProductId)
                 .logFailure("Failed to start TrUAPI host bridge for $productUrl")
         }
         return bridge
@@ -50,13 +51,17 @@ class TrUAPISessionStarter @Inject constructor(
         navigation: NavigationPolicy,
         kind: ProductExecutionKind,
         card: ExpandedCardFace?,
+        explicitProductId: ProductId?,
     ): Result<Unit> {
-        val tld = dotNsTldProvider.getTld().getOrElse { return Result.failure(it) }
-        // A page that is not a product (the debug SPA browser opening any URL) has no bridge to
-        // attach, but it is still a page to show.
-        val productId = ProductId.fromUrl(productUrl.toUri(), tld).getOrNull() ?: run {
-            Timber.d("Loading %s without a TrUAPI bridge: not a product URL", productUrl)
-            return runCatching { provider.loadInitialContent() }
+        // A debug page served from a loopback url carries no product in its host.
+        val productId = explicitProductId ?: run {
+            val tld = dotNsTldProvider.getTld().getOrElse { return Result.failure(it) }
+            // A page that is not a product (the debug SPA browser opening any URL) has no bridge to
+            // attach, but it is still a page to show.
+            ProductId.fromUrl(productUrl.toUri(), tld).getOrNull() ?: run {
+                Timber.d("Loading %s without a TrUAPI bridge: not a product URL", productUrl)
+                return runCatching { provider.loadInitialContent() }
+            }
         }
 
         val runtime = runtimeProvider.runtime().getOrElse { return Result.failure(it) }

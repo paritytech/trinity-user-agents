@@ -11,6 +11,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
@@ -28,6 +29,7 @@ class RealProductBotManagementInteractorTest {
     }
 
     private var readThread: String? = null
+    private var storedAppUrl: String? = null
 
     private val debugPocketCards = object : DebugPocketCards {
         override fun get(productId: ProductId): DebugPocketCard? {
@@ -37,6 +39,16 @@ class RealProductBotManagementInteractorTest {
         }
 
         override fun set(productId: ProductId, card: DebugPocketCard?) = Unit
+
+        override fun appUrl(productId: ProductId): String? {
+            readThread = Thread.currentThread().name
+
+            return storedAppUrl
+        }
+
+        override fun setAppUrl(productId: ProductId, appUrl: String?) {
+            storedAppUrl = appUrl
+        }
     }
 
     private val interactor = RealProductBotManagementInteractor(
@@ -66,7 +78,44 @@ class RealProductBotManagementInteractorTest {
         assertNotEquals(caller, readThread)
     }
 
+    @Test
+    fun `the app url is read off the caller's thread`() = runBlocking {
+        storedAppUrl = APP_URL
+
+        val appUrl = interactor.getAppUrl(PRODUCT)
+
+        assertEquals(APP_URL, appUrl)
+        assertTrue("read on $readThread", readThread.orEmpty().startsWith("cards-io"))
+    }
+
+    /** The page is what the card opens, so saving the product must save where that page comes from. */
+    @Test
+    fun `updating a product stores the app url it was given`() = runBlocking {
+        interactor.updateProduct(PRODUCT, WORKER_URL, "Coinflip", CARD, APP_URL)
+
+        assertEquals(APP_URL, storedAppUrl)
+    }
+
+    @Test
+    fun `clearing the app url removes it`() = runBlocking {
+        storedAppUrl = APP_URL
+
+        interactor.updateProduct(PRODUCT, WORKER_URL, "Coinflip", CARD, appUrl = null)
+
+        assertNull(storedAppUrl)
+    }
+
+    @Test
+    fun `adding a product stores the app url it was given`() = runBlocking {
+        interactor.upsertProduct(PRODUCT, WORKER_URL, "Coinflip", CARD, APP_URL)
+
+        assertEquals(APP_URL, storedAppUrl)
+    }
+
     private companion object {
+        const val APP_URL = "http://127.0.0.1:5173/"
+        const val WORKER_URL = "http://127.0.0.1:5173/worker.js"
+
         val PRODUCT = ProductId.fromStoredValue("coinflip.dot")
 
         val CARD = DebugPocketCard(

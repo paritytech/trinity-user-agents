@@ -23,11 +23,13 @@ import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsContentLoad
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
+import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.PageLifecycleSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.UrlDerivedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
  * Visible WebView provider for SPA browser and Explore environments.
@@ -46,33 +48,43 @@ class BrowserWebViewProvider @AssistedInject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
     private val servingHostResolver: DotNsServingHostResolver,
     dispatchers: CoroutineDispatchers,
-    @Assisted private val initialUrl: String,
+    @Assisted("initialUrl") private val initialUrl: String,
     @Assisted private val navigationPolicy: NavigationPolicy,
     @Assisted private val allowIframes: Boolean,
     @Assisted private val scope: CoroutineScope,
+    @Assisted private val fixedProductId: ProductId?,
+    @Assisted("firstPartyOrigin") private val firstPartyOrigin: String?,
 ) : WebViewProvider(dispatchers), PageLifecycleSource {
     @AssistedFactory
     interface Factory {
         fun create(
-            initialUrl: String,
+            @Assisted("initialUrl") initialUrl: String,
             navigationPolicy: NavigationPolicy,
             allowIframes: Boolean,
-            scope: CoroutineScope
+            scope: CoroutineScope,
+            fixedProductId: ProductId? = null,
+            @Assisted("firstPartyOrigin") firstPartyOrigin: String? = null,
         ): BrowserWebViewProvider
     }
 
-    override val callingProductIdProvider: CallingProductIdProvider = UrlDerivedProductId(dotNsTldProvider) {
-        accessWebView(WebView::getUrl)
-    }
+    // A page served from a debug loopback url has no dotNS host to read its product from.
+    override val callingProductIdProvider: CallingProductIdProvider =
+        fixedProductId?.let(::FixedProductId) ?: UrlDerivedProductId(dotNsTldProvider) {
+            accessWebView(WebView::getUrl)
+        }
 
     // Per-session decorator over the resolver: tracks the domain currently being served and
     // exposes its download/unpack progress for the host UI to render.
     private val contentLoader = DotNsContentLoader(dotNsResolver)
 
-    /** Load progress of the domain the WebView is currently resolving content for. */
-    val loadProgress: Flow<DotNsLoadProgress> = contentLoader.loadProgress
+    // No dotNS load reports progress for a page served from a loopback url, so its own load does.
+    private val servedPageProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Idle)
 
-    private val permissionClient = webViewPermissionClientFactory.create(callingProductIdProvider, firstPartyOrigin = null)
+    /** Load progress of the domain the WebView is currently resolving content for. */
+    val loadProgress: Flow<DotNsLoadProgress> =
+        if (fixedProductId != null) servedPageProgress else contentLoader.loadProgress
+
+    private val permissionClient = webViewPermissionClientFactory.create(callingProductIdProvider, firstPartyOrigin)
     private val chromeClient = productWebChromeClientFactory.create(
         logPrefix = "Browser: $initialUrl",
         callingProductIdProvider = callingProductIdProvider,
@@ -146,6 +158,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
 
         override fun onPageFinished(view: WebView, url: String?) {
             innerClient.onPageFinished(view, url)
+            if (fixedProductId != null) servedPageProgress.value = DotNsLoadProgress.Completed
             notifyOnPageFinished()
         }
 
