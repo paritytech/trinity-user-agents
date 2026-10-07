@@ -112,6 +112,9 @@ pub enum HostFundingReportError {
     /// The update does not follow the session's last one, or does not fit
     /// its direction.
     OutOfOrder,
+    /// The top-up or payment request it names is already named by another of
+    /// the caller's sessions.
+    DuplicateId,
     /// Catch-all.
     Unknown {
         /// Human-readable failure reason.

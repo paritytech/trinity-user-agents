@@ -83,6 +83,9 @@ pub enum ReportRefusal {
     /// The update does not follow the last one, or does not fit the
     /// session's direction.
     OutOfOrder,
+    /// The top-up or payment request it names is already named by another
+    /// session of the same provider.
+    DuplicateId,
 }
 
 /// What a cancel did.
@@ -237,6 +240,22 @@ impl FundingSession {
                 FundingUpdate::Delivered => last < Some(update_rank(update)) && !top_ups.is_empty(),
                 _ => last < Some(update_rank(update)),
             }
+    }
+
+    /// The top-up or payment request id `update` names, if any.
+    pub fn named_id(update: &FundingUpdate) -> Option<[u8; 32]> {
+        match update {
+            FundingUpdate::Crediting { top_up_id, .. } => Some(*top_up_id),
+            FundingUpdate::Collecting { payment_id, .. } => Some(*payment_id),
+            _ => None,
+        }
+    }
+
+    /// Whether any of this session's updates names `id`.
+    pub fn names(&self, id: &[u8; 32]) -> bool {
+        self.updates
+            .iter()
+            .any(|record| Self::named_id(&record.update).as_ref() == Some(id))
     }
 
     /// The top-ups the provider started, in order, with the amount each asks

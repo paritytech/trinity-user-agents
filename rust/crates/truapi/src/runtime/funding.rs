@@ -157,7 +157,17 @@ impl FundingRegistry {
         let intent = intent.to_string();
         let provider = provider_id.to_string();
         self.commit(storage, now_ms, move |sessions| {
+            // Ids are the provider's own, so one named by another of its
+            // sessions would settle two sessions from a single claim.
+            let duplicate = FundingSession::named_id(&update).is_some_and(|id| {
+                sessions.values().any(|other| {
+                    other.intent != intent
+                        && other.provider_id.as_deref() == Some(provider.as_str())
+                        && other.names(&id)
+                })
+            });
             let reported = match sessions.get_mut(&intent) {
+                Some(_) if duplicate => Err(ReportRefusal::DuplicateId),
                 Some(session) => session.report(&provider, update, now_ms),
                 None => Err(ReportRefusal::NotFound),
             };
@@ -774,7 +784,7 @@ mod tests {
     use futures::executor::block_on;
     use truapi::latest::FundingFailure;
 
-    use crate::host_logic::funding::FundingStage;
+    use crate::host_logic::funding::{FundingStage, ReportRefusal};
     use crate::test_support::stub_platform;
 
     const NOW: u64 = 1_700_000_000_000;
@@ -886,6 +896,44 @@ mod tests {
         assert_eq!(
             registry.sessions().into_iter().map(|session| session.intent).collect::<Vec<_>>(),
             ["fs_live_new", "fs_live_old", "fs_new", "fs_old"]
+        );
+    }
+
+    // A provider's top-up and payment ids are its own, so naming one in two
+    // sessions would settle both from a single claim and show the money twice
+    // in the user's history. Another provider's ids are a different namespace.
+    #[test]
+    fn a_provider_cannot_name_one_top_up_in_two_sessions() {
+        let storage = stub_platform();
+        let registry = FundingRegistry::default();
+        let served = |intent: &str, provider: &str| {
+            let mut session = session(intent, NOW);
+            assert!(session.assign(provider));
+            session
+        };
+        for session in [
+            served("fs_a", "ramp.dot"),
+            served("fs_b", "ramp.dot"),
+            served("fs_c", "other.dot"),
+        ] {
+            insert(&registry, storage.as_ref(), session);
+        }
+        let crediting = FundingUpdate::Crediting {
+            top_up_id: [9; 32],
+            amount: 100,
+        };
+        let report = |provider: &str, intent: &str| {
+            block_on(registry.report(storage.as_ref(), NOW, provider, intent, crediting.clone()))
+                .expect("stored")
+        };
+
+        assert_eq!(
+            (
+                report("ramp.dot", "fs_a"),
+                report("ramp.dot", "fs_b"),
+                report("other.dot", "fs_c"),
+            ),
+            (Ok(()), Err(ReportRefusal::DuplicateId), Ok(()))
         );
     }
 
