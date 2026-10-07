@@ -123,6 +123,7 @@ const callbacks: HostCallbacks = {
   pocket, // optional: serves the host's Pocket card collection
   game, // optional: holds the host's game reminders
   contacts, // optional: leave it out and contacts calls get `Unsupported`
+  scanner, // optional: draws the host's QR and barcode viewfinder
 };
 ```
 
@@ -278,6 +279,15 @@ account (`blake2b(account, { key: handleKey, dkLen: 32 })` in `@noble/hashes`).
 The core re-checks every account returned. It caches what it resolves, so call
 `notifyContactsChanged()` whenever a contact is removed or blocked. Omit blocked
 contacts from both. See the contacts RFC (`docs/rfcs/contacts-api.md`).
+
+`scanner.scanCode(product, request)` opens the host's viewfinder and answers
+`Scanned { text, format }`, `Dismissed`, or `CameraUnavailable`. Title it with
+the product id, show `request.hint` under the title as the product's words, and
+never follow a scanned link. The core checks the request before calling and
+checks the answer after, so a code the request does not accept never reaches
+the product. The mock test host serves no scanner by default. Create it with
+`createMockHost({ scanner: answer })` to serve one, and change the next answer
+with `setScanAnswer(answer)`.
 
 ## Generated WASM artefacts
 

@@ -23,6 +23,7 @@ import {
   type SigningLogEntry,
   type StatementEntry,
 } from "../web/create-mock-host.js";
+import type { HostScan } from "../generated/host-callbacks.js";
 import type { StatementInput } from "../web/loopback-statements.js";
 
 // The statement shapes `@parity/host-api-test-sdk` names, so a suite that
@@ -265,6 +266,12 @@ export interface TestHost {
   clearPreimages(): Promise<void>;
   getTheme(): Promise<string>;
   setTheme(variant: string): Promise<void>;
+  /**
+   * Set what the next product scan answers. Throws unless the mock was created
+   * with a `scanner` answer, because a host serves the scanner or not from
+   * the start.
+   */
+  setScanAnswer(answer: HostScan): Promise<void>;
   getIsAuthenticated(): Promise<boolean>;
   getChainStatus(): Promise<ChainStatus>;
   getConnectionStatus(): Promise<ChainStatus>;
@@ -754,6 +761,7 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
         clearPreimages: () => call("clearPreimages"),
         getTheme: () => call("getTheme"),
         setTheme: (variant) => call("setTheme", variant),
+        setScanAnswer: (answer) => call("setScanAnswer", answer),
         getIsAuthenticated: () => call("getIsAuthenticated"),
         getChainStatus: () => call("getChainStatus"),
         getConnectionStatus: () => call("getConnectionStatus"),

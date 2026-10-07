@@ -56,6 +56,49 @@ suite("createMockClient", () => {
     }
   });
 
+  it("answers a product's scan with the code the test configured", async () => {
+    // The browser joins for an optional capability are written by hand, so a
+    // missing one leaves every product scan `Unsupported` while unit tests
+    // pass. Only a call through the real core proves the scanner is reachable.
+    const { client, host, dispose } = await createMockClient({
+      mock: {
+        scanner: {
+          tag: "Scanned",
+          value: { text: "https://greenmarket.example/r/1", format: "Qr" },
+        },
+      },
+    });
+    try {
+      const first = await client.scanner.scan({
+        formats: ["Qr"],
+        prefix: "https://greenmarket.example/r/",
+      });
+      expect(first._unsafeUnwrap().outcome).toEqual({
+        tag: "Scanned",
+        value: { text: "https://greenmarket.example/r/1", format: "Qr" },
+      });
+
+      // A "Scan another" flow: the next scan gets the next answer.
+      host.setScanAnswer({ tag: "Dismissed" });
+      const second = await client.scanner.scan({ formats: ["Qr"] });
+      expect(second._unsafeUnwrap().outcome).toEqual({ tag: "Dismissed" });
+    } finally {
+      dispose();
+    }
+  });
+
+  it("leaves scanning unsupported when the test configures no scanner", async () => {
+    // A suite that never mentions scanning sees what a web host answers.
+    const { client, host, dispose } = await createMockClient();
+    try {
+      const result = await client.scanner.scan({ formats: ["Qr"] });
+      expect(result._unsafeUnwrapErr().tag).toBe("Unsupported");
+      expect(() => host.setScanAnswer({ tag: "Dismissed" })).toThrow();
+    } finally {
+      dispose();
+    }
+  });
+
   it("resolves a seeded preimage, so the seeded key is the one the core asks for", async () => {
     // `seedPreimage` is only worth anything if the key it hands back is the key
     // the core asks the host for. The core content-addresses preimages and

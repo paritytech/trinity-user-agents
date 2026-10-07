@@ -50,6 +50,7 @@ const TEST_HOST_API = [
   "setPaymentBalance",
   "setPaymentTopUpBehavior",
   "setPermissionBehavior",
+  "setScanAnswer",
   "setTheme",
   "simulateDisconnect",
   "simulatePaymentStatus",

@@ -42,6 +42,7 @@ import type {
   AuthState,
   CoreStorageKey,
   HostChainSet,
+  HostScan,
   JsonRpcConnection,
   PermissionDecision,
   RequiredHostCallbacks,
@@ -400,6 +401,11 @@ export interface MockHostConfig {
   /** Whether `confirmUserAction` confirms reviewed actions. Default `true`. */
   confirmUserActions?: boolean;
   /**
+   * What the scanner answers a product's scan. Unset (the default) serves no
+   * scanner, so `scanner.scan` is `Unsupported`, as on a web host.
+   */
+  scanner?: HostScan;
+  /**
    * JSON-RPC response frames the chain connection replays, in order. Empty
    * (the default) means a silent connection: it records outbound requests and
    * never answers, so chain-dependent flows park.
@@ -550,6 +556,12 @@ export interface MockHost {
   getTheme(): ThemeVariant;
   /** Replace the reported theme. */
   setTheme(variant: ThemeVariant): void;
+  /**
+   * Set what the next product scan answers. Throws unless the mock was created
+   * with a `scanner` answer, because a host serves the scanner or not from
+   * the start.
+   */
+  setScanAnswer(answer: HostScan): void;
   /** State of the mock's chain connection. */
   getChainStatus(): ChainStatus;
   /** Mark the chain disconnected, as a dropped transport would. */
@@ -845,6 +857,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     chainProxies = [],
     languageTag = "en",
     faults = {},
+    scanner,
     supportedChains = {
       network: "mock",
       chains: [
@@ -855,6 +868,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
   } = config;
 
+  let scanAnswer: HostScan = scanner ?? { tag: "Dismissed" };
   const storage = new Map<string, Uint8Array>();
   const preimages = new Map<string, Uint8Array>();
   const navigations: string[] = [];
@@ -1165,6 +1179,16 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async scheduleGameReminder() {},
       async cancelGameReminder() {},
     },
+
+    ...(scanner === undefined
+      ? {}
+      : {
+          scanner: {
+            async scanCode() {
+              return scanAnswer;
+            },
+          },
+        }),
 
     permissions: {
       async devicePermission(_product, request) {
@@ -1494,6 +1518,14 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       enforcePermissions = enforce;
     },
     getTheme: () => currentTheme,
+    setScanAnswer: (answer) => {
+      if (scanner === undefined) {
+        throw new Error(
+          "this mock serves no scanner: create it with a `scanner` answer",
+        );
+      }
+      scanAnswer = answer;
+    },
     setTheme: (variant) => {
       currentTheme = variant;
       const item: HostThemeSubscribeItem = {
