@@ -10,7 +10,7 @@ use truapi::versioned::resource_allocation::HostRequestResourceAllocationError;
 use truapi::versioned::signing::HostSignRawWithLegacyAccountRequest;
 
 /// Allocate an AutoSigning grant for the runtime's own product.
-pub fn grant_auto_signing(runtime: &ProductRuntimeHost) {
+pub fn grant_auto_signing(runtime: &ProductRuntimeHost<WalletAccountHolder>) {
     let allocation = futures::executor::block_on(ResourceAllocation::request(
         runtime,
         &CallContext::default(),
@@ -248,19 +248,20 @@ fn direct_allocation_cannot_authorize_signing_without_wallet_approval() {
     let platform = Arc::new(StubPlatform::default());
     let (_, authority) = signing_runtime_with_platform(platform.clone());
     futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-    let operation = authority.current_operation().unwrap();
+    let operation = authority.accounts().current_operation().unwrap();
     let request = truapi::latest::HostRequestResourceAllocationRequest {
         resources: vec![truapi::latest::AllocatableResource::AutoSigning],
     };
-    let result = futures::executor::block_on(authority.allocate_resources(
+    let result = futures::executor::block_on(authority.accounts().allocate_resources(
         &CallContext::default(),
         &operation,
         &ProductContext::new("myapp.dot".to_string()).unwrap(),
         request.clone(),
     ));
     let grant = authority
+        .accounts()
         .wallet_authorization(
-            &authority.current_operation().unwrap(),
+            &authority.accounts().current_operation().unwrap(),
             &ProductContext::new("myapp.dot".to_string()).unwrap(),
         )
         .map(|authorization| authorization.is_some());
@@ -319,16 +320,18 @@ fn cancelling_a_later_resource_keeps_the_first_native_authorization() {
         Poll::Pending,
     );
     let retained_before_cancel = authority
+        .accounts()
         .wallet_authorization(
-            &authority.current_operation().unwrap(),
+            &authority.accounts().current_operation().unwrap(),
             &ProductContext::new("myapp.dot".to_string()).unwrap(),
         )
         .map(|authorization| authorization.is_some());
     cancel.cancel();
     let result = futures::executor::block_on(allocation);
     let retained_after_cancel = authority
+        .accounts()
         .wallet_authorization(
-            &authority.current_operation().unwrap(),
+            &authority.accounts().current_operation().unwrap(),
             &ProductContext::new("myapp.dot".to_string()).unwrap(),
         )
         .map(|authorization| authorization.is_some());

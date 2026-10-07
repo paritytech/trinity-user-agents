@@ -7,13 +7,13 @@ mod tests;
 
 use super::auth_state::AuthStateMachine;
 use super::authority::{AuthoritySession, authority_session};
-use super::connected_session_ui_info;
 use super::host_grants::{HostGrantPersistence, HostGrantStore};
 use super::identity::resolve_session_identity_with_chain;
 use super::services::RuntimeServices;
 use super::sso_remote::{SSO_PEER_DISCONNECT_REASON, SessionDisconnects, SsoSessionKey};
 use super::statement_store_rpc::StatementStoreRpc;
 use super::vrf;
+use super::{HostSession, connected_session_ui_info};
 use crate::chain_runtime::ChainRuntime;
 use crate::host_logic::session::{SessionInfo, SessionState, encode_persisted_session};
 use crate::host_logic::session_store::SessionStoreChangeNotifier;
@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex, Weak};
 use tracing::{instrument, warn};
 use truapi::CallError;
 use truapi::latest as api;
-use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse};
+use truapi::latest::{HostRequestLoginError, HostRequestLoginResponse};
 
 struct LoginInFlight {
     waiters: Vec<oneshot::Sender<Result<(), String>>>,
@@ -157,11 +157,6 @@ impl SsoRequestService {
         })
     }
 
-    /// Shared session holder for connection-status subscriptions.
-    pub fn session_state(&self) -> Arc<SessionState> {
-        self.session_state.clone()
-    }
-
     /// Invalidate stale work and request a persisted-session reread.
     pub fn notify_session_store_changed(&self) {
         self.advance_session_lifecycle();
@@ -218,6 +213,61 @@ impl SsoRequestService {
             let _ = entered.send(());
             let _ = resume.await;
         }
+    }
+
+    /// Present host-owned review metadata before starting an outbound exchange.
+    pub async fn approve(
+        &self,
+        invocation: &super::authority::AccountInvocation<'_>,
+    ) -> Result<(), super::authority::AuthorityError> {
+        use super::authority::{AccountCaller, AuthorityError};
+        use crate::platform::{UserConfirmationReview, has_trusted_remote_permissions};
+        if let AccountCaller::Local {
+            product,
+            outbound_review: Some(review),
+            ..
+        } = invocation.caller
+        {
+            if has_trusted_remote_permissions(&product.product_id)
+                && matches!(
+                    review,
+                    UserConfirmationReview::ResourceAllocation(_)
+                        | UserConfirmationReview::ProductSubtree(_)
+                )
+            {
+                return Ok(());
+            }
+            invocation
+                .confirm(self.platform.as_ref(), review.clone())
+                .await
+                .map_err(|error| match (review, error) {
+                    (
+                        UserConfirmationReview::SignVrf(_),
+                        AuthorityError::ConfirmationFailed(error),
+                    ) => AuthorityError::Unknown {
+                        reason: format!("VRF signing confirmation failed: {error:?}"),
+                    },
+                    (_, error) => error,
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Clear all capability material owned by one product while preserving the
+    /// active session and unrelated products.
+    pub async fn clear_product_state(&self, product_id: &str) -> Result<(), String> {
+        let product_id = crate::platform::normalize_product_identifier(product_id)
+            .map_err(|error| error.to_string())?;
+        let session = {
+            let mut lifecycle = self.grants.lifecycle();
+            lifecycle.revoke_product(&product_id);
+            self.session_state().current()
+        };
+        self.grants
+            .persistence()
+            .await
+            .clear_product(session.as_ref(), &product_id)
+            .await
     }
 
     /// Selected remote account identity.
@@ -389,81 +439,6 @@ impl SsoRequestService {
         }));
     }
 
-    /// Start or join the current pairing attempt.
-    #[instrument(skip_all, fields(runtime.method = "account.request_login", product = %product.product_id))]
-    pub async fn request_login(
-        &self,
-        product: &ProductContext,
-    ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
-        let _ = product;
-        if let Some(session) = self.session_state.current() {
-            self.auth_state
-                .connected(&connected_session_ui_info(&session));
-            return Ok(HostRequestLoginResponse::V1(
-                api::HostRequestLoginResponse::AlreadyConnected,
-            ));
-        }
-
-        if let Some(waiter) = self.login_waiter() {
-            match waiter.await {
-                Ok(Ok(())) => {
-                    return Ok(HostRequestLoginResponse::V1(
-                        if self.session_state.current().is_some() {
-                            api::HostRequestLoginResponse::AlreadyConnected
-                        } else {
-                            api::HostRequestLoginResponse::Rejected
-                        },
-                    ));
-                }
-                Ok(Err(reason)) => {
-                    return Err(CallError::Domain(HostRequestLoginError::V1(
-                        api::HostRequestLoginError::Unknown { reason },
-                    )));
-                }
-                Err(_) => {
-                    return Err(CallError::Domain(HostRequestLoginError::V1(
-                        api::HostRequestLoginError::Unknown {
-                            reason: "login waiter dropped".to_string(),
-                        },
-                    )));
-                }
-            }
-        }
-
-        let mut login_owner = LoginInFlightOwner::new(self);
-        let login_generation = self.begin_login_attempt();
-        let outcome = match SsoPairingFlow::new(self, login_generation)
-            .request_session()
-            .await
-        {
-            Ok(outcome) => outcome,
-            Err(err) => {
-                login_owner.finish(Err(login_error_reason(&err)));
-                return Err(err);
-            }
-        };
-        match outcome {
-            SsoPairingOutcome::Cancelled => {
-                login_owner.finish(Ok(()));
-                if self.session_state.current().is_some() {
-                    Ok(HostRequestLoginResponse::V1(
-                        api::HostRequestLoginResponse::AlreadyConnected,
-                    ))
-                } else {
-                    Ok(HostRequestLoginResponse::V1(
-                        api::HostRequestLoginResponse::Rejected,
-                    ))
-                }
-            }
-            SsoPairingOutcome::Success => {
-                login_owner.finish(Ok(()));
-                Ok(HostRequestLoginResponse::V1(
-                    api::HostRequestLoginResponse::Success,
-                ))
-            }
-        }
-    }
-
     /// Persist and install the selected login under the storage guard.
     async fn commit_login_session(
         &self,
@@ -528,22 +503,6 @@ impl SsoRequestService {
         let persistence = self.grants.persistence().await;
         if let Err(reason) = self.drain_session_deletions(&persistence).await {
             warn!(%reason, "cancelled login cleanup remains pending");
-        }
-    }
-
-    /// Revoke the paired session and notify its peer.
-    #[instrument(skip_all, fields(runtime.method = "account.disconnect"))]
-    pub async fn disconnect(&self) {
-        self.cancel_login();
-        let session = self.session_state.current();
-        self.clear_disconnected_session(true, None).await;
-        if let Some(session) = session {
-            let weak_self = self.weak_self.clone();
-            (self.spawner)(Box::pin(async move {
-                if let Some(host) = weak_self.upgrade() {
-                    let _ = channel::submit_disconnected_message(&host, &session).await;
-                }
-            }));
         }
     }
 
@@ -799,7 +758,7 @@ impl SsoRequestService {
     }
 
     /// Resolve missing identity information for the selected session.
-    pub async fn refresh_current_session_identity(&self) -> Option<AuthoritySession> {
+    async fn refresh_current_session_identity(&self) -> Option<AuthoritySession> {
         let (current, epoch) = {
             let lifecycle = self.grants.lifecycle();
             (self.session_state.current()?, lifecycle.revision())
@@ -848,11 +807,103 @@ impl SsoRequestService {
     }
 }
 
+#[crate::platform::async_trait]
+impl HostSession for SsoRequestService {
+    /// Shared session holder for connection-status subscriptions.
+    fn session_state(&self) -> Arc<SessionState> {
+        self.session_state.clone()
+    }
+
+    /// Start or join the current pairing attempt.
+    #[instrument(skip_all, fields(runtime.method = "account.request_login", product = %product.product_id))]
+    async fn request_login(
+        &self,
+        product: &ProductContext,
+    ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
+        let _ = product;
+        if let Some(session) = self.session_state.current() {
+            self.auth_state
+                .connected(&connected_session_ui_info(&session));
+            return Ok(api::HostRequestLoginResponse::AlreadyConnected);
+        }
+
+        if let Some(waiter) = self.login_waiter() {
+            match waiter.await {
+                Ok(Ok(())) => {
+                    return Ok(if self.session_state.current().is_some() {
+                        api::HostRequestLoginResponse::AlreadyConnected
+                    } else {
+                        api::HostRequestLoginResponse::Rejected
+                    });
+                }
+                Ok(Err(reason)) => {
+                    return Err(CallError::Domain(api::HostRequestLoginError::Unknown {
+                        reason,
+                    }));
+                }
+                Err(_) => {
+                    return Err(CallError::Domain(api::HostRequestLoginError::Unknown {
+                        reason: "login waiter dropped".to_string(),
+                    }));
+                }
+            }
+        }
+
+        let mut login_owner = LoginInFlightOwner::new(self);
+        let login_generation = self.begin_login_attempt();
+        let outcome = match SsoPairingFlow::new(self, login_generation)
+            .request_session()
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                login_owner.finish(Err(login_error_reason(&err)));
+                return Err(err);
+            }
+        };
+        match outcome {
+            SsoPairingOutcome::Cancelled => {
+                login_owner.finish(Ok(()));
+                if self.session_state.current().is_some() {
+                    Ok(api::HostRequestLoginResponse::AlreadyConnected)
+                } else {
+                    Ok(api::HostRequestLoginResponse::Rejected)
+                }
+            }
+            SsoPairingOutcome::Success => {
+                login_owner.finish(Ok(()));
+                Ok(api::HostRequestLoginResponse::Success)
+            }
+        }
+    }
+
+    /// Revoke the paired session and notify its peer.
+    #[instrument(skip_all, fields(runtime.method = "account.disconnect"))]
+    async fn disconnect(&self) {
+        self.cancel_login();
+        let session = self.session_state.current();
+        self.clear_disconnected_session(true, None).await;
+        if let Some(session) = session {
+            let weak_self = self.weak_self.clone();
+            (self.spawner)(Box::pin(async move {
+                if let Some(host) = weak_self.upgrade() {
+                    let _ = channel::submit_disconnected_message(&host, &session).await;
+                }
+            }));
+        }
+    }
+
+    async fn primary_username(&self) -> Option<String> {
+        self.refresh_current_session_identity()
+            .await?
+            .primary_username()
+            .map(str::to_string)
+    }
+}
+
 fn login_error_reason(err: &CallError<HostRequestLoginError>) -> String {
     match err {
-        CallError::Domain(HostRequestLoginError::V1(api::HostRequestLoginError::Unknown {
-            reason,
-        }))
+        CallError::Domain(api::HostRequestLoginError::Unknown { reason })
         | CallError::HostFailure { reason } => reason.clone(),
         CallError::Unsupported => "login unsupported".to_string(),
         CallError::Denied => "login denied".to_string(),

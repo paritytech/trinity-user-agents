@@ -1,13 +1,13 @@
 //! Incoming SSO account requests and wallet grant responses.
 
-use super::signing_host::{wallet_allocate_grants, wallet_require_current_session};
 use std::sync::Arc;
 
 use futures::StreamExt;
 use tracing::warn;
 use truapi::latest as api;
 
-use super::signing_host::{AccountGrant, AllowanceAllocationError, WalletAccountHolder};
+use super::authority::{AccountGrant, AccountGrantOutcome};
+use super::signing_host::WalletAccountHolder;
 use crate::host_internal::sso_messages::{
     CreateAccountProofResponse, CreateTransactionLegacyPayload, CreateTransactionPayload,
     CreateTransactionRequest, CreateTransactionResponse, CreateTransactionWithLegacyAccountRequest,
@@ -49,7 +49,7 @@ impl SsoAccountHolderService {
 
     /// Require the activation that authenticated this peer.
     pub fn require_current_session(&self) -> Result<(), AuthorityError> {
-        wallet_require_current_session(&self.wallet, &self.session)
+        self.wallet.require_current_session(&self.session)
     }
 
     /// Apply a withdrawal without waiting behind the request it cancels.
@@ -263,15 +263,16 @@ impl SsoAccountHolderService {
         let mut failures = Vec::new();
         let payload = async {
             let count = request.resources.len();
-            let mut grants = match wallet_allocate_grants(
-                &self.wallet,
-                cx.account_invocation(Some(&request.calling_product_id)),
-                api::HostRequestResourceAllocationRequest {
-                    resources: request.resources,
-                },
-                request.on_existing,
-            )
-            .await
+            let mut grants = match self
+                .wallet
+                .allocate_grants(
+                    cx.account_invocation(Some(&request.calling_product_id)),
+                    api::HostRequestResourceAllocationRequest {
+                        resources: request.resources,
+                    },
+                    request.on_existing,
+                )
+                .await
             {
                 Ok(grants) => grants,
                 Err(AuthorityError::Rejected) => {
@@ -282,33 +283,42 @@ impl SsoAccountHolderService {
             let mut outcomes = Vec::with_capacity(count);
             while let Some(grant) = grants.next().await {
                 outcomes.push(match grant {
-                    Ok(grant) => SsoAllocationOutcome::Allocated(match grant {
-                        AccountGrant::StatementStore(allocation) => {
-                            SsoAllocatedResource::StatementStoreAllowance {
-                                slot_account_key: allocation.secret,
+                    Ok(AccountGrantOutcome::Allocated(grant)) => {
+                        SsoAllocationOutcome::Allocated(match grant {
+                            AccountGrant::StatementStore { key, .. } => {
+                                SsoAllocatedResource::StatementStoreAllowance {
+                                    slot_account_key: key.secret.to_vec(),
+                                }
                             }
-                        }
-                        AccountGrant::Bulletin(key) => SsoAllocatedResource::BulletinAllowance {
-                            slot_account_key: key.as_secret_bytes().to_vec(),
-                        },
-                        AccountGrant::SmartContract => SsoAllocatedResource::SmartContractAllowance,
-                        AccountGrant::AutoSigning(key) => SsoAllocatedResource::AutoSigning {
-                            product_root_private_key: *key.as_secret_bytes(),
-                            ring_vrf_domain_entropy: *key.ring_vrf_domain_entropy(),
-                        },
-                        AccountGrant::WalletAuthorization(_) => {
-                            unreachable!("remote wallet allocation exports a signing key")
-                        }
-                    }),
-                    Err(AllowanceAllocationError::Authority(
-                        error @ (AuthorityError::Disconnected | AuthorityError::Cancelled(_)),
-                    )) => return Err(error.to_string()),
-                    Err(error) => {
-                        let reason = error.to_string();
-                        warn!(%reason, "resource allocation item failed");
-                        failures.push(reason);
+                            AccountGrant::Bulletin(key) => {
+                                SsoAllocatedResource::BulletinAllowance {
+                                    slot_account_key: key.as_secret_bytes().to_vec(),
+                                }
+                            }
+                            AccountGrant::SmartContract => {
+                                SsoAllocatedResource::SmartContractAllowance
+                            }
+                            AccountGrant::AutoSigning(key) => SsoAllocatedResource::AutoSigning {
+                                product_root_private_key: *key.as_secret_bytes(),
+                                ring_vrf_domain_entropy: *key.ring_vrf_domain_entropy(),
+                            },
+                            AccountGrant::WalletAuthorization(_) => {
+                                unreachable!("remote wallet allocation exports a signing key")
+                            }
+                        })
+                    }
+                    Ok(AccountGrantOutcome::Rejected) => {
+                        failures.push(AuthorityError::Rejected.to_string());
                         SsoAllocationOutcome::NotAvailable
                     }
+                    Ok(AccountGrantOutcome::NotAvailable { reason }) => {
+                        if let Some(reason) = reason {
+                            warn!(%reason, "resource allocation item failed");
+                            failures.push(reason);
+                        }
+                        SsoAllocationOutcome::NotAvailable
+                    }
+                    Err(error) => return Err(error.to_string()),
                 });
             }
             Ok(outcomes)
@@ -403,7 +413,9 @@ impl SsoAccountHolderService {
         request: ProductSubtreeRequest,
     ) -> ProductSubtreeResponse {
         self.wallet
-            .product_subtree_public_key(&cx.call, &cx.session, request.product_id)
+            .product_subtree_public_key(cx.account_invocation(None), request.product_id)
+            .await
+            .map_err(|err| err.to_string())?
             .await
             .map_err(|err| err.to_string())
     }

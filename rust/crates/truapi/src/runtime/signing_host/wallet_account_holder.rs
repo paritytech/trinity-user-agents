@@ -6,20 +6,12 @@ mod allowance;
 mod allowance_renewal;
 #[cfg(test)]
 mod allowance_tests;
-pub use allowance::{
-    AccountGrant, AllowanceAllocationError, StatementStoreAllocation, current_unix_secs,
-};
+pub use allowance::AllowanceAllocationError;
 pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
 
-pub use account::{
-    derive_subtree_public_key, ring_vrf_providers, select_ring_vrf_provider,
-    selected_ring_vrf_provider,
-};
-pub use allowance::{
-    allocate_bulletin_allowance, allocate_grants, allocate_statement_store_allowance,
-};
+pub use account::derive_subtree_public_key;
 use allowance_renewal::track_statement_renewal_targets_for;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::{
@@ -29,8 +21,6 @@ pub use allowance_renewal::{
 };
 
 use crate::runtime::WalletAuthorization;
-#[cfg(feature = "test-host")]
-use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use truapi::latest::ProductAccountId;
 use zeroize::Zeroizing;
@@ -49,7 +39,8 @@ use crate::host_logic::sso::pairing::{
 };
 use crate::platform::normalize_product_identifier;
 use crate::runtime::authority::{
-    AuthorityError, AuthoritySession, AutoSigningGrant, authority_session_validation_id,
+    AccountHolder, AuthorityError, AuthoritySession, AutoSigningGrant,
+    authority_session_validation_id,
 };
 use crate::runtime::statement_allowance::collection::PersonhoodCollection;
 use crate::runtime::statement_allowance::{PersonhoodSigner, StatementAllowanceError};
@@ -66,9 +57,7 @@ pub struct WalletAccountHolder {
     ring_vrf_registry: Arc<crate::runtime::ring_vrf_registry::RingVrfRegistryStore>,
     renewal: allowance_renewal::RenewalState,
     #[cfg(feature = "test-host")]
-    grant_allowances_unchecked: std::sync::atomic::AtomicBool,
-    #[cfg(feature = "test-host")]
-    withheld_resources: Mutex<HashSet<String>>,
+    resource_controls: Arc<crate::runtime::test_resource_controls::TestResourceControls>,
     network_suffix: String,
     lifecycle: Mutex<WalletState>,
     session_state: Arc<SessionState>,
@@ -181,27 +170,30 @@ pub fn new_with_ring_resolver(
     services: Arc<crate::runtime::RuntimeServices>,
     network_suffix: String,
     ring_resolver: Arc<dyn super::ring_vrf::RingResolver>,
+    ring_vrf_registry: Arc<crate::runtime::ring_vrf_registry::RingVrfRegistryStore>,
 ) -> WalletAccountHolder {
     WalletAccountHolder {
         ring_resolver,
-        ..WalletAccountHolder::new(services, network_suffix)
+        ..WalletAccountHolder::new(services, network_suffix, ring_vrf_registry)
     }
 }
 
 impl WalletAccountHolder {
     /// Start locked, with no wallet secrets.
-    pub fn new(services: Arc<crate::runtime::RuntimeServices>, network_suffix: String) -> Self {
+    pub fn new(
+        services: Arc<crate::runtime::RuntimeServices>,
+        network_suffix: String,
+        ring_vrf_registry: Arc<crate::runtime::ring_vrf_registry::RingVrfRegistryStore>,
+    ) -> Self {
         Self {
             ring_resolver: super::ring_vrf::ChainRingResolver::new(services.chain.clone()),
-            ring_vrf_registry: crate::runtime::ring_vrf_registry::RingVrfRegistryStore::new(
-                services.platform.clone(),
-            ),
+            ring_vrf_registry,
             services,
             renewal: allowance_renewal::RenewalState::default(),
             #[cfg(feature = "test-host")]
-            grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
-            #[cfg(feature = "test-host")]
-            withheld_resources: Mutex::new(HashSet::new()),
+            resource_controls: Arc::new(
+                crate::runtime::test_resource_controls::TestResourceControls::default(),
+            ),
             network_suffix,
             lifecycle: Mutex::new(WalletState::default()),
             session_state: SessionState::new(),
@@ -226,7 +218,7 @@ impl WalletAccountHolder {
         session: &'a AuthoritySession,
     ) -> Result<WalletPersonhoodSigner<'a>, StatementAllowanceError> {
         let vrf = vrf::load().await.map_err(proof::vrf_error)?;
-        require_current_session(self, session)?;
+        self.require_current_session(session)?;
         Ok(WalletPersonhoodSigner {
             wallet: self,
             session,
@@ -242,7 +234,7 @@ impl WalletAccountHolder {
         account: &ProductAccountId,
         authorization: Option<&WalletAuthorization>,
     ) -> Result<AutoSigningGrant, AuthorityError> {
-        require_current_session(self, session)?;
+        self.require_current_session(session)?;
         if crate::runtime::authority::is_blessed_owner(
             calling_product_id,
             &account.dot_ns_identifier,
@@ -281,92 +273,17 @@ impl WalletAccountHolder {
     }
 }
 
-/// Whether allocation is answered as granted without performing it.
+/// Shared synthetic controls for the wallet and its native host.
 #[cfg(feature = "test-host")]
-pub fn grants_allowances_unchecked(wallet: &WalletAccountHolder) -> bool {
-    wallet
-        .grant_allowances_unchecked
-        .load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// Answer resource allocation as granted without performing it.
-#[cfg(feature = "test-host")]
-pub fn set_grant_allowances_unchecked(wallet: &WalletAccountHolder, granted: bool) {
-    wallet
-        .grant_allowances_unchecked
-        .store(granted, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Replace refused resource tags; SmartContractAllowance covers every index.
-#[cfg(feature = "test-host")]
-pub fn set_withheld_resources(wallet: &WalletAccountHolder, tags: Vec<String>) {
-    *wallet
-        .withheld_resources
-        .lock()
-        .expect("withheld resource mutex poisoned") = tags.into_iter().collect();
-}
-
-/// Whether `resource` is answered as refused.
-#[cfg(feature = "test-host")]
-pub fn withholds(
+pub fn resource_controls(
     wallet: &WalletAccountHolder,
-    resource: &truapi::latest::AllocatableResource,
-) -> bool {
-    let tag = match resource {
-        truapi::latest::AllocatableResource::StatementStoreAllowance => "StatementStoreAllowance",
-        truapi::latest::AllocatableResource::BulletinAllowance => "BulletinAllowance",
-        truapi::latest::AllocatableResource::SmartContractAllowance(_) => "SmartContractAllowance",
-        truapi::latest::AllocatableResource::AutoSigning => "AutoSigning",
-    };
-    wallet
-        .withheld_resources
-        .lock()
-        .expect("withheld resource mutex poisoned")
-        .contains(tag)
-}
-
-/// Withholding also applies to implicit native allowance access.
-#[cfg(feature = "test-host")]
-pub fn refuse_withheld(
-    wallet: &WalletAccountHolder,
-    resource: &truapi::latest::AllocatableResource,
-) -> Result<(), AuthorityError> {
-    if withholds(wallet, resource) {
-        return Err(AuthorityError::Rejected);
-    }
-    Ok(())
-}
-
-/// Reject a receipt issued for a different wallet, activation or product.
-pub fn validate_authorization(
-    wallet: &WalletAccountHolder,
-    session: &AuthoritySession,
-    product_id: &str,
-    authorization: &WalletAuthorization,
-) -> Result<(), AuthorityError> {
-    require_current_session(wallet, session)?;
-    if !wallet.authorization_matches(authorization, session, product_id) {
-        return Err(AuthorityError::Rejected);
-    }
-    Ok(())
+) -> &Arc<crate::runtime::test_resource_controls::TestResourceControls> {
+    &wallet.resource_controls
 }
 
 /// Connection-status subscriptions for the active wallet.
 pub fn session_state(wallet: &WalletAccountHolder) -> Arc<SessionState> {
     wallet.session_state.clone()
-}
-
-/// Reject work for a wallet activation that is no longer current.
-pub fn require_current_session(
-    wallet: &WalletAccountHolder,
-    session: &AuthoritySession,
-) -> Result<(), AuthorityError> {
-    wallet
-        .lifecycle
-        .lock()
-        .expect("wallet lifecycle mutex poisoned")
-        .require_session(wallet.session_state.current(), session)
-        .map(|_| ())
 }
 
 /// Verify both keys of an externally owned SSO transport.

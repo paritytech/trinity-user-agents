@@ -271,13 +271,17 @@ async fn establish_pairing_session(
         let statement = prepare_handshake_answer(&session, peer, &success)?;
         (session, statement)
     };
-    wallet_account_holder::require_current_session(&signing_host.wallet, &wallet_session)
+    signing_host
+        .wallet
+        .require_current_session(&wallet_session)
         .map_err(|error| error.to_string())?;
     services
         .statement_store
         .submit(statement, "sso-responder handshake")
         .await?;
-    wallet_account_holder::require_current_session(&signing_host.wallet, &wallet_session)
+    signing_host
+        .wallet
+        .require_current_session(&wallet_session)
         .map_err(|error| error.to_string())?;
     debug!("answered pairing handshake");
     // The submit is the earliest point the peer could read the answer.
@@ -347,7 +351,9 @@ pub async fn disconnect_paired_host(
         vec![message],
         fresh_statement_expiry(),
     )?;
-    wallet_account_holder::require_current_session(&signing_host.wallet, &wallet_session)
+    signing_host
+        .wallet
+        .require_current_session(&wallet_session)
         .map_err(|error| error.to_string())?;
     services
         .statement_store
@@ -428,7 +434,9 @@ pub async fn notify_pairing_allowance_allocation(
         .map_err(|error| error.to_string())?;
     let session = responder_session_from_identity(&identity, peer)?;
 
-    wallet_account_holder::require_current_session(&signing_host.wallet, &wallet_session)
+    signing_host
+        .wallet
+        .require_current_session(&wallet_session)
         .map_err(|error| error.to_string())?;
     let pending = v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation);
     submit_handshake_answer(
@@ -865,7 +873,6 @@ fn response_cli_summary(
 #[cfg(test)]
 mod tests {
     use super::super::LocalActivation;
-    use super::super::wallet_account_holder::current_unix_secs;
     use super::*;
     use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
     use crate::host_internal::sso_messages::{
@@ -878,6 +885,7 @@ mod tests {
         derive_identity_keypair, derive_product_subtree_keypair, derive_root_keypair_from_entropy,
     };
     use crate::host_logic::sso::pairing::derive_x25519_keypair_from_entropy;
+    use crate::runtime::allowances::current_unix_secs;
 
     /// The key a host advertises on chain must be the one it serves over
     /// pairing. These derive independently, so a test that asks only one of
@@ -910,7 +918,7 @@ mod tests {
     }
     use crate::host_logic::statement_store::decode_verified_statement_data;
     use crate::platform::{HostInfo, Platform, PlatformInfo, SigningHostConfig};
-    use crate::runtime::authority::ProductAuthority;
+    use crate::runtime::HostSession;
     use crate::runtime::services::RuntimeServices;
     use crate::test_support::{StubPlatform, test_spawner};
     use std::sync::Arc;
@@ -1044,10 +1052,15 @@ mod tests {
         // because it is catching a hang, not asserting latency.
         let allocation = futures::executor::block_on(async {
             let session = signing_host.account_holder().current_session().unwrap();
+            let call = truapi::CallContext::default();
             futures::select! {
-                result = wallet_account_holder::allocate_statement_store_allowance(&signing_host.wallet,
-                    &session,
-                    product_id,
+                result = signing_host.account_holder().ensure_allowance(
+                    crate::runtime::authority::AccountInvocation {
+                        call: &call,
+                        session: &session,
+                        caller: crate::runtime::authority::AccountCaller::Remote { product_id: Some(product_id) },
+                    },
+                    crate::runtime::allowances::AllowanceResource::StatementStore,
                     OnExistingAllowancePolicy::Ignore,
                 )
                 .fuse() => result,
@@ -1058,7 +1071,10 @@ mod tests {
         })
         .expect("an existing allowance is returned");
 
-        assert_eq!(allocation.secret, allowance.secret.to_bytes().to_vec());
+        let crate::runtime::authority::AccountGrant::StatementStore { key, .. } = allocation else {
+            panic!("expected a statement-store allowance");
+        };
+        assert_eq!(key.secret, allowance.secret.to_bytes());
 
         let sent = platform.sent_rpc.lock().expect("rpc list mutex poisoned");
         let methods: Vec<String> = sent

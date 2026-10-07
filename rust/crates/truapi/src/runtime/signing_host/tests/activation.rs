@@ -179,8 +179,9 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
     release.send(()).unwrap();
     let result = futures::executor::block_on(allocation);
     let status = authority
+        .accounts()
         .wallet_authorization(
-            &authority.current_operation().unwrap(),
+            &authority.accounts().current_operation().unwrap(),
             &ProductContext::new("myapp.dot".to_string()).unwrap(),
         )
         .map(|authorization| authorization.is_some());
@@ -227,6 +228,7 @@ fn wallet_change_during_ring_preparation_rejects_the_alias() {
                 caller: AccountCaller::Local {
                     product: &product,
                     authorization: None,
+                    outbound_review: None,
                 },
             },
             HostAccountGetAliasRequest {

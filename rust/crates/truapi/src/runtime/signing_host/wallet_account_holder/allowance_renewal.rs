@@ -5,8 +5,8 @@ use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode};
 use tracing::{debug, info, warn};
 
-use super::allowance::current_unix_secs;
-use super::{WalletAccountHolder, WalletKeys, require_current_session};
+use super::{WalletAccountHolder, WalletKeys};
+use crate::runtime::allowances::current_unix_secs;
 use crate::runtime::authority::{AccountHolder, AuthorityError, AuthoritySession};
 use crate::runtime::statement_allowance::renewal::{
     RenewalChainContext, ResolvedRenewalTarget, StatementRenewalReport, renew_targets,
@@ -228,9 +228,13 @@ pub async fn track_statement_renewal_targets_for(
         .map(StatementRenewalTarget::normalized)
         .collect::<Result<Vec<_>, _>>()?;
     let _guard = wallet.renewal.ledger_lock().lock().await;
-    require_current_session(wallet, session).map_err(|error| error.to_string())?;
+    wallet
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
     let mut entries = read_entries(wallet.services.platform.as_ref()).await?;
-    require_current_session(wallet, session).map_err(|error| error.to_string())?;
+    wallet
+        .require_current_session(session)
+        .map_err(|error| error.to_string())?;
     let mut changed = false;
     for target in targets {
         let entry = TrackedStatementRenewalTarget::new(target, session.public_key);
@@ -240,9 +244,13 @@ pub async fn track_statement_renewal_targets_for(
         }
     }
     if changed {
-        require_current_session(wallet, session).map_err(|error| error.to_string())?;
+        wallet
+            .require_current_session(session)
+            .map_err(|error| error.to_string())?;
         write_entries(wallet.services.platform.as_ref(), &entries).await?;
-        require_current_session(wallet, session).map_err(|error| error.to_string())?;
+        wallet
+            .require_current_session(session)
+            .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -254,9 +262,11 @@ impl WalletAccountHolder {
         session: &AuthoritySession,
     ) -> Result<(Vec<StatementRenewalTarget>, Vec<String>), String> {
         let _guard = self.renewal.ledger_lock().lock().await;
-        require_current_session(self, session).map_err(|error| error.to_string())?;
+        self.require_current_session(session)
+            .map_err(|error| error.to_string())?;
         let entries = read_entries(self.services.platform.as_ref()).await?;
-        require_current_session(self, session).map_err(|error| error.to_string())?;
+        self.require_current_session(session)
+            .map_err(|error| error.to_string())?;
         let (owned, foreign): (Vec<_>, Vec<_>) = entries
             .into_iter()
             .partition(|entry| entry.is_owned_by(session.public_key));
@@ -266,9 +276,11 @@ impl WalletAccountHolder {
             .collect();
         if !foreign.is_empty() {
             warn!(dropped = ?pruned, "pruning renewal targets promised by a previous identity");
-            require_current_session(self, session).map_err(|error| error.to_string())?;
+            self.require_current_session(session)
+                .map_err(|error| error.to_string())?;
             write_entries(self.services.platform.as_ref(), &owned).await?;
-            require_current_session(self, session).map_err(|error| error.to_string())?;
+            self.require_current_session(session)
+                .map_err(|error| error.to_string())?;
         }
         Ok((
             owned.into_iter().map(|entry| entry.target).collect(),
@@ -305,9 +317,13 @@ pub async fn untrack_statement_renewal_account(
         .current_session()
         .ok_or_else(|| AuthorityError::Disconnected.to_string())?;
     let _guard = wallet.renewal.ledger_lock().lock().await;
-    require_current_session(wallet, &session).map_err(|error| error.to_string())?;
+    wallet
+        .require_current_session(&session)
+        .map_err(|error| error.to_string())?;
     let mut entries = read_entries(wallet.services.platform.as_ref()).await?;
-    require_current_session(wallet, &session).map_err(|error| error.to_string())?;
+    wallet
+        .require_current_session(&session)
+        .map_err(|error| error.to_string())?;
     let original_len = entries.len();
     entries.retain(|entry| {
         entry.owner != Some(session.public_key)
@@ -322,9 +338,13 @@ pub async fn untrack_statement_renewal_account(
     if entries.len() == original_len {
         return Ok(false);
     }
-    require_current_session(wallet, &session).map_err(|error| error.to_string())?;
+    wallet
+        .require_current_session(&session)
+        .map_err(|error| error.to_string())?;
     write_entries(wallet.services.platform.as_ref(), &entries).await?;
-    require_current_session(wallet, &session).map_err(|error| error.to_string())?;
+    wallet
+        .require_current_session(&session)
+        .map_err(|error| error.to_string())?;
     Ok(true)
 }
 
@@ -340,7 +360,9 @@ pub async fn renew_statement_allowances(
         current_unix_secs().map_err(|err| err.to_string())?,
     );
     let (targets, pruned) = wallet.owned_targets(&session).await?;
-    require_current_session(wallet, &session).map_err(|err| err.to_string())?;
+    wallet
+        .require_current_session(&session)
+        .map_err(|err| err.to_string())?;
     let resolved = wallet
         .with_keys::<_, AuthorityError>(&session, |keys| Ok(resolve_targets(keys, &targets)))
         .map_err(|error| error.to_string())?;
@@ -398,7 +420,9 @@ pub async fn renew_statement_allowances(
         collections: &super::PersonhoodCollection::ALL,
         memberships: &memberships,
     };
-    require_current_session(wallet, &session).map_err(|err| err.to_string())?;
+    wallet
+        .require_current_session(&session)
+        .map_err(|err| err.to_string())?;
     let mut report = renew_targets(
         &context,
         period,
@@ -407,7 +431,9 @@ pub async fn renew_statement_allowances(
     )
     .await
     .map_err(|error| error.to_string())?;
-    require_current_session(wallet, &session).map_err(|err| err.to_string())?;
+    wallet
+        .require_current_session(&session)
+        .map_err(|err| err.to_string())?;
     report.pruned = pruned;
     Ok(report)
 }
@@ -499,7 +525,8 @@ mod tests {
             [0; 32],
             test_spawner(),
         );
-        let wallet = WalletAccountHolder::new(services, "paseo".to_string());
+        let registry = crate::runtime::RingVrfRegistryStore::new(services.platform.clone());
+        let wallet = WalletAccountHolder::new(services, "paseo".to_string(), registry);
         wallet_account_holder::install(
             &wallet,
             wallet_account_holder::prepare_activation(&wallet, vec![entropy; 32], None).unwrap(),

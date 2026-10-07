@@ -19,7 +19,8 @@ fn wallet(suffix: &str) -> WalletAccountHolder {
         [0; 32],
         test_spawner(),
     );
-    let wallet = WalletAccountHolder::new(services, suffix.to_string());
+    let registry = crate::runtime::RingVrfRegistryStore::new(services.platform.clone());
+    let wallet = WalletAccountHolder::new(services, suffix.to_string(), registry);
     wallet_account_holder::install(
         &wallet,
         wallet_account_holder::prepare_activation(&wallet, vec![7; 32], None).unwrap(),

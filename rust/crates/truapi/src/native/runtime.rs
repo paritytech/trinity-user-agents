@@ -67,11 +67,12 @@ impl NativeTrUApiHostRuntime {
             }
         })?;
         let directory = &runtime_config.database_directory;
-        let core_db = futures::executor::block_on(Db::open(core_db_config(directory))).map_err(
-            |err| NativeRuntimeConfigError::DatabaseUnavailable {
-                reason: format!("{}: {err}", directory.display()),
-            },
-        )?;
+        let core_db =
+            futures::executor::block_on(Db::open(core_db_config(directory))).map_err(|err| {
+                NativeRuntimeConfigError::DatabaseUnavailable {
+                    reason: format!("{}: {err}", directory.display()),
+                }
+            })?;
         let events = Arc::new(NativeEventBus::default());
         let platform = Arc::new(CallbackPlatform {
             callbacks: callbacks.clone(),
@@ -639,9 +640,12 @@ impl NativeProductExecution {
         }
     }
 
-    fn admin(&self) -> crate::HostAdmin {
-        self.runtime
-            .product_admin_with(self.product.clone(), self.adapters())
+    fn admin(&self) -> crate::HostAdmin<crate::runtime::WalletAccountHolder> {
+        crate::host_core::product_admin_with_adapters(
+            &self.runtime,
+            self.product.clone(),
+            self.adapters(),
+        )
     }
 
     fn require_chat(&self) -> Result<(), crate::ProductRuntimeError> {
@@ -900,8 +904,12 @@ impl NativeProductExecution {
         let adapters = self.adapters();
         let product_control = self.product_control.clone();
         let runtime_factory = Arc::new(move |sink| {
-            let product_runtime =
-                runtime.product_runtime_with(product.clone(), adapters.clone(), sink);
+            let product_runtime = crate::host_core::product_runtime_with_adapters(
+                &runtime,
+                product.clone(),
+                adapters.clone(),
+                sink,
+            );
             *product_control
                 .lock()
                 .expect("native product control mutex poisoned") = Some(product_runtime.control());
@@ -967,7 +975,8 @@ mod tests {
         execution: &NativeProductExecution,
     ) -> (crate::ProductRuntime, Receiver<ProtocolMessage>) {
         let (sender, receiver) = std::sync::mpsc::channel();
-        let runtime = execution.runtime.product_runtime_with(
+        let runtime = crate::host_core::product_runtime_with_adapters(
+            &execution.runtime,
             execution.product.clone(),
             execution.adapters(),
             Arc::new(ProductFrames(sender)),

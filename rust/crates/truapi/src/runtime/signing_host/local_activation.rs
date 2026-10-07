@@ -34,11 +34,8 @@ impl LocalActivation for SigningHost {
         let activation =
             wallet_account_holder::prepare_activation(&self.wallet, secret, lite_username)?;
         let session = {
-            let mut state = self
-                .local_grants
-                .lock()
-                .expect("local AutoSigning grant mutex poisoned");
-            state.clear_grants();
+            let mut state = self.grants.lifecycle();
+            state.clear_memory();
             wallet_account_holder::install(&self.wallet, activation)
         };
         self.auth_state

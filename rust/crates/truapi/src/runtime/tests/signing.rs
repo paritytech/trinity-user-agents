@@ -663,7 +663,7 @@ fn gated_create_transaction(
     request_id: &str,
 ) -> (
     Arc<StubPlatform>,
-    ProductRuntimeHost,
+    ProductRuntimeHost<SsoAccountHolderClient>,
     CallContext,
     futures::channel::oneshot::Sender<()>,
 ) {

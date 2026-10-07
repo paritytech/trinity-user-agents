@@ -20,7 +20,13 @@ fn approving_platform() -> Arc<StubPlatform> {
 }
 
 /// A product runtime on a signing host with a local session.
-fn activated(unchecked: bool, withheld: &[&str]) -> (ProductRuntimeHost, Arc<SigningHostRole>) {
+fn activated(
+    unchecked: bool,
+    withheld: &[&str],
+) -> (
+    ProductRuntimeHost<WalletAccountHolder>,
+    Arc<SigningHostRole>,
+) {
     let (services, activation) = signing_runtime_with_platform(approving_platform());
     futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
         .expect("activation succeeds");
@@ -30,9 +36,12 @@ fn activated(unchecked: bool, withheld: &[&str]) -> (ProductRuntimeHost, Arc<Sig
 }
 
 fn submit(
-    runtime: &ProductRuntimeHost,
+    runtime: &ProductRuntimeHost<WalletAccountHolder>,
     value: &[u8],
-) -> Result<RemotePreimageSubmitResponse, CallError<truapi::versioned::preimage::RemotePreimageSubmitError>> {
+) -> Result<
+    RemotePreimageSubmitResponse,
+    CallError<truapi::versioned::preimage::RemotePreimageSubmitError>,
+> {
     futures::executor::block_on(Preimage::submit(
         runtime,
         &CallContext::default(),
@@ -77,7 +86,8 @@ fn a_withheld_bulletin_allowance_still_refuses_the_submit() {
         error,
         CallError::Domain(truapi::versioned::preimage::RemotePreimageSubmitError::V1(
             v01::PreimageSubmitError::Unknown {
-                reason: "Bulletin allowance allocation was rejected by the signing host".to_string(),
+                reason: "Bulletin allowance allocation was rejected by the signing host"
+                    .to_string(),
             }
         ))
     );
@@ -88,9 +98,9 @@ fn a_signing_host_sends_preimages_to_the_chain_unless_told_or_unchecked() {
     let (_, checked) = activated(false, &[]);
     let (_, unchecked) = activated(true, &[]);
     let (_, told) = activated(false, &[]);
-    told.set_submit_preimages_locally(true);
+    told.accounts().set_submit_preimages_locally(true);
 
-    assert!(!ProductAuthority::submits_preimages_locally(&*checked));
-    assert!(ProductAuthority::submits_preimages_locally(&*unchecked));
-    assert!(ProductAuthority::submits_preimages_locally(&*told));
+    assert!(!checked.accounts().submits_preimages_locally());
+    assert!(unchecked.accounts().submits_preimages_locally());
+    assert!(told.accounts().submits_preimages_locally());
 }

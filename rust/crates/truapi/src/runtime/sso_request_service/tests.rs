@@ -75,8 +75,8 @@ fn replacement_waits_for_old_session_cleanup() {
         core_storage_override: Some(storage.clone()),
         ..Default::default()
     });
-    let (_, host) = ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
-    let host = host.sso_for_tests();
+    let (_, _, host) =
+        ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
     let session = sso_session_info();
     block_on(host.set_connected_session_for_tests(session.clone()));
     let root =
@@ -170,8 +170,7 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
             core_storage_override: Some(storage.clone()),
             ..Default::default()
         });
-        let (_, host) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
-        let host = host.sso_for_tests();
+        let (_, _, host) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
         let session = sso_session_info();
         block_on(host.set_connected_session_for_tests(session.clone()));
         let blob = encode_persisted_session(&session);
@@ -186,7 +185,7 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
             block_on(storage.write_core_storage(key, blob.clone())).unwrap();
         }
         let cache_key = (
-            SsoSessionKey::from_session(session.sso.as_ref().unwrap()),
+            allowances::GrantScope::from_session(&session),
             "myapp.dot".to_string(),
         );
         let revision = host.grants.lifecycle().revision();
@@ -244,8 +243,7 @@ fn superseded_login_cannot_leave_its_session_in_storage() {
             core_storage_override: Some(storage.clone()),
             ..Default::default()
         });
-        let (_, host) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
-        let host = host.sso_for_tests();
+        let (_, _, host) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
         let session = sso_session_info();
         let generation = host.begin_login_attempt();
         let (release, pause) = oneshot::channel();
@@ -297,8 +295,7 @@ fn login_store_notifications_follow_the_persisted_value() {
             core_storage_override: Some(storage.clone()),
             ..Default::default()
         });
-        let (_, host) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
-        let host = host.sso_for_tests();
+        let (_, _, host) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
         let session = sso_session_info();
         let generation = host.begin_login_attempt();
         let (release, pause) = oneshot::channel();
