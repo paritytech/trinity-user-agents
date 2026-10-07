@@ -9,8 +9,6 @@ import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.parity.truapi.WebSocketChainProvider
@@ -40,21 +38,23 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import timber.log.Timber
-import uniffi.truapi.HostDevicePermissionRequest
-import uniffi.truapi.HostFeatureSupportedRequest
-import uniffi.truapi.HostPushNotificationRequest
-import uniffi.truapi.HostThemeSubscribeItem
-import uniffi.truapi.RemotePermission
-import uniffi.truapi.ThemeName
 import uniffi.truapi.AuthState
 import uniffi.truapi.HostChainSet
-import uniffi.truapi.UserConfirmationReview
+import uniffi.truapi.HostDevicePermissionRequest
+import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostNavigateToException
+import uniffi.truapi.HostPushNotificationRequest
 import uniffi.truapi.HostRejection
+import uniffi.truapi.HostThemeSubscribeItem
+import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.RemotePermission
+import uniffi.truapi.ThemeName
+import uniffi.truapi.UserConfirmationReview
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
-import uniffi.truapi.ThemeVariant as NativeThemeVariant
 import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
+import uniffi.truapi.ThemeVariant as NativeThemeVariant
 
 /**
  * Native platform callbacks ([io.parity.truapi.HostBridge]) for one product
@@ -73,6 +73,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val hostApiInteractor: HostApiInteractor,
     @param:TrUAPIChainHttpClient private val chainHttpClient: OkHttpClient,
     private val encryptedPreferences: EncryptedPreferences,
+    private val coreStorage: EncryptedHostCoreStorage,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
     private val dotNsTldProvider: DotNsTldProvider,
@@ -126,7 +127,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override val storage: HostStorage =
             EncryptedHostStorage(encryptedPreferences, callingProductId.value)
 
-        override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
+        override val coreStorage: HostCoreStorage = this@ProductTrUAPIHostBridge.coreStorage
 
         override fun onCoreLog(marker: String, detail: String) {
             Timber.tag("truapi.core").d("%s: %s", marker, detail)

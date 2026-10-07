@@ -106,7 +106,7 @@ private func makeBridge(
         chainRegistry: chainRegistry,
         chainConnections: pool,
         productStorage: productStorage,
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
+        coreStorage: CoreStorageBackend.create(defaults: makeTestDefaults(), keychain: InMemoryKeychain()),
         confirmationPresenter: confirmationPresenter,
         preimageCache: preimageCache,
         hostProvider: hostProvider,
@@ -600,7 +600,7 @@ struct RustRuntimeBridgeTests {
                 productId: "test.dot",
                 defaults: makeTestDefaults()
             ),
-            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
+            coreStorage: CoreStorageBackend.create(defaults: makeTestDefaults(), keychain: InMemoryKeychain()),
             confirmationPresenter: MockConfirmationPresenter(),
             preimageCache: TrUAPIPreimageCache { _ in nil },
             hostProvider: StubHostProvider(),
@@ -634,7 +634,7 @@ struct RustRuntimeBridgeTests {
     /// a write then read round-trips through the hex key.
     @Test func coreStorageBackendHexEncodesKeys() throws {
         let bridge = makeBridge()
-        let key = Data([0xDE, 0xAD])
+        let key = Data([4])
         let value = Data([0x01, 0x02, 0x03])
 
         try bridge.coreStorage.write(key: key, value: value)

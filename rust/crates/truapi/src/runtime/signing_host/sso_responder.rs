@@ -1781,7 +1781,7 @@ mod tests {
         let answer = service.answer(allocation_request("remote-reset"));
         futures::pin_mut!(answer);
         assert!(answer.as_mut().now_or_never().is_none());
-        signing_host.clear_product_state("myapp.dot").unwrap();
+        futures::executor::block_on(signing_host.clear_product_state("myapp.dot")).unwrap();
         release.send(()).unwrap();
         let Ok(Dispatch::Response(answer)) = futures::executor::block_on(answer) else {
             panic!("expected an allocation response")

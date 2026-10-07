@@ -1,6 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
-import uniffi.truapi.ProductExecutionKind
+import io.mockk.mockk
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
@@ -23,6 +23,7 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
 import org.mockito.stubbing.Answer
 import uniffi.truapi.HostRejection
+import uniffi.truapi.ProductExecutionKind
 
 class ProductTrUAPIHostBridgeTest {
     // The core refuses the open: an unavailable loopback port, or an execution config it rejects.
@@ -35,6 +36,7 @@ class ProductTrUAPIHostBridgeTest {
         hostApiInteractor = mock(HostApiInteractor::class.java),
         chainHttpClient = OkHttpClient(),
         encryptedPreferences = mock(EncryptedPreferences::class.java),
+        coreStorage = mockk(),
         confirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
         appLifecycleObserver = mock(AppLifecycleObserver::class.java),
         dotNsTldProvider = mock(DotNsTldProvider::class.java),

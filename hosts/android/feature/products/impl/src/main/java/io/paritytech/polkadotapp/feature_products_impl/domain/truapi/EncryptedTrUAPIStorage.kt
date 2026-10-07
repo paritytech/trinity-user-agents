@@ -2,10 +2,17 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
+import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
-import uniffi.truapi.HostRejection
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.HostRejection
 import java.text.Normalizer
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Product-scoped storage for the Rust core, encrypted at rest.
@@ -38,35 +45,43 @@ class EncryptedHostStorage(
         productStorageKeyOwner(key)?.takeUnless { it == normalizedProductId } ?: productId
 }
 
-/**
- * Core-owned storage: auth session, pairing identity, and persisted permission
- * decisions.
- *
- * Deliberately *not* product-scoped. The pairing identity belongs to the user,
- * not to a product, and scoping it per product would make every product demand
- * its own pairing. The core disambiguates internally through the SCALE-encoded
- * `CoreStorageKey` it passes here.
- */
-class EncryptedHostCoreStorage(
+@Singleton
+class EncryptedHostCoreStorage @Inject constructor(
     private val preferences: EncryptedPreferences,
+    private val backing: Preferences,
 ) : HostCoreStorage {
-    override suspend fun read(key: ByteArray): ByteArray? = readValue(preferences, qualify(key))
+    private val mutex = Mutex()
 
-    override suspend fun write(key: ByteArray, value: ByteArray) {
-        writeValue(preferences, qualify(key), value)
-            ?.let { throw HostRejection.Rejected("core storage: $it") }
+    override suspend fun read(key: ByteArray): ByteArray? = withStorage {
+        val stored = preferences.getDecryptedStringOrThrow(qualify(key))
+        if (stored == null) {
+            null
+        } else {
+            require(stored.startsWith(VALUE_TAG)) { "Invalid core storage value encoding" }
+            requireNotNull(decodeOrNull(stored.removePrefix(VALUE_TAG))) { "Invalid core storage bytes" }
+        }
     }
 
-    override suspend fun clear(key: ByteArray) {
-        runCatching { preferences.removeKey(qualify(key)) }
-            .getOrElse { throw HostRejection.Rejected("failed to clear core storage key: ${it.message}") }
+    override suspend fun write(key: ByteArray, value: ByteArray) = withStorage {
+        preferences.putEncryptedStringCommitted(qualify(key), VALUE_TAG + value.toHex())
     }
 
-    private fun qualify(key: ByteArray) = "$CORE_NAMESPACE/${key.toHex()}"
-
-    private companion object {
-        const val CORE_NAMESPACE = "truapi/core"
+    override suspend fun clear(key: ByteArray) = withStorage {
+        preferences.removeKeyCommitted(qualify(key))
     }
+
+    private suspend fun <T> withStorage(operation: () -> T): T = mutex.withLock {
+        currentCoroutineContext().ensureActive()
+        try {
+            // A failed commit can leave newer data visible in SharedPreferences memory.
+            check(backing.edit().commit()) { "Core storage persistence is unavailable" }
+            operation()
+        } catch (error: Exception) {
+            throw HostRejection.Rejected("Core storage: ${error.message}")
+        }
+    }
+
+    private fun qualify(key: ByteArray) = "truapi/core/${key.toHex()}"
 }
 
 /** Namespace for one product's core-facing local storage. */

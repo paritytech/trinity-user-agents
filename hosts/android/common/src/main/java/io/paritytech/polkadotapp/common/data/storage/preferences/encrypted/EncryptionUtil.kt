@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.common.data.storage.preferences.encrypted
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import androidx.core.content.edit
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.bouncycastle.util.Arrays
 import org.bouncycastle.util.encoders.Base64
@@ -35,7 +34,6 @@ class EncryptionUtil @Inject constructor(
         private const val MGF_NAME = "MGF1"
         private const val BLOCK_SIZE = 16
         private const val AES_KEY_LENGTH = 256
-        private var second = false
 
         private var privateKey: PrivateKey? = null
         private var publicKey: PublicKey? = null
@@ -43,10 +41,6 @@ class EncryptionUtil @Inject constructor(
         private const val SECRET_KEY = "secret_key"
         private val secureRandom = SecureRandom()
         private var keyStore: KeyStore? = null
-    }
-
-    init {
-        initKeystore()
     }
 
     private val oaepParam = OAEPParameterSpec(MD_NAME, MGF_NAME, MGF1ParameterSpec.SHA1, PSource.PSpecified.DEFAULT)
@@ -63,39 +57,34 @@ class EncryptionUtil @Inject constructor(
         val encryptedKey =
             context.getSharedPreferences(KEY_ALIAS, Context.MODE_PRIVATE).getString(
                 SECRET_KEY,
-                "",
+                null,
             )
-        if (encryptedKey!!.isEmpty()) {
+        check(encryptedKey == null || encryptedKey.isNotEmpty()) { "Persisted preference key is corrupt" }
+        initKeystore(hasWrappedKey = encryptedKey != null)
+        if (encryptedKey == null) {
             val keyGenerator = KeyGenerator.getInstance(AES)
             keyGenerator.init(AES_KEY_LENGTH, secureRandom)
             secretKey = keyGenerator.generateKey()
-            context.getSharedPreferences(KEY_ALIAS, Context.MODE_PRIVATE)
-                .edit { putString(SECRET_KEY, encryptRsa(secretKey.encoded)) }
         } else {
-            val key = decryptRsa(encryptedKey)
-            secretKey = SecretKeySpec(key, 0, key!!.size, AES)
+            val key = checkNotNull(decryptRsa(encryptedKey)) { "Persisted preference key could not be decrypted" }
+            check(key.size == AES_KEY_LENGTH / 8) { "Persisted preference key has an invalid length" }
+            secretKey = SecretKeySpec(key, AES)
         }
+        val wrappedKey = encryptedKey ?: encryptRsa(secretKey.encoded)
+        check(wrappedKey.isNotEmpty()) { "Preference key protection failed" }
+        check(context.getSharedPreferences(KEY_ALIAS, Context.MODE_PRIVATE)
+            .edit().putString(SECRET_KEY, wrappedKey).commit()) { "Preference key was not committed" }
         return secretKey
     }
 
-    private fun initKeystore() {
-        try {
-            keyStore = KeyStore.getInstance(KEY_STORE_PROVIDER)
-            keyStore!!.load(null)
-
-            if (keyStore!!.getKey(KEY_ALIAS, null) == null) {
-                createKeys()
-            }
-
-            privateKey = keyStore!!.getKey(KEY_ALIAS, null) as PrivateKey
-            publicKey = keyStore!!.getCertificate(KEY_ALIAS).publicKey
-        } catch (e: Exception) {
-            if (!second) {
-                second = true
-                initKeystore()
-            }
-            Timber.e(e)
+    private fun initKeystore(hasWrappedKey: Boolean) {
+        keyStore = KeyStore.getInstance(KEY_STORE_PROVIDER).also { it.load(null) }
+        if (keyStore!!.getKey(KEY_ALIAS, null) == null) {
+            check(!hasWrappedKey) { "Keystore protection key is missing for existing encrypted preferences" }
+            createKeys()
         }
+        privateKey = keyStore!!.getKey(KEY_ALIAS, null) as PrivateKey
+        publicKey = checkNotNull(keyStore!!.getCertificate(KEY_ALIAS)) { "Keystore protection certificate is missing" }.publicKey
     }
 
     private fun createKeys() {
@@ -118,6 +107,12 @@ class EncryptionUtil @Inject constructor(
         keyPairGenerator.initialize(spec)
         keyPairGenerator.generateKeyPair()
     }
+
+    internal fun encryptOrThrow(cleartext: String): String =
+        Base64.toBase64String(encrypt(getPrerenceAesKey().encoded, cleartext.toByteArray()))
+
+    internal fun decryptOrThrow(encryptedBase64: String): String =
+        String(decrypt(getPrerenceAesKey().encoded, Base64.decode(encryptedBase64)))
 
     fun encrypt(cleartext: String?): String {
         if (!cleartext.isNullOrEmpty()) {

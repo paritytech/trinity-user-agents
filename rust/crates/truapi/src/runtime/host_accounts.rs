@@ -409,11 +409,71 @@ impl<H: AccountHolder> HostAccounts<H> {
         }
     }
 
-    /// Forget only the dated statement grant whose key was rejected.
-    pub fn forget_statement_store_allowance_key(&self, product_id: &str, public_key: [u8; 32]) {
-        self.grants
-            .lifecycle()
-            .forget_statement_store_allowance(product_id, public_key);
+    /// Snapshot the dated grant whose submitted key can later be rejected.
+    pub async fn statement_store_allowance_period(
+        &self,
+        operation: &HostOperation,
+        product_id: &str,
+        public_key: [u8; 32],
+    ) -> Result<Option<u32>, AuthorityError> {
+        let snapshot = async {
+            let (session, revision) = self.operation_session(operation)?;
+            if session.sso.is_some() {
+                return Ok(None);
+            }
+            let allowance = self
+                .grants
+                .cached_statement_store_allowance_key(
+                    &self.session_state,
+                    &session,
+                    revision,
+                    product_id,
+                )
+                .await?;
+            self.require_current_operation(operation)?;
+            Ok(allowance.and_then(|(period, key)| {
+                if key.public_key == public_key {
+                    period
+                } else {
+                    None
+                }
+            }))
+        }
+        .await;
+        match snapshot {
+            Err(AuthorityError::Disconnected) => Ok(None),
+            result => result,
+        }
+    }
+
+    /// Persist rejection only for the original wallet, key and allocation period.
+    pub async fn forget_statement_store_allowance_key(
+        &self,
+        operation: &HostOperation,
+        product_id: &str,
+        public_key: [u8; 32],
+        period: u32,
+    ) -> Result<(), AuthorityError> {
+        {
+            let mut lifecycle = match self.hold_operation(operation) {
+                Err(AuthorityError::Disconnected) => return Ok(()),
+                result => result?,
+            };
+            let session = self
+                .session_state
+                .current()
+                .ok_or(AuthorityError::Disconnected)?;
+            if session.sso.is_some() {
+                return Ok(());
+            }
+            lifecycle.forget_statement_store_allowance(&session, product_id, public_key, period);
+        }
+        let storage = self.grants.persistence().await;
+        storage.begin_cleanup();
+        storage
+            .drain_cleanup()
+            .await
+            .map_err(|reason| AuthorityError::Unavailable { reason })
     }
 
     /// Reuse a retained Bulletin key without contacting its issuer.

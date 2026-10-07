@@ -5,15 +5,12 @@ import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
-import uniffi.truapi.HostRuntimeConfig
 import io.parity.truapi.HostStorage
-import uniffi.truapi.ProductExecutionConfig
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
-import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -40,15 +37,17 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import timber.log.Timber
-import uniffi.truapi.HostDevicePermissionRequest
-import uniffi.truapi.HostFeatureSupportedRequest
-import uniffi.truapi.RemotePermission
 import uniffi.truapi.AuthState
 import uniffi.truapi.HostChainSet
-import uniffi.truapi.PermissionDecision
-import uniffi.truapi.UserConfirmationReview
-import uniffi.truapi.HostNavigateToException
+import uniffi.truapi.HostDevicePermissionRequest
+import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.HostNavigateToException
+import uniffi.truapi.HostRuntimeConfig
+import uniffi.truapi.PermissionDecision
+import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.RemotePermission
+import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.WorkerTransition
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
@@ -68,7 +67,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val localSessionSource: TrUAPILocalSessionSource,
     private val accountRepository: AccountRepository,
     private val dotNsTldProvider: DotNsTldProvider,
-    private val encryptedPreferences: EncryptedPreferences,
+    private val coreStorage: EncryptedHostCoreStorage,
     @param:TrUAPIChainHttpClient private val chainHttpClient: OkHttpClient,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
@@ -210,7 +209,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private inner class HostRuntimeBridge : HostBridge {
         override val storage: HostStorage = HostLevelStorage
 
-        override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
+        override val coreStorage: HostCoreStorage = this@TrUAPIHostRuntimeProvider.coreStorage
 
         override fun onCoreLog(marker: String, detail: String) {
             Timber.tag("truapi.core").d("%s: %s", marker, detail)

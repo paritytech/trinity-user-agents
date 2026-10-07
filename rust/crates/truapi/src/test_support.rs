@@ -80,6 +80,8 @@ pub type StorageWriteHook = Arc<dyn Fn() + Send + Sync>;
 /// can exercise its delegation paths without pulling in a real backend.
 #[derive(Default)]
 pub struct StubPlatform {
+    /// Delay completion after a durable core write takes effect.
+    pub core_storage_write_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     pub device_permission_decisions:
         Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
     pub device_permission_requests: Mutex<Vec<v01::HostDevicePermissionRequest>>,
@@ -1138,6 +1140,10 @@ impl PlatformCoreStorage for StubPlatform {
             .lock()
             .expect("local storage mutex poisoned")
             .insert(core_storage_test_key(key), value);
+        let gate = self.core_storage_write_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
         Ok(())
     }
 

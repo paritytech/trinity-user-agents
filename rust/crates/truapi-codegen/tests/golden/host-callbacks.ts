@@ -202,7 +202,11 @@ export type CoreStorageKey =
    * core honours it for a bounded lifetime, which is what makes a revoked
    * trust grant eventually take effect.
    */
-  | { tag: "ProductManifest"; value: { productId: string } };
+  | { tag: "ProductManifest"; value: { productId: string } }
+  /**
+   * Native allowance grants indexed by wallet, product and resource within the value.
+   */
+  | { tag: "NativeAllowanceKeys"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -757,6 +761,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
       ProductManifest: S.Struct({ productId: S.str }) as S.Codec<{
         productId: string;
       }>,
+      NativeAllowanceKeys: S._void,
     }),
 );
 
@@ -1339,6 +1344,10 @@ export interface CoreAdmin {
 
 /**
  * Host-private persistence for core-owned state.
+ *
+ * Secret slots require protected storage. Only absence returns ``undefined``; failures
+ * must propagate. Successful secret writes and clears are durable and ordered
+ * after earlier writes, including writes whose awaiting task was cancelled.
  *
  * Clearing product-indexed slots is the host's job. The core drops the ones
  * it is holding when a session ends, but a product it never opened this run
