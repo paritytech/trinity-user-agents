@@ -2576,7 +2576,7 @@ fn a_test_host_settles_a_funding_session_once() {
 }
 
 /// A Worker manifest serving card payments in and crypto in and out.
-const RAMP_MANIFEST: &str = r#"{"$v":2,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"]}],"quote":{"via":"worker"}}}}"#;
+const RAMP_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"]}],"quote":{"via":"worker"}}}}"#;
 
 /// Offer `provider_id` as a funding provider publishing `manifest`.
 fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: &str) {

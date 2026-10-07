@@ -140,7 +140,7 @@ mod tests {
 
     fn manifest(routes: &str) -> String {
         format!(
-            r#"{{"$v":2,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{{"funding":{{"routes":[{routes}],"quote":{{"via":"worker"}}}}}}}}"#
+            r#"{{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{{"funding":{{"routes":[{routes}],"quote":{{"via":"worker"}}}}}}}}"#
         )
     }
 
