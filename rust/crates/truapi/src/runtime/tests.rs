@@ -3958,6 +3958,72 @@ fn handle_avatars_render_personal_profiles_without_reviving_removed_contacts_on_
     );
 }
 
+/// A published page that is not a Chat app names its owner by peer identity:
+/// only a viewer the owner granted personally gets the owner's avatar drawn,
+/// and the page cannot tell, because the answer is the same either way.
+#[test]
+fn peer_avatars_draw_personal_profiles_for_pages_that_are_not_chat() {
+    use truapi::latest::{ContactAvatarSlot, ProfileContact};
+    let platform = stub_platform();
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let page = ProductContext::new("alice.paseo".to_string()).expect("valid product");
+    let host = signed_in(avatar_host(&platform, page, &avatars), WALLET);
+    let granted = [0xa1; 32];
+    futures::executor::block_on(profile::record_personal_received_reference(
+        platform.as_ref(),
+        owner_of(&host),
+        granted,
+        "seity.dot".into(),
+        1,
+        1,
+        Some(CONTACTS_REFERENCE.into()),
+    ))
+    .unwrap();
+    let place = |peers: &[[u8; 32]]| {
+        futures::executor::block_on(Profile::place_contact_avatars(
+            &host,
+            &CallContext::default(),
+            HostProfilePlaceContactAvatarsRequest::V3(
+                truapi::latest::HostProfilePlaceContactAvatarsRequest {
+                    surface_width: 360,
+                    surface_height: 640,
+                    own: None,
+                    slots: peers
+                        .iter()
+                        .enumerate()
+                        .map(|(index, &peer_identity)| ContactAvatarSlot {
+                            slot: index as u32,
+                            contact: ProfileContact::Peer { peer_identity },
+                            rect: avatar_rect(16, 80 + 56 * index as i32, 44),
+                            clip: AVATAR_CLIP,
+                        })
+                        .collect(),
+                },
+            ),
+        ))
+    };
+
+    let stranger = [0xb2; 32];
+    assert_eq!(
+        place(&[granted, stranger]),
+        Ok(HostProfilePlaceContactAvatarsResponse::V3)
+    );
+    assert_eq!(
+        place(&[stranger]),
+        Ok(HostProfilePlaceContactAvatarsResponse::V3)
+    );
+    assert_eq!(
+        avatars.wait_for(2),
+        vec![
+            (
+                "alice.paseo".to_string(),
+                placed_avatars(vec![placed_avatar(0, CONTACTS_REFERENCE)])
+            ),
+            ("alice.paseo".to_string(), placed_avatars(Vec::new())),
+        ]
+    );
+}
+
 #[test]
 fn handle_avatar_redraw_does_not_resolve_under_a_signed_out_wallet() {
     let platform = stub_platform();
