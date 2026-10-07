@@ -72,7 +72,15 @@ fn an_unchecked_test_host_answers_a_submit_with_the_content_key_and_serves_it_ba
 fn a_withheld_bulletin_allowance_still_refuses_the_submit() {
     let (runtime, _) = activated(true, &["BulletinAllowance"]);
 
-    assert!(submit(&runtime, b"refused").is_err());
+    let error = submit(&runtime, b"refused").expect_err("the withheld allowance refuses it");
+    assert_eq!(
+        error,
+        CallError::Domain(truapi::versioned::preimage::RemotePreimageSubmitError::V1(
+            v01::PreimageSubmitError::Unknown {
+                reason: "Bulletin allowance allocation was rejected by the signing host".to_string(),
+            }
+        ))
+    );
 }
 
 #[test]

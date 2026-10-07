@@ -1260,6 +1260,12 @@ impl WasmSigningHostRuntime {
     /// withheld while the rest stay granted. The tag is the
     /// `AllocatableResource` variant name, so `SmartContractAllowance`
     /// withholds every derivation index.
+    #[cfg(feature = "test-host")]
+    #[wasm_bindgen(js_name = setWithheldResources)]
+    pub fn set_withheld_resources(&self, tags: Vec<String>) {
+        self.runtime.set_withheld_resources(tags);
+    }
+
     /// Keep preimage submissions in the core instead of the Bulletin chain.
     ///
     /// For a test host whose wallet answers allowances in-page: the Bulletin
@@ -1271,12 +1277,6 @@ impl WasmSigningHostRuntime {
     #[wasm_bindgen(js_name = setSubmitPreimagesLocally)]
     pub fn set_submit_preimages_locally(&self, local: bool) {
         self.runtime.set_submit_preimages_locally(local);
-    }
-
-    #[cfg(feature = "test-host")]
-    #[wasm_bindgen(js_name = setWithheldResources)]
-    pub fn set_withheld_resources(&self, tags: Vec<String>) {
-        self.runtime.set_withheld_resources(tags);
     }
 
     /// Build a shared signing runtime from host callbacks and host config.

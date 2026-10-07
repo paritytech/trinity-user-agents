@@ -92,9 +92,9 @@ export interface WorkerPairingHostRuntime {
   /**
    * Answer resource allocation as granted without performing it.
    *
-   * Test hosts only, on a core built with `test-host`. Nothing reaches a chain:
-   * preimage submissions stay in the core and are served back from its lookup
-   * cache, since the Bulletin allowance was never authorized on chain.
+   * Test hosts only, on a core built with `test-host`. No allowance is
+   * allocated, so preimage submissions also stay in the core: the Bulletin
+   * allowance was never authorized on chain to submit with.
    */
   setGrantAllowancesUnchecked(granted: boolean): Promise<void>;
   /**

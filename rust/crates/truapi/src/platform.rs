@@ -3203,9 +3203,7 @@ pub trait LocaleHost: Send + Sync {
 
 /// Host preimage backend. The core builds, signs, and submits the Bulletin
 /// `TransactionStorage.store` transaction itself; the host only owns preimage
-/// content retrieval (P2P/IPFS lookup). A test host can keep submissions in the
-/// core instead (`setSubmitPreimagesLocally`, implied by granting allowances
-/// unchecked), since it holds no Bulletin authorization to submit with.
+/// content retrieval (P2P/IPFS lookup).
 #[async_trait]
 pub trait PreimageHost: Send + Sync {
     /// Emits current value/miss immediately, then future updates.

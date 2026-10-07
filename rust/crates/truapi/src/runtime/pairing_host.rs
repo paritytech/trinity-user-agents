@@ -265,7 +265,7 @@ pub struct PairingHost {
     /// Bulletin chain. A test host whose wallet answers allowances in-page
     /// holds no on-chain authorization to submit with.
     #[cfg(feature = "test-host")]
-    submit_preimages_locally: std::sync::atomic::AtomicBool,
+    submit_preimages_locally: core::sync::atomic::AtomicBool,
     #[cfg(test)]
     external_session_activation_pause: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
     /// Change notifications the sync task has finished reconciling.
@@ -319,7 +319,7 @@ impl PairingHost {
             session_store_activation: futures::lock::Mutex::new(()),
             session_lifecycle: Mutex::new(SessionLifecycle::default()),
             #[cfg(feature = "test-host")]
-            submit_preimages_locally: std::sync::atomic::AtomicBool::new(false),
+            submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             external_session_activation_pause: Mutex::new(None),
             #[cfg(test)]
@@ -2633,7 +2633,7 @@ impl PairingHost {
     #[cfg(feature = "test-host")]
     pub fn set_submit_preimages_locally(&self, local: bool) {
         self.submit_preimages_locally
-            .store(local, std::sync::atomic::Ordering::Relaxed);
+            .store(local, core::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -2646,7 +2646,7 @@ impl ProductAuthority for PairingHost {
     #[cfg(feature = "test-host")]
     fn submits_preimages_locally(&self) -> bool {
         self.submit_preimages_locally
-            .load(std::sync::atomic::Ordering::Relaxed)
+            .load(core::sync::atomic::Ordering::Relaxed)
     }
 
     fn session_state(&self) -> Arc<SessionState> {
