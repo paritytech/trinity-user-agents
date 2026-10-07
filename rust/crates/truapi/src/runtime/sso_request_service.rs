@@ -229,7 +229,7 @@ impl SsoRequestService {
     #[cfg(test)]
     pub fn start_remote_monitor_for_current_session(&self) {
         if let Some(session) = self.session_state.current() {
-            self.start_disconnect_monitor(&session);
+            channel::start_disconnect_monitor(self, &session);
         }
     }
 
@@ -541,7 +541,7 @@ impl SsoRequestService {
             let weak_self = self.weak_self.clone();
             (self.spawner)(Box::pin(async move {
                 if let Some(host) = weak_self.upgrade() {
-                    let _ = host.submit_disconnected_message(&session).await;
+                    let _ = channel::submit_disconnected_message(&host, &session).await;
                 }
             }));
         }
@@ -668,10 +668,10 @@ impl SsoRequestService {
         lifecycle.revoke_session(previous.as_ref(), clear_auth_session);
         selection.external_session_active = false;
         self.session_state.clear_session();
-        let monitor = self.detach_session_channel(previous.as_ref());
+        let monitor = channel::detach_session_channel(self, previous.as_ref());
         drop(lifecycle);
         drop(selection);
-        self.stop_session_channel(previous.as_ref(), monitor);
+        channel::stop_session_channel(self, previous.as_ref(), monitor);
         true
     }
 
@@ -754,7 +754,7 @@ impl SsoRequestService {
             }
             let previous = self.session_state.current();
             let detached = (previous.as_ref() != Some(&session)).then(|| {
-                let monitor = self.detach_session_channel(previous.as_ref());
+                let monitor = channel::detach_session_channel(self, previous.as_ref());
                 (previous, monitor)
             });
             lifecycle.forget_auth_deletion();
@@ -763,9 +763,9 @@ impl SsoRequestService {
             detached
         };
         if let Some((previous, monitor)) = detached {
-            self.stop_session_channel(previous.as_ref(), monitor);
+            channel::stop_session_channel(self, previous.as_ref(), monitor);
         }
-        self.start_disconnect_monitor(&session);
+        channel::start_disconnect_monitor(self, &session);
         vrf::prefetch(&self.spawner);
         self.auth_state
             .connected(&connected_session_ui_info(&session));
