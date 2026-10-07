@@ -2,6 +2,10 @@ use parity_scale_codec::{Decode, Encode};
 
 /// Code formats the host scanner reads: the set both platform decoders share.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum CodeFormat {
     /// QR code.
     Qr,
@@ -35,6 +39,10 @@ pub enum CodeFormat {
 /// The host draws the viewfinder and writes its title, naming the product.
 /// Only `hint` is product text, shown as one plain line under the title.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct HostScannerScanRequest {
     /// Formats the product accepts. At least one.
     pub formats: Vec<CodeFormat>,
