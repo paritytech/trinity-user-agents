@@ -5528,7 +5528,7 @@ dependencies = [
 
 [[package]]
 name = "truapi"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "async-sqlite",
  "async-trait",
@@ -5602,7 +5602,7 @@ dependencies = [
 
 [[package]]
 name = "truapi-host-cli"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "arboard",
