@@ -13,21 +13,16 @@ extension ServiceCoordinator {
     static func createChatExtensionsRegistry(
         accountManager: ProductsAccountManaging,
         truapiRuntimeProvider: TrUAPIHostRuntimeProviding,
-        gameReminders: ProductGameReminderScheduling,
         syncStore: DetermineStateSyncStore,
         personDataStore: DetermineStatePersonDataStore,
         syncService: DetermineStateSyncServicing,
         personhoodRegistrationService: PersonhoodRegistrationServicing,
         audioSessionManager: AudioSessionManaging,
-        spaFlowState: SPAFlowState
+        spaFlowState: SPAFlowState,
+        productFileProvider: any ChatProductFileProviding,
+        pocket: ProductPocketService?
     ) -> (registry: ChatExtensionsRegistering, workerFacade: ProductWorkerFacade) {
         let productRepositoryFactory = ProductRepositoryFactory()
-
-        let productFileProvider = CompositeProductFileProvider(
-            dotNsContentStorage: DotNsContentStorage(),
-            chatScriptStorage: FileChatScriptStorage(),
-            contentHashCache: ContentHashCache.shared
-        )
 
         // The builder gets the operations service (the worker's own JS uses it),
         // which lets the facade wire the factory into the manager in `init`.
@@ -46,11 +41,9 @@ extension ServiceCoordinator {
 
         let botFactory = ProductBotFactory(
             productFileProvider: productFileProvider,
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            hostProvider: spaFlowState.hostProvider,
             runtimeProvider: truapiRuntimeProvider,
-            workerManager: workerFacade.manager,
-            gameReminders: gameReminders
+            workers: { pocket?.workers },
+            workerManager: workerFacade.manager
         )
 
         let productBotProvider = ProductBotProvider(
