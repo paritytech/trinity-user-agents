@@ -44,6 +44,8 @@ pub struct RuntimeServices {
     /// Host Pocket adapter, installed once at startup by a host with a Pocket
     /// surface. Unset leaves every product Pocket call `Unsupported`.
     pocket_platform: OnceLock<Arc<dyn crate::platform::PocketPlatform>>,
+    /// Funding sessions shared by every product runtime of this host.
+    funding: Arc<crate::runtime::funding::FundingRegistry>,
     /// Host contacts adapter, installed once at startup by a host with a
     /// contact picker. Unset leaves every product contacts call `Unsupported`.
     contacts_platform: OnceLock<Arc<dyn crate::platform::ContactsPlatform>>,
@@ -117,6 +119,7 @@ impl RuntimeServices {
             chat_platform: None,
             permission_status: OnceLock::new(),
             pocket_platform: OnceLock::new(),
+            funding: Default::default(),
             contacts_platform: OnceLock::new(),
             contact_handles: Default::default(),
             device_pairing_observer: OnceLock::new(),
@@ -202,6 +205,11 @@ impl RuntimeServices {
         platform: Arc<dyn crate::platform::PocketPlatform>,
     ) -> bool {
         self.pocket_platform.set(platform).is_ok()
+    }
+
+    /// Funding sessions shared by every product runtime of this host.
+    pub fn funding(&self) -> &Arc<crate::runtime::funding::FundingRegistry> {
+        &self.funding
     }
 
     /// The host's Pocket adapter, when one is installed.

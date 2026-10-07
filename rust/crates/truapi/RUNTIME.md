@@ -397,6 +397,22 @@ AutoSigning without approval. Legacy-account signing still asks the user.
 - `PocketPlatform`: stream the product's Pocket card collection and remove a
   card from it. The host owns the collection and decides which cards are
   privileged.
+- `FundingPlatform`: show the native funding overlay for a session, with its
+  direction and amount and the product that opened it, and report whether the
+  user started or dismissed it. Installed with `set_funding_platform`; the
+  Balance card opens sessions with `open_funding`. The core owns the sessions,
+  persists them, expires them, and answers Funding calls `Unsupported` while no
+  overlay is installed.
+  Native hosts reach this through `NativeTrUApiHostRuntime`:
+  `set_funding_callbacks` (the overlay), `open_funding`,
+  `funding_session`, `funding_sessions`, `cancel_funding` and
+  `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
+  `funding_sessions` lists sessions in flight first, then ended ones, each
+  newest first. An ended session is handed to the host through
+  `funding_session_changed` each time funding resumes until the host calls
+  `acknowledge_funding_session`, so its history writes every outcome once;
+  the core keeps the 50 newest recorded sessions and every unrecorded one
+  within the 200 newest ended.
 - `ContactsPlatform`: resolve the handles a transaction names to contacts, and
   render the picker that selects one. `contacts` is the only required method; `pick_contact`
   defaults to `Unsupported`, so a host serving no picker says so rather than

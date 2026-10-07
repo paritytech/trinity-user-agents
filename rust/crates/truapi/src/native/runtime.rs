@@ -25,7 +25,8 @@ use crate::subscription::Spawner;
 use crate::{PairedSsoPeer, ResponderExit, SigningHostRuntime};
 
 use super::callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativePocketCallbacks,
+    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeFundingCallbacks,
+    NativePocketCallbacks,
 };
 use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -35,7 +36,8 @@ use super::errors::{HostRejection, NativeCoreDatabaseError};
 use super::executor::shared_native_executor;
 use super::events::NativeEventBus;
 use super::platform::{
-    CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, PocketCallbackPlatform,
+    CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, FundingCallbackPlatform,
+    PocketCallbackPlatform,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
@@ -235,6 +237,53 @@ impl From<v01::GenericError> for NativePairingError {
 #[derive(uniffi::Object)]
 pub struct NativeAnnouncedPairing {
     inner: AnnouncedPairing,
+}
+
+#[uniffi::export]
+impl NativeTrUApiHostRuntime {
+    /// Install the host's funding overlay. Set-once; answers whether this
+    /// call installed it. Call it before opening any product execution.
+    pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
+        self.runtime
+            .set_funding_platform(Arc::new(FundingCallbackPlatform { funding: callbacks }))
+    }
+
+    /// Open a funding session on the host's own behalf, as the Balance
+    /// card does, and show the overlay. Answers the session id, or `None`
+    /// when the user dismissed it.
+    pub async fn open_funding(
+        &self,
+        direction: v01::FundingDirection,
+        amount: Option<u128>,
+    ) -> Result<Option<String>, HostRejection> {
+        Ok(self.runtime.open_funding(direction, amount).await?)
+    }
+
+    /// Session `intent` as the core holds it, for the host's status and
+    /// history views.
+    pub fn funding_session(
+        &self,
+        intent: String,
+    ) -> Option<crate::host_logic::funding::FundingSession> {
+        self.runtime.funding_session(&intent)
+    }
+
+    /// Every funding session the core keeps, in flight first, then ended,
+    /// each newest first.
+    pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
+        self.runtime.funding_sessions()
+    }
+
+    /// Record that the host wrote ended session `intent` into its own
+    /// history; until then it is handed over again on each resume.
+    pub async fn acknowledge_funding_session(&self, intent: String) -> Result<bool, HostRejection> {
+        Ok(self.runtime.acknowledge_funding_session(&intent).await?)
+    }
+
+    /// Cancel open funding session `intent`.
+    pub async fn cancel_funding(&self, intent: String) -> Result<bool, HostRejection> {
+        Ok(self.runtime.cancel_funding(&intent).await?)
+    }
 }
 
 #[uniffi::export]

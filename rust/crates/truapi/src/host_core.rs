@@ -14,7 +14,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::platform::{ChatPlatform, ContactsPlatform, PermissionStatusHost, PocketPlatform};
+use crate::platform::{
+    ChatPlatform, ContactsPlatform, FundingPlatform, PermissionStatusHost, PocketPlatform,
+};
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
     PermissionAuthorizationStatus, Platform, ProductContext, SigningHostConfig,
@@ -263,6 +265,37 @@ impl PairingHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_pocket_platform"))]
     pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
         self.services.install_pocket_platform(platform)
+    }
+
+    /// Install the host's [`FundingPlatform`], the native funding overlay.
+    ///
+    /// Set-once. Returns whether this call installed it. Call it before
+    /// serving any product runtime.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_funding_platform"))]
+    pub fn set_funding_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
+        let installed = self.services.funding().install_platform(platform);
+        if installed {
+            self.services.resume_funding();
+        }
+        installed
+    }
+
+    /// Open a funding session on the host's own behalf, as the Balance card's
+    /// Add and Withdraw do, and show the overlay. Returns the session id, or
+    /// `None` when the user dismissed the overlay without starting.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.open_funding"))]
+    pub async fn open_funding(
+        &self,
+        direction: v01::FundingDirection,
+        amount: Option<u128>,
+    ) -> Result<Option<String>, v01::GenericError> {
+        match self.services.open_funding(None, direction, amount).await {
+            Ok(session) => Ok(Some(session.intent)),
+            Err(crate::runtime::OpenFundingError::Dismissed) => Ok(None),
+            Err(error) => Err(v01::GenericError {
+                reason: error.to_string(),
+            }),
+        }
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -588,6 +621,25 @@ impl SigningHostRuntime {
             })
     }
 
+    /// End funding session `intent` with `stage` as though its funds had
+    /// moved, so a test host can drive the flow with no chain behind it.
+    /// Returns whether it was still in flight.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub async fn settle_funding_for_test(
+        &self,
+        intent: &str,
+        stage: crate::host_logic::funding::FundingStage,
+    ) -> Result<bool, v01::GenericError> {
+        self.services
+            .settle_funding_for_test(intent, stage)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
     /// Answer these resource tags as refused, replacing any earlier set.
     ///
     /// For test hosts only, with the `test-host` feature enabled.
@@ -685,6 +737,79 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_pocket_platform"))]
     pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
         self.services.install_pocket_platform(platform)
+    }
+
+    /// Install the host's [`FundingPlatform`], the native funding overlay.
+    ///
+    /// Set-once. Returns whether this call installed it. Call it before
+    /// serving any product runtime.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_platform"))]
+    pub fn set_funding_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
+        let installed = self.services.funding().install_platform(platform);
+        if installed {
+            self.services.resume_funding();
+        }
+        installed
+    }
+
+    /// Every funding session the core keeps, in flight first, then ended,
+    /// each newest first.
+    pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
+        self.services.funding().sessions()
+    }
+
+    /// Record that the host wrote ended session `intent` into its own
+    /// history. Until it does, the session is handed over again through
+    /// `funding_session_changed` each time funding resumes; the host reads
+    /// the full record with `funding_session`. Call it outside that
+    /// callback, which runs while the core holds its session lock.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.acknowledge_funding_session"))]
+    pub async fn acknowledge_funding_session(&self, intent: &str) -> Result<bool, v01::GenericError> {
+        self.services
+            .acknowledge_funding_session(intent)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
+    /// Cancel open funding session `intent`. Returns whether it was still
+    /// open.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.cancel_funding"))]
+    pub async fn cancel_funding(&self, intent: &str) -> Result<bool, v01::GenericError> {
+        self.services
+            .cancel_funding(intent)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
+    /// One funding session as the core holds it, for the host's own status
+    /// and history views.
+    pub fn funding_session(
+        &self,
+        intent: &str,
+    ) -> Option<crate::host_logic::funding::FundingSession> {
+        self.services.funding().get(intent)
+    }
+
+    /// Open a funding session on the host's own behalf, as the Balance card's
+    /// Add and Withdraw do, and show the overlay. Returns the session id, or
+    /// `None` when the user dismissed the overlay without starting.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.open_funding"))]
+    pub async fn open_funding(
+        &self,
+        direction: v01::FundingDirection,
+        amount: Option<u128>,
+    ) -> Result<Option<String>, v01::GenericError> {
+        match self.services.open_funding(None, direction, amount).await {
+            Ok(session) => Ok(Some(session.intent)),
+            Err(crate::runtime::OpenFundingError::Dismissed) => Ok(None),
+            Err(error) => Err(v01::GenericError {
+                reason: error.to_string(),
+            }),
+        }
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and

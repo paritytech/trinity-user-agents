@@ -27,15 +27,16 @@ pub mod mock;
 
 use truapi::latest::{
     AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
-    ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, GenericError,
+    ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, FundingDirection, GenericError,
     HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
     HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
     HostChatRegisterBotResponse, HostDevicePermissionRequest, HostFeatureSupportedRequest,
-    HostFeatureSupportedResponse, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
-    HostNavigateToError, HostPlatform, HostPocketListSubscribeItem, HostPocketRemoveCardError,
-    HostPocketRemoveCardRequest, HostPushNotificationRequest, HostPushNotificationResponse,
-    HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
+    HostFeatureSupportedResponse, HostFundingStatusSubscribeItem, HostLocalStorageChangeItem,
+    HostLocaleSubscribeItem, HostNavigateToError, HostPlatform,
+    HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
+    HostPushNotificationRequest, HostPushNotificationResponse, HostSignPayloadRequest,
+    HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
     HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, HostWorkerBeginOperationResponse,
     HostWorkerOperationError, LegacyAccountTxPayload, ProductAccountId, ProductAccountTxPayload,
     ProductProofContext, RemotePermission, RemotePermissionRequest, RingLocation,
@@ -1454,6 +1455,10 @@ pub enum CoreStorageKey {
         /// Product whose manifest was cached, normalized.
         product_id: String,
     },
+    /// Funding sessions: every live one plus a bounded tail of settled ones,
+    /// as one SCALE blob.
+    #[codec(index = 13)]
+    FundingSessions,
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1507,6 +1512,7 @@ pub fn describe_core_storage_key(
         CoreStorageKey::DeviceEncryptionKey => ("DeviceEncryptionKey", None),
         CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
         CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
+        CoreStorageKey::FundingSessions => ("FundingSessions", None),
     };
     Ok(CoreStorageKeyDescription { kind, product_id })
 }
@@ -2574,6 +2580,7 @@ mod tests {
                 "SsoResponderRequestLedger",
                 None,
             ),
+            (CoreStorageKey::FundingSessions, "FundingSessions", None),
         ] {
             let description = describe_core_storage_key(&key.encode()).expect("valid key");
             assert_eq!(description.kind, kind);
@@ -3248,6 +3255,48 @@ pub trait ChatPlatform: Send + Sync {
         &self,
         product: &ProductContext,
     ) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
+}
+
+/// A funding session as the host overlay needs it to open on the right screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FundingPresentation {
+    /// Session id.
+    pub intent: String,
+    /// Which way value moves, which decides the screen the overlay opens on.
+    pub direction: FundingDirection,
+    /// Amount the caller asked for, or `None` to let the user choose.
+    pub amount: Option<u128>,
+}
+
+/// How the user left the funding overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum FundingPresentOutcome {
+    /// The user went ahead; the session runs on without the overlay.
+    Started,
+    /// The user closed the overlay before starting; the core discards the
+    /// session.
+    Dismissed,
+}
+
+/// Host-implemented funding surface: the native overlay a funding session
+/// runs in. Optional: a host that omits it leaves funding requests answered
+/// `Unsupported`.
+#[async_trait]
+pub trait FundingPlatform: Send + Sync {
+    /// Show the funding overlay for a session that `product` opened, or the
+    /// host itself when `product` is `None`.
+    async fn present_funding(
+        &self,
+        product: Option<&ProductContext>,
+        session: FundingPresentation,
+    ) -> Result<FundingPresentOutcome, GenericError>;
+
+    /// Observe a session's status change, for host UI such as the in-flight
+    /// pill.
+    fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
+        let _ = (intent, status);
+    }
 }
 
 /// Host-implemented adapter through which product Pocket calls reach the

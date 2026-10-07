@@ -10,6 +10,7 @@ import {
   AllocatableResource,
   Bytes32,
   ChainIdentifier,
+  FundingDirection,
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
   HostSignPayloadRequest,
@@ -35,6 +36,7 @@ import type {
   HostChatRegisterBotResponse,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
+  HostFundingStatusSubscribeItem,
   HostLocalStorageChangeItem,
   HostLocaleSubscribeItem,
   HostPocketListSubscribeItem,
@@ -202,7 +204,12 @@ export type CoreStorageKey =
    * core honours it for a bounded lifetime, which is what makes a revoked
    * trust grant eventually take effect.
    */
-  | { tag: "ProductManifest"; value: { productId: string } };
+  | { tag: "ProductManifest"; value: { productId: string } }
+  /**
+   * Funding sessions: every live one plus a bounded tail of settled ones,
+   * as one SCALE blob.
+   */
+  | { tag: "FundingSessions"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -258,6 +265,31 @@ export type DevicePermissionStatus =
   | "Denied"
   | "NotDetermined"
   | "NotApplicable";
+
+/**
+ * How the user left the funding overlay.
+ */
+export type FundingPresentOutcome = "Started" | "Dismissed";
+
+/**
+ * A funding session as the host overlay needs it to open on the right screen.
+ */
+export interface FundingPresentation {
+  /**
+   * Session id.
+   */
+  intent: string;
+
+  /**
+   * Which way value moves, which decides the screen the overlay opens on.
+   */
+  direction: FundingDirection;
+
+  /**
+   * Amount the caller asked for, or ``undefined`` to let the user choose.
+   */
+  amount?: bigint;
+}
 
 /**
  * One chain a host serves: a protocol chain role mapped to the concrete
@@ -757,6 +789,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
       ProductManifest: S.Struct({ productId: S.str }) as S.Codec<{
         productId: string;
       }>,
+      FundingSessions: S._void,
     }),
 );
 
@@ -801,6 +834,25 @@ export const CreateTransactionReview: S.Codec<CreateTransactionReview> = S.lazy(
 export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
   (): S.Codec<DevicePermissionStatus> =>
     S.Status("Granted", "Denied", "NotDetermined", "NotApplicable"),
+);
+
+/**
+ * How the user left the funding overlay.
+ */
+export const FundingPresentOutcome: S.Codec<FundingPresentOutcome> = S.lazy(
+  (): S.Codec<FundingPresentOutcome> => S.Status("Started", "Dismissed"),
+);
+
+/**
+ * A funding session as the host overlay needs it to open on the right screen.
+ */
+export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
+  (): S.Codec<FundingPresentation> =>
+    S.Struct({
+      intent: S.str,
+      direction: FundingDirection,
+      amount: S.Option(S.u128),
+    }) as S.Codec<FundingPresentation>,
 );
 
 /**
@@ -1386,6 +1438,31 @@ export interface Features {
    * `get_chain_info` requests against the returned set.
    */
   supportedChains(): Promise<HostChainSet>;
+}
+
+/**
+ * Host-implemented funding surface: the native overlay a funding session
+ * runs in. Optional: a host that omits it leaves funding requests answered
+ * `Unsupported`.
+ */
+export interface FundingPlatform {
+  /**
+   * Show the funding overlay for a session that `product` opened, or the
+   * host itself when `product` is ``undefined``.
+   */
+  presentFunding(
+    product: ProductContext | undefined,
+    session: FundingPresentation,
+  ): Promise<FundingPresentOutcome>;
+
+  /**
+   * Observe a session's status change, for host UI such as the in-flight
+   * pill.
+   */
+  fundingSessionChanged?(
+    intent: string,
+    status: HostFundingStatusSubscribeItem,
+  ): void;
 }
 
 /**
