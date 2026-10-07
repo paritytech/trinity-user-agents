@@ -306,6 +306,7 @@ make e2e-signing-cli                # same direct signing-host phase
 make e2e-pairing-cli                # same paired pairing-host phase
 make e2e-chat-cli                   # chat content screening against a chat signing-host
 make e2e-pocket-cli                 # Pocket protocol check against a Pocket signing-host
+make e2e-scanner-cli                # scanner checks against a signing-host that scans a fixed code
 ```
 
 The Pocket phase runs its product as a Worker execution, the only execution
@@ -331,6 +332,10 @@ host failures.
 "Host-drawn scanner"). Both CLI host roles answer it from `TRUAPI_SCAN_TEXT`,
 or with a dismissal when it is unset, so the battery runs it. The playground's
 Diagnosis skips it, since dot.li has no viewfinder and answers `Unsupported`.
+`make e2e-scanner-cli` runs the scanner phase: a signing host scans
+`https://greenmarket.example/r/BAG6`, and the cases check that a matching code
+reaches the product, that a code or format the product did not ask for never
+does, and that an invalid request is refused before the host is asked.
 
 To run the playground locally in a plain browser tab, against a signing host on
 your own machine:
