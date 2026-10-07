@@ -42,7 +42,7 @@ class CoreDatabaseTest {
         val status = runtime.use { runBlocking { it.coreDatabaseStatus() } }
 
         val file = File(directory, "core.sqlite3")
-        assertEquals(file.canonicalPath to 1u, status.path to status.schemaVersion)
+        assertEquals(file.canonicalPath to 2u, status.path to status.schemaVersion)
         assertTrue("SQLite ${status.sqliteVersion} is not 3.x", status.sqliteVersion.startsWith("3."))
         assertTrue("database file was not created", file.exists())
     }
