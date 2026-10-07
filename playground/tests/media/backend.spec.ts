@@ -143,6 +143,28 @@ test("a picture placed for an admitted participant before its peer exists shows 
     .toBeGreaterThan(0);
 });
 
+test("a picture keeps its video element and follows the last accepted layout while the product scrolls", async ({
+  page,
+}) => {
+  expect(
+    await page.evaluate("mediaFixture.startPairWithEarlyPicture()"),
+  ).toEqual({ tag: "Done" });
+  await expect
+    .poll(() => page.evaluate("mediaFixture.decodedFrames()"), {
+      timeout: 15_000,
+    })
+    .toBeGreaterThan(0);
+  expect(
+    await page.evaluate("mediaFixture.scrollPicture({ frames: 20, step: 3 })"),
+  ).toEqual({
+    replaced: 0,
+    kept: true,
+    finalTop: 60,
+    expectedTop: 60,
+    stale: "StaleLayout",
+  });
+});
+
 test("cancellation stops a genuine capture delivered after cancellation", async ({
   page,
 }) => {

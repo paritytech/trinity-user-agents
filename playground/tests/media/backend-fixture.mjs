@@ -142,6 +142,37 @@ window.mediaFixture = {
     await connectPair();
     return early;
   },
+  // A product re-submits its layout on every scroll frame. The receiver's
+  // picture must keep its <video> (a fresh one shows nothing until its first
+  // decoded frame) and end at the last accepted rectangle; a stale layout
+  // revision must leave the plane alone.
+  async scrollPicture({ frames, step }) {
+    const receiver = nodes[1];
+    const current = () => {
+      const video = receiver.mount.querySelector("video");
+      return { video, top: video ? parseFloat(video.parentElement.parentElement.style.top) : null };
+    };
+    const first = current().video;
+    let layoutRevision = 1n;
+    let y = 0;
+    let replaced = 0;
+    for (let frame = 0; frame < frames; frame++) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      y += step;
+      const layout = remoteCameraSurface(receiver, id(1));
+      layout.layoutRevision = ++layoutRevision;
+      layout.surfaces[0].rect.y = y;
+      await command(receiver, "SetSurfaces", layout);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      if (current().video !== first) replaced += 1;
+    }
+    const stale = { ...remoteCameraSurface(receiver, id(1)), layoutRevision: 1n };
+    const rejected = await receiver.backend.mediaBackendCommand(product, receiver.runtime, { tag: "SetSurfaces", value: stale });
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const final = current();
+    return { replaced, finalTop: final.top, expectedTop: y, kept: final.video === first,
+      stale: rejected.tag === "Rejected" ? rejected.value.failure.value.error.tag : rejected.tag };
+  },
   async setAnswererCamera(enabled) {
     const node = nodes[1];
     const operationId = id(300 + Number(++node.intentRevision));
