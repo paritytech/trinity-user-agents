@@ -44,41 +44,41 @@ final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
     }
 
     func read(key: Data) throws -> Data? {
-        try withHostRejection {
-            try Self.lock.withLock {
-                try Task.checkCancellation()
-                guard try isProtected(key) else { return try storage.read(key: key.toHex()) }
-                do {
-                    return try keychain.fetchKey(for: identifier(key))
-                } catch KeystoreError.noKeyFound {
-                    return nil
-                }
+        try withStorage {
+            guard try isProtected(key) else { return try storage.read(key: key.toHex()) }
+            do {
+                return try keychain.fetchKey(for: identifier(key))
+            } catch KeystoreError.noKeyFound {
+                return nil
             }
         }
     }
 
     func write(key: Data, value: Data) throws {
-        try withHostRejection {
-            try Self.lock.withLock {
-                try Task.checkCancellation()
-                if try isProtected(key) {
-                    try keychain.saveKey(value, with: identifier(key))
-                } else {
-                    try storage.write(key: key.toHex(), value: value)
-                }
+        try withStorage {
+            if try isProtected(key) {
+                try keychain.saveKey(value, with: identifier(key))
+            } else {
+                try storage.write(key: key.toHex(), value: value)
             }
         }
     }
 
     func clear(key: Data) throws {
+        try withStorage {
+            if try isProtected(key) {
+                try keychain.deleteKeyIfExists(for: identifier(key))
+            } else {
+                try storage.clear(key: key.toHex())
+            }
+        }
+    }
+
+    private func withStorage<T>(_ operation: () throws -> T) throws -> T {
         try withHostRejection {
             try Self.lock.withLock {
                 try Task.checkCancellation()
-                if try isProtected(key) {
-                    try keychain.deleteKeyIfExists(for: identifier(key))
-                } else {
-                    try storage.clear(key: key.toHex())
-                }
+                return try operation()
             }
         }
     }

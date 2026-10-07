@@ -163,6 +163,26 @@ impl HostGrantStore {
         }
     }
 
+    async fn allowance_persistence(
+        &self,
+        session_state: &SessionState,
+        session: &SessionInfo,
+        lifecycle_epoch: u64,
+    ) -> Result<HostGrantPersistence<'_>, AuthorityError> {
+        let storage = self.persistence().await;
+        if session.sso.is_none() {
+            storage.begin_cleanup();
+            storage
+                .drain_cleanup()
+                .await
+                .map_err(|reason| AuthorityError::Unavailable { reason })?;
+        }
+        if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
+            return Err(AuthorityError::Disconnected);
+        }
+        Ok(storage)
+    }
+
     fn session_secret_allocation_is_current(
         &self,
         session_state: &SessionState,
@@ -337,17 +357,9 @@ impl HostGrantStore {
         allowance: StatementStoreAllowanceKey,
         period: Option<u32>,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        let storage = self.persistence().await;
-        if session.sso.is_none() {
-            storage.begin_cleanup();
-            storage
-                .drain_cleanup()
-                .await
-                .map_err(|reason| AuthorityError::Unavailable { reason })?;
-        }
-        if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
-            return Err(AuthorityError::Disconnected);
-        }
+        let storage = self
+            .allowance_persistence(session_state, session, lifecycle_epoch)
+            .await?;
         if session.sso.is_none() {
             storage
                 .retain_native_allowance(
@@ -361,24 +373,16 @@ impl HostGrantStore {
                     },
                 )
                 .await?;
-            self.remember_statement_store_allowance_key(
-                session_state,
+        } else {
+            allowances::write_allowance_key(
+                &*self.storage,
                 session,
-                lifecycle_epoch,
                 product_id,
-                allowance.clone(),
-                period,
-            )?;
-            return Ok(allowance);
+                AllowanceResource::StatementStore,
+                allowance.secret.to_vec(),
+            )
+            .await?;
         }
-        allowances::write_allowance_key(
-            &*self.storage,
-            session,
-            product_id,
-            AllowanceResource::StatementStore,
-            allowance.secret.to_vec(),
-        )
-        .await?;
         if let Err(error) = self.remember_statement_store_allowance_key(
             session_state,
             session,
@@ -387,13 +391,15 @@ impl HostGrantStore {
             allowance.clone(),
             period,
         ) {
-            let _ = allowances::remove_allowance_key(
-                &*self.storage,
-                session,
-                product_id,
-                AllowanceResource::StatementStore,
-            )
-            .await;
+            if session.sso.is_some() {
+                let _ = allowances::remove_allowance_key(
+                    &*self.storage,
+                    session,
+                    product_id,
+                    AllowanceResource::StatementStore,
+                )
+                .await;
+            }
             return Err(error);
         }
         Ok(allowance)
@@ -434,17 +440,9 @@ impl HostGrantStore {
     ) -> Result<Option<(Option<u32>, StatementStoreAllowanceKey)>, AuthorityError> {
         let cache_key =
             AllowanceCacheKey::new(session, product_id, AllowanceResource::StatementStore);
-        let storage = self.persistence().await;
-        if session.sso.is_none() {
-            storage.begin_cleanup();
-            storage
-                .drain_cleanup()
-                .await
-                .map_err(|reason| AuthorityError::Unavailable { reason })?;
-        }
-        if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
-            return Err(AuthorityError::Disconnected);
-        }
+        let storage = self
+            .allowance_persistence(session_state, session, lifecycle_epoch)
+            .await?;
         if let Some(allowance) = self
             .statement_store_allowances
             .lock()
@@ -454,7 +452,7 @@ impl HostGrantStore {
         {
             return Ok(Some(allowance));
         }
-        if session.sso.is_none() {
+        let (period, allowance) = if session.sso.is_none() {
             let allowance = storage
                 .native_allowance(
                     session.public_key,
@@ -465,36 +463,29 @@ impl HostGrantStore {
             let Some(AccountGrant::StatementStore { key, period }) = allowance else {
                 return Ok(None);
             };
-            self.remember_statement_store_allowance_key(
-                session_state,
+            (period, key)
+        } else {
+            let Some(secret) = allowances::read_allowance_key(
+                &*self.storage,
                 session,
-                lifecycle_epoch,
                 product_id,
-                key.clone(),
-                period,
-            )?;
-            return Ok(Some((period, key)));
-        }
-        let Some(secret) = allowances::read_allowance_key(
-            &*self.storage,
-            session,
-            product_id,
-            AllowanceResource::StatementStore,
-        )
-        .await?
-        else {
-            return Ok(None);
+                AllowanceResource::StatementStore,
+            )
+            .await?
+            else {
+                return Ok(None);
+            };
+            (None, StatementStoreAllowanceKey::from_secret_bytes(secret)?)
         };
-        let allowance = StatementStoreAllowanceKey::from_secret_bytes(secret)?;
         self.remember_statement_store_allowance_key(
             session_state,
             session,
             lifecycle_epoch,
             product_id,
             allowance.clone(),
-            None,
+            period,
         )?;
-        Ok(Some((None, allowance)))
+        Ok(Some((period, allowance)))
     }
 
     /// Persist and memory-cache a freshly allocated Bulletin allowance key.
@@ -506,17 +497,9 @@ impl HostGrantStore {
         product_id: &str,
         allowance: BulletinAllowanceKey,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let storage = self.persistence().await;
-        if session.sso.is_none() {
-            storage.begin_cleanup();
-            storage
-                .drain_cleanup()
-                .await
-                .map_err(|reason| AuthorityError::Unavailable { reason })?;
-        }
-        if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
-            return Err(AuthorityError::Disconnected);
-        }
+        let storage = self
+            .allowance_persistence(session_state, session, lifecycle_epoch)
+            .await?;
         if session.sso.is_none() {
             storage
                 .retain_native_allowance(
@@ -527,23 +510,16 @@ impl HostGrantStore {
                     &AccountGrant::Bulletin(allowance.clone()),
                 )
                 .await?;
-            self.remember_bulletin_allowance_key(
-                session_state,
+        } else {
+            allowances::write_allowance_key(
+                &*self.storage,
                 session,
-                lifecycle_epoch,
                 product_id,
-                allowance.clone(),
-            )?;
-            return Ok(allowance);
+                AllowanceResource::Bulletin,
+                allowance.as_secret_bytes().to_vec(),
+            )
+            .await?;
         }
-        allowances::write_allowance_key(
-            &*self.storage,
-            session,
-            product_id,
-            AllowanceResource::Bulletin,
-            allowance.as_secret_bytes().to_vec(),
-        )
-        .await?;
         if let Err(error) = self.remember_bulletin_allowance_key(
             session_state,
             session,
@@ -551,13 +527,15 @@ impl HostGrantStore {
             product_id,
             allowance.clone(),
         ) {
-            let _ = allowances::remove_allowance_key(
-                &*self.storage,
-                session,
-                product_id,
-                AllowanceResource::Bulletin,
-            )
-            .await;
+            if session.sso.is_some() {
+                let _ = allowances::remove_allowance_key(
+                    &*self.storage,
+                    session,
+                    product_id,
+                    AllowanceResource::Bulletin,
+                )
+                .await;
+            }
             return Err(error);
         }
         Ok(allowance)
@@ -595,17 +573,9 @@ impl HostGrantStore {
         product_id: &str,
     ) -> Result<Option<BulletinAllowanceKey>, AuthorityError> {
         let cache_key = AllowanceCacheKey::new(session, product_id, AllowanceResource::Bulletin);
-        let storage = self.persistence().await;
-        if session.sso.is_none() {
-            storage.begin_cleanup();
-            storage
-                .drain_cleanup()
-                .await
-                .map_err(|reason| AuthorityError::Unavailable { reason })?;
-        }
-        if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
-            return Err(AuthorityError::Disconnected);
-        }
+        let storage = self
+            .allowance_persistence(session_state, session, lifecycle_epoch)
+            .await?;
         if let Some(allowance) = self
             .bulletin_allowances
             .lock()
@@ -615,33 +585,27 @@ impl HostGrantStore {
         {
             return Ok(Some(allowance));
         }
-        if session.sso.is_none() {
+        let allowance = if session.sso.is_none() {
             let allowance = storage
                 .native_allowance(session.public_key, product_id, AllowanceResource::Bulletin)
                 .await?;
             let Some(AccountGrant::Bulletin(key)) = allowance else {
                 return Ok(None);
             };
-            self.remember_bulletin_allowance_key(
-                session_state,
+            key
+        } else {
+            let Some(secret) = allowances::read_allowance_key(
+                &*self.storage,
                 session,
-                lifecycle_epoch,
                 product_id,
-                key.clone(),
-            )?;
-            return Ok(Some(key));
-        }
-        let Some(secret) = allowances::read_allowance_key(
-            &*self.storage,
-            session,
-            product_id,
-            AllowanceResource::Bulletin,
-        )
-        .await?
-        else {
-            return Ok(None);
+                AllowanceResource::Bulletin,
+            )
+            .await?
+            else {
+                return Ok(None);
+            };
+            BulletinAllowanceKey::from_secret_bytes(secret)?
         };
-        let allowance = BulletinAllowanceKey::from_secret_bytes(secret)?;
         self.remember_bulletin_allowance_key(
             session_state,
             session,
