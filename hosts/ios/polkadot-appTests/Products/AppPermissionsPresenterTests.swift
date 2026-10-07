@@ -28,7 +28,7 @@ struct AppPermissionsPresenterTests {
         let first = scope(root: 1)
         let media = TrUAPIMediaPermissionSetting(
             id: "media:calling:account-one", title: "Calling", detail: "Account one",
-            request: .calling(Data(repeating: 2, count: 32), first.rootPublicKey),
+            request: .calling(network: Data(repeating: 2, count: 32), account: first.rootPublicKey),
             status: .authorized
         )
         presenter.didReceive(mediaPermissions: [media])
