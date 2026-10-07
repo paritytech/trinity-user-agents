@@ -37,7 +37,7 @@ impl DurableTxEngine {
         let Some(_running) = self.pass_lock.try_lock() else {
             return;
         };
-        let domains = match self.db.read(|conn| Ok(dao::live_domains(conn)?)).await {
+        let domains = match self.db.read(dao::live_domains).await {
             Ok(domains) => domains,
             Err(error) => return warn!(%error, "durable recovery pass could not read the ledger"),
         };
@@ -138,7 +138,7 @@ impl DurableTxEngine {
         let domain = domain.clone();
         let entries = self
             .db
-            .read(move |conn| Ok(dao::domain_entries(conn, &domain)?))
+            .read(move |conn| dao::domain_entries(conn, &domain))
             .await?;
         let decidable = entries
             .iter()
@@ -223,7 +223,7 @@ mod tests {
     const TEST: DomainId = DomainId::from_static("test");
 
     fn status(db: &Db, id: DurableTxId) -> DurableTxStatus {
-        block_on(db.read(move |conn| Ok(dao::status(conn, id)?)))
+        block_on(db.read(move |conn| dao::status(conn, id)))
             .unwrap()
             .unwrap()
     }
@@ -459,7 +459,7 @@ mod tests {
 
         block_on(engine.run_pass());
 
-        let entry = block_on(engine.db.read(move |conn| Ok(dao::entry(conn, id)?)))
+        let entry = block_on(engine.db.read(move |conn| dao::entry(conn, id)))
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -516,7 +516,7 @@ mod tests {
 
         block_on(engine.run_pass());
 
-        let entry = block_on(engine.db.read(move |conn| Ok(dao::entry(conn, id)?)))
+        let entry = block_on(engine.db.read(move |conn| dao::entry(conn, id)))
             .unwrap()
             .unwrap();
         assert_eq!(

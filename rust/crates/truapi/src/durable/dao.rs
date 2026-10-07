@@ -23,9 +23,9 @@ pub fn insert(
     domain: &DomainId,
     group: Option<&GroupId>,
     extrinsic: &MortalExtrinsic,
-) -> rusqlite::Result<DurableTxId> {
+) -> Result<DurableTxId, DbError> {
     let birth = extrinsic.mortality.birth();
-    tx.prepare_cached(INSERT)?.query_row(
+    let id = tx.prepare_cached(INSERT)?.query_row(
         named_params! {
             ":domain": domain.as_str(),
             ":group_id": group.map(GroupId::as_str),
@@ -35,7 +35,8 @@ pub fn insert(
             ":period": extrinsic.mortality.period(),
         },
         |row| row.get("id").map(DurableTxId),
-    )
+    )?;
+    Ok(id)
 }
 
 const COMPARE_AND_SET: &str = "UPDATE durable_tx
@@ -49,7 +50,7 @@ pub fn compare_and_set(
     tx: &Transaction<'_>,
     observed: &DurableTxEntry,
     verdict: &Verdict,
-) -> rusqlite::Result<bool> {
+) -> Result<bool, DbError> {
     let success = verdict.success_detected_at;
     let changed = tx.prepare_cached(COMPARE_AND_SET)?.execute(named_params! {
         ":status": verdict.status,
@@ -65,19 +66,19 @@ pub fn compare_and_set(
 const ENTRY: &str = "SELECT * FROM durable_tx WHERE id = :id";
 
 /// The row with `id`.
-pub fn entry(conn: &Connection, id: DurableTxId) -> rusqlite::Result<Option<DurableTxEntry>> {
+pub fn entry(conn: &Connection, id: DurableTxId) -> Result<Option<DurableTxEntry>, DbError> {
     let mut stmt = conn.prepare_cached(ENTRY)?;
     let mut rows = stmt.query(named_params! { ":id": id.0 })?;
-    rows.next()?.map(DurableTxEntry::from_row).transpose()
+    Ok(rows.next()?.map(DurableTxEntry::from_row).transpose()?)
 }
 
 const STATUS: &str = "SELECT status FROM durable_tx WHERE id = :id";
 
 /// The status of the row with `id`.
-pub fn status(conn: &Connection, id: DurableTxId) -> rusqlite::Result<Option<DurableTxStatus>> {
+pub fn status(conn: &Connection, id: DurableTxId) -> Result<Option<DurableTxStatus>, DbError> {
     let mut stmt = conn.prepare_cached(STATUS)?;
     let mut rows = stmt.query(named_params! { ":id": id.0 })?;
-    rows.next()?.map(|row| row.get("status")).transpose()
+    Ok(rows.next()?.map(|row| row.get("status")).transpose()?)
 }
 
 /// [`status`], re-read after every commit that changes it.
@@ -98,13 +99,14 @@ pub fn group(
     conn: &Connection,
     domain: &DomainId,
     group: &GroupId,
-) -> rusqlite::Result<Vec<DurableTxState>> {
-    conn.prepare_cached(GROUP)?
+) -> Result<Vec<DurableTxState>, DbError> {
+    Ok(conn
+        .prepare_cached(GROUP)?
         .query_map(
             named_params! { ":domain": domain.as_str(), ":group_id": group.as_str() },
             DurableTxState::from_row,
         )?
-        .collect()
+        .collect::<rusqlite::Result<_>>()?)
 }
 
 /// [`group`], re-read after every commit that changes it.
@@ -127,23 +129,25 @@ const DOMAIN_ENTRIES: &str = "SELECT * FROM durable_tx WHERE domain = :domain OR
 pub fn domain_entries(
     conn: &Connection,
     domain: &DomainId,
-) -> rusqlite::Result<Vec<DurableTxEntry>> {
-    conn.prepare_cached(DOMAIN_ENTRIES)?
+) -> Result<Vec<DurableTxEntry>, DbError> {
+    Ok(conn
+        .prepare_cached(DOMAIN_ENTRIES)?
         .query_map(
             named_params! { ":domain": domain.as_str() },
             DurableTxEntry::from_row,
         )?
-        .collect()
+        .collect::<rusqlite::Result<_>>()?)
 }
 
 const LIVE_DOMAINS: &str = "SELECT DISTINCT domain FROM durable_tx
     WHERE status IN ('PENDING', 'PENDING_SUCCESS') ORDER BY domain";
 
 /// Every domain with a transaction still awaiting a verdict.
-pub fn live_domains(conn: &Connection) -> rusqlite::Result<Vec<DomainId>> {
-    conn.prepare_cached(LIVE_DOMAINS)?
+pub fn live_domains(conn: &Connection) -> Result<Vec<DomainId>, DbError> {
+    Ok(conn
+        .prepare_cached(LIVE_DOMAINS)?
         .query_map([], |row| row.get::<_, String>("domain").map(DomainId::new))?
-        .collect()
+        .collect::<rusqlite::Result<_>>()?)
 }
 
 const HAS_LIVE: &str = "SELECT EXISTS (SELECT 1 FROM durable_tx
@@ -240,26 +244,19 @@ mod tests {
     const DOMAIN: DomainId = DomainId::from_static("test");
 
     fn register(db: &Db, group: Option<GroupId>, tag: u8) -> DurableTxId {
-        block_on(db.write(move |tx| {
-            Ok(insert(
-                tx,
-                &DOMAIN,
-                group.as_ref(),
-                &extrinsic(tag, 100, 64),
-            )?)
-        }))
-        .unwrap()
+        block_on(db.write(move |tx| insert(tx, &DOMAIN, group.as_ref(), &extrinsic(tag, 100, 64))))
+            .unwrap()
     }
 
     fn read<T: Send + 'static>(
         db: &Db,
-        f: impl FnOnce(&Connection) -> rusqlite::Result<T> + Send + 'static,
+        f: impl FnOnce(&Connection) -> Result<T, DbError> + Send + 'static,
     ) -> T {
-        block_on(db.read(move |conn| Ok(f(conn)?))).unwrap()
+        block_on(db.read(f)).unwrap()
     }
 
     fn write_verdict(db: &Db, observed: DurableTxEntry, verdict: Verdict) -> bool {
-        block_on(db.write(move |tx| Ok(compare_and_set(tx, &observed, &verdict)?))).unwrap()
+        block_on(db.write(move |tx| compare_and_set(tx, &observed, &verdict))).unwrap()
     }
 
     fn verdict(status: DurableTxStatus, success_detected_at: Option<HashAndNumber>) -> Verdict {
@@ -408,12 +405,12 @@ mod tests {
         register(&db, None, 3);
         let other = group_id.clone();
         block_on(db.write(move |tx| {
-            Ok(insert(
+            insert(
                 tx,
                 &DomainId::from_static("other"),
                 Some(&other),
                 &extrinsic(4, 100, 64),
-            )?)
+            )
         }))
         .unwrap();
 
@@ -502,6 +499,6 @@ mod tests {
         }))
         .unwrap();
 
-        assert!(block_on(db.read(move |conn| Ok(status(conn, id)?))).is_err());
+        assert!(block_on(db.read(move |conn| status(conn, id))).is_err());
     }
 }

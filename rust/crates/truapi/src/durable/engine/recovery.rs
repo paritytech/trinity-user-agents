@@ -87,7 +87,7 @@ impl DurableTxEngine {
     /// them. An unreadable ledger counts as live: abandoning transactions is
     /// far worse than one more pass.
     async fn has_live(&self) -> bool {
-        match self.db.read(|conn| Ok(dao::live_domains(conn)?)).await {
+        match self.db.read(dao::live_domains).await {
             Ok(domains) => domains
                 .iter()
                 .any(|domain| self.registry.oracle(domain).is_some()),

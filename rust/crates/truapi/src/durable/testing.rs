@@ -462,7 +462,7 @@ pub fn engine_with_spawner(
 pub fn insert(db: &Db, domain: &DomainId, extrinsic: MortalExtrinsic) -> DurableTxId {
     let domain = domain.clone();
     futures::executor::block_on(
-        db.write(move |tx| Ok(super::dao::insert(tx, &domain, None, &extrinsic)?)),
+        db.write(move |tx| super::dao::insert(tx, &domain, None, &extrinsic)),
     )
     .unwrap()
 }

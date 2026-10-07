@@ -195,7 +195,7 @@ impl DurableTxEngine {
             return;
         };
         let id = attempt.id;
-        let Ok(Some(entry)) = self.db.read(move |conn| Ok(dao::entry(conn, id)?)).await else {
+        let Ok(Some(entry)) = self.db.read(move |conn| dao::entry(conn, id)).await else {
             return;
         };
         if entry.success_detected_at.map(|block| block.hash) == Some(retracted) {
@@ -212,7 +212,7 @@ impl DurableTxEngine {
     /// attempt.
     async fn propose(&self, attempt: Attempt, verdict: Verdict) {
         let id = attempt.id;
-        let observed = match self.db.read(move |conn| Ok(dao::entry(conn, id)?)).await {
+        let observed = match self.db.read(move |conn| dao::entry(conn, id)).await {
             Ok(Some(observed)) => observed,
             Ok(None) => return,
             Err(error) => {
@@ -229,7 +229,7 @@ impl DurableTxEngine {
 
     /// Whether recovery still has to decide `id`. Unreadable counts as yes.
     async fn needs_recovery(&self, id: DurableTxId) -> bool {
-        match self.db.read(move |conn| Ok(dao::status(conn, id)?)).await {
+        match self.db.read(move |conn| dao::status(conn, id)).await {
             Ok(Some(status)) => status.awaits_verdict(),
             Ok(None) => false,
             Err(_) => true,
@@ -289,7 +289,7 @@ mod tests {
     impl Fixture {
         fn entry(&self) -> DurableTxEntry {
             let id = self.id;
-            block_on(self.engine.db.read(move |conn| Ok(dao::entry(conn, id)?)))
+            block_on(self.engine.db.read(move |conn| dao::entry(conn, id)))
                 .unwrap()
                 .unwrap()
         }

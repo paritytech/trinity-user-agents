@@ -97,7 +97,7 @@ impl DurableTxEngine {
 
     /// The status of `id`, or `None` when no such transaction exists.
     pub async fn status(&self, id: DurableTxId) -> Result<Option<DurableTxStatus>, DbError> {
-        self.db.read(move |conn| Ok(dao::status(conn, id)?)).await
+        self.db.read(move |conn| dao::status(conn, id)).await
     }
 
     /// [`Self::status`], again after every commit that changes it.
@@ -116,7 +116,7 @@ impl DurableTxEngine {
     ) -> Result<Vec<DurableTxState>, DbError> {
         let (domain, group) = (domain.clone(), group.clone());
         self.db
-            .read(move |conn| Ok(dao::group(conn, &domain, &group)?))
+            .read(move |conn| dao::group(conn, &domain, &group))
             .await
     }
 
@@ -138,7 +138,7 @@ impl DurableTxEngine {
     ) -> Result<bool, DbError> {
         let (observed, verdict) = (observed.clone(), verdict);
         self.db
-            .write(move |tx| Ok(dao::compare_and_set(tx, &observed, &verdict)?))
+            .write(move |tx| dao::compare_and_set(tx, &observed, &verdict))
             .await
     }
 

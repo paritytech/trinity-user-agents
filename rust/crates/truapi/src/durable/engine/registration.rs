@@ -165,7 +165,7 @@ impl DurableTxEngine {
 fn insert_all(
     tx: &rusqlite::Transaction<'_>,
     request: &DurableRequest,
-) -> rusqlite::Result<Vec<DurableTxId>> {
+) -> Result<Vec<DurableTxId>, DbError> {
     request
         .extrinsics
         .iter()
