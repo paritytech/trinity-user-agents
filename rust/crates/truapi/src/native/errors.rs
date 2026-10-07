@@ -84,6 +84,13 @@ pub enum NativeRendererError {
         /// Largest accepted nesting.
         limit: u32,
     },
+    /// The thread faces are read on could not be started, so the face was not
+    /// read at all. Reading it again may succeed.
+    #[error("face reader could not start: {reason}")]
+    ReaderUnavailable {
+        /// Why the thread could not be started.
+        reason: String,
+    },
 }
 
 /// Rejection of a product-supplied chat field, value-shaped for UniFFI.
