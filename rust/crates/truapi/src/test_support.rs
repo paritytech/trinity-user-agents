@@ -122,6 +122,8 @@ pub struct StubPlatform {
     pub sign_vrf_confirmed: bool,
     pub sign_vrf_error: Option<&'static str>,
     pub sign_vrf_reviews: Arc<Mutex<Vec<SignVrfReview>>>,
+    /// Pause a VRF review until the test releases its confirmation.
+    pub sign_vrf_confirmation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Every `StatementStoreProductSign` review passed to `confirm_user_action`, in order.
     pub statement_store_product_sign_reviews: Arc<Mutex<Vec<StatementStoreProductSignReview>>>,
     pub create_transaction_confirmed: bool,
@@ -202,6 +204,8 @@ pub struct StubPlatform {
     /// Hold every core-storage read pending forever, standing in for a host
     /// callback that is never answered.
     pub core_storage_pending: bool,
+    /// Substitute storage for wallet lifecycle tests.
+    pub core_storage_override: Option<Arc<dyn PlatformCoreStorage>>,
     pub chain_connect_pending: bool,
     /// Set when a `chain_connect_pending` connect future is dropped.
     pub pending_connect_dropped: Arc<AtomicBool>,
@@ -1062,6 +1066,9 @@ impl PlatformCoreStorage for StubPlatform {
         &self,
         key: CoreStorageKey,
     ) -> Result<Option<Vec<u8>>, v01::GenericError> {
+        if let Some(storage) = &self.core_storage_override {
+            return storage.read_core_storage(key).await;
+        }
         if self.core_storage_pending {
             futures::future::pending::<()>().await;
         }
@@ -1098,6 +1105,9 @@ impl PlatformCoreStorage for StubPlatform {
         key: CoreStorageKey,
         value: Vec<u8>,
     ) -> Result<(), v01::GenericError> {
+        if let Some(storage) = &self.core_storage_override {
+            return storage.write_core_storage(key, value).await;
+        }
         if let CoreStorageKey::AuthSession = key {
             self.session_writes
                 .lock()
@@ -1126,6 +1136,9 @@ impl PlatformCoreStorage for StubPlatform {
     }
 
     async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
+        if let Some(storage) = &self.core_storage_override {
+            return storage.clear_core_storage(key).await;
+        }
         if let CoreStorageKey::AuthSession = key {
             *self
                 .session_clears
@@ -1864,6 +1877,10 @@ impl UserConfirmation for StubPlatform {
                     .lock()
                     .expect("VRF signing review list mutex poisoned")
                     .push(review);
+                let gate = self.sign_vrf_confirmation_gate.lock().unwrap().take();
+                if let Some(gate) = gate {
+                    gate.await.expect("VRF confirmation gate was released");
+                }
                 (self.sign_vrf_error, self.sign_vrf_confirmed)
             }
             UserConfirmationReview::StatementStoreProductSign(review) => {

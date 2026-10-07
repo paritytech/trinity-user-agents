@@ -223,8 +223,12 @@ path. Web hosts do not compile the store.
 
 ### The two roles
 
-Both implement the role-neutral **`ProductAuthority`** trait; each owns its
-role-specific lifecycle, so no method exists on a role that can't mean it:
+`AccountHolder` provides wallet account derivation, signing and proofs. `SigningHost` selects its shared `WalletAccountHolder`; `PairingHost` implements account operations using cached keys and SSO. Product runtimes use `ProductAuthority` for host lifecycle, grant acquisition and retention.
+
+- `WalletAccountHolder` owns active entropy, wallet approval, account derivation, resource issuance and renewal. It validates the selected activation before private-key use and renewal-record mutation.
+- `AccountInvocation` carries the original call, wallet activation and trusted caller origin. Local calls can carry wallet-issued authorization. Remote requests require independent consent and cannot inherit native AutoSigning permission.
+- `SigningHost` owns retained grants. `HostOperation` rejects results invalidated by wallet changes or host reset. Resetting a product does not invalidate independent incoming SSO wallet work.
+- Resource approval returns a lazy, ordered stream of wallet receipts. The host retains each successful grant before issuing the next resource; recoverable item failures do not stop later resources.
 
 - **`PairingHost`** (seedless): the user's keys live in an external wallet, so
   signing/aliases/entropy relay over an encrypted SSO channel (statement store
@@ -265,11 +269,7 @@ the page.
 ### Inter-host SSO
 
 `PairingHost::call(request)` sends typed requests to
-[`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs). Handlers own
-consent and business logic; `sso_responder.rs` owns the transport loop and shared
-allowance helpers. Resource consent is bound to the request's signing session:
-account changes, disconnects, and reactivation invalidate pending approval before
-allocation or key return. Allocation failure details stay in local transcripts.
+[`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs). Handlers forward remote account invocations and encode wallet receipts in the existing SSO messages. Signing consent belongs to the account implementation, resource consent and issuance to `WalletAccountHolder`; `sso_responder.rs` owns the transport loop. Consent is bound to the request's signing session: account changes, disconnects, and reactivation invalidate pending approval before allocation or key return. Allocation failure details stay in local transcripts.
 Allocation requests use the canonical `truapi::latest::AllocatableResource` type.
 Signing uses canonical request and result types. Product-scoped VRF requests use
 `ProductRequest<P>` to attach the caller to a canonical payload. Both product and

@@ -93,7 +93,7 @@ fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
 fn allowance_key(signing_host: &SigningHostRole) -> StatementStoreAllowanceKey {
     futures::executor::block_on(async {
         let session = signing_host
-            .current_session()
+            .current_operation()
             .expect("a session is active");
         let cx = CallContext::default();
         futures::select! {
@@ -129,22 +129,13 @@ fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
         .insert(product_id.to_string(), (period, secret_key()));
 }
 
-fn current_generation(signing_host: &SigningHostRole) -> u64 {
-    signing_host
-        .local_grants
-        .lock()
-        .expect("local AutoSigning grant mutex poisoned")
-        .activation_generation
-}
-
 fn remembered(signing_host: &SigningHostRole, product_id: &str, period: u32) -> Option<[u8; 64]> {
     let state = signing_host
         .local_grants
         .lock()
         .expect("local AutoSigning grant mutex poisoned");
     state
-        .statement_allowance_key(state.activation_generation, product_id, period)
-        .expect("the generation is current")
+        .statement_allowance_key(product_id, period)
         .map(|key| key.secret)
 }
 
@@ -218,46 +209,81 @@ fn clearing_a_product_forgets_only_its_key() {
 #[test]
 fn a_replaced_session_is_not_served_the_new_sessions_key() {
     let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
-    let stale_generation = current_generation(&signing_host);
+    let operation = signing_host.current_operation().unwrap();
     futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
         .expect("re-activation succeeds");
-    remember(&signing_host, PRODUCT_ID, PERIOD);
+    remember(
+        &signing_host,
+        PRODUCT_ID,
+        slot::current_period(crate::unix_time::current_unix_secs()),
+    );
 
-    assert!(
-        matches!(
-            signing_host
-                .local_grants
-                .lock()
-                .expect("local AutoSigning grant mutex poisoned")
-                .statement_allowance_key(stale_generation, PRODUCT_ID, PERIOD),
-            Err(AuthorityError::Disconnected)
-        ),
-        "a request validated under the replaced session was served a key"
+    assert_eq!(
+        futures::executor::block_on(signing_host.statement_store_allowance_key(
+            &CallContext::default(),
+            &operation,
+            PRODUCT_ID.to_string()
+        ))
+        .map(|_| ()),
+        Err(AuthorityError::Disconnected),
+        "a request validated under the replaced session was served a key",
     );
 }
 
 #[test]
 fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
     let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
-    let stale_generation = current_generation(&signing_host);
+    let operation = signing_host.current_operation().unwrap();
     futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
         .expect("re-activation succeeds");
 
-    let remembered_stale = signing_host
-        .local_grants
-        .lock()
-        .expect("local AutoSigning grant mutex poisoned")
-        .remember_statement_allowance_key(
-            stale_generation,
-            PRODUCT_ID.to_string(),
-            PERIOD,
-            secret_key(),
-        );
-
+    let remembered_stale = signing_host.retain_statement_store_allowance(
+        &operation,
+        PRODUCT_ID,
+        super::super::wallet_account_holder::StatementStoreAllocation {
+            secret: SECRET.to_vec(),
+            period: PERIOD,
+        },
+    );
     assert_eq!(
-        (remembered_stale, remembered(&signing_host, PRODUCT_ID, PERIOD)),
+        (
+            remembered_stale.map(|_| ()),
+            remembered(&signing_host, PRODUCT_ID, PERIOD)
+        ),
         (Err(AuthorityError::Disconnected), None),
-        "a key allocated for a replaced session was handed back or remembered"
+        "a key allocated for a replaced session was handed back or remembered",
+    );
+}
+
+#[test]
+fn product_reset_stops_native_allowance_preparation_on_resumption() {
+    let (release, gate) = futures::channel::oneshot::channel();
+    let platform = chain_with_allocated_slot();
+    *platform.rpc_method_responses_gate.lock().unwrap() = Some(gate);
+    let signing_host = active_signing_host(platform.clone());
+    let operation = signing_host.current_operation().unwrap();
+    let cx = CallContext::default();
+    let allocation =
+        signing_host.statement_store_allowance_key(&cx, &operation, PRODUCT_ID.to_string());
+    futures::pin_mut!(allocation);
+    assert!(allocation.as_mut().now_or_never().is_none());
+    crate::test_support::wait_until(
+        || sent_rpc_count(&platform) > 0,
+        "allowance preparation did not reach the chain",
+    );
+    let before_reset = sent_rpc_count(&platform);
+    signing_host.clear_product_state(PRODUCT_ID).unwrap();
+    release.send(()).unwrap();
+    let result = futures::executor::block_on(async {
+        futures::select! {
+            result = allocation.fuse() => result.map(|_| ()),
+            _ = futures_timer::Delay::new(std::time::Duration::from_secs(5)).fuse() => panic!("stale acquisition did not stop"),
+        }
+    });
+    assert_eq!(
+        (result, sent_rpc_count(&platform)),
+        (Err(AuthorityError::Disconnected), before_reset),
+        "reset must stop chain preparation, not only discard its eventual key",
     );
 }
 

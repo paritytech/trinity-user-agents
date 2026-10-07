@@ -401,7 +401,7 @@ impl PairingHost {
     /// Forward a raw-signing request to the paired signing host.
     #[instrument(skip_all, fields(account_kind = match &request {
         SignRawAuthorityRequest::Product(_) => "product",
-        SignRawAuthorityRequest::LegacyAccount { .. } => "legacy",
+        SignRawAuthorityRequest::LegacyAccount { .. } | SignRawAuthorityRequest::IdentityAccount { .. } => "legacy",
     }))]
     pub async fn remote_sign_raw(
         &self,
@@ -410,21 +410,16 @@ impl PairingHost {
         request: SignRawAuthorityRequest,
         watermarked: bool,
     ) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
-        match request {
-            SignRawAuthorityRequest::Product(request) => self
-                .call(
-                    cx,
-                    session,
-                    if watermarked {
-                        SignRequest::Raw(request)
-                    } else {
-                        SignRequest::RawUnwatermarkedDeprecated(request)
-                    },
-                )
-                .await
-                .map_err(remote_authority_error)?
-                .map_err(remote_authority_error),
-            SignRawAuthorityRequest::LegacyAccount { account, request } => {
+        let request = match request {
+            SignRawAuthorityRequest::Product(request) => request,
+            SignRawAuthorityRequest::LegacyAccount {
+                product_account,
+                request,
+            } => latest::HostSignRawRequest {
+                account: product_account,
+                payload: request.payload,
+            },
+            SignRawAuthorityRequest::IdentityAccount { account, request } => {
                 let request = SignRawWithLegacyAccountRequest {
                     account,
                     data: request.payload,
@@ -445,12 +440,24 @@ impl PairingHost {
                     .await
                     .map_err(remote_authority_error)?
                     .map_err(remote_authority_error)?;
-                Ok(latest::HostSignPayloadResponse {
+                return Ok(latest::HostSignPayloadResponse {
                     signature,
                     signed_transaction: None,
-                })
+                });
             }
-        }
+        };
+        self.call(
+            cx,
+            session,
+            if watermarked {
+                SignRequest::Raw(request)
+            } else {
+                SignRequest::RawUnwatermarkedDeprecated(request)
+            },
+        )
+        .await
+        .map_err(remote_authority_error)?
+        .map_err(remote_authority_error)
     }
 
     /// Forward a transaction-creation request to the paired signing host.
@@ -574,34 +581,26 @@ impl PairingHost {
             .map_err(ring_vrf_transport_error)?
     }
 
-    /// Ask the paired signing host to allocate product resources, caching any
-    /// returned allowance keys.
+    /// Return allocation outcomes from the paired signing host without retaining keys.
     pub async fn remote_allocate_resources(
         &self,
         cx: &CallContext,
         session: &SessionInfo,
         product_id: String,
         request: latest::HostRequestResourceAllocationRequest,
-    ) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
-        let lifecycle_epoch = self.current_session_lifecycle_epoch();
-        let outcomes = self
-            .call(
-                cx,
-                session,
-                ResourceAllocationRequest {
-                    calling_product_id: product_id.clone(),
-                    resources: request.resources,
-                    on_existing: OnExistingAllowancePolicy::Increase,
-                },
-            )
-            .await
-            .map_err(remote_authority_error)?
-            .map_err(remote_authority_error)?;
-        self.cache_allowance_outcomes(cx, session, lifecycle_epoch, &product_id, &outcomes)
-            .await?;
-        Ok(latest::HostRequestResourceAllocationResponse {
-            outcomes: outcomes.into_iter().map(Into::into).collect(),
-        })
+    ) -> Result<Vec<SsoAllocationOutcome>, AuthorityError> {
+        self.call(
+            cx,
+            session,
+            ResourceAllocationRequest {
+                calling_product_id: product_id,
+                resources: request.resources,
+                on_existing: OnExistingAllowancePolicy::Increase,
+            },
+        )
+        .await
+        .map_err(remote_authority_error)?
+        .map_err(remote_authority_error)
     }
 
     /// Allocate exactly one allowance for the product and return its material.
@@ -645,9 +644,9 @@ impl PairingHost {
         &self,
         cx: &CallContext,
         session: &SessionInfo,
+        lifecycle_epoch: u64,
         product_id: String,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        let lifecycle_epoch = self.current_session_lifecycle_epoch();
         if let Some(cached) = self
             .cached_statement_store_allowance_key(session, lifecycle_epoch, &product_id)
             .await?
@@ -683,9 +682,9 @@ impl PairingHost {
         &self,
         cx: &CallContext,
         session: &SessionInfo,
+        lifecycle_epoch: u64,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let lifecycle_epoch = self.current_session_lifecycle_epoch();
         if let Some(cached) = self
             .cached_bulletin_allowance_key(session, lifecycle_epoch, &product_id)
             .await?
@@ -708,9 +707,9 @@ impl PairingHost {
         &self,
         cx: &CallContext,
         session: &SessionInfo,
+        lifecycle_epoch: u64,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let lifecycle_epoch = self.current_session_lifecycle_epoch();
         self.evict_bulletin_allowance_key(session, lifecycle_epoch, &product_id)
             .await?;
         self.allocate_bulletin_allowance_key(
@@ -752,59 +751,6 @@ impl PairingHost {
             }
             other => Err(unexpected_resource("bulletin allowance", &other)),
         }
-    }
-
-    async fn cache_allowance_outcomes(
-        &self,
-        cx: &CallContext,
-        session: &SessionInfo,
-        lifecycle_epoch: u64,
-        product_id: &str,
-        outcomes: &[SsoAllocationOutcome],
-    ) -> Result<(), AuthorityError> {
-        for outcome in outcomes {
-            if let SsoAllocationOutcome::Allocated(resource) = outcome {
-                match resource {
-                    SsoAllocatedResource::StatementStoreAllowance { slot_account_key } => {
-                        self.cache_statement_store_allowance_key(
-                            session,
-                            lifecycle_epoch,
-                            product_id,
-                            slot_account_key.clone(),
-                        )
-                        .await?;
-                    }
-                    SsoAllocatedResource::BulletinAllowance { slot_account_key } => {
-                        self.cache_bulletin_allowance_key(
-                            session,
-                            lifecycle_epoch,
-                            product_id,
-                            slot_account_key.clone(),
-                        )
-                        .await?;
-                    }
-                    SsoAllocatedResource::SmartContractAllowance => {}
-                    SsoAllocatedResource::AutoSigning {
-                        product_root_private_key,
-                        ring_vrf_domain_entropy,
-                    } => {
-                        let expected_product_subtree_public_key = self
-                            .remote_product_subtree_public_key(cx, session, product_id.to_string())
-                            .await?;
-                        self.remember_auto_signing_key(
-                            session,
-                            lifecycle_epoch,
-                            product_id,
-                            expected_product_subtree_public_key,
-                            *product_root_private_key,
-                            *ring_vrf_domain_entropy,
-                        )
-                        .await?;
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 }
 

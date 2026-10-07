@@ -27,7 +27,7 @@ use subxt::ext::scale_encode::{
 use subxt::metadata::ArcMetadata;
 use subxt::tx::Signer;
 use subxt::utils::{AccountId32, H256, MultiAddress, MultiSignature};
-use truapi::latest::{HostCreateTransactionResponse, TxPayloadExtension};
+use truapi::latest::TxPayloadExtension;
 
 use crate::chain_runtime::ChainRuntime;
 use crate::host_logic::product_account::SR25519_SIGNING_CONTEXT;
@@ -315,31 +315,18 @@ pub enum LocalTransactionError {
     Other(String),
 }
 
-/// Assemble a transaction locally from caller-supplied, pre-encoded parts,
-/// against the runtime metadata of the genesis-pinned Subxt client.
-pub async fn build_local_transaction(
+/// Runtime metadata for locally constructing a transaction.
+pub async fn local_transaction_metadata(
     chain: &ChainRuntime,
-    keypair: &schnorrkel::Keypair,
     genesis_hash: [u8; 32],
-    call_data: &[u8],
-    extensions: &[TxPayloadExtension],
-    tx_ext_version: u8,
-) -> Result<HostCreateTransactionResponse, LocalTransactionError> {
+) -> Result<ArcMetadata, LocalTransactionError> {
     let client = chain.online_client(&genesis_hash).await.map_err(|error| {
         LocalTransactionError::ChainUnavailable(format!("cannot load chain metadata: {error}"))
     })?;
     let at_block = client.at_current_block().await.map_err(|error| {
         LocalTransactionError::ChainUnavailable(format!("cannot select a metadata block: {error}"))
     })?;
-    let transaction = build_signed_transaction(
-        &Sr25519Signer::from_keypair(keypair),
-        genesis_hash,
-        call_data,
-        extensions,
-        tx_ext_version,
-        at_block.metadata(),
-    )?;
-    Ok(HostCreateTransactionResponse { transaction })
+    Ok(at_block.metadata())
 }
 
 /// Choose the extrinsic format for `tx_ext_version`, then assemble it.

@@ -6,7 +6,7 @@ use std::sync::{Mutex, PoisonError};
 
 use truapi::{CallContext, CancellationToken};
 
-use super::authority::AuthoritySession;
+use super::authority::{AccountCaller, AccountInvocation, AuthoritySession};
 use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, Response, v1};
 use crate::host_internal::sso_wire::ResponseOutcome;
 
@@ -25,6 +25,15 @@ impl SsoRequestContext {
         Self {
             call: CallContext::with_parts(String::from(message_id), cancel),
             session,
+        }
+    }
+
+    /// Bind the peer's reported caller without inheriting this host's product permissions.
+    pub fn account_invocation<'a>(&'a self, product_id: Option<&'a str>) -> AccountInvocation<'a> {
+        AccountInvocation {
+            call: &self.call,
+            session: &self.session,
+            caller: AccountCaller::Remote { product_id },
         }
     }
 }

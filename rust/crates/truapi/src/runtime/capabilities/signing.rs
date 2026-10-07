@@ -1,8 +1,5 @@
 //! Product-facing signing capability adapters.
 
-use crate::platform::{
-    CreateTransactionReview, SignPayloadReview, SignRawReview, UserConfirmationReview,
-};
 use tracing::{debug, instrument};
 use truapi::api::Signing;
 use truapi::versioned::signing::{
@@ -17,14 +14,13 @@ use truapi::versioned::signing::{
 use truapi::{CallContext, CallError, v01};
 
 use crate::runtime::authority::{
-    AuthorityError, AuthoritySession, AutoSigningGrant, CreateTransactionAuthorityRequest,
+    AccountCaller, AccountInvocation, AuthorityError, CreateTransactionAuthorityRequest,
     SignPayloadAuthorityRequest, SignRawAuthorityRequest,
 };
 use crate::runtime::{
     ContactResolutionError, LEGACY_ACCOUNT_UNAVAILABLE_REASON,
-    LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON, LegacySigner, ProductRuntimeHost,
-    remote_authority_call, remote_authority_context, signing_call_error, transaction_call_error,
-    until_cancelled,
+    LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON, LegacySigner, ProductRuntimeHost, signing_call_error,
+    transaction_call_error,
 };
 
 #[truapi::async_trait]
@@ -42,15 +38,17 @@ impl Signing for ProductRuntimeHost {
                 v01::HostSignPayloadError::PermissionDenied,
             ))
         })?;
+        let operation = self.authority.current_operation();
         self.require_chain_submit(HostSignPayloadError::V1(
             v01::HostSignPayloadError::PermissionDenied,
         ))
         .await?;
-        let Some(session) = self.authority.current_session() else {
+        let Some(operation) = operation else {
             return Err(CallError::Domain(HostSignPayloadError::V1(
                 v01::HostSignPayloadError::Rejected,
             )));
         };
+        let session = &operation.session;
         let Some(owner) = self
             .authorized_product_account(&inner.account.dot_ns_identifier, cx)
             .await
@@ -60,38 +58,21 @@ impl Signing for ProductRuntimeHost {
             )));
         };
         inner.account.dot_ns_identifier = owner;
-        let grant = self
-            .auto_signing_status(&session, &inner.account)
-            .await
+        let authorization = self
+            .authority
+            .wallet_authorization(&operation, &self.product)
             .map_err(|reason| signing_call_error(HostSignPayloadError::V1, reason))?;
-        if grant == AutoSigningGrant::Absent {
-            let confirmed = until_cancelled(
-                cx,
-                self.confirm_product_action(UserConfirmationReview::SignPayload(
-                    SignPayloadReview::Product {
-                        calling_product_id: Some(self.product_id()),
-                        request: inner.clone(),
+        self.account_call(
+            &operation,
+            self.authority.account_holder().sign_payload(
+                AccountInvocation {
+                    call: cx,
+                    session,
+                    caller: AccountCaller::Local {
+                        product: &self.product,
+                        authorization: authorization.as_ref(),
                     },
-                )),
-            )
-            .await
-            .map_err(|reason| signing_call_error(HostSignPayloadError::V1, reason))?
-            .map_err(|err| CallError::HostFailure {
-                reason: format!("sign payload confirmation failed: {err:?}"),
-            })?;
-            if !confirmed {
-                return Err(CallError::Domain(HostSignPayloadError::V1(
-                    v01::HostSignPayloadError::Rejected,
-                )));
-            }
-        }
-        let cx = remote_authority_context(cx);
-        remote_authority_call(
-            &cx,
-            self.authority.sign_payload(
-                &cx,
-                &session,
-                Some(self.product_id().as_str()),
+                },
                 SignPayloadAuthorityRequest::Product(inner),
             ),
         )
@@ -134,15 +115,17 @@ impl Signing for ProductRuntimeHost {
                 v01::HostCreateTransactionError::PermissionDenied,
             ))
         })?;
+        let operation = self.authority.current_operation();
         self.require_chain_submit(HostCreateTransactionError::V1(
             v01::HostCreateTransactionError::PermissionDenied,
         ))
         .await?;
-        let Some(session) = self.authority.current_session() else {
+        let Some(operation) = operation else {
             return Err(CallError::Domain(HostCreateTransactionError::V1(
                 v01::HostCreateTransactionError::Rejected,
             )));
         };
+        let session = &operation.session;
         let Some(owner) = self
             .authorized_product_account(&inner.signer.dot_ns_identifier, cx)
             .await
@@ -152,7 +135,6 @@ impl Signing for ProductRuntimeHost {
             )));
         };
         inner.signer.dot_ns_identifier = owner;
-        let names_contacts = !inner.contacts.is_empty();
         inner.call_data = self
             .substitute_declared_contacts(inner.call_data, &inner.contacts)
             .await
@@ -175,42 +157,21 @@ impl Signing for ProductRuntimeHost {
                 };
                 CallError::Domain(HostCreateTransactionError::V1(error))
             })?;
-        let grant = self
-            .auto_signing_status(&session, &inner.signer)
-            .await
+        let authorization = self
+            .authority
+            .wallet_authorization(&operation, &self.product)
             .map_err(|reason| transaction_call_error(HostCreateTransactionError::V1, reason))?;
-        // The signed call goes back to the product with each contact's real
-        // account in it, so naming a contact always asks the user: an
-        // auto-signing grant must not let a product read accounts out of
-        // handles unseen.
-        if grant == AutoSigningGrant::Absent || names_contacts {
-            let confirmed = until_cancelled(
-                cx,
-                self.confirm_product_action(UserConfirmationReview::CreateTransaction(
-                    CreateTransactionReview::Product {
-                        calling_product_id: Some(self.product_id()),
-                        payload: inner.clone(),
+        self.account_call(
+            &operation,
+            self.authority.account_holder().create_transaction(
+                AccountInvocation {
+                    call: cx,
+                    session,
+                    caller: AccountCaller::Local {
+                        product: &self.product,
+                        authorization: authorization.as_ref(),
                     },
-                )),
-            )
-            .await
-            .map_err(|reason| transaction_call_error(HostCreateTransactionError::V1, reason))?
-            .map_err(|err| CallError::HostFailure {
-                reason: format!("create transaction confirmation failed: {err:?}"),
-            })?;
-            if !confirmed {
-                return Err(CallError::Domain(HostCreateTransactionError::V1(
-                    v01::HostCreateTransactionError::Rejected,
-                )));
-            }
-        }
-        let cx = remote_authority_context(cx);
-        remote_authority_call(
-            &cx,
-            self.authority.create_transaction(
-                &cx,
-                &session,
-                Some(self.product_id().as_str()),
+                },
                 CreateTransactionAuthorityRequest::Product(inner),
             ),
         )
@@ -229,13 +190,14 @@ impl Signing for ProductRuntimeHost {
         CallError<HostSignPayloadWithLegacyAccountError>,
     > {
         let HostSignPayloadWithLegacyAccountRequest::V1(inner) = request;
-        let Some(session) = self.authority.current_session() else {
+        let Some(operation) = self.authority.current_operation() else {
             return Err(CallError::Domain(
                 HostSignPayloadWithLegacyAccountError::V1(v01::HostSignPayloadError::Rejected),
             ));
         };
+        let session = &operation.session;
         let signer = self
-            .classify_legacy_address_signer(cx, &session, &inner.signer)
+            .classify_legacy_address_signer(cx, &operation, &inner.signer)
             .await
             .map_err(|err| {
                 CallError::Domain(HostSignPayloadWithLegacyAccountError::V1(
@@ -253,30 +215,17 @@ impl Signing for ProductRuntimeHost {
             v01::HostSignPayloadError::PermissionDenied,
         ))
         .await?;
-        let confirmed = until_cancelled(
-            cx,
-            self.platform
-                .confirm_user_action(UserConfirmationReview::SignPayload(
-                    SignPayloadReview::LegacyAccount(inner.clone()),
-                )),
-        )
-        .await
-        .map_err(|reason| signing_call_error(HostSignPayloadWithLegacyAccountError::V1, reason))?
-        .map_err(|err| CallError::HostFailure {
-            reason: format!("sign payload confirmation failed: {err:?}"),
-        })?;
-        if !confirmed {
-            return Err(CallError::Domain(
-                HostSignPayloadWithLegacyAccountError::V1(v01::HostSignPayloadError::Rejected),
-            ));
-        }
-        let cx = remote_authority_context(cx);
-        remote_authority_call(
-            &cx,
-            self.authority.sign_payload(
-                &cx,
-                &session,
-                Some(self.product_id().as_str()),
+        self.account_call(
+            &operation,
+            self.authority.account_holder().sign_payload(
+                AccountInvocation {
+                    call: cx,
+                    session,
+                    caller: AccountCaller::Local {
+                        product: &self.product,
+                        authorization: None,
+                    },
+                },
                 SignPayloadAuthorityRequest::LegacyAccount {
                     product_account: v01::ProductAccountId {
                         dot_ns_identifier: self.product_id(),
@@ -326,15 +275,16 @@ impl Signing for ProductRuntimeHost {
         CallError<HostCreateTransactionWithLegacyAccountError>,
     > {
         let HostCreateTransactionWithLegacyAccountRequest::V1(inner) = request;
-        let Some(session) = self.authority.current_session() else {
+        let Some(operation) = self.authority.current_operation() else {
             return Err(CallError::Domain(
                 HostCreateTransactionWithLegacyAccountError::V1(
                     v01::HostCreateTransactionError::Rejected,
                 ),
             ));
         };
+        let session = &operation.session;
         let signer = self
-            .classify_legacy_signer(cx, &session, inner.signer)
+            .classify_legacy_signer(cx, &operation, inner.signer)
             .await
             .map_err(|err| {
                 CallError::Domain(HostCreateTransactionWithLegacyAccountError::V1(
@@ -347,28 +297,6 @@ impl Signing for ProductRuntimeHost {
             v01::HostCreateTransactionError::PermissionDenied,
         ))
         .await?;
-        let confirmed = until_cancelled(
-            cx,
-            self.platform
-                .confirm_user_action(UserConfirmationReview::CreateTransaction(
-                    CreateTransactionReview::LegacyAccount(inner.clone()),
-                )),
-        )
-        .await
-        .map_err(|reason| {
-            transaction_call_error(HostCreateTransactionWithLegacyAccountError::V1, reason)
-        })?
-        .map_err(|err| CallError::HostFailure {
-            reason: format!("create transaction confirmation failed: {err:?}"),
-        })?;
-        if !confirmed {
-            return Err(CallError::Domain(
-                HostCreateTransactionWithLegacyAccountError::V1(
-                    v01::HostCreateTransactionError::Rejected,
-                ),
-            ));
-        }
-        let cx = remote_authority_context(cx);
         let authority_request = match signer {
             LegacySigner::Product => CreateTransactionAuthorityRequest::LegacyAccount {
                 product_account: v01::ProductAccountId {
@@ -379,12 +307,17 @@ impl Signing for ProductRuntimeHost {
             },
             LegacySigner::Identity(_) => CreateTransactionAuthorityRequest::IdentityAccount(inner),
         };
-        remote_authority_call(
-            &cx,
-            self.authority.create_transaction(
-                &cx,
-                &session,
-                Some(self.product_id().as_str()),
+        self.account_call(
+            &operation,
+            self.authority.account_holder().create_transaction(
+                AccountInvocation {
+                    call: cx,
+                    session,
+                    caller: AccountCaller::Local {
+                        product: &self.product,
+                        authorization: None,
+                    },
+                },
                 authority_request,
             ),
         )
@@ -403,21 +336,6 @@ impl Signing for ProductRuntimeHost {
 }
 
 impl ProductRuntimeHost {
-    /// Whether the authority permits this product-account call without confirmation.
-    ///
-    /// Not wrapped in `remote_authority_call`: no authority answers this over
-    /// SSO, so there is no remote hop to cancel or time out. That is the same
-    /// locality assumption `confirm_user_action` already makes here.
-    async fn auto_signing_status(
-        &self,
-        session: &AuthoritySession,
-        account: &v01::ProductAccountId,
-    ) -> Result<AutoSigningGrant, AuthorityError> {
-        self.authority
-            .auto_signing_status(session, &self.product_id(), account)
-            .await
-    }
-
     async fn sign_raw_with_watermark(
         &self,
         cx: &CallContext,
@@ -431,15 +349,17 @@ impl ProductRuntimeHost {
                 v01::HostSignPayloadError::PermissionDenied,
             ))
         })?;
+        let operation = self.authority.current_operation();
         self.require_chain_submit(HostSignRawError::V1(
             v01::HostSignPayloadError::PermissionDenied,
         ))
         .await?;
-        let Some(session) = self.authority.current_session() else {
+        let Some(operation) = operation else {
             return Err(CallError::Domain(HostSignRawError::V1(
                 v01::HostSignPayloadError::Rejected,
             )));
         };
+        let session = &operation.session;
         let Some(owner) = self
             .authorized_product_account(&inner.account.dot_ns_identifier, cx)
             .await
@@ -449,51 +369,28 @@ impl ProductRuntimeHost {
             )));
         };
         inner.account.dot_ns_identifier = owner;
-        // Ordinary products cannot use an AutoSigning grant for unwatermarked
-        // bytes, which are not separated from transaction signatures.
-        let grant = if watermarked {
-            self.auto_signing_status(&session, &inner.account)
-                .await
-                .map_err(|reason| signing_call_error(HostSignRawError::V1, reason))?
-        } else {
-            AutoSigningGrant::Absent
-        };
-        if grant == AutoSigningGrant::Absent {
-            let confirmed = until_cancelled(
-                cx,
-                self.confirm_product_action(UserConfirmationReview::SignRaw(
-                    SignRawReview::Product {
-                        calling_product_id: Some(self.product_id()),
-                        request: inner.clone(),
-                        watermarked,
+        let authorization = self
+            .authority
+            .wallet_authorization(&operation, &self.product)
+            .map_err(|reason| raw_signing_call_error(HostSignRawError::V1, reason))?;
+        self.account_call(
+            &operation,
+            self.authority.account_holder().sign_raw(
+                AccountInvocation {
+                    call: cx,
+                    session,
+                    caller: AccountCaller::Local {
+                        product: &self.product,
+                        authorization: authorization.as_ref(),
                     },
-                )),
-            )
-            .await
-            .map_err(|reason| signing_call_error(HostSignRawError::V1, reason))?
-            .map_err(|err| CallError::HostFailure {
-                reason: format!("sign raw confirmation failed: {err:?}"),
-            })?;
-            if !confirmed {
-                return Err(CallError::Domain(HostSignRawError::V1(
-                    v01::HostSignPayloadError::Rejected,
-                )));
-            }
-        }
-        let cx = remote_authority_context(cx);
-        remote_authority_call(
-            &cx,
-            self.authority.sign_raw(
-                &cx,
-                &session,
-                Some(self.product_id().as_str()),
+                },
                 SignRawAuthorityRequest::Product(inner),
                 watermarked,
             ),
         )
         .await
         .map(HostSignRawResponse::V1)
-        .map_err(|reason| signing_call_error(HostSignRawError::V1, reason))
+        .map_err(|reason| raw_signing_call_error(HostSignRawError::V1, reason))
     }
 
     async fn sign_raw_with_legacy_account_with_watermark(
@@ -504,13 +401,14 @@ impl ProductRuntimeHost {
     ) -> Result<HostSignRawWithLegacyAccountResponse, CallError<HostSignRawWithLegacyAccountError>>
     {
         let HostSignRawWithLegacyAccountRequest::V1(inner) = request;
-        let Some(session) = self.authority.current_session() else {
+        let Some(operation) = self.authority.current_operation() else {
             return Err(CallError::Domain(HostSignRawWithLegacyAccountError::V1(
                 v01::HostSignPayloadError::Rejected,
             )));
         };
+        let session = &operation.session;
         let signer = self
-            .classify_legacy_address_signer(cx, &session, &inner.signer)
+            .classify_legacy_address_signer(cx, &operation, &inner.signer)
             .await
             .map_err(|err| {
                 CallError::Domain(HostSignRawWithLegacyAccountError::V1(
@@ -521,52 +419,48 @@ impl ProductRuntimeHost {
             v01::HostSignPayloadError::PermissionDenied,
         ))
         .await?;
-        let confirmed = until_cancelled(
-            cx,
-            self.platform
-                .confirm_user_action(UserConfirmationReview::SignRaw(
-                    SignRawReview::LegacyAccount {
-                        request: inner.clone(),
-                        watermarked,
-                    },
-                )),
-        )
-        .await
-        .map_err(|reason| signing_call_error(HostSignRawWithLegacyAccountError::V1, reason))?
-        .map_err(|err| CallError::HostFailure {
-            reason: format!("sign raw confirmation failed: {err:?}"),
-        })?;
-        if !confirmed {
-            return Err(CallError::Domain(HostSignRawWithLegacyAccountError::V1(
-                v01::HostSignPayloadError::Rejected,
-            )));
-        }
-        let cx = remote_authority_context(cx);
         let authority_request = match signer {
-            LegacySigner::Product => SignRawAuthorityRequest::Product(v01::HostSignRawRequest {
-                account: v01::ProductAccountId {
+            LegacySigner::Product => SignRawAuthorityRequest::LegacyAccount {
+                product_account: v01::ProductAccountId {
                     dot_ns_identifier: self.product_id(),
                     derivation_index: v01::DerivationIndex::Index(0),
                 },
-                payload: inner.payload,
-            }),
-            LegacySigner::Identity(account) => SignRawAuthorityRequest::LegacyAccount {
+                request: inner,
+            },
+            LegacySigner::Identity(account) => SignRawAuthorityRequest::IdentityAccount {
                 account,
                 request: inner,
             },
         };
-        remote_authority_call(
-            &cx,
-            self.authority.sign_raw(
-                &cx,
-                &session,
-                Some(self.product_id().as_str()),
+        self.account_call(
+            &operation,
+            self.authority.account_holder().sign_raw(
+                AccountInvocation {
+                    call: cx,
+                    session,
+                    caller: AccountCaller::Local {
+                        product: &self.product,
+                        authorization: None,
+                    },
+                },
                 authority_request,
                 watermarked,
             ),
         )
         .await
         .map(HostSignRawWithLegacyAccountResponse::V1)
-        .map_err(|reason| signing_call_error(HostSignRawWithLegacyAccountError::V1, reason))
+        .map_err(|reason| raw_signing_call_error(HostSignRawWithLegacyAccountError::V1, reason))
+    }
+}
+
+fn raw_signing_call_error<E>(
+    wrap: fn(v01::HostSignPayloadError) -> E,
+    error: AuthorityError,
+) -> CallError<E> {
+    match error {
+        AuthorityError::ConfirmationFailed(error) => CallError::HostFailure {
+            reason: format!("sign raw confirmation failed: {error:?}"),
+        },
+        error => signing_call_error(wrap, error),
     }
 }
