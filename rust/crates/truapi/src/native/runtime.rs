@@ -287,6 +287,15 @@ impl NativeTrUApiHostRuntime {
         self.runtime.funding_session(&intent)
     }
 
+    /// Session `intent`'s progress: the steps for its direction and rail
+    /// with when each was reached, and the provider's references.
+    pub fn funding_progress(
+        &self,
+        intent: String,
+    ) -> Option<crate::host_logic::funding::FundingProgress> {
+        self.runtime.funding_progress(&intent)
+    }
+
     /// Every funding session the core keeps, in flight first, then ended,
     /// each newest first.
     pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
@@ -362,16 +371,40 @@ impl NativeTrUApiHostRuntime {
         }
     }
 
+    /// Replace the funding providers this host offers, each with the Worker
+    /// manifest JSON it ships for it.
+    pub fn set_funding_providers(
+        &self,
+        providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+    ) -> Result<(), HostRejection> {
+        Ok(self.runtime.set_funding_providers(providers)?)
+    }
+
+    /// The providers funding session `intent` can be handed to.
+    pub fn funding_candidates(
+        &self,
+        intent: String,
+    ) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
+        self.runtime.funding_candidates(&intent)
+    }
+
+    /// Ask the candidates for funding session `intent` to price `ask`. Each
+    /// provider's row arrives through `funding_quote_changed`.
+    pub fn get_funding_quote(&self, intent: String, ask: v01::FundingQuoteAsk) {
+        self.runtime.request_funding_quotes(&intent, ask);
+    }
+
     /// Hand open funding session `intent` to the provider the user chose, by
-    /// product id.
+    /// product id, on the quote it was chosen by when it was quoted.
     pub async fn select_funding_provider(
         &self,
         intent: String,
         provider_id: String,
+        quote_id: Option<String>,
     ) -> Result<bool, HostRejection> {
         Ok(self
             .runtime
-            .select_funding_provider(&intent, &provider_id)
+            .select_funding_provider(&intent, &provider_id, quote_id.as_deref())
             .await?)
     }
 }
@@ -671,6 +704,15 @@ impl NativeTrUApiHostRuntime {
                 .activate_local_session_with_identity(secret, lite_username),
         )
         .map_err(Into::into)
+    }
+
+    /// `product_id`'s Worker manifest from dotNS, cached for a day. `None`
+    /// when the product publishes no Worker, or one the core cannot use.
+    pub async fn worker_manifest(
+        &self,
+        product_id: String,
+    ) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, HostRejection> {
+        Ok(self.runtime.worker_manifest(&product_id).await?)
     }
 
     /// Reports the core database's SQLite version, schema version and file

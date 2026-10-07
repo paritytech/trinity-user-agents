@@ -9,7 +9,8 @@
 //! product's side of funding headlessly.
 //!
 //! `provide` and `provide-cancel` instead hand the session to the product that
-//! asked, so a provider worker can serve its own request; `provide-cancel`
+//! asked, which `TRUAPI_FUNDING_PROVIDERS` must name as a provider, so a
+//! provider worker can serve its own request; `provide-cancel`
 //! then cancels it, as a user would. Top-ups and payment requests that worker
 //! starts are accepted and complete in full, recorded in the ledger named by
 //! `TRUAPI_FUNDING_LEDGER` so their statuses outlive a restart.
@@ -29,17 +30,73 @@ use std::time::Duration;
 use futures::stream::{self, BoxStream, StreamExt};
 use truapi::SigningHostRuntime;
 use truapi::host_logic::funding::FundingStage;
+use truapi::host_logic::funding_providers::FundingProviderEntry;
 use truapi::latest::{
-    FundingDirection, FundingFailure, FundingFrameOutcome, GenericError,
-    HostFundingStatusSubscribeItem, HostPaymentError, HostPaymentRequest,
+    FundingDirection, FundingFailure, FundingFrameOutcome, FundingQuoteAsk, FundingRail,
+    GenericError, HostFundingStatusSubscribeItem, HostPaymentError, HostPaymentRequest,
     HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
     HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
     HostPaymentTopUpStatusSubscribeItem,
 };
 use truapi::platform::{
-    FundingPlatform, FundingPresentOutcome, FundingPresentation, PaymentPlatform, ProductContext,
-    TopUpPlatform, async_trait,
+    CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, FundingQuoteRow,
+    FundingQuoteState, PaymentPlatform, ProductContext, TopUpPlatform, async_trait,
 };
+
+/// Worker manifest every scripted provider publishes: card in, and crypto in
+/// and out, quoted by its worker.
+const SCRIPTED_PROVIDER_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"]}]}}}"#;
+
+/// Offer each product named in `TRUAPI_FUNDING_PROVIDERS` (comma-separated)
+/// as a funding provider publishing [`SCRIPTED_PROVIDER_MANIFEST`], seeded
+/// into the core's manifest cache as though read from dotNS, so the core
+/// neither reads the chain for it nor drops it for publishing nothing there.
+pub async fn offer_scripted_providers(
+    runtime: &SigningHostRuntime,
+    platform: &dyn CoreStorage,
+) -> anyhow::Result<()> {
+    let Ok(spec) = std::env::var("TRUAPI_FUNDING_PROVIDERS") else {
+        return Ok(());
+    };
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let mut providers = Vec::new();
+    for product_id in spec.split(',').map(str::trim).filter(|id| !id.is_empty()) {
+        platform
+            .write_core_storage(
+                truapi::worker_manifest_cache_key(product_id),
+                truapi::encode_cached_root_manifest(Some(SCRIPTED_PROVIDER_MANIFEST), now_secs),
+            )
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("seeding the funding provider {product_id}: {error:?}")
+            })?;
+        providers.push(FundingProviderEntry {
+            product_id: product_id.to_string(),
+            worker_manifest: Some(SCRIPTED_PROVIDER_MANIFEST.to_string()),
+        });
+    }
+    runtime
+        .set_funding_providers(providers)
+        .map_err(|error| anyhow::anyhow!("offering funding providers: {}", error.reason))
+}
+
+/// The ask a scripted session is quoted on: a card payment in EUR inbound,
+/// USDT outbound, as [`SCRIPTED_PROVIDER_MANIFEST`] serves them.
+fn scripted_ask(direction: FundingDirection, amount: Option<u128>) -> FundingQuoteAsk {
+    let (rail, asset) = match direction {
+        FundingDirection::In => (FundingRail::Card, "EUR"),
+        FundingDirection::Out => (FundingRail::Crypto, "USDT"),
+    };
+    FundingQuoteAsk {
+        direction,
+        rail,
+        asset: asset.to_string(),
+        amount: amount.unwrap_or(1_000),
+        country: None,
+    }
+}
 
 /// How long a started session stays in flight before it is settled, so a
 /// product sees its first status before the terminal one.
@@ -136,6 +193,7 @@ impl CliFundingHost {
         runtime: Option<Weak<SigningHostRuntime>>,
         product: Option<&ProductContext>,
         intent: String,
+        ask: FundingQuoteAsk,
         cancel: bool,
     ) -> Result<FundingPresentOutcome, GenericError> {
         let (Some(runtime), Some(product)) =
@@ -143,8 +201,37 @@ impl CliFundingHost {
         else {
             return Ok(FundingPresentOutcome::Dismissed);
         };
+        let candidates: Vec<String> = runtime
+            .funding_candidates(&intent)
+            .into_iter()
+            .map(|candidate| candidate.provider_id)
+            .collect();
+        self.record(serde_json::json!({
+            "kind": "candidates",
+            "intent": intent,
+            "providers": candidates,
+        }));
+        let rows: Vec<FundingQuoteRow> = runtime.get_funding_quote(&intent, ask).collect().await;
+        let chosen = rows.iter().find_map(|row| match &row.state {
+            FundingQuoteState::Quoted { quote } if row.provider_id == product.product_id => {
+                Some(quote.quote_id.clone())
+            }
+            _ => None,
+        });
+        self.record(serde_json::json!({
+            "kind": "quotes",
+            "intent": intent,
+            "rows": rows.iter().map(|row| serde_json::json!({
+                "provider": row.provider_id,
+                "state": match &row.state {
+                    FundingQuoteState::Pending => "Pending".to_string(),
+                    FundingQuoteState::Quoted { quote } => format!("Quoted:{}", quote.quote_id),
+                    FundingQuoteState::Unavailable { reason } => format!("Unavailable:{reason:?}"),
+                },
+            })).collect::<Vec<_>>(),
+        }));
         runtime
-            .select_funding_provider(&intent, &product.product_id)
+            .select_funding_provider(&intent, &product.product_id, chosen.as_deref())
             .await?;
         if cancel {
             let runtime = Arc::downgrade(&runtime);
@@ -219,11 +306,13 @@ impl FundingPlatform for CliFundingHost {
         let runtime = self.runtime.get().cloned();
         let intent = session.intent;
         if matches!(outcome, Outcome::Provide | Outcome::ProvideThenCancel) {
+            let ask = scripted_ask(session.direction, session.amount);
             return self
                 .provide(
                     runtime,
                     product,
                     intent,
+                    ask,
                     outcome == Outcome::ProvideThenCancel,
                 )
                 .await;

@@ -357,6 +357,15 @@ pub trait NativeFundingCallbacks: Send + Sync {
 
     /// A session's status changed, for host UI such as the in-flight pill.
     fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);
+
+    /// One provider's row of a quote list the host requested with
+    /// `get_funding_quote`: `Pending` first, then its quote or why it is
+    /// unavailable.
+    fn funding_quote_changed(
+        &self,
+        intent: String,
+        row: crate::platform::FundingQuoteRow,
+    );
 }
 
 /// Native payment engine, which pays from the user's balance to an account.

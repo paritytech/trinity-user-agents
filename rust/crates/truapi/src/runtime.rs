@@ -13,6 +13,7 @@ mod allowances;
 /// Core-owned auth/session UI state machine.
 pub mod auth_state;
 mod authority;
+mod browse;
 /// In-core Bulletin preimage submission over the shared Subxt client.
 pub mod bulletin_rpc;
 mod capabilities;
@@ -20,6 +21,8 @@ mod chat;
 pub mod contacts;
 mod dotns_lookup;
 mod funding;
+mod funding_providers;
+mod funding_quotes;
 pub use funding::OpenFundingError;
 mod identity;
 pub mod login_failure;
@@ -108,8 +111,10 @@ use truapi::versioned::funding::{
     HostFundingStatusSubscribeItem, HostFundingStatusSubscribeRequest,
 };
 use truapi::versioned::funding_provider::{
+    HostFundingAnswerQuoteError, HostFundingAnswerQuoteRequest, HostFundingAnswerQuoteResponse,
     HostFundingPresentFrameError, HostFundingPresentFrameRequest, HostFundingPresentFrameResponse,
     HostFundingReportError, HostFundingReportRequest, HostFundingReportResponse,
+    HostFundingSaveError, HostFundingSaveRequest, HostFundingSaveResponse,
     HostFundingServeSubscribeError, HostFundingServeSubscribeItem,
     HostFundingServeSubscribeRequest,
 };
@@ -134,7 +139,7 @@ use crate::host_internal::sso_messages::RingVrfError;
 use crate::host_logic::product_account::{
     derivation_index_bytes, derive_product_public_key, public_key_from_address,
 };
-use crate::host_logic::funding::ReportRefusal;
+use crate::host_logic::funding::{MAX_SAVED_BYTES, ReportRefusal, SaveRefusal};
 use crate::host_logic::session::SessionInfo;
 #[cfg(test)]
 use crate::host_logic::session::SessionState;
@@ -1645,6 +1650,59 @@ impl FundingProvider for ProductRuntimeHost {
             Err(ReportRefusal::NotFound) => Err(domain(v01::HostFundingReportError::NotFound)),
             Err(ReportRefusal::OutOfOrder) => Err(domain(v01::HostFundingReportError::OutOfOrder)),
             Err(ReportRefusal::DuplicateId) => Err(domain(v01::HostFundingReportError::DuplicateId)),
+        }
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "funding_provider.save"))]
+    async fn save(
+        &self,
+        _cx: &CallContext,
+        request: HostFundingSaveRequest,
+    ) -> Result<HostFundingSaveResponse, CallError<HostFundingSaveError>> {
+        let HostFundingSaveRequest::V1(request) = request;
+        self.funding_provider_access()?;
+        let saved = self
+            .services
+            .funding()
+            .save(
+                self.platform.as_ref(),
+                current_unix_millis(),
+                &self.product.product_id,
+                &request.intent,
+                request.state,
+            )
+            .await
+            .map_err(|error| CallError::HostFailure {
+                reason: error.to_string(),
+            })?;
+        let domain = |error| CallError::Domain(HostFundingSaveError::V1(error));
+        match saved {
+            Ok(()) => Ok(HostFundingSaveResponse::V1),
+            Err(SaveRefusal::NotFound) => Err(domain(v01::HostFundingSaveError::NotFound)),
+            Err(SaveRefusal::TooLarge) => Err(domain(v01::HostFundingSaveError::TooLarge {
+                max: MAX_SAVED_BYTES,
+            })),
+        }
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "funding_provider.answer_quote"))]
+    async fn answer_quote(
+        &self,
+        _cx: &CallContext,
+        request: HostFundingAnswerQuoteRequest,
+    ) -> Result<HostFundingAnswerQuoteResponse, CallError<HostFundingAnswerQuoteError>> {
+        let HostFundingAnswerQuoteRequest::V1(request) = request;
+        self.funding_provider_access()?;
+        if self.services.funding().answer_quote(
+            &self.product.product_id,
+            &request.ask_id,
+            request.answer,
+        ) {
+            Ok(HostFundingAnswerQuoteResponse::V1)
+        } else {
+            Err(CallError::Domain(HostFundingAnswerQuoteError::V1(
+                v01::HostFundingAnswerQuoteError::NotFound,
+            )))
         }
     }
 

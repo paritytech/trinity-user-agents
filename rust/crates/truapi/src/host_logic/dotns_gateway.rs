@@ -385,6 +385,24 @@ pub fn decode_string_array(data: &[u8]) -> Result<Vec<String>, DotnsContractErro
         .collect()
 }
 
+/// Decodes an ABI `bytes32[]`, such as a page of `Publisher.getPublished`.
+pub fn decode_bytes32_array(data: &[u8]) -> Result<Vec<[u8; 32]>, DotnsContractError> {
+    let array_at = word_usize(data, 0)?;
+    let array = data.get(array_at..).ok_or(DotnsContractError::Abi {
+        context: "array offset",
+    })?;
+    let len = word_usize(array, 0)?;
+    (1..=len)
+        .map(|index| {
+            word(array, index).map(|bytes| {
+                let mut value = [0u8; 32];
+                value.copy_from_slice(bytes);
+                value
+            })
+        })
+        .collect()
+}
+
 /// Decodes one `DotnsPopController.pendingClaims(address,uint256,uint256)`
 /// page, an ABI `(string label, uint64 mintedAt)[]`, as `(label, minted_at)`
 /// pairs.
@@ -1241,6 +1259,11 @@ mod tests {
             decode_string_array(&[abi_word(0x20), abi_word(0)].concat()).unwrap(),
             Vec::<String>::new()
         );
+
+        // bytes32[] = [0x11.., 0x22..]; a truncated one is refused.
+        let hashes = [abi_word(0x20).to_vec(), abi_word(2).to_vec(), vec![0x11; 32], vec![0x22; 32]].concat();
+        assert_eq!(decode_bytes32_array(&hashes).unwrap(), vec![[0x11; 32], [0x22; 32]]);
+        assert!(decode_bytes32_array(&hashes[..hashes.len() - 1]).is_err());
 
         // pendingClaims = [("alice01", 42), ("bob", 7)].
         let struct_a = [
