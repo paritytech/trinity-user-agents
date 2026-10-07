@@ -9,7 +9,7 @@ use truapi::versioned::scanner::{
 use truapi::{CallContext, CallError};
 
 use crate::host_logic::scanner::{accepts, validate_request};
-use crate::platform::HostScan;
+use crate::platform::{HostScan, ProductExecutionKind};
 use crate::runtime::{ProductRuntimeHost, until_cancelled};
 
 fn domain(error: latest::HostScannerScanError) -> CallError<HostScannerScanError> {
@@ -39,6 +39,9 @@ impl Scanner for ProductRuntimeHost {
             .ok_or(CallError::Unsupported)?;
         validate_request(&request)
             .map_err(|reason| domain(latest::HostScannerScanError::InvalidRequest { reason }))?;
+        if self.execution_kind() == ProductExecutionKind::Worker && !self.recently_tapped() {
+            return Err(domain(latest::HostScannerScanError::NotVisible));
+        }
         let _claim = self
             .services
             .claim_scan()
@@ -61,6 +64,9 @@ impl Scanner for ProductRuntimeHost {
             HostScan::Dismissed => latest::ScanOutcome::Dismissed,
             HostScan::CameraUnavailable => {
                 return Err(domain(latest::HostScannerScanError::CameraUnavailable));
+            }
+            HostScan::NotVisible => {
+                return Err(domain(latest::HostScannerScanError::NotVisible));
             }
         };
         Ok(HostScannerScanResponse::V1(

@@ -3509,6 +3509,10 @@ pub enum HostScan {
     /// The device has no camera, or the user refused the host application one.
     /// The host has already told the user how to turn it on.
     CameraUnavailable,
+    /// The requesting App or Widget is not the screen the user sees, so the
+    /// host opened nothing. A Worker's request was already checked by the core
+    /// and is never answered this way.
+    NotVisible,
 }
 
 /// Host-owned viewfinder for QR codes and barcodes.
@@ -3523,6 +3527,11 @@ pub enum HostScan {
 /// before that close has finished, so close any viewfinder still open before
 /// opening another. A JS host is not told about a cancel, because a promise
 /// cannot be withdrawn.
+///
+/// An App or Widget scans only while it is the screen the user sees: answer
+/// [`HostScan::NotVisible`] otherwise, without opening anything. A Worker's
+/// request has already passed the core's tap check, so open it over whatever is
+/// on screen.
 #[async_trait]
 pub trait ScannerPlatform: Send + Sync {
     /// Open the viewfinder on behalf of `product` and wait for the user.

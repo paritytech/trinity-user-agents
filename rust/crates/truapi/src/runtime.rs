@@ -42,6 +42,7 @@ mod statement_store_rpc;
 mod vrf;
 
 use core::future::Future;
+use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -321,7 +322,15 @@ pub struct ProductRuntimeHost {
     /// operations is the host's call, made in `begin_operation`, since the
     /// host is what the operations keep running.
     open_operations: Mutex<HashSet<u32>>,
+    /// When the user last tapped UI the host drew for this connection, in unix
+    /// seconds, or zero before the first tap. A Worker may scan only shortly
+    /// after one, because it has no screen the user could be looking at.
+    last_user_tap_secs: AtomicU64,
 }
+
+/// How long after a tap a Worker may still open the scanner, as browsers bound
+/// transient user activation.
+pub(crate) const USER_TAP_WINDOW_SECS: u64 = 5;
 
 /// A connection that goes away without ending its operations still owes the
 /// ledger their references, so the host is told to stop rather than keeping a
@@ -356,7 +365,22 @@ impl ProductRuntimeHost {
             pocket_platform: adapters.pocket_platform,
             game_platform: adapters.game_platform,
             open_operations: Mutex::new(HashSet::new()),
+            last_user_tap_secs: AtomicU64::new(0),
         }
+    }
+
+    /// Record that the user tapped UI the host drew for this connection.
+    pub(crate) fn note_user_tap_at(&self, unix_secs: u64) {
+        self.last_user_tap_secs.store(unix_secs, Ordering::Release);
+    }
+
+    /// Whether the user tapped UI the host drew for this connection within the
+    /// last [`USER_TAP_WINDOW_SECS`].
+    pub(crate) fn recently_tapped(&self) -> bool {
+        let tapped_at = self.last_user_tap_secs.load(Ordering::Acquire);
+        tapped_at != 0
+            && crate::unix_time::current_unix_secs().saturating_sub(tapped_at)
+                <= USER_TAP_WINDOW_SECS
     }
 
     /// Role-neutral services shared with the owning host runtime.
@@ -486,6 +510,7 @@ impl ProductRuntimeHost {
             pocket_platform: None,
             game_platform: None,
             open_operations: Mutex::new(HashSet::new()),
+            last_user_tap_secs: AtomicU64::new(0),
         };
         (host, pairing_host)
     }
@@ -1247,7 +1272,9 @@ impl ProductRuntimeHost {
         item: HostRendererActionSubscribeItem,
     ) -> Result<(), crate::host_core::ProductRuntimeError> {
         self.renderer_access()?;
-        self.renderer.publish(item)
+        self.renderer.publish(item)?;
+        self.note_user_tap_at(crate::unix_time::current_unix_secs());
+        Ok(())
     }
 
     /// Pocket access policy for this connection: the collection is reachable

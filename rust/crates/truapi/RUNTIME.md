@@ -416,12 +416,16 @@ AutoSigning without approval. Legacy-account signing still asks the user.
 - `ScannerPlatform`: open the host's QR and barcode viewfinder for a product
   and report how it ended. The core checks the request first, answering
   `Unsupported` without a scanner, `InvalidRequest` for a request over its
-  limits, and `Busy` while another scan is open, since the device has one
-  viewfinder. It then calls the host and checks the code again, so a code the
-  request does not accept reaches the product as `Unknown`. A cancelled call
-  drops the host's future, which is the host's signal to close the viewfinder.
-  The host filters codes with the core's `ScanFilter` and never follows a
-  scanned link.
+  limits, `NotVisible` for a Worker the user has not tapped in the last 5
+  seconds, and `Busy` while another scan is open, since the device has one
+  viewfinder. A tap is a renderer action the host delivered to that
+  connection. The core then calls the host, which answers `NotVisible` itself
+  for an App or Widget that is not on screen, and checks the code again, so a
+  code the request does not accept reaches the product as `Unknown`. A code
+  the core would accept as a pairing request is never accepted, whatever the
+  request asks for. A cancelled call drops the host's future, which is the
+  host's signal to close the viewfinder. The host filters codes with the
+  core's `ScanFilter` and never follows a scanned link.
 
 `Platform` is a blanket-implemented supertrait that combines the capability
 traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,

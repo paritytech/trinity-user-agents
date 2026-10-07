@@ -311,8 +311,16 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
 /// the product's words. Hand every code the camera reads to a `ScanFilter`
 /// built from `request` and act on its verdict. Never follow a scanned link.
 /// Close the viewfinder when the task is cancelled.
+///
+/// An App or Widget scans only while it is the screen the user sees: answer
+/// `.notVisible` otherwise, without opening anything. A Worker's request has
+/// already passed the core's tap check, so open it over whatever is on screen.
 public protocol ScannerHostBridge: AnyObject, Sendable {
-    func scanCode(productId: String, request: HostScannerScanRequest) async throws -> HostScan
+    func scanCode(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostScannerScanRequest
+    ) async throws -> HostScan
 }
 
 public extension HostBridge {
@@ -476,9 +484,13 @@ private final class ScannerCallbackAdapter: NativeScannerCallbacks, @unchecked S
         self.bridge = bridge
     }
 
-    func scanCode(productId: String, request: HostScannerScanRequest) async throws -> HostScan {
+    func scanCode(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostScannerScanRequest
+    ) async throws -> HostScan {
         try await withHostRejection {
-            try await bridge.scanCode(productId: productId, request: request)
+            try await bridge.scanCode(productId: productId, executionKind: executionKind, request: request)
         }
     }
 }

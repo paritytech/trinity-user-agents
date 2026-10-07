@@ -370,7 +370,13 @@ export type HostScan =
    * The device has no camera, or the user refused the host application one.
    * The host has already told the user how to turn it on.
    */
-  | { tag: "CameraUnavailable"; value?: undefined };
+  | { tag: "CameraUnavailable"; value?: undefined }
+  /**
+   * The requesting App or Widget is not the screen the user sees, so the
+   * host opened nothing. A Worker's request was already checked by the core
+   * and is never answered this way.
+   */
+  | { tag: "NotVisible"; value?: undefined };
 
 /**
  * Review shown before a product learns the user's primary identity.
@@ -900,6 +906,7 @@ export const HostScan: S.Codec<HostScan> = S.lazy(
       }>,
       Dismissed: S._void,
       CameraUnavailable: S._void,
+      NotVisible: S._void,
     }),
 );
 
@@ -1714,6 +1721,11 @@ export interface ProductStorage {
  * before that close has finished, so close any viewfinder still open before
  * opening another. A JS host is not told about a cancel, because a promise
  * cannot be withdrawn.
+ *
+ * An App or Widget scans only while it is the screen the user sees: answer
+ * `HostScan::NotVisible` otherwise, without opening anything. A Worker's
+ * request has already passed the core's tap check, so open it over whatever is
+ * on screen.
  */
 export interface ScannerPlatform {
   /**

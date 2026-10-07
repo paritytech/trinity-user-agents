@@ -335,13 +335,19 @@ pub trait NativeContactsCallbacks: Send + Sync {
 /// [`crate::host_logic::scanner::ScanFilter`] built from `request`, and never
 /// follow a scanned link. Dropping the returned future cancels the foreign
 /// task; close the viewfinder when that happens.
+///
+/// An App or Widget scans only while it is the screen the user sees: answer
+/// `NotVisible` otherwise, without opening anything. A Worker's request has
+/// already passed the core's tap check, so open it over whatever is on screen.
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
 pub trait NativeScannerCallbacks: Send + Sync {
-    /// Open the viewfinder on behalf of `product_id` and report how it ended.
+    /// Open the viewfinder on behalf of `product_id`'s execution of
+    /// `execution_kind` and report how it ended.
     async fn scan_code(
         &self,
         product_id: String,
+        execution_kind: crate::platform::ProductExecutionKind,
         request: truapi::latest::HostScannerScanRequest,
     ) -> Result<crate::platform::HostScan, HostRejection>;
 }

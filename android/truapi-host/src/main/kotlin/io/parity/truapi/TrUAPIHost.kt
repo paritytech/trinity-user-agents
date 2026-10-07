@@ -92,6 +92,7 @@ import uniffi.truapi.NativeContactsCallbacks
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
 import uniffi.truapi.NativeScannerCallbacks
+import uniffi.truapi.ProductExecutionKind
 
 /** Package metadata. */
 object TrUAPIHost {
@@ -681,15 +682,26 @@ private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : 
  * product's words. Hand every code the camera reads to a `ScanFilter` built from
  * [request] and act on its verdict. Never follow a scanned link. Close the
  * viewfinder when the coroutine is cancelled.
+ *
+ * An App or Widget scans only while it is the screen the user sees: answer
+ * `HostScan.NotVisible` otherwise, without opening anything. A Worker's request
+ * has already passed the core's tap check, so open it over whatever is on screen.
  */
 interface ScannerHostBridge {
     @Throws(HostRejection::class)
-    suspend fun scanCode(productId: String, request: HostScannerScanRequest): HostScan
+    suspend fun scanCode(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostScannerScanRequest,
+    ): HostScan
 }
 
 private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : NativeScannerCallbacks {
-    override suspend fun scanCode(productId: String, request: HostScannerScanRequest): HostScan =
-        withHostRejection { bridge.scanCode(productId, request) }
+    override suspend fun scanCode(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostScannerScanRequest,
+    ): HostScan = withHostRejection { bridge.scanCode(productId, executionKind, request) }
 }
 
 private class PocketCallbackAdapter(private val bridge: PocketHostBridge) : NativePocketCallbacks {

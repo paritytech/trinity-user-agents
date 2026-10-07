@@ -70,7 +70,11 @@ impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
         request: &truapi::latest::HostScannerScanRequest,
     ) -> Result<crate::platform::HostScan, v01::GenericError> {
         self.scanner
-            .scan_code(product.product_id.clone(), request.clone())
+            .scan_code(
+                product.product_id.clone(),
+                product.execution_kind,
+                request.clone(),
+            )
             .await
             .map_err(|error| v01::GenericError {
                 reason: error.to_string(),

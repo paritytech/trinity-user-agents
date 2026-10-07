@@ -7752,7 +7752,16 @@ impl crate::platform::ScannerPlatform for StubScannerPlatform {
 /// A runtime for `greenmarket.dot` with no session, and `scanner` installed
 /// when given.
 fn scanner_host(scanner: Option<Arc<StubScannerPlatform>>) -> ProductRuntimeHost {
-    let (host_config, product) = runtime_config("greenmarket.dot");
+    scanner_host_for(crate::platform::ProductExecutionKind::App, scanner)
+}
+
+/// [`scanner_host`] for an execution of `kind`.
+fn scanner_host_for(
+    kind: crate::platform::ProductExecutionKind,
+    scanner: Option<Arc<StubScannerPlatform>>,
+) -> ProductRuntimeHost {
+    let (host_config, mut product) = runtime_config("greenmarket.dot");
+    product.execution_kind = kind;
     let services = RuntimeServices::with_chat_platform(
         stub_platform() as Arc<dyn Platform>,
         host_config.host.host_info.clone(),
@@ -7806,6 +7815,68 @@ fn scan(
     host: &ProductRuntimeHost,
 ) -> Result<v01::ScanOutcome, CallError<v01::HostScannerScanError>> {
     scan_in(host, &CallContext::default())
+}
+
+/// The user tapping a button on the product's card face.
+fn card_tap() -> truapi::versioned::renderer::HostRendererActionSubscribeItem {
+    truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(
+        v01::HostRendererActionSubscribeItem {
+            context: v01::RenderContext::PocketCard {
+                card_id: "receipts".into(),
+            },
+            action_id: "scan".into(),
+            payload: vec![],
+        },
+    )
+}
+
+#[test]
+fn a_worker_scans_only_right_after_the_user_taps_its_card() {
+    // A Worker has no screen of its own. Without a tap, the viewfinder would
+    // open over whatever the user is doing.
+    let scanner = StubScannerPlatform::answering(crate::platform::HostScan::Dismissed);
+    let host = scanner_host_for(
+        crate::platform::ProductExecutionKind::Worker,
+        Some(scanner.clone()),
+    );
+    assert_eq!(
+        scan(&host),
+        Err(CallError::Domain(v01::HostScannerScanError::NotVisible))
+    );
+    assert!(scanner.asked().is_empty());
+
+    host.publish_renderer_action(card_tap()).unwrap();
+    assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
+    assert_eq!(scanner.asked().len(), 1);
+}
+
+#[test]
+fn a_tap_older_than_the_window_does_not_let_a_worker_scan() {
+    let scanner = StubScannerPlatform::answering(crate::platform::HostScan::Dismissed);
+    let host = scanner_host_for(
+        crate::platform::ProductExecutionKind::Worker,
+        Some(scanner.clone()),
+    );
+    host.note_user_tap_at(
+        crate::unix_time::current_unix_secs() - super::USER_TAP_WINDOW_SECS - 1,
+    );
+    assert_eq!(
+        scan(&host),
+        Err(CallError::Domain(v01::HostScannerScanError::NotVisible))
+    );
+    assert!(scanner.asked().is_empty());
+}
+
+#[test]
+fn a_page_the_host_says_is_off_screen_is_not_visible() {
+    // Only the host knows which page the user is looking at.
+    let host = scanner_host(Some(StubScannerPlatform::answering(
+        crate::platform::HostScan::NotVisible,
+    )));
+    assert_eq!(
+        scan(&host),
+        Err(CallError::Domain(v01::HostScannerScanError::NotVisible))
+    );
 }
 
 fn scanned(text: &str, format: v01::CodeFormat) -> crate::platform::HostScan {
