@@ -32,6 +32,12 @@ pub struct SsoAccountHolderService {
     withdrawals: SsoWithdrawals,
 }
 
+/// Withdrawals shared with this peer's transport reader.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn withdrawals(service: &SsoAccountHolderService) -> &SsoWithdrawals {
+    &service.withdrawals
+}
+
 impl SsoAccountHolderService {
     /// Bind one peer to the activation that authenticated its transport.
     pub fn new(wallet: Arc<WalletAccountHolder>, session: AuthoritySession) -> Self {
@@ -45,11 +51,6 @@ impl SsoAccountHolderService {
     /// Require the activation that authenticated this peer.
     pub fn require_current_session(&self) -> Result<(), AuthorityError> {
         wallet_require_current_session(&self.wallet, &self.session)
-    }
-
-    /// Withdrawals shared with this peer's transport reader.
-    pub fn withdrawals(&self) -> &SsoWithdrawals {
-        &self.withdrawals
     }
 
     /// Apply a withdrawal without waiting behind the request it cancels.
