@@ -16,7 +16,7 @@ fn granting_platform() -> Arc<StubPlatform> {
 
 /// Ask for `resources` and return the per-resource outcomes.
 fn allocate(
-    runtime: &ProductRuntimeHost,
+    runtime: &ProductRuntimeHost<WalletAccountHolder>,
     resources: Vec<v01::AllocatableResource>,
 ) -> Vec<v01::AllocationOutcome> {
     let response = futures::executor::block_on(ResourceAllocation::request(
@@ -73,8 +73,9 @@ fn withholding_nothing_leaves_every_resource_granted() {
                 "myapp.dot",
                 &product_account(0),
                 activation
+                    .accounts()
                     .wallet_authorization(
-                        &activation.current_operation().unwrap(),
+                        &activation.accounts().current_operation().unwrap(),
                         &ProductContext::new("myapp.dot".to_string()).unwrap()
                     )
                     .unwrap()
@@ -116,7 +117,7 @@ fn a_later_set_replaces_the_earlier_one() {
 }
 
 /// Ask for a statement proof the way `createProofAuthorized` does.
-fn proof_is_signed(runtime: &ProductRuntimeHost) -> bool {
+fn proof_is_signed(runtime: &ProductRuntimeHost<WalletAccountHolder>) -> bool {
     futures::executor::block_on(StatementStore::create_proof_authorized(
         runtime,
         &CallContext::default(),
@@ -166,6 +167,7 @@ fn a_withheld_bulletin_allowance_yields_no_key_on_either_call() {
     activation.set_grant_allowances_unchecked(true);
     activation.set_withheld_resources(vec!["BulletinAllowance".to_string()]);
     let session = activation
+        .accounts()
         .current_operation()
         .expect("the session just made");
     let cx = CallContext::default();
@@ -173,10 +175,12 @@ fn a_withheld_bulletin_allowance_yields_no_key_on_either_call() {
     let keys = futures::executor::block_on(async {
         [
             activation
+                .accounts()
                 .bulletin_allowance_key(&cx, &session, "myapp.dot".to_string())
                 .await
                 .is_ok(),
             activation
+                .accounts()
                 .refresh_bulletin_allowance_key(&cx, &session, "myapp.dot".to_string())
                 .await
                 .is_ok(),

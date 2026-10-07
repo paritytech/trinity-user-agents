@@ -1,24 +1,14 @@
 //! Wallet resource approval and allowance issuance.
 
-use super::{WalletAccountHolder, WalletAuthorization, product_authority_error};
+use crate::runtime::allowances::current_unix_secs;
+
+use super::WalletAccountHolder;
 use crate::chain_runtime::RuntimeFailure;
 use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
 use crate::host_logic::product_account::ProductAccountError;
-use crate::platform::{
-    ResourceAllocationReview, UserConfirmationReview, has_trusted_remote_permissions,
-    normalize_product_identifier,
-};
-use crate::runtime::authority::{
-    AccountCaller, AccountInvocation, AuthorityError, AuthoritySession, AutoSigningKey,
-    BulletinAllowanceKey,
-};
+use crate::runtime::authority::{AuthorityError, AuthoritySession};
 use crate::runtime::statement_allowance::StatementAllowanceError;
 use crate::runtime::statement_store_rpc::StatementStoreRpcClientError;
-use futures::{
-    StreamExt,
-    stream::{self, BoxStream},
-};
-use std::sync::Arc;
 use tracing::{debug, warn};
 use truapi::latest as v01;
 
@@ -59,9 +49,6 @@ pub enum AllowanceAllocationError {
         #[source]
         source: RuntimeFailure,
     },
-    /// System time cannot be converted into a UNIX timestamp.
-    #[error("system clock before UNIX epoch")]
-    SystemClockBeforeUnixEpoch,
     /// The signing account is not in any personhood ring.
     #[error("signing account is not a personhood ring member; cannot grant {resource} allowance")]
     MissingPersonhoodMembership {
@@ -91,145 +78,6 @@ pub struct StatementStoreAllocation {
     pub period: u32,
 }
 
-/// A wallet-issued resource, retained locally or encoded for the paired host.
-pub enum AccountGrant {
-    /// Statement key and its actual allocated period.
-    StatementStore(StatementStoreAllocation),
-    /// Dedicated Bulletin allowance key.
-    Bulletin(BulletinAllowanceKey),
-    /// Funded product account.
-    SmartContract,
-    /// Delegated product signing material for a remote host.
-    AutoSigning(AutoSigningKey),
-    /// Native signing permission without exporting wallet keys.
-    WalletAuthorization(WalletAuthorization),
-}
-
-impl WalletAccountHolder {
-    /// Approve one ordered request before issuing its resources lazily.
-    pub async fn allocate_grants<'a>(
-        &'a self,
-        invocation: AccountInvocation<'a>,
-        request: v01::HostRequestResourceAllocationRequest,
-        policy: OnExistingAllowancePolicy,
-    ) -> Result<BoxStream<'a, Result<AccountGrant, AllowanceAllocationError>>, AuthorityError> {
-        let caller = invocation
-            .caller
-            .product_id()
-            .ok_or(AuthorityError::Rejected)?;
-        let confirmed = crate::runtime::until_cancelled(invocation.call, async {
-            if matches!(invocation.caller, AccountCaller::Local { .. })
-                && has_trusted_remote_permissions(caller)
-            {
-                return Ok(true);
-            }
-            self.services
-                .platform
-                .confirm_user_action(UserConfirmationReview::ResourceAllocation(
-                    ResourceAllocationReview {
-                        calling_product_id: caller.to_string(),
-                        resources: request.resources.clone(),
-                    },
-                ))
-                .await
-        })
-        .await?
-        .map_err(AuthorityError::ConfirmationFailed)?;
-        if !confirmed {
-            return Err(AuthorityError::Rejected);
-        }
-        self.require_current_session(invocation.session)?;
-        let product_id = caller.to_string();
-        Ok(stream::unfold(
-            (request.resources.into_iter(), product_id, invocation),
-            move |(mut resources, product_id, invocation)| async move {
-                let resource = resources.next()?;
-                let outcome = async {
-                    self.require_current_session(invocation.session)?;
-                    if let Some(reason) = invocation.call.cancel().reason() {
-                        return Err(crate::runtime::authority_cancellation_error(
-                            invocation.call,
-                            reason,
-                        )
-                        .into());
-                    }
-                    #[cfg(feature = "test-host")]
-                    if matches!(invocation.caller, AccountCaller::Local { .. }) {
-                        self.refuse_withheld(&resource)?;
-                    }
-                    let product_id = product_id.as_str();
-                    let grant = match resource {
-                        v01::AllocatableResource::StatementStoreAllowance => {
-                            AccountGrant::StatementStore(
-                                self.allocate_statement_store_allowance(
-                                    invocation.session,
-                                    product_id,
-                                    policy,
-                                )
-                                .await?,
-                            )
-                        }
-                        v01::AllocatableResource::BulletinAllowance => {
-                            AccountGrant::Bulletin(BulletinAllowanceKey::from_secret_bytes(
-                                self.allocate_bulletin_allowance(
-                                    invocation.session,
-                                    product_id,
-                                    policy,
-                                )
-                                .await?,
-                            )?)
-                        }
-                        v01::AllocatableResource::SmartContractAllowance(index) => {
-                            self.allocate_smart_contract_allowance(
-                                invocation.session,
-                                product_id,
-                                index,
-                                policy,
-                            )
-                            .await?;
-                            AccountGrant::SmartContract
-                        }
-                        v01::AllocatableResource::AutoSigning => self
-                            .with_keys::<_, AuthorityError>(invocation.session, |keys| {
-                                Ok(match invocation.caller {
-                                    AccountCaller::Local { .. } => {
-                                        let product_id = normalize_product_identifier(product_id)
-                                            .map_err(|error| {
-                                            AuthorityError::Unavailable {
-                                                reason: error.to_string(),
-                                            }
-                                        })?;
-                                        keys.product_subtree_public_key(&product_id)?;
-                                        AccountGrant::WalletAuthorization(WalletAuthorization {
-                                            issuer: Arc::downgrade(&self.session_state),
-                                            validation_id: invocation.session.validation_id.clone(),
-                                            product_id,
-                                        })
-                                    }
-                                    AccountCaller::Remote { .. } => {
-                                        AccountGrant::AutoSigning(AutoSigningKey::from_parts(
-                                            keys.product_subtree_secret(product_id)?,
-                                            keys.ring_vrf_domain_entropy(product_id)
-                                                .map_err(product_authority_error)?,
-                                        ))
-                                    }
-                                })
-                            })?,
-                    };
-                    Ok(grant)
-                }
-                .await;
-                let outcome = self
-                    .require_current_session(invocation.session)
-                    .map_err(AllowanceAllocationError::from)
-                    .and(outcome);
-                Some((outcome, (resources, product_id, invocation)))
-            },
-        )
-        .boxed())
-    }
-}
-
 impl WalletAccountHolder {
     /// Issue a statement allowance with the period actually found or registered.
     pub async fn allocate_statement_store_allowance(
@@ -247,7 +95,7 @@ impl WalletAccountHolder {
 
         // Test signatures use real keys without claiming on-chain registration.
         #[cfg(feature = "test-host")]
-        if self.grants_allowances_unchecked() {
+        if self.resource_controls.grants_allowances_unchecked() {
             return self.with_keys(session, |keys| {
                 Ok(StatementStoreAllocation {
                     secret: keys
@@ -408,7 +256,7 @@ impl WalletAccountHolder {
         };
 
         #[cfg(feature = "test-host")]
-        if self.grants_allowances_unchecked() {
+        if self.resource_controls.grants_allowances_unchecked() {
             return self.with_keys(session, |keys| {
                 Ok(keys
                     .bulletin_allowance_key(product_id)?
@@ -621,17 +469,4 @@ impl WalletAccountHolder {
         self.require_current_session(session)?;
         Ok(())
     }
-}
-
-/// Allowance period clock, using web-time on browsers to avoid SystemTime panics.
-pub fn current_unix_secs() -> Result<u64, AllowanceAllocationError> {
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::time::{SystemTime, UNIX_EPOCH};
-    #[cfg(target_arch = "wasm32")]
-    use web_time::{SystemTime, UNIX_EPOCH};
-
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .map_err(|_| AllowanceAllocationError::SystemClockBeforeUnixEpoch)
 }

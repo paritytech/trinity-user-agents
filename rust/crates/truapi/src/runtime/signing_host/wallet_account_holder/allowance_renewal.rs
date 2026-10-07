@@ -5,8 +5,8 @@ use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode};
 use tracing::{debug, info, warn};
 
-use super::allowance::current_unix_secs;
 use super::{WalletAccountHolder, WalletKeys};
+use crate::runtime::allowances::current_unix_secs;
 use crate::runtime::authority::{AuthorityError, AuthoritySession};
 use crate::runtime::statement_allowance::renewal::{
     RenewalChainContext, ResolvedRenewalTarget, StatementRenewalReport, renew_targets,
@@ -508,7 +508,8 @@ mod tests {
             [0; 32],
             test_spawner(),
         );
-        let wallet = WalletAccountHolder::new(services, "paseo".to_string());
+        let registry = crate::runtime::RingVrfRegistryStore::new(services.platform.clone());
+        let wallet = WalletAccountHolder::new(services, "paseo".to_string(), registry);
         wallet.install(wallet.prepare_activation(vec![entropy; 32], None).unwrap());
         wallet
     }

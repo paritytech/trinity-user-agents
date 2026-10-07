@@ -30,18 +30,18 @@ use truapi::{CallContext, CallError, CancellationReason, Subscription, v01};
 
 use crate::host_logic::features::{chain_info, supported_chains};
 use crate::runtime::{
-    AUTHORITY_CANCEL_UNWIND_GRACE, PERMISSION_DENIED_REASON, ProductRuntimeHost,
-    runtime_failure_to_call_error,
+    AUTHORITY_CANCEL_UNWIND_GRACE, AccountHolder, PERMISSION_DENIED_REASON, ProductConnection,
+    ProductRuntimeHost, runtime_failure_to_call_error,
 };
 
-impl ProductRuntimeHost {
+impl ProductConnection {
     /// Stop a broadcast whose call was withdrawn, bounded so a stalled stop
     /// cannot hold back the withdrawn call's answer.
     async fn stop_withdrawn_broadcast(&self, genesis_hash: Vec<u8>, operation_id: String) {
         let stop = self
             .services
             .chain
-            .remote_chain_transaction_stop(v01::RemoteChainTransactionStopRequest {
+            .remote_chain_transaction_stop(truapi::latest::RemoteChainTransactionStopRequest {
                 genesis_hash,
                 operation_id: operation_id.clone(),
             })
@@ -60,7 +60,7 @@ impl ProductRuntimeHost {
 }
 
 #[truapi::async_trait]
-impl Chain for ProductRuntimeHost {
+impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
     #[instrument(skip_all, fields(runtime.method = "chain.follow_head_subscribe"))]
     async fn follow_head_subscribe(
         &self,
@@ -68,8 +68,9 @@ impl Chain for ProductRuntimeHost {
         request: RemoteChainHeadFollowRequest,
     ) -> Subscription<RemoteChainHeadFollowItem, CallError<RemoteChainHeadFollowError>> {
         let RemoteChainHeadFollowRequest::V1(inner) = request;
-        let follow_subscription_id = self.follow_id(cx.request_id());
+        let follow_subscription_id = self.connection.follow_id(cx.request_id());
         let stream = self
+            .connection
             .services
             .chain
             .remote_chain_head_follow(follow_subscription_id, inner)
@@ -87,8 +88,9 @@ impl Chain for ProductRuntimeHost {
         request: RemoteChainHeadHeaderRequest,
     ) -> Result<RemoteChainHeadHeaderResponse, CallError<RemoteChainHeadHeaderError>> {
         let RemoteChainHeadHeaderRequest::V1(mut inner) = request;
-        inner.follow_subscription_id = self.follow_id(&inner.follow_subscription_id);
-        self.services
+        inner.follow_subscription_id = self.connection.follow_id(&inner.follow_subscription_id);
+        self.connection
+            .services
             .chain
             .remote_chain_head_header(inner)
             .await
@@ -103,8 +105,9 @@ impl Chain for ProductRuntimeHost {
         request: RemoteChainHeadBodyRequest,
     ) -> Result<RemoteChainHeadBodyResponse, CallError<RemoteChainHeadBodyError>> {
         let RemoteChainHeadBodyRequest::V1(mut inner) = request;
-        inner.follow_subscription_id = self.follow_id(&inner.follow_subscription_id);
-        self.services
+        inner.follow_subscription_id = self.connection.follow_id(&inner.follow_subscription_id);
+        self.connection
+            .services
             .chain
             .remote_chain_head_body(inner)
             .await
@@ -119,8 +122,9 @@ impl Chain for ProductRuntimeHost {
         request: RemoteChainHeadStorageRequest,
     ) -> Result<RemoteChainHeadStorageResponse, CallError<RemoteChainHeadStorageError>> {
         let RemoteChainHeadStorageRequest::V1(mut inner) = request;
-        inner.follow_subscription_id = self.follow_id(&inner.follow_subscription_id);
-        self.services
+        inner.follow_subscription_id = self.connection.follow_id(&inner.follow_subscription_id);
+        self.connection
+            .services
             .chain
             .remote_chain_head_storage(inner)
             .await
@@ -135,8 +139,9 @@ impl Chain for ProductRuntimeHost {
         request: RemoteChainHeadCallRequest,
     ) -> Result<RemoteChainHeadCallResponse, CallError<RemoteChainHeadCallError>> {
         let RemoteChainHeadCallRequest::V1(mut inner) = request;
-        inner.follow_subscription_id = self.follow_id(&inner.follow_subscription_id);
-        self.services
+        inner.follow_subscription_id = self.connection.follow_id(&inner.follow_subscription_id);
+        self.connection
+            .services
             .chain
             .remote_chain_head_call(inner)
             .await
@@ -151,8 +156,9 @@ impl Chain for ProductRuntimeHost {
         request: RemoteChainHeadUnpinRequest,
     ) -> Result<RemoteChainHeadUnpinResponse, CallError<RemoteChainHeadUnpinError>> {
         let RemoteChainHeadUnpinRequest::V1(mut inner) = request;
-        inner.follow_subscription_id = self.follow_id(&inner.follow_subscription_id);
-        self.services
+        inner.follow_subscription_id = self.connection.follow_id(&inner.follow_subscription_id);
+        self.connection
+            .services
             .chain
             .remote_chain_head_unpin(inner)
             .await
@@ -167,8 +173,9 @@ impl Chain for ProductRuntimeHost {
         request: RemoteChainHeadContinueRequest,
     ) -> Result<RemoteChainHeadContinueResponse, CallError<RemoteChainHeadContinueError>> {
         let RemoteChainHeadContinueRequest::V1(mut inner) = request;
-        inner.follow_subscription_id = self.follow_id(&inner.follow_subscription_id);
-        self.services
+        inner.follow_subscription_id = self.connection.follow_id(&inner.follow_subscription_id);
+        self.connection
+            .services
             .chain
             .remote_chain_head_continue(inner)
             .await
@@ -184,8 +191,9 @@ impl Chain for ProductRuntimeHost {
     ) -> Result<RemoteChainHeadStopOperationResponse, CallError<RemoteChainHeadStopOperationError>>
     {
         let RemoteChainHeadStopOperationRequest::V1(mut inner) = request;
-        inner.follow_subscription_id = self.follow_id(&inner.follow_subscription_id);
-        self.services
+        inner.follow_subscription_id = self.connection.follow_id(&inner.follow_subscription_id);
+        self.connection
+            .services
             .chain
             .remote_chain_head_stop_operation(inner)
             .await
@@ -201,7 +209,8 @@ impl Chain for ProductRuntimeHost {
     ) -> Result<RemoteChainSpecGenesisHashResponse, CallError<RemoteChainSpecGenesisHashError>>
     {
         let RemoteChainSpecGenesisHashRequest::V1(inner) = request;
-        self.services
+        self.connection
+            .services
             .chain
             .remote_chain_spec_genesis_hash(inner.genesis_hash)
             .await
@@ -216,7 +225,8 @@ impl Chain for ProductRuntimeHost {
         request: RemoteChainSpecChainNameRequest,
     ) -> Result<RemoteChainSpecChainNameResponse, CallError<RemoteChainSpecChainNameError>> {
         let RemoteChainSpecChainNameRequest::V1(inner) = request;
-        self.services
+        self.connection
+            .services
             .chain
             .remote_chain_spec_chain_name(inner.genesis_hash)
             .await
@@ -231,7 +241,8 @@ impl Chain for ProductRuntimeHost {
         request: RemoteChainSpecPropertiesRequest,
     ) -> Result<RemoteChainSpecPropertiesResponse, CallError<RemoteChainSpecPropertiesError>> {
         let RemoteChainSpecPropertiesRequest::V1(inner) = request;
-        self.services
+        self.connection
+            .services
             .chain
             .remote_chain_spec_properties(inner.genesis_hash)
             .await
@@ -252,7 +263,7 @@ impl Chain for ProductRuntimeHost {
         let denied = RemoteChainTransactionBroadcastError::V1(v01::GenericError {
             reason: PERMISSION_DENIED_REASON.to_string(),
         });
-        self.require_chain_submit(denied).await?;
+        self.connection.require_chain_submit(denied).await?;
         if let Some(reason) = cx.cancel().reason() {
             return Err(CallError::Domain(RemoteChainTransactionBroadcastError::V1(
                 v01::GenericError {
@@ -262,6 +273,7 @@ impl Chain for ProductRuntimeHost {
         }
         let genesis_hash = inner.genesis_hash.clone();
         let response = self
+            .connection
             .services
             .chain
             .remote_chain_transaction_broadcast(inner)
@@ -273,7 +285,8 @@ impl Chain for ProductRuntimeHost {
         if cx.cancel().reason() == Some(CancellationReason::Cancelled)
             && let Some(operation_id) = response.operation_id.clone()
         {
-            self.stop_withdrawn_broadcast(genesis_hash, operation_id)
+            self.connection
+                .stop_withdrawn_broadcast(genesis_hash, operation_id)
                 .await;
         }
         Ok(RemoteChainTransactionBroadcastResponse::V1(response))
@@ -290,7 +303,8 @@ impl Chain for ProductRuntimeHost {
         // ChainRuntime resolves this product-visible host handle to the
         // provider's short-lived operation id and makes stopping an operation
         // that completed between broadcast and stop idempotent.
-        self.services
+        self.connection
+            .services
             .chain
             .remote_chain_transaction_stop(inner)
             .await
@@ -305,7 +319,7 @@ impl Chain for ProductRuntimeHost {
         request: RemoteChainInfoRequest,
     ) -> Result<RemoteChainInfoResponse, CallError<RemoteChainInfoError>> {
         let RemoteChainInfoRequest::V1(inner) = request;
-        let set = supported_chains(self.services.platform.as_ref())
+        let set = supported_chains(self.connection.services.platform.as_ref())
             .await
             .map_err(|err| {
                 CallError::Domain(RemoteChainInfoError::V1(

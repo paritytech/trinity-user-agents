@@ -26,6 +26,7 @@ fn direct_local_signing_without_authorization_requires_wallet_review() {
             caller: AccountCaller::Local {
                 product: &product,
                 authorization: None,
+                outbound_review: None,
             },
         },
         SignRawAuthorityRequest::Product(request.clone()),
@@ -128,8 +129,9 @@ fn remote_vrf_cannot_reuse_a_native_auto_signing_grant() {
     let session = authority.account_holder().current_session().unwrap();
     auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
     let authorization = authority
+        .accounts()
         .wallet_authorization(
-            &authority.current_operation().unwrap(),
+            &authority.accounts().current_operation().unwrap(),
             &ProductContext::new("myapp.dot".to_string()).unwrap(),
         )
         .unwrap();
@@ -141,6 +143,7 @@ fn remote_vrf_cannot_reuse_a_native_auto_signing_grant() {
             caller: AccountCaller::Local {
                 product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
                 authorization: authorization.as_ref(),
+                outbound_review: None,
             },
         },
         vrf_request("myapp.dot"),
@@ -304,6 +307,7 @@ fn remote_published_access_is_independent_of_native_refusals() {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new(request.calling_product_id.clone()).unwrap(),
                     authorization: None,
+                    outbound_review: None,
                 },
             },
             request.payload.clone(),

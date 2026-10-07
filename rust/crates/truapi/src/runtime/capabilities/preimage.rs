@@ -25,7 +25,7 @@ use crate::runtime::{
 };
 
 #[truapi::async_trait]
-impl Preimage for ProductRuntimeHost {
+impl<H: crate::runtime::AccountHolder> Preimage for ProductRuntimeHost<H> {
     #[instrument(skip_all, fields(runtime.method = "preimage.lookup_subscribe"))]
     async fn lookup_subscribe(
         &self,
@@ -43,7 +43,7 @@ impl Preimage for ProductRuntimeHost {
         // Emit the value once, then keep the subscription open until the
         // caller unsubscribes, since there is nothing left to report.
         if let Ok(key_bytes) = <[u8; 32]>::try_from(key.as_slice())
-            && let Some(value) = self.services.cached_preimage(&key_bytes)
+            && let Some(value) = self.connection.services.cached_preimage(&key_bytes)
         {
             let item =
                 RemotePreimageLookupSubscribeItem::V1(v01::RemotePreimageLookupSubscribeItem {
@@ -59,33 +59,37 @@ impl Preimage for ProductRuntimeHost {
         // cannot feed products forged content. A mismatch is reported as a
         // miss, so the product still gets its initial current-value/miss
         // emission.
-        let stream = self.platform.lookup_preimage(key.clone()).map(move |item| {
-            let value = match item {
-                Ok(value) => value,
-                Err(error) => {
-                    warn!(
-                        reason = %error.reason,
-                        "preimage lookup platform stream failed"
-                    );
-                    return Err(CallError::HostFailure {
-                        reason: error.reason,
-                    });
-                }
-            };
-            let value = value.filter(|value| {
-                let matches = preimage_key(value)[..] == key[..];
-                if !matches {
-                    warn!(
-                        "preimage lookup returned a value whose hash does not match the \
+        let stream = self
+            .connection
+            .platform
+            .lookup_preimage(key.clone())
+            .map(move |item| {
+                let value = match item {
+                    Ok(value) => value,
+                    Err(error) => {
+                        warn!(
+                            reason = %error.reason,
+                            "preimage lookup platform stream failed"
+                        );
+                        return Err(CallError::HostFailure {
+                            reason: error.reason,
+                        });
+                    }
+                };
+                let value = value.filter(|value| {
+                    let matches = preimage_key(value)[..] == key[..];
+                    if !matches {
+                        warn!(
+                            "preimage lookup returned a value whose hash does not match the \
                          requested key; downgrading to a miss"
-                    );
-                }
-                matches
+                        );
+                    }
+                    matches
+                });
+                Ok(RemotePreimageLookupSubscribeItem::V1(
+                    v01::RemotePreimageLookupSubscribeItem { value },
+                ))
             });
-            Ok(RemotePreimageLookupSubscribeItem::V1(
-                v01::RemotePreimageLookupSubscribeItem { value },
-            ))
-        });
         Subscription::new(stream)
     }
 
@@ -96,24 +100,26 @@ impl Preimage for ProductRuntimeHost {
         request: RemotePreimageSubmitRequest,
     ) -> Result<RemotePreimageSubmitResponse, CallError<RemotePreimageSubmitError>> {
         let RemotePreimageSubmitRequest::V1(value) = request;
-        let Some(operation) = self.authority.current_operation() else {
+        let Some(operation) = self.accounts.current_operation() else {
             return Err(preimage_submit_error("No active session".to_string()));
         };
-        let bulletin = &self.services.bulletin;
-        self.require_remote_permission(
-            v01::RemotePermission::PreimageSubmit,
-            RemotePreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
-                reason: PERMISSION_DENIED_REASON.to_string(),
-            }),
-        )
-        .await?;
+        let bulletin = &self.connection.services.bulletin;
+        self.connection
+            .require_remote_permission(
+                v01::RemotePermission::PreimageSubmit,
+                RemotePreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
+                    reason: PERMISSION_DENIED_REASON.to_string(),
+                }),
+            )
+            .await?;
         let confirmed = until_cancelled(
             cx,
-            self.confirm_product_action(UserConfirmationReview::PreimageSubmit(
-                PreimageSubmitReview {
-                    size: value.len() as u64,
-                },
-            )),
+            self.connection
+                .confirm_product_action(UserConfirmationReview::PreimageSubmit(
+                    PreimageSubmitReview {
+                        size: value.len() as u64,
+                    },
+                )),
         )
         .await
         .map_err(|err| preimage_submit_error(err.to_string()))?
@@ -133,14 +139,24 @@ impl Preimage for ProductRuntimeHost {
             .account_operation(
                 &operation,
                 &authority_cx,
-                self.authority
-                    .bulletin_allowance_key(&authority_cx, &operation, self.product_id()),
+                self.accounts.bulletin_allowance_key(
+                    &authority_cx,
+                    &operation,
+                    self.connection.product_id(),
+                ),
             )
             .await
             .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
 
         let key = match bulletin
-            .submit_preimage(cx, submission_deadline, &allowance, &value)
+            .submit_preimage(
+                cx,
+                submission_deadline,
+                self.accounts.as_ref(),
+                &operation,
+                &allowance,
+                &value,
+            )
             .await
         {
             Ok(key) => key,
@@ -157,16 +173,23 @@ impl Preimage for ProductRuntimeHost {
                     .account_operation(
                         &operation,
                         &authority_cx,
-                        self.authority.refresh_bulletin_allowance_key(
+                        self.accounts.refresh_bulletin_allowance_key(
                             &authority_cx,
                             &operation,
-                            self.product_id(),
+                            self.connection.product_id(),
                         ),
                     )
                     .await
                     .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
                 bulletin
-                    .submit_preimage(cx, submission_deadline, &allowance, &value)
+                    .submit_preimage(
+                        cx,
+                        submission_deadline,
+                        self.accounts.as_ref(),
+                        &operation,
+                        &allowance,
+                        &value,
+                    )
                     .await
                     .map_err(|err| preimage_submit_error(err.to_string()))?
             }

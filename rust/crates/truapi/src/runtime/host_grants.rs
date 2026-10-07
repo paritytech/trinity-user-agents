@@ -1,12 +1,11 @@
 //! Retained host capabilities and their persistence barrier.
 
-use super::allowances::{self, AllowanceCacheKey, AllowanceResource};
+use super::allowances::{self, AllowanceCacheKey, AllowanceResource, GrantScope};
 use super::authority::{
     AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey, HostOperation,
     StatementStoreAllowanceKey,
 };
 use super::product_subtree;
-use super::sso_remote::SsoSessionKey;
 use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::platform::{CoreStorage, CoreStorageKey};
 use futures::lock::MutexGuard as AsyncMutexGuard;
@@ -89,6 +88,7 @@ fn validate_auto_signing_key(
 struct GrantState {
     revision: u64,
     pending_deletions: Vec<CoreStorageKey>,
+    wallet_authorizations: HashMap<String, super::WalletAuthorization>,
 }
 
 impl GrantState {
@@ -104,9 +104,10 @@ pub struct HostGrantStore {
     storage: Arc<dyn CoreStorage>,
     state: Mutex<GrantState>,
     persistence: futures::lock::Mutex<()>,
-    statement_store_allowances: Mutex<HashMap<AllowanceCacheKey, StatementStoreAllowanceKey>>,
+    statement_store_allowances:
+        Mutex<HashMap<AllowanceCacheKey, (Option<u32>, StatementStoreAllowanceKey)>>,
     bulletin_allowances: Mutex<HashMap<AllowanceCacheKey, BulletinAllowanceKey>>,
-    product_subtrees: Mutex<HashMap<(SsoSessionKey, String), [u8; 32]>>,
+    product_subtrees: Mutex<HashMap<(GrantScope, String), [u8; 32]>>,
     auto_signing_keys: Mutex<HashMap<AutoSigningCacheKey, AutoSigningKey>>,
 }
 
@@ -158,10 +159,8 @@ impl HostGrantStore {
         session: &SessionInfo,
         lifecycle_epoch: u64,
     ) -> bool {
-        session.sso.as_ref().is_some_and(|sso| {
-            SsoSessionKey::from_session(sso).matches(session_state)
-                && self.lifecycle().revision() == lifecycle_epoch
-        })
+        GrantScope::from_session(session).matches(session_state)
+            && self.lifecycle().revision() == lifecycle_epoch
     }
 
     fn cache_auto_signing_key_if_current(
@@ -176,10 +175,7 @@ impl HostGrantStore {
         if lifecycle.revision() != lifecycle_epoch {
             return false;
         }
-        let Some(sso) = session.sso.as_ref() else {
-            return false;
-        };
-        if !SsoSessionKey::from_session(sso).matches(session_state) {
+        if !GrantScope::from_session(session).matches(session_state) {
             return false;
         }
         self.auto_signing_keys
@@ -194,7 +190,7 @@ impl HostGrantStore {
         &self,
         session_state: &SessionState,
         session: &SessionInfo,
-        cache_key: (SsoSessionKey, String),
+        cache_key: (GrantScope, String),
     ) -> Option<[u8; 32]> {
         let lifecycle_epoch = self.lifecycle().revision();
         if let Some(public_key) = self
@@ -216,8 +212,9 @@ impl HostGrantStore {
         session_state: &SessionState,
         session: &SessionInfo,
         lifecycle_epoch: u64,
-        cache_key: (SsoSessionKey, String),
+        cache_key: (GrantScope, String),
     ) -> Option<[u8; 32]> {
+        session.sso.as_ref()?;
         let public_key = match product_subtree::read_product_subtree(
             &*self.storage,
             session,
@@ -249,10 +246,19 @@ impl HostGrantStore {
         session_state: &SessionState,
         session: &SessionInfo,
         lifecycle_epoch: u64,
-        cache_key: (SsoSessionKey, String),
+        cache_key: (GrantScope, String),
         public_key: [u8; 32],
     ) -> bool {
         let product_id = cache_key.1.clone();
+        if session.sso.is_none() {
+            return self.cache_product_subtree_if_current(
+                session_state,
+                session,
+                lifecycle_epoch,
+                cache_key,
+                public_key,
+            );
+        }
         let _storage_guard = self.persistence().await;
         if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
             return false;
@@ -293,17 +299,14 @@ impl HostGrantStore {
         session_state: &SessionState,
         session: &SessionInfo,
         lifecycle_epoch: u64,
-        cache_key: (SsoSessionKey, String),
+        cache_key: (GrantScope, String),
         public_key: [u8; 32],
     ) -> bool {
         let lifecycle = self.lifecycle();
         if lifecycle.revision() != lifecycle_epoch {
             return false;
         }
-        let Some(sso) = session.sso.as_ref() else {
-            return false;
-        };
-        if !SsoSessionKey::from_session(sso).matches(session_state) {
+        if !GrantScope::from_session(session).matches(session_state) {
             return false;
         }
         self.product_subtrees
@@ -321,9 +324,20 @@ impl HostGrantStore {
         session: &SessionInfo,
         lifecycle_epoch: u64,
         product_id: &str,
-        slot_account_key: Vec<u8>,
+        allowance: StatementStoreAllowanceKey,
+        period: Option<u32>,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        let allowance = StatementStoreAllowanceKey::from_secret_bytes(slot_account_key)?;
+        if session.sso.is_none() {
+            self.remember_statement_store_allowance_key(
+                session_state,
+                session,
+                lifecycle_epoch,
+                product_id,
+                allowance.clone(),
+                period,
+            )?;
+            return Ok(allowance);
+        }
         let _storage_guard = self.persistence().await;
         if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
             return Err(AuthorityError::Disconnected);
@@ -342,6 +356,7 @@ impl HostGrantStore {
             lifecycle_epoch,
             product_id,
             allowance.clone(),
+            period,
         ) {
             let _ = allowances::remove_allowance_key(
                 &*self.storage,
@@ -362,22 +377,20 @@ impl HostGrantStore {
         lifecycle_epoch: u64,
         product_id: &str,
         allowance: StatementStoreAllowanceKey,
+        period: Option<u32>,
     ) -> Result<(), AuthorityError> {
         let cache_key =
-            AllowanceCacheKey::new(session, product_id, AllowanceResource::StatementStore)?;
+            AllowanceCacheKey::new(session, product_id, AllowanceResource::StatementStore);
         let lifecycle = self.lifecycle();
         if lifecycle.revision() != lifecycle_epoch
-            || !session
-                .sso
-                .as_ref()
-                .is_some_and(|sso| SsoSessionKey::from_session(sso).matches(session_state))
+            || !GrantScope::from_session(session).matches(session_state)
         {
             return Err(AuthorityError::Disconnected);
         }
         self.statement_store_allowances
             .lock()
             .expect("statement-store allowance cache mutex poisoned")
-            .insert(cache_key, allowance);
+            .insert(cache_key, (period, allowance));
         Ok(())
     }
 
@@ -389,9 +402,9 @@ impl HostGrantStore {
         session: &SessionInfo,
         lifecycle_epoch: u64,
         product_id: &str,
-    ) -> Result<Option<StatementStoreAllowanceKey>, AuthorityError> {
+    ) -> Result<Option<(Option<u32>, StatementStoreAllowanceKey)>, AuthorityError> {
         let cache_key =
-            AllowanceCacheKey::new(session, product_id, AllowanceResource::StatementStore)?;
+            AllowanceCacheKey::new(session, product_id, AllowanceResource::StatementStore);
         let _storage_guard = self.persistence().await;
         if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
             return Err(AuthorityError::Disconnected);
@@ -404,6 +417,9 @@ impl HostGrantStore {
             .cloned()
         {
             return Ok(Some(allowance));
+        }
+        if session.sso.is_none() {
+            return Ok(None);
         }
         let Some(secret) = allowances::read_allowance_key(
             &*self.storage,
@@ -422,8 +438,9 @@ impl HostGrantStore {
             lifecycle_epoch,
             product_id,
             allowance.clone(),
+            None,
         )?;
-        Ok(Some(allowance))
+        Ok(Some((None, allowance)))
     }
 
     /// Persist and memory-cache a freshly allocated Bulletin allowance key.
@@ -433,9 +450,18 @@ impl HostGrantStore {
         session: &SessionInfo,
         lifecycle_epoch: u64,
         product_id: &str,
-        slot_account_key: Vec<u8>,
+        allowance: BulletinAllowanceKey,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let allowance = BulletinAllowanceKey::from_secret_bytes(slot_account_key)?;
+        if session.sso.is_none() {
+            self.remember_bulletin_allowance_key(
+                session_state,
+                session,
+                lifecycle_epoch,
+                product_id,
+                allowance.clone(),
+            )?;
+            return Ok(allowance);
+        }
         let _storage_guard = self.persistence().await;
         if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
             return Err(AuthorityError::Disconnected);
@@ -475,13 +501,10 @@ impl HostGrantStore {
         product_id: &str,
         allowance: BulletinAllowanceKey,
     ) -> Result<(), AuthorityError> {
-        let cache_key = AllowanceCacheKey::new(session, product_id, AllowanceResource::Bulletin)?;
+        let cache_key = AllowanceCacheKey::new(session, product_id, AllowanceResource::Bulletin);
         let lifecycle = self.lifecycle();
         if lifecycle.revision() != lifecycle_epoch
-            || !session
-                .sso
-                .as_ref()
-                .is_some_and(|sso| SsoSessionKey::from_session(sso).matches(session_state))
+            || !GrantScope::from_session(session).matches(session_state)
         {
             return Err(AuthorityError::Disconnected);
         }
@@ -501,7 +524,7 @@ impl HostGrantStore {
         lifecycle_epoch: u64,
         product_id: &str,
     ) -> Result<Option<BulletinAllowanceKey>, AuthorityError> {
-        let cache_key = AllowanceCacheKey::new(session, product_id, AllowanceResource::Bulletin)?;
+        let cache_key = AllowanceCacheKey::new(session, product_id, AllowanceResource::Bulletin);
         let _storage_guard = self.persistence().await;
         if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
             return Err(AuthorityError::Disconnected);
@@ -514,6 +537,9 @@ impl HostGrantStore {
             .cloned()
         {
             return Ok(Some(allowance));
+        }
+        if session.sso.is_none() {
+            return Ok(None);
         }
         let Some(secret) = allowances::read_allowance_key(
             &*self.storage,
@@ -544,7 +570,7 @@ impl HostGrantStore {
         lifecycle_epoch: u64,
         product_id: &str,
     ) -> Result<(), AuthorityError> {
-        let cache_key = AllowanceCacheKey::new(session, product_id, AllowanceResource::Bulletin)?;
+        let cache_key = AllowanceCacheKey::new(session, product_id, AllowanceResource::Bulletin);
         let _storage_guard = self.persistence().await;
         if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
             return Err(AuthorityError::Disconnected);
@@ -553,6 +579,9 @@ impl HostGrantStore {
             .lock()
             .expect("bulletin allowance cache mutex poisoned")
             .remove(&cache_key);
+        if session.sso.is_none() {
+            return Ok(());
+        }
         allowances::remove_allowance_key(
             &*self.storage,
             session,
@@ -577,10 +606,7 @@ impl HostGrantStore {
             allowances.clear();
             return;
         };
-        let Some(sso) = session.sso.as_ref() else {
-            return;
-        };
-        let session_key = SsoSessionKey::from_session(sso);
+        let session_key = GrantScope::from_session(session);
         allowances.retain(|key, _| !key.is_for_session(session_key));
     }
 
@@ -595,10 +621,7 @@ impl HostGrantStore {
             allowances.clear();
             return;
         };
-        let Some(sso) = session.sso.as_ref() else {
-            return;
-        };
-        let session_key = SsoSessionKey::from_session(sso);
+        let session_key = GrantScope::from_session(session);
         allowances.retain(|key, _| !key.is_for_session(session_key));
     }
 
@@ -678,6 +701,10 @@ impl HostGrantStore {
         session: &SessionInfo,
         product_id: &str,
     ) -> Result<Option<AutoSigningKey>, AuthorityError> {
+        if session.sso.is_none() {
+            return Ok(None);
+        }
+
         let owner = AutoSigningOwner::from_session(session);
         let cache_key = (owner.clone(), product_id.to_string());
         if let Some(key) = self
@@ -758,11 +785,11 @@ impl HostGrantStore {
                 Ok(None)
             };
         };
-        let current_expected_subtree = session.sso.as_ref().and_then(|sso| {
+        let current_expected_subtree = session.sso.as_ref().and_then(|_| {
             self.product_subtrees
                 .lock()
                 .expect("product subtree cache mutex poisoned")
-                .get(&(SsoSessionKey::from_session(sso), product_id.to_string()))
+                .get(&(GrantScope::from_session(session), product_id.to_string()))
                 .copied()
         });
         if current_expected_subtree
@@ -815,10 +842,7 @@ impl HostGrantStore {
             subtrees.clear();
             return;
         };
-        let Some(sso) = session.sso.as_ref() else {
-            return;
-        };
-        let session_key = SsoSessionKey::from_session(sso);
+        let session_key = GrantScope::from_session(session);
         subtrees.retain(|(key, _), _| *key != session_key);
     }
 
@@ -853,18 +877,113 @@ impl HostGrantStore {
         product_id: &str,
         public_key: [u8; 32],
     ) {
-        let sso = session.sso.as_ref().expect("test session must contain SSO");
         self.product_subtrees
             .lock()
             .expect("product subtree cache mutex poisoned")
             .insert(
-                (SsoSessionKey::from_session(sso), product_id.to_string()),
+                (GrantScope::from_session(session), product_id.to_string()),
                 public_key,
             );
     }
 }
 
 impl HostGrantGuard<'_> {
+    /// Revoke transient grants before replacing or locking the local wallet.
+    pub fn clear_memory(&mut self) {
+        self.advance();
+        self.state.wallet_authorizations.clear();
+        self.store
+            .statement_store_allowances
+            .lock()
+            .expect("statement-store allowance cache mutex poisoned")
+            .clear();
+        self.store
+            .bulletin_allowances
+            .lock()
+            .expect("bulletin allowance cache mutex poisoned")
+            .clear();
+        self.store
+            .product_subtrees
+            .lock()
+            .expect("product subtree cache mutex poisoned")
+            .clear();
+        self.store
+            .auto_signing_keys
+            .lock()
+            .expect("AutoSigning key cache mutex poisoned")
+            .clear();
+    }
+
+    /// Retain a receipt issued to this runtime's canonical wallet activation.
+    pub fn retain_wallet_authorization(
+        &mut self,
+        session_state: &Arc<SessionState>,
+        operation: &HostOperation,
+        product_id: &str,
+        authorization: super::WalletAuthorization,
+    ) -> Result<(), AuthorityError> {
+        self.require(operation)?;
+        if !authorization.issuer.ptr_eq(&Arc::downgrade(session_state))
+            || authorization.validation_id != operation.session.validation_id
+            || authorization.product_id != product_id
+        {
+            return Err(AuthorityError::Rejected);
+        }
+        self.state
+            .wallet_authorizations
+            .insert(product_id.to_string(), authorization);
+        Ok(())
+    }
+
+    /// Permission retained for the calling product under the held revision.
+    pub fn wallet_authorization(
+        &self,
+        operation: &HostOperation,
+        product_id: &str,
+    ) -> Result<Option<super::WalletAuthorization>, AuthorityError> {
+        self.require(operation)?;
+        Ok(self.state.wallet_authorizations.get(product_id).cloned())
+    }
+
+    /// Invalidate one product without touching another product's wallet permission.
+    pub fn revoke_product(&mut self, product_id: &str) {
+        self.advance();
+        self.state.wallet_authorizations.remove(product_id);
+        self.store
+            .statement_store_allowances
+            .lock()
+            .expect("statement-store allowance cache mutex poisoned")
+            .retain(|key, _| !key.is_for_product(product_id));
+        self.store
+            .bulletin_allowances
+            .lock()
+            .expect("bulletin allowance cache mutex poisoned")
+            .retain(|key, _| !key.is_for_product(product_id));
+        self.store
+            .auto_signing_keys
+            .lock()
+            .expect("AutoSigning key cache mutex poisoned")
+            .retain(|(_, owner), _| owner != product_id);
+        self.store
+            .product_subtrees
+            .lock()
+            .expect("product subtree cache mutex poisoned")
+            .retain(|(_, owner), _| owner != product_id);
+    }
+
+    /// Forget a dated allowance only if no replacement key has been retained.
+    pub fn forget_statement_store_allowance(&self, product_id: &str, public_key: [u8; 32]) {
+        self.store
+            .statement_store_allowances
+            .lock()
+            .expect("statement-store allowance cache mutex poisoned")
+            .retain(|owner, (period, key)| {
+                !owner.is_for_product(product_id)
+                    || period.is_none()
+                    || key.public_key != public_key
+            });
+    }
+
     /// Revision selected by the held guard.
     pub fn revision(&self) -> u64 {
         self.state.revision
@@ -914,7 +1033,7 @@ impl HostGrantGuard<'_> {
             self.state.queue_deletion(CoreStorageKey::AllowanceKeys {
                 session_id: session_id.clone(),
             });
-            let session_key = SsoSessionKey::from_session(sso);
+            let session_key = GrantScope::from_session(previous.expect("paired session exists"));
             for (key, product_id) in self
                 .store
                 .product_subtrees
@@ -1057,6 +1176,7 @@ impl HostGrantPersistence<'_> {
 
         let mut first_error = self.clear_auto_signing_product(product_id).await.err();
         if let Some(session) = session
+            && session.sso.is_some()
             && let Err(error) =
                 allowances::clear_product_allowance_keys(&*self.store.storage, session, product_id)
                     .await
