@@ -97,7 +97,11 @@ impl<H: AccountHolder> HostAccounts<H> {
     ) -> Result<(SessionInfo, u64), AuthorityError> {
         let lifecycle = self.grants.lifecycle();
         lifecycle.require(operation)?;
-        let session = self.holder.require_current_session(&operation.session)?;
+        self.holder.require_current_session(&operation.session)?;
+        let session = self
+            .session_state
+            .current()
+            .ok_or(AuthorityError::Disconnected)?;
         Ok((session, lifecycle.revision()))
     }
 

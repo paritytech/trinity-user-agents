@@ -305,11 +305,8 @@ impl AccountHolder for WalletAccountHolder {
         WalletAccountHolder::current_session(self)
     }
 
-    fn require_current_session(
-        &self,
-        session: &AuthoritySession,
-    ) -> Result<crate::host_logic::session::SessionInfo, AuthorityError> {
-        WalletAccountHolder::require_current_session(self, session)
+    fn require_current_session(&self, session: &AuthoritySession) -> Result<(), AuthorityError> {
+        WalletAccountHolder::require_current_session(self, session).map(|_| ())
     }
 
     async fn allocate_grants<'a>(

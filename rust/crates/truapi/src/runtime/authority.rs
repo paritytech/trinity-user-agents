@@ -582,10 +582,7 @@ pub trait AccountHolder: Send + Sync + 'static {
     fn current_session(&self) -> Option<AuthoritySession>;
 
     /// Reject replacement of the originally selected wallet or paired channel.
-    fn require_current_session(
-        &self,
-        session: &AuthoritySession,
-    ) -> Result<SessionInfo, AuthorityError>;
+    fn require_current_session(&self, session: &AuthoritySession) -> Result<(), AuthorityError>;
 
     /// Review an explicit request before lazily issuing its ordered grants.
     async fn allocate_grants<'a>(

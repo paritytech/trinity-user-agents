@@ -229,6 +229,7 @@ impl RingVrfRegistryStore {
     }
 
     /// Persist a registration without replacing an existing key.
+    #[cfg(test)]
     pub async fn register(
         &self,
         root_public_key: [u8; 32],
@@ -262,7 +263,8 @@ impl RingVrfRegistryStore {
     /// invalidate an entry already accepted by this host. This also prevents a
     /// list response created before a fire-and-forget registration mirror from
     /// removing that local registration.
-    pub async fn reconcile_owner(
+    #[cfg(test)]
+    async fn reconcile_owner(
         &self,
         root_public_key: [u8; 32],
         owner: &str,
@@ -304,7 +306,8 @@ impl RingVrfRegistryStore {
     }
 
     /// Persist a user-selected provider after validating its registration.
-    pub async fn select_provider(
+    #[cfg(test)]
+    async fn select_provider(
         &self,
         root_public_key: [u8; 32],
         ring: RingLocation,
