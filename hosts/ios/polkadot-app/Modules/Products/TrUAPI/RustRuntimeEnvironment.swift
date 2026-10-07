@@ -122,7 +122,7 @@ private extension RustRuntimeEnvironment {
             chainRegistry: chainRegistry,
             chainConnections: chainConnections,
             productStorage: TrUAPILocalStorage.createProductLocalStorage(productId: productId),
-            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
+            coreStorage: CoreStorageBackend.create(),
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: routers),
             preimageCache: TrUAPIPreimageCache { [logger, ipfsFetcher] key in
                 do {

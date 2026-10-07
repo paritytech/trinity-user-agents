@@ -53,7 +53,7 @@ class TrUAPIHostRuntimeProviderTest {
         localSessionSource = mockk { coEvery { resolve() } returns Result.failure(IllegalStateException()) },
         accountRepository = mockk { every { walletAccountFlow() } returns emptyFlow() },
         dotNsTldProvider = mockk { coEvery { getTld() } returns Result.success(DotNsTld.parse("paseo")!!) },
-        encryptedPreferences = mockk(relaxed = true),
+        coreStorage = mockk(relaxed = true),
         chainHttpClient = mockk(relaxed = true),
         confirmationLauncher = mockk(relaxed = true),
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },

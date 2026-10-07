@@ -1473,6 +1473,9 @@ pub enum CoreStorageKey {
         /// Product whose manifest was cached, normalized.
         product_id: String,
     },
+    /// Native allowance grants indexed by wallet, product and resource within the value.
+    #[codec(index = 13)]
+    NativeAllowanceKeys,
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1511,6 +1514,7 @@ pub fn describe_core_storage_key(
         return Err(CoreStorageKeyDescriptionError::TrailingBytes);
     }
     let (kind, product_id) = match key {
+        CoreStorageKey::NativeAllowanceKeys => ("NativeAllowanceKeys", None),
         CoreStorageKey::AuthSession => ("AuthSession", None),
         CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
         CoreStorageKey::PermissionAuthorization { product_id, .. } => {
@@ -2541,6 +2545,11 @@ mod tests {
             })
         );
         for (key, kind, product_id) in [
+            (
+                CoreStorageKey::NativeAllowanceKeys,
+                "NativeAllowanceKeys",
+                None,
+            ),
             (CoreStorageKey::AuthSession, "AuthSession", None),
             (
                 CoreStorageKey::PairingDeviceIdentity,
@@ -2849,6 +2858,10 @@ mod tests {
 
 /// Host-private persistence for core-owned state.
 ///
+/// Secret slots require protected storage. Only absence returns `None`; failures
+/// must propagate. Successful secret writes and clears are durable and ordered
+/// after earlier writes, including writes whose awaiting task was cancelled.
+///
 /// Clearing product-indexed slots is the host's job. The core drops the ones
 /// it is holding when a session ends, but a product it never opened this run
 /// has no entry to drop, so those slots outlive the disconnect. A host that
@@ -2860,6 +2873,7 @@ mod tests {
 /// product-indexed variants, which are `PermissionAuthorization`,
 /// `AutoSigningKey`, and `ProductSubtree`. Keying host storage by that value
 /// makes the sweep a prefix delete rather than a scan.
+// TODO: introduce SecretStorage to make protection a separate contract.
 #[async_trait]
 pub trait CoreStorage: Send + Sync {
     /// Read a core-owned value by typed slot.

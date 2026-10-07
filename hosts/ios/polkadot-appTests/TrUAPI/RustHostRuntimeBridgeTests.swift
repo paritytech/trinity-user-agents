@@ -1,3 +1,4 @@
+import Keystore_iOS
 import Foundation
 import Testing
 import ChainRegistry
@@ -27,7 +28,7 @@ private func makeHostBridge(
     )
     return RustHostRuntimeBridge(
         chainRegistry: chainRegistry,
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
+        coreStorage: CoreStorageBackend.create(defaults: makeHostDefaults(), keychain: InMemoryKeychain()),
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
         logger: Logger.shared
@@ -116,7 +117,7 @@ struct RustHostRuntimeBridgeTests {
     /// Core storage is the real host-global backend: writes round-trip.
     @Test func coreStorageRoundTrips() throws {
         let bridge = makeHostBridge()
-        let key = Data([0x0A, 0x0B])
+        let key = Data([4])
         let value = Data([0x10, 0x20, 0x30])
 
         try bridge.coreStorage.write(key: key, value: value)

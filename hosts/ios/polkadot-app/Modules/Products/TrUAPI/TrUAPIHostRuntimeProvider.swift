@@ -34,7 +34,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let chainRegistry: ChainRegistryProtocol
     private let entropyManager: RootEntropyManaging
     private let settingsManager: SettingsManagerProtocol
-    private let coreStorage: TrUAPILocalStoring
+    private let coreStorage: HostCoreStorageBackend
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
@@ -47,7 +47,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         chainRegistry: ChainRegistryProtocol,
         entropyManager: RootEntropyManaging,
         settingsManager: SettingsManagerProtocol,
-        coreStorage: TrUAPILocalStoring,
+        coreStorage: HostCoreStorageBackend,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         logger: LoggerProtocol

@@ -766,6 +766,7 @@ fn hex_key(bytes: &[u8; 32]) -> String {
 /// Stable string key for a typed core-storage slot.
 fn core_key(key: &CoreStorageKey) -> String {
     match key {
+        CoreStorageKey::NativeAllowanceKeys => "core:native-allowance-keys".to_string(),
         CoreStorageKey::AuthSession => "core:auth-session".to_string(),
         CoreStorageKey::PairingDeviceIdentity => "core:pairing-device-identity".to_string(),
         CoreStorageKey::PermissionAuthorization {

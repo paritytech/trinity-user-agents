@@ -172,7 +172,8 @@ fn a_new_period_looks_the_allowance_up_again() {
     let period = slot::current_period(crate::unix_time::current_unix_secs());
     remember(&signing_host, PRODUCT_ID, period.checked_sub(1).unwrap());
 
-    let key = allowance_key(&signing_host);
+    let restarted = active_signing_host(platform.clone());
+    let key = allowance_key(&restarted);
     assert_eq!(
         (
             key.public_key == secret_key().public_key,
@@ -184,38 +185,63 @@ fn a_new_period_looks_the_allowance_up_again() {
 }
 
 #[test]
-fn a_new_session_looks_the_allowance_up_again() {
-    let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
+fn a_new_session_reuses_the_same_wallet_allowance() {
+    let platform = Arc::new(StubPlatform::default());
+    let signing_host = active_signing_host(platform.clone());
     remember(&signing_host, PRODUCT_ID, PERIOD);
 
     futures::executor::block_on(signing_host.disconnect());
-    futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
-        .expect("re-activation succeeds");
+    futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let after_lock = remembered(&signing_host, PRODUCT_ID);
+    let restarted = active_signing_host(platform);
+    let state = restarted.session_state();
+    let session = state.current().unwrap();
+    let revision = restarted.grants.lifecycle().revision();
+    let restored = futures::executor::block_on(
+        restarted
+            .grants
+            .cached_statement_store_allowance_key(&state, &session, revision, PRODUCT_ID),
+    )
+    .unwrap();
+    futures::executor::block_on(restarted.activate_local_session(vec![0xAC; 16])).unwrap();
 
     assert_eq!(
-        remembered(&signing_host, PRODUCT_ID),
-        None,
-        "the second session served the first session's key"
+        (
+            after_lock,
+            restored.map(|(period, key)| (period, key.secret)),
+            remembered(&restarted, PRODUCT_ID)
+        ),
+        (Some(SECRET), Some((Some(PERIOD), SECRET)), None),
+        "same-wallet restart preserves the actual period without exposing its key to another owner",
     );
 }
 
 #[test]
 fn clearing_a_product_forgets_only_its_key() {
-    let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
+    let platform = Arc::new(StubPlatform::default());
+    let signing_host = active_signing_host(platform.clone());
     remember(&signing_host, PRODUCT_ID, PERIOD);
     remember(&signing_host, "other.dot", PERIOD);
+    futures::executor::block_on(signing_host.activate_local_session(vec![0xAC; 16])).unwrap();
+    remember(&signing_host, PRODUCT_ID, PERIOD);
+    remember(&signing_host, "other.dot", PERIOD);
+    futures::executor::block_on(signing_host.disconnect());
+    futures::executor::block_on(signing_host.clear_product_state(PRODUCT_ID)).unwrap();
 
-    signing_host
-        .clear_product_state(PRODUCT_ID)
-        .expect("the product id is valid");
-
+    let restarted = active_signing_host(platform);
+    let first = (
+        remembered(&restarted, PRODUCT_ID),
+        remembered(&restarted, "other.dot"),
+    );
+    futures::executor::block_on(restarted.activate_local_session(vec![0xAC; 16])).unwrap();
+    let second = (
+        remembered(&restarted, PRODUCT_ID),
+        remembered(&restarted, "other.dot"),
+    );
     assert_eq!(
-        (
-            remembered(&signing_host, PRODUCT_ID),
-            remembered(&signing_host, "other.dot"),
-        ),
-        (None, Some(SECRET)),
-        "clearing a product's state must forget its key and keep the others"
+        (first, second),
+        ((None, Some(SECRET)), (None, Some(SECRET))),
+        "locked product reset preserves unrelated grants for both owners"
     );
 }
 
@@ -291,7 +317,7 @@ fn product_reset_stops_native_allowance_preparation_on_resumption() {
         "allowance preparation did not reach the chain",
     );
     let before_reset = sent_rpc_count(&platform);
-    signing_host.clear_product_state(PRODUCT_ID).unwrap();
+    futures::executor::block_on(signing_host.clear_product_state(PRODUCT_ID)).unwrap();
     release.send(()).unwrap();
     let result = futures::executor::block_on(async {
         futures::select! {
@@ -311,6 +337,20 @@ const SUBMIT_ATTEMPTS: usize = 11;
 
 fn rejected(reason: &str) -> String {
     format!(r#"{{"status":"rejected","reason":"{reason}"}}"#)
+}
+
+fn submitted_statement(signer: [u8; 32]) -> RemoteStatementStoreSubmitRequest {
+    RemoteStatementStoreSubmitRequest::V1(truapi::latest::SignedStatement {
+        proof: truapi::latest::StatementProof::Sr25519 {
+            signature: [0; 64],
+            signer,
+        },
+        decryption_key: None,
+        expiry: None,
+        channel: None,
+        topics: Vec::new(),
+        data: None,
+    })
 }
 
 fn submit_answered(
@@ -333,20 +373,9 @@ fn submit_answered(
     remember(&signing_host, PRODUCT_ID, PERIOD);
     let runtime = product_runtime_for(services, signing_host.clone(), PRODUCT_ID);
 
-    let submitted = futures::executor::block_on(runtime.submit(
-        &CallContext::default(),
-        RemoteStatementStoreSubmitRequest::V1(truapi::latest::SignedStatement {
-            proof: truapi::latest::StatementProof::Sr25519 {
-                signature: [0; 64],
-                signer,
-            },
-            decryption_key: None,
-            expiry: None,
-            channel: None,
-            topics: Vec::new(),
-            data: None,
-        }),
-    ))
+    let submitted = futures::executor::block_on(
+        runtime.submit(&CallContext::default(), submitted_statement(signer)),
+    )
     .map(|_| ());
     (submitted, signing_host)
 }
@@ -367,6 +396,8 @@ fn submit_rejected(reason: &str, attempts: usize, signer: [u8; 32]) -> Arc<Signi
 #[test]
 fn a_lasting_no_allowance_rejection_forgets_the_rejected_key() {
     let signing_host = submit_rejected("noAllowance", SUBMIT_ATTEMPTS, secret_key().public_key);
+    futures::executor::block_on(signing_host.disconnect());
+    futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec())).unwrap();
 
     assert_eq!(
         remembered(&signing_host, PRODUCT_ID),
@@ -416,7 +447,11 @@ fn another_rejection_keeps_the_key() {
 fn native_bulletin_reuses_its_retained_key_until_refresh() {
     use crate::runtime::BulletinAllowanceKey;
 
-    let host = active_signing_host(Arc::new(StubPlatform::default()));
+    let platform = Arc::new(StubPlatform {
+        chain_connect_error: Some("unexpected Bulletin issuer call"),
+        ..Default::default()
+    });
+    let host = active_signing_host(platform.clone());
     host.set_grant_allowances_unchecked(true);
     let retained = derive_sr25519_hard_path(&ENTROPY, &["previous-bulletin-grant"])
         .unwrap()
@@ -441,10 +476,13 @@ fn native_bulletin_reuses_its_retained_key_until_refresh() {
             )
             .await
             .unwrap();
+        let (_, cold) = signing_runtime_with_platform(platform.clone());
+        cold.activate_local_session(ENTROPY.to_vec()).await.unwrap();
+        let cold_operation = cold.accounts().current_operation().unwrap();
         let cx = CallContext::default();
-        let warm = host
+        let warm = cold
             .accounts()
-            .bulletin_allowance_key(&cx, &operation, PRODUCT_ID.to_string())
+            .bulletin_allowance_key(&cx, &cold_operation, PRODUCT_ID.to_string())
             .await
             .unwrap();
         let refreshed = host
@@ -465,4 +503,141 @@ fn native_bulletin_reuses_its_retained_key_until_refresh() {
     });
 
     assert_eq!(result, (retained, issued, Some(issued)));
+}
+
+#[test]
+fn late_rejection_preserves_a_new_period_for_the_same_statement_key() {
+    let (release, gate) = futures::channel::oneshot::channel();
+    let platform = Arc::new(StubPlatform {
+        rpc_method_responses: vec![
+            (SUBMIT_STATEMENT_METHOD, rejected("noAllowance"));
+            SUBMIT_ATTEMPTS
+        ],
+        ..Default::default()
+    });
+    *platform.rpc_method_responses_gate.lock().unwrap() = Some(gate);
+    let (services, host) = signing_runtime_with_platform(platform.clone());
+    futures::executor::block_on(host.activate_local_session(ENTROPY.to_vec())).unwrap();
+    remember(&host, PRODUCT_ID, PERIOD);
+    let runtime = product_runtime_for(services, host.clone(), PRODUCT_ID);
+    let cx = CallContext::default();
+    let submitted = runtime.submit(&cx, submitted_statement(secret_key().public_key));
+    futures::pin_mut!(submitted);
+    assert!(submitted.as_mut().now_or_never().is_none());
+    crate::test_support::wait_until(
+        || sent_rpc_count(&platform) > 0,
+        "submission did not reach the chain",
+    );
+    remember(&host, PRODUCT_ID, PERIOD + 1);
+    release.send(()).unwrap();
+    let result = futures::executor::block_on(submitted);
+    assert!(
+        matches!(result, Err(CallError::Domain(RemoteStatementStoreSubmitError::V1(error))) if error.reason.contains("noAllowance"))
+    );
+
+    let restarted = active_signing_host(platform);
+    let state = restarted.session_state();
+    let session = state.current().unwrap();
+    let revision = restarted.grants.lifecycle().revision();
+    let retained = futures::executor::block_on(
+        restarted
+            .grants
+            .cached_statement_store_allowance_key(&state, &session, revision, PRODUCT_ID),
+    )
+    .unwrap();
+    assert_eq!(
+        retained.map(|(period, key)| (period, key.secret)),
+        Some((Some(PERIOD + 1), SECRET))
+    );
+}
+
+#[test]
+fn started_native_writes_survive_lock_but_not_an_interrupted_product_reset() {
+    for change in ["lock", "reset-and-drop-write", "reset"] {
+        let platform = Arc::new(StubPlatform::default());
+        let host = active_signing_host(platform.clone());
+        remember(&host, "other.dot", PERIOD);
+        let state = host.session_state();
+        let session = state.current().unwrap();
+        let revision = host.grants.lifecycle().revision();
+        let (release, gate) = futures::channel::oneshot::channel();
+        *platform.core_storage_write_gate.lock().unwrap() = Some(gate);
+        let mut write = Box::pin(host.grants.cache_statement_store_allowance_key(
+            &state,
+            &session,
+            revision,
+            PRODUCT_ID,
+            secret_key(),
+            Some(PERIOD),
+        ));
+        assert!(write.as_mut().now_or_never().is_none());
+        if change == "lock" {
+            futures::executor::block_on(host.disconnect());
+        } else {
+            let mut reset = Box::pin(host.clear_product_state(PRODUCT_ID));
+            assert!(reset.as_mut().now_or_never().is_none());
+            drop(reset);
+        }
+        if change == "reset-and-drop-write" {
+            drop(write);
+            let _ = release.send(());
+        } else {
+            release.send(()).unwrap();
+            assert_eq!(
+                futures::executor::block_on(write).map(|_| ()),
+                Err(AuthorityError::Disconnected)
+            );
+        }
+        futures::executor::block_on(host.activate_local_session(ENTROPY.to_vec())).unwrap();
+        assert_eq!(
+            (
+                remembered(&host, PRODUCT_ID),
+                remembered(&host, "other.dot")
+            ),
+            (
+                if change == "lock" { Some(SECRET) } else { None },
+                Some(SECRET)
+            ),
+            "{change}",
+        );
+    }
+}
+
+#[test]
+fn corrupt_native_records_preserve_scoped_reset_for_a_later_retry() {
+    use crate::platform::{CoreStorage, CoreStorageKey};
+
+    let platform = Arc::new(StubPlatform::default());
+    let host = active_signing_host(platform.clone());
+    remember(&host, PRODUCT_ID, PERIOD);
+    remember(&host, "other.dot", PERIOD);
+    let slot = CoreStorageKey::NativeAllowanceKeys;
+    let valid = futures::executor::block_on(platform.read_core_storage(slot.clone()))
+        .unwrap()
+        .unwrap();
+    let corrupt = vec![0xff];
+    futures::executor::block_on(platform.write_core_storage(slot.clone(), corrupt.clone()))
+        .unwrap();
+    futures::executor::block_on(host.disconnect());
+    let reset = futures::executor::block_on(host.clear_product_state(PRODUCT_ID));
+    let after = futures::executor::block_on(platform.read_core_storage(slot.clone())).unwrap();
+    assert_eq!(
+        (reset, after),
+        (
+            Err(AuthorityError::Unavailable {
+                reason: "persisted native allowances are invalid".to_string()
+            }),
+            Some(corrupt)
+        )
+    );
+
+    futures::executor::block_on(platform.write_core_storage(slot, valid)).unwrap();
+    futures::executor::block_on(host.activate_local_session(ENTROPY.to_vec())).unwrap();
+    assert_eq!(
+        (
+            remembered(&host, PRODUCT_ID),
+            remembered(&host, "other.dot")
+        ),
+        (None, Some(SECRET))
+    );
 }

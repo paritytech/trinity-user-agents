@@ -186,12 +186,14 @@ path. Web hosts do not compile the store.
 
 ### The two roles
 
+Native allowance records use `CoreStorageKey::NativeAllowanceKeys`, a versioned collection scoped by root public key, canonical product and resource. One ordered read-modify-write lets product reset clear all owners without extending the storage callbacks with enumeration. iOS chooses Keychain for secret slots; Android commits encrypted preferences before returning. Wallet lock retains these grants, while product reset removes its records.
+
 - Native execution uses `HostAccounts<WalletAccountHolder>`; paired execution uses `HostAccounts<SsoAccountHolderClient>`. Both share the same grant acquisition, retention and delegated signing policy.
 - `WalletAccountHolder` owns entropy, wallet consent, derivation, issuance and renewal. Incoming `SsoAccountHolderService` calls it directly and cannot inherit native permissions or populate native grants.
 - `AccountInvocation` carries the selected wallet activation and trusted caller origin. Local callers may carry a wallet-issued authorization; remote callers require independent approval.
 - `HostOperation` captures the original account session and host grant revision before review. Wallet signing and cached-key use validate that selection after asynchronous preparation. Product reset invalidates host work without changing the wallet activation.
 - `AccountHolder::allocate_grants` returns a lazy, ordered stream. The host retains each success before continuing; recoverable item failures and whole-operation failures remain distinct.
-- `HostGrantStore` owns retained keys, wallet authorizations and public subtrees. Paired keys use existing storage encodings; native grants remain in memory. Both hosts use a cached Bulletin key, dry-run the transaction, then refresh once on allowance rejection.
+- `HostGrantStore` owns retained keys, wallet authorizations and public subtrees. Paired keys use existing storage encodings; native allowance grants use `CoreStorage`. Both hosts use a cached Bulletin key, dry-run the transaction, then refresh once on allowance rejection.
 - `HostSession` covers login, disconnect and identity lookup through the existing `SigningHost` or `SsoRequestService`. Paired session replacement waits for pending storage cleanup, and explicit cancellation withdraws submitted SSO requests.
 - `ProductConnection` holds the existing per-product adapters, permissions, action channels and open-operation references independently of the holder type. The dispatcher erases that type for native control handles. Worker scheduling and ownership remain in their existing components.
 

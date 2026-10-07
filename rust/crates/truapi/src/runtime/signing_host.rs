@@ -190,14 +190,19 @@ impl SigningHost {
     }
 
     /// Revoke one product's grants while preserving the active wallet.
-    pub fn clear_product_state(&self, product_id: &str) -> Result<(), AuthorityError> {
+    pub async fn clear_product_state(&self, product_id: &str) -> Result<(), AuthorityError> {
         let product_id = normalize_product_identifier(product_id).map_err(|error| {
             AuthorityError::Unavailable {
                 reason: error.to_string(),
             }
         })?;
-        self.grants.lifecycle().revoke_product(&product_id);
-        Ok(())
+        self.grants.lifecycle().revoke_native_product(&product_id);
+        let storage = self.grants.persistence().await;
+        storage.begin_cleanup();
+        storage
+            .drain_cleanup()
+            .await
+            .map_err(|reason| AuthorityError::Unavailable { reason })
     }
 
     fn clear_local_session(&self) {
@@ -2175,7 +2180,7 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-        authority.clear_product_state("myapp.dot").unwrap();
+        futures::executor::block_on(authority.clear_product_state("myapp.dot")).unwrap();
         let current_session = authority.account_holder().current_session().unwrap();
         let own = authority.account_holder().auto_signing_status(
             &current_session,

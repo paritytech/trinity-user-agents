@@ -38,13 +38,13 @@ class RealOurDeviceKeypairProvider @Inject constructor(
     }
 
     private fun load(): X25519KeyPair {
-        val storedPrivateKey = encryptedPreferences.getDecryptedString(OUR_DEVICE_PRIVATE_KEY)
-        if (storedPrivateKey != null) {
-            return keyGenerator.createKeyPair(X25519PrivateKey.fromDerivedBytes(storedPrivateKey.fromHex()))
+        val storedPrivateKey = encryptedPreferences.getDecryptedStringOrThrow(OUR_DEVICE_PRIVATE_KEY)
+        val keypair = if (storedPrivateKey != null) {
+            keyGenerator.createKeyPair(X25519PrivateKey.fromDerivedBytes(storedPrivateKey.fromHex()))
+        } else {
+            keyGenerator.generateRandomKeypair()
         }
-
-        val fresh = keyGenerator.generateRandomKeypair()
-        encryptedPreferences.putEncryptedString(OUR_DEVICE_PRIVATE_KEY, fresh.privateKey.bytes.value.toHexString())
-        return fresh
+        encryptedPreferences.putEncryptedStringCommitted(OUR_DEVICE_PRIVATE_KEY, keypair.privateKey.bytes.value.toHexString())
+        return keypair
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import TrUAPIHost
 import SubstrateSdk
 
@@ -25,27 +26,78 @@ final class ProductStorageBackend: HostStorageBackend, @unchecked Sendable {
     }
 }
 
-/// Adapts the host-global core ``TrUAPILocalStoring`` to
-/// `HostCoreStorageBackend`. Core keys are SCALE-encoded `Data`; they are
-/// hex-encoded for the underlying String-keyed store. Plain Swift errors
-/// surface as `HostRejection`.
 final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
+    private static let lock = NSLock()
     private let storage: TrUAPILocalStoring
+    private let keychain: KeystoreProtocol
 
-    init(storage: TrUAPILocalStoring) {
+    init(storage: TrUAPILocalStoring, keychain: KeystoreProtocol) {
         self.storage = storage
+        self.keychain = keychain
+    }
+
+    static func create(
+        defaults: UserDefaults = .standard,
+        keychain: KeystoreProtocol = Keychain()
+    ) -> CoreStorageBackend {
+        CoreStorageBackend(storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults), keychain: keychain)
     }
 
     func read(key: Data) throws -> Data? {
-        try withHostRejection { try storage.read(key: key.toHex()) }
+        try withHostRejection {
+            try Self.lock.withLock {
+                try Task.checkCancellation()
+                guard try isProtected(key) else { return try storage.read(key: key.toHex()) }
+                do {
+                    return try keychain.fetchKey(for: identifier(key))
+                } catch KeystoreError.noKeyFound {
+                    return nil
+                }
+            }
+        }
     }
 
     func write(key: Data, value: Data) throws {
-        try withHostRejection { try storage.write(key: key.toHex(), value: value) }
+        try withHostRejection {
+            try Self.lock.withLock {
+                try Task.checkCancellation()
+                if try isProtected(key) {
+                    try keychain.saveKey(value, with: identifier(key))
+                } else {
+                    try storage.write(key: key.toHex(), value: value)
+                }
+            }
+        }
     }
 
     func clear(key: Data) throws {
-        try withHostRejection { try storage.clear(key: key.toHex()) }
+        try withHostRejection {
+            try Self.lock.withLock {
+                try Task.checkCancellation()
+                if try isProtected(key) {
+                    try keychain.deleteKeyIfExists(for: identifier(key))
+                } else {
+                    try storage.clear(key: key.toHex())
+                }
+            }
+        }
+    }
+
+    private func isProtected(_ key: Data) throws -> Bool {
+        switch try coreStorageKeyKind(encoded: key) {
+        case "AuthSession",
+             "PairingDeviceIdentity",
+             "AllowanceKeys",
+             "AutoSigningKey",
+             "AutoSigningKeys",
+             "DeviceEncryptionKey",
+             "NativeAllowanceKeys": true
+        default: false
+        }
+    }
+
+    private func identifier(_ key: Data) -> String {
+        "io.polkadotapp.truapi.core.\(key.toHex())"
     }
 }
 

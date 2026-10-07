@@ -310,7 +310,7 @@ extension ServiceCoordinator {
             chainRegistry: ChainRegistryFacade.sharedRegistry,
             entropyManager: RootEntropyManager.shared,
             settingsManager: SettingsManager.shared,
-            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
+            coreStorage: CoreStorageBackend.create(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
             logger: logger
         )

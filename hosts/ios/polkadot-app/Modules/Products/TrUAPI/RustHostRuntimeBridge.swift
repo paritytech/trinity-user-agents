@@ -24,7 +24,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
 
     init(
         chainRegistry: ChainRegistryProtocol,
-        coreStorage: TrUAPILocalStoring,
+        coreStorage: HostCoreStorageBackend,
         chainConnections: TrUAPIChainConnecting,
         confirmationPresenter: TrUAPIConfirmationPresenting,
         logger: LoggerProtocol
@@ -33,7 +33,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         self.chainConnections = chainConnections
         self.confirmationPresenter = confirmationPresenter
         self.logger = logger
-        self.coreStorage = CoreStorageBackend(storage: coreStorage)
+        self.coreStorage = coreStorage
         storage = EmptyHostStorageBackend()
         chainConnections.eventHandler = self
     }
