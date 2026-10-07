@@ -105,6 +105,9 @@ enum BundleResolution {
 pub struct TemporaryPermissions {
     authorization: futures::lock::Mutex<()>,
     grants: std::sync::Mutex<HashSet<Vec<u8>>>,
+    statement_signer_prompt: futures::lock::Mutex<()>,
+    /// Keys of other products' accounts the user let this execution sign statements with.
+    statement_signers: std::sync::Mutex<HashSet<[u8; 32]>>,
 }
 
 impl TemporaryPermissions {
@@ -114,6 +117,40 @@ impl TemporaryPermissions {
             .lock()
             .expect("temporary permissions mutex poisoned")
             .clear();
+        self.statement_signers
+            .lock()
+            .expect("statement signers mutex poisoned")
+            .clear();
+    }
+
+    /// Whether the user lets this execution sign statements as `signer`.
+    ///
+    /// Asks through `confirm` until the user first approves, then answers yes
+    /// without asking. A refusal is not remembered, so the next statement asks
+    /// again. Requests that arrive while a prompt is open wait for its answer
+    /// rather than opening their own.
+    pub async fn approve_statement_signer<E>(
+        &self,
+        signer: [u8; 32],
+        confirm: impl Future<Output = Result<bool, E>>,
+    ) -> Result<bool, E> {
+        let _prompt = self.statement_signer_prompt.lock().await;
+        if self
+            .statement_signers
+            .lock()
+            .expect("statement signers mutex poisoned")
+            .contains(&signer)
+        {
+            return Ok(true);
+        }
+        let approved = confirm.await?;
+        if approved {
+            self.statement_signers
+                .lock()
+                .expect("statement signers mutex poisoned")
+                .insert(signer);
+        }
+        Ok(approved)
     }
 
     fn authorize(&self, key: &CoreStorageKey, consume: bool) -> bool {

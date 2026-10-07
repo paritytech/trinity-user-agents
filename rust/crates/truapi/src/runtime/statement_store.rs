@@ -355,13 +355,17 @@ impl ProductRuntimeHost {
         // A publisher's grant does not replace an ordinary caller's signature approval.
         if product_account_id.dot_ns_identifier != self.product_id() {
             let confirmed = self
-                .confirm_product_action(UserConfirmationReview::StatementStoreProductSign(
-                    StatementStoreProductSignReview {
-                        calling_product_id: Some(self.product_id()),
-                        account: product_account_id.clone(),
-                        payload: payload.clone(),
-                    },
-                ))
+                .temporary_permissions
+                .approve_statement_signer(
+                    signer,
+                    self.confirm_product_action(UserConfirmationReview::StatementStoreProductSign(
+                        StatementStoreProductSignReview {
+                            calling_product_id: Some(self.product_id()),
+                            account: product_account_id.clone(),
+                            payload: payload.clone(),
+                        },
+                    )),
+                )
                 .await
                 .map_err(|err| StatementProofFailure::UnableToSign(err.reason))?;
             if !confirmed {
@@ -695,6 +699,73 @@ mod tests {
                 latest::RemoteStatementStoreCreateProofError::UnableToSign
             ))
         ));
+    }
+
+    fn create_proof_as(
+        host: &ProductRuntimeHost,
+        account: latest::ProductAccountId,
+    ) -> Result<RemoteStatementStoreCreateProofResponse, CallError<RemoteStatementStoreCreateProofError>>
+    {
+        futures::executor::block_on(StatementStore::create_proof(
+            host,
+            &CallContext::default(),
+            RemoteStatementStoreCreateProofRequest::V1(
+                latest::RemoteStatementStoreCreateProofRequest {
+                    product_account_id: account,
+                    statement: statement(),
+                },
+            ),
+        ))
+    }
+
+    /// A game signals with one statement per move, so asking for each one
+    /// would put a prompt in front of every move. One approval covers that
+    /// account for the rest of the execution, and only that account.
+    #[test]
+    fn statement_store_create_proof_asks_once_per_cross_product_account() {
+        let platform = Arc::new(StubPlatform {
+            sign_raw_confirmed: true,
+            ..Default::default()
+        });
+        cache_context_grant(&platform, "dim2.paseo", "dim2next");
+        let (host, _signing_host) = signing_host_runtime_on("dim2next.paseo", platform.clone());
+
+        for _ in 0..3 {
+            create_proof_as(&host, account_id("dim2.paseo", 0)).expect("the grant admits the account");
+        }
+        create_proof_as(&host, account_id("dim2.paseo", 1)).expect("the grant admits the account");
+
+        let reviewed: Vec<_> = platform
+            .statement_store_product_sign_reviews
+            .lock()
+            .expect("statement store product sign review list mutex poisoned")
+            .iter()
+            .map(|review| review.account.clone())
+            .collect();
+        assert_eq!(
+            reviewed,
+            vec![account_id("dim2.paseo", 0), account_id("dim2.paseo", 1)]
+        );
+    }
+
+    #[test]
+    fn statement_store_create_proof_asks_again_after_a_refusal() {
+        let platform = Arc::new(StubPlatform {
+            sign_raw_confirmed: false,
+            ..Default::default()
+        });
+        cache_context_grant(&platform, "dim2.paseo", "dim2next");
+        let (host, _signing_host) = signing_host_runtime_on("dim2next.paseo", platform.clone());
+
+        for _ in 0..2 {
+            create_proof_as(&host, account_id("dim2.paseo", 0)).expect_err("the user refused");
+        }
+
+        let reviews = platform
+            .statement_store_product_sign_reviews
+            .lock()
+            .expect("statement store product sign review list mutex poisoned");
+        assert_eq!(reviews.len(), 2, "a refusal is not remembered");
     }
 
     #[test]
