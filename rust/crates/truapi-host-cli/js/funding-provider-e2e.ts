@@ -173,7 +173,15 @@ export async function runProviderStart(
     ) {
       throw new Error(`unexpected assignment ${stringify(item)}`);
     }
-    return "the provider's worker was handed the session it was chosen for";
+    await waitForTranscript(
+      fundingLogPath,
+      (line) =>
+        line.kind === "candidates" &&
+        line.intent === inbound &&
+        (line.providers ?? []).length > 0,
+      `the provider list for ${inbound}`,
+    );
+    return "the host listed the provider and handed it the session it was chosen for";
   });
 
   await check("provider_present_frame", async () => {

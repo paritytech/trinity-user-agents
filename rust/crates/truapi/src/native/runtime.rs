@@ -335,6 +335,23 @@ impl NativeTrUApiHostRuntime {
         Ok(self.runtime.cancel_funding(&intent).await?)
     }
 
+    /// Replace the funding providers this host offers, each with the Worker
+    /// manifest JSON it ships for it.
+    pub fn set_funding_providers(
+        &self,
+        providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+    ) -> Result<(), HostRejection> {
+        Ok(self.runtime.set_funding_providers(providers)?)
+    }
+
+    /// The providers funding session `intent` can be handed to.
+    pub fn funding_candidates(
+        &self,
+        intent: String,
+    ) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
+        self.runtime.funding_candidates(&intent)
+    }
+
     /// Hand open funding session `intent` to the provider the user chose, by
     /// product id.
     pub async fn select_funding_provider(

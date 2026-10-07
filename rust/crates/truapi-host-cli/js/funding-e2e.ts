@@ -28,6 +28,7 @@ export interface TranscriptLine {
   outcome?: string;
   tag?: string;
   route?: string;
+  providers?: string[];
 }
 
 /** What the host recorded. */

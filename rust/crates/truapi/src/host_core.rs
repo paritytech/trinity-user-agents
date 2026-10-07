@@ -817,6 +817,35 @@ impl SigningHostRuntime {
             })
     }
 
+    /// Replace the funding providers this host offers, each with the Worker
+    /// manifest it ships for it. The core re-reads each one from dotNS in the
+    /// background, and that answer wins once it has one.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_providers"))]
+    pub fn set_funding_providers(
+        &self,
+        providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+    ) -> Result<(), v01::GenericError> {
+        self.services
+            .set_funding_providers(providers)
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
+    /// The providers funding session `intent` can be handed to, with the
+    /// routes that serve its direction, in the host's order. Empty for a
+    /// session the core does not know.
+    pub fn funding_candidates(
+        &self,
+        intent: &str,
+    ) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
+        self.services
+            .funding()
+            .get(intent)
+            .map(|session| self.services.funding_candidates(session.direction))
+            .unwrap_or_default()
+    }
+
     /// Hand open funding session `intent` to the provider the user chose,
     /// by product id. Returns whether it was open and not yet assigned.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.select_funding_provider"))]

@@ -2575,6 +2575,19 @@ fn a_test_host_settles_a_funding_session_once() {
     );
 }
 
+/// A Worker manifest serving card payments in and crypto in and out.
+const RAMP_MANIFEST: &str = r#"{"$v":2,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"]}],"quote":{"via":"worker"}}}}"#;
+
+/// Offer `provider_id` as a funding provider publishing `manifest`.
+fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: &str) {
+    services
+        .set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
+            product_id: provider_id.to_string(),
+            worker_manifest: Some(manifest.to_string()),
+        }])
+        .expect("provider offered");
+}
+
 fn funding_services_over(platform: Arc<dyn Platform>) -> Arc<RuntimeServices> {
     let (host_config, _) = runtime_config("funding.dot");
     RuntimeServices::new(
@@ -2669,6 +2682,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
         services
     };
     let before = start(&storage);
+    offer_provider(&before, "ramp.dot", RAMP_MANIFEST);
     let intent = futures::executor::block_on(before.open_funding(
         None,
         v01::FundingDirection::In,
@@ -2716,6 +2730,7 @@ fn only_the_assigned_provider_worker_reports() {
     assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
         crate::platform::FundingPresentOutcome::Started,
     )));
+    offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
     let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, None))
         .expect("opened")
         .intent;
@@ -2735,6 +2750,39 @@ fn only_the_assigned_provider_worker_reports() {
             ))),
         )
     ));
+}
+
+// A session goes only to a provider the host offers, and only one serving
+// the session's direction; anything else the user could not have picked.
+#[test]
+fn a_session_is_handed_only_to_an_offered_provider_serving_its_direction() {
+    let services = funding_services();
+    assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+        crate::platform::FundingPresentOutcome::Started,
+    )));
+    let card_in_only = RAMP_MANIFEST.replace(
+        r#",{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"]}"#,
+        "",
+    );
+    offer_provider(&services, "ramp.dot", &card_in_only);
+    let open = |direction| {
+        futures::executor::block_on(services.open_funding(None, direction, None))
+            .expect("opened")
+            .intent
+    };
+    let (inbound, outbound) = (open(v01::FundingDirection::In), open(v01::FundingDirection::Out));
+    let select = |intent: &str, provider| {
+        futures::executor::block_on(services.select_funding_provider(intent, provider)).is_ok()
+    };
+
+    assert_eq!(
+        (
+            select(&inbound, "unknown.dot"),
+            select(&outbound, "ramp.dot"),
+            select(&inbound, "ramp.dot"),
+        ),
+        (false, false, true)
+    );
 }
 
 #[derive(Default)]

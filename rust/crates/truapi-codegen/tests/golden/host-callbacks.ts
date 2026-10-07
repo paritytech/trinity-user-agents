@@ -216,7 +216,12 @@ export type CoreStorageKey =
    * Funding sessions: every live one plus a bounded tail of settled ones,
    * as one SCALE blob.
    */
-  | { tag: "FundingSessions"; value?: undefined };
+  | { tag: "FundingSessions"; value?: undefined }
+  /**
+   * A product's Worker executable manifest as last read from dotNS, and when,
+   * cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "WorkerManifest"; value: { productId: string } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -797,6 +802,9 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         productId: string;
       }>,
       FundingSessions: S._void,
+      WorkerManifest: S.Struct({ productId: S.str }) as S.Codec<{
+        productId: string;
+      }>,
     }),
 );
 

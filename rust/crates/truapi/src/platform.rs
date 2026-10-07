@@ -1461,6 +1461,13 @@ pub enum CoreStorageKey {
     /// as one SCALE blob.
     #[codec(index = 13)]
     FundingSessions,
+    /// A product's Worker executable manifest as last read from dotNS, and when,
+    /// cached for the same lifetime as [`Self::ProductManifest`].
+    #[codec(index = 14)]
+    WorkerManifest {
+        /// Bare label of the product whose Worker manifest was cached.
+        product_id: String,
+    },
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1515,6 +1522,7 @@ pub fn describe_core_storage_key(
         CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
         CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
         CoreStorageKey::FundingSessions => ("FundingSessions", None),
+        CoreStorageKey::WorkerManifest { product_id } => ("WorkerManifest", Some(product_id)),
     };
     Ok(CoreStorageKeyDescription { kind, product_id })
 }
@@ -2583,6 +2591,13 @@ mod tests {
                 None,
             ),
             (CoreStorageKey::FundingSessions, "FundingSessions", None),
+            (
+                CoreStorageKey::WorkerManifest {
+                    product_id: "ramp".to_string(),
+                },
+                "WorkerManifest",
+                Some("ramp"),
+            ),
         ] {
             let description = describe_core_storage_key(&key.encode()).expect("valid key");
             assert_eq!(description.kind, kind);

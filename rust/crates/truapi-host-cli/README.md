@@ -777,7 +777,8 @@ Scripts under `js/scripts/` include:
   (`deliver:900,release:500,fail,dismiss,provide,provide,provide-cancel`). A
   `deliver`, `release` or `fail` session is settled through the core's test
   hook with no chain behind it. A `provide` session is handed to the product
-  that asked, which runs as a Worker and serves it as the provider: it reports
+  that asked, which `TRUAPI_FUNDING_PROVIDERS` offers as a provider with a
+  scripted Worker manifest seeded into the core's cache, which runs as a Worker and serves it as the provider: it reports
   progress, starts top-ups and payment requests, which scripted engines
   complete in full and record in `TRUAPI_FUNDING_LEDGER`, and the core settles
   the session from them. `provide-cancel` also cancels it. The phase runs the

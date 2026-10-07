@@ -559,8 +559,9 @@ impl RuntimeServices {
         Ok(outcome != CancelOutcome::Refused)
     }
 
-    /// Hand open session `intent` to the provider the user chose. Returns
-    /// whether it was open and not yet assigned.
+    /// Hand open session `intent` to the provider the user chose, which must
+    /// be one of the host's providers serving its direction. Returns whether
+    /// it was open and not yet assigned.
     pub async fn select_funding_provider(
         self: &Arc<Self>,
         intent: &str,
@@ -575,6 +576,18 @@ impl RuntimeServices {
         })?;
         let registry = self.funding();
         registry.bind(self);
+        if let Some(session) = registry.get(intent)
+            && !self
+                .funding_providers
+                .is_candidate(&provider.product_id, session.direction)
+        {
+            return Err(FundingSessionError::InvalidProvider {
+                reason: format!(
+                    "{} is not a funding provider for this session",
+                    provider.product_id
+                ),
+            });
+        }
         registry
             .select_provider(
                 self.platform.as_ref(),

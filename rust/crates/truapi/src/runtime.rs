@@ -20,6 +20,7 @@ mod chat;
 pub mod contacts;
 mod dotns_lookup;
 mod funding;
+mod funding_providers;
 pub use funding::OpenFundingError;
 mod identity;
 pub mod login_failure;
