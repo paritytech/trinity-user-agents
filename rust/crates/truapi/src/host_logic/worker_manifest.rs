@@ -30,7 +30,7 @@ pub struct WorkerManifest {
     /// Whether the worker serves Input.
     pub input: bool,
     /// How the worker serves Funding. `None` when it does not, including when
-    /// its configuration has no usable route or quote source.
+    /// its configuration has no usable route.
     pub funding: Option<FundingConfig>,
 }
 
@@ -44,8 +44,6 @@ pub struct WorkerManifest {
 pub struct FundingConfig {
     /// What the provider moves and how; never empty.
     pub routes: Vec<FundingRoute>,
-    /// Where the host gets a live quote.
-    pub quote: FundingQuoteSource,
     /// Onramp adapter id for calls that need the provider's key.
     pub backend: Option<String>,
 }
@@ -83,22 +81,6 @@ pub enum FundingMode {
     Bank,
     /// A crypto transfer.
     Crypto,
-}
-
-/// Where a provider's quotes come from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Enum)
-)]
-pub enum FundingQuoteSource {
-    /// The provider's worker answers.
-    Worker,
-    /// The host calls this https URL.
-    Url {
-        /// The URL.
-        url: String,
-    },
 }
 
 /// Which way a route moves value.
@@ -139,7 +121,6 @@ struct PublishedIncludes {
 #[derive(Deserialize)]
 struct PublishedFunding {
     routes: Vec<PublishedRoute>,
-    quote: PublishedQuote,
     backend: Option<String>,
 }
 
@@ -152,12 +133,6 @@ struct PublishedRoute {
     countries: Option<Vec<String>>,
     #[serde(default)]
     requires_account: bool,
-}
-
-#[derive(Deserialize)]
-struct PublishedQuote {
-    via: String,
-    url: Option<String>,
 }
 
 impl WorkerManifest {
@@ -193,17 +168,15 @@ impl WorkerManifest {
 
 impl PublishedFunding {
     /// The configuration with what this core does not recognise left out, or
-    /// `None` when no route or no quote source is left.
+    /// `None` when no route is left.
     fn usable(self) -> Option<FundingConfig> {
         let routes: Vec<FundingRoute> = self
             .routes
             .into_iter()
             .filter_map(PublishedRoute::usable)
             .collect();
-        let quote = self.quote.usable()?;
         (!routes.is_empty()).then_some(FundingConfig {
             routes,
-            quote,
             backend: self.backend,
         })
     }
@@ -238,16 +211,6 @@ impl PublishedRoute {
     }
 }
 
-impl PublishedQuote {
-    fn usable(self) -> Option<FundingQuoteSource> {
-        match (self.via.as_str(), self.url) {
-            ("worker", _) => Some(FundingQuoteSource::Worker),
-            ("url", Some(url)) if url.starts_with("https://") => Some(FundingQuoteSource::Url { url }),
-            _ => None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,8 +226,7 @@ mod tests {
                 "routes": [
                     { "mode": "CARD", "directions": ["In"], "assets": ["EUR", "USD"], "countries": ["DE", "FR", "US"], "requiresAccount": true },
                     { "mode": "CRYPTO", "directions": ["In", "Out"], "assets": ["USDT", "DOT"] }
-                ],
-                "quote": { "via": "worker" }
+                ]
             }
         }
     }"#;
@@ -317,7 +279,6 @@ mod tests {
                             requires_account: false,
                         },
                     ],
-                    quote: FundingQuoteSource::Worker,
                     backend: None,
                 }),
             })
@@ -377,7 +338,7 @@ mod tests {
                 {{ "mode": "BANK", "directions": ["Sideways"], "assets": ["EUR"] }},
                 {{ "mode": "BANK", "directions": ["Out", "Sideways"], "assets": [] }},
                 {{ "mode": "CRYPTO", "directions": ["Sideways", "Out"], "assets": ["DOT"] }}
-            ],"quote":{{"via":"worker"}}}}"#
+            ]}}"#
         )))
         .expect("parses");
 
@@ -396,27 +357,22 @@ mod tests {
         );
     }
 
-    // A provider the host cannot quote, or with nothing it can offer, is not
-    // listed, but its other surfaces still serve.
+    // A provider with nothing it can offer is not listed, but its other
+    // surfaces still serve.
     #[test]
-    fn no_usable_route_or_quote_source_serves_no_funding() {
-        let unusable = [
-            r#"{"routes":[{ "mode": "CASH", "directions": ["In"], "assets": ["EUR"] }],"quote":{"via":"worker"}}"#.to_string(),
-            format!(r#"{{"routes":[{CARD_IN}],"quote":{{"via":"carrier-pigeon"}}}}"#),
-            format!(r#"{{"routes":[{CARD_IN}],"quote":{{"via":"url","url":"http://quotes.example"}}}}"#),
-            format!(r#"{{"routes":[{CARD_IN}],"quote":{{"via":"url"}}}}"#),
-        ];
+    fn no_usable_route_serves_no_funding() {
+        let manifest = WorkerManifest::parse(&with_funding(
+            r#"{"routes":[{ "mode": "CASH", "directions": ["In"], "assets": ["EUR"] }]}"#,
+        ))
+        .expect("parses");
 
-        for funding in unusable {
-            let manifest = WorkerManifest::parse(&with_funding(&funding)).expect("parses");
-            assert_eq!((manifest.chat, manifest.funding), (true, None), "{funding}");
-        }
+        assert_eq!((manifest.chat, manifest.funding), (true, None));
     }
 
     #[test]
-    fn a_url_quote_source_and_a_backend_are_kept() {
+    fn a_backend_is_kept() {
         let manifest = WorkerManifest::parse(&with_funding(&format!(
-            r#"{{"routes":[{CARD_IN}],"quote":{{"via":"url","url":"https://quotes.example/v1"}},"backend":"meld"}}"#
+            r#"{{"routes":[{CARD_IN}],"backend":"meld"}}"#
         )))
         .expect("parses");
 
@@ -424,9 +380,6 @@ mod tests {
             manifest.funding,
             Some(FundingConfig {
                 routes: vec![card_in()],
-                quote: FundingQuoteSource::Url {
-                    url: "https://quotes.example/v1".to_string(),
-                },
                 backend: Some("meld".to_string()),
             })
         );
@@ -435,7 +388,7 @@ mod tests {
     #[test]
     fn a_route_of_the_wrong_shape_fails_the_document() {
         let manifest = WorkerManifest::parse(&with_funding(
-            r#"{"routes":[{ "mode": "CARD", "directions": "In", "assets": ["EUR"] }],"quote":{"via":"worker"}}"#,
+            r#"{"routes":[{ "mode": "CARD", "directions": "In", "assets": ["EUR"] }]}"#,
         ));
 
         assert!(manifest.is_err());
