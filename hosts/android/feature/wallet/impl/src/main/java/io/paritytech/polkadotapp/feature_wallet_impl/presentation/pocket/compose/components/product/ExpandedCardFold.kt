@@ -43,12 +43,17 @@ internal class ExpandedCardFoldState(initialFoldPx: Float = 0f) {
 
     /** Stops any fold the page started: a drag outranks it. */
     suspend fun beginDrag() {
-        animations.mutate(MutatePriority.UserInput) { dragging = true }
+        dragging = true
+        animations.mutate(MutatePriority.UserInput) {}
     }
 
+    /**
+     * The user owns the face until the settle ends, so the flag is cleared only on completion: a settle
+     * cancelled by a new drag must leave the flag that drag set.
+     */
     suspend fun endDrag() {
-        dragging = false
         animateTo(settledTarget(), MutatePriority.UserInput)
+        dragging = false
     }
 
     /**
