@@ -128,8 +128,8 @@ grocery code has no prefix to give, and a required prefix would not help anyway:
 
 **Only for what the user is looking at.** The viewfinder opens over whatever is on screen, so the call has to come
 from there. An App or Widget may scan only while it is the screen the user sees; the host checks that. A Worker has no
-screen of its own, so it may scan only within 5 seconds of the core delivering it a tap from the user, on its card face
-or in a chat message. Anything else is answered `NotVisible` and no viewfinder opens. A product therefore cannot open
+screen of its own, so it may scan only within 5 seconds of the user tapping something the host drew for it, such as
+its card face. Chat messages and actions do not count, because they can come from other people. Anything else is answered `NotVisible` and no viewfinder opens. A product therefore cannot open
 the viewfinder from the background, or open it again each time the user closes it.
 
 **No permission.** The product never touches the camera, and the user pointing the viewfinder at a code is the consent.
