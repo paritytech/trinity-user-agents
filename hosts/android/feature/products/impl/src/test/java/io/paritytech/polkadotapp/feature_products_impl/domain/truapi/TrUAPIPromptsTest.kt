@@ -37,10 +37,12 @@ class TrUAPIPromptsTest {
     }
 
     @Test
-    fun `a screen that never appears answers unanswered instead of holding the core`() = runTest {
+    fun `a screen that never appears fails the call instead of holding the core`() = runTest {
+        // The user dismissed nothing, so the product hears of a host failure.
         val prompts = RecordingPrompts()
 
-        assertEquals("dismissed", prompts.ask("question"))
+        assertTrue(runCatching { prompts.ask("question") }.isFailure)
+        assertEquals(listOf("open", "close"), prompts.events)
     }
 
     @Test

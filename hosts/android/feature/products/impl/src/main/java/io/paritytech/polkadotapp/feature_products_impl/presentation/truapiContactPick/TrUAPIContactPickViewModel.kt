@@ -24,10 +24,15 @@ class TrUAPIContactPickViewModel @Inject constructor(
     // None after Android restores the sheet in a new process, and answered when the sheet
     // appeared too late. Either way there is nobody to pick for.
     private val prompt = picks.current?.takeUnless { it.isAnswered }
-    private val choosing = MutableStateFlow(prompt == null)
+    private val choosing = MutableStateFlow(false)
 
     init {
-        if (prompt == null) launchUnit { router.closeTrUAPIContactPick() } else prompt.markShown()
+        prompt?.markShown()
+    }
+
+    /** Closes the sheet when it comes back on top after its prompt already ended. */
+    override fun onShown() {
+        if (prompt?.isAnswered != false) launchUnit { router.closeTrUAPIContactPick() }
     }
 
     override val state: StateFlow<LoadingState<TrUAPIContactPickUiState>> =
@@ -57,9 +62,10 @@ class TrUAPIContactPickViewModel @Inject constructor(
     )
 
     private fun answer(choose: () -> Unit) = launchUnit {
-        if (choosing.value) return@launchUnit
-        choosing.value = true
-        choose()
+        if (!choosing.value) {
+            choosing.value = true
+            choose()
+        }
         router.closeTrUAPIContactPick()
     }
 }

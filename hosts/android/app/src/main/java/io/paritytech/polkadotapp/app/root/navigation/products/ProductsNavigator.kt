@@ -109,15 +109,17 @@ class ProductsNavigator @Inject constructor(
     override suspend fun closeTrUAPIContactPick() = closeIfShowing(R.id.truapiContactPickBottomSheet)
 
     override suspend fun openTrUAPIProductScan() = withContext(dispatchers.main) {
-        performNavigation(R.id.action_global_to_truapiProductScanFragment)
+        performNavigation(R.id.action_global_to_truapiProductScanBottomSheet)
     }
 
-    override suspend fun closeTrUAPIProductScan() = closeIfShowing(R.id.truapiProductScanFragment)
+    override suspend fun closeTrUAPIProductScan() = closeIfShowing(R.id.truapiProductScanBottomSheet)
 
-    /** Removes the screen wherever it is in the back stack, even under another sheet. */
+    /**
+     * Closes the prompt only when it is on top, so a sheet over it stays. A prompt under another
+     * sheet closes itself when it is shown again, because its answer is already given.
+     */
     private suspend fun closeIfShowing(destinationId: Int) = withContext(dispatchers.main) {
-        popBackstack(destinationId, inclusive = true)
-        Unit
+        if (isCurrentDestination(destinationId)) back()
     }
 
     override fun openPocketAddCard(payload: PocketAddCardPayload) = performNavigation(

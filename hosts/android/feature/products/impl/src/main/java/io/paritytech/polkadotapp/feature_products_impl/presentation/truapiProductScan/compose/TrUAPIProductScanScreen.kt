@@ -24,6 +24,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import io.paritytech.polkadotapp.common.presentation.camera.compose.QrViewfinder
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
@@ -44,6 +46,7 @@ private const val NOT_FOR_THIS_PRODUCT_SHOWN_MS = 2_000L
 @Composable
 fun TrUAPIProductScanScreen(viewModel: TrUAPIProductScanViewModel) {
     BackHandler(onBack = viewModel::onCloseClicked)
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.onShown() }
 
     var notForThisProduct by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {

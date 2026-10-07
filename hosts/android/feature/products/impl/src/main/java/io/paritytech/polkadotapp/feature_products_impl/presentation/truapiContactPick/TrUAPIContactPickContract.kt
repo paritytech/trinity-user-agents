@@ -10,6 +10,8 @@ interface TrUAPIContactPickContract {
     fun onContactClicked(index: Int)
 
     fun onDismissClicked()
+
+    fun onShown()
 }
 
 data class TrUAPIContactPickUiState(

@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
@@ -55,17 +54,12 @@ abstract class TrUAPIPrompts<Q, A>(private val unanswered: A) {
         try {
             open()
             // Navigation can fail silently, and then no screen would ever answer.
-            if (prompt.awaitShown(SHOWN_TIMEOUT_MS)) {
-                prompt.await()
-            } else {
-                prompt.dismiss()
-                close()
-                unanswered
-            }
-        } catch (cancelled: CancellationException) {
+            check(prompt.awaitShown(SHOWN_TIMEOUT_MS)) { "the host screen did not appear" }
+            prompt.await()
+        } catch (failure: Throwable) {
             prompt.dismiss()
             withContext(NonCancellable) { close() }
-            throw cancelled
+            throw failure
         }
     }
 

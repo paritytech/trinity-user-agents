@@ -42,15 +42,25 @@ class TrUAPIProductScanViewModel @Inject constructor(
     val notForThisProduct = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
     init {
-        if (prompt == null) launchUnit { router.closeTrUAPIProductScan() } else prompt.markShown()
+        prompt?.markShown()
+    }
+
+    /** Closes the screen when it comes back on top after its prompt already ended. */
+    fun onShown() {
+        if (prompt?.isAnswered != false) close()
     }
 
     suspend fun bindToCamera(lifecycleOwner: LifecycleOwner) {
         val prompt = prompt ?: return
-        if (permissionAsker.askPermission(Manifest.permission.CAMERA) != PermissionResult.GRANTED) {
+        when (permissionAsker.askPermission(Manifest.permission.CAMERA)) {
+            PermissionResult.GRANTED -> Unit
+            // Android asks again next time, so there is nothing to explain.
+            PermissionResult.DENIED -> return answer(HostScan.CameraUnavailable)
             // The dialog tells the user how to turn the camera on. Closing it answers.
-            cameraPermissionDenied.value = true
-            return
+            PermissionResult.DENIED_FOREVER -> {
+                cameraPermissionDenied.value = true
+                return
+            }
         }
         val formats = ProductScanFormats.mlKitFormats(prompt.question.request.formats)
         try {
@@ -86,8 +96,9 @@ class TrUAPIProductScanViewModel @Inject constructor(
     }
 
     private fun answer(scan: HostScan) {
-        if (!answered.compareAndSet(false, true)) return
-        prompt?.answer(scan)
-        launchUnit { router.closeTrUAPIProductScan() }
+        if (answered.compareAndSet(false, true)) prompt?.answer(scan)
+        close()
     }
+
+    private fun close() = launchUnit { router.closeTrUAPIProductScan() }
 }
