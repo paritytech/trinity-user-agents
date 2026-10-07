@@ -74,6 +74,17 @@ pub trait HostCallbacks: Send + Sync {
         request: v01::HostDevicePermissionRequest,
     ) -> Result<DevicePermissionStatus, HostRejection>;
 
+    /// Show (`true`) or hide (`false`) the face above this execution's
+    /// expanded card.
+    ///
+    /// Answer `NotPresented` when the execution is not under its card and
+    /// `UserMoving` while the user drags it. Return without waiting for the
+    /// animation to finish.
+    async fn set_expanded_card_face_shown(
+        &self,
+        shown: bool,
+    ) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection>;
+
     /// Prompt the user for a remote permission `product` requested.
     async fn remote_permission(
         &self,
