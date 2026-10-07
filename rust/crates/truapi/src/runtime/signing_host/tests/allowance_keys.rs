@@ -12,6 +12,7 @@ use crate::host_logic::product_account::{
 };
 use crate::host_logic::statement_store::SUBMIT_STATEMENT_METHOD;
 use crate::runtime::statement_allowance::slot;
+use crate::runtime::statement_store::StatementProofFailure;
 
 const PRODUCT_ID: &str = "myapp.dot";
 const PERIOD: u32 = 7;
@@ -90,8 +91,8 @@ fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
 
 /// Bounded so a regression waiting on an unanswered chain read fails instead
 /// of hanging.
-fn allowance_key(signing_host: &SigningHostRole) -> StatementStoreAllowanceKey {
-    futures::executor::block_on(async {
+fn proof_signer(signing_host: &SigningHostRole) -> [u8; 32] {
+    let proof = futures::executor::block_on(async {
         let session = signing_host
             .accounts()
             .current_operation()
@@ -99,14 +100,22 @@ fn allowance_key(signing_host: &SigningHostRole) -> StatementStoreAllowanceKey {
         let cx = CallContext::default();
         futures::select! {
             result = signing_host.accounts()
-                .statement_store_allowance_key(&cx, &session, PRODUCT_ID.to_string())
+                .create_authorized_statement_proof(
+                    &cx,
+                    &session,
+                    PRODUCT_ID.to_string(),
+                    crate::test_support::statement(),
+                )
                 .fuse() => result,
             _ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
                 panic!("the proof blocked on a chain read")
             }
         }
-    })
-    .expect("the proof is served")
+    });
+    let Ok(truapi::latest::StatementProof::Sr25519 { signer, .. }) = proof else {
+        panic!("the statement must have an Sr25519 proof");
+    };
+    signer
 }
 
 fn sent_rpc_count(platform: &StubPlatform) -> usize {
@@ -154,13 +163,13 @@ fn a_second_proof_in_the_same_session_sends_nothing_to_the_chain() {
     let platform = chain_with_allocated_slot();
     let signing_host = active_signing_host(platform.clone());
 
-    let first = allowance_key(&signing_host);
+    let first = proof_signer(&signing_host);
     let sent_after_first = sent_rpc_count(&platform);
-    let second = allowance_key(&signing_host);
+    let second = proof_signer(&signing_host);
 
     assert_eq!(
-        (sent_after_first > 0, second.public_key, sent_rpc_count(&platform)),
-        (true, first.public_key, sent_after_first),
+        (sent_after_first > 0, second, sent_rpc_count(&platform)),
+        (true, first, sent_after_first),
         "the first proof must reach the chain, and a proof after it must not"
     );
 }
@@ -173,10 +182,10 @@ fn a_new_period_looks_the_allowance_up_again() {
     remember(&signing_host, PRODUCT_ID, period.checked_sub(1).unwrap());
 
     let restarted = active_signing_host(platform.clone());
-    let key = allowance_key(&restarted);
+    let signer = proof_signer(&restarted);
     assert_eq!(
         (
-            key.public_key == secret_key().public_key,
+            signer == secret_key().public_key,
             sent_rpc_count(&platform) > 0
         ),
         (false, true),
@@ -257,15 +266,17 @@ fn a_replaced_session_is_not_served_the_new_sessions_key() {
         slot::current_period(crate::unix_time::current_unix_secs()),
     );
 
-    assert_eq!(
-        futures::executor::block_on(signing_host.accounts().statement_store_allowance_key(
-            &CallContext::default(),
-            &operation,
-            PRODUCT_ID.to_string()
-        ))
-        .map(|_| ()),
-        Err(AuthorityError::Disconnected),
-        "a request validated under the replaced session was served a key",
+    assert!(
+        matches!(
+            futures::executor::block_on(signing_host.accounts().create_authorized_statement_proof(
+                &CallContext::default(),
+                &operation,
+                PRODUCT_ID.to_string(),
+                crate::test_support::statement(),
+            )),
+            Err(StatementProofFailure::NoSession),
+        ),
+        "a request validated under the replaced session was served a proof",
     );
 }
 
@@ -305,10 +316,11 @@ fn product_reset_stops_native_allowance_preparation_on_resumption() {
     let signing_host = active_signing_host(platform.clone());
     let operation = signing_host.accounts().current_operation().unwrap();
     let cx = CallContext::default();
-    let allocation = signing_host.accounts().statement_store_allowance_key(
+    let allocation = signing_host.accounts().create_authorized_statement_proof(
         &cx,
         &operation,
         PRODUCT_ID.to_string(),
+        crate::test_support::statement(),
     );
     futures::pin_mut!(allocation);
     assert!(allocation.as_mut().now_or_never().is_none());
@@ -326,8 +338,11 @@ fn product_reset_stops_native_allowance_preparation_on_resumption() {
         }
     });
     assert_eq!(
-        (result, sent_rpc_count(&platform)),
-        (Err(AuthorityError::Disconnected), before_reset),
+        (
+            matches!(result, Err(StatementProofFailure::NoSession)),
+            sent_rpc_count(&platform),
+        ),
+        (true, before_reset),
         "reset must stop chain preparation, not only discard its eventual key",
     );
 }

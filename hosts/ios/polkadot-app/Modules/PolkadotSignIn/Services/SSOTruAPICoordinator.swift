@@ -198,7 +198,7 @@ private extension SSOTruAPICoordinator {
 
 // MARK: - State
 
-extension SSOTruAPICoordinator {
+private extension SSOTruAPICoordinator {
     actor State {
         struct Peer {
             let host: PolkadotSignInHost

@@ -56,113 +56,119 @@ impl Drop for RequestWithdrawal<'_> {
     }
 }
 
-impl SsoRequestService {
-    /// Watch the session's topics for a peer disconnect statement, replacing
-    /// any monitor for a different session. No-op when one is already running
-    /// for this session.
-    pub fn start_disconnect_monitor(&self, session: &SessionInfo) {
-        let Some(sso) = session.sso.clone() else {
+/// Watch the session's topics for a peer disconnect statement, replacing
+/// any monitor for a different session. No-op when one is already running
+/// for this session.
+pub fn start_disconnect_monitor(service: &SsoRequestService, session: &SessionInfo) {
+    let Some(sso) = session.sso.clone() else {
+        return;
+    };
+    let key = SsoSessionKey::from_session(&sso);
+
+    let (registration, spawner, previous) = {
+        let _lifecycle = service.grants.lifecycle();
+        if !service.current_sso_session_matches(key) {
+            return;
+        }
+        let mut current = service
+            .disconnect_monitor
+            .lock()
+            .expect("SSO disconnect monitor mutex poisoned");
+        if current.as_ref().is_some_and(|active| active.key == key) {
+            return;
+        }
+        let (abort, registration) = AbortHandle::new_pair();
+        let previous = current.replace(SsoDisconnectMonitor { key, abort });
+        (registration, service.spawner.clone(), previous)
+    };
+    drop(previous);
+
+    let statement_store = service.statement_store.clone();
+    let service = service.weak_self.clone();
+    let future = async move {
+        let result = wait_for_sso_peer_disconnect(statement_store, sso).await;
+        let Some(service) = service.upgrade() else {
             return;
         };
-        let key = SsoSessionKey::from_session(&sso);
-
-        let (registration, spawner, previous) = {
-            let _lifecycle = self.grants.lifecycle();
-            if !self.current_sso_session_matches(key) {
-                return;
-            }
-            let mut current = self
+        {
+            let mut active = service
                 .disconnect_monitor
                 .lock()
                 .expect("SSO disconnect monitor mutex poisoned");
-            if current.as_ref().is_some_and(|active| active.key == key) {
-                return;
+            if active.as_ref().is_some_and(|active| active.key == key) {
+                *active = None;
             }
-            let (abort, registration) = AbortHandle::new_pair();
-            let previous = current.replace(SsoDisconnectMonitor { key, abort });
-            (registration, self.spawner.clone(), previous)
-        };
-        drop(previous);
-
-        let statement_store = self.statement_store.clone();
-        let service = self.weak_self.clone();
-        let future = async move {
-            let result = wait_for_sso_peer_disconnect(statement_store, sso).await;
-            let Some(service) = service.upgrade() else {
-                return;
-            };
-            {
-                let mut active = service
-                    .disconnect_monitor
-                    .lock()
-                    .expect("SSO disconnect monitor mutex poisoned");
-                if active.as_ref().is_some_and(|active| active.key == key) {
-                    *active = None;
-                }
-            }
-            match result {
-                Ok(()) => {
-                    service.handle_signing_host_disconnected(key).await;
-                }
-                Err(reason) => {
-                    warn!(%reason, "SSO peer disconnect monitor stopped");
-                }
-            }
-        };
-        spawner(Box::pin(Abortable::new(future, registration).map(|_| ())));
-    }
-
-    /// Detach channel state while the session lifecycle is locked.
-    pub fn detach_session_channel(
-        &self,
-        session: Option<&SessionInfo>,
-    ) -> Option<SsoDisconnectMonitor> {
-        *self
-            .newest_request
-            .lock()
-            .expect("newest request mutex poisoned") = None;
-        self.grants.clear_statement_store_allowance_keys(session);
-        self.grants.clear_bulletin_allowance_keys(session);
-        self.grants.clear_product_subtrees(session);
-        self.disconnect_monitor
-            .lock()
-            .expect("SSO disconnect monitor mutex poisoned")
-            .take()
-    }
-
-    /// Wake detached channel work after releasing the lifecycle lock.
-    pub fn stop_session_channel(
-        &self,
-        session: Option<&SessionInfo>,
-        monitor: Option<SsoDisconnectMonitor>,
-    ) {
-        drop(monitor);
-        if let Some(sso) = session.and_then(|session| session.sso.as_ref()) {
-            self.session_disconnects
-                .notify(sso, SSO_LOCAL_DISCONNECT_REASON);
         }
-    }
+        match result {
+            Ok(()) => {
+                service.handle_signing_host_disconnected(key).await;
+            }
+            Err(reason) => {
+                warn!(%reason, "SSO peer disconnect monitor stopped");
+            }
+        }
+    };
+    spawner(Box::pin(Abortable::new(future, registration).map(|_| ())));
+}
 
-    /// Best-effort `Disconnected` notification to the SSO peer.
-    #[instrument(skip_all, fields(runtime.method = "sso.disconnect.submit"))]
-    pub async fn submit_disconnected_message(&self, session: &SessionInfo) -> Result<(), String> {
-        let sso = session
-            .sso
-            .as_ref()
-            .ok_or_else(|| "No SSO session state".to_string())?;
-        let message_id = sso_message_id();
-        let message = RemoteMessage {
-            message_id: message_id.clone(),
-            data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
-        };
-        let statement = self.build_request_channel_statement(sso, message_id, message, None)?;
-        self.statement_store
-            .submit_fire_and_forget(statement, "SSO statement-store")
-            .await
-            .map_err(|err| format!("SSO statement submit failed: {err}"))?;
-        Ok(())
-    }
+/// Detach channel state while the session lifecycle is locked.
+pub fn detach_session_channel(
+    service: &SsoRequestService,
+    session: Option<&SessionInfo>,
+) -> Option<SsoDisconnectMonitor> {
+    *service
+        .newest_request
+        .lock()
+        .expect("newest request mutex poisoned") = None;
+    service.grants.clear_statement_store_allowance_keys(session);
+    service.grants.clear_bulletin_allowance_keys(session);
+    service.grants.clear_product_subtrees(session);
+    service
+        .disconnect_monitor
+        .lock()
+        .expect("SSO disconnect monitor mutex poisoned")
+        .take()
+}
 
+/// Wake detached channel work after releasing the lifecycle lock.
+pub fn stop_session_channel(
+    service: &SsoRequestService,
+    session: Option<&SessionInfo>,
+    monitor: Option<SsoDisconnectMonitor>,
+) {
+    drop(monitor);
+    if let Some(sso) = session.and_then(|session| session.sso.as_ref()) {
+        service
+            .session_disconnects
+            .notify(sso, SSO_LOCAL_DISCONNECT_REASON);
+    }
+}
+
+/// Best-effort `Disconnected` notification to the SSO peer.
+#[instrument(skip_all, fields(runtime.method = "sso.disconnect.submit"))]
+pub async fn submit_disconnected_message(
+    service: &SsoRequestService,
+    session: &SessionInfo,
+) -> Result<(), String> {
+    let sso = session
+        .sso
+        .as_ref()
+        .ok_or_else(|| "No SSO session state".to_string())?;
+    let message_id = sso_message_id();
+    let message = RemoteMessage {
+        message_id: message_id.clone(),
+        data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
+    };
+    let statement = service.build_request_channel_statement(sso, message_id, message, None)?;
+    service
+        .statement_store
+        .submit_fire_and_forget(statement, "SSO statement-store")
+        .await
+        .map_err(|err| format!("SSO statement submit failed: {err}"))?;
+    Ok(())
+}
+
+impl SsoRequestService {
     /// Build a statement on the session's request channel, recording
     /// `newest` as the request the channel now carries.
     ///

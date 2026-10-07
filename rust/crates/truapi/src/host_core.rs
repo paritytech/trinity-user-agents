@@ -808,25 +808,6 @@ impl SigningHostRuntime {
         )
     }
 
-    /// Build one product connection with adapters scoped to one native
-    /// executable while sharing this runtime's authentication and services.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn product_runtime_with(
-        &self,
-        product: ProductContext,
-        adapters: ConnectionAdapters,
-        sink: Arc<dyn FrameSink>,
-    ) -> ProductRuntime {
-        ProductRuntime::new(
-            self.services.clone(),
-            self.signing_host.accounts().clone(),
-            self.signing_host.clone(),
-            product,
-            adapters,
-            sink,
-        )
-    }
-
     /// Build a product-scoped administration handle from this signing host.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_admin"))]
     pub fn product_admin(&self, product: ProductContext) -> HostAdmin<WalletAccountHolder> {
@@ -836,23 +817,6 @@ impl SigningHostRuntime {
             self.signing_host.clone(),
             product,
             ConnectionAdapters::from_services(&self.services),
-        )
-    }
-
-    /// Build a product administration handle with adapters scoped to one
-    /// native executable connection.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn product_admin_with(
-        &self,
-        product: ProductContext,
-        adapters: ConnectionAdapters,
-    ) -> HostAdmin<WalletAccountHolder> {
-        HostAdmin::new(
-            self.services.clone(),
-            self.signing_host.accounts().clone(),
-            self.signing_host.clone(),
-            product,
-            adapters,
         )
     }
 
@@ -1051,6 +1015,42 @@ impl SigningHostRuntime {
         )?;
         Ok(SsoAccountHolderSession { wallet, session })
     }
+}
+
+/// Build one product connection with adapters scoped to one native
+/// executable while sharing this runtime's authentication and services.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn product_runtime_with_adapters(
+    host: &SigningHostRuntime,
+    product: ProductContext,
+    adapters: ConnectionAdapters,
+    sink: Arc<dyn FrameSink>,
+) -> ProductRuntime {
+    ProductRuntime::new(
+        host.services.clone(),
+        host.signing_host.accounts().clone(),
+        host.signing_host.clone(),
+        product,
+        adapters,
+        sink,
+    )
+}
+
+/// Build a product administration handle with adapters scoped to one
+/// native executable connection.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn product_admin_with_adapters(
+    host: &SigningHostRuntime,
+    product: ProductContext,
+    adapters: ConnectionAdapters,
+) -> HostAdmin<WalletAccountHolder> {
+    HostAdmin::new(
+        host.services.clone(),
+        host.signing_host.accounts().clone(),
+        host.signing_host.clone(),
+        product,
+        adapters,
+    )
 }
 
 /// A wallet activation authenticated by an externally owned SSO transport.
@@ -1677,7 +1677,7 @@ impl ProductRuntime {
         });
         let host_subscriptions = Arc::new(HostInitiatedSubscriptionManager::new());
         Self {
-            core: TrUApiCore::from_product_runtime(runtime, services.spawner.clone()),
+            core: crate::truapi_core::from_product_runtime(runtime, services.spawner.clone()),
             connection,
             host_session,
             transport,

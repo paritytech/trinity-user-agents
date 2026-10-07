@@ -371,7 +371,7 @@ impl ProductConnection {
     }
 
     /// Canonical account owner allowed by this product's manifest grants.
-    pub async fn authorized_product_account(
+    async fn authorized_product_account(
         &self,
         dot_ns_identifier: &str,
         cx: &CallContext,
@@ -388,7 +388,7 @@ impl ProductConnection {
 
     /// Resolve access before authority execution; timeout and cancellation answer
     /// the same refusal as a missing grant, without revealing cached targets.
-    pub async fn bounded_cross_product_scope_target(
+    async fn bounded_cross_product_scope_target(
         &self,
         target: &str,
         scope: Granted,
@@ -413,7 +413,7 @@ impl ProductConnection {
     }
 
     /// Canonical target whose manifest grants this caller the requested scope.
-    pub async fn cross_product_scope_target(&self, target: &str, scope: Granted) -> Option<String> {
+    async fn cross_product_scope_target(&self, target: &str, scope: Granted) -> Option<String> {
         let normalized = normalize_product_identifier(target).ok()?;
         if normalized == self.product_id() {
             return Some(normalized);
@@ -488,7 +488,7 @@ impl ProductConnection {
     }
 
     /// Require remote authorization, prompting only when no decision is stored.
-    pub async fn require_remote_permission<E>(
+    async fn require_remote_permission<E>(
         &self,
         permission: latest::RemotePermission,
         denied_error: E,
@@ -559,7 +559,7 @@ impl ProductConnection {
     }
 
     /// Chat access policy for this connection; see [`chat_platform_for`].
-    pub fn native_chat_platform(
+    fn native_chat_platform(
         &self,
     ) -> Result<Arc<dyn crate::platform::ChatPlatform>, crate::host_core::ProductRuntimeError> {
         chat_platform_for(
@@ -611,7 +611,7 @@ impl ProductConnection {
     }
 
     /// Begin off-dispatch so cancellation cannot strand an unreported host operation.
-    pub async fn begin_operation_with_host(
+    async fn begin_operation_with_host(
         &self,
         label: String,
     ) -> Result<latest::HostWorkerBeginOperationResponse, latest::HostWorkerOperationError> {
@@ -632,7 +632,7 @@ impl ProductConnection {
     }
 
     /// Hold worker demand until this operation ends or the connection closes.
-    pub fn hold_worker_for_operation(&self, id: u32) {
+    fn hold_worker_for_operation(&self, id: u32) {
         if self
             .open_operations
             .lock()
@@ -668,7 +668,7 @@ impl ProductConnection {
     }
 
     /// Release one open operation's demand; unknown ids leave demand unchanged.
-    pub fn release_worker_for_operation(&self, id: u32) {
+    fn release_worker_for_operation(&self, id: u32) {
         if self
             .open_operations
             .lock()
@@ -753,13 +753,13 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 
     /// Test-only access to the shared session-state holder.
     #[cfg(test)]
-    pub fn test_session_state(&self) -> Arc<SessionState> {
+    fn test_session_state(&self) -> Arc<SessionState> {
         self.host_session.session_state()
     }
 
     /// Seed the paired Account Holder's hard product subtree for unit tests.
     #[cfg(test)]
-    pub fn test_cache_product_subtree(
+    fn test_cache_product_subtree(
         &self,
         session: &SessionInfo,
         product_id: &str,
@@ -772,7 +772,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
     /// Disconnect this runtime from its paired signing host.
     #[cfg(test)]
     #[instrument(skip_all, fields(runtime.method = "account.disconnect"))]
-    pub async fn disconnect(&self) {
+    async fn disconnect(&self) {
         self.host_session.disconnect().await;
     }
 
@@ -1154,7 +1154,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
     /// call it is about to sign, and by then the handle is an account it can
     /// put a name to. A call declaring no contacts reaches for no host, but is
     /// still refused if it carries a handle it forgot to declare.
-    pub async fn substitute_declared_contacts(
+    async fn substitute_declared_contacts(
         &self,
         call_data: Vec<u8>,
         declared: &[v01::ContactHandle],
@@ -1590,7 +1590,7 @@ fn bulletin_allowance_error_reason(err: AuthorityError) -> String {
 #[cfg(test)]
 impl ProductRuntimeHost<SsoAccountHolderClient> {
     /// Test constructor building a standalone pairing-host runtime.
-    pub fn new<P>(
+    fn new<P>(
         platform: Arc<P>,
         config: (crate::platform::PairingHostConfig, ProductContext),
         spawner: Spawner,

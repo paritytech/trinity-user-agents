@@ -234,7 +234,7 @@ pub fn encode_cached_root_manifest(json: Option<&str>, fetched_at_secs: u64) -> 
 /// to parse alike, and whoever debugs it goes to fix a manifest that is already
 /// correct.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RefusedBecause {
+enum RefusedBecause {
     /// The published manifest does not name this caller for this scope.
     NotGranted,
     /// The user has already refused this pair.
@@ -279,7 +279,7 @@ pub async fn grants_scope(
 }
 
 /// Published access subject to this host's stored account-access refusals.
-pub async fn scope_grant(
+async fn scope_grant(
     services: &RuntimeServices,
     platform: &dyn Platform,
     caller_id: &str,
