@@ -303,18 +303,8 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
     func pickContact(productId: String) async throws -> HostContactPick
 }
 
-/// Draws the host's viewfinder when a product scans a code. Installed once on
-/// ``TrUAPIHostRuntime/setScanner(_:)``. A runtime without one answers
-/// `scanner.scan` with `Unsupported`.
-///
-/// Title the viewfinder with `productId` and show `request.hint` under it as
-/// the product's words. Hand every code the camera reads to a `ScanFilter`
-/// built from `request` and act on its verdict. Never follow a scanned link.
-/// Close the viewfinder when the task is cancelled.
-///
-/// An App or Widget scans only while it is the screen the user sees: answer
-/// `.notVisible` otherwise, without opening anything. A Worker's request has
-/// already passed the core's tap check, so open it over whatever is on screen.
+/// Draws the viewfinder for `scanner.scan`, following the rules on the core's
+/// `ScannerPlatform`. Closes it when the task is cancelled.
 public protocol ScannerHostBridge: AnyObject, Sendable {
     func scanCode(
         productId: String,
@@ -767,11 +757,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         return inner.setContactsCallbacks(callbacks: adapter)
     }
 
-    /// Install the host's scanner, which draws the viewfinder.
-    ///
-    /// Set-once, so the viewfinder cannot change hands under a running product.
-    /// Answers whether this call installed it. Call it before opening any
-    /// product execution.
+    /// Install the host's scanner before opening any product execution.
+    /// Set-once: answers whether this call installed it.
     @discardableResult
     public func setScanner(_ scanner: ScannerHostBridge) -> Bool {
         let adapter = ScannerCallbackAdapter(bridge: scanner)

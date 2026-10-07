@@ -400,10 +400,7 @@ export interface MockHostConfig {
   languageTag?: string;
   /** Whether `confirmUserAction` confirms reviewed actions. Default `true`. */
   confirmUserActions?: boolean;
-  /**
-   * What the scanner answers a product's scan. Unset (the default) serves no
-   * scanner, so `scanner.scan` is `Unsupported`, as on a web host.
-   */
+  /** The scanner's answer. Unset serves no scanner, so scans are `Unsupported`. */
   scanner?: HostScan;
   /**
    * JSON-RPC response frames the chain connection replays, in order. Empty
@@ -556,11 +553,7 @@ export interface MockHost {
   getTheme(): ThemeVariant;
   /** Replace the reported theme. */
   setTheme(variant: ThemeVariant): void;
-  /**
-   * Set what the next product scan answers. Throws unless the mock was created
-   * with a `scanner` answer, because a host serves the scanner or not from
-   * the start.
-   */
+  /** Set the next scan's answer. Throws unless created with a `scanner` answer. */
   setScanAnswer(answer: HostScan): void;
   /** State of the mock's chain connection. */
   getChainStatus(): ChainStatus;
@@ -868,7 +861,6 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
   } = config;
 
-  // Present only when the mock serves a scanner, so `setScanAnswer` can tell.
   const scan = scanner === undefined ? undefined : { answer: scanner };
   const storage = new Map<string, Uint8Array>();
   const preimages = new Map<string, Uint8Array>();

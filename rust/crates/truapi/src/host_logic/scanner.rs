@@ -138,60 +138,50 @@ mod tests {
     use super::*;
 
     fn request(
-        formats: Vec<CodeFormat>,
+        formats: &[CodeFormat],
         prefix: Option<&str>,
         hint: Option<&str>,
     ) -> HostScannerScanRequest {
         HostScannerScanRequest {
-            formats,
+            formats: formats.to_vec(),
             prefix: prefix.map(str::to_owned),
             hint: hint.map(str::to_owned),
         }
     }
 
-    fn qr(prefix: Option<&str>, hint: Option<&str>) -> HostScannerScanRequest {
-        request(vec![CodeFormat::Qr], prefix, hint)
+    fn valid(formats: &[CodeFormat], prefix: Option<&str>, hint: Option<&str>) -> bool {
+        validate_request(&request(formats, prefix, hint)).is_ok()
     }
 
-    fn receipts() -> HostScannerScanRequest {
-        qr(Some("https://greenmarket.example/r/"), None)
+    const RECEIPTS: &str = "https://greenmarket.example/r/";
+
+    #[test]
+    fn formats_are_required_and_named_once() {
+        // With no formats the host would decide what comes back, and the filter
+        // checks the list on every camera frame.
+        assert!(!valid(&[], None, None));
+        assert!(!valid(&[CodeFormat::Qr, CodeFormat::Qr], None, None));
+        assert!(valid(&[CodeFormat::Qr, CodeFormat::Ean13], None, None));
     }
 
     #[test]
-    fn a_request_must_name_a_format() {
-        // With no formats the host, not the product, would decide what comes back.
-        assert!(validate_request(&request(vec![], None, None)).is_err());
-        assert!(validate_request(&qr(None, None)).is_ok());
-    }
-
-    #[test]
-    fn a_format_may_be_named_only_once() {
-        // The filter checks the list on every camera frame, so it stays as
-        // short as the formats themselves.
-        assert!(
-            validate_request(&request(vec![CodeFormat::Qr, CodeFormat::Qr], None, None)).is_err()
-        );
-        assert!(
-            validate_request(&request(
-                vec![CodeFormat::Qr, CodeFormat::Ean13],
-                None,
-                None
-            ))
-            .is_ok()
-        );
-    }
-
-    #[test]
-    fn the_hint_is_counted_in_unicode_scalars() {
-        // TypeScript products count with `[...hint].length`, which agrees with this.
-        assert!(validate_request(&qr(None, Some(&"é".repeat(MAX_HINT_CHARS)))).is_ok());
-        assert!(validate_request(&qr(None, Some(&"a".repeat(MAX_HINT_CHARS + 1)))).is_err());
+    fn limits_count_the_hint_in_scalars_and_the_prefix_in_bytes() {
+        // TypeScript products count a hint with `[...hint].length`, which agrees.
+        let qr = &[CodeFormat::Qr];
+        assert!(valid(qr, None, Some(&"é".repeat(MAX_HINT_CHARS))));
+        assert!(!valid(qr, None, Some(&"a".repeat(MAX_HINT_CHARS + 1))));
+        assert!(valid(qr, Some(&"a".repeat(MAX_PREFIX_BYTES)), None));
+        assert!(!valid(
+            qr,
+            Some(&"é".repeat(MAX_PREFIX_BYTES / 2 + 1)),
+            None
+        ));
     }
 
     #[test]
     fn the_hint_stays_one_plain_line() {
-        // The hint sits under the host's title, so text that breaks the line or
-        // flips its direction could pass for a host instruction.
+        // The hint sits under the host's title, so text that breaks the line,
+        // flips its direction or hides itself could pass for host text.
         for refused in [
             "scan\nto sign in",
             "tab\there",
@@ -207,88 +197,40 @@ mod tests {
             "\u{FFF9}annotation",
         ] {
             assert!(
-                validate_request(&qr(None, Some(refused))).is_err(),
-                "{refused:?} was allowed"
+                !valid(&[CodeFormat::Qr], None, Some(refused)),
+                "{refused:?}"
             );
         }
-        assert!(validate_request(&qr(None, Some("Point at the receipt's QR code"))).is_ok());
-    }
-
-    #[test]
-    fn the_prefix_is_counted_in_bytes() {
-        assert!(validate_request(&qr(Some(&"a".repeat(MAX_PREFIX_BYTES)), None)).is_ok());
-        let over = "é".repeat(MAX_PREFIX_BYTES / 2 + 1);
-        assert!(validate_request(&qr(Some(&over), None)).is_err());
-    }
-
-    #[test]
-    fn a_code_is_accepted_only_in_a_named_format() {
-        assert!(accepts(&qr(None, None), CodeFormat::Qr, "anything"));
-        assert!(!accepts(
-            &qr(None, None),
-            CodeFormat::Ean13,
-            "4006381333931"
+        assert!(valid(
+            &[CodeFormat::Qr],
+            None,
+            Some("Point at the receipt's QR code")
         ));
     }
 
     #[test]
-    fn the_prefix_ignores_letter_case_and_nothing_else() {
+    fn a_code_must_have_a_named_format_and_the_prefix_in_any_letter_case() {
         // QR codes often store URLs in capitals to fit more in the code.
-        assert!(accepts(
-            &receipts(),
-            CodeFormat::Qr,
-            "https://greenmarket.example/r/BAG6"
-        ));
-        assert!(accepts(
-            &receipts(),
-            CodeFormat::Qr,
-            "HTTPS://GREENMARKET.EXAMPLE/R/BAG6"
-        ));
-        assert!(!accepts(
-            &receipts(),
-            CodeFormat::Qr,
-            "polkadotapp://pair?handshake=00"
-        ));
-        assert!(!accepts(
-            &receipts(),
-            CodeFormat::Qr,
-            "https://greenmarket.example"
-        ));
-    }
-
-    #[test]
-    fn a_prefix_that_ends_inside_a_character_does_not_panic() {
-        // A byte-length cut through a multi-byte character must refuse, not crash.
-        assert!(!accepts(&qr(Some("ab"), None), CodeFormat::Qr, "aé"));
-    }
-
-    #[test]
-    fn the_filter_accepts_once() {
-        // The viewfinder sees the same code on many frames before it closes.
-        let filter = ScanFilter::new(receipts());
-        let receipt = "https://greenmarket.example/r/BAG6".to_owned();
-        assert_eq!(
-            filter.observe(CodeFormat::Qr, receipt.clone()),
-            ScanVerdict::Accept
-        );
-        assert_eq!(filter.observe(CodeFormat::Qr, receipt), ScanVerdict::Ignore);
-    }
-
-    #[test]
-    fn the_filter_names_each_wrong_code_once_per_scan() {
-        // A poster with two codes on it is read alternately, frame after frame.
-        // The user should hear about each once, not on every frame.
-        let filter = ScanFilter::new(receipts());
-        let poster = "https://elsewhere.example".to_owned();
-        let pairing = "polkadotapp://pair?handshake=00".to_owned();
-        for (code, expected) in [
-            (&poster, ScanVerdict::NotForThisProduct),
-            (&pairing, ScanVerdict::NotForThisProduct),
-            (&poster, ScanVerdict::Ignore),
-            (&pairing, ScanVerdict::Ignore),
+        let receipts = request(&[CodeFormat::Qr], Some(RECEIPTS), None);
+        for (format, text, accepted) in [
+            (CodeFormat::Qr, "https://greenmarket.example/r/BAG6", true),
+            (CodeFormat::Qr, "HTTPS://GREENMARKET.EXAMPLE/R/BAG6", true),
+            (
+                CodeFormat::Ean13,
+                "https://greenmarket.example/r/BAG6",
+                false,
+            ),
+            (CodeFormat::Qr, "https://greenmarket.example", false),
+            (CodeFormat::Qr, "https://elsewhere.example/r/", false),
         ] {
-            assert_eq!(filter.observe(CodeFormat::Qr, code.clone()), expected);
+            assert_eq!(accepts(&receipts, format, text), accepted, "{text}");
         }
+        // A byte-length cut through a multi-byte character refuses, not panics.
+        assert!(!accepts(
+            &request(&[CodeFormat::Qr], Some("ab"), None),
+            CodeFormat::Qr,
+            "aé"
+        ));
     }
 
     #[test]
@@ -305,22 +247,35 @@ mod tests {
         let other_scheme = link.replacen("polkadotapp", "otherwallet", 1);
         let bare_handshake = link.split_once("?handshake=").unwrap().1.to_owned();
         for text in [&link, &other_scheme, &bare_handshake] {
-            assert!(!accepts(&qr(None, None), CodeFormat::Qr, text), "{text}");
-            assert!(!accepts(&qr(Some("polkadotapp://pair?"), None), CodeFormat::Qr, text));
+            for prefix in [None, Some("polkadotapp://pair?")] {
+                let any_qr = request(&[CodeFormat::Qr], prefix, None);
+                assert!(!accepts(&any_qr, CodeFormat::Qr, text), "{text}");
+            }
         }
-        assert_eq!(
-            ScanFilter::new(qr(None, None)).observe(CodeFormat::Qr, link),
-            ScanVerdict::NotForThisProduct
-        );
     }
 
     #[test]
-    fn the_filter_still_accepts_after_refusing() {
-        let filter = ScanFilter::new(receipts());
-        filter.observe(CodeFormat::Qr, "https://elsewhere.example".to_owned());
+    fn the_filter_accepts_once_and_names_each_wrong_code_once() {
+        // The camera reads the same codes frame after frame, and a poster with
+        // two codes is read in turn. The user hears about each code once.
+        let filter = ScanFilter::new(request(&[CodeFormat::Qr], Some(RECEIPTS), None));
+        let observe = |text: &str| filter.observe(CodeFormat::Qr, text.to_owned());
         assert_eq!(
-            filter.observe(CodeFormat::Qr, "https://greenmarket.example/r/1".to_owned()),
+            observe("https://elsewhere.example"),
+            ScanVerdict::NotForThisProduct
+        );
+        assert_eq!(
+            observe("https://other.example"),
+            ScanVerdict::NotForThisProduct
+        );
+        assert_eq!(observe("https://elsewhere.example"), ScanVerdict::Ignore);
+        assert_eq!(
+            observe("https://greenmarket.example/r/1"),
             ScanVerdict::Accept
+        );
+        assert_eq!(
+            observe("https://greenmarket.example/r/1"),
+            ScanVerdict::Ignore
         );
     }
 }

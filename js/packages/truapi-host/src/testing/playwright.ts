@@ -266,11 +266,7 @@ export interface TestHost {
   clearPreimages(): Promise<void>;
   getTheme(): Promise<string>;
   setTheme(variant: string): Promise<void>;
-  /**
-   * Set what the next product scan answers. Throws unless the mock was created
-   * with a `scanner` answer, because a host serves the scanner or not from
-   * the start.
-   */
+  /** Set the next scan's answer. Throws unless created with a `scanner` answer. */
   setScanAnswer(answer: HostScan): Promise<void>;
   getIsAuthenticated(): Promise<boolean>;
   getChainStatus(): Promise<ChainStatus>;

@@ -676,16 +676,8 @@ private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : 
 }
 
 /**
- * Draws the host's viewfinder when a product scans a code.
- *
- * Title the viewfinder with [productId] and show `request.hint` under it as the
- * product's words. Hand every code the camera reads to a `ScanFilter` built from
- * [request] and act on its verdict. Never follow a scanned link. Close the
- * viewfinder when the coroutine is cancelled.
- *
- * An App or Widget scans only while it is the screen the user sees: answer
- * `HostScan.NotVisible` otherwise, without opening anything. A Worker's request
- * has already passed the core's tap check, so open it over whatever is on screen.
+ * Draws the viewfinder for `scanner.scan`, following the rules on the core's
+ * `ScannerPlatform`. Closes it when the coroutine is cancelled.
  */
 interface ScannerHostBridge {
     @Throws(HostRejection::class)
@@ -769,11 +761,8 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     private var scannerRetainer: NativeScannerCallbacks? = null
 
     /**
-     * Install the host's scanner, which draws the viewfinder.
-     *
-     * Set-once, so the viewfinder cannot change hands under a running product.
-     * Returns whether this call installed it. Call it before opening any
-     * product execution.
+     * Install the host's scanner before opening any product execution.
+     * Set-once: returns whether this call installed it.
      */
     fun setScanner(scanner: ScannerHostBridge): Boolean {
         val adapter = ScannerCallbackAdapter(scanner)

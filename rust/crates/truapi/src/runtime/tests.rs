@@ -4,7 +4,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::platform::{
-    AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, PermissionAuthorizationRequest,
+    AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, HostScan,
+    PermissionAuthorizationRequest, ProductExecutionKind,
 };
 use parity_scale_codec::Encode;
 use truapi::api::{
@@ -7690,14 +7691,14 @@ fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
 /// asked for. A parked one never answers, standing in for a user who has not
 /// scanned yet, and records when the core stops waiting on it.
 struct StubScannerPlatform {
-    answer: crate::platform::HostScan,
+    answer: HostScan,
     park: bool,
     asked: Mutex<Vec<(String, truapi::latest::HostScannerScanRequest)>>,
     abandoned: Arc<AtomicBool>,
 }
 
 impl StubScannerPlatform {
-    fn answering(answer: crate::platform::HostScan) -> Arc<Self> {
+    fn answering(answer: HostScan) -> Arc<Self> {
         Arc::new(Self {
             answer,
             park: false,
@@ -7707,12 +7708,9 @@ impl StubScannerPlatform {
     }
 
     fn parked() -> Arc<Self> {
-        Arc::new(Self {
-            answer: crate::platform::HostScan::Dismissed,
-            park: true,
-            asked: Mutex::new(Vec::new()),
-            abandoned: Arc::default(),
-        })
+        let mut stub = Arc::into_inner(Self::answering(HostScan::Dismissed)).unwrap();
+        stub.park = true;
+        Arc::new(stub)
     }
 
     fn asked(&self) -> Vec<(String, truapi::latest::HostScannerScanRequest)> {
@@ -7736,7 +7734,7 @@ impl crate::platform::ScannerPlatform for StubScannerPlatform {
         &self,
         product: &crate::platform::ProductContext,
         request: &truapi::latest::HostScannerScanRequest,
-    ) -> Result<crate::platform::HostScan, truapi::latest::GenericError> {
+    ) -> Result<HostScan, truapi::latest::GenericError> {
         self.asked
             .lock()
             .unwrap()
@@ -7752,12 +7750,12 @@ impl crate::platform::ScannerPlatform for StubScannerPlatform {
 /// A runtime for `greenmarket.dot` with no session, and `scanner` installed
 /// when given.
 fn scanner_host(scanner: Option<Arc<StubScannerPlatform>>) -> ProductRuntimeHost {
-    scanner_host_for(crate::platform::ProductExecutionKind::App, scanner)
+    scanner_host_for(ProductExecutionKind::App, scanner)
 }
 
 /// [`scanner_host`] for an execution of `kind`.
 fn scanner_host_for(
-    kind: crate::platform::ProductExecutionKind,
+    kind: ProductExecutionKind,
     scanner: Option<Arc<StubScannerPlatform>>,
 ) -> ProductRuntimeHost {
     let (host_config, mut product) = runtime_config("greenmarket.dot");
@@ -7787,18 +7785,6 @@ fn receipt_request() -> truapi::latest::HostScannerScanRequest {
     }
 }
 
-fn scan_in(
-    host: &ProductRuntimeHost,
-    cx: &CallContext,
-) -> Result<v01::ScanOutcome, CallError<v01::HostScannerScanError>> {
-    let result = futures::executor::block_on(Scanner::scan(
-        host,
-        cx,
-        HostScannerScanRequest::V1(receipt_request()),
-    ));
-    unwrap_scan(result)
-}
-
 fn unwrap_scan(
     result: Result<HostScannerScanResponse, CallError<HostScannerScanError>>,
 ) -> Result<v01::ScanOutcome, CallError<v01::HostScannerScanError>> {
@@ -7814,7 +7800,11 @@ fn unwrap_scan(
 fn scan(
     host: &ProductRuntimeHost,
 ) -> Result<v01::ScanOutcome, CallError<v01::HostScannerScanError>> {
-    scan_in(host, &CallContext::default())
+    unwrap_scan(futures::executor::block_on(Scanner::scan(
+        host,
+        &CallContext::default(),
+        HostScannerScanRequest::V1(receipt_request()),
+    )))
 }
 
 /// The user tapping a button on the product's card face.
@@ -7834,11 +7824,8 @@ fn card_tap() -> truapi::versioned::renderer::HostRendererActionSubscribeItem {
 fn a_worker_scans_only_right_after_the_user_taps_its_card() {
     // A Worker has no screen of its own. Without a tap, the viewfinder would
     // open over whatever the user is doing.
-    let scanner = StubScannerPlatform::answering(crate::platform::HostScan::Dismissed);
-    let host = scanner_host_for(
-        crate::platform::ProductExecutionKind::Worker,
-        Some(scanner.clone()),
-    );
+    let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
+    let host = scanner_host_for(ProductExecutionKind::Worker, Some(scanner.clone()));
     assert_eq!(
         scan(&host),
         Err(CallError::Domain(v01::HostScannerScanError::NotVisible))
@@ -7852,14 +7839,9 @@ fn a_worker_scans_only_right_after_the_user_taps_its_card() {
 
 #[test]
 fn a_tap_older_than_the_window_does_not_let_a_worker_scan() {
-    let scanner = StubScannerPlatform::answering(crate::platform::HostScan::Dismissed);
-    let host = scanner_host_for(
-        crate::platform::ProductExecutionKind::Worker,
-        Some(scanner.clone()),
-    );
-    host.note_user_tap_at(
-        crate::unix_time::current_unix_secs() - super::USER_TAP_WINDOW_SECS - 1,
-    );
+    let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
+    let host = scanner_host_for(ProductExecutionKind::Worker, Some(scanner.clone()));
+    host.note_user_tap_at(crate::unix_time::current_unix_secs() - super::USER_TAP_WINDOW_SECS - 1);
     assert_eq!(
         scan(&host),
         Err(CallError::Domain(v01::HostScannerScanError::NotVisible))
@@ -7870,17 +7852,15 @@ fn a_tap_older_than_the_window_does_not_let_a_worker_scan() {
 #[test]
 fn a_page_the_host_says_is_off_screen_is_not_visible() {
     // Only the host knows which page the user is looking at.
-    let host = scanner_host(Some(StubScannerPlatform::answering(
-        crate::platform::HostScan::NotVisible,
-    )));
+    let host = scanner_host(Some(StubScannerPlatform::answering(HostScan::NotVisible)));
     assert_eq!(
         scan(&host),
         Err(CallError::Domain(v01::HostScannerScanError::NotVisible))
     );
 }
 
-fn scanned(text: &str, format: v01::CodeFormat) -> crate::platform::HostScan {
-    crate::platform::HostScan::Scanned {
+fn scanned(text: &str, format: v01::CodeFormat) -> HostScan {
+    HostScan::Scanned {
         text: text.into(),
         format,
     }
@@ -7920,13 +7900,11 @@ fn a_scan_returns_the_code_and_names_the_product_without_a_session() {
 #[test]
 fn a_dismissal_is_an_outcome_and_a_missing_camera_is_an_error() {
     // The product offers a dismissed scan again, but not one with no camera.
-    let dismissed = scanner_host(Some(StubScannerPlatform::answering(
-        crate::platform::HostScan::Dismissed,
-    )));
+    let dismissed = scanner_host(Some(StubScannerPlatform::answering(HostScan::Dismissed)));
     assert_eq!(scan(&dismissed), Ok(v01::ScanOutcome::Dismissed));
 
     let no_camera = scanner_host(Some(StubScannerPlatform::answering(
-        crate::platform::HostScan::CameraUnavailable,
+        HostScan::CameraUnavailable,
     )));
     assert_eq!(
         scan(&no_camera),
@@ -7939,7 +7917,7 @@ fn a_dismissal_is_an_outcome_and_a_missing_camera_is_an_error() {
 #[test]
 fn an_invalid_request_never_reaches_the_host() {
     // No viewfinder may open for a request the product could not make.
-    let scanner = StubScannerPlatform::answering(crate::platform::HostScan::Dismissed);
+    let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
     let host = scanner_host(Some(scanner.clone()));
     let mut request = receipt_request();
     request.hint = Some("Scan the code on your computer\nto sign in".into());
@@ -8085,12 +8063,8 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
     let session = sso_session_info();
     let platform = Arc::new(StubPlatform::default());
     let (host_config, product) = runtime_config("myapp.dot");
-    let (host, pairing_host) = ProductRuntimeHost::new_pairing_for_tests(
-        platform,
-        host_config,
-        product,
-        test_spawner(),
-    );
+    let (host, pairing_host) =
+        ProductRuntimeHost::new_pairing_for_tests(platform, host_config, product, test_spawner());
     install_pairing_session(&host, session.clone());
     let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
     futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(

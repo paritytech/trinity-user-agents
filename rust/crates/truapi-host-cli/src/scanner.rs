@@ -1,10 +1,5 @@
-//! Scanner host for the CLI.
-//!
-//! A CLI has no camera, so the code it scans comes from `TRUAPI_SCAN_TEXT`,
-//! read on every scan and reported as a QR code. With nothing set the user
-//! dismisses, which lets the generated example and the battery pass on a bare
-//! host. The host does not filter: the core refuses a configured code the
-//! request does not accept.
+//! Scanner host for the CLI. It has no camera, so every scan answers
+//! `TRUAPI_SCAN_TEXT` as a QR code, or a dismissal when it is unset.
 
 use truapi::latest::{CodeFormat, GenericError, HostScannerScanRequest};
 use truapi::platform::{HostScan, ProductContext, ScannerPlatform, async_trait};
@@ -40,13 +35,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn with_nothing_set_the_user_dismisses() {
-        // The generated example and the battery run on a bare CLI.
+    fn answers_the_configured_text_or_a_dismissal() {
+        // A bare CLI dismisses, so the generated example and the battery pass.
         assert_eq!(answer(None), HostScan::Dismissed);
-    }
-
-    #[test]
-    fn a_set_text_is_scanned_as_a_qr_code() {
         assert_eq!(
             answer(Some("https://greenmarket.example/r/1".into())),
             HostScan::Scanned {

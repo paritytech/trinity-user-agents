@@ -276,12 +276,8 @@ impl NativeTrUApiHostRuntime {
             }))
     }
 
-    /// Install the host's scanner, which draws the viewfinder.
-    ///
-    /// Set-once, so the viewfinder cannot change hands under a running
-    /// product. Answers whether this call installed it. Call it before opening
-    /// any product execution; a runtime without one answers `scanner.scan`
-    /// with `Unsupported`.
+    /// Install the host's scanner before opening any product execution.
+    /// Set-once: answers whether this call installed it.
     pub fn set_scanner_callbacks(&self, callbacks: Arc<dyn NativeScannerCallbacks>) -> bool {
         self.runtime
             .set_scanner_platform(Arc::new(ScannerCallbackPlatform { scanner: callbacks }))

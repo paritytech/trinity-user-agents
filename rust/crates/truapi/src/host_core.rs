@@ -287,11 +287,8 @@ impl PairingHostRuntime {
         self.services.install_game_platform(platform)
     }
 
-    /// Install the host's [`ScannerPlatform`], which draws the viewfinder.
-    ///
-    /// Set-once, so the viewfinder cannot change hands under a running product.
-    /// Returns whether this call installed it. Call it before serving any
-    /// product runtime.
+    /// Install the host's [`ScannerPlatform`] before serving any product
+    /// runtime. Set-once: returns whether this call installed it.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_scanner_platform"))]
     pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
         self.services.install_scanner_platform(platform)
@@ -738,11 +735,8 @@ impl SigningHostRuntime {
         self.services.install_game_platform(platform)
     }
 
-    /// Install the host's [`ScannerPlatform`], which draws the viewfinder.
-    ///
-    /// Set-once, so the viewfinder cannot change hands under a running product.
-    /// Returns whether this call installed it. Call it before serving any
-    /// product runtime.
+    /// Install the host's [`ScannerPlatform`] before serving any product
+    /// runtime. Set-once: returns whether this call installed it.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_scanner_platform"))]
     pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
         self.services.install_scanner_platform(platform)

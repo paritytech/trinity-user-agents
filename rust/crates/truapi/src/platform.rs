@@ -3515,23 +3515,17 @@ pub enum HostScan {
     NotVisible,
 }
 
-/// Host-owned viewfinder for QR codes and barcodes.
+/// Host-owned viewfinder for QR codes and barcodes. Optional. The Swift and
+/// Kotlin bridges and the JS `scanner` callbacks follow the same rules.
 ///
-/// Optional, and listed on [`OptionalPlatform`] as [`ContactsPlatform`] is.
-///
-/// The host draws the viewfinder and titles it with the requesting product's
-/// id. Only `request.hint` is product text. It hands every code the camera
-/// reads to the core's `ScanFilter` and acts on its verdict, and never follows
-/// a scanned link itself. The core drops the returned future when the product
-/// cancels, and the host closes the viewfinder then. The next scan can arrive
-/// before that close has finished, so close any viewfinder still open before
-/// opening another. A JS host is not told about a cancel, because a promise
-/// cannot be withdrawn.
-///
-/// An App or Widget scans only while it is the screen the user sees: answer
-/// [`HostScan::NotVisible`] otherwise, without opening anything. A Worker's
-/// request has already passed the core's tap check, so open it over whatever is
-/// on screen.
+/// - Title the viewfinder with the product id. Show `request.hint` under it as
+///   the product's words.
+/// - Pass every code the camera reads to a `ScanFilter` built from `request`,
+///   and never follow a scanned link.
+/// - Answer [`HostScan::NotVisible`] for an App or Widget that is not on
+///   screen. A Worker reaching the host already passed the core's tap check.
+/// - Close the viewfinder when the core drops the future, and close any still
+///   open before opening another. A JS host is not told about a drop.
 #[async_trait]
 pub trait ScannerPlatform: Send + Sync {
     /// Open the viewfinder on behalf of `product` and wait for the user.
