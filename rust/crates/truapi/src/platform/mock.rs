@@ -802,6 +802,7 @@ fn core_key(key: &CoreStorageKey) -> String {
         CoreStorageKey::WorkerManifest { product_id } => {
             format!("core:worker-manifest:{product_id}")
         }
+        CoreStorageKey::PublishedProducts => "core:published-products".to_string(),
         CoreStorageKey::AllowanceKeys { session_id } => {
             format!("core:allowance-keys:{session_id}")
         }

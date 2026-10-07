@@ -1468,6 +1468,10 @@ pub enum CoreStorageKey {
         /// Bare label of the product whose Worker manifest was cached.
         product_id: String,
     },
+    /// The products published to browse on this network, as last read, and
+    /// when, cached for the same lifetime as [`Self::ProductManifest`].
+    #[codec(index = 15)]
+    PublishedProducts,
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1523,6 +1527,7 @@ pub fn describe_core_storage_key(
         CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
         CoreStorageKey::FundingSessions => ("FundingSessions", None),
         CoreStorageKey::WorkerManifest { product_id } => ("WorkerManifest", Some(product_id)),
+        CoreStorageKey::PublishedProducts => ("PublishedProducts", None),
     };
     Ok(CoreStorageKeyDescription { kind, product_id })
 }
@@ -2598,6 +2603,7 @@ mod tests {
                 "WorkerManifest",
                 Some("ramp"),
             ),
+            (CoreStorageKey::PublishedProducts, "PublishedProducts", None),
         ] {
             let description = describe_core_storage_key(&key.encode()).expect("valid key");
             assert_eq!(description.kind, kind);

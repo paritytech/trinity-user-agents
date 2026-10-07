@@ -221,7 +221,12 @@ export type CoreStorageKey =
    * A product's Worker executable manifest as last read from dotNS, and when,
    * cached for the same lifetime as `Self::ProductManifest`.
    */
-  | { tag: "WorkerManifest"; value: { productId: string } };
+  | { tag: "WorkerManifest"; value: { productId: string } }
+  /**
+   * The products published to browse on this network, as last read, and
+   * when, cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "PublishedProducts"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -805,6 +810,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
       WorkerManifest: S.Struct({ productId: S.str }) as S.Codec<{
         productId: string;
       }>,
+      PublishedProducts: S._void,
     }),
 );
 

@@ -159,7 +159,7 @@ async fn fetch_text_record(
 /// `protocolRegistry()` on the stored address directly reverts on a chain that
 /// still keeps its dispatcher, which would refuse every grant on that chain
 /// while username resolution kept working.
-async fn protocol_registry<T: DotnsTransport + ?Sized>(
+pub async fn protocol_registry<T: DotnsTransport + ?Sized>(
     transport: &mut T,
 ) -> Result<Option<[u8; 20]>, String> {
     let Some(controller) = discover_pop_controller(transport).await? else {

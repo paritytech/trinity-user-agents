@@ -1,17 +1,22 @@
-//! The funding providers the host offers, kept current against dotNS.
+//! The funding providers a session can be handed to, kept current against
+//! dotNS.
 //!
-//! The host supplies the list once it knows it, each entry with the Worker
-//! manifest it shipped. Candidates are answered from what dotNS last said
-//! about a provider, and from that snapshot until dotNS has answered, so the
-//! list renders with no chain read. Every query re-checks the providers in the
-//! background through the manifest cache, so a provider whose publisher
-//! changed or withdrew its manifest is corrected within the cache lifetime.
+//! The host supplies the providers it offers, each with the Worker manifest it
+//! shipped; candidates are answered from what dotNS last said about a provider,
+//! and from that snapshot until dotNS has answered, so the list renders with no
+//! chain read. Products published to browse whose Worker manifest serves
+//! Funding join after the host's own, once dotNS has answered for them. Every
+//! query re-checks both in the background through the manifest cache, so a
+//! provider whose publisher changed, withdrew or unpublished it is corrected
+//! within the cache lifetime.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use truapi::latest::FundingDirection;
 
+use super::browse::published_products;
 use super::product_manifest::worker_manifest;
 use super::services::RuntimeServices;
 use crate::host_logic::worker_manifest::WorkerManifest;
@@ -27,24 +32,31 @@ pub struct FundingProviders {
     /// What dotNS last said each provider publishes: its Worker manifest, or
     /// `None` for nothing usable.
     live: Mutex<HashMap<String, Option<WorkerManifest>>>,
+    /// Products published to browse, in the Publishers' order.
+    discovered: Mutex<Vec<String>>,
     /// Providers whose manifest is being read.
     refreshing: Mutex<HashSet<String>>,
+    /// Whether the browse list is being read.
+    discovering: AtomicBool,
 }
 
 impl FundingProviders {
-    /// Every provider serving `direction`, in the host's order.
+    /// Every provider serving `direction`: the host's in its order, then
+    /// those published to browse that the host does not list.
     pub fn candidates(&self, direction: FundingDirection) -> Vec<FundingCandidate> {
         let entries = lock(&self.entries).clone();
-        entries
+        let discovered = lock(&self.discovered).clone();
+        let offered = entries.iter().filter_map(|entry| {
+            FundingCandidate::for_direction(&entry.product_id, &self.manifest(entry)?, direction)
+        });
+        let published = discovered
             .iter()
-            .filter_map(|entry| {
-                FundingCandidate::for_direction(
-                    &entry.product_id,
-                    &self.manifest(entry)?,
-                    direction,
-                )
-            })
-            .collect()
+            .filter(|product_id| entries.iter().all(|entry| &entry.product_id != *product_id))
+            .filter_map(|product_id| {
+                let manifest = lock(&self.live).get(product_id).cloned().flatten()?;
+                FundingCandidate::for_direction(product_id, &manifest, direction)
+            });
+        offered.chain(published).collect()
     }
 
     /// Whether `provider_id` serves `direction`.
@@ -92,8 +104,11 @@ impl RuntimeServices {
             }
         }
         let providers = &self.funding_providers;
-        lock(&providers.live)
-            .retain(|product_id, _| normalized.iter().any(|entry| &entry.product_id == product_id));
+        let discovered = lock(&providers.discovered).clone();
+        lock(&providers.live).retain(|product_id, _| {
+            normalized.iter().any(|entry| &entry.product_id == product_id)
+                || discovered.contains(product_id)
+        });
         *lock(&providers.entries) = normalized;
         self.refresh_funding_providers();
         Ok(())
@@ -105,8 +120,9 @@ impl RuntimeServices {
         self.funding_providers.candidates(direction)
     }
 
-    /// Read every provider's manifest that is not already being read. A read
-    /// that fails keeps what the core had, since it says nothing about the
+    /// Read every host provider's manifest that is not already being read,
+    /// and the browse list with the manifests of what it lists. A read that
+    /// fails keeps what the core had, since it says nothing about the
     /// provider.
     fn refresh_funding_providers(self: &Arc<Self>) {
         let entries = lock(&self.funding_providers.entries).clone();
@@ -116,15 +132,50 @@ impl RuntimeServices {
             }
             let services = self.clone();
             (self.spawner)(Box::pin(async move {
-                let product_id = entry.product_id;
-                let read = worker_manifest(&services, services.platform.as_ref(), &product_id).await;
-                let providers = &services.funding_providers;
-                if let Ok(manifest) = read {
-                    lock(&providers.live).insert(product_id.clone(), manifest);
-                }
-                lock(&providers.refreshing).remove(&product_id);
+                services.read_provider_manifest(&entry.product_id).await;
             }));
         }
+        if self.funding_providers.discovering.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let services = self.clone();
+        (self.spawner)(Box::pin(async move {
+            services.discover_funding_providers().await;
+            services
+                .funding_providers
+                .discovering
+                .store(false, Ordering::Release);
+        }));
+    }
+
+    /// Read the browse list, then the manifest of each product on it, one at
+    /// a time so a long list does not open a burst of chain reads.
+    async fn discover_funding_providers(&self) {
+        let published = match published_products(self, self.platform.as_ref()).await {
+            Ok(published) => published,
+            Err(reason) => {
+                tracing::warn!(%reason, "reading the browse list failed");
+                return;
+            }
+        };
+        tracing::debug!(count = published.len(), "products published to browse");
+        let providers = &self.funding_providers;
+        *lock(&providers.discovered) = published.clone();
+        for product_id in published {
+            if lock(&providers.refreshing).insert(product_id.clone()) {
+                self.read_provider_manifest(&product_id).await;
+            }
+        }
+    }
+
+    /// Read `product_id`'s Worker manifest into what the core goes by.
+    async fn read_provider_manifest(&self, product_id: &str) {
+        let read = worker_manifest(self, self.platform.as_ref(), product_id).await;
+        let providers = &self.funding_providers;
+        if let Ok(manifest) = read {
+            lock(&providers.live).insert(product_id.to_string(), manifest);
+        }
+        lock(&providers.refreshing).remove(product_id);
     }
 }
 
@@ -191,6 +242,27 @@ mod tests {
                     requires_account: false,
                 }]],
             )
+        );
+    }
+
+    // Published providers join after the host's own, once dotNS has said what
+    // they serve; one the host also lists appears once, in the host's place.
+    #[test]
+    fn published_providers_follow_the_hosts_own() {
+        let providers = providers(&[("card.dot", Some(manifest(CARD_IN)))]);
+        let live = |routes: &str| WorkerManifest::parse(&manifest(routes)).ok();
+        *lock(&providers.discovered) = ["unread.dot", "found.dot", "card.dot", "nothing.dot"]
+            .map(str::to_string)
+            .to_vec();
+        lock(&providers.live).extend([
+            ("found.dot".to_string(), live(CARD_IN)),
+            ("card.dot".to_string(), live(CARD_IN)),
+            ("nothing.dot".to_string(), None),
+        ]);
+
+        assert_eq!(
+            ids(providers.candidates(FundingDirection::In)),
+            vec!["card.dot".to_string(), "found.dot".to_string()]
         );
     }
 
