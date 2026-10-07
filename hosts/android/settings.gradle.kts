@@ -26,6 +26,7 @@ include(":database")
 include(":bindings:bandersnatch-crypto")
 include(":bindings:hydra-dx-math")
 include(":bindings:sr25519-vrf")
+include(":bindings:wasmi-worker")
 
 // The :bindings:truapi-host module compiles the TrUAPI Rust core from an
 // out-of-repo checkout, located via `truapi.dir` in local.properties or the

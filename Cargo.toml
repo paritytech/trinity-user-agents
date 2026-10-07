@@ -6,6 +6,7 @@ exclude = [
     "hosts/android/bindings/bandersnatch-crypto/rust",
     "hosts/android/bindings/hydra-dx-math/rust",
     "hosts/android/bindings/sr25519-vrf/rust",
+    "hosts/android/bindings/wasmi-worker/rust",
 ]
 
 [workspace.package]
