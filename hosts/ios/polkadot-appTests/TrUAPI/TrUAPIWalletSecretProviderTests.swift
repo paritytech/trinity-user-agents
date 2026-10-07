@@ -241,7 +241,18 @@ final class TrUAPIHostRuntimeReadinessTests {
         reset.cancel()
         release.signal()
         try await reset.value
-        _ = await construction.result
+        await #expect {
+            try await construction.value
+        } throws: { error in
+            switch error {
+            case let NativeRuntimeConfigError.DatabaseUnavailable(reason):
+                failWrite && reason == "database protection failed: KeystoreError"
+            case TrUAPIRuntimeConfigError.runtimeRetired:
+                !failWrite
+            default:
+                false
+            }
+        }
         #expect(protectedKeys.writes == 1)
         #expect(keychain.reads == 0)
         #expect(!FileManager.default.fileExists(atPath: directory.path))
