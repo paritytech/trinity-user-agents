@@ -24,10 +24,10 @@ use zeroize::Zeroize;
 use super::allowances::{self, AllowanceCacheKey, AllowanceResource};
 use super::auth_state::AuthStateMachine;
 use super::authority::{
-    AuthorityError, AuthoritySession, AutoSigningGrant, AutoSigningKey, BulletinAllowanceKey,
-    CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
-    SignRawAuthorityRequest, StatementStoreAllowanceKey, authority_session,
-    require_current_session,
+    AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
+    AutoSigningKey, BulletinAllowanceKey, CreateTransactionAuthorityRequest, HostOperation,
+    ProductAuthority, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
+    StatementStoreAllowanceKey, authority_session, require_current_session,
 };
 use super::connected_session_ui_info;
 use super::identity::resolve_session_identity_with_chain;
@@ -39,8 +39,12 @@ use super::sso_remote::{
 };
 use super::statement_store_rpc::StatementStoreRpc;
 use crate::chain_runtime::ChainRuntime;
-use crate::host_internal::extrinsic::build_local_transaction;
-use crate::host_internal::sso_messages::{ProductRequest, RingVrfError};
+use crate::host_internal::extrinsic::{
+    Sr25519Signer, build_signed_transaction, local_transaction_metadata,
+};
+use crate::host_internal::sso_messages::{
+    ProductRequest, RingVrfError, SsoAllocatedResource, SsoAllocationOutcome,
+};
 use crate::host_internal::transaction::sign_extrinsic_payload;
 use crate::host_logic::entropy::derive_product_entropy_from_source;
 use crate::host_logic::product_account::{
@@ -1252,6 +1256,19 @@ impl PairingHost {
         require_current_session(&self.session_state, session)
     }
 
+    fn operation_session(
+        &self,
+        operation: &HostOperation,
+    ) -> Result<(SessionInfo, u64), AuthorityError> {
+        let lifecycle = self
+            .session_lifecycle
+            .lock()
+            .expect("session lifecycle mutex poisoned");
+        operation.require_revision(lifecycle.epoch)?;
+        let session = self.current_private_session(&operation.session)?;
+        Ok((session, lifecycle.epoch))
+    }
+
     async fn refresh_current_session_identity(&self) -> Option<AuthoritySession> {
         let current = self.session_state.current()?;
         if current.has_username() || self.host_config.asset_hub_chain_genesis_hash == [0; 32] {
@@ -1959,14 +1976,10 @@ impl PairingHost {
         subtrees.retain(|(key, _), _| *key != session_key);
     }
 
-    /// Whether `calling_product_id` may act on `handle`'s ring-VRF key.
-    ///
-    /// Delegates to [`crate::runtime::ring_vrf_key_access_granted`], which
-    /// resolves the owner's manifest here rather than trusting the request: on
-    /// this role the request can have arrived over the pairing wire.
+    /// Keep access checks and key derivation bound to the same canonical owner.
     async fn require_ring_vrf_key_access(
         &self,
-        calling_product_id: &str,
+        caller: AccountCaller<'_>,
         handle: &v01::ProductAccountId,
     ) -> Result<
         (
@@ -1978,7 +1991,7 @@ impl PairingHost {
         let access = crate::runtime::product_manifest::ring_vrf_key_access_granted(
             &self.services,
             self.platform.as_ref(),
-            calling_product_id,
+            caller,
             handle,
         )
         .await?;
@@ -2116,37 +2129,17 @@ impl PairingHost {
         })
     }
 
-    /// Whether an AutoSigning capability lets this host serve `account`
-    /// locally for `calling_product_id`.
-    ///
-    /// A capability this host cannot trust is an error, not a fall-through:
-    /// the lookup erases the slot as it rejects it, and prompting afterwards
-    /// would ask the user to approve a signature the host just refused to make.
-    async fn auto_signing_status(
-        &self,
-        session: &AuthoritySession,
-        calling_product_id: &str,
-        account: &v01::ProductAccountId,
-    ) -> Result<AutoSigningGrant, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        Ok(
-            match self
-                .local_product_signing_key(&session, Some(calling_product_id), account)
-                .await?
-            {
-                Some(_) => AutoSigningGrant::Active,
-                None => AutoSigningGrant::Absent,
-            },
-        )
-    }
-
     async fn sign_vrf(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: String,
+        invocation: AccountInvocation<'_>,
         request: v01::HostAccountSignVrfRequest,
     ) -> Result<v01::VrfSignature, AuthorityError> {
+        let session = invocation.session;
+        let cx = invocation.call;
+        let calling_product_id = invocation
+            .caller
+            .product_id()
+            .ok_or(AuthorityError::Rejected)?;
         let session = self.current_private_session(session)?;
         if calling_product_id == request.account.dot_ns_identifier
             && let Some(auto_signing_key) = self
@@ -2171,14 +2164,14 @@ impl PairingHost {
             return Ok(v01::VrfSignature { pre_output, proof });
         }
         if !super::authority::is_blessed_owner(
-            &calling_product_id,
+            calling_product_id,
             &request.account.dot_ns_identifier,
         ) {
             let confirmed = super::until_cancelled(
                 cx,
                 self.platform
                     .confirm_user_action(UserConfirmationReview::SignVrf(SignVrfReview {
-                        calling_product_id: calling_product_id.clone(),
+                        calling_product_id: calling_product_id.to_string(),
                         request: request.clone(),
                     })),
             )
@@ -2190,178 +2183,83 @@ impl PairingHost {
                 return Err(AuthorityError::Rejected);
             }
         }
-        self.remote_sign_vrf(cx, &session, calling_product_id, request)
+        self.remote_sign_vrf(cx, &session, calling_product_id.to_string(), request)
             .await
-    }
-
-    async fn sign_payload(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
-        request: SignPayloadAuthorityRequest,
-    ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        if let SignPayloadAuthorityRequest::Product(payload) = &request
-            && let Some(keypair) = self
-                .local_product_signing_key(&session, calling_product_id, &payload.account)
-                .await?
-        {
-            return Ok(sign_extrinsic_payload(&keypair, payload.payload.clone())?);
-        }
-        self.remote_sign_payload(cx, &session, request).await
-    }
-
-    async fn sign_raw(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
-        request: SignRawAuthorityRequest,
-        watermarked: bool,
-    ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        // The unwatermarked API is never grant-covered, so a local signature
-        // here would skip a prompt the gate deliberately raised.
-        if watermarked
-            && let SignRawAuthorityRequest::Product(payload) = &request
-            && let Some(keypair) = self
-                .local_product_signing_key(&session, calling_product_id, &payload.account)
-                .await?
-        {
-            let message = raw_payload_bytes(payload.payload.clone(), watermarked)?;
-            let signature = keypair
-                .secret
-                .sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
-                .to_bytes();
-            return Ok(v01::HostSignPayloadResponse {
-                signature: signature.to_vec(),
-                signed_transaction: None,
-            });
-        }
-        self.remote_sign_raw(cx, &session, request, watermarked)
-            .await
-    }
-
-    async fn create_transaction(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
-        request: CreateTransactionAuthorityRequest,
-    ) -> Result<v01::HostCreateTransactionResponse, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        if let CreateTransactionAuthorityRequest::Product(payload) = &request
-            && let Some(keypair) = self
-                .local_product_signing_key(&session, calling_product_id, &payload.signer)
-                .await?
-        {
-            // A payload this host cannot assemble is an error, not a
-            // fall-through to the relay: the gate already told the caller no
-            // prompt was coming, and relaying would raise one on the signing
-            // host after a chain timeout.
-            //
-            // Assembling needs runtime metadata, which a granted product
-            // moves from the signing host to this one. A pairing host is
-            // assumed to reach any genesis a product it has granted signs
-            // against; where it cannot, the call fails rather than producing
-            // the prompt-and-signature an ungranted product would have got.
-            //
-            // The failure is not prompt. An unreachable genesis leaves the
-            // metadata read waiting on the chain, so the caller can sit on the
-            // authority request timeout before it sees anything — the cost of
-            // assembling locally is paid before the grant can be found wanting.
-            return Ok(build_local_transaction(
-                &self.chain,
-                &keypair,
-                payload.genesis_hash,
-                &payload.call_data,
-                &payload.extensions,
-                payload.tx_ext_version,
-            )
-            .await?);
-        }
-        self.remote_create_transaction(cx, &session, request).await
     }
 
     async fn account_alias(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountGetAliasRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountGetAliasRequest,
     ) -> Result<v01::ContextualAlias, RingVrfError> {
+        let session = invocation.session;
+        let cx = invocation.call;
+        let calling_product_id = invocation
+            .caller
+            .product_id()
+            .ok_or(RingVrfError::NotAllowlisted)?;
         let private_session = self.current_private_session(session)?;
-        if request.calling_product_id == request.payload.key_handle.dot_ns_identifier
+        if calling_product_id == request.key_handle.dot_ns_identifier
             && let Some(entropy) = self
                 .local_ring_vrf_entropy_for_ring(
                     &private_session,
-                    &request.payload.key_handle,
-                    &request.payload.ring_location,
+                    &request.key_handle,
+                    &request.ring_location,
                 )
                 .await?
         {
-            self.ring_resolver
-                .validate(&request.payload.ring_location)
-                .await?;
+            self.ring_resolver.validate(&request.ring_location).await?;
             let vrf = vrf::load().await?;
             self.current_private_session(session)?;
-            let context = development_context_bytes(&request.payload.context);
+            let context = development_context_bytes(&request.context);
             let alias = vrf.alias(&entropy, &context)?;
             return Ok(v01::ContextualAlias {
                 context,
                 alias: alias.to_vec(),
             });
         }
-        self.remote_account_alias(cx, &private_session, request)
-            .await
+        self.remote_account_alias(
+            cx,
+            &private_session,
+            ProductRequest {
+                calling_product_id: calling_product_id.to_string(),
+                payload: request,
+            },
+        )
+        .await
     }
 
     async fn create_proof(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountCreateProofRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountCreateProofRequest,
     ) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
+        let session = invocation.session;
+        let cx = invocation.call;
+        let calling_product_id = invocation
+            .caller
+            .product_id()
+            .ok_or(RingVrfError::NotAllowlisted)?;
         let (key_handle, access) = self
-            .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+            .require_ring_vrf_key_access(invocation.caller, &request.key_handle)
             .await?;
-        // A grant lets the caller act with the owner's key in the caller's own
-        // context. It does not let it choose whose pseudonym to mint: the
-        // contextual alias is a function of (owner key, context), so an
-        // unconstrained context would let a grantee produce the alias the owner
-        // presents to a third product that granted nothing. That third party
-        // cannot consent here and is not a party to the grant.
-        //
-        // The owner's own calls are unaffected; a cross-product caller is held to
-        // its own context or the granting product's.
-        crate::runtime::product_manifest::require_own_context(&access, &request.payload.context)?;
+        // A publisher's grant cannot expose its alias in an unrelated product's context.
+        crate::runtime::product_manifest::require_own_context(&access, &request.context)?;
         let private_session = self.current_private_session(session)?;
         if let Some(entropy) = self
-            .local_ring_vrf_entropy_for_ring(
-                &private_session,
-                &key_handle,
-                &request.payload.ring_location,
-            )
+            .local_ring_vrf_entropy_for_ring(&private_session, &key_handle, &request.ring_location)
             .await?
         {
             let vrf = vrf::load().await?;
             let member = vrf.member(&entropy)?;
             let resolved = self
                 .ring_resolver
-                .resolve(
-                    &request.payload.ring_location,
-                    &[MemberCandidate { member }],
-                )
+                .resolve(&request.ring_location, &[MemberCandidate { member }])
                 .await?;
             self.current_private_session(session)?;
-            let context = development_context_bytes(&request.payload.context);
-            let (proof, alias) = create_proof(
-                &vrf,
-                &entropy,
-                &resolved,
-                &context,
-                &request.payload.message,
-            )?;
+            let context = development_context_bytes(&request.context);
+            let (proof, alias) =
+                create_proof(&vrf, &entropy, &resolved, &context, &request.message)?;
             return Ok(v01::HostAccountCreateProofResponse {
                 proof,
                 contextual_alias: v01::ContextualAlias {
@@ -2372,8 +2270,15 @@ impl PairingHost {
                 ring_revision: resolved.ring_revision,
             });
         }
-        self.remote_create_proof(cx, &private_session, request)
-            .await
+        self.remote_create_proof(
+            cx,
+            &private_session,
+            ProductRequest {
+                calling_product_id: calling_product_id.to_string(),
+                payload: request,
+            },
+        )
+        .await
     }
 
     async fn register_ring_vrf_key(
@@ -2433,28 +2338,36 @@ impl PairingHost {
 
     async fn list_ring_vrf_keys(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountListRingVrfKeysRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountListRingVrfKeysRequest,
     ) -> Result<Vec<v01::RegisteredRingVrfKey>, RingVrfError> {
+        let session = invocation.session;
+        let cx = invocation.call;
+        let calling_product_id = invocation
+            .caller
+            .product_id()
+            .ok_or(RingVrfError::NotAllowlisted)?;
         let private_session = self.current_private_session(session)?;
-        let owner = normalize_product_identifier(&request.payload.owner).map_err(|error| {
+        let owner = normalize_product_identifier(&request.owner).map_err(|error| {
             RingVrfError::Unknown {
                 reason: error.to_string(),
             }
         })?;
-        if request.calling_product_id == owner
+        if calling_product_id == owner
             && let Some(mut entries) = self
                 .ring_vrf_registry
                 .complete_owner_entries(private_session.public_key, &owner)
                 .await?
         {
             self.current_private_session(session)?;
-            apply_ring_vrf_disclosure(&mut entries, request.payload.disclosure);
+            apply_ring_vrf_disclosure(&mut entries, request.disclosure);
             return Ok(entries);
         }
-        let requested_disclosure = request.payload.disclosure;
-        let mut remote_request = request;
+        let requested_disclosure = request.disclosure;
+        let mut remote_request = ProductRequest {
+            calling_product_id: calling_product_id.to_string(),
+            payload: request,
+        };
         if remote_request.calling_product_id == owner {
             remote_request.payload.disclosure = v01::RingVrfKeyDisclosure::PublicKey;
         }
@@ -2475,12 +2388,17 @@ impl PairingHost {
 
     async fn ring_vrf_sign(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountRingVrfSignRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountRingVrfSignRequest,
     ) -> Result<Vec<u8>, RingVrfError> {
+        let session = invocation.session;
+        let cx = invocation.call;
+        let calling_product_id = invocation
+            .caller
+            .product_id()
+            .ok_or(RingVrfError::NotAllowlisted)?;
         let (key_handle, _access) = self
-            .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+            .require_ring_vrf_key_access(invocation.caller, &request.key_handle)
             .await?;
         let private_session = self.current_private_session(session)?;
         if let Some(entropy) = self
@@ -2489,84 +2407,120 @@ impl PairingHost {
         {
             let vrf = vrf::load().await?;
             self.current_private_session(session)?;
-            return vrf.sign(&entropy, &request.payload.message);
+            return vrf.sign(&entropy, &request.message);
         }
-        self.remote_ring_vrf_sign(cx, &private_session, request)
-            .await
+        self.remote_ring_vrf_sign(
+            cx,
+            &private_session,
+            ProductRequest {
+                calling_product_id: calling_product_id.to_string(),
+                payload: request,
+            },
+        )
+        .await
     }
 
-    async fn allocate_resources(
+    async fn cache_allowance_outcomes(
         &self,
         cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-        request: v01::HostRequestResourceAllocationRequest,
-    ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        self.remote_allocate_resources(cx, &session, product_id, request)
-            .await
-    }
-
-    async fn statement_store_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        self.remote_statement_store_allowance_key(cx, &session, product_id)
-            .await
-    }
-
-    async fn bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        self.remote_bulletin_allowance_key(cx, &session, product_id)
-            .await
-    }
-
-    async fn refresh_bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let session = self.current_private_session(session)?;
-        self.remote_refresh_bulletin_allowance_key(cx, &session, product_id)
-            .await
+        session: &SessionInfo,
+        lifecycle_epoch: u64,
+        product_id: &str,
+        outcomes: &[SsoAllocationOutcome],
+    ) -> Result<(), AuthorityError> {
+        for outcome in outcomes {
+            if let SsoAllocationOutcome::Allocated(resource) = outcome {
+                match resource {
+                    SsoAllocatedResource::StatementStoreAllowance { slot_account_key } => {
+                        self.cache_statement_store_allowance_key(
+                            session,
+                            lifecycle_epoch,
+                            product_id,
+                            slot_account_key.clone(),
+                        )
+                        .await?;
+                    }
+                    SsoAllocatedResource::BulletinAllowance { slot_account_key } => {
+                        self.cache_bulletin_allowance_key(
+                            session,
+                            lifecycle_epoch,
+                            product_id,
+                            slot_account_key.clone(),
+                        )
+                        .await?;
+                    }
+                    SsoAllocatedResource::SmartContractAllowance => {}
+                    SsoAllocatedResource::AutoSigning {
+                        product_root_private_key,
+                        ring_vrf_domain_entropy,
+                    } => {
+                        let expected_product_subtree_public_key = self
+                            .remote_product_subtree_public_key(cx, session, product_id.to_string())
+                            .await?;
+                        self.remember_auto_signing_key(
+                            session,
+                            lifecycle_epoch,
+                            product_id,
+                            expected_product_subtree_public_key,
+                            *product_root_private_key,
+                            *ring_vrf_domain_entropy,
+                        )
+                        .await?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn sign_statement_store_product_payload(
         &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         account: v01::ProductAccountId,
         payload: Vec<u8>,
     ) -> Result<[u8; 64], AuthorityError> {
-        let session = self.current_private_session(session)?;
-        // The SSO raw-signing protocol cannot carry an exact, unwatermarked
-        // payload, so the capability's own key is the only way this role signs
-        // one. Statement proofs raise no confirmation on either role, so this
-        // unlocks the operation rather than waiving a prompt.
-        let Some(keypair) = self
-            .local_product_signing_key(&session, calling_product_id, &account)
-            .await?
-        else {
-            return Err(AuthorityError::Unavailable {
-                reason: "pairing host: exact statement proof signing needs an AutoSigning \
-                         capability; the current SSO raw-signing protocol cannot carry it"
-                    .to_string(),
-            });
+        let (session, operation) = {
+            let lifecycle = self
+                .session_lifecycle
+                .lock()
+                .expect("session lifecycle mutex poisoned");
+            (
+                self.current_private_session(invocation.session)?,
+                HostOperation::new(invocation.session.clone(), lifecycle.epoch),
+            )
         };
-        Ok(keypair
-            .secret
-            .sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)
-            .to_bytes())
+        if !matches!(invocation.caller, AccountCaller::Local { product, .. } if product.product_id == account.dot_ns_identifier)
+        {
+            invocation
+                .confirm(
+                    self.platform.as_ref(),
+                    UserConfirmationReview::StatementStoreProductSign(
+                        crate::platform::StatementStoreProductSignReview {
+                            calling_product_id: invocation.caller.product_id().map(str::to_string),
+                            account: account.clone(),
+                            payload: payload.clone(),
+                        },
+                    ),
+                )
+                .await?;
+        }
+        let cx = match invocation.caller {
+            AccountCaller::Local { .. } => super::remote_authority_context(invocation.call),
+            AccountCaller::Remote { .. } => invocation.call.clone(),
+        };
+        super::remote_authority_call(&cx, async {
+            let keypair = match invocation.caller {
+                AccountCaller::Local { product, .. } => self.local_product_signing_key(&session, Some(&product.product_id), &account).await?,
+                AccountCaller::Remote { .. } => None,
+            };
+            let Some(keypair) = keypair else {
+                return Err(AuthorityError::Unavailable { reason: "pairing host: exact statement proof signing needs an AutoSigning capability; the current SSO raw-signing protocol cannot carry it".to_string() });
+            };
+            let lifecycle = self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
+            operation.require_revision(lifecycle.epoch)?;
+            self.current_private_session(invocation.session)?;
+            Ok(keypair.secret.sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public).to_bytes())
+        }).await
     }
 
     fn derive_entropy(
@@ -2637,8 +2591,79 @@ fn login_error_reason(err: &CallError<HostRequestLoginError>) -> String {
 
 #[async_trait::async_trait]
 impl ProductAuthority for PairingHost {
-    fn current_session(&self) -> Option<AuthoritySession> {
-        PairingHost::current_session(self)
+    fn account_holder(&self) -> &dyn AccountHolder {
+        self
+    }
+
+    fn current_operation(&self) -> Option<HostOperation> {
+        let lifecycle = self
+            .session_lifecycle
+            .lock()
+            .expect("session lifecycle mutex poisoned");
+        self.current_session()
+            .map(|session| HostOperation::new(session, lifecycle.epoch))
+    }
+
+    fn require_current_operation(&self, operation: &HostOperation) -> Result<(), AuthorityError> {
+        self.operation_session(operation).map(|_| ())
+    }
+
+    async fn allocate_resources(
+        &self,
+        cx: &CallContext,
+        operation: &HostOperation,
+        product: &ProductContext,
+        request: v01::HostRequestResourceAllocationRequest,
+    ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
+        let (session, lifecycle_epoch) = self.operation_session(operation)?;
+        let confirmed = super::until_cancelled(cx, async {
+            if crate::platform::has_trusted_remote_permissions(&product.product_id) {
+                return Ok(true);
+            }
+            self.platform
+                .confirm_user_action(UserConfirmationReview::ResourceAllocation(
+                    crate::platform::ResourceAllocationReview {
+                        calling_product_id: product.product_id.clone(),
+                        resources: request.resources.clone(),
+                    },
+                ))
+                .await
+        })
+        .await?
+        .map_err(AuthorityError::ConfirmationFailed)?;
+        if !confirmed {
+            return Err(AuthorityError::Unknown {
+                reason: "User rejected resource allocation".to_string(),
+            });
+        }
+        let cx = super::remote_authority_context_with_default(
+            cx,
+            super::RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+        );
+        super::remote_authority_call(&cx, async {
+            self.require_current_operation(operation)?;
+            let outcomes = sso_channel::remote_allocate_resources(
+                self,
+                &cx,
+                &session,
+                product.product_id.clone(),
+                request,
+            )
+            .await?;
+            self.cache_allowance_outcomes(
+                &cx,
+                &session,
+                lifecycle_epoch,
+                &product.product_id,
+                &outcomes,
+            )
+            .await?;
+            self.require_current_operation(operation)?;
+            Ok(v01::HostRequestResourceAllocationResponse {
+                outcomes: outcomes.into_iter().map(Into::into).collect(),
+            })
+        })
+        .await
     }
 
     #[cfg(feature = "test-host")]
@@ -2683,6 +2708,75 @@ impl ProductAuthority for PairingHost {
         self.refresh_current_session_identity().await
     }
 
+    async fn subtree_resolution_reaches_account_holder(
+        &self,
+        session: &AuthoritySession,
+        product_id: &str,
+    ) -> bool {
+        PairingHost::subtree_reaches_account_holder(self, session, product_id).await
+    }
+
+    fn wallet_authorization(
+        &self,
+        operation: &HostOperation,
+        _product: &ProductContext,
+    ) -> Result<Option<super::WalletAuthorization>, AuthorityError> {
+        self.require_current_operation(operation)?;
+        Ok(None)
+    }
+
+    async fn statement_store_allowance_key(
+        &self,
+        cx: &CallContext,
+        operation: &HostOperation,
+        product_id: String,
+    ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
+        let (session, lifecycle_epoch) = self.operation_session(operation)?;
+        sso_channel::remote_statement_store_allowance_key(
+            self,
+            cx,
+            &session,
+            lifecycle_epoch,
+            product_id,
+        )
+        .await
+    }
+
+    async fn bulletin_allowance_key(
+        &self,
+        cx: &CallContext,
+        operation: &HostOperation,
+        product_id: String,
+    ) -> Result<BulletinAllowanceKey, AuthorityError> {
+        let (session, lifecycle_epoch) = self.operation_session(operation)?;
+        sso_channel::remote_bulletin_allowance_key(self, cx, &session, lifecycle_epoch, product_id)
+            .await
+    }
+
+    async fn refresh_bulletin_allowance_key(
+        &self,
+        cx: &CallContext,
+        operation: &HostOperation,
+        product_id: String,
+    ) -> Result<BulletinAllowanceKey, AuthorityError> {
+        let (session, lifecycle_epoch) = self.operation_session(operation)?;
+        sso_channel::remote_refresh_bulletin_allowance_key(
+            self,
+            cx,
+            &session,
+            lifecycle_epoch,
+            product_id,
+        )
+        .await
+    }
+}
+
+#[async_trait::async_trait]
+impl AccountHolder for PairingHost {
+    fn current_session(&self) -> Option<AuthoritySession> {
+        PairingHost::current_session(self)
+    }
+
     async fn product_subtree_public_key(
         &self,
         cx: &CallContext,
@@ -2692,163 +2786,277 @@ impl ProductAuthority for PairingHost {
         PairingHost::product_subtree_public_key(self, cx, session, product_id).await
     }
 
-    async fn subtree_resolution_reaches_account_holder(
-        &self,
-        session: &AuthoritySession,
-        product_id: &str,
-    ) -> bool {
-        PairingHost::subtree_reaches_account_holder(self, session, product_id).await
-    }
-
-    async fn auto_signing_status(
-        &self,
-        session: &AuthoritySession,
-        calling_product_id: &str,
-        account: &v01::ProductAccountId,
-    ) -> Result<AutoSigningGrant, AuthorityError> {
-        PairingHost::auto_signing_status(self, session, calling_product_id, account).await
-    }
-
     async fn sign_vrf(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: String,
+        invocation: AccountInvocation<'_>,
         request: v01::HostAccountSignVrfRequest,
     ) -> Result<v01::VrfSignature, AuthorityError> {
-        PairingHost::sign_vrf(self, cx, session, calling_product_id, request).await
+        PairingHost::sign_vrf(self, invocation, request).await
     }
 
     async fn sign_payload(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         request: SignPayloadAuthorityRequest,
     ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
-        PairingHost::sign_payload(self, cx, session, calling_product_id, request).await
+        let (session, operation) = {
+            let lifecycle = self
+                .session_lifecycle
+                .lock()
+                .expect("session lifecycle mutex poisoned");
+            (
+                self.current_private_session(invocation.session)?,
+                HostOperation::new(invocation.session.clone(), lifecycle.epoch),
+            )
+        };
+        let keypair = if let AccountCaller::Local { product, .. } = invocation.caller
+            && let SignPayloadAuthorityRequest::Product(payload) = &request
+        {
+            self.local_product_signing_key(&session, Some(&product.product_id), &payload.account)
+                .await?
+        } else {
+            None
+        };
+        if keypair.is_none() && matches!(invocation.caller, AccountCaller::Local { .. }) {
+            invocation
+                .confirm(self.platform.as_ref(), request.review(invocation.caller))
+                .await?;
+        }
+        let cx = match invocation.caller {
+            AccountCaller::Local { .. } => super::remote_authority_context(invocation.call),
+            AccountCaller::Remote { .. } => invocation.call.clone(),
+        };
+        super::remote_authority_call(&cx, async {
+            self.require_current_operation(&operation)?;
+            if let Some(keypair) = keypair
+                && let SignPayloadAuthorityRequest::Product(payload) = request
+            {
+                let lifecycle = self
+                    .session_lifecycle
+                    .lock()
+                    .expect("session lifecycle mutex poisoned");
+                operation.require_revision(lifecycle.epoch)?;
+                self.current_private_session(invocation.session)?;
+                return Ok(sign_extrinsic_payload(&keypair, payload.payload)?);
+            }
+            self.remote_sign_payload(&cx, &session, request).await
+        })
+        .await
     }
 
     async fn sign_raw(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         request: SignRawAuthorityRequest,
         watermarked: bool,
     ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
-        PairingHost::sign_raw(self, cx, session, calling_product_id, request, watermarked).await
+        let (session, operation) = {
+            let lifecycle = self
+                .session_lifecycle
+                .lock()
+                .expect("session lifecycle mutex poisoned");
+            (
+                self.current_private_session(invocation.session)?,
+                HostOperation::new(invocation.session.clone(), lifecycle.epoch),
+            )
+        };
+        if !matches!(request, SignRawAuthorityRequest::Product(_))
+            && matches!(invocation.caller, AccountCaller::Local { .. })
+        {
+            invocation
+                .confirm(
+                    self.platform.as_ref(),
+                    request.review(invocation.caller, watermarked),
+                )
+                .await?;
+        }
+        let keypair = if let AccountCaller::Local { product, .. } = invocation.caller
+            && watermarked
+        {
+            let account = match &request {
+                SignRawAuthorityRequest::Product(payload) => Some(&payload.account),
+                SignRawAuthorityRequest::LegacyAccount {
+                    product_account, ..
+                } => Some(product_account),
+                SignRawAuthorityRequest::IdentityAccount { .. } => None,
+            };
+            if let Some(account) = account {
+                self.local_product_signing_key(&session, Some(&product.product_id), account)
+                    .await?
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if keypair.is_none()
+            && matches!(request, SignRawAuthorityRequest::Product(_))
+            && matches!(invocation.caller, AccountCaller::Local { .. })
+        {
+            invocation
+                .confirm(
+                    self.platform.as_ref(),
+                    request.review(invocation.caller, watermarked),
+                )
+                .await?;
+        }
+        let cx = match invocation.caller {
+            AccountCaller::Local { .. } => super::remote_authority_context(invocation.call),
+            AccountCaller::Remote { .. } => invocation.call.clone(),
+        };
+        super::remote_authority_call(&cx, async {
+            self.require_current_operation(&operation)?;
+            if let Some(keypair) = keypair {
+                let payload = match request {
+                    SignRawAuthorityRequest::Product(request) => request.payload,
+                    SignRawAuthorityRequest::LegacyAccount { request, .. }
+                    | SignRawAuthorityRequest::IdentityAccount { request, .. } => request.payload,
+                };
+                let message = raw_payload_bytes(payload, watermarked)?;
+                let lifecycle = self
+                    .session_lifecycle
+                    .lock()
+                    .expect("session lifecycle mutex poisoned");
+                operation.require_revision(lifecycle.epoch)?;
+                self.current_private_session(invocation.session)?;
+                let signature = keypair
+                    .secret
+                    .sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
+                    .to_bytes();
+                return Ok(v01::HostSignPayloadResponse {
+                    signature: signature.to_vec(),
+                    signed_transaction: None,
+                });
+            }
+            sso_channel::remote_sign_raw(self, &cx, &session, request, watermarked).await
+        })
+        .await
     }
 
     async fn create_transaction(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         request: CreateTransactionAuthorityRequest,
     ) -> Result<v01::HostCreateTransactionResponse, AuthorityError> {
-        PairingHost::create_transaction(self, cx, session, calling_product_id, request).await
+        let (session, operation) = {
+            let lifecycle = self
+                .session_lifecycle
+                .lock()
+                .expect("session lifecycle mutex poisoned");
+            (
+                self.current_private_session(invocation.session)?,
+                HostOperation::new(invocation.session.clone(), lifecycle.epoch),
+            )
+        };
+        let keypair = if let AccountCaller::Local { product, .. } = invocation.caller
+            && let CreateTransactionAuthorityRequest::Product(payload) = &request
+        {
+            self.local_product_signing_key(&session, Some(&product.product_id), &payload.signer)
+                .await?
+        } else {
+            None
+        };
+        let names_contacts = matches!(&request, CreateTransactionAuthorityRequest::Product(payload) if !payload.contacts.is_empty());
+        if (keypair.is_none() || names_contacts)
+            && matches!(invocation.caller, AccountCaller::Local { .. })
+        {
+            invocation
+                .confirm(self.platform.as_ref(), request.review(invocation.caller))
+                .await?;
+        }
+        let cx = match invocation.caller {
+            AccountCaller::Local { .. } => super::remote_authority_context(invocation.call),
+            AccountCaller::Remote { .. } => invocation.call.clone(),
+        };
+        super::remote_authority_call(&cx, async {
+            self.require_current_operation(&operation)?;
+            if let Some(keypair) = keypair
+                && let CreateTransactionAuthorityRequest::Product(payload) = request
+            {
+                let metadata =
+                    local_transaction_metadata(&self.chain, payload.genesis_hash).await?;
+                let lifecycle = self
+                    .session_lifecycle
+                    .lock()
+                    .expect("session lifecycle mutex poisoned");
+                operation.require_revision(lifecycle.epoch)?;
+                self.current_private_session(invocation.session)?;
+                return Ok(v01::HostCreateTransactionResponse {
+                    transaction: build_signed_transaction(
+                        &Sr25519Signer::from_keypair(&keypair),
+                        payload.genesis_hash,
+                        &payload.call_data,
+                        &payload.extensions,
+                        payload.tx_ext_version,
+                        metadata,
+                    )?,
+                });
+            }
+            self.remote_create_transaction(&cx, &session, request).await
+        })
+        .await
     }
 
     async fn account_alias(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountGetAliasRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountGetAliasRequest,
     ) -> Result<v01::ContextualAlias, RingVrfError> {
-        PairingHost::account_alias(self, cx, session, request).await
+        PairingHost::account_alias(self, invocation, request).await
     }
 
     async fn create_proof(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountCreateProofRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountCreateProofRequest,
     ) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
-        PairingHost::create_proof(self, cx, session, request).await
+        PairingHost::create_proof(self, invocation, request).await
     }
 
     async fn register_ring_vrf_key(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountRegisterRingVrfKeyRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountRegisterRingVrfKeyRequest,
     ) -> Result<[u8; 32], RingVrfError> {
-        PairingHost::register_ring_vrf_key(self, cx, session, request).await
+        PairingHost::register_ring_vrf_key(
+            self,
+            invocation.call,
+            invocation.session,
+            ProductRequest {
+                calling_product_id: invocation
+                    .caller
+                    .product_id()
+                    .ok_or(RingVrfError::NotAllowlisted)?
+                    .to_string(),
+                payload: request,
+            },
+        )
+        .await
     }
 
     async fn list_ring_vrf_keys(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountListRingVrfKeysRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountListRingVrfKeysRequest,
     ) -> Result<Vec<v01::RegisteredRingVrfKey>, RingVrfError> {
-        PairingHost::list_ring_vrf_keys(self, cx, session, request).await
+        PairingHost::list_ring_vrf_keys(self, invocation, request).await
     }
 
     async fn ring_vrf_sign(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountRingVrfSignRequest>,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountRingVrfSignRequest,
     ) -> Result<Vec<u8>, RingVrfError> {
-        PairingHost::ring_vrf_sign(self, cx, session, request).await
-    }
-
-    async fn allocate_resources(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-        request: v01::HostRequestResourceAllocationRequest,
-    ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
-        PairingHost::allocate_resources(self, cx, session, product_id, request).await
-    }
-
-    async fn statement_store_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        PairingHost::statement_store_allowance_key(self, cx, session, product_id).await
-    }
-
-    async fn bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        PairingHost::bulletin_allowance_key(self, cx, session, product_id).await
-    }
-
-    async fn refresh_bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        PairingHost::refresh_bulletin_allowance_key(self, cx, session, product_id).await
+        PairingHost::ring_vrf_sign(self, invocation, request).await
     }
 
     async fn sign_statement_store_product_payload(
         &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
+        invocation: AccountInvocation<'_>,
         account: v01::ProductAccountId,
         payload: Vec<u8>,
     ) -> Result<[u8; 64], AuthorityError> {
-        PairingHost::sign_statement_store_product_payload(
-            self,
-            cx,
-            session,
-            calling_product_id,
-            account,
-            payload,
-        )
-        .await
+        PairingHost::sign_statement_store_product_payload(self, invocation, account, payload).await
     }
 
     fn derive_entropy(

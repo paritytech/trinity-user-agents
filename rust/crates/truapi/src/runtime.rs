@@ -41,6 +41,17 @@ pub mod statement_store;
 mod statement_store_rpc;
 mod vrf;
 
+pub use signing_host::{
+    wallet_derive_subtree_public_key, wallet_ring_vrf_providers, wallet_select_ring_vrf_provider,
+    wallet_selected_ring_vrf_provider,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use signing_host::{
+    wallet_last_statement_renewal_report, wallet_renew_statement_allowances,
+    wallet_statement_renewal_owner_key, wallet_statement_renewal_targets,
+    wallet_track_statement_renewal_targets, wallet_untrack_statement_renewal_account,
+};
+
 use core::future::Future;
 use core::time::Duration;
 use std::collections::HashSet;
@@ -49,8 +60,19 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 pub use actions::ActionChannel;
-use authority::{AuthorityCancelError, AuthoritySession};
-pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
+use authority::AuthorityCancelError;
+pub use authority::{
+    AccountCaller, AccountHolder, AccountInvocation, AuthorityError, BulletinAllowanceKey,
+    HostOperation, ProductAuthority,
+};
+/// Wallet-issued permission for one product during one activation.
+#[derive(Clone)]
+pub struct WalletAuthorization {
+    issuer: std::sync::Weak<crate::host_logic::session::SessionState>,
+    validation_id: Vec<u8>,
+    product_id: String,
+}
+
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
 
@@ -628,22 +650,48 @@ impl ProductRuntimeHost {
         self.product.product_id.as_str().to_string()
     }
 
+    async fn account_operation<T, E, F>(
+        &self,
+        operation: &HostOperation,
+        cx: &CallContext,
+        call: F,
+    ) -> Result<T, E>
+    where
+        F: Future<Output = Result<T, E>>,
+        E: From<AuthorityError>,
+    {
+        remote_authority_call(cx, self.account_call(operation, call)).await
+    }
+
+    async fn account_call<T, E, F>(&self, operation: &HostOperation, call: F) -> Result<T, E>
+    where
+        F: Future<Output = Result<T, E>>,
+        E: From<AuthorityError>,
+    {
+        self.authority.require_current_operation(operation)?;
+        let result = call.await?;
+        self.authority.require_current_operation(operation)?;
+        Ok(result)
+    }
+
     async fn product_account_public_key(
         &self,
         cx: &CallContext,
-        session: &AuthoritySession,
+        operation: &HostOperation,
         product_account_id: &v01::ProductAccountId,
     ) -> Result<[u8; 32], AuthorityError> {
         let cx = remote_authority_context(cx);
-        let subtree = remote_authority_call(
-            &cx,
-            self.authority.product_subtree_public_key(
+        let subtree = self
+            .account_operation(
+                operation,
                 &cx,
-                session,
-                product_account_id.dot_ns_identifier.clone(),
-            ),
-        )
-        .await?;
+                self.authority.account_holder().product_subtree_public_key(
+                    &cx,
+                    &operation.session,
+                    product_account_id.dot_ns_identifier.clone(),
+                ),
+            )
+            .await?;
         derive_product_public_key(
             subtree,
             derivation_index_bytes(&product_account_id.derivation_index),
@@ -656,11 +704,11 @@ impl ProductRuntimeHost {
     async fn legacy_slot_zero_public_key(
         &self,
         cx: &CallContext,
-        session: &AuthoritySession,
+        operation: &HostOperation,
     ) -> Result<[u8; 32], String> {
         self.product_account_public_key(
             cx,
-            session,
+            operation,
             &v01::ProductAccountId {
                 dot_ns_identifier: self.product_id(),
                 derivation_index: v01::DerivationIndex::Index(0),
@@ -820,27 +868,27 @@ impl ProductRuntimeHost {
     async fn classify_legacy_address_signer(
         &self,
         cx: &CallContext,
-        session: &AuthoritySession,
+        operation: &HostOperation,
         signer: &str,
     ) -> Result<LegacySigner, LegacySignerError> {
         let requested_key = parse_legacy_signer_hex(signer)
             .or_else(|| public_key_from_address(signer))
             .ok_or(LegacySignerError::Unavailable)?;
-        self.classify_legacy_signer(cx, session, requested_key)
+        self.classify_legacy_signer(cx, operation, requested_key)
             .await
     }
 
     async fn classify_legacy_signer(
         &self,
         cx: &CallContext,
-        session: &AuthoritySession,
+        operation: &HostOperation,
         requested_key: [u8; 32],
     ) -> Result<LegacySigner, LegacySignerError> {
-        if session.identity_account_id == Some(requested_key) {
+        if operation.session.identity_account_id == Some(requested_key) {
             return Ok(LegacySigner::Identity(requested_key));
         }
         let product_public_key = self
-            .legacy_slot_zero_public_key(cx, session)
+            .legacy_slot_zero_public_key(cx, operation)
             .await
             .map_err(LegacySignerError::ProductDerivation)?;
         if requested_key == product_public_key {
@@ -972,6 +1020,9 @@ fn account_get_authority_error(err: AuthorityError) -> CallError<HostAccountGetE
     let error = match err {
         AuthorityError::Disconnected => v01::HostAccountGetError::NotConnected,
         AuthorityError::Rejected => v01::HostAccountGetError::Rejected,
+        error @ AuthorityError::ConfirmationFailed(_) => v01::HostAccountGetError::Unknown {
+            reason: error.to_string(),
+        },
         AuthorityError::Cancelled(err) => v01::HostAccountGetError::Unknown {
             reason: err.to_string(),
         },
@@ -1060,6 +1111,11 @@ fn signing_call_error<E>(
         AuthorityError::Rejected | AuthorityError::Disconnected => {
             v01::HostSignPayloadError::Rejected
         }
+        AuthorityError::ConfirmationFailed(error) => {
+            return CallError::HostFailure {
+                reason: format!("sign payload confirmation failed: {error:?}"),
+            };
+        }
         AuthorityError::Cancelled(err) => v01::HostSignPayloadError::Unknown {
             reason: err.to_string(),
         },
@@ -1076,6 +1132,11 @@ fn transaction_call_error<E>(
     CallError::Domain(wrap(match err {
         AuthorityError::Rejected | AuthorityError::Disconnected => {
             v01::HostCreateTransactionError::Rejected
+        }
+        AuthorityError::ConfirmationFailed(error) => {
+            return CallError::HostFailure {
+                reason: format!("create transaction confirmation failed: {error:?}"),
+            };
         }
         AuthorityError::Cancelled(err) => v01::HostCreateTransactionError::Unknown {
             reason: err.to_string(),
@@ -1354,19 +1415,21 @@ impl ProductRuntimeHost {
             .ok_or(CallError::Unsupported)?;
         let session = self
             .authority
+            .account_holder()
             .current_session()
             .ok_or(CallError::Domain(v01::HostContactsPickError::NotConnected))?;
-        let handle_key =
-            self.authority
-                .contacts_handle_key(&session)
-                .map_err(|error| match error {
-                    AuthorityError::Disconnected => {
-                        CallError::Domain(v01::HostContactsPickError::NotConnected)
-                    }
-                    other => CallError::Domain(v01::HostContactsPickError::Unknown {
-                        reason: other.to_string(),
-                    }),
-                })?;
+        let handle_key = self
+            .authority
+            .account_holder()
+            .contacts_handle_key(&session)
+            .map_err(|error| match error {
+                AuthorityError::Disconnected => {
+                    CallError::Domain(v01::HostContactsPickError::NotConnected)
+                }
+                other => CallError::Domain(v01::HostContactsPickError::Unknown {
+                    reason: other.to_string(),
+                }),
+            })?;
         Ok((
             platform,
             crate::runtime::contacts::ContactHandles::from_handle_key(handle_key),

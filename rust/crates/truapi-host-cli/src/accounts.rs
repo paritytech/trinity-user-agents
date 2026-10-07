@@ -697,6 +697,7 @@ async fn wait_for_ring_membership(network: NetworkConfig, entropy: &[u8]) -> Res
 
     let people_ws = network.people_ws;
     let candidates = collection_candidates(entropy, network.network_suffix);
+    let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
     let mut metadata = None;
     for attempt in 1..=MAX_ATTEMPTS {
         crate::terminal_ui::update_activity(
@@ -737,11 +738,19 @@ async fn wait_for_ring_membership(network: NetworkConfig, entropy: &[u8]) -> Res
         }
         let metadata_ref = metadata.as_ref().expect("metadata is initialized");
         // Every ring back to index 0: the signer may sit in an older one.
-        match alloc::find_including_rings(&rpc, metadata_ref, &candidates, u32::MAX).await {
+        match alloc::find_including_rings(
+            &rpc,
+            metadata_ref,
+            &signer,
+            &PersonhoodCollection::ALL,
+            u32::MAX,
+        )
+        .await
+        {
             Ok(memberships) if !memberships.is_empty() => {
                 let held = memberships
                     .iter()
-                    .map(|membership| membership.collection().to_string())
+                    .map(|membership| membership.collection.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
                 crate::terminal_ui::update_activity(

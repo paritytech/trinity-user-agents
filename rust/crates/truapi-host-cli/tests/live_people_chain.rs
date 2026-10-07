@@ -131,12 +131,19 @@ async fn scanning_a_live_period_answers_without_erroring() {
 
     // Entropy and target are throwaway: no alias derived from them owns a slot,
     // so the scan must offer a free one or report the table full — never error.
+    let candidates = [alloc::CollectionCandidate {
+        collection: PersonhoodCollection::LitePeople,
+        entropy: [0x11; 32],
+    }];
+    let signer = alloc::FixedPersonhoodSigner::new(&candidates)
+        .await
+        .expect("load the prover");
     let selection = alloc::slot::scan_slot_excluding(
         &rpc,
         &chain.metadata,
         alloc::slot::SlotScan {
             collection: PersonhoodCollection::LitePeople,
-            entropy: [0x11; 32],
+            signer: &signer,
             network_suffix: &network_suffix,
             period,
             target: &[0x22; 32],

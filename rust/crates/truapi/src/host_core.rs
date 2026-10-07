@@ -610,11 +610,13 @@ impl SigningHostRuntime {
         &self,
         product_id: &str,
     ) -> Result<Option<[u8; 32]>, v01::GenericError> {
-        self.signing_host
-            .derive_subtree_public_key(product_id)
-            .map_err(|err| v01::GenericError {
-                reason: err.to_string(),
-            })
+        crate::runtime::wallet_derive_subtree_public_key(
+            self.signing_host.account_holder(),
+            product_id,
+        )
+        .map_err(|err| v01::GenericError {
+            reason: err.to_string(),
+        })
     }
 
     /// Answer these resource tags as refused, replacing any earlier set.
@@ -869,8 +871,7 @@ impl SigningHostRuntime {
         &self,
         ring: &v01::RingLocation,
     ) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
-        self.signing_host
-            .ring_vrf_providers(ring)
+        crate::runtime::wallet_ring_vrf_providers(self.signing_host.account_holder(), ring)
             .await
             .map_err(ring_vrf_admin_error)
     }
@@ -880,8 +881,7 @@ impl SigningHostRuntime {
         &self,
         ring: &v01::RingLocation,
     ) -> Result<Option<v01::ProductAccountId>, v01::GenericError> {
-        self.signing_host
-            .selected_ring_vrf_provider(ring)
+        crate::runtime::wallet_selected_ring_vrf_provider(self.signing_host.account_holder(), ring)
             .await
             .map_err(ring_vrf_admin_error)
     }
@@ -892,10 +892,13 @@ impl SigningHostRuntime {
         ring: v01::RingLocation,
         handle: v01::ProductAccountId,
     ) -> Result<(), v01::GenericError> {
-        self.signing_host
-            .select_ring_vrf_provider(ring, handle)
-            .await
-            .map_err(ring_vrf_admin_error)
+        crate::runtime::wallet_select_ring_vrf_provider(
+            self.signing_host.account_holder(),
+            ring,
+            handle,
+        )
+        .await
+        .map_err(ring_vrf_admin_error)
     }
 
     /// Activate a wallet-local session from host-held secret material (raw
@@ -1042,10 +1045,12 @@ impl SigningHostRuntime {
         &self,
         targets: Vec<crate::runtime::StatementRenewalTarget>,
     ) -> Result<(), v01::GenericError> {
-        self.signing_host
-            .track_statement_renewal_targets(targets)
-            .await
-            .map_err(|reason| v01::GenericError { reason })
+        crate::runtime::wallet_track_statement_renewal_targets(
+            self.signing_host.account_holder(),
+            targets,
+        )
+        .await
+        .map_err(|reason| v01::GenericError { reason })
     }
 
     /// Every statement account the renewal ledger currently tracks.
@@ -1056,8 +1061,7 @@ impl SigningHostRuntime {
     pub async fn statement_renewal_targets(
         &self,
     ) -> Result<Vec<crate::runtime::TrackedStatementRenewalTarget>, v01::GenericError> {
-        self.signing_host
-            .statement_renewal_targets()
+        crate::runtime::wallet_statement_renewal_targets(self.signing_host.account_holder())
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -1070,8 +1074,7 @@ impl SigningHostRuntime {
     /// from what it will prune.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.statement_renewal_owner_key"))]
     pub fn statement_renewal_owner_key(&self) -> Result<truapi::Bytes32, v01::GenericError> {
-        self.signing_host
-            .statement_renewal_owner_key()
+        crate::runtime::wallet_statement_renewal_owner_key(self.signing_host.account_holder())
             .map_err(|reason| v01::GenericError { reason })
     }
 
@@ -1081,10 +1084,12 @@ impl SigningHostRuntime {
         &self,
         account_id: &[u8; 32],
     ) -> Result<bool, v01::GenericError> {
-        self.signing_host
-            .untrack_statement_renewal_account(account_id)
-            .await
-            .map_err(|reason| v01::GenericError { reason })
+        crate::runtime::wallet_untrack_statement_renewal_account(
+            self.signing_host.account_holder(),
+            account_id,
+        )
+        .await
+        .map_err(|reason| v01::GenericError { reason })
     }
 
     /// Run one statement-store renewal pass now and return per-target
@@ -1096,8 +1101,7 @@ impl SigningHostRuntime {
         &self,
     ) -> Result<crate::statement_allowance::renewal::StatementRenewalReport, v01::GenericError>
     {
-        self.signing_host
-            .renew_statement_allowances()
+        crate::runtime::wallet_renew_statement_allowances(self.signing_host.account_holder())
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -1126,7 +1130,7 @@ impl SigningHostRuntime {
     pub fn last_statement_renewal_report(
         &self,
     ) -> Option<crate::statement_allowance::renewal::StatementRenewalReport> {
-        self.signing_host.last_statement_renewal_report()
+        crate::runtime::wallet_last_statement_renewal_report(self.signing_host.account_holder())
     }
 }
 
@@ -1190,16 +1194,29 @@ pub struct HostAdmin {
 }
 
 impl HostAdmin {
-    /// Access the execution's product-facing capabilities and permission grants.
-    #[cfg(any(test, not(target_arch = "wasm32")))]
-    pub fn product_runtime(&self) -> &Arc<ProductRuntimeHost> {
-        &self.product_runtime
+    /// Authorize one operation using this execution's saved and one-use permissions.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn authorize_remote_permission(
+        &self,
+        request: truapi::latest::RemotePermissionRequest,
+    ) -> Result<bool, truapi::latest::GenericError> {
+        use truapi::api::Permissions;
+        use truapi::versioned::IntoLatest;
+
+        self.product_runtime
+            .authorize_remote_permission(
+                &CallContext::default(),
+                truapi::versioned::permissions::RemotePermissionRequest::V1(request),
+            )
+            .await
+            .map(|response| response.into_latest().granted)
+            .map_err(|error| truapi::latest::GenericError {
+                reason: format!("{error:?}"),
+            })
     }
 
-    /// Build an admin handle from a long-lived host runtime and the adapters
-    /// scoped to one product connection.
     #[instrument(skip_all, fields(runtime.method = "host_admin.new"))]
-    pub fn new(
+    fn new(
         services: Arc<RuntimeServices>,
         authority: Arc<dyn ProductAuthority>,
         product: ProductContext,
@@ -1350,7 +1367,7 @@ async fn product_subtree_public_key(
         normalize_product_identifier(product_id).map_err(|reason| v01::GenericError {
             reason: reason.to_string(),
         })?;
-    let Some(session) = authority.current_session() else {
+    let Some(session) = authority.account_holder().current_session() else {
         return Ok(None);
     };
     let timeout = timeout_ms
@@ -1360,6 +1377,7 @@ async fn product_subtree_public_key(
     cx.set_timeout(timeout);
 
     let call = authority
+        .account_holder()
         .product_subtree_public_key(&cx, &session, product_id)
         .fuse();
     let deadline = futures_timer::Delay::new(timeout).fuse();
@@ -1584,9 +1602,8 @@ impl ProductRuntime {
         pairing.product_runtime(product, sink)
     }
 
-    /// Build a product-facing runtime from shared services and an authority.
     #[instrument(skip_all, fields(runtime.method = "product_runtime.new"))]
-    pub fn new(
+    fn new(
         services: Arc<RuntimeServices>,
         authority: Arc<dyn ProductAuthority>,
         product: ProductContext,
@@ -2793,7 +2810,7 @@ mod tests {
             test_spawner(),
             Arc::new(RecordingSink::default()),
         );
-        let host = runtime.admin.product_runtime().clone();
+        let host = runtime.admin.product_runtime.clone();
         assert!(
             host.test_session_state().current().is_none(),
             "the fixture must be signed out for this test to mean anything"
@@ -2869,7 +2886,7 @@ mod tests {
             test_spawner(),
             Arc::new(RecordingSink::default()),
         );
-        let services = runtime.admin.product_runtime().services().clone();
+        let services = runtime.admin.product_runtime.services().clone();
         let demand = Arc::new(RecordingDemand::default());
         assert!(
             services
@@ -2984,7 +3001,7 @@ mod tests {
     #[test]
     fn a_render_the_product_ends_releases_its_worker_reference() {
         let (runtime, sink) = render_runtime();
-        let services = runtime.admin.product_runtime().services().clone();
+        let services = runtime.admin.product_runtime.services().clone();
         let mut render = start_render(&runtime, "loyalty");
         assert_eq!(services.worker_ledger.count("worker.dot"), 1);
 
@@ -3012,7 +3029,7 @@ mod tests {
     #[test]
     fn a_render_the_product_interrupts_releases_its_worker_reference() {
         let (runtime, sink) = render_runtime();
-        let services = runtime.admin.product_runtime().services().clone();
+        let services = runtime.admin.product_runtime.services().clone();
         let mut render = start_render(&runtime, "loyalty");
 
         let request_id = render_request_id(&sink, 0);
@@ -3044,7 +3061,7 @@ mod tests {
     #[test]
     fn a_render_refused_for_a_malformed_tree_releases_its_worker_reference() {
         let (runtime, sink) = render_runtime();
-        let services = runtime.admin.product_runtime().services().clone();
+        let services = runtime.admin.product_runtime.services().clone();
         let mut render = start_render(&runtime, "loyalty");
 
         let request_id = render_request_id(&sink, 0);
@@ -3067,7 +3084,7 @@ mod tests {
     #[test]
     fn disposing_the_core_releases_an_open_renders_worker_reference() {
         let (runtime, _sink) = render_runtime();
-        let services = runtime.admin.product_runtime().services().clone();
+        let services = runtime.admin.product_runtime.services().clone();
         let mut render = start_render(&runtime, "loyalty");
         assert_eq!(services.worker_ledger.count("worker.dot"), 1);
 
@@ -3085,7 +3102,7 @@ mod tests {
     #[test]
     fn one_render_ending_leaves_the_other_renders_worker_reference() {
         let (runtime, sink) = render_runtime();
-        let services = runtime.admin.product_runtime().services().clone();
+        let services = runtime.admin.product_runtime.services().clone();
         let mut first = start_render(&runtime, "loyalty");
         let second = start_render(&runtime, "rewards");
         assert_eq!(services.worker_ledger.count("worker.dot"), 2);
@@ -3394,7 +3411,7 @@ mod tests {
             test_spawner(),
             sink,
         );
-        let host = runtime.admin.product_runtime().clone();
+        let host = runtime.admin.product_runtime.clone();
 
         futures::executor::block_on(truapi::api::Worker::begin_operation(
             host.as_ref(),
@@ -3429,7 +3446,7 @@ mod tests {
             test_spawner(),
             sink,
         );
-        let host = runtime.admin.product_runtime().clone();
+        let host = runtime.admin.product_runtime.clone();
 
         futures::executor::block_on(truapi::api::Worker::begin_operation(
             host.as_ref(),

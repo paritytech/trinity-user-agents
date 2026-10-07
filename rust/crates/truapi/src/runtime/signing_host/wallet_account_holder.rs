@@ -1,0 +1,600 @@
+//! Wallet activation, authorization and resource issuance.
+
+mod account;
+mod allowance;
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+mod allowance_renewal;
+#[cfg(test)]
+mod allowance_tests;
+pub use allowance::{
+    AccountGrant, AllowanceAllocationError, StatementStoreAllocation, current_unix_secs,
+};
+pub use allowance_renewal::StatementRenewalTarget;
+#[cfg(not(target_arch = "wasm32"))]
+pub use allowance_renewal::TrackedStatementRenewalTarget;
+
+pub use account::{
+    derive_subtree_public_key, ring_vrf_providers, select_ring_vrf_provider,
+    selected_ring_vrf_provider,
+};
+pub use allowance::{
+    allocate_bulletin_allowance, allocate_grants, allocate_statement_store_allowance,
+};
+use allowance_renewal::track_statement_renewal_targets_for;
+#[cfg(not(target_arch = "wasm32"))]
+pub use allowance_renewal::{
+    last_statement_renewal_report, renew_statement_allowances, renewal_tick,
+    statement_renewal_owner_key, statement_renewal_targets, track_statement_renewal_targets,
+    untrack_statement_renewal_account,
+};
+
+use crate::runtime::WalletAuthorization;
+#[cfg(feature = "test-host")]
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
+use truapi::latest::ProductAccountId;
+use zeroize::Zeroizing;
+
+use crate::host_internal::sso_messages::RingVrfError;
+use crate::host_logic::entropy::{derive_product_entropy, root_entropy_source};
+use crate::host_logic::product_account::{
+    ProductAccountError, derivation_index_bytes, derive_full_person_ring_vrf_entropy,
+    derive_identity_keypair, derive_lite_person_ring_vrf_entropy, derive_product_keypair,
+    derive_product_subtree_keypair, derive_ring_vrf_domain_entropy, derive_ring_vrf_entropy,
+    derive_root_keypair_from_entropy, derive_sr25519_hard_path,
+};
+use crate::host_logic::session::{SessionInfo, SessionState};
+use crate::host_logic::sso::pairing::{
+    ResponderIdentity, derive_identity_chat_private_key, derive_x25519_keypair_from_entropy,
+};
+use crate::platform::normalize_product_identifier;
+use crate::runtime::authority::{
+    AuthorityError, AuthoritySession, AutoSigningGrant, authority_session_validation_id,
+};
+use crate::runtime::statement_allowance::collection::PersonhoodCollection;
+use crate::runtime::statement_allowance::{PersonhoodSigner, StatementAllowanceError};
+use crate::runtime::statement_allowance::{proof, ring::RingParams};
+use crate::runtime::vrf::{self, Vrf};
+
+/// RFC-0022 domain for the responder's persistent SSO X25519 key.
+const SSO_ENCRYPTION_DOMAIN: &[u8] = b"sso";
+
+/// Owns the active wallet session and its zeroizable entropy.
+pub struct WalletAccountHolder {
+    services: Arc<crate::runtime::RuntimeServices>,
+    ring_resolver: Arc<dyn super::ring_vrf::RingResolver>,
+    ring_vrf_registry: Arc<crate::runtime::ring_vrf_registry::RingVrfRegistryStore>,
+    renewal: allowance_renewal::RenewalState,
+    #[cfg(feature = "test-host")]
+    grant_allowances_unchecked: std::sync::atomic::AtomicBool,
+    #[cfg(feature = "test-host")]
+    withheld_resources: Mutex<HashSet<String>>,
+    network_suffix: String,
+    lifecycle: Mutex<WalletState>,
+    session_state: Arc<SessionState>,
+}
+
+#[derive(Default)]
+struct WalletState {
+    activation: u64,
+    keys: Option<WalletKeys>,
+}
+
+impl WalletState {
+    fn advance(&mut self) {
+        self.activation = self
+            .activation
+            .checked_add(1)
+            .expect("wallet activation exhausted");
+    }
+
+    fn session(&self, session: &SessionInfo) -> AuthoritySession {
+        let mut validation_id = authority_session_validation_id(session);
+        validation_id.extend_from_slice(b":activation:");
+        validation_id.extend_from_slice(&self.activation.to_le_bytes());
+        AuthoritySession::from_session_info(session, validation_id)
+    }
+
+    fn require_session(
+        &self,
+        current: Option<SessionInfo>,
+        session: &AuthoritySession,
+    ) -> Result<SessionInfo, AuthorityError> {
+        let current = current.ok_or(AuthorityError::Disconnected)?;
+        if self.session(&current).validation_id != session.validation_id {
+            return Err(AuthorityError::Disconnected);
+        }
+        Ok(current)
+    }
+}
+
+struct WalletPersonhoodSigner<'a> {
+    wallet: &'a WalletAccountHolder,
+    session: &'a AuthoritySession,
+    vrf: Vrf,
+}
+
+impl PersonhoodSigner for WalletPersonhoodSigner<'_> {
+    fn member(
+        &self,
+        collection: PersonhoodCollection,
+    ) -> Result<[u8; 32], StatementAllowanceError> {
+        self.wallet.with_keys(self.session, |keys| {
+            Ok(self
+                .vrf
+                .member(&keys.personhood_entropy(collection))
+                .map_err(proof::vrf_error)?)
+        })
+    }
+
+    fn alias(
+        &self,
+        collection: PersonhoodCollection,
+        context: &[u8],
+    ) -> Result<[u8; 32], StatementAllowanceError> {
+        self.wallet.with_keys(self.session, |keys| {
+            Ok(self
+                .vrf
+                .alias(&keys.personhood_entropy(collection), context)
+                .map_err(proof::vrf_error)?)
+        })
+    }
+
+    fn prove(
+        &self,
+        ring: &RingParams,
+        context: &[u8],
+        message: &[u8],
+    ) -> Result<Vec<u8>, StatementAllowanceError> {
+        self.wallet.with_keys(self.session, |keys| {
+            proof::ring_vrf_proof(
+                &self.vrf,
+                proof::domain_for_ring_exponent(ring.exponent)?,
+                &keys.personhood_entropy(ring.collection),
+                &ring.members,
+                context,
+                message,
+            )
+        })
+    }
+}
+
+/// Secrets exported only while preparing an encrypted pairing answer.
+pub struct PairingMaterial {
+    /// Identity retained by the authenticated transport.
+    pub identity: ResponderIdentity,
+    /// Chat identity shared with the paired host.
+    pub chat_private_key: Zeroizing<[u8; 32]>,
+    /// Product entropy shared with the paired host.
+    pub product_entropy_source: Zeroizing<[u8; 32]>,
+}
+
+/// Validated activation material, installed only after host grants are invalidated.
+pub struct PreparedWalletActivation {
+    keys: WalletKeys,
+    session: SessionInfo,
+}
+
+/// Inject a ring resolver for account-operation tests.
+#[cfg(test)]
+pub fn new_with_ring_resolver(
+    services: Arc<crate::runtime::RuntimeServices>,
+    network_suffix: String,
+    ring_resolver: Arc<dyn super::ring_vrf::RingResolver>,
+) -> WalletAccountHolder {
+    WalletAccountHolder {
+        ring_resolver,
+        ..WalletAccountHolder::new(services, network_suffix)
+    }
+}
+
+impl WalletAccountHolder {
+    /// Start locked, with no wallet secrets.
+    pub fn new(services: Arc<crate::runtime::RuntimeServices>, network_suffix: String) -> Self {
+        Self {
+            ring_resolver: super::ring_vrf::ChainRingResolver::new(services.chain.clone()),
+            ring_vrf_registry: crate::runtime::ring_vrf_registry::RingVrfRegistryStore::new(
+                services.platform.clone(),
+            ),
+            services,
+            renewal: allowance_renewal::RenewalState::default(),
+            #[cfg(feature = "test-host")]
+            grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(feature = "test-host")]
+            withheld_resources: Mutex::new(HashSet::new()),
+            network_suffix,
+            lifecycle: Mutex::new(WalletState::default()),
+            session_state: SessionState::new(),
+        }
+    }
+
+    fn with_keys<T, E: From<AuthorityError>>(
+        &self,
+        session: &AuthoritySession,
+        use_keys: impl FnOnce(&WalletKeys) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let state = self
+            .lifecycle
+            .lock()
+            .expect("wallet lifecycle mutex poisoned");
+        state.require_session(self.session_state.current(), session)?;
+        use_keys(state.keys.as_ref().ok_or(AuthorityError::Disconnected)?)
+    }
+
+    async fn personhood_signer<'a>(
+        &'a self,
+        session: &'a AuthoritySession,
+    ) -> Result<WalletPersonhoodSigner<'a>, StatementAllowanceError> {
+        let vrf = vrf::load().await.map_err(proof::vrf_error)?;
+        require_current_session(self, session)?;
+        Ok(WalletPersonhoodSigner {
+            wallet: self,
+            session,
+            vrf,
+        })
+    }
+
+    /// Validate retained permission without accessing the host's grant cache.
+    fn auto_signing_status(
+        &self,
+        session: &AuthoritySession,
+        calling_product_id: &str,
+        account: &ProductAccountId,
+        authorization: Option<&WalletAuthorization>,
+    ) -> Result<AutoSigningGrant, AuthorityError> {
+        require_current_session(self, session)?;
+        if crate::runtime::authority::is_blessed_owner(
+            calling_product_id,
+            &account.dot_ns_identifier,
+        ) {
+            return Ok(AutoSigningGrant::Active);
+        }
+        let (Ok(caller), Ok(owner)) = (
+            normalize_product_identifier(calling_product_id),
+            normalize_product_identifier(&account.dot_ns_identifier),
+        ) else {
+            return Ok(AutoSigningGrant::Absent);
+        };
+        Ok(
+            if caller == owner
+                && authorization
+                    .is_some_and(|grant| self.authorization_matches(grant, session, &caller))
+            {
+                AutoSigningGrant::Active
+            } else {
+                AutoSigningGrant::Absent
+            },
+        )
+    }
+
+    fn authorization_matches(
+        &self,
+        authorization: &WalletAuthorization,
+        session: &AuthoritySession,
+        product_id: &str,
+    ) -> bool {
+        authorization
+            .issuer
+            .ptr_eq(&Arc::downgrade(&self.session_state))
+            && authorization.validation_id == session.validation_id
+            && authorization.product_id == product_id
+    }
+}
+
+/// Whether allocation is answered as granted without performing it.
+#[cfg(feature = "test-host")]
+pub fn grants_allowances_unchecked(wallet: &WalletAccountHolder) -> bool {
+    wallet
+        .grant_allowances_unchecked
+        .load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Answer resource allocation as granted without performing it.
+#[cfg(feature = "test-host")]
+pub fn set_grant_allowances_unchecked(wallet: &WalletAccountHolder, granted: bool) {
+    wallet
+        .grant_allowances_unchecked
+        .store(granted, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Replace refused resource tags; SmartContractAllowance covers every index.
+#[cfg(feature = "test-host")]
+pub fn set_withheld_resources(wallet: &WalletAccountHolder, tags: Vec<String>) {
+    *wallet
+        .withheld_resources
+        .lock()
+        .expect("withheld resource mutex poisoned") = tags.into_iter().collect();
+}
+
+/// Whether `resource` is answered as refused.
+#[cfg(feature = "test-host")]
+pub fn withholds(
+    wallet: &WalletAccountHolder,
+    resource: &truapi::latest::AllocatableResource,
+) -> bool {
+    let tag = match resource {
+        truapi::latest::AllocatableResource::StatementStoreAllowance => "StatementStoreAllowance",
+        truapi::latest::AllocatableResource::BulletinAllowance => "BulletinAllowance",
+        truapi::latest::AllocatableResource::SmartContractAllowance(_) => "SmartContractAllowance",
+        truapi::latest::AllocatableResource::AutoSigning => "AutoSigning",
+    };
+    wallet
+        .withheld_resources
+        .lock()
+        .expect("withheld resource mutex poisoned")
+        .contains(tag)
+}
+
+/// Withholding also applies to implicit native allowance access.
+#[cfg(feature = "test-host")]
+pub fn refuse_withheld(
+    wallet: &WalletAccountHolder,
+    resource: &truapi::latest::AllocatableResource,
+) -> Result<(), AuthorityError> {
+    if withholds(wallet, resource) {
+        return Err(AuthorityError::Rejected);
+    }
+    Ok(())
+}
+
+/// Reject a receipt issued for a different wallet, activation or product.
+pub fn validate_authorization(
+    wallet: &WalletAccountHolder,
+    session: &AuthoritySession,
+    product_id: &str,
+    authorization: &WalletAuthorization,
+) -> Result<(), AuthorityError> {
+    require_current_session(wallet, session)?;
+    if !wallet.authorization_matches(authorization, session, product_id) {
+        return Err(AuthorityError::Rejected);
+    }
+    Ok(())
+}
+
+/// Connection-status subscriptions for the active wallet.
+pub fn session_state(wallet: &WalletAccountHolder) -> Arc<SessionState> {
+    wallet.session_state.clone()
+}
+
+/// Reject work for a wallet activation that is no longer current.
+pub fn require_current_session(
+    wallet: &WalletAccountHolder,
+    session: &AuthoritySession,
+) -> Result<(), AuthorityError> {
+    wallet
+        .lifecycle
+        .lock()
+        .expect("wallet lifecycle mutex poisoned")
+        .require_session(wallet.session_state.current(), session)
+        .map(|_| ())
+}
+
+/// Export the selected wallet's SSO transport identity.
+pub fn responder_identity(
+    wallet: &WalletAccountHolder,
+    session: &AuthoritySession,
+) -> Result<ResponderIdentity, AuthorityError> {
+    wallet.with_keys(session, |keys| {
+        Ok(keys
+            .responder_identity()
+            .map_err(product_authority_error)?
+            .0)
+    })
+}
+
+/// Export the selected wallet's material for an encrypted pairing answer.
+pub fn pairing_material(
+    wallet: &WalletAccountHolder,
+    session: &AuthoritySession,
+) -> Result<PairingMaterial, AuthorityError> {
+    wallet.with_keys(session, |keys| {
+        let (identity, chat_private_key) =
+            keys.responder_identity().map_err(product_authority_error)?;
+        Ok(PairingMaterial {
+            identity,
+            chat_private_key: Zeroizing::new(chat_private_key),
+            product_entropy_source: Zeroizing::new(keys.root_entropy_source()),
+        })
+    })
+}
+
+/// Validate and derive activation material without changing the active wallet.
+pub fn prepare_activation(
+    wallet: &WalletAccountHolder,
+    secret: Vec<u8>,
+    lite_username: Option<String>,
+) -> Result<PreparedWalletActivation, AuthorityError> {
+    let keys = WalletKeys::new(secret, wallet.network_suffix.clone());
+    let public_key = keys.root_public_key().map_err(product_authority_error)?;
+    let identity_account_id = keys.identity_keypair()?.public.to_bytes();
+    let identity_chat_private_key = derive_identity_chat_private_key(&keys.entropy);
+    Ok(PreparedWalletActivation {
+        keys,
+        session: SessionInfo {
+            public_key,
+            sso: None,
+            root_entropy_source: None,
+            identity_account_id: Some(identity_account_id),
+            identity_chat_private_key: Some(identity_chat_private_key),
+            device_enc_public_key: None,
+            lite_username,
+            full_username: None,
+        },
+    })
+}
+
+/// Install under the host's grant lock so session and grant changes are atomic.
+pub fn install(wallet: &WalletAccountHolder, activation: PreparedWalletActivation) -> SessionInfo {
+    let mut state = wallet
+        .lifecycle
+        .lock()
+        .expect("wallet lifecycle mutex poisoned");
+    state.advance();
+    state.keys = Some(activation.keys);
+    wallet.session_state.set_session(activation.session.clone());
+    activation.session
+}
+
+/// Clear under the host's grant lock, dropping the active wallet secrets.
+pub fn clear(wallet: &WalletAccountHolder) {
+    let mut state = wallet
+        .lifecycle
+        .lock()
+        .expect("wallet lifecycle mutex poisoned");
+    state.advance();
+    state.keys.take();
+    wallet.session_state.clear_session();
+}
+
+struct WalletKeys {
+    entropy: Zeroizing<Vec<u8>>,
+    network_suffix: String,
+}
+
+impl WalletKeys {
+    /// Keep entropy zeroizable without caching expanded secret keys.
+    fn new(entropy: Vec<u8>, network_suffix: String) -> Self {
+        Self {
+            entropy: Zeroizing::new(entropy),
+            network_suffix,
+        }
+    }
+
+    /// Root public key used to bind grants and renewal records to their owner.
+    fn root_public_key(&self) -> Result<[u8; 32], ProductAccountError> {
+        derive_root_keypair_from_entropy(&self.entropy).map(|root| root.public.to_bytes())
+    }
+
+    fn product_subtree_public_key(&self, product_id: &str) -> Result<[u8; 32], AuthorityError> {
+        let root =
+            derive_root_keypair_from_entropy(&self.entropy).map_err(product_authority_error)?;
+        derive_product_subtree_keypair(&root, product_id)
+            .map(|keypair| keypair.public.to_bytes())
+            .map_err(product_authority_error)
+    }
+
+    fn product_subtree_secret(&self, product_id: &str) -> Result<[u8; 64], AuthorityError> {
+        let root =
+            derive_root_keypair_from_entropy(&self.entropy).map_err(product_authority_error)?;
+        let product_id = normalize_product_identifier(product_id).map_err(|err| {
+            AuthorityError::Unavailable {
+                reason: err.to_string(),
+            }
+        })?;
+        derive_product_subtree_keypair(&root, &product_id)
+            .map(|keypair| keypair.secret.to_bytes())
+            .map_err(product_authority_error)
+    }
+
+    fn product_keypair(
+        &self,
+        account: &ProductAccountId,
+    ) -> Result<schnorrkel::Keypair, AuthorityError> {
+        let root =
+            derive_root_keypair_from_entropy(&self.entropy).map_err(product_authority_error)?;
+        let product_id =
+            normalize_product_identifier(&account.dot_ns_identifier).map_err(|err| {
+                AuthorityError::Unavailable {
+                    reason: err.to_string(),
+                }
+            })?;
+        derive_product_keypair(
+            &root,
+            &product_id,
+            derivation_index_bytes(&account.derivation_index),
+        )
+        .map_err(product_authority_error)
+    }
+
+    fn identity_keypair(&self) -> Result<schnorrkel::Keypair, AuthorityError> {
+        derive_identity_keypair(&self.entropy, &self.network_suffix)
+            .map_err(product_authority_error)
+    }
+
+    fn ring_vrf_entropy(
+        &self,
+        handle: &ProductAccountId,
+    ) -> Result<Zeroizing<[u8; 32]>, RingVrfError> {
+        derive_ring_vrf_entropy(
+            &self.entropy,
+            &handle.dot_ns_identifier,
+            &handle.derivation_index,
+        )
+        .map(Zeroizing::new)
+        .map_err(|err| RingVrfError::Unknown {
+            reason: err.to_string(),
+        })
+    }
+
+    fn ring_vrf_domain_entropy(&self, product_id: &str) -> Result<[u8; 32], ProductAccountError> {
+        derive_ring_vrf_domain_entropy(&self.entropy, product_id)
+    }
+
+    fn personhood_entropy(&self, collection: PersonhoodCollection) -> Zeroizing<[u8; 32]> {
+        Zeroizing::new(match collection {
+            PersonhoodCollection::People => {
+                derive_full_person_ring_vrf_entropy(&self.entropy, &self.network_suffix)
+            }
+            PersonhoodCollection::LitePeople => {
+                derive_lite_person_ring_vrf_entropy(&self.entropy, &self.network_suffix)
+            }
+        })
+    }
+
+    /// RFC-0007 product-scoped entropy.
+    fn derive_entropy(&self, product_id: &str, context: &[u8]) -> Result<[u8; 32], AuthorityError> {
+        derive_product_entropy(&self.entropy, product_id, context).map_err(|err| {
+            AuthorityError::Unknown {
+                reason: err.to_string(),
+            }
+        })
+    }
+
+    fn contacts_handle_key(&self) -> [u8; 32] {
+        crate::runtime::contacts::handle_key_from_root_source(&self.root_entropy_source())
+    }
+
+    /// Purpose-limited entropy shared with a paired host.
+    fn root_entropy_source(&self) -> [u8; 32] {
+        root_entropy_source(&self.entropy)
+    }
+
+    /// Statement-store allowance account for a product.
+    fn statement_allowance_key(
+        &self,
+        product_id: &str,
+    ) -> Result<schnorrkel::Keypair, ProductAccountError> {
+        derive_sr25519_hard_path(&self.entropy, &["allowance", "statement-store", product_id])
+    }
+
+    fn bulletin_allowance_key(
+        &self,
+        product_id: &str,
+    ) -> Result<schnorrkel::Keypair, ProductAccountError> {
+        derive_sr25519_hard_path(&self.entropy, &["allowance", "bulletin", product_id])
+    }
+
+    /// Statement, encryption and chat keys from one wallet snapshot.
+    fn responder_identity(&self) -> Result<(ResponderIdentity, [u8; 32]), ProductAccountError> {
+        let statement = derive_identity_keypair(&self.entropy, &self.network_suffix)?;
+        let (encryption_secret_key, encryption_public_key) =
+            derive_x25519_keypair_from_entropy(&self.entropy, SSO_ENCRYPTION_DOMAIN);
+        let identity_chat_private_key = derive_identity_chat_private_key(&self.entropy);
+        Ok((
+            ResponderIdentity {
+                statement_secret: statement.secret.to_bytes(),
+                statement_public_key: statement.public.to_bytes(),
+                encryption_secret_key,
+                encryption_public_key,
+            },
+            identity_chat_private_key,
+        ))
+    }
+}
+
+/// Map unavailable wallet derivations to the account-operation error contract.
+fn product_authority_error(err: ProductAccountError) -> AuthorityError {
+    AuthorityError::Unavailable {
+        reason: err.to_string(),
+    }
+}

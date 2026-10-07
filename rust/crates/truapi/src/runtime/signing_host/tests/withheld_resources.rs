@@ -63,11 +63,19 @@ fn withholding_nothing_leaves_every_resource_granted() {
     futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
         .expect("activation succeeds");
     activation.set_grant_allowances_unchecked(true);
-    let runtime = product_runtime(services, activation);
+    let runtime = product_runtime(services, activation.clone());
 
     assert_eq!(
-        allocate(&runtime, vec![v01::AllocatableResource::AutoSigning]),
-        vec![v01::AllocationOutcome::Allocated],
+        (
+            allocate(&runtime, vec![v01::AllocatableResource::AutoSigning]),
+            activation
+                .wallet_authorization(
+                    &activation.current_operation().unwrap(),
+                    &ProductContext::new("myapp.dot".to_string()).unwrap()
+                )
+                .map(|authorization| authorization.is_some()),
+        ),
+        (vec![v01::AllocationOutcome::Allocated], Ok(false)),
     );
 }
 
@@ -148,7 +156,9 @@ fn a_withheld_bulletin_allowance_yields_no_key_on_either_call() {
         .expect("activation succeeds");
     activation.set_grant_allowances_unchecked(true);
     activation.set_withheld_resources(vec!["BulletinAllowance".to_string()]);
-    let session = activation.current_session().expect("the session just made");
+    let session = activation
+        .current_operation()
+        .expect("the session just made");
     let cx = CallContext::default();
 
     let keys = futures::executor::block_on(async {

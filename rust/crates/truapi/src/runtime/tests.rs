@@ -1,5 +1,6 @@
 //! Shared runtime fixtures and cross-capability integration tests.
 
+use super::authority::{AccountCaller, AccountInvocation};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -5381,6 +5382,46 @@ fn an_authority_call_withdrawn_before_it_starts_is_never_polled() {
 }
 
 #[test]
+fn product_reset_during_allocation_review_cannot_request_paired_grants() {
+    let (release, gate) = futures::channel::oneshot::channel();
+    let platform = Arc::new(StubPlatform {
+        resource_allocation_confirmed: true,
+        resource_allocation_confirmation_gate: Mutex::new(Some(gate)),
+        ..Default::default()
+    });
+    let (host_config, product) = runtime_config("myapp.dot");
+    let (host, pairing_host) = ProductRuntimeHost::new_pairing_for_tests(
+        platform.clone(),
+        host_config,
+        product,
+        test_spawner(),
+    );
+    install_pairing_session(&host, sso_session_info());
+    let cx = CallContext::default();
+    let call = ResourceAllocation::request(&host, &cx, resource_allocation_request());
+    futures::pin_mut!(call);
+    assert!(call.as_mut().now_or_never().is_none());
+    futures::executor::block_on(pairing_host.clear_product_state("myapp.dot")).unwrap();
+    release.send(()).unwrap();
+    assert_eq!(
+        (
+            call.as_mut()
+                .now_or_never()
+                .map(|result| result.map(|_| ())),
+            recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement")
+        ),
+        (
+            Some(Err(CallError::Domain(
+                HostRequestResourceAllocationError::V1(v01::ResourceAllocationError::Unknown {
+                    reason: AuthorityError::Disconnected.to_string()
+                })
+            ))),
+            0
+        ),
+    );
+}
+
+#[test]
 fn resource_allocation_accepts_confirmation_then_returns_sso_response() {
     let session = sso_session_info();
     let slot_account_key = {
@@ -5559,6 +5600,52 @@ fn auto_signing_serves_sign_raw_locally_without_prompt_or_sso() {
             .verify_simple(b"substrate", b"<Bytes>hello world</Bytes>", &signature)
             .is_ok(),
         "the local signature is over the watermarked bytes, by the product account",
+    );
+}
+
+#[test]
+fn legacy_raw_review_preserves_cached_product_signing() {
+    let session = sso_session_info();
+    let mut platform = auto_signing_test_platform(&session, "auto-1");
+    Arc::get_mut(&mut platform).unwrap().sign_raw_confirmed = true;
+    let host = ProductRuntimeHost::new(
+        platform.clone(),
+        runtime_config("myapp.dot"),
+        test_spawner(),
+    );
+    install_pairing_session(&host, session);
+    request_auto_signing(&host, "auto-1");
+    let keypair = granted_keypair();
+    let request = v01::HostSignRawWithLegacyAccountRequest {
+        signer: subxt::utils::AccountId32(keypair.public.to_bytes()).to_string(),
+        payload: v01::RawPayload::Bytes {
+            bytes: b"legacy cached".to_vec(),
+        },
+    };
+    let HostSignRawWithLegacyAccountResponse::V1(response) =
+        futures::executor::block_on(host.sign_raw_with_legacy_account(
+            &CallContext::default(),
+            HostSignRawWithLegacyAccountRequest::V1(request.clone()),
+        ))
+        .expect("the reviewed legacy request uses the cached key without another SSO response");
+    let signature = schnorrkel::Signature::from_bytes(&response.signature).unwrap();
+    assert_eq!(
+        (
+            keypair
+                .public
+                .verify_simple(b"substrate", b"<Bytes>legacy cached</Bytes>", &signature)
+                .is_ok(),
+            response.signed_transaction,
+            platform.sign_raw_reviews.lock().unwrap().clone()
+        ),
+        (
+            true,
+            None,
+            vec![crate::platform::SignRawReview::LegacyAccount {
+                request,
+                watermarked: true
+            }]
+        ),
     );
 }
 
@@ -7492,24 +7579,27 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
         .current_session()
         .expect("the pairing host has an active session");
 
-    let proof = futures::executor::block_on(ProductAuthority::create_proof(
+    let proof = futures::executor::block_on(AccountHolder::create_proof(
         &*pairing_host,
-        &CallContext::default(),
-        &session,
-        crate::host_internal::sso_messages::ProductRequest {
-            calling_product_id: "dim2.dot".to_string(),
-            payload: v01::HostAccountCreateProofRequest {
-                key_handle: v01::ProductAccountId {
-                    dot_ns_identifier: "peopl.dot".to_string(),
-                    derivation_index: v01::DerivationIndex::Index(0),
-                },
-                context: v01::ProductProofContext {
-                    product_id: "dim2.dot".to_string(),
-                    suffix: v01::DerivationIndex::Index(0),
-                },
-                ring_location: ring_location_fixture(),
-                message: b"prove me".to_vec(),
+        AccountInvocation {
+            call: &CallContext::default(),
+            session: &session,
+            caller: AccountCaller::Local {
+                product: &ProductContext::new("dim2.dot".to_string()).unwrap(),
+                authorization: None,
             },
+        },
+        v01::HostAccountCreateProofRequest {
+            key_handle: v01::ProductAccountId {
+                dot_ns_identifier: "peopl.dot".to_string(),
+                derivation_index: v01::DerivationIndex::Index(0),
+            },
+            context: v01::ProductProofContext {
+                product_id: "dim2.dot".to_string(),
+                suffix: v01::DerivationIndex::Index(0),
+            },
+            ring_location: ring_location_fixture(),
+            message: b"prove me".to_vec(),
         },
     ));
     assert_eq!(
@@ -7518,19 +7608,22 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
         "the pairing authority must refuse a foreign key that no manifest granted"
     );
 
-    let signed = futures::executor::block_on(ProductAuthority::ring_vrf_sign(
+    let signed = futures::executor::block_on(AccountHolder::ring_vrf_sign(
         &*pairing_host,
-        &CallContext::default(),
-        &session,
-        crate::host_internal::sso_messages::ProductRequest {
-            calling_product_id: "dim2.dot".to_string(),
-            payload: v01::HostAccountRingVrfSignRequest {
-                key_handle: v01::ProductAccountId {
-                    dot_ns_identifier: "peopl.dot".to_string(),
-                    derivation_index: v01::DerivationIndex::Index(0),
-                },
-                message: b"sign me".to_vec(),
+        AccountInvocation {
+            call: &CallContext::default(),
+            session: &session,
+            caller: AccountCaller::Local {
+                product: &ProductContext::new("dim2.dot".to_string()).unwrap(),
+                authorization: None,
             },
+        },
+        v01::HostAccountRingVrfSignRequest {
+            key_handle: v01::ProductAccountId {
+                dot_ns_identifier: "peopl.dot".to_string(),
+                derivation_index: v01::DerivationIndex::Index(0),
+            },
+            message: b"sign me".to_vec(),
         },
     ));
     assert_eq!(
