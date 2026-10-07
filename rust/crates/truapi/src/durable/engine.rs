@@ -172,21 +172,20 @@ mod tests {
         let mut group = engine.observe_group(&DOMAIN, &GroupId::new("op"));
 
         assert_eq!(
-            (
-                block_on(status.next()).unwrap().unwrap(),
-                block_on(group.next()).unwrap().unwrap(),
-                block_on(engine.status(id)).unwrap(),
-                block_on(engine.status(DurableTxId(99))).unwrap(),
-            ),
-            (
-                Some(DurableTxStatus::Pending),
-                vec![DurableTxState {
-                    id,
-                    status: DurableTxStatus::Pending
-                }],
-                Some(DurableTxStatus::Pending),
-                None
-            )
+            block_on(status.next()).unwrap().unwrap(),
+            Some(DurableTxStatus::Pending)
         );
+        assert_eq!(
+            block_on(group.next()).unwrap().unwrap(),
+            vec![DurableTxState {
+                id,
+                status: DurableTxStatus::Pending
+            }]
+        );
+        assert_eq!(
+            block_on(engine.status(id)).unwrap(),
+            Some(DurableTxStatus::Pending)
+        );
+        assert_eq!(block_on(engine.status(DurableTxId(99))).unwrap(), None);
     }
 }

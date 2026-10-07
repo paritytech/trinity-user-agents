@@ -354,7 +354,6 @@ mod tests {
         (fixture, events.unwrap())
     }
 
-    /// Android: WatcherScenariosTest `InBlock with a successful dispatch records the block`.
     #[test]
     fn inclusion_in_a_best_block_with_success_records_that_block() {
         let (fixture, events) = watched();
@@ -384,17 +383,12 @@ mod tests {
         drop(events);
 
         fixture.wait_released();
-        assert_eq!(
-            {
-                let observed = fixture.entry().status;
-                (observed, fixture.nudged())
-            },
-            (DurableTxStatus::Pending, true)
-        );
+        assert_eq!(fixture.entry().status, DurableTxStatus::Pending);
+        assert!(fixture.nudged());
     }
 
-    /// Android: WatcherScenariosTest `Finalized with success finalizes the entry`,
-    /// `a finalized transaction asks for no recovery`.
+    /// The watch decided the transaction itself, so starting recovery would
+    /// only re-derive an answer that exists.
     #[test]
     fn finality_with_success_finalizes_and_asks_for_no_recovery() {
         let (mut fixture, events) = watched();
@@ -408,13 +402,8 @@ mod tests {
 
         fixture.wait_for(DurableTxStatus::FinalizedSuccess);
         fixture.wait_released();
-        assert_eq!(
-            {
-                let observed = fixture.entry().success_detected_at;
-                (observed, fixture.nudged())
-            },
-            (Some(block(125)), false)
-        );
+        assert_eq!(fixture.entry().success_detected_at, Some(block(125)));
+        assert!(!fixture.nudged());
     }
 
     #[test]
@@ -431,8 +420,9 @@ mod tests {
         fixture.wait_for(DurableTxStatus::Failure);
     }
 
-    /// Android: WatcherScenariosTest `a node refusal before submission fails without waiting for the window`,
-    /// `a pre-submission refusal asks for no recovery`.
+    /// The node rejects the extrinsic during validation, for example because
+    /// its nonce is stale. Nothing can ever include these bytes, so the
+    /// transaction fails without waiting for its era.
     #[test]
     fn a_refusal_before_submission_fails_at_once_and_sends_nothing() {
         let (mut fixture, _) = register(|chain| {
@@ -442,17 +432,12 @@ mod tests {
 
         fixture.wait_for(DurableTxStatus::Failure);
         fixture.wait_released();
-        assert_eq!(
-            {
-                let observed = fixture.chain.state().submitted.len();
-                (observed, fixture.nudged())
-            },
-            (0, false)
-        );
+        assert_eq!(fixture.chain.state().submitted.len(), 0);
+        assert!(!fixture.nudged());
     }
 
-    /// Android: WatcherScenariosTest `a failure after reaching the node is left to the pass`,
-    /// `a transaction left undecided when its watch ends is handed to recovery`.
+    /// The pool drops the extrinsic. It may still have been included, so the
+    /// watch decides nothing and recovery takes over.
     #[test]
     fn a_dropped_transaction_is_handed_to_recovery() {
         let (mut fixture, events) = watched();
@@ -462,16 +447,12 @@ mod tests {
             .unwrap();
 
         fixture.wait_released();
-        assert_eq!(
-            {
-                let observed = fixture.entry().status;
-                (observed, fixture.nudged())
-            },
-            (DurableTxStatus::Pending, true)
-        );
+        assert_eq!(fixture.entry().status, DurableTxStatus::Pending);
+        assert!(fixture.nudged());
     }
 
-    /// Android: WatcherScenariosTest `inclusion in an unreadable block records nothing`.
+    /// The block is announced but its events cannot be read yet. Inclusion is
+    /// not success, so nothing is recorded.
     #[test]
     fn inclusion_whose_outcome_cannot_be_read_records_nothing() {
         let (fixture, events) = watched();
@@ -493,7 +474,8 @@ mod tests {
         assert_eq!(fixture.entry().status, DurableTxStatus::Pending);
     }
 
-    /// Android: WatcherScenariosTest `a retraction of the recorded block clears the record`.
+    /// A reorg retracts the best block the success was recorded at; a success
+    /// resting on a block that is gone is no evidence.
     #[test]
     fn a_retraction_of_the_recorded_block_clears_the_record() {
         let (fixture, events) = watched();
@@ -513,7 +495,9 @@ mod tests {
         assert_eq!(fixture.entry().success_detected_at, None);
     }
 
-    /// Android: WatcherScenariosTest `a retraction naming another block leaves the record alone`.
+    /// The extrinsic moves to a block whose outcome cannot be read, and that
+    /// block is retracted. The earlier recorded success is not what was
+    /// retracted.
     #[test]
     fn a_retraction_of_a_block_that_was_not_recorded_leaves_the_record() {
         let (fixture, events) = watched();
@@ -539,13 +523,12 @@ mod tests {
         drop(events);
 
         fixture.wait_released();
-        assert_eq!(
-            (fixture.entry().status, fixture.entry().success_detected_at),
-            (DurableTxStatus::PendingSuccess, Some(block(135)))
-        );
+        assert_eq!(fixture.entry().status, DurableTxStatus::PendingSuccess);
+        assert_eq!(fixture.entry().success_detected_at, Some(block(135)));
     }
 
-    /// Android: WatcherScenariosTest `a failed subscription hands the entry to recovery with its lock intact`.
+    /// The connection closes mid-watch. The transaction stays pending with its
+    /// locks and recovery decides it.
     #[test]
     fn a_watch_that_ends_without_a_verdict_is_handed_to_recovery() {
         let (mut fixture, events) = watched();
@@ -553,16 +536,10 @@ mod tests {
         drop(events);
 
         fixture.wait_released();
-        assert_eq!(
-            {
-                let observed = fixture.entry().status;
-                (observed, fixture.nudged())
-            },
-            (DurableTxStatus::Pending, true)
-        );
+        assert_eq!(fixture.entry().status, DurableTxStatus::Pending);
+        assert!(fixture.nudged());
     }
 
-    /// Android: WatcherScenariosTest `a subscription that cannot open is handled like a dead one`.
     #[test]
     fn a_submission_that_cannot_open_is_handed_to_recovery() {
         let (mut fixture, _) = register(|chain| {
@@ -571,13 +548,8 @@ mod tests {
         });
 
         fixture.wait_released();
-        assert_eq!(
-            {
-                let observed = fixture.entry().status;
-                (observed, fixture.nudged())
-            },
-            (DurableTxStatus::Pending, true)
-        );
+        assert_eq!(fixture.entry().status, DurableTxStatus::Pending);
+        assert!(fixture.nudged());
     }
 
     /// The bytes exist only in memory, so a validation call that fails must
@@ -595,8 +567,8 @@ mod tests {
         );
     }
 
-    /// Android: WatcherScenariosTest `the silence timeout`; a watch that hears
-    /// nothing releases the transaction.
+    /// The node stops reporting without closing the subscription. Recovery
+    /// takes over long before the era could end.
     #[test]
     fn a_silent_watch_releases_after_the_timeout() {
         let (mut fixture, _events) = watched();

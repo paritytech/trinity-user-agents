@@ -93,10 +93,9 @@ mod tests {
     fn an_era_is_born_at_its_block_and_dies_a_period_later() {
         let mortality = Mortality::new(block(100), 64).unwrap();
 
-        assert_eq!(
-            (mortality.birth(), mortality.period(), mortality.death()),
-            (block(100), 64, 164)
-        );
+        assert_eq!(mortality.birth(), block(100));
+        assert_eq!(mortality.period(), 64);
+        assert_eq!(mortality.death(), 164);
     }
 
     /// `Era::mortal` rounds a period up to a power of two, so a period that

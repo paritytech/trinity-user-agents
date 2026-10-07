@@ -41,7 +41,7 @@ impl DurableTxEngine {
             Ok(domains) => domains,
             Err(error) => return warn!(%error, "durable recovery pass could not read the ledger"),
         };
-        for (genesis, domains) in self.by_chain(domains) {
+        for (genesis, domains) in self.group_domains_by_chain(domains) {
             self.decide_chain(genesis, domains).await;
         }
     }
@@ -49,7 +49,7 @@ impl DurableTxEngine {
     /// Groups `domains` by the chain their oracle names, so each chain's
     /// heads are read once. A domain with no oracle has no chain and is
     /// skipped.
-    fn by_chain(&self, domains: Vec<DomainId>) -> BTreeMap<H256, ChainDomains<'_>> {
+    fn group_domains_by_chain(&self, domains: Vec<DomainId>) -> BTreeMap<H256, ChainDomains<'_>> {
         let mut by_chain: BTreeMap<H256, ChainDomains<'_>> = BTreeMap::new();
         for domain in domains {
             match self.registry.oracle(&domain) {
@@ -281,7 +281,8 @@ mod tests {
         }
     }
 
-    /// iOS: `A settled ledger does not pin a chain view`.
+    /// Recovery runs on every launch, and usually nothing is live; that must
+    /// cost no chain reads.
     #[test]
     fn a_settled_ledger_reads_no_chain() {
         let chain = FakeChain::new(150, 200);
@@ -293,7 +294,6 @@ mod tests {
         assert_eq!(chain.state().heads_reads, 0);
     }
 
-    /// iOS: `A decided transaction is written through the oracle's answer`.
     #[test]
     fn the_oracles_answer_is_written() {
         let chain = FakeChain::new(150, 200);
@@ -306,7 +306,8 @@ mod tests {
         assert_eq!(status(&engine.db, id), DurableTxStatus::FinalizedSuccess);
     }
 
-    /// iOS: `A submission-owned transaction gets no verdict`.
+    /// A watch is following the transaction right now and will decide it
+    /// faster; a pass deciding it too would race the watch's writes.
     #[test]
     fn a_transaction_a_watch_owns_gets_no_verdict() {
         let chain = FakeChain::new(150, 200);
@@ -322,7 +323,8 @@ mod tests {
         assert_eq!(status(&engine.db, id), DurableTxStatus::Pending);
     }
 
-    /// iOS: `A domain with no registered oracle is left alone`.
+    /// An app update removed a domain while its rows were live. Nothing can
+    /// decide them any more, but they must not be decided wrongly either.
     #[test]
     fn a_domain_without_an_oracle_is_left_alone() {
         let chain = FakeChain::new(150, 200);
@@ -333,10 +335,8 @@ mod tests {
 
         block_on(engine.run_pass());
 
-        assert_eq!(
-            (status(&engine.db, id), chain.state().heads_reads),
-            (DurableTxStatus::Pending, 0)
-        );
+        assert_eq!(status(&engine.db, id), DurableTxStatus::Pending);
+        assert_eq!(chain.state().heads_reads, 0);
     }
 
     /// Proves completion at the finalized head for the listed transactions.
@@ -348,7 +348,9 @@ mod tests {
         }
     }
 
-    /// iOS: `A second round lets a domain see what the first round wrote`.
+    /// A domain may only be able to infer a transaction's completion from its
+    /// successor's status, as coinage infers a minter from a finalized
+    /// consumer. The second round sees what the first one wrote.
     #[test]
     fn a_second_round_sees_what_the_first_wrote() {
         const PREDECESSOR: DurableTxId = DurableTxId(1);
@@ -376,18 +378,15 @@ mod tests {
         block_on(engine.run_pass());
 
         assert_eq!(
-            (
-                status(&engine.db, PREDECESSOR),
-                status(&engine.db, SUCCESSOR)
-            ),
-            (
-                DurableTxStatus::FinalizedSuccess,
-                DurableTxStatus::FinalizedSuccess
-            )
+            status(&engine.db, PREDECESSOR),
+            DurableTxStatus::FinalizedSuccess
+        );
+        assert_eq!(
+            status(&engine.db, SUCCESSOR),
+            DurableTxStatus::FinalizedSuccess
         );
     }
 
-    /// iOS: `Two domains on one chain share a single pinned view`.
     #[test]
     fn two_domains_on_one_chain_read_its_heads_once() {
         let chain = FakeChain::new(150, 200);
@@ -411,7 +410,8 @@ mod tests {
         assert_eq!(chain.state().heads_reads, 1);
     }
 
-    /// iOS: `A pass that cannot pin writes nothing`.
+    /// The node is unreachable when the pass starts: without heads nothing can
+    /// be decided, so nothing is written.
     #[test]
     fn a_chain_whose_heads_cannot_be_read_gets_no_verdict() {
         let chain = FakeChain::new(150, 200);
@@ -425,7 +425,9 @@ mod tests {
         assert_eq!(status(&engine.db, id), DurableTxStatus::Pending);
     }
 
-    /// iOS: `An oracle that fails to open leaves its domain untouched this pass`.
+    /// The domain's own chain read fails mid-pass. Even a transaction the
+    /// search could find waits for the next pass instead of being decided on
+    /// half the evidence.
     #[test]
     fn an_oracle_that_fails_to_open_leaves_its_domain_untouched() {
         let chain = FakeChain::new(150, 200);
@@ -444,8 +446,8 @@ mod tests {
         assert_eq!(status(&engine.db, id), DurableTxStatus::Pending);
     }
 
-    /// iOS: `Recorded canonicality is read from the view, once per recorded height`.
-    /// Android: ReorgScenariosTest `Rule 0 clears and demotes when the recorded block is gone`.
+    /// The watch saw the transaction in a best block, which a reorg then
+    /// replaced. With nothing else proving it ran, the success is withdrawn.
     #[test]
     fn a_record_whose_block_was_reorged_out_is_demoted_and_cleared() {
         let chain = FakeChain::new(150, 200);
@@ -462,13 +464,12 @@ mod tests {
         let entry = block_on(engine.db.read(move |conn| dao::entry(conn, id)))
             .unwrap()
             .unwrap();
-        assert_eq!(
-            (entry.status, entry.success_detected_at),
-            (DurableTxStatus::Pending, None)
-        );
+        assert_eq!(entry.status, DurableTxStatus::Pending);
+        assert_eq!(entry.success_detected_at, None);
     }
 
-    /// Android: ReorgScenariosTest `an unreachable node does not withdraw a detected success`.
+    /// The node cannot serve the hash at the recorded height, for example after
+    /// a restart. A transport failure must not withdraw a success.
     #[test]
     fn an_unreadable_record_height_keeps_the_success() {
         let chain = FakeChain::new(150, 200);
@@ -485,7 +486,8 @@ mod tests {
         assert_eq!(status(&engine.db, id), DurableTxStatus::PendingSuccess);
     }
 
-    /// Android: ReorgScenariosTest `a reorg shortening the chain past the record clears it`.
+    /// A reorg replaced the branch with a shorter one that does not reach the
+    /// recorded block at all.
     #[test]
     fn a_chain_shorter_than_the_record_clears_it() {
         let chain = FakeChain::new(150, 155);
@@ -519,13 +521,12 @@ mod tests {
         let entry = block_on(engine.db.read(move |conn| dao::entry(conn, id)))
             .unwrap()
             .unwrap();
-        assert_eq!(
-            (entry.status, entry.success_detected_at),
-            (DurableTxStatus::FinalizedSuccess, Some(block(120)))
-        );
+        assert_eq!(entry.status, DurableTxStatus::FinalizedSuccess);
+        assert_eq!(entry.success_detected_at, Some(block(120)));
     }
 
-    /// Android: SystemScenariosTest `best-chain height alone yields no terminal verdict while finality stalls`.
+    /// Finality stalls while best blocks keep coming. The era has passed on the
+    /// best chain, but only finalized facts may fail a transaction.
     #[test]
     fn best_height_alone_never_expires_a_transaction() {
         let chain = FakeChain::new(150, 400);

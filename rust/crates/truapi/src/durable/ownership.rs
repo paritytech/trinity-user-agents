@@ -68,7 +68,8 @@ mod tests {
 
     const ID: DurableTxId = DurableTxId(1);
 
-    /// Android: RegistrationScenariosTest `ownership is one-shot and never taken back`.
+    /// A late event from a watch that already released its transaction must not
+    /// take it back from recovery.
     #[test]
     fn a_released_attempt_is_never_owned_again() {
         let ownership = Ownership::default();
@@ -76,26 +77,20 @@ mod tests {
         assert!(ownership.acquire(ID, hash));
         ownership.release(ID, hash);
 
-        assert_eq!(
-            (ownership.acquire(ID, hash), ownership.is_owned(ID)),
-            (false, false)
-        );
+        assert!(!ownership.acquire(ID, hash));
+        assert!(!ownership.is_owned(ID));
     }
 
-    /// iOS: SubmissionWatcherTests `a rebuilt transaction is owned afresh`.
+    /// A policy rebuilt the transaction with new bytes under the same id; the
+    /// new attempt gets a watch of its own.
     #[test]
     fn a_new_attempt_of_the_same_transaction_is_owned_afresh() {
         let ownership = Ownership::default();
         ownership.acquire(ID, H256::repeat_byte(1));
         ownership.release(ID, H256::repeat_byte(1));
 
-        assert_eq!(
-            (
-                ownership.acquire(ID, H256::repeat_byte(2)),
-                ownership.is_owned(ID)
-            ),
-            (true, true)
-        );
+        assert!(ownership.acquire(ID, H256::repeat_byte(2)));
+        assert!(ownership.is_owned(ID));
     }
 
     #[test]

@@ -235,7 +235,6 @@ mod tests {
         ScriptedScope::default()
     }
 
-    /// Android: `a canonical record at or below the finalized head finalizes`.
     #[test]
     fn rule_0_a_canonical_record_at_or_below_finalized_finalizes() {
         block_on(async {
@@ -248,7 +247,6 @@ mod tests {
         })
     }
 
-    /// Android: `a canonical record above the finalized head holds at PENDING_SUCCESS`.
     #[test]
     fn rule_0_a_canonical_record_above_finalized_holds_pending_success() {
         block_on(async {
@@ -261,7 +259,9 @@ mod tests {
         })
     }
 
-    /// Android: `a record whose block is gone demotes to PENDING when nothing is visible any more`.
+    /// A reorg removed the block the success was recorded at and the domain
+    /// sees no effect any more: the transaction is pending again, so its
+    /// effects are no longer trusted.
     #[test]
     fn rule_0_a_gone_record_with_nothing_visible_demotes_and_clears() {
         block_on(async {
@@ -272,7 +272,8 @@ mod tests {
         })
     }
 
-    /// Android: `a record whose block is gone re-records the best head when completion is still visible there`.
+    /// The transaction was re-included on the new branch, so its effect is
+    /// still visible at the best head.
     #[test]
     fn rule_0_a_gone_record_still_completed_at_best_re_records_the_best_head() {
         block_on(async {
@@ -320,7 +321,8 @@ mod tests {
         })
     }
 
-    /// Android: `an unreadable canonicality check leaves the transaction undecided`.
+    /// The recorded block's height could not be read. Even a domain that proves
+    /// completion waits: the record has to be checked first.
     #[test]
     fn rule_0_an_unreadable_canonicity_check_is_undecided() {
         block_on(async {
@@ -335,8 +337,6 @@ mod tests {
         })
     }
 
-    /// Android: `completion proven at the finalized head finalizes`.
-    /// iOS: `Rule 1 writes no record`.
     #[test]
     fn rule_1_completion_proven_at_finalized_finalizes() {
         block_on(async {
@@ -354,7 +354,6 @@ mod tests {
         })
     }
 
-    /// Android: `completion proven only at the best head is PENDING_SUCCESS`.
     #[test]
     fn rule_2_completion_proven_only_at_best_is_pending_success() {
         block_on(async {
@@ -377,7 +376,6 @@ mod tests {
         })
     }
 
-    /// Android: `the finalized head wins over the best head on the same evidence`.
     #[test]
     fn rule_1_wins_over_rule_2_on_the_same_evidence() {
         block_on(async {
@@ -396,7 +394,6 @@ mod tests {
         })
     }
 
-    /// Android: `proven non-completion after mortality fails the transaction`.
     #[test]
     fn rule_3_proven_non_completion_after_the_era_fails() {
         block_on(async {
@@ -414,7 +411,8 @@ mod tests {
         })
     }
 
-    /// Android: `proven non-completion before mortality does not fail the transaction`.
+    /// The transaction can still be included until its era ends, so absence of
+    /// its effect means nothing yet.
     #[test]
     fn rule_3_proven_non_completion_before_the_era_ends_does_not_fail() {
         block_on(async {
@@ -445,7 +443,7 @@ mod tests {
         })
     }
 
-    /// Android: `proven completion beats proven non-completion`.
+    /// A domain that answers both ways cannot fail a transaction that ran.
     #[test]
     fn proven_completion_beats_proven_non_completion() {
         block_on(async {
@@ -464,7 +462,8 @@ mod tests {
         })
     }
 
-    /// Android: `proven non-completion at the best head short circuits the search while the window is open`.
+    /// A transaction with no evidence yet must not cost a body search on every
+    /// new head.
     #[test]
     fn rule_4_short_circuits_the_search_while_the_window_is_open() {
         block_on(async {
@@ -476,14 +475,12 @@ mod tests {
 
             let outcome = evaluate_ladder(&tx(None), &scope, &view, None).await;
 
-            assert_eq!(
-                (outcome, view.searches()),
-                (decided(DurableTxStatus::Pending, None, None), 0)
-            );
+            assert_eq!(outcome, decided(DurableTxStatus::Pending, None, None));
+            assert_eq!(view.searches(), 0);
         })
     }
 
-    /// Android: `the short circuit does not fire once mortality has expired`.
+    /// Past the era the search is the only thing left that can decide it.
     #[test]
     fn rule_4_does_not_fire_once_the_era_has_ended() {
         block_on(async {
@@ -499,7 +496,6 @@ mod tests {
         })
     }
 
-    /// Android: `a successful dispatch found in the window finalizes`.
     #[test]
     fn rule_5_a_successful_dispatch_found_finalizes_at_its_block() {
         block_on(async {
@@ -517,8 +513,8 @@ mod tests {
         })
     }
 
-    /// Android: `a failed dispatch found in the window fails the transaction`,
-    /// `a failed dispatch is reported as a dispatch failure`.
+    /// The extrinsic was included and its dispatch failed: inclusion is not
+    /// success.
     #[test]
     fn rule_5_a_failed_dispatch_found_fails_as_dispatch_failed() {
         block_on(async {
@@ -540,7 +536,7 @@ mod tests {
         })
     }
 
-    /// Android: `an unreadable outcome leaves the transaction PENDING`.
+    /// The extrinsic is in a block whose events are pruned on this node.
     #[test]
     fn rule_5_an_unreadable_outcome_stays_pending() {
         block_on(async {
@@ -555,8 +551,8 @@ mod tests {
         })
     }
 
-    /// Android: `a transaction that never ran within its window is reported as expired`,
-    /// `absence fails the transaction only once the whole window was read and mortality expired`.
+    /// The extrinsic never made it into any block of its era, and every block
+    /// was read.
     #[test]
     fn rule_5_absence_over_the_whole_closed_window_expires() {
         block_on(async {
@@ -569,7 +565,7 @@ mod tests {
         })
     }
 
-    /// Android: `a partially read window leaves the transaction PENDING`.
+    /// Some blocks of the era could not be read, so absence proves nothing.
     #[test]
     fn rule_5_a_partially_read_window_stays_pending() {
         block_on(async {
@@ -579,7 +575,6 @@ mod tests {
         })
     }
 
-    /// iOS: `the search window runs from the checkpoint to F, never past mortality`.
     #[test]
     fn rule_5_searches_from_birth_to_the_earlier_of_death_and_finalized() {
         block_on(async {
@@ -589,14 +584,13 @@ mod tests {
             evaluate_ladder(&tx(None), &says(), &early, None).await;
             evaluate_ladder(&tx(None), &says(), &late, None).await;
 
-            assert_eq!(
-                (early.searched_ranges(), late.searched_ranges()),
-                (vec![(BIRTH, 130)], vec![(BIRTH, DEATH)])
-            );
+            assert_eq!(early.searched_ranges(), vec![(BIRTH, 130)]);
+            assert_eq!(late.searched_ranges(), vec![(BIRTH, DEATH)]);
         })
     }
 
-    /// iOS: `a checkpoint above F has nothing to search and stays pending`.
+    /// The extrinsic was signed against a best block finality has not reached
+    /// yet.
     #[test]
     fn a_birth_above_finalized_stays_pending_without_searching() {
         block_on(async {
@@ -604,14 +598,11 @@ mod tests {
 
             let outcome = evaluate_ladder(&tx(None), &says(), &view, None).await;
 
-            assert_eq!(
-                (outcome, view.searches()),
-                (decided(DurableTxStatus::Pending, None, None), 0)
-            );
+            assert_eq!(outcome, decided(DurableTxStatus::Pending, None, None));
+            assert_eq!(view.searches(), 0);
         })
     }
 
-    /// Android: `a domain with no oracle is still decided by the search`.
     #[test]
     fn an_unobservable_domain_is_still_decided_by_the_search() {
         block_on(async {

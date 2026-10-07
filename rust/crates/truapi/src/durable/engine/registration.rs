@@ -88,6 +88,10 @@ impl DurableTxEngine {
         let genesis = self
             .chain_of(&request.domain)
             .ok_or_else(|| RegistrationError::UnknownDomain(request.domain.clone()))?;
+        // Detached from the caller: once queued, the write commits on the
+        // database thread even if this future is dropped (a cancelled FFI
+        // call, a select), and this task holds the only copy of the signed
+        // bytes that must then be broadcast.
         let (done, outcome) = oneshot::channel();
         let engine = self.clone();
         (self.spawner)(Box::pin(async move {
@@ -210,7 +214,6 @@ mod tests {
         ));
     }
 
-    /// iOS: `Ids come back in registration order and every one is owned by its submission`.
     #[test]
     fn registered_ids_come_back_in_order_and_are_owned_by_their_watch() {
         let chain = FakeChain::new(130, 140);
@@ -265,8 +268,9 @@ mod tests {
         );
     }
 
-    /// Android: ownership is taken in the registering transaction, so a
-    /// committed row always has an owner and a pass never reaches it first.
+    /// A recovery pass may run the moment the rows commit. Ownership is taken
+    /// inside the write, so the pass never evaluates a transaction its watch is
+    /// about to decide.
     #[test]
     fn a_registered_transaction_is_owned_before_its_rows_commit() {
         let chain = FakeChain::new(130, 140);
@@ -283,8 +287,8 @@ mod tests {
         assert!(owned_in_write);
     }
 
-    /// iOS: `The hook runs inside the transaction with the minted ids`.
-    /// Android: LedgerAtomicityTest `aDomainsRowsJoinTheEnginesTransaction`.
+    /// A domain locks the items a transaction spends in the same write as the
+    /// ledger row, so neither can exist without the other.
     #[test]
     fn the_hook_writes_its_rows_in_the_same_transaction_with_the_new_ids() {
         let chain = FakeChain::new(130, 140);
@@ -306,11 +310,12 @@ mod tests {
                 .read(|conn| Ok(conn.query_row("SELECT tx_id FROM locks", [], |row| row.get(0))?)),
         )
         .unwrap();
-        assert_eq!((hooked, locked), (ids.clone(), ids[0].0));
+        assert_eq!(hooked, ids.clone());
+        assert_eq!(locked, ids[0].0);
     }
 
-    /// iOS: `A throwing hook rolls the whole batch back and takes no ownership`.
-    /// Android: LedgerAtomicityTest `throwingAfterWritingDomainRowsRollsBackBoth`.
+    /// The domain finds an item it meant to lock already spent and refuses the
+    /// registration: nothing may be recorded, owned or submitted.
     #[test]
     fn a_failing_hook_rolls_back_every_row_and_broadcasts_nothing() {
         let chain = FakeChain::new(130, 140);
@@ -334,14 +339,12 @@ mod tests {
         .unwrap();
         assert!(matches!(result, Err(RegistrationError::Db(_))));
         assert_eq!(
-            (
-                block_on(engine.group(&DOMAIN, &GroupId::new("op"))).unwrap(),
-                tables,
-                chain.state().submitted.len(),
-                engine.ownership.is_owned(DurableTxId(1)),
-            ),
-            (vec![], 0, 0, false)
+            block_on(engine.group(&DOMAIN, &GroupId::new("op"))).unwrap(),
+            vec![]
         );
+        assert_eq!(tables, 0);
+        assert_eq!(chain.state().submitted.len(), 0);
+        assert!(!engine.ownership.is_owned(DurableTxId(1)));
     }
 
     /// A rolled-back id is handed out again, so its ownership must be given

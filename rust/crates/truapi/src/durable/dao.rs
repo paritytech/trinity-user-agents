@@ -320,20 +320,20 @@ mod tests {
             verdict(DurableTxStatus::PendingSuccess, Some(at)),
         );
 
+        assert!(wrote);
         assert_eq!(
-            (wrote, read(&db, move |conn| entry(conn, id)).unwrap()),
-            (
-                true,
-                DurableTxEntry {
-                    status: DurableTxStatus::PendingSuccess,
-                    success_detected_at: Some(at),
-                    ..observed
-                }
-            )
+            read(&db, move |conn| entry(conn, id)).unwrap(),
+            DurableTxEntry {
+                status: DurableTxStatus::PendingSuccess,
+                success_detected_at: Some(at),
+                ..observed
+            }
         );
     }
 
-    /// iOS: `updateTxStatus writes only while the observed status still holds`.
+    /// A pass and a watch both read a row as Pending; the watch records the
+    /// inclusion first. The pass's verdict, derived from the stale status, must
+    /// not overwrite it.
     #[test]
     fn a_verdict_is_refused_once_the_status_moved() {
         let (_dir, db) = open_db();
@@ -347,13 +347,16 @@ mod tests {
 
         let wrote = write_verdict(&db, observed, verdict(DurableTxStatus::Failure, None));
 
+        assert!(!wrote);
         assert_eq!(
-            (wrote, read(&db, move |conn| status(conn, id))),
-            (false, Some(DurableTxStatus::PendingSuccess))
+            read(&db, move |conn| status(conn, id)),
+            Some(DurableTxStatus::PendingSuccess)
         );
     }
 
-    /// Android: `a verdict is written only against the attempt it was derived from`.
+    /// A verdict derived from one attempt must not land on a row whose attempt
+    /// has since changed, as it will once a policy rebuilds a transaction under
+    /// the same id.
     #[test]
     fn a_verdict_is_refused_for_another_attempt() {
         let (_dir, db) = open_db();
@@ -368,7 +371,6 @@ mod tests {
         ));
     }
 
-    /// iOS: `updateTxStatus does not overwrite a terminal entry`.
     #[test]
     fn a_terminal_row_is_never_rewritten() {
         let (_dir, db) = open_db();
@@ -395,7 +397,8 @@ mod tests {
         ));
     }
 
-    /// iOS: `Group entries are scoped to their domain`.
+    /// Two domains may pick the same group name, such as an operation id; a
+    /// group is only ever read within its domain.
     #[test]
     fn a_group_lists_its_own_domain_in_registration_order() {
         let (_dir, db) = open_db();
@@ -462,22 +465,21 @@ mod tests {
         let group_id = GroupId::new("payment");
         let mut live = observe_has_live(&db);
         let mut grouped = observe_group(&db, DOMAIN, group_id.clone());
-        assert_eq!((next(&mut live), next(&mut grouped)), (false, vec![]));
+        assert!(!next(&mut live));
+        assert_eq!(next(&mut grouped), vec![]);
 
         let id = register(&db, Some(group_id), 1);
         let mut status = observe_status(&db, id);
 
+        assert!(next(&mut live));
         assert_eq!(
-            (next(&mut live), next(&mut grouped), next(&mut status)),
-            (
-                true,
-                vec![DurableTxState {
-                    id,
-                    status: DurableTxStatus::Pending
-                }],
-                Some(DurableTxStatus::Pending)
-            )
+            next(&mut grouped),
+            vec![DurableTxState {
+                id,
+                status: DurableTxStatus::Pending
+            }]
         );
+        assert_eq!(next(&mut status), Some(DurableTxStatus::Pending));
     }
 
     fn next<T>(stream: &mut BoxStream<'static, Result<T, DbError>>) -> T {

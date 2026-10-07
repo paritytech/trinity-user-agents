@@ -2,11 +2,14 @@
 
 use futures::FutureExt;
 use futures::channel::mpsc;
+use futures::future::ready;
 use futures::stream::{self, BoxStream, StreamExt};
 use subxt::utils::H256;
 use tracing::warn;
 
 use super::DurableTxEngine;
+use crate::chain::HeadEvent;
+use crate::chain_runtime::RuntimeFailure;
 use crate::durable::dao;
 
 /// What wakes the loop for another pass. An `Err` stops it.
@@ -62,8 +65,8 @@ impl DurableTxEngine {
         Ok(stream::select_all(sources).boxed())
     }
 
-    /// One trigger per head of the chain with `genesis`. A failed head read
-    /// is one missed head; the subscription ending is an error.
+    /// One trigger per head of the chain with `genesis`, ending in an error
+    /// when the node's head subscription ends.
     async fn head_triggers(&self, genesis: H256) -> Result<Triggers, RecoveryError> {
         let heads = self
             .heads
@@ -73,11 +76,7 @@ impl DurableTxEngine {
         let ended =
             stream::once(async move { Err(heads_lost(genesis, "head events ended".into())) });
         Ok(heads
-            .filter_map(move |head| async move {
-                head.map_err(|error| warn!(?genesis, %error, "durable recovery missed a head"))
-                    .ok()
-                    .map(|_| Ok(()))
-            })
+            .filter_map(move |head| ready(as_trigger(genesis, head)))
             .chain(ended)
             .boxed())
     }
@@ -95,6 +94,21 @@ impl DurableTxEngine {
                 warn!(%error, "durable recovery could not read the ledger");
                 true
             }
+        }
+    }
+}
+
+/// A head read is one trigger. A failed read is one missed head, not a
+/// reason to stop: later heads still follow.
+fn as_trigger(
+    genesis: H256,
+    head: Result<HeadEvent, RuntimeFailure>,
+) -> Option<Result<(), RecoveryError>> {
+    match head {
+        Ok(_) => Some(Ok(())),
+        Err(error) => {
+            warn!(?genesis, %error, "durable recovery missed a head");
+            None
         }
     }
 }
@@ -200,7 +214,9 @@ mod tests {
         fixture.oracle.opened.load(Ordering::SeqCst)
     }
 
-    /// Android: DurableRecoveryLoopTest `a settled ledger costs one pass`.
+    /// The app was killed after its last transaction was finalized but before
+    /// its row was updated; the launch pass settles it and recovery stops
+    /// without waiting for a head.
     #[test]
     fn a_ledger_settled_by_the_first_pass_costs_one_pass() {
         let fixture = fixture(1);
@@ -214,7 +230,6 @@ mod tests {
         assert_eq!(passes(&fixture), 1);
     }
 
-    /// Android: DurableRecoveryLoopTest `one pass per head until nothing is live`.
     #[test]
     fn one_pass_per_head_until_nothing_is_live() {
         let fixture = fixture(3);
@@ -231,10 +246,12 @@ mod tests {
             .unbounded_send(Ok(HeadEvent::Finalized(block(132))))
             .unwrap();
 
-        assert_eq!((running.join().unwrap(), passes(&fixture)), (Ok(()), 3));
+        assert_eq!(running.join().unwrap(), Ok(()));
+        assert_eq!(passes(&fixture), 3);
     }
 
-    /// Android: DurableRecoveryLoopTest `a best head drives a pass just as a finalized one does`.
+    /// Pre-finality success is read at the best head, so a new best block can
+    /// decide a transaction several blocks before finality does.
     #[test]
     fn a_best_head_drives_a_pass() {
         let fixture = fixture(2);
@@ -246,7 +263,8 @@ mod tests {
             .unbounded_send(Ok(HeadEvent::Best(block(141))))
             .unwrap();
 
-        assert_eq!((running.join().unwrap(), passes(&fixture)), (Ok(()), 2));
+        assert_eq!(running.join().unwrap(), Ok(()));
+        assert_eq!(passes(&fixture), 2);
     }
 
     /// A released watch hands its transaction back without waiting a block.
@@ -258,7 +276,8 @@ mod tests {
 
         fixture.engine.recovery_wakes.wake();
 
-        assert_eq!((running.join().unwrap(), passes(&fixture)), (Ok(()), 2));
+        assert_eq!(running.join().unwrap(), Ok(()));
+        assert_eq!(passes(&fixture), 2);
     }
 
     /// An error item is one missed head; the subscription goes on.
@@ -277,10 +296,13 @@ mod tests {
             .unbounded_send(Ok(HeadEvent::Finalized(block(131))))
             .unwrap();
 
-        assert_eq!((running.join().unwrap(), passes(&fixture)), (Ok(()), 2));
+        assert_eq!(running.join().unwrap(), Ok(()));
+        assert_eq!(passes(&fixture), 2);
     }
 
-    /// Android: DurableRecoveryLoopTest `a lost head subscription fails the loop so its host can retry`.
+    /// The app went to background and the node connection closed. Without heads
+    /// nothing would drive the next pass, so the loop fails and the host
+    /// retries it.
     #[test]
     fn a_head_subscription_that_ends_fails_the_loop() {
         let fixture = fixture(usize::MAX);
@@ -313,7 +335,8 @@ mod tests {
         ));
     }
 
-    /// Android: DurableRecoveryLoopTest `an unreadable ledger keeps the loop running rather than abandoning entries`.
+    /// Abandoning live transactions because the ledger could not be read once
+    /// is far worse than one more pass.
     #[test]
     fn an_unreadable_ledger_counts_as_live() {
         let fixture = fixture(1);
@@ -347,8 +370,9 @@ mod tests {
         assert_eq!(running.join().unwrap(), Ok(()));
     }
 
-    /// Android: the launch pass runs before any head subscription, so a
-    /// settled ledger finishes even when no head can be read.
+    /// The device is offline at launch with nothing live. Recovery must finish
+    /// rather than fail on a head subscription it never needed, or the host
+    /// would retry it forever.
     #[test]
     fn a_settled_ledger_needs_no_head_subscription() {
         let chain = FakeChain::new(130, 140);

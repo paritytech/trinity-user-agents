@@ -105,8 +105,8 @@ mod tests {
         block_on(search_range(chain, GENESIS, from, to, TX))
     }
 
-    /// Android: SearchRangeTest; the outcome is read from the block the
-    /// extrinsic was found in.
+    /// A reorg can reorder extrinsics, so the outcome is read from the block
+    /// the extrinsic was actually found in.
     #[test]
     fn a_hit_reports_its_block_and_the_outcome_read_there() {
         let chain = FakeChain::new(130, 140);
@@ -121,7 +121,6 @@ mod tests {
         );
     }
 
-    /// iOS: `Absence proven only when entire window readable`.
     #[test]
     fn absence_over_a_fully_read_range_is_complete() {
         let chain = FakeChain::new(130, 140);
@@ -134,7 +133,6 @@ mod tests {
         );
     }
 
-    /// iOS: `Hash in block with hash fetch failure leaves entry pending`.
     #[test]
     fn an_unreadable_block_hash_spoils_absence() {
         let chain = FakeChain::new(130, 140);
@@ -148,7 +146,6 @@ mod tests {
         );
     }
 
-    /// iOS: `Unreadable block body leaves entry pending`.
     #[test]
     fn an_unreadable_body_spoils_absence() {
         let chain = FakeChain::new(130, 140);
@@ -178,7 +175,8 @@ mod tests {
         );
     }
 
-    /// iOS: `Hit resolves outcome at same block; outcome unreadable`.
+    /// The body is still kept but the events are pruned: inclusion alone is not
+    /// success.
     #[test]
     fn a_hit_whose_events_cannot_be_read_has_no_outcome() {
         let chain = FakeChain::new(130, 140);
@@ -205,7 +203,8 @@ mod tests {
         assert!(chain.state().body_reads < 100);
     }
 
-    /// iOS: `Window is re-read on each pass; nothing carried between passes`.
+    /// A reorg between passes can change any block of the range, so nothing
+    /// read earlier is reused.
     #[test]
     fn every_search_reads_the_range_again() {
         let chain = FakeChain::new(130, 140);
