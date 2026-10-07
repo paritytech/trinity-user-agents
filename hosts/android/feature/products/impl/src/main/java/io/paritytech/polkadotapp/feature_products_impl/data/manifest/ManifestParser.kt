@@ -2,15 +2,17 @@ package io.paritytech.polkadotapp.feature_products_impl.data.manifest
 
 import com.google.gson.Gson
 import io.paritytech.polkadotapp.common.utils.enumValueOfOrNull
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductIcon
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardIdentifier
 import io.paritytech.polkadotapp.tools_ipfs_api.Cid
 import timber.log.Timber
+import uniffi.truapi.screenPocketCardId
+import uniffi.truapi.screenPocketCardTitle
 import javax.inject.Inject
 
 /** Rejections are `Result.failure`: the record exists but the publisher got it wrong. */
@@ -90,12 +92,12 @@ internal class ManifestParser @Inject constructor(
     }
 
     private fun PocketCardRemote.toDefinition(): PocketCardDefinition {
-        val title = requireNotNull(title) { "pocket card missing title" }
+        val title = screenPocketCardTitle(requireNotNull(title) { "pocket card missing title" })
         val preview = requireNotNull(preview) { "pocket card missing preview" }
-        require(title.isNotBlank()) { "pocket card title must not be blank" }
+        require(title.isNotEmpty()) { "pocket card title must not be blank" }
         require(preview.isNotBlank()) { "pocket card preview must not be blank" }
         return PocketCardDefinition(
-            id = PocketCardIdentifier.screen(requireNotNull(id) { "pocket card missing id" }),
+            id = PocketCardId(screenPocketCardId(requireNotNull(id) { "pocket card missing id" })),
             title = title,
             // Always a path in the archive: a published card must not be able to name a URL.
             preview = PocketCardPreview.Archive(preview),

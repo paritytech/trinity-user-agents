@@ -3,11 +3,9 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 import android.net.Uri
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
-import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductWorkerArchive
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.RendererNodeJsonDecoder
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -17,6 +15,8 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verifyNoInteractions
+import uniffi.truapi.RendererNode
+import uniffi.truapi.TextProps
 import java.io.File
 
 private const val ONE_MEGABYTE = 1024 * 1024
@@ -29,9 +29,9 @@ class PocketPreviewLoaderTest {
     private val dotNsResolver: DotNsResolver = mock()
 
     private val fetchedUrls = mutableListOf<String>()
-    private var remoteFace: Result<JsWidget> = Result.success(JsWidget.Text(text = "from the dev server"))
+    private var remoteFace: Result<RendererNode> = Result.success(faceOf("from the dev server"))
     private val remoteFaces = object : RemoteFaceSource {
-        override suspend fun fetch(url: String): Result<JsWidget> {
+        override suspend fun fetch(url: String): Result<RendererNode> {
             fetchedUrls += url
             return remoteFace
         }
@@ -40,7 +40,6 @@ class PocketPreviewLoaderTest {
     private val loader = PocketPreviewLoader(
         archive = ProductWorkerArchive(dotNsResolver),
         remoteFaces = remoteFaces,
-        faceDecoder = PocketFaceJsonDecoder(RendererNodeJsonDecoder()),
     )
 
     private fun definition(preview: PocketCardPreview) =
@@ -66,7 +65,7 @@ class PocketPreviewLoaderTest {
 
         val face = loader.load(gameProduct, definition(PocketCardPreview.Archive(ARCHIVE_PATH))).getOrThrow()
 
-        assertEquals(JsWidget.Text(text = "Loyalty"), face)
+        assertEquals(RendererNode.Text(emptyList(), TextProps(style = null, color = null), listOf(RendererNode.String("Loyalty"))), face)
     }
 
     /**
@@ -79,7 +78,7 @@ class PocketPreviewLoaderTest {
         val face = loader.load(gameProduct, definition(PocketCardPreview.Url(DEV_SERVER_FACE))).getOrThrow()
 
         assertEquals(listOf(DEV_SERVER_FACE), fetchedUrls)
-        assertEquals(JsWidget.Text(text = "from the dev server"), face)
+        assertEquals(faceOf("from the dev server"), face)
     }
 
     /** The archive is resolved through dotNS, which a locally served worker has no entry in. */
