@@ -25,9 +25,12 @@ internal class CardFaceRequests : ExpandedCardFace {
 
     override suspend fun setFaceShown(shown: Boolean): ExpandedCardFaceOutcome {
         if (outgoing.subscriptionCount.value == 0) return ExpandedCardFaceOutcome.NOT_PRESENTED
-        val reply = CompletableDeferred<FaceShownAnswer>()
-        outgoing.emit(FaceShownRequest(shown, reply))
-        return when (withTimeoutOrNull(REPLY_TIMEOUT) { reply.await() }) {
+        val answer = withTimeoutOrNull(REPLY_TIMEOUT) {
+            val reply = CompletableDeferred<FaceShownAnswer>()
+            outgoing.emit(FaceShownRequest(shown, reply))
+            reply.await()
+        }
+        return when (answer) {
             FaceShownAnswer.APPLIED -> ExpandedCardFaceOutcome.APPLIED
             FaceShownAnswer.USER_MOVING -> ExpandedCardFaceOutcome.USER_MOVING
             null -> ExpandedCardFaceOutcome.NOT_PRESENTED
