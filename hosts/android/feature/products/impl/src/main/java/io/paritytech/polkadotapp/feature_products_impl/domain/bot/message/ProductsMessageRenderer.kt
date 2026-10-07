@@ -59,7 +59,7 @@ class ProductsMessageRenderer(
                 message.content.fold(
                     onSuccess = { content ->
                         ProductsMessageContent(
-                            messageId = message.id,
+                            message = message,
                             content = content,
                         )
                     },
@@ -77,13 +77,13 @@ class ProductsMessageRenderer(
 
     @Composable
     private fun ProductsMessageContent(
-        messageId: String,
+        message: ChatMessageUiModel.Custom<ProductsMessageContent>,
         content: ProductsMessageContent,
     ) {
         val viewModel: ProductsMessageViewModel = hiltViewModel(
-            key = messageId,
+            key = message.id,
             creationCallback = { factory: ProductsMessageViewModel.Factory ->
-                factory.create(content, messageId, product, worker)
+                factory.create(content, message, product, worker)
             }
         )
 

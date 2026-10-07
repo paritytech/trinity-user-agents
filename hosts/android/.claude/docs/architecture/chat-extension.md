@@ -15,7 +15,7 @@ The current code implements **v1**: native `ChatExtension`s plug renderers/overl
 - **`ChatExtensionRegistry`** — Dagger `Set<@JvmSuppressWildcards ChatExtension>`. Add an extension via `@Binds @IntoSet`.
 - **`ChatEngine`** — orchestrator; **not exposed** from `feature/chats/api`. Other modules cannot reach into it.
 - **Renderers** — `CustomChatMessageRenderer<T>`, `CustomChatFooterRenderer`, `CustomChatHeaderRenderer`, `CustomChatMenuRenderer`, `CustomChatOverlayRenderer`.
-- **`ProductChatExtension`** — wrapper that hosts a product's JS in a hidden WebView and forwards `ChatHostCalls`. One per installed product; owns N rooms. Runs on the **native host runtime only** — the Rust TrUAPI core has no chat host yet, so chat products ignore the runtime toggle. Under RFC-0002 v2 this wrapper retires: Products become the message data source.
+- **`ProductChatExtension`** — wrapper that hosts a product's JS in a hidden WebView and forwards `ChatHostCalls`. One per installed product; owns N rooms. Runs on the **native host runtime**, whatever the runtime toggle says, except for a product opted into the wasmi worker (`ProductRuntimeSettings.isWasmiWorkerProduct`, debug-only): its chat is served by `TrUAPIChatHost` from its core worker and the native worker is never acquired. Under RFC-0002 v2 this wrapper retires: Products become the message data source.
 
 ---
 

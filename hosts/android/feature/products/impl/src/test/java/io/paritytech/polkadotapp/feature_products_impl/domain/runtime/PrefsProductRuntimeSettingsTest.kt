@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.runtime
 
 import android.content.SharedPreferences
+import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -34,6 +35,25 @@ class PrefsProductRuntimeSettingsTest {
         settings.setTrUAPIRuntimeEnabled(true)
 
         assertFalse(settings.isTrUAPIRuntimeEnabled())
+    }
+
+    // The opt-in moves one product's worker and chat onto the core; any other product, or any
+    // release build, has to keep the runtime it had.
+    @Test
+    fun `a wasmi opt-in covers only its product and never a release build`() {
+        val debug = PrefsProductRuntimeSettings(prefs, isDebugBuild = true)
+
+        debug.setWasmiWorkerProduct(COUNTER, enabled = true)
+
+        assertTrue(debug.isWasmiWorkerProduct(COUNTER))
+        assertFalse(debug.isWasmiWorkerProduct(OTHER))
+        assertFalse(debug.isWasmiWorkerRuntimeEnabled())
+        assertFalse(PrefsProductRuntimeSettings(prefs, isDebugBuild = false).isWasmiWorkerProduct(COUNTER))
+    }
+
+    private companion object {
+        val COUNTER = ProductId.fromStoredValue("counter.paseo")
+        val OTHER = ProductId.fromStoredValue("dim2.paseo")
     }
 }
 

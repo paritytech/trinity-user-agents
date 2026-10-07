@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatBotStateController
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
@@ -28,11 +29,14 @@ interface ProductBotManagementInteractor {
 
     suspend fun getDebugCard(productId: ProductId): DebugPocketCard?
 
+    suspend fun isWasmiWorkerProduct(productId: ProductId): Boolean
+
     suspend fun upsertProduct(
         productId: ProductId,
         workerUrl: String,
         name: String,
         card: DebugPocketCard?,
+        runsOnWasmi: Boolean,
     ): Result<ProductId>
 
     suspend fun updateProduct(
@@ -40,6 +44,7 @@ interface ProductBotManagementInteractor {
         workerUrl: String,
         name: String,
         card: DebugPocketCard?,
+        runsOnWasmi: Boolean,
     ): Result<Unit>
 
     suspend fun deleteProduct(productId: ProductId): Result<Unit>
@@ -59,6 +64,7 @@ class RealProductBotManagementInteractor @Inject constructor(
     private val uninstallProductUseCase: UninstallProductUseCase,
     private val dotNsTldProvider: DotNsTldProvider,
     private val debugPocketCards: DebugPocketCards,
+    private val runtimeSettings: ProductRuntimeSettings,
     private val dispatchers: CoroutineDispatchers,
 ) : ProductBotManagementInteractor {
     override fun observeProducts(): Flow<List<Product>> {
@@ -78,15 +84,21 @@ class RealProductBotManagementInteractor @Inject constructor(
         debugPocketCards.get(productId)
     }
 
+    override suspend fun isWasmiWorkerProduct(productId: ProductId): Boolean = withContext(dispatchers.io) {
+        runtimeSettings.isWasmiWorkerProduct(productId)
+    }
+
     override suspend fun upsertProduct(
         productId: ProductId,
         workerUrl: String,
         name: String,
         card: DebugPocketCard?,
+        runsOnWasmi: Boolean,
     ): Result<ProductId> {
         return runCatching {
             productRepository.upsertManualProduct(productId, name, workerUrl)
             debugPocketCards.set(productId, card)
+            runtimeSettings.setWasmiWorkerProduct(productId, runsOnWasmi)
             resolveProductUseCase.invalidate(productId) // force next resolve to read the new URL
             integrationRepository.install(productId, IntegrationType.Chat)
             botStateController.setActive(productId.toChatExtensionId())
@@ -99,10 +111,12 @@ class RealProductBotManagementInteractor @Inject constructor(
         workerUrl: String,
         name: String,
         card: DebugPocketCard?,
+        runsOnWasmi: Boolean,
     ): Result<Unit> {
         return runCatching {
             productRepository.upsertManualProduct(productId, name, workerUrl)
             debugPocketCards.set(productId, card)
+            runtimeSettings.setWasmiWorkerProduct(productId, runsOnWasmi)
             // The card rides on the resolved worker, so a changed one is only seen after this.
             resolveProductUseCase.invalidate(productId)
         }

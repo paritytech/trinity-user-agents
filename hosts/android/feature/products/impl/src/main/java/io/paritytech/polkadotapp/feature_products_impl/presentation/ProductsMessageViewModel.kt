@@ -8,7 +8,7 @@ import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.Product
@@ -30,7 +30,8 @@ import kotlinx.coroutines.flow.onEach
 @HiltViewModel(assistedFactory = ProductsMessageViewModel.Factory::class)
 class ProductsMessageViewModel @AssistedInject constructor(
     @Assisted private val content: ProductsMessageContent,
-    @Assisted private val messageId: ChatMessageId,
+    // Carries the message's own room; the factory cannot take a ChatId, a value class, directly.
+    @Assisted private val message: ChatMessageUiModel.Custom<ProductsMessageContent>,
     @Assisted private val worker: ProductWorker,
     @Assisted private val product: Product,
 ) : BaseViewModel() {
@@ -44,19 +45,19 @@ class ProductsMessageViewModel @AssistedInject constructor(
     }
 
     fun handleUiEvent(actionId: String, eventType: JsUiEvent.Type) {
-        val event = JsUiEvent(messageId, chatId, actionId, eventType)
+        val event = JsUiEvent(message.id, chatId, actionId, eventType)
         worker.dispatchEvent(event)
     }
 
     private fun loadWidget() {
-        worker.renderMessage(messageId, content.messageType, content.data)
+        worker.renderMessage(message.chatId, message.id, content.messageType, content.data)
             .onEach { result -> handleRenderUpdate(result) }
             .launchIn(this)
     }
 
     private fun handleRenderUpdate(result: Result<JsWidget>) {
         result
-            .logFailure("Error receiving render update  for message $messageId in ${product.id}")
+            .logFailure("Error receiving render update  for message ${message.id} in ${product.id}")
             .onSuccess { widget ->
                 _state.value = LoadingState.Loaded(widget)
             }
@@ -69,7 +70,7 @@ class ProductsMessageViewModel @AssistedInject constructor(
     interface Factory {
         fun create(
             content: ProductsMessageContent,
-            messageId: ChatMessageId,
+            message: ChatMessageUiModel.Custom<ProductsMessageContent>,
             product: Product,
             worker: ProductWorker,
         ): ProductsMessageViewModel

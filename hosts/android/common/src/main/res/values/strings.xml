@@ -656,6 +656,7 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="product_bot_management_card_id_hint">Pocket card id (optional)</string>
     <string name="product_bot_management_card_title_hint">Pocket card title</string>
     <string name="product_bot_management_preview_url_hint">Pocket card face URL</string>
+    <string name="product_bot_management_wasmi_worker">Run worker and chat as wasm on the TrUAPI core</string>
     <string name="product_bot_management_app_url_hint">App URL</string>
     <string name="product_bot_management_name_hint">product%1$s</string>
     <string name="product_bot_management_confirm">Save</string>

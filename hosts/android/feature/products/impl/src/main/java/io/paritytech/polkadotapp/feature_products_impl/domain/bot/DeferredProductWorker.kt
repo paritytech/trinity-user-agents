@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
@@ -29,11 +30,12 @@ class DeferredProductWorker : ProductWorker {
     }
 
     override fun renderMessage(
+        chatId: ChatId,
         messageId: ChatMessageId,
         messageType: String,
         messageData: DataByteArray,
     ): Flow<Result<JsWidget>> = flow {
-        emitAll(delegate.filterNotNull().first().renderMessage(messageId, messageType, messageData))
+        emitAll(delegate.filterNotNull().first().renderMessage(chatId, messageId, messageType, messageData))
     }
 
     // UI events only originate from already-rendered widgets, so the worker is attached by then.

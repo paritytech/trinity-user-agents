@@ -4,6 +4,7 @@ import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
+import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.GameHostBridge
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
@@ -249,7 +250,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
      *
      * A second call opens nothing and answers with the execution already
      * running: opening another would leak the first, along with its loopback
-     * listener and chain sockets.
+     * listener and chain sockets. [chat] serves the execution's chat calls;
+     * without it the core answers them as unsupported.
      */
     suspend fun attach(
         runtime: TrUAPIHostRuntime,
@@ -257,6 +259,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         chains: TrUAPIChains,
         navigationPolicy: NavigationPolicy,
         kind: ProductExecutionKind,
+        chat: ChatHostBridge?,
         onReadyToInject: suspend (bootstrap: String) -> Unit,
     ): Result<TrUAPIProductExecution> {
         execution?.let {
@@ -271,6 +274,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             val opened = runtime.openProductExecution(
                 bridge = buildBridge(productId, navigationPolicy),
                 configuration = ProductExecutionConfig(productId.value, kind),
+                chat = chat,
                 pocket = pocket,
                 game = gameBridge(productId),
             )

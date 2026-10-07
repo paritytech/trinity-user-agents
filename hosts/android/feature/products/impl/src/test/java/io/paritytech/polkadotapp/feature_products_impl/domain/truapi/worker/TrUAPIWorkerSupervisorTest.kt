@@ -6,6 +6,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
+import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
@@ -14,6 +15,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.RuntimeS
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.chat.TrUAPIChatSurfaces
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewConfig
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewProvider
 import io.paritytech.polkadotapp.test_shared.testDispatchers
@@ -28,6 +30,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -41,6 +44,8 @@ class TrUAPIWorkerSupervisorTest {
     private var wasmiEnabled = false
     private val wasmiRuntimes = mutableListOf<WasmiWorkerRuntime>()
     private val wasmiStates = mutableListOf<MutableStateFlow<RuntimeState>>()
+    private var wasmiProduct: ProductId? = null
+    private val attachedChats = mutableListOf<ChatHostBridge?>()
 
     @Before
     fun parseScriptUrls() {
@@ -93,6 +98,23 @@ class TrUAPIWorkerSupervisorTest {
 
         assertEquals(listOf(null, executions[0], null), seen)
         assertEquals(1, wasmiRuntimes.size)
+        assertEquals("a product not opted in serves no chat from the core", listOf(null), attachedChats)
+    }
+
+    // The opt-in moves one product onto the core with the global setting off, and its chat rides on
+    // the same execution as its cards: the core keeps a single worker execution per product.
+    @Test
+    fun `an opted-in product runs in the sandbox with its chat on the one execution`() = runTest {
+        wasmiProduct = PRODUCT
+        val supervisor = supervisor()
+
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        advanceUntilIdle()
+
+        assertTrue("no WebView is created for a wasm worker", providers.isEmpty())
+        assertEquals(1, wasmiRuntimes.size)
+        assertEquals(1, executions.size)
+        assertNotNull(attachedChats.single())
     }
 
     private fun TestScope.supervisor() = TrUAPIWorkerSupervisor(
@@ -111,12 +133,16 @@ class TrUAPIWorkerSupervisorTest {
             override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider()
         },
         bootstrapInstaller = mockk(relaxed = true),
-        runtimeSettings = mockk<ProductRuntimeSettings> { every { isWasmiWorkerRuntimeEnabled() } answers { wasmiEnabled } },
+        runtimeSettings = mockk<ProductRuntimeSettings> {
+            every { isWasmiWorkerRuntimeEnabled() } answers { wasmiEnabled }
+            every { isWasmiWorkerProduct(any()) } answers { firstArg<ProductId>() == wasmiProduct }
+        },
         wasmiRuntimeFactory = object : WasmiWorkerRuntime.Factory {
             override fun create(scope: CoroutineScope) = wasmiRuntime()
         },
         guestFactory = mockk { every { create(any(), any(), any()) } returns Result.success(mockk(relaxed = true)) },
         moduleFetcher = mockk { coEvery { fetch(any()) } returns Result.success(WASM_HEADER) },
+        chatSurfaces = TrUAPIChatSurfaces(),
         dispatchers = testDispatchers(),
     )
 
@@ -133,7 +159,10 @@ class TrUAPIWorkerSupervisorTest {
 
     private fun bridge(): ProductTrUAPIHostBridge = mockk {
         val execution = mockk<TrUAPIProductExecution>().also { executions += it }
-        coEvery { attach(any(), any(), any(), any(), any(), any()) } returns Result.success(execution)
+        coEvery { attach(any(), any(), any(), any(), any(), any(), any()) } answers {
+            attachedChats += arg<ChatHostBridge?>(5)
+            Result.success(execution)
+        }
         every { bridgeEndpoint } returns WsBridgeEndpoint(port = 9731u, token = "t")
     }
 

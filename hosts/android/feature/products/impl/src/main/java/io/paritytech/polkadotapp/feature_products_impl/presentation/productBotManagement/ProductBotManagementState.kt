@@ -29,6 +29,8 @@ sealed interface ProductDialogState {
         val cardId: String = "",
         val cardTitle: String = "",
         val previewUrl: String = "",
+        // Moves only this product's worker and chat onto the core under wasmi.
+        val runsOnWasmi: Boolean = false,
         val isSubmitting: Boolean = false,
     ) : ProductDialogState
 }

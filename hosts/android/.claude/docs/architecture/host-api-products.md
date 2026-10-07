@@ -30,7 +30,7 @@ per session by `ProductRuntimeSettings` (debug toggle, default TrUAPI).
 | Lifecycle | Per-WebView session | Per `HostApiSession` / per `ProductTrUAPIHostBridge` (scoped to a WebView lifetime) | Hilt singleton |
 | Composition | Selected by navigation; loaded from DotNs | `HostCallHandlerGroup`s in `HostApiEnvironment` (native); Rust core dispatches, Kotlin implements `HostBridge` callbacks (TrUAPI) | `@IntoSet` Dagger multibinding |
 
-A product can *integrate* with chat (see `chat-extension.md § Products and chat`). That integration produces a `ProductChatExtension` — a single `ChatExtension` that hosts the product's JS in a hidden WebView and forwards `ChatHostCalls`. Chat products run the **native runtime only**; the core has no chat host yet.
+A product can *integrate* with chat (see `chat-extension.md § Products and chat`). That integration produces a `ProductChatExtension` — a single `ChatExtension` that hosts the product's JS in a hidden WebView and forwards `ChatHostCalls`. Chat products run the **native runtime**; the one exception is a product opted into the wasmi worker (see `§ Pocket — the host-owned card collection`, core side).
 
 ---
 
@@ -78,6 +78,10 @@ Products are stored in the Room DB and resolved via `ProductRepository`. Scripts
 - `RuntimeSelectingSpaHost` — the `SpaHost` binding; picks `NativeSpaHost` or `TrUAPISpaHost` per `createSession`.
 - `ProductTabSessionFactory` — picks `NativeProductTabSessionFactory` or `TrUAPIProductTabSessionFactory` per browser tab.
 - `ExploreProductsViewModel` — forks its `SessionComponents` per Explore session.
+
+Worker runtime, read at worker boot and chat start rather than per session: `isWasmiWorkerRuntimeEnabled` (every worker
+as wasm) and `isWasmiWorkerProduct(productId)` (one product's worker as wasm, with its chat on the core). Both are
+read by `TrUAPIWorkerSupervisor`; the per-product one also by `ProductChatExtension`.
 
 Don't add a fourth decision point without wiring it through `ProductRuntimeSettings` the same way.
 
@@ -349,7 +353,12 @@ Core side (`feature/products/impl/.../domain/truapi/`):
 - `TrUAPIWorkerSupervisor` starts a product's worker on the core's `Start` transition (runtime bridge
   `workerDemandChanged`): hidden `ChatWebViewProvider` WebView, `openProductExecution(WORKER, pocket = ...)` through
   `ProductTrUAPIHostBridge.attach(kind = WORKER)`, bootstrap at document start, entry module by URL. `Stop` tears it
-  down. Chat is not served on this path; chat products keep the native worker, so a product with both runs two.
+  down. Chat is served on this path only for a product opted in with `isWasmiWorkerProduct`: the supervisor boots it
+  under wasmi and passes `TrUAPIChatSurfaces.bridgeFor(productId)` as `chat` on the same execution as `pocket` (the core
+  keeps one worker execution per product). `ProductChatExtension` then runs `TrUAPIChatHost.serve` instead of the
+  native worker: it binds the room/message binding for the bridge, holds one `acquireWorker` reference, and attaches
+  `TrUAPIChatProductWorker`, which renders `RenderContext.ChatMessage` and sends presses as renderer actions. Every
+  other chat product keeps the native worker, so one with Pocket cards runs two.
 - `TrUAPIPocketFaceStreams` takes one `acquireWorker` reference per collected face, opens `render` on
   `RenderContext.PocketCard`, retries the first `render` while the worker's client is still connecting, and publishes
   renderer actions. Both callbacks of `ProductPocketHostBridge` run on the core's dispatcher thread: the list is a

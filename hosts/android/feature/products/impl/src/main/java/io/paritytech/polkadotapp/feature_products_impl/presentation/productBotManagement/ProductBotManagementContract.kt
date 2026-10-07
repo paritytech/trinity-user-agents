@@ -28,5 +28,7 @@ interface ProductBotManagementContract {
 
     fun onPreviewUrlChanged(url: String)
 
+    fun onRunsOnWasmiChanged(enabled: Boolean)
+
     fun onDialogConfirm()
 }

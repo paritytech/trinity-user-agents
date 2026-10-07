@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
+import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.RuntimeState
@@ -20,6 +21,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUA
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIChainDirectory
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.chat.TrUAPIChatSurfaces
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewConfig
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewProvider
 import kotlinx.coroutines.CoroutineScope
@@ -46,7 +48,8 @@ enum class WorkerDemand { START, STOP }
  * boots the worker executable behind a `WORKER` execution, a `Stop` tears it down. The executable
  * runs as a script in a hidden WebView, or, when the debug setting selects it, as a wasm module in
  * the embedded sandbox; the execution and its bridge are the same either way.
- * Chat is not served on this path; chat products keep their native worker.
+ * Chat is served here only for a product opted into the wasmi worker, on the same execution as its
+ * cards; every other chat product keeps its native worker.
  */
 @Singleton
 class TrUAPIWorkerSupervisor @Inject constructor(
@@ -61,6 +64,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val wasmiRuntimeFactory: WasmiWorkerRuntime.Factory,
     private val guestFactory: WorkerGuestFactory,
     private val moduleFetcher: WorkerModuleFetcher,
+    private val chatSurfaces: TrUAPIChatSurfaces,
     dispatchers: CoroutineDispatchers,
 ) {
     private sealed interface WorkerHost {
@@ -123,8 +127,11 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         val runtime = runtimeProvider.get().runtime().getOrElse { return Result.failure(it) }
         val workerScript = WorkerScript.of(script.scriptUrl)
 
+        if (runtimeSettings.isWasmiWorkerProduct(productId)) {
+            return bootWasmi(productId, worker, runtime, workerScript, chatSurfaces.bridgeFor(productId))
+        }
         if (runtimeSettings.isWasmiWorkerRuntimeEnabled()) {
-            return bootWasmi(productId, worker, runtime, workerScript)
+            return bootWasmi(productId, worker, runtime, workerScript, chat = null)
         }
 
         val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript), worker.scope)
@@ -143,6 +150,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 chainDirectory.resolve(),
                 ignoredNavigation(),
                 ProductExecutionKind.WORKER,
+                chat = null,
             ) { bootstrap -> provider.addWebViewSetup(installBootstrap(bootstrap)) }
             .flatMap { execution ->
                 runCatching {
@@ -164,20 +172,22 @@ class TrUAPIWorkerSupervisor @Inject constructor(
      * The wasm path: the module is fetched from the worker URL, the execution and its bridge open as
      * for a script, and the sandbox connects to that bridge itself, so the bootstrap script the bridge
      * hands back has nowhere to go and is dropped. A guest fault ends the worker; nothing reboots it,
-     * because a guest that trapped once would trap again on the same frames.
+     * because a guest that trapped once would trap again on the same frames. [chat] rides on this one
+     * execution with the Pocket bridge: the core keeps one worker execution per product.
      */
     private suspend fun bootWasmi(
         productId: ProductId,
         worker: RunningWorker,
         runtime: TrUAPIHostRuntime,
         workerScript: WorkerScript,
+        chat: ChatHostBridge?,
     ): Result<TrUAPIProductExecution> {
         val module = moduleFetcher.fetch(workerScript).getOrElse { return Result.failure(it) }
         val wasmiRuntime = wasmiRuntimeFactory.create(worker.scope).also { worker.host = WorkerHost.Wasmi(it) }
         val hostBridge = hostBridgeFactory.create(worker.scope)
 
         return hostBridge
-            .attach(runtime, productId, chainDirectory.resolve(), ignoredNavigation(), ProductExecutionKind.WORKER) {}
+            .attach(runtime, productId, chainDirectory.resolve(), ignoredNavigation(), ProductExecutionKind.WORKER, chat) {}
             .flatMap { execution ->
                 val endpoint = hostBridge.bridgeEndpoint
                     ?: return@flatMap Result.failure(IllegalStateException("worker execution opened without a bridge"))

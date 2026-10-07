@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.common.utils.HexString
 import io.paritytech.polkadotapp.common.utils.awaitTrue
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatActiveTracker
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
@@ -130,6 +131,7 @@ class HostApiProductsScriptExecutor @AssistedInject constructor(
     }
 
     override fun renderMessage(
+        chatId: ChatId,
         messageId: ChatMessageId,
         messageType: String,
         messageData: DataByteArray,

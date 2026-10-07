@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
@@ -24,6 +25,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductC
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.extractProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.toChatId
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.chat.TrUAPIChatHost
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerModalityApi
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.menu.ProductChatMenuRenderer
@@ -46,7 +48,8 @@ import timber.log.Timber
  *
  * The worker itself is owned by [ProductWorkerRefCounter]; this extension is the only consumer that
  * drives it. It binds its [ProductChatMessaging] onto the shared worker while attached and releases
- * the driving lease on dispose.
+ * the driving lease on dispose. A product opted into the wasmi worker is served by [TrUAPIChatHost]
+ * instead, and never boots the native worker.
  *
  * Each instance is created by [ProductBotFactory] for a specific [Product].
  */
@@ -54,6 +57,8 @@ class ProductChatExtension(
     appContext: Context,
     val product: Product,
     private val workerRefCounter: ProductWorkerRefCounter,
+    private val runtimeSettings: ProductRuntimeSettings,
+    private val coreChatHost: TrUAPIChatHost,
 ) : ExternalExtension() {
     override val id = product.id.toChatExtensionId()
 
@@ -90,6 +95,10 @@ class ProductChatExtension(
                 .filter { it.origin !is ChatMessageOrigin.Extension }
                 .onEach { message -> routeMessage(message) }
                 .launchIn(chatExtensionContext.scope)
+
+            if (runtimeSettings.isWasmiWorkerProduct(product.id)) {
+                coreChatHost.serve(product.id, id, messaging, runningWorker::attach)
+            }
 
             // Enable chat messaging before the worker's started hook so an initial/welcome message
             // routes. The reference is released from the finally so a dispose that races boot never

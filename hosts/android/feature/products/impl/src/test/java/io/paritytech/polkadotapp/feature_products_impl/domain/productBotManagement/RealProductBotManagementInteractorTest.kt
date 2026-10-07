@@ -47,6 +47,7 @@ class RealProductBotManagementInteractorTest {
         uninstallProductUseCase = mock(),
         dotNsTldProvider = mock(),
         debugPocketCards = debugPocketCards,
+        runtimeSettings = mock(),
         dispatchers = dispatchers,
     )
 

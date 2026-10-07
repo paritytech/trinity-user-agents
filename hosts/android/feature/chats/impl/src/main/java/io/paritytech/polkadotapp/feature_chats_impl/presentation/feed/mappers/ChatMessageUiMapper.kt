@@ -270,6 +270,7 @@ class ChatMessageUiMapper @Inject constructor(
                         timestamp = timestamp,
                         direction = direction,
                         status = status,
+                        chatId = chatId,
                         renderer = renderer,
                         origin = origin,
                         content = latestContent.content

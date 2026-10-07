@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_api.domain.runtime
 
+import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+
 /**
  * Selects which product host runtime new sessions use: the native JS-bridge
  * host or the TrUAPI Rust core. Read once per session creation, so flipping
@@ -19,4 +21,13 @@ interface ProductRuntimeSettings {
     fun isWasmiWorkerRuntimeEnabled(): Boolean
 
     fun setWasmiWorkerRuntimeEnabled(enabled: Boolean)
+
+    /**
+     * Runs this one product's worker under wasmi on the core, and serves its chat there instead of
+     * on the native worker. Debug-only and off by default; read when the worker boots and when the
+     * product's chat starts, so flipping it affects the next app start.
+     */
+    fun isWasmiWorkerProduct(productId: ProductId): Boolean
+
+    fun setWasmiWorkerProduct(productId: ProductId, enabled: Boolean)
 }
