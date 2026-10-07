@@ -2,15 +2,16 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.net.Uri
 import androidx.core.net.toUri
-import uniffi.truapi.ProductExecutionKind
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import uniffi.truapi.ProductExecutionKind
 import javax.inject.Inject
 
 /**
@@ -31,10 +32,12 @@ class TrUAPISessionStarter @Inject constructor(
         productUrl: String,
         scope: CoroutineScope,
         hostApiNavigation: NavigationPolicy,
+        kind: ProductExecutionKind = ProductExecutionKind.APP,
+        card: ExpandedCardFace? = null,
     ): ProductTrUAPIHostBridge {
         val bridge = hostBridgeFactory.create(scope)
         scope.launch {
-            attachAndLoad(bridge, provider, productUrl, hostApiNavigation)
+            attachAndLoad(bridge, provider, productUrl, hostApiNavigation, kind, card)
                 .logFailure("Failed to start TrUAPI host bridge for $productUrl")
         }
         return bridge
@@ -45,6 +48,8 @@ class TrUAPISessionStarter @Inject constructor(
         provider: BrowserWebViewProvider,
         productUrl: String,
         navigation: NavigationPolicy,
+        kind: ProductExecutionKind,
+        card: ExpandedCardFace?,
     ): Result<Unit> {
         val tld = dotNsTldProvider.getTld().getOrElse { return Result.failure(it) }
         // A page that is not a product (the debug SPA browser opening any URL) has no bridge to
@@ -63,7 +68,7 @@ class TrUAPISessionStarter @Inject constructor(
         }.getOrElse { return Result.failure(it) }
 
         return bridge
-            .attach(runtime, productId, chainDirectory.resolve(), navigation, ProductExecutionKind.APP) { bootstrap ->
+            .attach(runtime, productId, chainDirectory.resolve(), navigation, kind, card) { bootstrap ->
                 provider.addWebViewSetup(installBootstrap(bootstrap))
             }
             .mapCatching { execution ->
