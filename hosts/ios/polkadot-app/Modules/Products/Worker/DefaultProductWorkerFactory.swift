@@ -3,6 +3,7 @@ import Keystore_iOS
 import KeyDerivation
 import Products
 import ChainRegistry
+import BulletinChain
 import DesignSystem
 
 enum DefaultProductWorkerFactoryError: Error {

@@ -229,8 +229,9 @@ configuration values (compiler flags, icon suffix, bundle suffix) stay in
 
 ## 5. Code signing
 
-You need an Apple Developer account and a registered App ID for the app **and**
-its `NotificationServiceExtension`.
+You need an Apple Developer account and registered App IDs for the app,
+`NotificationServiceExtension`, and `MediaBroadcastExtension`. The broadcast
+extension and app must share the configured App Group entitlement.
 
 Recommended: **App Store Connect API key** (`.p8`) for non-interactive signing
 and uploads. Generate one in App Store Connect → Users and Access → Integrations
@@ -249,6 +250,14 @@ For certificates and provisioning profiles, pick one of:
 
 In CI, create a dedicated keychain, import the certificate, and select the right
 provisioning profile via the export options when archiving.
+
+Signed CI builds fetch existing assets with `match` in read-only mode. For the
+development configuration, the signing repository must include
+`match Development io.parity.polkadotapp.develop.MediaBroadcastExtension`, in
+addition to the app and notification-extension profiles. A signing maintainer
+must provision a missing profile for the configured team and App Group before
+the archive can succeed; disabling read-only signing is not a build workaround.
+Unsigned simulator builds do not require these provisioning profiles.
 
 ---
 
