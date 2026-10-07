@@ -62,7 +62,7 @@ stage in the frame path; the host's `Platform` impl is the syscall floor.
    │ PairingHost | SigningHost   │   │ platform · chain · RPC │
    └─────────────────────────────┘   └────────────────────────┘
               │
-              │  PairingHost only : encrypted SSO channel
+              │  PairingHost → SsoRequestService → encrypted SSO
               ▼
        ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐
        ╎ remote signing host   ( external wallet ) ╎
@@ -230,12 +230,13 @@ path. Web hosts do not compile the store.
 - `SigningHost` owns retained grants. `HostOperation` rejects results invalidated by wallet changes or host reset. Resetting a product does not invalidate independent incoming SSO wallet work.
 - Resource approval returns a lazy, ordered stream of wallet receipts. The host retains each successful grant before issuing the next resource; recoverable item failures do not stop later resources.
 
+`SsoAccountHolderClient` translates wallet operations to the existing SSO messages. `SsoRequestService` owns login, session selection, cancellation and transport. `PairingHost` owns local review and delegated execution; `HostGrantStore` retains its keys and orders persistence against session cleanup. A replacement session is published only after required cleanup succeeds.
+
 - **`PairingHost`** (seedless): the user's keys live in an external wallet, so
   signing/aliases/entropy relay over an encrypted SSO channel (statement store
-  on the People chain; the channel lives in `pairing_host/sso_channel.rs`). The
+  on the People chain; transport lives in `sso_request_service/channel.rs`). The
   v2 wire protocol uses raw X25519 keys, HKDF-SHA256, and
-  ChaCha20-Poly1305. It owns pairing/login state, persisted auth-session reload,
-  and remote signing-host liveness monitoring.
+  ChaCha20-Poly1305. `SsoRequestService` owns pairing/login state, persisted auth-session reload and remote signing-host liveness monitoring.
 - **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
   from host-held secret material. Its public identity is the RFC-0022
@@ -268,8 +269,10 @@ the page.
 
 ### Inter-host SSO
 
+`SsoAccountHolderService` serves one peer through the shared wallet and the activation that authenticated its channel. It owns that peer's withdrawals without host grants or per-message wallet selection. Directly dispatched stale requests produce the macro-generated NotConnected response; activation loss during a request discards its result. The transport rejects posts on an expired activation, so even a disconnected response requires a live channel. Native transports first verify their own statement and encryption public keys through `open_sso_session`, then retain independent peer services from that binding. Neither a child service nor an old binding can attach itself to a replacement activation, including the same wallet reactivated. Product reset does not invalidate the wallet binding. Already-dispatched transport writes cannot be recalled.
+
 `PairingHost::call(request)` sends typed requests to
-[`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs). Handlers forward remote account invocations and encode wallet receipts in the existing SSO messages. Signing consent belongs to the account implementation, resource consent and issuance to `WalletAccountHolder`; `sso_responder.rs` owns the transport loop. Consent is bound to the request's signing session: account changes, disconnects, and reactivation invalidate pending approval before allocation or key return. Allocation failure details stay in local transcripts.
+[`SsoAccountHolderService`](src/runtime/sso_account_holder_service.rs). Handlers forward remote account invocations and encode wallet receipts in the existing SSO messages. Signing consent belongs to the account implementation, resource consent and issuance to `WalletAccountHolder`; `sso_responder.rs` owns the transport loop. Consent is bound to the request's signing session: account changes, disconnects, and reactivation invalidate pending approval before allocation or key return. Allocation failure details stay in local transcripts.
 Allocation requests use the canonical `truapi::latest::AllocatableResource` type.
 Signing uses canonical request and result types. Product-scoped VRF requests use
 `ProductRequest<P>` to attach the caller to a canonical payload. Both product and

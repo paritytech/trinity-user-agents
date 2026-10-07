@@ -369,6 +369,26 @@ pub fn require_current_session(
         .map(|_| ())
 }
 
+/// Verify both keys of an externally owned SSO transport.
+pub fn require_sso_identity(
+    wallet: &WalletAccountHolder,
+    session: &AuthoritySession,
+    statement_public_key: [u8; 32],
+    encryption_public_key: [u8; 32],
+) -> Result<(), AuthorityError> {
+    wallet.with_keys(session, |keys| {
+        let (identity, _) = keys.responder_identity().map_err(product_authority_error)?;
+        if identity.statement_public_key != statement_public_key
+            || identity.encryption_public_key != encryption_public_key
+        {
+            return Err(AuthorityError::Unavailable {
+                reason: "SSO transport identity does not match the active wallet".to_string(),
+            });
+        }
+        Ok(())
+    })
+}
+
 /// Export the selected wallet's SSO transport identity.
 pub fn responder_identity(
     wallet: &WalletAccountHolder,
@@ -452,7 +472,6 @@ struct WalletKeys {
 }
 
 impl WalletKeys {
-    /// Keep entropy zeroizable without caching expanded secret keys.
     fn new(entropy: Vec<u8>, network_suffix: String) -> Self {
         Self {
             entropy: Zeroizing::new(entropy),
@@ -460,7 +479,6 @@ impl WalletKeys {
         }
     }
 
-    /// Root public key used to bind grants and renewal records to their owner.
     fn root_public_key(&self) -> Result<[u8; 32], ProductAccountError> {
         derive_root_keypair_from_entropy(&self.entropy).map(|root| root.public.to_bytes())
     }
@@ -559,7 +577,6 @@ impl WalletKeys {
         root_entropy_source(&self.entropy)
     }
 
-    /// Statement-store allowance account for a product.
     fn statement_allowance_key(
         &self,
         product_id: &str,
@@ -574,7 +591,6 @@ impl WalletKeys {
         derive_sr25519_hard_path(&self.entropy, &["allowance", "bulletin", product_id])
     }
 
-    /// Statement, encryption and chat keys from one wallet snapshot.
     fn responder_identity(&self) -> Result<(ResponderIdentity, [u8; 32]), ProductAccountError> {
         let statement = derive_identity_keypair(&self.entropy, &self.network_suffix)?;
         let (encryption_secret_key, encryption_public_key) =

@@ -20,16 +20,19 @@ final class SSOTruAPICoordinator {
     private let hostsDataProviderFactory: PolkadotSignInHostDataProviderMaking
     private let hostRepository: AnyDataProviderRepository<PolkadotSignInHost>
     private let runtimeProvider: TrUAPIHostRuntimeProviding
+    private let runtime: TrUAPIHostRuntime
     private let rawSender: PolkadotHostMessageSender<SSORawHostMessage>
-    private let messageHandler: any PolkadotHostMessageHandling<SSORawHostMessage>
+    private let messageHandler: SSOTrUAPIMessageHandler
     private let logger: LoggerProtocol
 
-    private let state = State()
+    private let state: State
 
     init(
         ownKeyId: Chat.Contact.Own,
         serviceFactory: MessageExchageServiceMaking,
         runtimeProvider: TrUAPIHostRuntimeProviding,
+        runtime: TrUAPIHostRuntime,
+        session: NativeSsoAccountHolderSession,
         chainId: ChainModel.Id = AppConfig.Chains.chatChain,
         chainRegistry: ChainRegistryProtocol = ChainRegistryFacade.sharedRegistry,
         hostsDataProviderFactory: PolkadotSignInHostDataProviderMaking = PolkadotSignInHostDataProviderFactory(),
@@ -40,6 +43,8 @@ final class SSOTruAPICoordinator {
         self.ownKeyId = ownKeyId
         self.serviceFactory = serviceFactory
         self.runtimeProvider = runtimeProvider
+        self.runtime = runtime
+        state = State(session: session)
         self.chainId = chainId
         self.chainRegistry = chainRegistry
         self.hostsDataProviderFactory = hostsDataProviderFactory
@@ -50,13 +55,12 @@ final class SSOTruAPICoordinator {
         rawSender = sender
 
         let requestHandler = SSOTrUAPIRequestHandler(
-            runtimeProvider: runtimeProvider,
             sender: sender,
             disconnectApplier: disconnectApplier,
             logger: logger
         )
 
-        let processingContext = SSORequestProcessingContext<SSORawHostMessage>(
+        let processingContext = SSORequestProcessingContext<SSOTrUAPIRequest>(
             handlers: [requestHandler],
             logger: logger
         )
@@ -105,7 +109,6 @@ extension SSOTruAPICoordinator: MessageExchangeSignInHostCoordinating {
             return
         }
 
-        let runtime = try runtimeProvider.sharedRuntime()
         let disconnectBytes = runtime.prepareDisconnectRequest()
 
         logger.debug("Posting disconnect request to host \(host.name)")
@@ -127,14 +130,18 @@ extension SSOTruAPICoordinator {
     ) async {
         completion(.success)
 
-        guard let host = await state.host(forAccountId: peer.accountId) else {
+        guard let entry = await state.peer(matching: peer) else {
             logger.warning("Missing active host for peer \(peer.accountId.toHex())")
             return
         }
 
-        logger.info("Will handle \(messages.count) raw message(s) for host \(host.name)")
+        logger.info("Will handle \(messages.count) raw message(s) for host \(entry.host.name)")
 
-        await messageHandler.handleMessages(messages.map(\.message), from: host)
+        await messageHandler.handleMessages(
+            messages.map(\.message),
+            from: entry.host,
+            service: entry.service
+        )
     }
 
     func handleDidPostMessages(
@@ -158,7 +165,7 @@ private extension SSOTruAPICoordinator {
                 let sequence = hostsDataProviderFactory.subscribeHosts()
 
                 for try await hosts in sequence {
-                    await handleNewHosts(hosts)
+                    try await handleNewHosts(hosts)
                 }
             } catch {
                 logger.error("Host subscription error: \(error)")
@@ -167,9 +174,8 @@ private extension SSOTruAPICoordinator {
         await state.setHostSubscriptionTask(task)
     }
 
-    func handleNewHosts(_ hosts: [PolkadotSignInHost]) async {
+    func handleNewHosts(_ hosts: [PolkadotSignInHost]) async throws {
         var requests = Set<MessageExchange.SessionRequest>()
-        var hostsByAccountId = [Data: PolkadotSignInHost]()
 
         for host in hosts {
             let request = MessageExchange.SessionRequest(
@@ -182,33 +188,60 @@ private extension SSOTruAPICoordinator {
                 )
             )
             requests.insert(request)
-            hostsByAccountId[host.accountId] = host
         }
 
         logger.debug("Setting \(requests.count) host(s) to TrUAPI exchange service")
-        await state.setHostsByAccountId(hostsByAccountId)
+        try await state.setHosts(hosts)
         await state.updateSessionRequests(requests)
     }
 }
 
 // MARK: - State
 
-extension SSOTruAPICoordinator {
+private extension SSOTruAPICoordinator {
     actor State {
+        struct Peer {
+            let host: PolkadotSignInHost
+            let service: NativeSsoAccountHolderService
+        }
+
+        private let session: NativeSsoAccountHolderSession
         private var exchangeService: AnyMessageExchangeService<OpaqueSSORawHostMessage>?
-        private var hostsByAccountId = [Data: PolkadotSignInHost]()
+        private var peersByAccountId = [Data: Peer]()
         private var hostSubscriptionTask: Task<Void, Never>?
 
+        init(session: NativeSsoAccountHolderSession) {
+            self.session = session
+        }
+
         func host(forAccountId accountId: Data) -> PolkadotSignInHost? {
-            hostsByAccountId[accountId]
+            peersByAccountId[accountId]?.host
+        }
+
+        func peer(matching peer: MessageExchange.Peer) -> Peer? {
+            guard let entry = peersByAccountId[peer.accountId], entry.host.publicKey == peer.publicKey else {
+                return nil
+            }
+            return entry
         }
 
         func setExchangeService(_ value: AnyMessageExchangeService<OpaqueSSORawHostMessage>?) {
             exchangeService = value
         }
 
-        func setHostsByAccountId(_ value: [Data: PolkadotSignInHost]) {
-            hostsByAccountId = value
+        func setHosts(_ hosts: [PolkadotSignInHost]) throws {
+            var peers = [Data: Peer]()
+            for host in hosts {
+                let service: NativeSsoAccountHolderService =
+                    if let existing = peersByAccountId[host.accountId],
+                    existing.host.publicKey == host.publicKey {
+                        existing.service
+                    } else {
+                        try session.openService()
+                    }
+                peers[host.accountId] = Peer(host: host, service: service)
+            }
+            peersByAccountId = peers
         }
 
         func setHostSubscriptionTask(_ value: Task<Void, Never>?) {
@@ -221,7 +254,7 @@ extension SSOTruAPICoordinator {
 
         func reset() {
             exchangeService?.updateSessions([])
-            hostsByAccountId = [:]
+            peersByAccountId = [:]
             hostSubscriptionTask?.cancel()
             hostSubscriptionTask = nil
         }

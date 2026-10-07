@@ -196,6 +196,11 @@ pub mod latest {
     /// Push notification scheduling result.
     pub type HostPushNotificationResponse =
         LatestOf<versioned::notifications::HostPushNotificationResponse>;
+    /// Login request.
+    pub type HostRequestLoginRequest = LatestOf<versioned::account::HostRequestLoginRequest>;
+    /// Connection state reported to account subscribers.
+    pub type HostAccountConnectionStatusSubscribeItem =
+        LatestOf<versioned::account::HostAccountConnectionStatusSubscribeItem>;
     /// Login request error.
     pub type HostRequestLoginError = LatestOf<versioned::account::HostRequestLoginError>;
     /// Login request result.
@@ -591,7 +596,7 @@ runtime_items! {
     pub use truapi_core::TrUApiCore;
     pub use host_core::{
         ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
-        ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
+        ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime, SsoAccountHolderSession,
     };
     pub use host_internal::bulletin::{preimage_cid, preimage_key};
     pub use host_logic::session::{

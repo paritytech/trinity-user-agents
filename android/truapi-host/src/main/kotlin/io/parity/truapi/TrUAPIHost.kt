@@ -69,6 +69,7 @@ import uniffi.truapi.DevicePermissionStatus
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
 import uniffi.truapi.NativeAnnouncedPairing
+import uniffi.truapi.NativeSsoAccountHolderSession
 import uniffi.truapi.PairedSsoPeer
 import uniffi.truapi.ResponderExit
 import uniffi.truapi.ProductRuntimeException
@@ -882,6 +883,19 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     fun activateLocalSession(secret: ByteArray, liteUsername: String? = null) {
         inner.activateLocalSession(secret, liteUsername)
     }
+
+    /**
+     * Bind an external SSO transport to the active wallet after verifying its
+     * own statement and encryption public keys. Retain this binding with the
+     * transport, open one service per authenticated peer, and close each handle
+     * when its transport ends.
+     */
+    @Throws(HostRejection::class)
+    fun openSsoSession(
+        ownStatementAccountId: ByteArray,
+        ownEncryptionPublicKey: ByteArray,
+    ): NativeSsoAccountHolderSession =
+        inner.openSsoSession(ownStatementAccountId, ownEncryptionPublicKey)
 
     /** Push a JSON-RPC response from a native chain connection into the runtime. */
     fun notifyChainResponse(connectionId: UInt, json: String) {

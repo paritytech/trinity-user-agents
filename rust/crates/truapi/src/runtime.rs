@@ -19,6 +19,7 @@ mod capabilities;
 mod chat;
 pub mod contacts;
 mod dotns_lookup;
+mod host_grants;
 mod identity;
 pub mod login_failure;
 mod pairing_host;
@@ -29,10 +30,11 @@ mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
-/// SSO pairing (login) flow over the statement store bootstrap topic.
-pub mod sso_pairing;
+mod sso_account_holder_client;
+mod sso_account_holder_service;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
+mod sso_request_service;
 pub mod sso_service;
 /// Statement Store and Bulletin allowance allocation.
 pub mod statement_allowance;
@@ -42,8 +44,8 @@ mod statement_store_rpc;
 mod vrf;
 
 pub use signing_host::{
-    wallet_derive_subtree_public_key, wallet_ring_vrf_providers, wallet_select_ring_vrf_provider,
-    wallet_selected_ring_vrf_provider,
+    wallet_derive_subtree_public_key, wallet_require_current_session, wallet_require_sso_identity,
+    wallet_ring_vrf_providers, wallet_select_ring_vrf_provider, wallet_selected_ring_vrf_provider,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use signing_host::{
@@ -62,8 +64,8 @@ use std::time::Instant;
 pub use actions::ActionChannel;
 use authority::AuthorityCancelError;
 pub use authority::{
-    AccountCaller, AccountHolder, AccountInvocation, AuthorityError, BulletinAllowanceKey,
-    HostOperation, ProductAuthority,
+    AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
+    BulletinAllowanceKey, HostOperation, ProductAuthority,
 };
 /// Wallet-issued permission for one product during one activation.
 #[derive(Clone)]
@@ -83,6 +85,7 @@ type ContactsPicker = (
     crate::runtime::contacts::ContactHandles,
 );
 use futures::{FutureExt, StreamExt, pin_mut};
+pub use host_grants::HostGrantStore;
 #[cfg(test)]
 use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
@@ -93,10 +96,13 @@ pub use signing_host::{
     PairingProposal, PairingProposalMetadata, ResponderExit,
 };
 pub use signing_host::{
-    LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService, disconnect_paired_host,
+    LocalActivation, SigningHost as SigningHostRole, WalletAccountHolder, disconnect_paired_host,
     establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
     respond_to_pairing, resume_pairing,
 };
+pub use sso_account_holder_client::SsoAccountHolderClient;
+pub use sso_account_holder_service::SsoAccountHolderService;
+pub use sso_request_service::SsoRequestService;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
@@ -490,7 +496,9 @@ impl ProductRuntimeHost {
             host_config.asset_hub_chain_genesis_hash,
             spawner.clone(),
         );
-        let pairing_host = PairingHost::new(services.clone(), host_config);
+        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+        let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
+        let pairing_host = PairingHost::new(services.clone(), sso, grants);
         let core_instance = services.next_core_instance();
         let chat = Arc::new(ActionChannel::chat());
         let renderer = Arc::new(ActionChannel::renderer());

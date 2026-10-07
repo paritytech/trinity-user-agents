@@ -23,7 +23,7 @@ the response's `Result` payload:
 pub type GetAccountAliasResponse = Result<HostAccountGetAliasResponse, RingVrfError>;
 
 #[truapi_macros::sso_service]
-impl SigningHostSsoService {
+impl SsoAccountHolderService {
     async fn get_account_alias(
         &self,
         cx: &SsoRequestContext,
