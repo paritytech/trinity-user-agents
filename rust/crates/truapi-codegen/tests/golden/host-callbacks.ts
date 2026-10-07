@@ -1389,9 +1389,9 @@ export interface CoreStorage {
 /**
  * Host control of the card face drawn above an opened card's Widget.
  *
- * Installed per connection, like `PermissionStatusHost`, because the host
- * owns one drawer per product execution. Hosts without expanded cards install
- * nothing and products are told `Unsupported`.
+ * Carried per connection on `ConnectionAdapters`, because the host owns one
+ * drawer per product execution. A connection without one tells products
+ * `Unsupported`.
  */
 export interface ExpandedCardHost {
   /**
