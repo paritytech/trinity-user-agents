@@ -1172,7 +1172,28 @@ mod tests {
             PermissionAuthorizationStatus::Authorized,
         ))
         .unwrap();
+        let database_file =
+            std::path::Path::new(&config.database_directory).join(crate::store::CORE_DB_FILE);
+        {
+            let connection = rusqlite::Connection::open(&database_file).unwrap();
+            connection.execute_batch(
+                "INSERT INTO allowance_records
+                    (wallet, chain, resource, account, allocated_at)
+                 VALUES (zeroblob(32), zeroblob(32), 'statement-store-allowance', zeroblob(32), 1);
+                 INSERT INTO statement_slots
+                    (wallet, chain, collection, period, slot, account, priority, last_allocated_or_renewed_at)
+                 VALUES (zeroblob(32), zeroblob(32), 'People', 1, 0, zeroblob(32), 0, 1);",
+            ).unwrap();
+        }
+        let journal_counts = || {
+            rusqlite::Connection::open(&database_file).unwrap().query_row(
+                "SELECT (SELECT COUNT(*) FROM allowance_records), (SELECT COUNT(*) FROM statement_slots)",
+                [],
+                |row| Ok((row.get::<_, u32>(0)?, row.get::<_, u32>(1)?)),
+            ).unwrap()
+        };
         host.lock_wallet();
+        assert_eq!(journal_counts(), (1, 1));
         assert_eq!(
             block_on(execution.platform.read(key.clone())),
             Ok(Some(vec![7]))
@@ -1188,6 +1209,7 @@ mod tests {
         callbacks.secret_storage.lock().unwrap().clear();
         std::fs::create_dir(&config.database_directory).unwrap();
         let fresh = native_host_runtime(callbacks.clone(), config).unwrap();
+        assert_eq!(journal_counts(), (0, 0));
         let fresh_execution = fresh
             .open_product_execution(
                 callbacks,
