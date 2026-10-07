@@ -182,16 +182,36 @@ mod tests {
     #[test]
     fn a_code_is_accepted_only_in_a_named_format() {
         assert!(accepts(&qr(None, None), CodeFormat::Qr, "anything"));
-        assert!(!accepts(&qr(None, None), CodeFormat::Ean13, "4006381333931"));
+        assert!(!accepts(
+            &qr(None, None),
+            CodeFormat::Ean13,
+            "4006381333931"
+        ));
     }
 
     #[test]
     fn the_prefix_ignores_letter_case_and_nothing_else() {
         // QR codes often store URLs in capitals to fit more in the code.
-        assert!(accepts(&receipts(), CodeFormat::Qr, "https://greenmarket.example/r/BAG6"));
-        assert!(accepts(&receipts(), CodeFormat::Qr, "HTTPS://GREENMARKET.EXAMPLE/R/BAG6"));
-        assert!(!accepts(&receipts(), CodeFormat::Qr, "polkadotapp://pair?handshake=00"));
-        assert!(!accepts(&receipts(), CodeFormat::Qr, "https://greenmarket.example"));
+        assert!(accepts(
+            &receipts(),
+            CodeFormat::Qr,
+            "https://greenmarket.example/r/BAG6"
+        ));
+        assert!(accepts(
+            &receipts(),
+            CodeFormat::Qr,
+            "HTTPS://GREENMARKET.EXAMPLE/R/BAG6"
+        ));
+        assert!(!accepts(
+            &receipts(),
+            CodeFormat::Qr,
+            "polkadotapp://pair?handshake=00"
+        ));
+        assert!(!accepts(
+            &receipts(),
+            CodeFormat::Qr,
+            "https://greenmarket.example"
+        ));
     }
 
     #[test]
@@ -205,7 +225,10 @@ mod tests {
         // The viewfinder sees the same code on many frames before it closes.
         let filter = ScanFilter::new(receipts());
         let receipt = "https://greenmarket.example/r/BAG6".to_owned();
-        assert_eq!(filter.observe(CodeFormat::Qr, receipt.clone()), ScanVerdict::Accept);
+        assert_eq!(
+            filter.observe(CodeFormat::Qr, receipt.clone()),
+            ScanVerdict::Accept
+        );
         assert_eq!(filter.observe(CodeFormat::Qr, receipt), ScanVerdict::Ignore);
     }
 
@@ -219,7 +242,10 @@ mod tests {
             filter.observe(CodeFormat::Qr, poster.clone()),
             ScanVerdict::NotForThisProduct
         );
-        assert_eq!(filter.observe(CodeFormat::Qr, poster.clone()), ScanVerdict::Ignore);
+        assert_eq!(
+            filter.observe(CodeFormat::Qr, poster.clone()),
+            ScanVerdict::Ignore
+        );
         assert_eq!(
             filter.observe(CodeFormat::Qr, pairing),
             ScanVerdict::NotForThisProduct

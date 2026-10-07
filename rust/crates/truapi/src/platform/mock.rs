@@ -1342,7 +1342,11 @@ impl ScannerPlatform for MockPlatform {
         _product: &ProductContext,
         _request: &latest::HostScannerScanRequest,
     ) -> Result<HostScan, latest::GenericError> {
-        Ok(self.scan_answer.lock().expect("scan answer poisoned").clone())
+        Ok(self
+            .scan_answer
+            .lock()
+            .expect("scan answer poisoned")
+            .clone())
     }
 }
 
@@ -1813,7 +1817,10 @@ mod tests {
             format: latest::CodeFormat::Qr,
         };
         p.set_scan_answer(receipt.clone());
-        assert_eq!(block_on(p.scan_code(&mock_product(), &request)), Ok(receipt));
+        assert_eq!(
+            block_on(p.scan_code(&mock_product(), &request)),
+            Ok(receipt)
+        );
     }
 
     #[test]

@@ -21,8 +21,7 @@ use crate::platform::SigningHostConfig;
 use crate::platform::{
     ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
     PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
-    ScannerPlatform,
-    ProductExecutionKind, ProviderError, RuntimeConfigValidationError,
+    ProductExecutionKind, ProviderError, RuntimeConfigValidationError, ScannerPlatform,
 };
 use futures::channel::mpsc;
 use futures::future::{AbortHandle, Abortable};

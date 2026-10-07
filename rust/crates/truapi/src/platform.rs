@@ -35,11 +35,11 @@ use truapi::latest::{
     HostFeatureSupportedResponse, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
     HostNavigateToError, HostPlatform, HostPocketListSubscribeItem, HostPocketRemoveCardError,
     HostPocketRemoveCardRequest, HostPushNotificationRequest, HostPushNotificationResponse,
-    HostScannerScanRequest,
-    HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
-    HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, HostWorkerBeginOperationResponse,
-    HostWorkerOperationError, LegacyAccountTxPayload, ProductAccountId, ProductAccountTxPayload,
-    ProductProofContext, RemotePermission, RemotePermissionRequest, RingLocation,
+    HostScannerScanRequest, HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest,
+    HostSignRawRequest, HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
+    HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
+    ProductAccountId, ProductAccountTxPayload, ProductProofContext, RemotePermission,
+    RemotePermissionRequest, RingLocation,
 };
 use truapi::v01::HostAccountSignVrfRequest;
 use url::{Host, Url};

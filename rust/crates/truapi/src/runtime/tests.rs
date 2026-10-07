@@ -7802,7 +7802,9 @@ fn unwrap_scan(
     }
 }
 
-fn scan(host: &ProductRuntimeHost) -> Result<v01::ScanOutcome, CallError<v01::HostScannerScanError>> {
+fn scan(
+    host: &ProductRuntimeHost,
+) -> Result<v01::ScanOutcome, CallError<v01::HostScannerScanError>> {
     scan_in(host, &CallContext::default())
 }
 
@@ -7857,7 +7859,9 @@ fn a_dismissal_is_an_outcome_and_a_missing_camera_is_an_error() {
     )));
     assert_eq!(
         scan(&no_camera),
-        Err(CallError::Domain(v01::HostScannerScanError::CameraUnavailable))
+        Err(CallError::Domain(
+            v01::HostScannerScanError::CameraUnavailable
+        ))
     );
 }
 
@@ -7877,7 +7881,9 @@ fn an_invalid_request_never_reaches_the_host() {
 
     assert!(matches!(
         result,
-        Err(CallError::Domain(v01::HostScannerScanError::InvalidRequest { .. }))
+        Err(CallError::Domain(
+            v01::HostScannerScanError::InvalidRequest { .. }
+        ))
     ));
     assert!(scanner.asked().is_empty());
 }
@@ -7888,7 +7894,10 @@ fn a_host_answer_the_request_does_not_accept_never_reaches_the_product() {
     // right text in a format it did not ask for.
     for answer in [
         scanned("polkadotapp://pair?handshake=00", v01::CodeFormat::Qr),
-        scanned("https://greenmarket.example/r/BAG6", v01::CodeFormat::Code128),
+        scanned(
+            "https://greenmarket.example/r/BAG6",
+            v01::CodeFormat::Code128,
+        ),
     ] {
         let host = scanner_host(Some(StubScannerPlatform::answering(answer)));
         assert!(matches!(
