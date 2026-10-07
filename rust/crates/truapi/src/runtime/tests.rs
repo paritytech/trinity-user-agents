@@ -2865,6 +2865,7 @@ fn navigate_to_internal_targets_do_not_consume_open_url_permission() {
         "mytestapp.dot",
         "localhost:3000",
         "polkadot://mytestapp.dot/-/pocket/open?card=loyalty",
+        "polkadot://mytestapp.dot/-/pocket",
     ] {
         let request = HostNavigateToRequest::V1(v01::HostNavigateToRequest {
             url: url.to_string(),
