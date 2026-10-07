@@ -596,7 +596,7 @@ runtime_items! {
     pub use truapi_core::TrUApiCore;
     pub use host_core::{
         ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
-        ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
+        ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime, SsoAccountHolderSession,
     };
     pub use host_internal::bulletin::{preimage_cid, preimage_key};
     pub use host_logic::session::{

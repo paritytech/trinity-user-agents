@@ -36,8 +36,9 @@ use crate::runtime::{
     ActionChannel, AuthorityError, AuthoritySession, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
     DevicePairingObserver, HostGrantStore, LocalActivation, PairedSsoPeer, PairingHostRole,
     ProductAuthority, ProductRuntimeHost, ResponderExit, RuntimeServices, SigningHostRole,
-    SsoRequestService, WalletAccountHolder, disconnect_paired_host, establish_pairing,
-    notify_pairing_allowance_allocation, notify_pairing_failed, respond_to_pairing, resume_pairing,
+    SsoAccountHolderService, SsoRequestService, WalletAccountHolder, disconnect_paired_host,
+    establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
+    respond_to_pairing, resume_pairing,
 };
 use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
 use crate::transport::Transport;
@@ -1004,7 +1005,7 @@ impl SigningHostRuntime {
         &self,
         own_statement_account_id: [u8; 32],
         own_encryption_public_key: [u8; 32],
-    ) -> Result<(Arc<WalletAccountHolder>, AuthoritySession), AuthorityError> {
+    ) -> Result<SsoAccountHolderSession, AuthorityError> {
         let wallet = self.signing_host.account_holder().clone();
         let session = wallet
             .current_session()
@@ -1014,7 +1015,24 @@ impl SigningHostRuntime {
             own_statement_account_id,
             own_encryption_public_key,
         )?;
-        Ok((wallet, session))
+        Ok(SsoAccountHolderSession { wallet, session })
+    }
+}
+
+/// A wallet activation authenticated by an externally owned SSO transport.
+pub struct SsoAccountHolderSession {
+    wallet: Arc<WalletAccountHolder>,
+    session: AuthoritySession,
+}
+
+impl SsoAccountHolderSession {
+    /// Give each peer independent request and withdrawal state.
+    pub fn open_service(&self) -> Result<SsoAccountHolderService, AuthorityError> {
+        self.wallet.require_current_session(&self.session)?;
+        Ok(SsoAccountHolderService::new(
+            self.wallet.clone(),
+            self.session.clone(),
+        ))
     }
 }
 

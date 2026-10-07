@@ -556,14 +556,14 @@ impl NativeTrUApiHostRuntime {
         own_statement_account_id: Bytes32,
         own_encryption_public_key: Bytes32,
     ) -> Result<Arc<super::sso::NativeSsoAccountHolderSession>, HostRejection> {
-        let (wallet, session) = self
+        let session = self
             .runtime
             .open_sso_session(own_statement_account_id, own_encryption_public_key)
             .map_err(|error| HostRejection::Rejected {
                 reason: error.to_string(),
             })?;
         Ok(Arc::new(super::sso::NativeSsoAccountHolderSession::new(
-            wallet, session,
+            session,
         )))
     }
 
