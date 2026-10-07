@@ -5,7 +5,7 @@
 //! never blocks on the host. Every entry point returns the frames to send, and
 //! the embedder relays them; replies come back through [`Worker::on_frame`].
 //!
-//! Two modes share the counter, the tree and the lifecycle:
+//! Three modes share the counter, the tree and the lifecycle:
 //!
 //! - [`Mode::Chat`] (the default, what the CLI proof runs): on start it
 //!   registers a bot, creates a room, subscribes to renderer actions and posts
@@ -16,8 +16,12 @@
 //!   makes no Chat call, because a host that serves Pocket workers need not
 //!   serve Chat, and a refused call would be noise rather than a finding. The
 //!   host opens `renderer.render` for a Pocket card.
+//! - [`Mode::Unified`] (the `unified` cargo feature): starts as chat mode does,
+//!   and draws both its chat message and a Pocket card, so one product shows
+//!   the same count on both surfaces.
 //!
-//! Each `bump` action increments the count and redraws every open stream.
+//! Each `bump` action, from whichever body it was pressed in, increments the
+//! one count and redraws every open stream.
 
 use parity_scale_codec::{Decode, DecodeAll, Encode};
 use truapi::v01::{
@@ -155,8 +159,7 @@ pub enum Event {
     RenderOpened {
         /// Host-minted subscription id.
         request_id: String,
-        /// The message id (chat mode) or card id (Pocket mode) from the
-        /// render context.
+        /// The message id or the card id from the render context.
         body: String,
     },
     /// The host closed a render stream.
@@ -186,6 +189,8 @@ pub enum Mode {
     Chat,
     /// A Pocket card the host's manifest (or debug settings) declares.
     Pocket,
+    /// Both: the chat message it posts and the Pocket card, one count.
+    Unified,
 }
 
 /// The counter bot. Pure state machine: frames in, frames and events out.
@@ -215,6 +220,15 @@ impl Worker {
         }
     }
 
+    /// A fresh bot that draws its chat message and a Pocket card from one
+    /// count, starting at zero.
+    pub fn unified() -> Self {
+        Self {
+            mode: Mode::Unified,
+            ..Self::default()
+        }
+    }
+
     /// Events recorded since the last call, oldest first.
     pub fn take_events(&mut self) -> Vec<Event> {
         core::mem::take(&mut self.events)
@@ -227,9 +241,9 @@ impl Worker {
         id
     }
 
-    /// Frames to send when the connection opens. Both modes handshake and
-    /// subscribe to renderer actions; chat mode also registers the bot and
-    /// creates the room, and posts the message once the room exists.
+    /// Frames to send when the connection opens. Every mode handshakes and
+    /// subscribes to renderer actions; chat and unified modes also register
+    /// the bot and create the room, and post the message once the room exists.
     pub fn start(&mut self) -> Vec<Frame> {
         let handshake = Frame::request(
             self.mint(Pending::Handshake),
@@ -255,7 +269,13 @@ impl Worker {
             wire::CHAT_CREATE_ROOM,
             versioned::chat::HostChatCreateRoomRequest::V1(HostChatCreateRoomRequest {
                 room_id: ROOM_ID.to_string(),
-                name: "Counter".to_string(),
+                // A host lists a unified product's room beside a chat-only counter's.
+                name: if self.mode == Mode::Unified {
+                    "Shared counter"
+                } else {
+                    "Counter"
+                }
+                .to_string(),
                 icon: String::new(),
             }),
         );
@@ -414,8 +434,12 @@ impl Worker {
                     return Vec::new();
                 };
                 let body = match (self.mode, request.context) {
-                    (Mode::Chat, RenderContext::ChatMessage { message_id, .. }) => message_id,
-                    (Mode::Pocket, RenderContext::PocketCard { card_id }) => card_id,
+                    (Mode::Chat | Mode::Unified, RenderContext::ChatMessage { message_id, .. }) => {
+                        message_id
+                    }
+                    (Mode::Pocket | Mode::Unified, RenderContext::PocketCard { card_id }) => {
+                        card_id
+                    }
                     _ => return Vec::new(),
                 };
                 self.events.push(Event::RenderOpened {
@@ -546,7 +570,10 @@ mod tests {
 
     /// Drive the bot to the point where its message is stored.
     fn posted_bot() -> Worker {
-        let mut worker = Worker::new();
+        posted(Worker::new())
+    }
+
+    fn posted(mut worker: Worker) -> Worker {
         let start = worker.start();
         assert_eq!(
             start
@@ -775,6 +802,70 @@ mod tests {
                     count: 0,
                     paused: false
                 },
+            ]
+        );
+    }
+
+    fn tap(context: RenderContext) -> Vec<u8> {
+        Frame {
+            request_id: "w:4".to_string(),
+            trait_id: wire::RENDERER_ACTION_SUBSCRIBE.0,
+            method_id: wire::RENDERER_ACTION_SUBSCRIBE.1,
+            message_type: wire::MESSAGE_TYPE_RESPONSE,
+            payload: versioned::renderer::HostRendererActionSubscribeItem::V1(
+                HostRendererActionSubscribeItem {
+                    context,
+                    action_id: BUMP_ACTION.to_string(),
+                    payload: Vec::new(),
+                },
+            )
+            .encode(),
+        }
+        .encode()
+    }
+
+    fn counts(trees: &[Frame]) -> Vec<(String, String)> {
+        trees
+            .iter()
+            .map(|tree| (tree.request_id.clone(), tree_count(tree)))
+            .collect()
+    }
+
+    // One product, one worker: the chat message and the Pocket card are two
+    // views of the same count, so a press in either moves both.
+    #[test]
+    fn unified_mode_draws_its_message_and_its_card_from_one_count() {
+        let mut worker = posted(Worker::unified());
+        assert_eq!(
+            counts(&worker.on_frame(&render_start("h:1"))),
+            [("h:1".into(), "count 0".into())]
+        );
+        assert_eq!(
+            counts(&worker.on_frame(&pocket_render_start("h:2"))),
+            [("h:2".into(), "count 0".into())]
+        );
+
+        let from_card = worker.on_frame(&tap(RenderContext::PocketCard {
+            card_id: "counter".to_string(),
+        }));
+        assert_eq!(
+            counts(&from_card),
+            [
+                ("h:1".into(), "count 1".into()),
+                ("h:2".into(), "count 1".into())
+            ]
+        );
+
+        let from_message = worker.on_frame(&tap(RenderContext::ChatMessage {
+            room_id: ROOM_ID.to_string(),
+            message_id: "m1".to_string(),
+            message_type: MESSAGE_TYPE.to_string(),
+        }));
+        assert_eq!(
+            counts(&from_message),
+            [
+                ("h:1".into(), "count 2".into()),
+                ("h:2".into(), "count 2".into())
             ]
         );
     }

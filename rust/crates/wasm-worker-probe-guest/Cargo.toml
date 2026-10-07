@@ -13,6 +13,9 @@ crate-type = ["cdylib", "rlib"]
 # The wasm32 ABI draws a Pocket card and makes no Chat call. Without it the
 # module is the chat bot the CLI proof runs.
 pocket = []
+# The wasm32 ABI posts its chat message and draws a Pocket card, both from one
+# count. Excludes `pocket`.
+unified = []
 
 [dependencies]
 truapi = { path = "../truapi", default-features = false }

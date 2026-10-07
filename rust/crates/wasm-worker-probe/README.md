@@ -22,6 +22,12 @@ Two crates:
   count and redraws every open stream; suspend and resume redraw with a
   `paused` marker. The guest never blocks on the host.
 
+  Two cargo features change what the wasm32 build draws. `pocket` makes no
+  Chat call and draws only a Pocket card. `unified` starts as the default
+  does and also draws a Pocket card, from the same count, so one product
+  shows that count in its chat message and on its card; a `bump` in either
+  redraws both. The two features exclude each other.
+
 The guest's sandbox boundary is two imports, `host.frame_send` and
 `host.log`, and the exports `alloc`, `free`, `on_start`, `on_frame`,
 `on_suspend`, `on_resume`. Its wire discriminants are hardcoded, because the

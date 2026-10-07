@@ -11,12 +11,20 @@ thread_local! {
     static WORKER: RefCell<Worker> = RefCell::new(fresh_worker());
 }
 
-#[cfg(feature = "pocket")]
+#[cfg(all(feature = "pocket", feature = "unified"))]
+compile_error!("`pocket` and `unified` select different modes; enable one");
+
+#[cfg(feature = "unified")]
+fn fresh_worker() -> Worker {
+    Worker::unified()
+}
+
+#[cfg(all(feature = "pocket", not(feature = "unified")))]
 fn fresh_worker() -> Worker {
     Worker::pocket()
 }
 
-#[cfg(not(feature = "pocket"))]
+#[cfg(not(any(feature = "pocket", feature = "unified")))]
 fn fresh_worker() -> Worker {
     Worker::new()
 }
