@@ -141,7 +141,8 @@ User                Host                             Product worker
 ```
 
 An added card is an ordinary card from then on: same face stream, actions, expansion, removal rules, and worker
-reference as a privileged one, without the pin. If the card is already present, `add` behaves as `open`. An unknown
+reference as a privileged one, without the pin. If the card is already present, `add` behaves as `open`, and if it is
+not, `open` behaves as `add`, so a link to a card the user has yet to add leads to it through the dialog. An unknown
 card, or a product whose manifest lacks `includes.pocket`, produces a host error and no dialog.
 
 ### Removing a card
