@@ -335,7 +335,7 @@ impl<H: AccountHolder> HostAccounts<H> {
     }
 
     /// Acquire a statement key, renewing only grants whose actual allocation period is known.
-    pub async fn statement_store_allowance_key(
+    async fn statement_store_allowance_key(
         &self,
         cx: &CallContext,
         operation: &HostOperation,
