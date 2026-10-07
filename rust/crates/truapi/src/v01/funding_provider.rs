@@ -20,6 +20,8 @@ pub struct FundingAssignment {
     pub last_update: Option<FundingUpdate>,
     /// The quote the user chose this provider on, when it was quoted.
     pub quote: Option<FundingQuote>,
+    /// What the provider last saved for the session with `save`.
+    pub saved: Option<Vec<u8>>,
 }
 
 /// How the user pays or is paid.
@@ -172,6 +174,16 @@ pub enum FundingUpdate {
         /// Why it ended.
         reason: FundingFailure,
     },
+    /// The provider's own references for the session, which the user can
+    /// quote to it. Allowed at any point while the session is open, outside
+    /// the order of the others; the latest value of each is shown.
+    Details {
+        /// The provider's transaction id.
+        transaction_id: Option<String>,
+        /// A reference the user pays with or quotes, such as a bank
+        /// transfer reference.
+        reference: Option<String>,
+    },
 }
 
 /// Item of [`crate::api::FundingProvider::serve_subscribe`].
@@ -270,6 +282,32 @@ pub struct HostFundingPresentFrameResponse {
 pub enum HostFundingPresentFrameError {
     /// No open session with this id is assigned to the caller.
     NotFound,
+    /// Catch-all.
+    Unknown {
+        /// Human-readable failure reason.
+        reason: String,
+    },
+}
+
+/// Request to save the provider's own state for a session.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostFundingSaveRequest {
+    /// Session the state belongs to.
+    pub intent: String,
+    /// The state, opaque to the host. Replaces what was saved before.
+    pub state: Vec<u8>,
+}
+
+/// Error from [`crate::api::FundingProvider::save`].
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostFundingSaveError {
+    /// No open session with this id is assigned to the caller.
+    NotFound,
+    /// The state is larger than the host keeps.
+    TooLarge {
+        /// The most bytes the host keeps for a session.
+        max: u32,
+    },
     /// Catch-all.
     Unknown {
         /// Human-readable failure reason.

@@ -232,6 +232,10 @@ pub mod latest {
     /// Failure answering a quote ask.
     pub type HostFundingAnswerQuoteError =
         LatestOf<versioned::funding_provider::HostFundingAnswerQuoteError>;
+    /// A provider's state saved for a session.
+    pub type HostFundingSaveRequest = LatestOf<versioned::funding_provider::HostFundingSaveRequest>;
+    /// Failure saving a provider's state.
+    pub type HostFundingSaveError = LatestOf<versioned::funding_provider::HostFundingSaveError>;
     /// Request to show a provider screen.
     pub type HostFundingPresentFrameRequest =
         LatestOf<versioned::funding_provider::HostFundingPresentFrameRequest>;

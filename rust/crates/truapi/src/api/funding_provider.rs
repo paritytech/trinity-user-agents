@@ -4,6 +4,7 @@ use crate::versioned::funding_provider::{
     HostFundingAnswerQuoteError, HostFundingAnswerQuoteRequest, HostFundingAnswerQuoteResponse,
     HostFundingPresentFrameError, HostFundingPresentFrameRequest, HostFundingPresentFrameResponse,
     HostFundingReportError, HostFundingReportRequest, HostFundingReportResponse,
+    HostFundingSaveError, HostFundingSaveRequest, HostFundingSaveResponse,
     HostFundingServeSubscribeError, HostFundingServeSubscribeItem,
     HostFundingServeSubscribeRequest,
 };
@@ -100,6 +101,27 @@ pub trait FundingProvider: Send + Sync {
         _cx: &CallContext,
         _request: HostFundingAnswerQuoteRequest,
     ) -> Result<HostFundingAnswerQuoteResponse, CallError<HostFundingAnswerQuoteError>> {
+        Err(CallError::unavailable())
+    }
+
+    /// Save the provider's own state for a session it serves, such as its
+    /// order id, so a restarted worker can carry on. The host keeps it with
+    /// the session, hands it back in `Assigned`, and drops it once the
+    /// session ends.
+    ///
+    /// ```ts
+    /// const result = await truapi.fundingProvider.save({
+    ///   intent: "fs_example",
+    ///   state: "0x6f5f31",
+    /// });
+    /// console.log("state saved:", result);
+    /// ```
+    #[wire(id = 4)]
+    async fn save(
+        &self,
+        _cx: &CallContext,
+        _request: HostFundingSaveRequest,
+    ) -> Result<HostFundingSaveResponse, CallError<HostFundingSaveError>> {
         Err(CallError::unavailable())
     }
 }

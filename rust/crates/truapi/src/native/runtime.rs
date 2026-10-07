@@ -317,6 +317,15 @@ impl NativeTrUApiHostRuntime {
         self.runtime.funding_session(&intent)
     }
 
+    /// Session `intent`'s progress: the steps for its direction and rail
+    /// with when each was reached, and the provider's references.
+    pub fn funding_progress(
+        &self,
+        intent: String,
+    ) -> Option<crate::host_logic::funding::FundingProgress> {
+        self.runtime.funding_progress(&intent)
+    }
+
     /// Every funding session the core keeps, in flight first, then ended,
     /// each newest first.
     pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {

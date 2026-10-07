@@ -406,7 +406,7 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   Native hosts reach this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `set_top_up_callbacks` with
   `notify_top_up_status` (the top-up engine), `open_funding`,
-  `funding_session`, `funding_sessions`, `set_funding_providers`,
+  `funding_session`, `funding_progress`, `funding_sessions`, `set_funding_providers`,
   `funding_candidates`, `get_funding_quote`, `select_funding_provider`,
   `cancel_funding` and `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
   `funding_sessions` lists sessions in flight first, then ended ones, each
@@ -440,11 +440,22 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   `select_funding_provider` hands a session to the provider the user chose,
   which must be one of those candidates, on the quote it was chosen by, which
   must be one core offered for the session and not yet expired; the provider
-  receives it in `Assigned`.
+  receives it in `Assigned`, and the session keeps it with the rail and asset
+  it priced.
+  `funding_progress(intent)` gives the steps the host draws for a session's
+  direction and rail, each with when it was reached: in, `Started`,
+  `Payment`, `Approved` (bank and crypto, once the payment can no longer be
+  reversed), `Conversion`, `Added`; out, `Started`, `Payment`, `Sent`. A step
+  the provider skipped takes the time of the first later one. It also carries
+  when the session failed and the latest transaction id and reference the
+  provider reported with `Details`.
   That provider's worker runs it through the `FundingProvider` trait:
   `serveSubscribe` replays its sessions in flight and then streams new ones
   and cancel requests, `report` stores each update on the session (only from
-  the assigned provider, only forward), and `presentFrame` asks the host to
+  the assigned provider, only forward; `Details` may come at any point while
+  the session is open), `save` keeps up to 4 KiB of the provider's own state
+  with the session, handed back in `Assigned` and dropped once the session
+  ends, and `presentFrame` asks the host to
   show one of its screens through `present_provider_frame`. The core holds the
   provider's worker while a session is assigned and open. It ends a session as
   `Delivered` or `Released` itself, from the claims of the top-ups the

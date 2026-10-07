@@ -22,6 +22,7 @@ use truapi::latest::{FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQ
 
 use super::services::RuntimeServices;
 use crate::platform::{FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable};
+use crate::host_logic::funding::FundingChoice;
 use crate::host_logic::funding_providers::LearnedSupport;
 use crate::unix_time::current_unix_millis;
 
@@ -43,35 +44,39 @@ struct RecentAnswer {
 pub struct FundingQuotes {
     /// Answers by provider and encoded ask, with when each came.
     answers: Mutex<HashMap<(String, Vec<u8>), RecentAnswer>>,
-    /// Quotes offered by session and provider, so a selection can only name
-    /// one the host was shown.
-    offered: Mutex<HashMap<(String, String), Vec<FundingQuote>>>,
+    /// Quotes offered by session and provider, with the rail and asset each
+    /// priced, so a selection can only name one the host was shown.
+    offered: Mutex<HashMap<(String, String), Vec<FundingChoice>>>,
 }
 
 impl FundingQuotes {
     /// The quote `quote_id` that `provider_id` offered for session `intent`,
-    /// unless it expired by `now_ms`.
+    /// with what it priced, unless it expired by `now_ms`.
     pub fn offered(
         &self,
         intent: &str,
         provider_id: &str,
         quote_id: &str,
         now_ms: u64,
-    ) -> Option<FundingQuote> {
+    ) -> Option<FundingChoice> {
         lock(&self.offered)
             .get(&(intent.to_string(), provider_id.to_string()))?
             .iter()
-            .find(|quote| quote.quote_id == quote_id && !expired(quote, now_ms))
+            .find(|choice| choice.quote.quote_id == quote_id && !expired(&choice.quote, now_ms))
             .cloned()
     }
 
-    fn offer(&self, intent: &str, provider_id: &str, quote: FundingQuote) {
+    fn offer(&self, intent: &str, provider_id: &str, quote: FundingQuote, ask: &FundingQuoteAsk) {
         let mut offered = lock(&self.offered);
-        let quotes = offered
+        let choices = offered
             .entry((intent.to_string(), provider_id.to_string()))
             .or_default();
-        quotes.retain(|kept| kept.quote_id != quote.quote_id);
-        quotes.push(quote);
+        choices.retain(|kept| kept.quote.quote_id != quote.quote_id);
+        choices.push(FundingChoice {
+            quote,
+            rail: ask.rail,
+            asset: ask.asset.clone(),
+        });
     }
 
     /// `provider_id`'s answer to the same ask, when it came recently and, if
@@ -202,7 +207,7 @@ impl RuntimeServices {
                 reason: FundingQuoteUnavailable::Refused { reason },
             },
             Some(FundingQuoteAnswer::Quoted { quote }) => {
-                quotes.offer(intent, provider_id, quote.clone());
+                quotes.offer(intent, provider_id, quote.clone(), &ask);
                 FundingQuoteState::Quoted { quote }
             }
         };

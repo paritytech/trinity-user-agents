@@ -289,6 +289,22 @@ export async function runProviderStart(
     return "the top-up was started and named in a Crediting report";
   });
 
+  await check("provider_saves_its_state", async () => {
+    if (!state) throw new Error("no session in flight");
+    await report(client, state.intent, {
+      tag: "Details",
+      value: { transactionId: `tx-${state.intent}`, reference: undefined },
+    });
+    const saved = await client.fundingProvider.save({
+      intent: state.intent,
+      state: state.topUpId,
+    });
+    if (saved.isErr()) {
+      throw new Error(`save failed: ${stringify(saved.error)}`);
+    }
+    return "the provider's references and its own state were kept while funds moved";
+  });
+
   await check("provider_out_released", async () => {
     const outbound = await requestFunding(client, "Out", OUT_AMOUNT);
     await served.next(assignedTo(outbound), `the session ${outbound}`);
@@ -358,10 +374,16 @@ export async function runProviderResume(
     );
     const last =
       item.tag === "Assigned" ? item.value.session.lastUpdate : undefined;
-    if (last?.tag !== "Crediting" || last.value.topUpId !== state.topUpId) {
+    const saved =
+      item.tag === "Assigned" ? item.value.session.saved : undefined;
+    if (
+      last?.tag !== "Crediting" ||
+      last.value.topUpId !== state.topUpId ||
+      saved !== state.topUpId
+    ) {
       throw new Error(`replayed ${stringify(item)}`);
     }
-    return "the restarted worker was handed the session with its last update";
+    return "the restarted worker was handed the session with its last update and saved state";
   });
 
   await check("provider_in_delivered", async () => {

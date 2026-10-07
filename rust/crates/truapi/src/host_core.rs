@@ -817,6 +817,13 @@ impl SigningHostRuntime {
         installed
     }
 
+    /// Session `intent`'s progress as the host draws it: the steps for its
+    /// direction and rail with when each was reached, and the provider's
+    /// references.
+    pub fn funding_progress(&self, intent: &str) -> Option<crate::host_logic::funding::FundingProgress> {
+        self.services.funding().get(intent).map(|session| session.progress())
+    }
+
     /// Every funding session the core keeps, in flight first, then ended,
     /// each newest first.
     pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {

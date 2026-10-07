@@ -15,4 +15,7 @@ truapi_macros::versioned_type! {
     pub enum HostFundingAnswerQuoteRequest { V1 => v01::HostFundingAnswerQuoteRequest }
     pub enum HostFundingAnswerQuoteResponse { V1 }
     pub enum HostFundingAnswerQuoteError { V1 => v01::HostFundingAnswerQuoteError }
+    pub enum HostFundingSaveRequest { V1 => v01::HostFundingSaveRequest }
+    pub enum HostFundingSaveResponse { V1 }
+    pub enum HostFundingSaveError { V1 => v01::HostFundingSaveError }
 }

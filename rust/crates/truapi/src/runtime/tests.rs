@@ -2651,6 +2651,22 @@ fn report_funding(
     .map(|_| ())
 }
 
+fn save_funding(
+    host: &ProductRuntimeHost,
+    intent: &str,
+    state: &[u8],
+) -> Result<(), CallError<truapi::versioned::funding_provider::HostFundingSaveError>> {
+    futures::executor::block_on(truapi::api::FundingProvider::save(
+        host,
+        &CallContext::default(),
+        truapi::versioned::funding_provider::HostFundingSaveRequest::V1(v01::HostFundingSaveRequest {
+            intent: intent.to_string(),
+            state: state.to_vec(),
+        }),
+    ))
+    .map(|_| ())
+}
+
 fn wait_for_stage(
     services: &RuntimeServices,
     intent: &str,
@@ -2667,8 +2683,9 @@ fn wait_for_stage(
 
 // The provider's worker takes a session from assignment to delivered, and a
 // restart in between loses nothing: the restarted worker is handed the
-// session again with its last update, and the host still decides delivery
-// from the claim of the top-up the provider named.
+// session again with its last step and the state it saved, and the host
+// still decides delivery from the claim of the top-up the provider named.
+// The saved state goes once the session ends.
 #[test]
 fn a_provider_worker_delivers_a_session_across_a_restart() {
     let storage = stub_platform();
@@ -2696,13 +2713,17 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
     let crediting = v01::FundingUpdate::Crediting { top_up_id: [7; 32], amount: 1_000 };
     report_funding(&worker, &intent, v01::FundingUpdate::Converting).expect("converting");
     report_funding(&worker, &intent, crediting.clone()).expect("crediting");
+    let details = v01::FundingUpdate::Details { transaction_id: Some("tx-1".into()), reference: None };
+    report_funding(&worker, &intent, details).expect("details while crediting");
+    save_funding(&worker, &intent, b"order-1").expect("saved");
+    let too_large = save_funding(&worker, &intent, &[0; 4097]);
 
     let after = start(&storage);
     let restarted = provider_worker(&after, "ramp.dot");
     let replayed = first_served(&restarted);
     report_funding(&restarted, &intent, v01::FundingUpdate::Delivered).expect("delivered");
 
-    let assignment = |last_update| {
+    let assignment = |last_update, saved: Option<&[u8]>| {
         Some(Ok(v01::HostFundingServeSubscribeItem::Assigned {
             session: v01::FundingAssignment {
                 intent: intent.clone(),
@@ -2711,15 +2732,25 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
                 expires_at: after.funding().get(&intent).expect("kept").deadline_ms,
                 last_update,
                 quote: None,
+                saved: saved.map(<[u8]>::to_vec),
             },
         }))
     };
+    let delivered = wait_for_stage(&after, &intent);
     assert_eq!(
-        (assigned, replayed, wait_for_stage(&after, &intent)),
         (
-            assignment(None),
-            assignment(Some(crediting)),
+            assigned,
+            replayed,
+            too_large.is_err(),
+            delivered,
+            after.funding().get(&intent).and_then(|session| session.saved),
+        ),
+        (
+            assignment(None, None),
+            assignment(Some(crediting), Some(b"order-1")),
+            true,
             Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1_000 }),
+            None,
         )
     );
 }
@@ -2883,7 +2914,7 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
             final_state("slow.dot"),
             unknown.is_err(),
             chosen,
-            services.funding().get(&intent).and_then(|session| session.quote),
+            services.funding().get(&intent).and_then(|session| session.choice),
         ),
         (
             2,
@@ -2891,7 +2922,11 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
             Some(FundingQuoteState::Unavailable { reason: FundingQuoteUnavailable::Timeout }),
             true,
             Ok(true),
-            Some(card_quote("q1")),
+            Some(crate::host_logic::funding::FundingChoice {
+                quote: card_quote("q1"),
+                rail: v01::FundingRail::Card,
+                asset: "EUR".into(),
+            }),
         )
     );
 }

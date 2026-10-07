@@ -19,7 +19,7 @@ use futures::channel::mpsc;
 use futures::lock::Mutex as AsyncMutex;
 use futures::stream::{self, BoxStream, StreamExt};
 use truapi::latest::{
-    FundingDirection, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingUpdate,
+    FundingDirection, FundingQuoteAnswer, FundingQuoteAsk, FundingUpdate,
     GenericError, HostFundingServeSubscribeItem,
     HostFundingStatusSubscribeItem, HostPaymentStatusSubscribeError,
     HostPaymentStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError,
@@ -28,7 +28,7 @@ use truapi::latest::{
 
 use super::services::RuntimeServices;
 use crate::host_logic::funding::{
-    CancelOutcome, FundingSession, FundingSessionError, ReportRefusal, Settlement, load_sessions,
+    CancelOutcome, FundingChoice, FundingSession, FundingSessionError, ReportRefusal, SaveRefusal, Settlement, load_sessions,
     retained, store_sessions,
 };
 use crate::platform::{
@@ -100,14 +100,14 @@ impl FundingRegistry {
         now_ms: u64,
         intent: &str,
         provider_id: &str,
-        quote: Option<FundingQuote>,
+        choice: Option<FundingChoice>,
     ) -> Result<bool, FundingSessionError> {
         let intent = intent.to_string();
         let provider = provider_id.to_string();
         let assigned = self
             .commit(storage, now_ms, move |sessions| {
                 let assigned = sessions.get_mut(&intent).and_then(|session| {
-                    session.assign(&provider, quote).then(|| session.assignment())
+                    session.assign(&provider, choice).then(|| session.assignment())
                 });
                 let changed = assigned.iter().map(|session| session.intent.clone()).collect();
                 (assigned, changed)
@@ -242,6 +242,27 @@ impl FundingRegistry {
         .await
     }
 
+    /// Keep `state` as `provider_id`'s own state for session `intent`.
+    pub async fn save(
+        &self,
+        storage: &(impl CoreStorage + ?Sized),
+        now_ms: u64,
+        provider_id: &str,
+        intent: &str,
+        state: Vec<u8>,
+    ) -> Result<Result<(), SaveRefusal>, FundingSessionError> {
+        let intent = intent.to_string();
+        let provider = provider_id.to_string();
+        self.commit(storage, now_ms, move |sessions| {
+            let saved = match sessions.get_mut(&intent) {
+                Some(session) => session.save(&provider, state),
+                None => Err(SaveRefusal::NotFound),
+            };
+            (saved, Vec::new())
+        })
+        .await
+    }
+
     /// Whether open session `intent` is assigned to `provider_id`.
     pub fn is_serving(&self, provider_id: &str, intent: &str) -> bool {
         self.get(intent).is_some_and(|session| {
@@ -368,6 +389,9 @@ impl FundingRegistry {
         for session in working.values_mut() {
             if session.expire_if_due(now_ms) {
                 changed.push(session.intent.clone());
+            }
+            if session.is_terminal() {
+                session.saved = None;
             }
         }
         if !*loaded || working != before {
@@ -669,7 +693,7 @@ impl RuntimeServices {
                 ),
             });
         }
-        let quote = match quote_id {
+        let choice = match quote_id {
             None => None,
             Some(quote_id) => Some(
                 self.funding_quotes
@@ -685,7 +709,7 @@ impl RuntimeServices {
                 current_unix_millis(),
                 intent,
                 &provider.product_id,
-                quote,
+                choice,
             )
             .await
     }
