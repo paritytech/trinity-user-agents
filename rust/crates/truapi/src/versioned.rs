@@ -40,6 +40,7 @@ pub mod chat;
 pub mod coin_payment;
 pub mod contacts;
 pub mod entropy;
+pub mod game;
 pub mod local_storage;
 pub mod locale;
 pub mod notifications;

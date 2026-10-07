@@ -8,6 +8,7 @@ import Operation_iOS
 import ChainRegistry
 
 extension ServiceCoordinator {
+    @MainActor
     // swiftlint:disable:next function_parameter_count
     static func createChatExtensionsRegistry(
         accountManager: ProductsAccountManaging,

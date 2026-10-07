@@ -308,6 +308,7 @@ pub struct ProductRuntimeHost {
     chat: Arc<ActionChannel<HostChatActionSubscribeItem>>,
     renderer: Arc<ActionChannel<HostRendererActionSubscribeItem>>,
     pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
+    game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
     /// Host-assigned ids of this connection's open pending operations, each
     /// holding one worker reference until it ends or the connection is torn
     /// down.
@@ -353,6 +354,7 @@ impl ProductRuntimeHost {
             chat: adapters.chat,
             renderer: adapters.renderer,
             pocket_platform: adapters.pocket_platform,
+            game_platform: adapters.game_platform,
             open_operations: Mutex::new(HashSet::new()),
         }
     }
@@ -482,6 +484,7 @@ impl ProductRuntimeHost {
             chat,
             renderer,
             pocket_platform: None,
+            game_platform: None,
             open_operations: Mutex::new(HashSet::new()),
         };
         (host, pairing_host)

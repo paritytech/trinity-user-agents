@@ -14,7 +14,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::platform::{ChatPlatform, ContactsPlatform, PermissionStatusHost, PocketPlatform};
+use crate::platform::{
+    ChatPlatform, ContactsPlatform, GamePlatform, PermissionStatusHost, PocketPlatform,
+};
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
     PermissionAuthorizationStatus, Platform, ProductContext, SigningHostConfig,
@@ -263,6 +265,17 @@ impl PairingHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_pocket_platform"))]
     pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
         self.services.install_pocket_platform(platform)
+    }
+
+    /// Install the host's [`GamePlatform`], which holds each product's game
+    /// reminder.
+    ///
+    /// Set-once, so reminders cannot change hands under a running product.
+    /// Returns whether this call installed it. Call it before serving any
+    /// product runtime.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_game_platform"))]
+    pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
+        self.services.install_game_platform(platform)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -687,6 +700,17 @@ impl SigningHostRuntime {
         self.services.install_pocket_platform(platform)
     }
 
+    /// Install the host's [`GamePlatform`], which holds each product's game
+    /// reminder.
+    ///
+    /// Set-once, so reminders cannot change hands under a running product.
+    /// Returns whether this call installed it. Call it before serving any
+    /// product runtime.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_game_platform"))]
+    pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
+        self.services.install_game_platform(platform)
+    }
+
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
     /// draws the picker.
     ///
@@ -1095,7 +1119,7 @@ impl SigningHostRuntime {
 /// host-fed action streams. Non-native connections use [`Self::from_services`].
 ///
 /// `pocket_platform` is the same kind of optional adapter for the card
-/// collection.
+/// collection, and `game_platform` for the product's game reminder.
 #[derive(Clone)]
 pub struct ConnectionAdapters {
     pub platform: Arc<dyn Platform>,
@@ -1110,6 +1134,7 @@ pub struct ConnectionAdapters {
     pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
     pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
     pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
+    pub game_platform: Option<Arc<dyn GamePlatform>>,
 }
 
 impl ConnectionAdapters {
@@ -1123,6 +1148,7 @@ impl ConnectionAdapters {
             chat: Arc::new(ActionChannel::chat()),
             renderer: Arc::new(ActionChannel::renderer()),
             pocket_platform: services.pocket_platform(),
+            game_platform: services.game_platform(),
         }
     }
 }

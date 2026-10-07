@@ -50,6 +50,9 @@ pub struct RuntimeServices {
     /// Contact handles already resolved, shared by every product runtime of
     /// this host and emptied when the host says its contacts changed.
     pub contact_handles: crate::runtime::contacts::ContactHandleCache,
+    /// Host Game adapter, installed once at startup by a host that can hold
+    /// reminders. Unset leaves every product Game call `Unsupported`.
+    game_platform: OnceLock<Arc<dyn crate::platform::GamePlatform>>,
     /// Host observer told when a device finishes pairing with this signing
     /// host. Unset leaves a paired device unannounced.
     device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
@@ -119,6 +122,7 @@ impl RuntimeServices {
             pocket_platform: OnceLock::new(),
             contacts_platform: OnceLock::new(),
             contact_handles: Default::default(),
+            game_platform: OnceLock::new(),
             device_pairing_observer: OnceLock::new(),
             #[cfg(not(target_arch = "wasm32"))]
             core_db: OnceLock::new(),
@@ -207,6 +211,22 @@ impl RuntimeServices {
     /// The host's Pocket adapter, when one is installed.
     pub fn pocket_platform(&self) -> Option<Arc<dyn crate::platform::PocketPlatform>> {
         self.pocket_platform.get().cloned()
+    }
+
+    /// Install the host's Game adapter.
+    ///
+    /// Set-once, like every optional capability, so reminders cannot change
+    /// hands under a running product. Returns whether this call installed it.
+    pub fn install_game_platform(
+        &self,
+        platform: Arc<dyn crate::platform::GamePlatform>,
+    ) -> bool {
+        self.game_platform.set(platform).is_ok()
+    }
+
+    /// The host's Game adapter, when one is installed.
+    pub fn game_platform(&self) -> Option<Arc<dyn crate::platform::GamePlatform>> {
+        self.game_platform.get().cloned()
     }
 
     /// Install the host's contacts adapter. Answers whether this call was the

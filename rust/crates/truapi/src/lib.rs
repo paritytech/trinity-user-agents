@@ -168,6 +168,12 @@ pub mod latest {
     /// Product context bound to the current host runtime.
     pub type HostGetProductContextResponse =
         LatestOf<versioned::system::HostGetProductContextResponse>;
+    /// Request to drop the calling product's game reminder.
+    pub type HostCancelNextGameRequest = LatestOf<versioned::game::HostCancelNextGameRequest>;
+    /// Request to remind the user when the calling product's next game starts.
+    pub type HostRemindNextGameRequest = LatestOf<versioned::game::HostRemindNextGameRequest>;
+    /// Why a game reminder was not taken.
+    pub type HostRemindNextGameError = LatestOf<versioned::game::HostRemindNextGameError>;
     /// Storage key change pushed to a subscriber.
     pub type HostLocalStorageChangeItem =
         LatestOf<versioned::local_storage::HostLocalStorageChangeItem>;

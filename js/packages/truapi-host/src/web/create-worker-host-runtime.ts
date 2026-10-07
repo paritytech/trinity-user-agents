@@ -1252,6 +1252,7 @@ export function createWebWorkerPairingHostRuntime(
             chat: host.chat !== undefined,
             permissionStatus: host.permissionStatus !== undefined,
             pocket: host.pocket !== undefined,
+            game: host.game !== undefined,
             contacts: host.contacts !== undefined,
           },
           debuggerUrl: debuggerDial,

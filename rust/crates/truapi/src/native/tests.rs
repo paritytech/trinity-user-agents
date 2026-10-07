@@ -18,7 +18,8 @@ use crate::host_logic::worker::WorkerTransition;
 use crate::{PairedSsoPeer, PairingProposal};
 
 use super::callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativePocketCallbacks, NativePocketRemoval,
+    HostCallbacks, NativeChatCallbacks, NativeGameCallbacks, NativePocketCallbacks,
+    NativePocketRemoval,
 };
 use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -26,7 +27,9 @@ use super::config::{
 };
 use super::errors::HostRejection;
 use super::events::NativeEventBus;
-use super::platform::{CallbackPlatform, ChatCallbackPlatform, PocketCallbackPlatform};
+use super::platform::{
+    CallbackPlatform, ChatCallbackPlatform, GameCallbackPlatform, PocketCallbackPlatform,
+};
 use super::runtime::{NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime};
 use crate::platform::CreateTransactionReview;
 use futures::FutureExt;
@@ -640,6 +643,7 @@ pub fn native_product_execution(
         callbacks,
         None,
         None,
+        None,
         native_execution_config(product_id, ProductExecutionKind::App),
     )
     .expect("product execution config should be valid")
@@ -989,6 +993,53 @@ fn native_pocket_removal_outcomes_are_decided_by_the_host() {
     );
 }
 
+#[derive(Default)]
+struct RecordingGameCallbacks {
+    calls: Mutex<Vec<Option<u64>>>,
+}
+
+#[async_trait::async_trait]
+impl NativeGameCallbacks for RecordingGameCallbacks {
+    async fn schedule_reminder(&self, starts_at: u64) -> Result<(), HostRejection> {
+        self.calls
+            .lock()
+            .expect("game calls mutex poisoned")
+            .push(Some(starts_at));
+        Ok(())
+    }
+
+    async fn cancel_reminder(&self) -> Result<(), HostRejection> {
+        self.calls
+            .lock()
+            .expect("game calls mutex poisoned")
+            .push(None);
+        Ok(())
+    }
+}
+
+#[test]
+fn game_callbacks_receive_the_start_time_and_the_cancel() {
+    let callbacks = Arc::new(RecordingGameCallbacks::default());
+    let platform = GameCallbackPlatform {
+        game: callbacks.clone(),
+    };
+    let product = ProductContext::new("dim2.dot".to_string()).expect("valid product id");
+
+    futures::executor::block_on(async {
+        crate::platform::GamePlatform::schedule_game_reminder(&platform, &product, 42)
+            .await
+            .expect("schedule succeeds");
+        crate::platform::GamePlatform::cancel_game_reminder(&platform, &product)
+            .await
+            .expect("cancel succeeds");
+    });
+
+    assert_eq!(
+        *callbacks.calls.lock().expect("game calls mutex poisoned"),
+        vec![Some(42), None]
+    );
+}
+
 #[test]
 fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
     let mut config = native_host_runtime_config();
@@ -999,6 +1050,7 @@ fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
     let execution = host
         .open_product_execution(
             Arc::new(EventCallbacks::new()),
+            None,
             None,
             None,
             native_execution_config("chat-product.dot", ProductExecutionKind::Worker),
@@ -2393,6 +2445,7 @@ fn closing_an_execution_releases_its_callbacks_while_the_host_lives() {
             callbacks,
             None,
             None,
+            None,
             native_execution_config("first.dot", ProductExecutionKind::App),
         )
         .expect("open execution");
@@ -2426,6 +2479,7 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
     let executions = [(1, "first.dot"), (2, "second.dot")].map(|(index, product_id)| {
         host.open_product_execution(
             callbacks[index].clone(),
+            None,
             None,
             None,
             native_execution_config(product_id, ProductExecutionKind::App),
@@ -2507,6 +2561,7 @@ fn two_executions_share_one_bridge_through_the_native_api() {
             Arc::new(EventCallbacks::new()),
             None,
             None,
+            None,
             native_execution_config("shared.dot", ProductExecutionKind::App),
         )
         .expect("App execution should open");
@@ -2515,6 +2570,7 @@ fn two_executions_share_one_bridge_through_the_native_api() {
         .open_product_execution(
             chat_host.clone(),
             Some(chat_host),
+            None,
             None,
             native_execution_config("shared.dot", ProductExecutionKind::Worker),
         )
@@ -2724,6 +2780,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
                 callbacks.clone(),
                 None,
                 None,
+                None,
                 native_execution_config("fetch.dot", ProductExecutionKind::Worker),
             )
             .unwrap();
@@ -2800,6 +2857,7 @@ fn native_remote_authorization_reuses_stored_product_decisions() {
                 callbacks.clone(),
                 None,
                 None,
+                None,
                 native_execution_config(product_id, ProductExecutionKind::App),
             )
             .unwrap()
@@ -2858,6 +2916,7 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
                 callbacks.clone(),
                 None,
                 None,
+                None,
                 native_execution_config("fetch.dot", ProductExecutionKind::App),
             )
             .unwrap();
@@ -2906,6 +2965,7 @@ fn a_native_status_read_follows_the_os_gate() {
             Arc::new(EventCallbacks::refusing(
                 v01::HostDevicePermissionRequest::Camera,
             )),
+            None,
             None,
             None,
             native_execution_config("gated.dot", ProductExecutionKind::App),

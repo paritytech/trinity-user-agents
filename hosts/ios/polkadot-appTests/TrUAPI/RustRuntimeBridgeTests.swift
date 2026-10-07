@@ -79,6 +79,8 @@ private func makeBridge(
     permissionGuard: MockPermissionGuard = MockPermissionGuard(),
     osPermissionAsker: MockOSPermissionAsker = MockOSPermissionAsker(),
     notificationScheduler: MockNotificationScheduler = MockNotificationScheduler(),
+    gameReminders: MockGameReminderScheduler? = nil,
+    reminderPermissionAsker: MockReminderPermissionAsker = MockReminderPermissionAsker(),
     chainRegistry: MockChainRegistry = MockChainRegistry(),
     confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter(),
     preimageCache: TrUAPIPreimageCache = TrUAPIPreimageCache { _ in nil },
@@ -98,6 +100,8 @@ private func makeBridge(
         permissionGuard: permissionGuard,
         osPermissionAsker: osPermissionAsker,
         notificationScheduler: notificationScheduler,
+        gameReminders: gameReminders ?? MockGameReminderScheduler(),
+        reminderPermissionAsker: reminderPermissionAsker,
         navigationRouter: router,
         chainRegistry: chainRegistry,
         chainConnections: pool,
@@ -184,6 +188,51 @@ struct RustRuntimeBridgeTests {
         #expect(try await bridge.devicePermissionStatus(request: request) == expected)
         #expect(osAsker.checkedCapabilities.isEmpty)
         #expect(osAsker.requestedCapabilities.isEmpty)
+    }
+
+    // MARK: gameReminders
+
+    @Test(arguments: [
+        (true, false, true, [MockReminderPermissionAsker.Ask.alarm]),
+        (true, true, true, [.alarm]),
+        (false, true, false, [.alarm, .notifications]),
+    ])
+    func scheduleReminderPrefersAnAlarmOverANotification(
+        alarmAllowed: Bool,
+        notificationsAllowed: Bool,
+        ringsAlarm: Bool,
+        asked: [MockReminderPermissionAsker.Ask]
+    ) async throws {
+        let gameReminders = MockGameReminderScheduler()
+        let asker = MockReminderPermissionAsker()
+        asker.alarmAllowed = alarmAllowed
+        asker.notificationsAllowed = notificationsAllowed
+        let bridge = makeBridge(productId: "game.dot", gameReminders: gameReminders, reminderPermissionAsker: asker)
+
+        try await bridge.scheduleReminder(startsAt: 2_000_000_000_000)
+
+        #expect(asker.asked == asked)
+        #expect(gameReminders.scheduled == [
+            .init(
+                productId: "game.dot",
+                startsAt: Date(timeIntervalSince1970: 2_000_000_000),
+                ringAlarm: ringsAlarm,
+                addCalendarEvent: true
+            )
+        ])
+    }
+
+    @Test func scheduleReminderRejectsWhenTheOSAllowsNeitherAlarmsNorNotifications() async {
+        let gameReminders = MockGameReminderScheduler()
+        let bridge = makeBridge(gameReminders: gameReminders)
+
+        await #expect {
+            try await bridge.scheduleReminder(startsAt: 2_000_000_000_000)
+        } throws: { error in
+            guard case HostRejection.Rejected = error else { return false }
+            return true
+        }
+        #expect(gameReminders.scheduled.isEmpty)
     }
 
     // MARK: remotePermission
@@ -542,6 +591,8 @@ struct RustRuntimeBridgeTests {
             permissionGuard: MockPermissionGuard(),
             osPermissionAsker: MockOSPermissionAsker(),
             notificationScheduler: MockNotificationScheduler(),
+            gameReminders: MockGameReminderScheduler(),
+            reminderPermissionAsker: MockReminderPermissionAsker(),
             navigationRouter: MockNavigationRouter(),
             chainRegistry: chainRegistry,
             chainConnections: pool,

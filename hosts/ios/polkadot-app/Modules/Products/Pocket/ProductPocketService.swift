@@ -128,7 +128,8 @@ final class ProductPocketService: @unchecked Sendable {
         runtimeProvider: any TrUAPIHostRuntimeProviding,
         flowState: SPAFlowState,
         productFileProvider: any ChatProductFileProviding,
-        chainRegistry: ChainRegistryProtocol
+        chainRegistry: ChainRegistryProtocol,
+        gameReminders: any ProductGameReminderScheduling
     ) {
         let manager = TrUAPIWorkerManager(
             builder: TrUAPIWorkerBuilder(
@@ -139,6 +140,7 @@ final class ProductPocketService: @unchecked Sendable {
                         runtime: runtimeProvider.sharedRuntime(),
                         chainRegistry: chainRegistry,
                         notificationScheduler: ProductNotificationScheduler.shared,
+                        gameReminders: gameReminders,
                         ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
                         hostProvider: flowState.hostProvider,
                         logger: logger

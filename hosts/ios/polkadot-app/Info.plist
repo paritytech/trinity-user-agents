@@ -70,14 +70,14 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAlarmKitUsageDescription</key>
-	<string>Polkadot uses alarms to notify you when your game is about to start.</string>
+	<string>Polkadot uses alarms to notify you when a scheduled event is about to start.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
-	<string>The app will add upcoming game to your calendar and remind you 5 minutes before the game starts.</string>
+	<string>Polkadot adds upcoming events to your calendar and reminds you before they start.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Please allow camera access to interact with features in the Polkadot app</string>
 	<key>NSFaceIDUsageDescription</key>
