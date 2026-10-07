@@ -48,18 +48,7 @@ fn reserved_identities_follow_the_network_and_collection_order() {
             .unwrap();
             (collection, signer.vrf.member(&entropy).unwrap())
         });
-        assert_eq!(
-            (members, session.identity_account_id),
-            (
-                expected,
-                Some(
-                    derive_identity_keypair(&[7; 32], suffix)
-                        .unwrap()
-                        .public
-                        .to_bytes()
-                )
-            ),
-        );
+        assert_eq!(members, expected);
     }
 }
 

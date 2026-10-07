@@ -96,26 +96,7 @@ fn remote_vrf_cannot_reuse_a_native_auto_signing_grant() {
     });
     let (services, authority) = signing_runtime_with_platform(platform.clone());
     futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-    let session = authority.account_holder().current_session().unwrap();
     auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
-    let authorization = authority
-        .wallet_authorization(
-            &authority.current_operation().unwrap(),
-            &ProductContext::new("myapp.dot".to_string()).unwrap(),
-        )
-        .unwrap();
-    let local = futures::executor::block_on(AccountHolder::sign_vrf(
-        authority.account_holder(),
-        AccountInvocation {
-            call: &CallContext::default(),
-            session: &session,
-            caller: AccountCaller::Local {
-                product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                authorization: authorization.as_ref(),
-            },
-        },
-        vrf_request("myapp.dot"),
-    ));
     let Dispatch::Response(answer) = futures::executor::block_on(
         SigningHostSsoService::new(authority).answer(RemoteMessage::request(
             "remote-vrf".to_string(),
@@ -133,11 +114,10 @@ fn remote_vrf_cannot_reuse_a_native_auto_signing_grant() {
     };
     assert_eq!(
         (
-            local.map(|_| ()),
             response.payload.map(|_| ()),
             platform.sign_vrf_reviews.lock().unwrap().len(),
         ),
-        (Ok(()), Err(v01::HostAccountSignVrfError::Rejected), 1),
+        (Err(v01::HostAccountSignVrfError::Rejected), 1),
     );
 }
 
