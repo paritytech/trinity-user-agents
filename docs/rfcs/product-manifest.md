@@ -234,12 +234,10 @@ type QuoteSource =
   | { via: 'url'; url: string }; // The Host calls this https URL, through the onramp adapter when `backend` is set.
 ```
 
-- **A route names one mode.** A provider serving card and bank publishes two routes, so each mode carries its own assets and directions. Routes are a set: order is not significant.
-- **Values a Host does not recognise are ignored, not fatal.** A route with an unrecognised `mode`, or none of whose `directions` the Host recognises, is ignored; an unrecognised direction is dropped from a route that has others. A route with no `assets` is ignored. A `QuoteSource` with an unrecognised `via` leaves the provider unquotable, so the Host does not offer it. This lets later revisions add modes, directions and quote sources without a new `$v`.
-- **A config with no usable route serves no Funding.** The manifest stays valid and the worker's other surfaces are unaffected.
-- **The manifest declares capability; the quote confirms it.** A Host MAY use `countries` to leave a route out for a user outside them, before asking for a quote. The quote is authoritative: a declared country can still be refused, and an omitted `countries` is answered per quote. Limits, fees and timing are answered per quote only, so they change without a re-publish. The quote contract belongs to the Funding runtime contract, not this RFC.
-- **`backend` names an onramp adapter, never a key.** Calls that need the provider's API key go to the adapter the id names, which holds the key. Hosts MUST NOT accept key material from a manifest.
-- **The destination is the user's balance.** Assets describe the user's side of the exchange; what lands in, or leaves, the balance is fixed by the Host.
+- **One mode per route.** A provider serving card and bank publishes two routes.
+- **Unrecognised values are ignored, not fatal**, so later revisions can add modes, directions and quote sources without a new `$v`. A route is ignored when its `mode` is unrecognised or it has no recognised direction or no assets; an unrecognised direction is dropped from a route that has others. An unrecognised `quote.via`, or a non-https `quote.url`, leaves the provider unquotable. Either way a worker left with no usable route or no quote source serves no Funding, and its other surfaces are unaffected.
+- **The quote is authoritative.** A Host MAY leave out a route whose `countries` omit the user's country without quoting it; a declared country can still be refused, and a route without `countries` is checked by its quote. Limits, fees and timing come only from the quote, which the Funding runtime contract defines.
+- **`backend` is an onramp adapter id, never a key.** The adapter holds the provider's key.
 
 A provider serving inbound card payments in EUR and USD in three countries, and crypto deposits and withdrawals of USDT and DOT, quoted by its worker:
 
@@ -288,7 +286,6 @@ For each executable type the Host can render, it MUST query the corresponding su
 - **Executable `contenthash` unset, non-IPFS codec, or undecodable.** That executable cannot be launched; surface a diagnostic. The product stays discoverable and its other executables still launch.
 - **Missing root manifest but present executable subnames.** Product is not discoverable; executables MUST NOT be launched.
 - **Unknown `kind` in an executable manifest.** Skip that executable rather than fail the whole product.
-- **`includes.funding` with no usable route, or an unrecognised `quote.via`.** The worker does not serve Funding; the manifest stays valid and its other surfaces still serve.
 - **`kind` does not match the subname label** (e.g. `kind: 'app'` read from `worker.<product_id>.<tld>`). Treat the executable as malformed and skip it; do not coerce to the subname's label.
 - **Manifest payload exceeds the dotNS text-record budget.** dotNS rejects the write at wire level (see [Security](#security)), so Hosts never observe oversized records.
 
@@ -569,15 +566,9 @@ A conforming Host implementation should produce well-defined behaviour for each 
 - `$v: 2` Worker manifest without `includes.funding` → validates; serves the same surfaces a v1 manifest with those flags would.
 - `$v: 2` App, Widget or root manifest → unknown version; treat as undiscoverable.
 - `includes.funding` on a `$v: 1` Worker manifest → fails the v1 schema; skip that executable.
-- Funding route with an unrecognised `mode`, or with no recognised `directions` → route ignored; other routes still apply.
-- Funding route with one unrecognised direction among recognised ones → that direction is dropped; the route still applies.
-- Funding route with an empty `assets` → route ignored.
-- Funding route whose `countries` omit the user's country → the Host MAY leave that route out without quoting.
-- Funding route with `countries` omitted → the Host asks the quote.
-- Every funding route ignored → the worker does not serve Funding; the manifest still validates.
-- `quote.via` unrecognised → the worker does not serve Funding; the manifest still validates.
-- `quote.via: 'url'` with a non-https URL → the worker does not serve Funding.
-- `backend` naming an onramp adapter the Host does not know → keyed calls fail; the Host does not offer the provider.
+- Funding route with an unrecognised `mode`, no recognised direction, or no assets → route ignored; other routes still apply. An unrecognised direction alongside recognised ones is dropped.
+- No usable funding route, unrecognised `quote.via`, or non-https `quote.url` → the worker does not serve Funding; the manifest still validates.
+- `backend` naming an onramp adapter the Host does not know → the Host does not offer the provider.
 
 ## Drawbacks
 
@@ -590,7 +581,6 @@ A conforming Host implementation should produce well-defined behaviour for each 
 
 - **Binary codec (SCALE/protobuf).** Lower wire cost but requires a codec library in every consumer. JSON with off-the-shelf parsers is simpler and fits within dotNS text-record budgets.
 - **Funding as a fourth executable type.** A separate `funding.<product_id>.<tld>` executable would duplicate the Worker's Host-API surface and split the provider's signing identity, for the reasons in [Why one Worker, not per modality](#executable-manifest-v1). Funding is served by the Worker instead.
-- **Funding configuration in its own text record.** A `funding` record on the worker subname could be filtered by key in dotNS logs. Hosts find providers through a blessed list and the browse publisher list instead, so the configuration stays in the manifest the Host already reads.
 - **Single manifest per product.** Fewer lookups, but a single record grows with each executable type and cannot be independently updated.
 
 ## Security
@@ -600,7 +590,7 @@ A conforming Host implementation should produce well-defined behaviour for each 
 - **Trust grants are publisher-declared, not user-declared.** A grant is authenticated by nothing stronger than dotNS ownership, so a compromised or transferred name widens access with one `setText`. Two constraints follow. A grant MUST NOT override a denial the user already gave — it waives the publisher's prompt, never the user's. And revocation is a record edit with no signal attached, so a Host that honours a cached grant indefinitely cannot be revoked from (see [Cache invalidation](#resolving-a-product)).
 - **Size cap at publishing.** The publisher MUST validate every manifest against the v1 schema and reject payloads exceeding the dotNS text-record budget before submitting. dotNS enforces a wire-level cap on writes.
 - **Subname squatting is structurally prevented.** `setSubnodeOwner` is gated by parent-ownership: only the owner of `<product_id>.<tld>` can create the modality subnames.
-- **No provider keys in manifests.** `backend` is an identifier the Host maps to an onramp adapter it trusts; a manifest that carried a key would publish it. Hosts MUST NOT read key material from a manifest, and a `quote.url` call never carries one unless it goes through the adapter.
+- **No provider keys in manifests.** A manifest is public, so `backend` names an onramp adapter the Host trusts and that adapter holds the key. Hosts MUST NOT read key material from a manifest.
 - **No user data.** The manifest carries no user data; privacy exposure is limited to whatever dotNS RPC traffic reveals about which products a client is resolving.
 
 ## Unresolved Questions
