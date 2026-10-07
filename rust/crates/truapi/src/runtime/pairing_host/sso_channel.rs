@@ -14,96 +14,6 @@ use tracing::warn;
 use truapi::{CallContext, latest};
 
 impl PairingHost {
-    /// Mirror a local registration to the paired account holder.
-    pub fn mirror_ring_vrf_registration(
-        &self,
-        session: SessionInfo,
-        request: ProductRequest<latest::HostAccountRegisterRingVrfKeyRequest>,
-    ) {
-        let weak_self = std::sync::Arc::downgrade(&self.holder);
-        (self.services.spawner)(Box::pin(async move {
-            let Some(host) = weak_self.upgrade() else {
-                return;
-            };
-            let cx = CallContext::with_request_id(format!(
-                "ring-vrf-registration-mirror:{}",
-                sso_message_id()
-            ));
-            if let Err(error) = host
-                .register_ring_vrf_key(
-                    AccountInvocation {
-                        call: &cx,
-                        session: &authority_session(&session),
-                        caller: AccountCaller::Remote {
-                            product_id: Some(&request.calling_product_id),
-                        },
-                    },
-                    request.payload,
-                )
-                .await
-            {
-                warn!(?error, "ring-VRF registration mirror failed");
-            }
-        }));
-    }
-
-    /// Resolve a product's hard-subtree public key, asking the Account Holder
-    /// only when neither the memory cache nor storage already holds it.
-    pub async fn remote_product_subtree_public_key(
-        &self,
-        cx: &CallContext,
-        session: &SessionInfo,
-        product_id: String,
-    ) -> Result<[u8; 32], AuthorityError> {
-        let sso = session.sso.as_ref().ok_or(AuthorityError::Disconnected)?;
-        let lifecycle_epoch = self.grants.lifecycle().revision();
-        let cache_key = (SsoSessionKey::from_session(sso), product_id.clone());
-        if let Some(public_key) = self
-            .grants
-            .known_product_subtree(&self.sso.session_state(), session, cache_key.clone())
-            .await
-        {
-            return Ok(public_key);
-        }
-        let public_key = self
-            .holder
-            .product_subtree_public_key(cx, &authority_session(session), product_id)
-            .await?;
-        if !self
-            .grants
-            .persist_product_subtree_if_current(
-                &self.sso.session_state(),
-                session,
-                lifecycle_epoch,
-                cache_key,
-                public_key,
-            )
-            .await
-        {
-            return Err(AuthorityError::Disconnected);
-        }
-        Ok(public_key)
-    }
-
-    /// Return allocation outcomes from the paired signing host without retaining keys.
-    pub async fn remote_allocate_resources(
-        &self,
-        cx: &CallContext,
-        session: &SessionInfo,
-        product_id: String,
-        request: latest::HostRequestResourceAllocationRequest,
-    ) -> Result<Vec<SsoAllocationOutcome>, AuthorityError> {
-        self.holder
-            .allocate_resources(
-                cx,
-                &authority_session(session),
-                product_id,
-                request,
-                OnExistingAllowancePolicy::Increase,
-            )
-            .await
-    }
-
     /// Allocate exactly one allowance for the product and return its material.
     async fn remote_allowance_slot(
         &self,
@@ -138,110 +48,6 @@ impl PairingHost {
         }
     }
 
-    /// Statement-store allowance key for the product, served from the cache
-    /// or allocated by the paired signing host.
-    pub async fn remote_statement_store_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &SessionInfo,
-        lifecycle_epoch: u64,
-        product_id: String,
-    ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        if let Some(cached) = self
-            .grants
-            .cached_statement_store_allowance_key(
-                &self.sso.session_state(),
-                session,
-                lifecycle_epoch,
-                &product_id,
-            )
-            .await?
-        {
-            return Ok(cached);
-        }
-        match self
-            .remote_allowance_slot(
-                cx,
-                session,
-                &product_id,
-                latest::AllocatableResource::StatementStoreAllowance,
-                OnExistingAllowancePolicy::Ignore,
-            )
-            .await?
-        {
-            SsoAllocatedResource::StatementStoreAllowance { slot_account_key } => {
-                self.grants
-                    .cache_statement_store_allowance_key(
-                        &self.sso.session_state(),
-                        session,
-                        lifecycle_epoch,
-                        &product_id,
-                        slot_account_key,
-                    )
-                    .await
-            }
-            other => Err(unexpected_resource("statement-store allowance", &other)),
-        }
-    }
-
-    /// Bulletin allowance key for the product, served from the cache or
-    /// allocated by the paired signing host.
-    pub async fn remote_bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &SessionInfo,
-        lifecycle_epoch: u64,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        if let Some(cached) = self
-            .grants
-            .cached_bulletin_allowance_key(
-                &self.sso.session_state(),
-                session,
-                lifecycle_epoch,
-                &product_id,
-            )
-            .await?
-        {
-            return Ok(cached);
-        }
-        self.allocate_bulletin_allowance_key(
-            cx,
-            session,
-            lifecycle_epoch,
-            product_id,
-            OnExistingAllowancePolicy::Ignore,
-        )
-        .await
-    }
-
-    /// Evict the cached Bulletin allowance key and allocate a fresh one with
-    /// an increased allowance, so a stale or exhausted slot is never reused.
-    pub async fn remote_refresh_bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &SessionInfo,
-        lifecycle_epoch: u64,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        self.grants
-            .evict_bulletin_allowance_key(
-                &self.sso.session_state(),
-                session,
-                lifecycle_epoch,
-                &product_id,
-            )
-            .await?;
-        self.allocate_bulletin_allowance_key(
-            cx,
-            session,
-            lifecycle_epoch,
-            product_id,
-            OnExistingAllowancePolicy::Increase,
-        )
-        .await
-    }
-
     async fn allocate_bulletin_allowance_key(
         &self,
         cx: &CallContext,
@@ -274,6 +80,200 @@ impl PairingHost {
             other => Err(unexpected_resource("bulletin allowance", &other)),
         }
     }
+}
+
+/// Mirror a local registration to the paired account holder.
+pub fn mirror_ring_vrf_registration(
+    host: &PairingHost,
+    session: SessionInfo,
+    request: ProductRequest<latest::HostAccountRegisterRingVrfKeyRequest>,
+) {
+    let weak_self = std::sync::Arc::downgrade(&host.holder);
+    (host.services.spawner)(Box::pin(async move {
+        let Some(host) = weak_self.upgrade() else {
+            return;
+        };
+        let cx = CallContext::with_request_id(format!(
+            "ring-vrf-registration-mirror:{}",
+            sso_message_id()
+        ));
+        if let Err(error) = host
+            .register_ring_vrf_key(
+                AccountInvocation {
+                    call: &cx,
+                    session: &authority_session(&session),
+                    caller: AccountCaller::Remote {
+                        product_id: Some(&request.calling_product_id),
+                    },
+                },
+                request.payload,
+            )
+            .await
+        {
+            warn!(?error, "ring-VRF registration mirror failed");
+        }
+    }));
+}
+
+/// Resolve a product's hard-subtree public key, asking the Account Holder
+/// only when neither the memory cache nor storage already holds it.
+pub async fn remote_product_subtree_public_key(
+    host: &PairingHost,
+    cx: &CallContext,
+    session: &SessionInfo,
+    product_id: String,
+) -> Result<[u8; 32], AuthorityError> {
+    let sso = session.sso.as_ref().ok_or(AuthorityError::Disconnected)?;
+    let lifecycle_epoch = host.grants.lifecycle().revision();
+    let cache_key = (SsoSessionKey::from_session(sso), product_id.clone());
+    if let Some(public_key) = host
+        .grants
+        .known_product_subtree(&host.sso.session_state(), session, cache_key.clone())
+        .await
+    {
+        return Ok(public_key);
+    }
+    let public_key = host
+        .holder
+        .product_subtree_public_key(cx, &authority_session(session), product_id)
+        .await?;
+    if !host
+        .grants
+        .persist_product_subtree_if_current(
+            &host.sso.session_state(),
+            session,
+            lifecycle_epoch,
+            cache_key,
+            public_key,
+        )
+        .await
+    {
+        return Err(AuthorityError::Disconnected);
+    }
+    Ok(public_key)
+}
+
+/// Return allocation outcomes from the paired signing host without retaining keys.
+pub async fn remote_allocate_resources(
+    host: &PairingHost,
+    cx: &CallContext,
+    session: &SessionInfo,
+    product_id: String,
+    request: latest::HostRequestResourceAllocationRequest,
+) -> Result<Vec<SsoAllocationOutcome>, AuthorityError> {
+    host.holder
+        .allocate_resources(
+            cx,
+            &authority_session(session),
+            product_id,
+            request,
+            OnExistingAllowancePolicy::Increase,
+        )
+        .await
+}
+
+/// Statement-store allowance key for the product, served from the cache
+/// or allocated by the paired signing host.
+pub async fn remote_statement_store_allowance_key(
+    host: &PairingHost,
+    cx: &CallContext,
+    session: &SessionInfo,
+    lifecycle_epoch: u64,
+    product_id: String,
+) -> Result<StatementStoreAllowanceKey, AuthorityError> {
+    if let Some(cached) = host
+        .grants
+        .cached_statement_store_allowance_key(
+            &host.sso.session_state(),
+            session,
+            lifecycle_epoch,
+            &product_id,
+        )
+        .await?
+    {
+        return Ok(cached);
+    }
+    match host
+        .remote_allowance_slot(
+            cx,
+            session,
+            &product_id,
+            latest::AllocatableResource::StatementStoreAllowance,
+            OnExistingAllowancePolicy::Ignore,
+        )
+        .await?
+    {
+        SsoAllocatedResource::StatementStoreAllowance { slot_account_key } => {
+            host.grants
+                .cache_statement_store_allowance_key(
+                    &host.sso.session_state(),
+                    session,
+                    lifecycle_epoch,
+                    &product_id,
+                    slot_account_key,
+                )
+                .await
+        }
+        other => Err(unexpected_resource("statement-store allowance", &other)),
+    }
+}
+
+/// Bulletin allowance key for the product, served from the cache or
+/// allocated by the paired signing host.
+pub async fn remote_bulletin_allowance_key(
+    host: &PairingHost,
+    cx: &CallContext,
+    session: &SessionInfo,
+    lifecycle_epoch: u64,
+    product_id: String,
+) -> Result<BulletinAllowanceKey, AuthorityError> {
+    if let Some(cached) = host
+        .grants
+        .cached_bulletin_allowance_key(
+            &host.sso.session_state(),
+            session,
+            lifecycle_epoch,
+            &product_id,
+        )
+        .await?
+    {
+        return Ok(cached);
+    }
+    host.allocate_bulletin_allowance_key(
+        cx,
+        session,
+        lifecycle_epoch,
+        product_id,
+        OnExistingAllowancePolicy::Ignore,
+    )
+    .await
+}
+
+/// Evict the cached Bulletin allowance key and allocate a fresh one with
+/// an increased allowance, so a stale or exhausted slot is never reused.
+pub async fn remote_refresh_bulletin_allowance_key(
+    host: &PairingHost,
+    cx: &CallContext,
+    session: &SessionInfo,
+    lifecycle_epoch: u64,
+    product_id: String,
+) -> Result<BulletinAllowanceKey, AuthorityError> {
+    host.grants
+        .evict_bulletin_allowance_key(
+            &host.sso.session_state(),
+            session,
+            lifecycle_epoch,
+            &product_id,
+        )
+        .await?;
+    host.allocate_bulletin_allowance_key(
+        cx,
+        session,
+        lifecycle_epoch,
+        product_id,
+        OnExistingAllowancePolicy::Increase,
+    )
+    .await
 }
 
 fn allowance_name(resource: &latest::AllocatableResource) -> &'static str {

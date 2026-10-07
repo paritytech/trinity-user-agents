@@ -192,7 +192,7 @@ impl PairingHost {
     ///
     /// A stale or missing session resolves as `false` so a broken state falls
     /// through to the resolution's own error rather than a spurious prompt.
-    pub async fn subtree_reaches_account_holder(
+    async fn subtree_reaches_account_holder(
         &self,
         session: &AuthoritySession,
         product_id: &str,
@@ -314,8 +314,7 @@ impl PairingHost {
         product_id: String,
     ) -> Result<[u8; 32], AuthorityError> {
         let session = self.current_private_session(session)?;
-        self.remote_product_subtree_public_key(cx, &session, product_id)
-            .await
+        sso_channel::remote_product_subtree_public_key(self, cx, &session, product_id).await
     }
 
     /// The keypair that can serve `account` locally under an AutoSigning
@@ -527,7 +526,7 @@ impl PairingHost {
                 )
                 .await?;
             self.current_private_session(session)?;
-            self.mirror_ring_vrf_registration(private_session, request);
+            sso_channel::mirror_ring_vrf_registration(self, private_session, request);
             return Ok(public_key);
         }
         let public_key = self
@@ -664,8 +663,13 @@ impl PairingHost {
                         product_root_private_key,
                         ring_vrf_domain_entropy,
                     } => {
-                        let expected_product_subtree_public_key = self
-                            .remote_product_subtree_public_key(cx, session, product_id.to_string())
+                        let expected_product_subtree_public_key =
+                            sso_channel::remote_product_subtree_public_key(
+                                self,
+                                cx,
+                                session,
+                                product_id.to_string(),
+                            )
                             .await?;
                         self.grants
                             .remember_auto_signing_key(
@@ -796,9 +800,14 @@ impl ProductAuthority for PairingHost {
         );
         super::remote_authority_call(&cx, async {
             self.require_current_operation(operation)?;
-            let outcomes = self
-                .remote_allocate_resources(&cx, &session, product.product_id.clone(), request)
-                .await?;
+            let outcomes = sso_channel::remote_allocate_resources(
+                self,
+                &cx,
+                &session,
+                product.product_id.clone(),
+                request,
+            )
+            .await?;
             self.cache_allowance_outcomes(
                 &cx,
                 &session,
@@ -875,8 +884,14 @@ impl ProductAuthority for PairingHost {
         product_id: String,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
         let (session, lifecycle_epoch) = self.operation_session(operation)?;
-        self.remote_statement_store_allowance_key(cx, &session, lifecycle_epoch, product_id)
-            .await
+        sso_channel::remote_statement_store_allowance_key(
+            self,
+            cx,
+            &session,
+            lifecycle_epoch,
+            product_id,
+        )
+        .await
     }
 
     async fn bulletin_allowance_key(
@@ -886,7 +901,7 @@ impl ProductAuthority for PairingHost {
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
         let (session, lifecycle_epoch) = self.operation_session(operation)?;
-        self.remote_bulletin_allowance_key(cx, &session, lifecycle_epoch, product_id)
+        sso_channel::remote_bulletin_allowance_key(self, cx, &session, lifecycle_epoch, product_id)
             .await
     }
 
@@ -897,8 +912,14 @@ impl ProductAuthority for PairingHost {
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
         let (session, lifecycle_epoch) = self.operation_session(operation)?;
-        self.remote_refresh_bulletin_allowance_key(cx, &session, lifecycle_epoch, product_id)
-            .await
+        sso_channel::remote_refresh_bulletin_allowance_key(
+            self,
+            cx,
+            &session,
+            lifecycle_epoch,
+            product_id,
+        )
+        .await
     }
 }
 

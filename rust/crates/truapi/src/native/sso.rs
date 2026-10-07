@@ -30,11 +30,9 @@ pub struct NativeSsoAccountHolderSession {
     session: SsoAccountHolderSession,
 }
 
-impl NativeSsoAccountHolderSession {
-    /// Retain the activation verified by the native runtime factory.
-    pub fn new(session: SsoAccountHolderSession) -> Self {
-        Self { session }
-    }
+/// Retain the activation verified by the native runtime factory.
+pub fn new_session(session: SsoAccountHolderSession) -> NativeSsoAccountHolderSession {
+    NativeSsoAccountHolderSession { session }
 }
 
 #[uniffi::export]

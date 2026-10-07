@@ -562,9 +562,7 @@ impl NativeTrUApiHostRuntime {
             .map_err(|error| HostRejection::Rejected {
                 reason: error.to_string(),
             })?;
-        Ok(Arc::new(super::sso::NativeSsoAccountHolderSession::new(
-            session,
-        )))
+        Ok(Arc::new(super::sso::new_session(session)))
     }
 
     /// Build the SCALE-encoded `Disconnected` message a wallet posts over a
