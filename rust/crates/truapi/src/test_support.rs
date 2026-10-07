@@ -284,6 +284,8 @@ pub enum SsoResponseScript {
         session: SessionInfo,
         response: Box<RemoteMessage>,
     },
+    /// Peer rejects a request it cannot decode.
+    DecodeRejected { session: SessionInfo },
     /// Peer acknowledges the request and then sends `Disconnected`.
     PeerDisconnect { session: SessionInfo },
 }
@@ -1337,7 +1339,8 @@ fn sso_scripted_responses(
                 }
                 3 => match &script {
                     SsoResponseScript::Success { session, .. }
-                    | SsoResponseScript::PeerDisconnect { session } => {
+                    | SsoResponseScript::PeerDisconnect { session }
+                    | SsoResponseScript::DecodeRejected { session } => {
                         let (statement_request_id, _) = submitted_sso_request(&sent, session);
                         Some((
                             new_statements_frame(
@@ -1346,7 +1349,14 @@ fn sso_scripted_responses(
                                     session,
                                     pairing::SsoStatementData::Response {
                                         request_id: statement_request_id,
-                                        response_code: 0,
+                                        response_code: if matches!(
+                                            script,
+                                            SsoResponseScript::DecodeRejected { .. }
+                                        ) {
+                                            2
+                                        } else {
+                                            0
+                                        },
                                     },
                                     1,
                                 )],
@@ -1356,6 +1366,7 @@ fn sso_scripted_responses(
                     }
                 },
                 4 => match script {
+                    SsoResponseScript::DecodeRejected { .. } => futures::future::pending().await,
                     SsoResponseScript::Success { session, response } => {
                         let (_, request) = submitted_sso_request(&sent, &session);
                         let response = retarget_sso_response(*response, &request.message_id);

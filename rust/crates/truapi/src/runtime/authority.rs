@@ -10,6 +10,7 @@ use crate::platform::ProductContext;
 use async_trait::async_trait;
 use std::sync::Arc;
 use truapi::latest::{
+    HostAccountCreateHonourProofRequest, HostAccountCreateHonourProofResponse,
     HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasRequest,
     HostAccountGetAliasResponse, HostAccountListRingVrfKeysRequest,
     HostAccountListRingVrfKeysResponse, HostAccountRegisterRingVrfKeyRequest,
@@ -494,6 +495,18 @@ pub trait ProductAuthority: Send + Sync {
         session: &AuthoritySession,
         request: ProductRequest<HostAccountCreateProofRequest>,
     ) -> Result<HostAccountCreateProofResponse, RingVrfError>;
+
+    /// Create an Honour proof with a registered full People key.
+    async fn create_honour_proof(
+        &self,
+        _cx: &CallContext,
+        _session: &AuthoritySession,
+        _request: ProductRequest<HostAccountCreateHonourProofRequest>,
+    ) -> Result<HostAccountCreateHonourProofResponse, RingVrfError> {
+        Err(RingVrfError::Unknown {
+            reason: "Honour proofs are unavailable".to_string(),
+        })
+    }
 
     /// Register a ring-VRF key owned by the calling product.
     async fn register_ring_vrf_key(

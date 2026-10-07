@@ -120,6 +120,34 @@ pub struct HostAccountCreateProofRequest {
     pub message: Vec<u8>,
 }
 
+/// Request for one proof over Honour's subject and point contexts.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostAccountCreateHonourProofRequest {
+    /// Registered key for the full People ring.
+    pub key_handle: ProductAccountId,
+    /// Full People ring containing the key.
+    pub ring_location: RingLocation,
+    /// Subject receiving the vote.
+    pub subject: [u8; 32],
+    /// Voting point to assign, from 0 through 255.
+    pub point: u8,
+    /// Message checked by the Honour transaction extension.
+    pub message: [u8; 32],
+}
+
+/// One Honour proof and its subject and point aliases, in that order.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostAccountCreateHonourProofResponse {
+    /// Encoded Bandersnatch ring proof.
+    pub proof: Vec<u8>,
+    /// Subject alias followed by point alias.
+    pub contextual_aliases: Vec<ContextualAlias>,
+    /// Ring containing the selected member key.
+    pub ring_index: u32,
+    /// Revision of the ring snapshot used for the proof.
+    pub ring_revision: u32,
+}
+
 /// A registered ring-VRF key entry.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct RegisteredRingVrfKey {

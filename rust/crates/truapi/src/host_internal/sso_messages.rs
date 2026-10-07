@@ -216,6 +216,10 @@ pub type RingVrfSignResponse = Result<Vec<u8>, RingVrfError>;
 /// Response returned by the Account Holder for a ring-VRF proof request.
 pub type CreateAccountProofResponse = Result<HostAccountCreateProofResponse, RingVrfError>;
 
+/// Response to an Honour proof request.
+pub type CreateHonourProofResponse =
+    Result<truapi::latest::HostAccountCreateHonourProofResponse, RingVrfError>;
+
 /// Request sent when a product asks the signing host to allocate SSO-backed
 /// resources.
 ///

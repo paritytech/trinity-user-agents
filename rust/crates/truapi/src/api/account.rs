@@ -2,7 +2,8 @@
 
 use crate::versioned::account::{
     HostAccountConnectionStatusSubscribeError, HostAccountConnectionStatusSubscribeItem,
-    HostAccountConnectionStatusSubscribeRequest, HostAccountCreateProofError,
+    HostAccountConnectionStatusSubscribeRequest, HostAccountCreateHonourProofRequest,
+    HostAccountCreateHonourProofResponse, HostAccountCreateProofError,
     HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasError,
     HostAccountGetAliasRequest, HostAccountGetAliasResponse, HostAccountGetError,
     HostAccountGetRequest, HostAccountGetResponse, HostAccountListRingVrfKeysError,
@@ -171,6 +172,48 @@ pub trait Account: Send + Sync {
         _cx: &CallContext,
         _request: HostAccountCreateProofRequest,
     ) -> Result<HostAccountCreateProofResponse, CallError<HostAccountCreateProofError>> {
+        Err(CallError::unavailable())
+    }
+
+    /// Create one proof over Honour's subject and point contexts.
+    ///
+    /// The Host computes both contexts and checks full People membership.
+    /// Foreign keys require the owner's `context` grant, without a prompt fallback.
+    /// `message` is the Blake2-256 hash of the SCALE-encoded inherited implication checked by `HonourAuth`.
+    /// The Host treats this hash as opaque data.
+    /// This operation creates a proof. It does not submit a vote.
+    /// Both paired Hosts must support this operation.
+    ///
+    /// ```ts
+    /// const people = await truapi.chain.getChainInfo({ chain: "People" });
+    /// assert(people.isOk(), "getChainInfo failed:", people);
+    /// const keys = await truapi.account.listRingVrfKeys({
+    ///   owner: "peopl.paseo", disclosure: "Anonymized",
+    /// });
+    /// assert(keys.isOk(), "listRingVrfKeys failed:", keys);
+    /// const collection = "0x706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652020202020";
+    /// const key = keys.value.find(entry => entry.rings.some(ring =>
+    ///   ring.chainId === people.value.genesisHash && ring.junctions.some(junction =>
+    ///     junction.tag === "CollectionId" && junction.value === collection)));
+    /// assert(key, "No registered full People key");
+    /// const ringLocation = key.rings.find(ring =>
+    ///   ring.chainId === people.value.genesisHash && ring.junctions.some(junction =>
+    ///     junction.tag === "CollectionId" && junction.value === collection));
+    /// assert(ringLocation, "No full People ring");
+    /// const result = await truapi.account.createHonourProof({
+    ///   keyHandle: key.handle, ringLocation,
+    ///   subject: `0x${"01".repeat(32)}`, point: 0,
+    ///   message: `0x${"02".repeat(32)}`,
+    /// });
+    /// assert(result.isOk(), "createHonourProof failed:", result);
+    /// console.log(result);
+    /// ```
+    #[wire(id = 11)]
+    async fn create_honour_proof(
+        &self,
+        _cx: &CallContext,
+        _request: HostAccountCreateHonourProofRequest,
+    ) -> Result<HostAccountCreateHonourProofResponse, CallError<HostAccountCreateProofError>> {
         Err(CallError::unavailable())
     }
 

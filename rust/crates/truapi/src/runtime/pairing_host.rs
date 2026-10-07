@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use truapi::latest::{
+    HostAccountCreateHonourProofRequest, HostAccountCreateHonourProofResponse,
     HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
     HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
 };
@@ -2360,6 +2361,42 @@ impl PairingHost {
             .await
     }
 
+    async fn create_honour_proof(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        request: ProductRequest<HostAccountCreateHonourProofRequest>,
+    ) -> Result<HostAccountCreateHonourProofResponse, RingVrfError> {
+        let (key_handle, _) = self
+            .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+            .await?;
+        let private_session = self.current_private_session(session)?;
+        super::honour::validate_ring(self.platform.as_ref(), &request.payload.ring_location)
+            .await?;
+        if let Some(entropy) = self
+            .local_ring_vrf_entropy_for_ring(
+                &private_session,
+                &key_handle,
+                &request.payload.ring_location,
+            )
+            .await?
+        {
+            let vrf = vrf::load().await?;
+            let member = vrf.member(&entropy)?;
+            let resolved = self
+                .ring_resolver
+                .resolve(
+                    &request.payload.ring_location,
+                    &[MemberCandidate { member }],
+                )
+                .await?;
+            self.current_private_session(session)?;
+            return super::honour::create_proof(&vrf, &entropy, &resolved, &request.payload);
+        }
+        self.remote_create_honour_proof(cx, &private_session, request)
+            .await
+    }
+
     async fn register_ring_vrf_key(
         &self,
         cx: &CallContext,
@@ -2744,6 +2781,15 @@ impl ProductAuthority for PairingHost {
         request: ProductRequest<HostAccountCreateProofRequest>,
     ) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
         PairingHost::create_proof(self, cx, session, request).await
+    }
+
+    async fn create_honour_proof(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        request: ProductRequest<HostAccountCreateHonourProofRequest>,
+    ) -> Result<HostAccountCreateHonourProofResponse, RingVrfError> {
+        PairingHost::create_honour_proof(self, cx, session, request).await
     }
 
     async fn register_ring_vrf_key(

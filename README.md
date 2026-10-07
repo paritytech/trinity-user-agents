@@ -54,6 +54,12 @@ handles discoverable; proof creation still checks permission and ring membership
 The `listRingVrfKeys` example checks that both built-in keys are discoverable
 under `peopl.paseo` on Paseo.
 
+`account.createHonourProof` creates one ring proof over the Honour subject and point
+contexts. It requires a registered full People member key and a `context` grant for
+a foreign key. Both paired hosts must support this method. Products construct the
+transaction message and submit the vote separately. The example fails if the host
+refuses proof creation.
+
 Product scripts and `truapi-host dev` use the same web API permission checks from `js/container`. Dev loads the container through a blocking script tag in your existing browser. Scripts run in Bun and retain filesystem, environment and process access.
 
 To build from source, run `make headless install` with stable Rust, nightly Rust with rustfmt, Node.js 22 or newer, and

@@ -79,6 +79,26 @@ impl Vrf {
             message,
         ))
     }
+
+    /// Prove membership once for several 32-byte contexts, returning one alias per context.
+    pub fn prove_multi_context(
+        &self,
+        entropy: &[u8; 32],
+        domain: u32,
+        member: &[u8; 32],
+        members: &[[u8; 32]],
+        contexts: &[[u8; 32]],
+        message: &[u8],
+    ) -> Result<(Vec<u8>, Vec<[u8; 32]>), RingVrfError> {
+        answer(&module::prove_multi_context(
+            entropy,
+            domain,
+            member,
+            &members.concat(),
+            &contexts.concat(),
+            message,
+        ))
+    }
 }
 
 /// A `truapi-verifiable` answer: `Result<T, String>`, SCALE-encoded.
@@ -126,6 +146,7 @@ export const member = (...args) => module.member(...args);
 export const sign = (...args) => module.sign(...args);
 export const alias = (...args) => module.alias(...args);
 export const prove = (...args) => module.prove(...args);
+export const prove_multi_context = (...args) => module.prove_multi_context(...args);
 "#)]
     extern "C" {
         fn read() -> js_sys::Promise;
@@ -133,6 +154,14 @@ export const prove = (...args) => module.prove(...args);
         pub fn member(entropy: &[u8]) -> Vec<u8>;
         pub fn sign(entropy: &[u8], message: &[u8]) -> Vec<u8>;
         pub fn alias(entropy: &[u8], context: &[u8]) -> Vec<u8>;
+        pub fn prove_multi_context(
+            entropy: &[u8],
+            domain: u32,
+            member: &[u8],
+            members: &[u8],
+            contexts: &[u8],
+            message: &[u8],
+        ) -> Vec<u8>;
         pub fn prove(
             entropy: &[u8],
             domain: u32,

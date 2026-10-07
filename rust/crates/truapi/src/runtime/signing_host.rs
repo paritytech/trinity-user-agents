@@ -25,9 +25,11 @@ mod sso_service;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use truapi::latest::{
-    ChainIdentifier, DerivationIndex, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
-    HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
-    HostAccountRingVrfSignRequest, ProductAccountId, RingLocation, RingLocationJunction,
+    ChainIdentifier, DerivationIndex, HostAccountCreateHonourProofRequest,
+    HostAccountCreateHonourProofResponse, HostAccountCreateProofRequest,
+    HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
+    HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest, ProductAccountId,
+    RingLocation, RingLocationJunction,
 };
 
 pub use allowance_renewal::StatementRenewalTarget;
@@ -1332,6 +1334,36 @@ impl ProductAuthority for SigningHost {
         })
     }
 
+    async fn create_honour_proof(
+        &self,
+        _cx: &CallContext,
+        session: &AuthoritySession,
+        request: ProductRequest<HostAccountCreateHonourProofRequest>,
+    ) -> Result<HostAccountCreateHonourProofResponse, RingVrfError> {
+        self.require_current_session(session)?;
+        let (key_handle, _) = self
+            .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+            .await?;
+        super::honour::validate_ring(self.platform.as_ref(), &request.payload.ring_location)
+            .await?;
+        let vrf = vrf::load().await?;
+        let entropy = self
+            .resolve_ring_vrf_key_for_ring(
+                &vrf,
+                session,
+                &key_handle,
+                &request.payload.ring_location,
+            )
+            .await?;
+        let candidate = self.ring_vrf_member_candidate(&vrf, &entropy)?;
+        let resolved = self
+            .ring_resolver
+            .resolve(&request.payload.ring_location, &[candidate])
+            .await?;
+        self.require_current_session(session)?;
+        super::honour::create_proof(&vrf, &entropy, &resolved, &request.payload)
+    }
+
     async fn register_ring_vrf_key(
         &self,
         _cx: &CallContext,
@@ -1662,6 +1694,7 @@ mod tests {
     mod allowance_keys;
     mod auto_signing;
     mod cross_product_account;
+    mod honour;
     mod raw_signing;
     #[cfg(feature = "test-host")]
     mod withheld_resources;

@@ -538,6 +538,18 @@ impl PairingHost {
             .map_err(ring_vrf_transport_error)?
     }
 
+    /// Forward an Honour proof request to the paired signing host.
+    pub async fn remote_create_honour_proof(
+        &self,
+        cx: &CallContext,
+        session: &SessionInfo,
+        request: ProductRequest<latest::HostAccountCreateHonourProofRequest>,
+    ) -> crate::host_internal::sso_messages::CreateHonourProofResponse {
+        self.call(cx, session, request)
+            .await
+            .map_err(ring_vrf_transport_error)?
+    }
+
     /// Forward a ring-VRF key registration request to the paired signing host.
     pub async fn remote_register_ring_vrf_key(
         &self,

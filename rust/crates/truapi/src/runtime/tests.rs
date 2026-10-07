@@ -1,5 +1,7 @@
 //! Shared runtime fixtures and cross-capability integration tests.
 
+mod honour;
+
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
