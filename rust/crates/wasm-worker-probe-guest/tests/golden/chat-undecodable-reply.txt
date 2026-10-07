@@ -1,0 +1,14 @@
+start
+  send 0c773a310100000003
+  send 0c773a32040100002c636f756e7465722d626f741c436f756e74657200
+  send 0c773a33040000001c636f756e7465721c436f756e74657200
+  send 0c773a3411010000
+frame 0c773a310100010000
+  log HandshakeOk
+frame 0c773a32040101000000
+  log BotRegistered
+frame 0c773a33040001000000
+  send 0c773a35040300001c636f756e7465720628636f756e7465722f763100
+  log RoomCreated
+frame 0c773a3504030107
+  log CallFailed { call: "chat.postMessage", error: "undecodable response: unexpected first byte decoding Result" }
