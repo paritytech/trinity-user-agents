@@ -1,4 +1,5 @@
 import Foundation
+import DesignSystem
 import Products
 import KeyDerivation
 import SubstrateSdk
@@ -50,7 +51,8 @@ extension ServiceCoordinator {
             hostProvider: spaFlowState.hostProvider,
             runtimeProvider: truapiRuntimeProvider,
             workerManager: workerFacade.manager,
-            gameReminders: gameReminders
+            gameReminders: gameReminders,
+            themeManager: MainActor.assumeIsolated { ThemeManager.shared }
         )
 
         let productBotProvider = ProductBotProvider(

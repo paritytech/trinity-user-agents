@@ -4,6 +4,7 @@ import Keystore_iOS
 import Products
 import ChainRegistry
 import BulletinChain
+import DesignSystem
 
 /// Creates ``ProductBot`` instances for a given product.
 ///
@@ -18,6 +19,7 @@ final class ProductBotFactory {
     private let runtimeProvider: TrUAPIHostRuntimeProviding
     private let workerManager: ProductWorkerManaging
     private let gameReminders: ProductGameReminderScheduling
+    private let themeManager: ThemeManagerProtocol
     private let logger: LoggerProtocol
 
     init(
@@ -27,6 +29,7 @@ final class ProductBotFactory {
         runtimeProvider: TrUAPIHostRuntimeProviding,
         workerManager: ProductWorkerManaging,
         gameReminders: ProductGameReminderScheduling,
+        themeManager: ThemeManagerProtocol,
         settingsManager: SettingsManagerProtocol = SettingsManager.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -37,6 +40,7 @@ final class ProductBotFactory {
         self.runtimeProvider = runtimeProvider
         self.workerManager = workerManager
         self.gameReminders = gameReminders
+        self.themeManager = themeManager
         self.logger = logger
     }
 
@@ -96,6 +100,7 @@ private extension ProductBotFactory {
             gameReminders: gameReminders,
             ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
             hostProvider: hostProvider,
+            themeManager: themeManager,
             logger: logger
         )
 
