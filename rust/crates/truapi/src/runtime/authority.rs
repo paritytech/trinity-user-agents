@@ -499,14 +499,10 @@ pub trait ProductAuthority: Send + Sync {
     /// Create an Honour proof with a registered full People key.
     async fn create_honour_proof(
         &self,
-        _cx: &CallContext,
-        _session: &AuthoritySession,
-        _request: ProductRequest<HostAccountCreateHonourProofRequest>,
-    ) -> Result<HostAccountCreateHonourProofResponse, RingVrfError> {
-        Err(RingVrfError::Unknown {
-            reason: "Honour proofs are unavailable".to_string(),
-        })
-    }
+        cx: &CallContext,
+        session: &AuthoritySession,
+        request: ProductRequest<HostAccountCreateHonourProofRequest>,
+    ) -> Result<HostAccountCreateHonourProofResponse, RingVrfError>;
 
     /// Register a ring-VRF key owned by the calling product.
     async fn register_ring_vrf_key(

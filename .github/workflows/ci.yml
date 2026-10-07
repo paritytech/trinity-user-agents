@@ -832,6 +832,9 @@ jobs:
       - name: Build wasm
         run: npm run build:wasm --prefix js/packages/truapi-host
 
+      - name: Verify WASM ring proofs
+        run: wasm-pack test --node rust/crates/truapi-verifiable --lib
+
       - name: Test
         run: npm test --prefix js/packages/truapi-host
 

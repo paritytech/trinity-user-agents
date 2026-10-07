@@ -276,6 +276,25 @@ pub struct PairingHost {
 impl PairingHost {
     /// Build a pairing host over the shared runtime services.
     pub fn new(services: Arc<RuntimeServices>, host_config: PairingHostConfig) -> Arc<Self> {
+        let ring_resolver = ChainRingResolver::new(services.chain.clone());
+        Self::with_ring_resolver(services, host_config, ring_resolver)
+    }
+
+    #[cfg(test)]
+    /// Build a pairing host with a controlled ring resolver.
+    pub fn new_with_ring_resolver(
+        services: Arc<RuntimeServices>,
+        host_config: PairingHostConfig,
+        ring_resolver: Arc<dyn RingResolver>,
+    ) -> Arc<Self> {
+        Self::with_ring_resolver(services, host_config, ring_resolver)
+    }
+
+    fn with_ring_resolver(
+        services: Arc<RuntimeServices>,
+        host_config: PairingHostConfig,
+        ring_resolver: Arc<dyn RingResolver>,
+    ) -> Arc<Self> {
         if services.asset_hub_chain_genesis_hash().is_none() {
             // Said once at startup rather than inferred from every grant
             // refusing, matching the signing role. Cross-product refusals are
@@ -309,7 +328,7 @@ impl PairingHost {
             bulletin_allowances: Mutex::new(HashMap::new()),
             product_subtrees: Mutex::new(HashMap::new()),
             auto_signing_keys: Mutex::new(HashMap::new()),
-            ring_resolver: ChainRingResolver::new(services.chain.clone()),
+            ring_resolver,
             ring_vrf_registry: RingVrfRegistryStore::new(services.platform.clone()),
             session_secret_storage: futures::lock::Mutex::new(()),
             session_store_activation: futures::lock::Mutex::new(()),

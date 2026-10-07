@@ -5699,6 +5699,7 @@ dependencies = [
  "parity-scale-codec",
  "verifiable",
  "wasm-bindgen",
+ "wasm-bindgen-test",
 ]
 
 [[package]]

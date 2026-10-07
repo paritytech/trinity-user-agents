@@ -1,4 +1,7 @@
 use super::*;
+use crate::runtime::signing_host::ring_vrf::{MemberCandidate, ResolvedRing, RingResolver};
+use futures::channel::oneshot;
+use std::sync::atomic::AtomicUsize;
 use truapi::latest::{HostAccountCreateHonourProofRequest, HostAccountCreateHonourProofResponse};
 use truapi::versioned::account::{
     HostAccountCreateHonourProofRequest as Request, HostAccountCreateHonourProofResponse as Answer,
@@ -152,5 +155,220 @@ fn honour_proof_reports_a_peer_that_cannot_decode_the_request() {
         matches!(result, Err(CallError::Domain(HostAccountCreateProofError::V1(
         v01::HostAccountCreateProofError::Unknown { reason }
     ))) if reason.contains("decodingFailed"))
+    );
+}
+
+struct LocalRingResolver {
+    ring: ResolvedRing,
+    pause: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
+    lookups: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl RingResolver for LocalRingResolver {
+    async fn members_pallet_index(&self, _chain_id: &[u8; 32]) -> Result<u8, RingVrfError> {
+        Ok(42)
+    }
+
+    async fn validate(&self, _location: &v01::RingLocation) -> Result<[u8; 32], RingVrfError> {
+        Ok(*b"pop:polkadot.network/people     ")
+    }
+
+    async fn resolve(
+        &self,
+        _location: &v01::RingLocation,
+        candidates: &[MemberCandidate],
+    ) -> Result<ResolvedRing, RingVrfError> {
+        self.lookups.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(candidates, &[self.ring.selected]);
+        let pause = self.pause.lock().unwrap().take();
+        if let Some((entered, resume)) = pause {
+            entered.send(()).unwrap();
+            resume.await.unwrap();
+        }
+        Ok(self.ring.clone())
+    }
+}
+
+fn local_fixture() -> (
+    ProductRuntimeHost,
+    Arc<StubPlatform>,
+    Arc<LocalRingResolver>,
+) {
+    use crate::host_logic::product_account::{
+        derive_ring_vrf_domain_entropy, derive_ring_vrf_entropy_from_domain,
+    };
+
+    let payload = request();
+    let domain = derive_ring_vrf_domain_entropy(&[0xab; 16], "myapp.dot").unwrap();
+    let entropy =
+        derive_ring_vrf_entropy_from_domain(&domain, &payload.key_handle.derivation_index);
+    let member = futures::executor::block_on(crate::runtime::vrf::load())
+        .unwrap()
+        .member(&entropy)
+        .unwrap();
+    let resolver = Arc::new(LocalRingResolver {
+        ring: ResolvedRing {
+            selected: MemberCandidate { member },
+            ring_index: 7,
+            ring_revision: 11,
+            domain_size: crate::runtime::vrf::DOMAIN_2E11,
+            members: vec![member],
+        },
+        pause: Mutex::new(None),
+        lookups: AtomicUsize::new(0),
+    });
+    let platform = Arc::new(StubPlatform::default());
+    let (config, product) = runtime_config("myapp.dot");
+    let services = RuntimeServices::new(
+        platform.clone(),
+        config.host.host_info.clone(),
+        config.people_chain_genesis_hash,
+        config.bulletin_chain_genesis_hash,
+        config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+    );
+    let authority = PairingHost::new_with_ring_resolver(services.clone(), config, resolver.clone());
+    let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+    let host = ProductRuntimeHost::from_services(services, adapters, authority.clone(), product);
+    let session = sso_session_info();
+    install_pairing_session(&host, session.clone());
+    let root =
+        crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xab; 16]).unwrap();
+    let subtree =
+        crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
+            .unwrap();
+    futures::executor::block_on(authority.remember_auto_signing_key_for_tests(
+        &session,
+        authority.current_session_lifecycle_epoch(),
+        "myapp.dot",
+        subtree.public.to_bytes(),
+        subtree.secret.to_bytes(),
+        domain,
+    ))
+    .unwrap();
+    futures::executor::block_on(authority.register_ring_vrf_key_for_tests(
+        &session,
+        payload.key_handle,
+        payload.ring_location,
+        member,
+    ))
+    .unwrap();
+    (host, platform, resolver)
+}
+
+#[test]
+fn honour_proof_uses_the_pairing_hosts_cached_local_key() {
+    use verifiable::GenerateVerifiable;
+    use verifiable::ring::ark_vrf::ring::SrsLookup;
+    use verifiable::ring::bandersnatch::{BandersnatchSha512Ell2, BandersnatchVrfVerifiable};
+    use verifiable::ring::{RingDomainSize, StaticChunk, ring_verifier_builder_params};
+
+    let (host, platform, resolver) = local_fixture();
+    let payload = request();
+    let Answer::V1(response) = futures::executor::block_on(
+        host.create_honour_proof(&CallContext::default(), Request::V1(payload.clone())),
+    )
+    .unwrap();
+    assert_eq!(resolver.lookups.load(Ordering::SeqCst), 1);
+    assert!(platform.sent_rpc.lock().unwrap().is_empty());
+    let domain = RingDomainSize::try_from(resolver.ring.domain_size).unwrap();
+    let builder = ring_verifier_builder_params::<BandersnatchSha512Ell2>(domain);
+    let lookup = |range: core::ops::Range<usize>| {
+        (&builder)
+            .lookup(range)
+            .map(|chunks| chunks.into_iter().map(StaticChunk).collect())
+            .ok_or(())
+    };
+    let mut members = BandersnatchVrfVerifiable::start_members(domain);
+    BandersnatchVrfVerifiable::push_members(
+        &mut members,
+        resolver.ring.members.iter().copied(),
+        lookup,
+    )
+    .unwrap();
+    let root = BandersnatchVrfVerifiable::finish_members(members);
+    let contexts = response
+        .contextual_aliases
+        .iter()
+        .map(|alias| alias.context.as_slice())
+        .collect::<Vec<_>>();
+    assert_eq!(contexts.len(), 2);
+    let aliases = BandersnatchVrfVerifiable::validate_multi_context(
+        domain,
+        &response.proof.try_into().unwrap(),
+        &root,
+        &contexts,
+        &payload.message,
+    )
+    .unwrap();
+    assert_eq!(
+        aliases
+            .into_iter()
+            .map(|alias| alias.to_vec())
+            .collect::<Vec<_>>(),
+        response
+            .contextual_aliases
+            .iter()
+            .map(|alias| alias.alias.clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        (response.ring_index, response.ring_revision),
+        (resolver.ring.ring_index, resolver.ring.ring_revision)
+    );
+}
+
+#[test]
+fn honour_proof_rejects_pairing_disconnect_during_local_ring_lookup() {
+    let (host, _, resolver) = local_fixture();
+    let (entered, entered_rx) = oneshot::channel();
+    let (resume, resume_rx) = oneshot::channel();
+    *resolver.pause.lock().unwrap() = Some((entered, resume_rx));
+    let cx = CallContext::default();
+    let (result, ()) = futures::executor::block_on(futures::future::join(
+        host.create_honour_proof(&cx, Request::V1(request())),
+        async {
+            entered_rx.await.unwrap();
+            host.disconnect().await;
+            resume.send(()).unwrap();
+        },
+    ));
+    assert_eq!(resolver.lookups.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        result,
+        Err(CallError::Domain(HostAccountCreateProofError::V1(
+            v01::HostAccountCreateProofError::Unknown {
+                reason: "Disconnected".to_string(),
+            }
+        )))
+    );
+}
+
+#[test]
+fn honour_proof_rejects_pairing_replacement_during_local_ring_lookup() {
+    let (host, _, resolver) = local_fixture();
+    let (entered, entered_rx) = oneshot::channel();
+    let (resume, resume_rx) = oneshot::channel();
+    *resolver.pause.lock().unwrap() = Some((entered, resume_rx));
+    let cx = CallContext::default();
+    let (result, ()) = futures::executor::block_on(futures::future::join(
+        host.create_honour_proof(&cx, Request::V1(request())),
+        async {
+            entered_rx.await.unwrap();
+            let mut replacement = sso_session_info();
+            replacement.sso.as_mut().unwrap().session_id_own = [0x88; 32];
+            install_pairing_session(&host, replacement);
+            resume.send(()).unwrap();
+        },
+    ));
+    assert_eq!(resolver.lookups.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        result,
+        Err(CallError::Domain(HostAccountCreateProofError::V1(
+            v01::HostAccountCreateProofError::Unknown {
+                reason: "Disconnected".to_string(),
+            }
+        )))
     );
 }

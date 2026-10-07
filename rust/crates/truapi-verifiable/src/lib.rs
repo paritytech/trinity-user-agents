@@ -199,6 +199,58 @@ mod tests {
         );
     }
 
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn multi_context_proof_verifies_and_binds_context_order_and_message() {
+        let ring = [key(1), key(2), key(3)];
+        let contexts = [[1; 32], [2; 32]];
+        let message = [3; 32];
+        let (proof, aliases): (Vec<u8>, Vec<[u8; 32]>) = answer(prove_multi_context(
+            &[2; 32],
+            DOMAIN.value(),
+            &ring[1],
+            &ring.concat(),
+            &contexts.concat(),
+            &message,
+        ));
+        let builder = ring_verifier_builder_params::<BandersnatchSha512Ell2>(DOMAIN);
+        let lookup = |range: core::ops::Range<usize>| {
+            (&builder)
+                .lookup(range)
+                .map(|chunks| chunks.into_iter().map(StaticChunk).collect())
+                .ok_or(())
+        };
+        let mut members = BandersnatchVrfVerifiable::start_members(DOMAIN);
+        BandersnatchVrfVerifiable::push_members(&mut members, ring.iter().copied(), lookup)
+            .unwrap();
+        let root = BandersnatchVrfVerifiable::finish_members(members);
+        let proof = proof.try_into().unwrap();
+        let contexts = [contexts[0].as_slice(), contexts[1].as_slice()];
+        assert_eq!(
+            BandersnatchVrfVerifiable::validate_multi_context(
+                DOMAIN, &proof, &root, &contexts, &message,
+            )
+            .map(|aliases| aliases.into_iter().collect::<Vec<_>>()),
+            Ok(aliases),
+        );
+        assert!(
+            BandersnatchVrfVerifiable::validate_multi_context(
+                DOMAIN, &proof, &root, &contexts, &[4; 32],
+            )
+            .is_err()
+        );
+        assert!(
+            BandersnatchVrfVerifiable::validate_multi_context(
+                DOMAIN,
+                &proof,
+                &root,
+                &[contexts[1], contexts[0]],
+                &message,
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     fn multi_context_proof_rejects_malformed_inputs() {
         let member = key(2);

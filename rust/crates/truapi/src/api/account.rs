@@ -184,6 +184,9 @@ pub trait Account: Send + Sync {
     /// This operation creates a proof. It does not submit a vote.
     /// Both paired Hosts must support this operation.
     ///
+    /// This Paseo example uses a dummy subject and message hash. It demonstrates
+    /// proof creation only. A vote requires the hash of its inherited implication.
+    ///
     /// ```ts
     /// const people = await truapi.chain.getChainInfo({ chain: "People" });
     /// assert(people.isOk(), "getChainInfo failed:", people);
