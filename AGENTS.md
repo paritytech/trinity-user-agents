@@ -20,8 +20,12 @@ rust/crates/
   truapi-host-cli/       CLI pairing/signing hosts; Bun scripts share the container web API gates
   wasm-worker-probe/     runs a wasm32 Worker product against a host's product-frame endpoint
                          under wasmi (fuel, memory cap, lifecycle), with a frame transcript
-  wasm-worker-probe-guest/ the counter bot that product is: Chat and Renderer over TrUAPI
-                         frames from Rust, no JavaScript; builds for wasm32-unknown-unknown
+  truapi-worker/         library for Worker products in Rust on wasm32: owns the sandbox
+                         ABI (the only unsafe), frames, calls, render streams, actions
+                         and lifecycle; a product implements `ProductWorker` and names
+                         it with `export_worker!`; `testing` replays golden transcripts
+  wasm-worker-probe-guest/ the counter bot that product is, on truapi-worker; chat,
+                         `pocket` or `unified` mode; builds for wasm32-unknown-unknown
 js/packages/
   truapi/                  @parity/truapi TS package; generated TS lives under ignored paths
   truapi-host/            @parity/truapi-host: WASM-backed host runtime. Subpath entries:

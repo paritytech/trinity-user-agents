@@ -185,3 +185,126 @@ fn read_guest(
         .map_err(|error| wasmi::Error::new(format!("guest pointer out of bounds: {error}")))?;
     Ok(bytes)
 }
+
+#[cfg(test)]
+mod tests {
+    //! The counter's wasm32 builds, run in this sandbox: their imports and
+    //! exports must be the ABI the hosts link, and every golden transcript must
+    //! replay byte for byte. Build them first, one file per mode:
+    //!
+    //! ```text
+    //! for mode in chat pocket unified; do
+    //!   features=$([ $mode = chat ] || echo "--features $mode")
+    //!   cargo build -p wasm-worker-probe-guest --target wasm32-unknown-unknown --release $features
+    //!   cp target/wasm32-unknown-unknown/release/wasm_worker_probe_guest.wasm /tmp/guests/$mode.wasm
+    //! done
+    //! WASM_WORKER_GUESTS=/tmp/guests cargo test -p wasm-worker-probe -- --ignored
+    //! ```
+
+    use std::path::{Path, PathBuf};
+
+    use truapi_worker::testing::{Answer, Transcript, Turn as HostTurn};
+    use wasmi::{Engine, ExternType, Module};
+
+    use super::{Sandbox, Turn};
+
+    /// Every import and export, with its type, sorted.
+    fn surface(module: &[u8]) -> Vec<String> {
+        let module = Module::new(&Engine::default(), module).expect("module compiles");
+        let describe = |ty: &ExternType| match ty {
+            ExternType::Func(func) => format!("fn{:?} -> {:?}", func.params(), func.results()),
+            ExternType::Memory(_) => "memory".to_string(),
+            ExternType::Table(_) => "table".to_string(),
+            ExternType::Global(_) => "global".to_string(),
+        };
+        let mut surface: Vec<String> = module
+            .imports()
+            .map(|import| {
+                format!(
+                    "import {}.{}: {}",
+                    import.module(),
+                    import.name(),
+                    describe(import.ty())
+                )
+            })
+            .chain(
+                module
+                    .exports()
+                    .map(|export| format!("export {}: {}", export.name(), describe(export.ty()))),
+            )
+            .collect();
+        surface.sort();
+        surface
+    }
+
+    fn guests() -> PathBuf {
+        PathBuf::from(
+            std::env::var("WASM_WORKER_GUESTS").expect("WASM_WORKER_GUESTS names the built guests"),
+        )
+    }
+
+    fn golden(name: &str) -> Transcript {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../wasm-worker-probe-guest/tests/golden")
+            .join(format!("{name}.txt"));
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        Transcript::parse(&text).unwrap_or_else(|error| panic!("{name}: {error}"))
+    }
+
+    fn replay(module: &[u8], name: &str) {
+        let mut sandbox = Sandbox::new(module, 50_000_000, 16 * 1024 * 1024).expect("instantiates");
+        for (index, (turn, expected)) in golden(name).turns.iter().enumerate() {
+            let turn_value = match turn {
+                HostTurn::Start => Turn::Start,
+                HostTurn::Frame(bytes) => Turn::Frame(bytes.clone()),
+                HostTurn::Suspend => Turn::Suspend,
+                HostTurn::Resume => Turn::Resume,
+            };
+            let outcome = sandbox
+                .run(turn_value)
+                .unwrap_or_else(|error| panic!("{name}: turn {index}: {error}"));
+            let answer = Answer {
+                sent: outcome.frames,
+                logs: sandbox.take_logs(),
+            };
+            assert_eq!(&answer, expected, "{name}: turn {index} ({turn:?})");
+        }
+    }
+
+    #[test]
+    #[ignore = "needs the counter built for wasm32 in each mode; see the module docs"]
+    fn every_counter_build_has_the_worker_abi_and_replays_its_transcripts() {
+        let abi = [
+            "export alloc: fn[I32] -> [I32]",
+            "export free: fn[I32, I32] -> []",
+            "export memory: memory",
+            "export on_frame: fn[I32, I32] -> []",
+            "export on_resume: fn[] -> []",
+            "export on_start: fn[] -> []",
+            "export on_suspend: fn[] -> []",
+            "import host.frame_send: fn[I32, I32] -> []",
+            "import host.log: fn[I32, I32] -> []",
+        ];
+        for (mode, transcripts) in [
+            (
+                "chat",
+                &["chat", "chat-room-refused", "chat-undecodable-reply"][..],
+            ),
+            ("pocket", &["pocket"][..]),
+            ("unified", &["unified"][..]),
+        ] {
+            let path = guests().join(format!("{mode}.wasm"));
+            let module = std::fs::read(&path)
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            assert_eq!(
+                surface(&module),
+                abi,
+                "{mode}: the module's imports and exports"
+            );
+            for name in transcripts {
+                replay(&module, name);
+            }
+        }
+    }
+}

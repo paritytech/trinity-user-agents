@@ -5725,6 +5725,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "truapi-worker"
+version = "0.0.0"
+dependencies = [
+ "parity-scale-codec",
+ "truapi",
+]
+
+[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6249,7 +6257,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "truapi",
- "wasm-worker-probe-guest",
+ "truapi-worker",
  "wasmi 2.0.0",
 ]
 
@@ -6258,7 +6266,7 @@ name = "wasm-worker-probe-guest"
 version = "0.0.0"
 dependencies = [
  "parity-scale-codec",
- "truapi",
+ "truapi-worker",
 ]
 
 [[package]]

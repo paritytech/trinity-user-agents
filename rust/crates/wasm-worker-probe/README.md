@@ -4,7 +4,7 @@ Runs a wasm32 module as a Worker product against a TrUAPI host, so a Worker
 can be checked without JavaScript. The host is unchanged: it sees SCALE
 frames on its product-frame endpoint, the same as from a JS worker.
 
-Two crates:
+Three crates:
 
 - `wasm-worker-probe` (this crate): the runner. It connects to the endpoint
   a `truapi-host` process prints, instantiates the module under wasmi with a
@@ -14,7 +14,12 @@ Two crates:
   frame, decoded with the host's envelope codec and named from the generated
   wire table, and every line the guest logs go to stdout and `--transcript`
   as one JSON object per line.
-- `wasm-worker-probe-guest`: the counter bot. On start it sends
+- `truapi-worker`: the library a Rust Worker product is written on. It owns
+  the sandbox ABI below, the frame envelope, request ids, the handshake,
+  calls, open render streams, actions and suspend and resume. A product
+  implements `ProductWorker` (`start`, `draws`, `render`, `action`) and
+  names its constructor with `export_worker!`, which generates the exports.
+- `wasm-worker-probe-guest`: the counter bot, on `truapi-worker`. On start it sends
   `system.handshake`, `chat.registerBot`, `chat.createRoom` and starts
   `renderer.actionSubscribe`; once the room exists it posts one `Custom`
   message. When the host opens `renderer.render` for that message it streams
@@ -30,9 +35,16 @@ Two crates:
 
 The guest's sandbox boundary is two imports, `host.frame_send` and
 `host.log`, and the exports `alloc`, `free`, `on_start`, `on_frame`,
-`on_suspend`, `on_resume`. Its wire discriminants are hardcoded, because the
-protocol-only `truapi` build has no wire table, and pinned to the generated
-table by this crate's tests.
+`on_suspend`, `on_resume`. `truapi-worker`'s wire discriminants are
+hardcoded, because the protocol-only `truapi` build has no wire table, and
+pinned to the generated table by this crate's tests.
+
+The counter's wire behaviour is pinned by golden transcripts in
+`wasm-worker-probe-guest/tests/golden`, one per scenario and mode, checked
+natively by that crate's tests. This crate's ignored sandbox test runs the
+three wasm32 builds: it checks each module's imports and exports against the
+ABI and replays every transcript through the sandbox; its module docs give
+the build commands.
 
 ## Running it against the CLI host
 

@@ -22,7 +22,7 @@ tokio-tungstenite = { workspace = true, features = ["connect"] }
 wasmi = { workspace = true }
 
 [dev-dependencies]
-wasm-worker-probe-guest = { path = "../wasm-worker-probe-guest" }
+truapi-worker = { path = "../truapi-worker" }
 
 [lints]
 workspace = true

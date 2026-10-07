@@ -121,12 +121,12 @@ fn leg_name(kind: Option<&WireKind>, message_type: u8) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    //! The guest hardcodes wire discriminants because the protocol-only build
-    //! has no wire table. These pin them to the generated table so a renumbered
-    //! method fails here, not on a live host.
+    //! `truapi-worker` hardcodes wire discriminants because the protocol-only
+    //! build has no wire table. These pin them to the generated table so a
+    //! renumbered method fails here, not on a live host.
 
     use truapi::frame::{request_ids, subscription_ids};
-    use wasm_worker_probe_guest::wire;
+    use truapi_worker::wire;
 
     fn request(method: &str) -> (u8, u8) {
         let ids = request_ids(method).unwrap_or_else(|| panic!("{method} is a request"));
@@ -139,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn guest_discriminants_match_the_generated_wire_table() {
+    fn worker_library_discriminants_match_the_generated_wire_table() {
         assert_eq!(
             [
                 wire::SYSTEM_HANDSHAKE,
@@ -161,7 +161,7 @@ mod tests {
     }
 
     #[test]
-    fn guest_message_types_match_the_frame_codec() {
+    fn worker_library_message_types_match_the_frame_codec() {
         use truapi::frame::{
             MESSAGE_TYPE_INTERRUPT, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_STOP,
         };

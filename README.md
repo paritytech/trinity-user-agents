@@ -112,7 +112,8 @@ rust/crates/
   truapi-verifiable/     Ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
   truapi-host-cli/       Headless pairing and signing hosts for scripts, batteries and local development
   wasm-worker-probe/     Runs a wasm32 Worker product against a host under wasmi; see its README
-  wasm-worker-probe-guest/ The counter bot that product is, written in Rust over TrUAPI frames
+  truapi-worker/         Library for Worker products written in Rust for wasm32: one trait and `export_worker!`
+  wasm-worker-probe-guest/ The counter bot that product is, written on truapi-worker
 hosts/android/bindings/wasmi-worker/ Embedded Worker sandbox, packaged as libwasmi_worker_java.so
 js/packages/
   truapi/                  @parity/truapi TypeScript client
