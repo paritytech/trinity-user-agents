@@ -6,7 +6,6 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.ContainerScriptBundle
-import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductWebChromeClient
 import javax.inject.Inject
 
 /**
@@ -25,14 +24,29 @@ class TrUAPIBootstrapInstaller @Inject constructor(
             "WebView lacks DOCUMENT_START_SCRIPT; cannot run a TrUAPI product"
         }
 
-        val container = "window.__truapi_localhost = {...window.__truapi_localhost, nativeHttp: true};\n" +
+        val container = MEDIA_ISOLATION + "\n" +
+            "window.__truapi_localhost = {...window.__truapi_localhost, nativeHttp: true};\n" +
             ContainerScriptBundle.load(context)
         return { bootstrap ->
             { webView ->
                 WebViewCompat.addDocumentStartJavaScript(webView, "if (window === window.top) {\n$bootstrap\n}", origins)
                 WebViewCompat.addDocumentStartJavaScript(webView, container, setOf("*"))
-                (webView.webChromeClient as? ProductWebChromeClient)?.useContainerPermissions()
             }
         }
+    }
+
+    private companion object {
+        // Every frame, before the shared container. Product realms have no raw RTC,
+        // capture or fullscreen escape even when the shared policy marker is absent.
+        val MEDIA_ISOLATION = """
+            (() => {
+              const deny = (object, name) => { if (!object) return; try { Object.defineProperty(object, name, { value: undefined, writable: false, configurable: false }); } catch (_) {} };
+              ['RTCPeerConnection','webkitRTCPeerConnection','mozRTCPeerConnection','RTCDataChannel','MediaStreamTrackProcessor','MediaStreamTrackGenerator'].forEach(name => deny(globalThis, name));
+              ['getUserMedia','webkitGetUserMedia','mozGetUserMedia'].forEach(name => { deny(navigator, name); deny(Object.getPrototypeOf(navigator), name); });
+              if (navigator.mediaDevices) ['getUserMedia','getDisplayMedia','enumerateDevices'].forEach(name => { deny(navigator.mediaDevices, name); deny(Object.getPrototypeOf(navigator.mediaDevices), name); });
+              ['requestFullscreen','webkitRequestFullscreen','webkitRequestFullScreen'].forEach(name => deny(Element.prototype, name));
+              ['webkitEnterFullscreen','webkitEnterFullScreen'].forEach(name => deny(HTMLVideoElement.prototype, name));
+            })();
+        """.trimIndent()
     }
 }

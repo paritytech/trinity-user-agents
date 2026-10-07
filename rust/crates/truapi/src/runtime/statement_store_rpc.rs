@@ -66,6 +66,11 @@ impl StatementStoreRpc {
         }
     }
 
+    /// Trusted network namespace shared by host-owned signaling and authority.
+    pub(crate) fn genesis_hash(&self) -> [u8; 32] {
+        self.people_chain_genesis_hash
+    }
+
     /// Open a People-chain RPC client already scoped to its genesis hash, for
     /// allowance paths that key the chain-context cache by it.
     pub async fn chain_client(
@@ -89,6 +94,22 @@ impl StatementStoreRpc {
         Ok(RpcClient::new(HostRpcClient::new(
             connection,
             self.spawner.clone(),
+        )))
+    }
+
+    /// Open a statement-store RPC client on its own connection whose request
+    /// ids all start with `request_id_prefix`, so the host can tell this
+    /// traffic apart (see `media_signaling::ADVERTISEMENT_LOOKUP_REQUEST_ID_PREFIX`).
+    pub(crate) async fn client_with_request_id_prefix(
+        &self,
+        label: &'static str,
+        request_id_prefix: &'static str,
+    ) -> Result<RpcClient, StatementStoreRpcClientError> {
+        let connection = self.connect(label).await?;
+        Ok(RpcClient::new(HostRpcClient::with_request_id_prefix(
+            connection,
+            self.spawner.clone(),
+            request_id_prefix,
         )))
     }
 

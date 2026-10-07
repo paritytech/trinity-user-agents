@@ -1616,6 +1616,15 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="truapi_confirm_title_main_purse_payment">Approve main-purse payment?</string>
     <string name="truapi_confirm_title_account_access">Allow account access?</string>
     <string name="truapi_confirm_title_product_subtree">Allow own-account access?</string>
+    <string name="truapi_confirm_title_calling">Allow calls for this account and network?</string>
+    <string name="truapi_confirm_title_chat_authority">Allow Chat identity access?</string>
+    <string name="truapi_confirm_chat_authority_details">Allow this product to bind its device account to your wallet Chat identity and encrypt or decrypt Chat routing data.</string>
+    <string name="truapi_confirm_title_main_purse_payment">Pay from your main purse?</string>
+    <string name="truapi_confirm_label_recipient">Authenticated recipient</string>
+    <string name="truapi_confirm_label_amount_cents">Recipient amount (asset cents)</string>
+    <string name="truapi_confirm_label_max_debit_cents">Maximum debit including fees (asset cents)</string>
+    <string name="truapi_confirm_label_asset_instance">Asset instance</string>
+    <string name="truapi_confirm_label_operation">Payment operation</string>
     <string name="truapi_confirm_label_request">Request</string>
     <string name="truapi_confirm_label_call">Call</string>
     <string name="truapi_confirm_label_call_data">Call data</string>

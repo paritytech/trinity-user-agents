@@ -66,8 +66,8 @@ private extension ProductBotFactory {
     /// A worker comes from a published manifest, or from a script installed by hand through debug
     /// settings. Nil means the product ships no chat surface and gets no bot.
     ///
-    /// A bot is a chat surface, so a worker that declares `includes.chat: false` gets none — that
-    /// is a valid background-only worker, and iOS has nothing else to run it on.
+    /// A worker declaring `includes.chat: false` is driven by ProductWorkerManager
+    /// as a plain Rust worker, never adapted to the Chat protocol.
     func workerSource(for resolved: ResolvedProduct) -> ProductWorkerSource? {
         if let worker = resolved.executables.worker {
             guard worker.includesChat else { return nil }

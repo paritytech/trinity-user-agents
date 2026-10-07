@@ -8,6 +8,7 @@ pub mod contacts;
 pub mod entropy;
 pub mod local_storage;
 pub mod locale;
+pub mod media;
 pub mod notifications;
 pub mod payment;
 pub mod permissions;
@@ -29,6 +30,7 @@ pub use contacts::Contacts;
 pub use entropy::Entropy;
 pub use local_storage::LocalStorage;
 pub use locale::Locale;
+pub use media::Media;
 pub use notifications::Notifications;
 pub use payment::Payment;
 pub use permissions::Permissions;
@@ -52,6 +54,7 @@ pub trait TrUApi:
     + Entropy
     + LocalStorage
     + Locale
+    + Media
     + Notifications
     + Payment
     + Permissions
@@ -78,6 +81,7 @@ impl<T> TrUApi for T where
         + Entropy
         + LocalStorage
         + Locale
+        + Media
         + Notifications
         + Payment
         + Permissions

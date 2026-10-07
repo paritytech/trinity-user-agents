@@ -16,6 +16,10 @@ export interface PermissionAuthorizationRuntime {
     request: Uint8Array,
     status: PermissionAuthorizationStatus,
   ): Promise<void>;
+  refreshPermissionAuthorization(
+    productId: string,
+    request: Uint8Array,
+  ): Promise<void>;
 }
 
 type PostToMain = (msg: WorkerToMain) => void;
@@ -121,6 +125,33 @@ export async function handleSetPermissionAuthorizationStatus(
   } catch (err) {
     postToMain({
       kind: "setPermissionAuthorizationStatusResponse",
+      requestId,
+      ok: false,
+      error: errorMessage(err),
+    });
+  }
+}
+
+export async function handleRefreshPermissionAuthorization(
+  runtime: PermissionAuthorizationRuntime | null,
+  postToMain: PostToMain,
+  productId: string,
+  requestId: number,
+  request: Uint8Array,
+): Promise<void> {
+  try {
+    if (!runtime) {
+      throw new Error("refreshPermissionAuthorization received before runtime is ready");
+    }
+    await runtime.refreshPermissionAuthorization(productId, request);
+    postToMain({
+      kind: "refreshPermissionAuthorizationResponse",
+      requestId,
+      ok: true,
+    });
+  } catch (err) {
+    postToMain({
+      kind: "refreshPermissionAuthorizationResponse",
       requestId,
       ok: false,
       error: errorMessage(err),

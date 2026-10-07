@@ -230,7 +230,7 @@ impl PairingHost {
     /// The outer error is the transport's; the inner result is the peer's
     /// payload for this request type.
     #[instrument(skip_all, fields(runtime.method = "sso.remote_message.submit", action = R::NAME))]
-    async fn call<R: SsoRequest>(
+    pub(super) async fn call<R: SsoRequest>(
         &self,
         cx: &CallContext,
         session: &SessionInfo,
@@ -879,7 +879,7 @@ fn unexpected_resource(label: &str, resource: &SsoAllocatedResource) -> Authorit
     }
 }
 
-fn remote_authority_error(reason: impl Into<SsoRemoteResponseError>) -> AuthorityError {
+pub(super) fn remote_authority_error(reason: impl Into<SsoRemoteResponseError>) -> AuthorityError {
     match reason.into() {
         SsoRemoteResponseError::Cancelled(err) => AuthorityError::Cancelled(
             AuthorityCancelError::new(err.remote_message_id(), err.reason()),

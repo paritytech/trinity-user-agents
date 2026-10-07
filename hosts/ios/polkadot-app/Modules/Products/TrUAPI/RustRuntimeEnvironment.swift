@@ -22,11 +22,11 @@ struct RustRuntimeEnvironment {
     struct ExecutionModel {
         let execution: TrUAPIProductExecutionProtocol
         let chainConnections: TrUAPIChainConnecting
-        let osPermissionAsker: OSPermissionAsking
+        let media: NativeMediaBackend
 
         /// Start the localhost ws-bridge and return the bootstrap script to
         /// inject. Called from the runtime's `start`; opening the execution
-        /// (``makeSPAExecution``/``makeChatExecution``) stays side-effect free.
+        /// (``makeSPAExecution``/``makeWorkerExecution``) stays side-effect free.
         /// The local session is activated once on the shared runtime, not here.
         func startBridge() throws -> String {
             let endpoint = try execution.startWsBridge(bindPort: 0)
@@ -43,6 +43,11 @@ struct RustRuntimeEnvironment {
     /// the pool, so holding `ExecutionModel` pins the whole chain.
     func makeSPAExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
         try makeExecution(productId: productId, routers: routers, kind: .app)
+    }
+
+    /// Open a background-only worker without installing Chat-specific APIs.
+    func makeWorkerExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
+        try makeExecution(productId: productId, routers: routers, kind: .worker)
     }
 
     /// Open a chat execution for `productId`. Mirrors ``makeSPAExecution``.
@@ -83,16 +88,13 @@ private extension RustRuntimeEnvironment {
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(productId: productId, executionKind: kind),
-            chat: chatBridge
+            chat: chatBridge,
+            media: bridge.media
         )
 
         bridge.attach(execution)
 
-        return ExecutionModel(
-            execution: execution,
-            chainConnections: chainConnections,
-            osPermissionAsker: osPermissionAsker
-        )
+        return ExecutionModel(execution: execution, chainConnections: chainConnections, media: bridge.media)
     }
 
     func makeBridgeDependencies(

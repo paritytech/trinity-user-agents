@@ -88,9 +88,18 @@ class TrUAPIConfirmationLauncher @Inject constructor(
             signingRequestBody = confirmation.request,
             signingAccount = confirmation.request.signingAccount(),
         )
-        signingContextHolder.set(context)
-        productsRouter.openSignTransaction()
-        return context.await()
+        try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+                signingContextHolder.set(context)
+                productsRouter.openSignTransaction()
+            }
+            return context.await()
+        } finally {
+            context.onAbandoned()
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.Main.immediate) {
+                signingContextHolder.clear(context)
+            }
+        }
     }
 
     private suspend fun awaitPromptDecision(confirmation: TrUAPIConfirmation.Prompt): Boolean {

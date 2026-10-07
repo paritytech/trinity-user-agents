@@ -425,6 +425,23 @@ impl CoreStorage for CallbackPlatform {
             .await
             .map_err(v01::GenericError::from)
     }
+
+    async fn compare_exchange_core_storage(
+        &self,
+        key: CoreStorageKey,
+        expected: Option<Vec<u8>>,
+        replacement: Vec<u8>,
+        notify_on_success: bool,
+    ) -> Result<bool, v01::GenericError> {
+        self.callbacks
+            .compare_exchange_core_storage(key.encode(), expected, replacement, notify_on_success)
+            .await
+            .map_err(v01::GenericError::from)
+    }
+
+    fn core_storage_changed(&self, key: CoreStorageKey) {
+        self.callbacks.core_storage_changed(key.encode());
+    }
 }
 
 struct NativeJsonRpcConnection {

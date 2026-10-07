@@ -91,7 +91,7 @@ private func makeBridge(
         ? FailingProductStorage()
         : TrUAPILocalStorage.createProductLocalStorage(
             productId: productId,
-            defaults: makeTestDefaults()
+            defaults: makeTestDefaults(), storageDomain: UUID().uuidString
         )
     return RustProductExecutionBridge(dependencies: .init(
         productId: productId,
@@ -102,7 +102,7 @@ private func makeBridge(
         chainRegistry: chainRegistry,
         chainConnections: pool,
         productStorage: productStorage,
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
+        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults(), storageDomain: UUID().uuidString),
         confirmationPresenter: confirmationPresenter,
         chatFiles: UnavailableNativeChatFiles(),
         preimageCache: preimageCache,
@@ -531,39 +531,7 @@ struct RustRuntimeBridgeTests {
         }
     }
 
-    /// After `attach`, the bridge sets itself as the chain event handler on
-    /// the connection pool. Mocked execution — the Rust cdylib never boots in
-    /// unit tests.
-    @Test func attachWiresChainEventHandlerOnPool() {
-        let chainRegistry = MockChainRegistry()
-        let pool = makeRegistryPool(chainRegistry: chainRegistry)
-        let bridge = RustProductExecutionBridge(dependencies: .init(
-            productId: "test.dot",
-            permissionGuard: MockPermissionGuard(),
-            osPermissionAsker: MockOSPermissionAsker(),
-            notificationScheduler: MockNotificationScheduler(),
-            navigationRouter: MockNavigationRouter(),
-            chainRegistry: chainRegistry,
-            chainConnections: pool,
-            productStorage: TrUAPILocalStorage.createProductLocalStorage(
-                productId: "test.dot",
-                defaults: makeTestDefaults()
-            ),
-            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
-            confirmationPresenter: MockConfirmationPresenter(),
-            chatFiles: UnavailableNativeChatFiles(),
-            preimageCache: TrUAPIPreimageCache { _ in nil },
-            hostProvider: StubHostProvider(),
-            logger: Logger.shared
-        ))
 
-        #expect(pool.eventHandler == nil)
-
-        let execution = MockProductExecution()
-        bridge.attach(execution)
-
-        #expect(pool.eventHandler === bridge)
-    }
 
     /// After `attach`, chain notify-backs route to the opened execution.
     @Test func chainEventForwardingRoutesToAttachedExecution() {

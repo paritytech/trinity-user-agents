@@ -89,6 +89,14 @@ pub enum RemotePermission {
     /// Submitting statements on behalf of the user via `remote_statement_store_submit`.
     #[display("submit statements")]
     StatementSubmit,
+    /// Host-owned Media calling, scoped to authenticated product/account/network.
+    ///
+    /// Distinct from browser-realm WebRtc. Receive-only sessions still require
+    /// this grant; microphone and camera additionally require device grants.
+    /// Screen selection is exclusively a trusted host picker, not a permission
+    /// to enumerate or name capture sources. Revocation ends affected sessions.
+    #[display("media calling")]
+    Calling,
 }
 
 /// remote-permission request (RFC 0002).
