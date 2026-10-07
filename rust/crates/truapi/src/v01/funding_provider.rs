@@ -145,6 +145,9 @@ pub enum FundingUpdate {
     PaymentReceived {
         /// Whether the payment can no longer be reversed.
         finalized: bool,
+        /// What arrived, when it differs from what the user was asked to
+        /// send: less, or another asset.
+        mismatch: Option<FundingReceived>,
     },
     /// Inbound: the provider is converting the payment to the user's balance
     /// asset.
@@ -174,6 +177,13 @@ pub enum FundingUpdate {
         /// Why it ended.
         reason: FundingFailure,
     },
+    /// Inbound: where and what the user pays, for the host to draw. Allowed
+    /// until funds move, outside the order of the others, so a provider can
+    /// ask for the rest of a short payment; the latest is shown.
+    Deposit {
+        /// The instructions.
+        deposit: FundingDeposit,
+    },
     /// The provider's own references for the session, which the user can
     /// quote to it. Allowed at any point while the session is open, outside
     /// the order of the others; the latest value of each is shown.
@@ -186,6 +196,67 @@ pub enum FundingUpdate {
     },
 }
 
+/// Where and what the user pays a provider.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum FundingDeposit {
+    /// A transfer to an address on a chain.
+    Crypto {
+        /// The address to send to.
+        address: String,
+        /// The network it is on, as the user should see it.
+        network: String,
+        /// Symbol of the asset to send.
+        asset: String,
+        /// Amount in the asset's smallest unit.
+        amount: u128,
+        /// Decimals of the asset.
+        decimals: u8,
+        /// Whether `amount` is exact, rather than an estimate or a minimum.
+        exact: bool,
+        /// A payment URI for the QR code, such as BIP21 or EIP-681. The host
+        /// shows the bare address when there is none.
+        uri: Option<String>,
+        /// When the address stops accepting payment, in Unix milliseconds.
+        expires_at: Option<u64>,
+    },
+    /// A bank transfer.
+    Bank {
+        /// Amount in the currency's minor unit, fees included.
+        amount: u128,
+        /// ISO 4217 currency code.
+        currency: String,
+        /// Decimals of the currency.
+        decimals: u8,
+        /// The account holder to pay.
+        beneficiary: Option<String>,
+        /// The account to pay, such as an IBAN.
+        account: Option<String>,
+        /// The bank's code, such as a BIC or sort code.
+        bank_code: Option<String>,
+        /// The reference the transfer must carry.
+        reference: String,
+        /// When the details stop being valid, in Unix milliseconds.
+        expires_at: Option<u64>,
+    },
+}
+
+/// What arrived for a payment that differs from what was asked.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct FundingReceived {
+    /// Symbol of the asset that arrived.
+    pub asset: String,
+    /// Amount in that asset's smallest unit.
+    pub amount: u128,
+}
+
 /// Item of [`crate::api::FundingProvider::serve_subscribe`].
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostFundingServeSubscribeItem {
@@ -193,7 +264,7 @@ pub enum HostFundingServeSubscribeItem {
     /// when the stream opened.
     Assigned {
         /// The session.
-        session: FundingAssignment,
+        session: Box<FundingAssignment>,
     },
     /// The user asked to cancel a session. The provider reports `Failed`
     /// with `Cancelled` if it can still stop.

@@ -250,8 +250,26 @@ export async function runProviderStart(
   await check("provider_reports_forward_only", async () => {
     await report(client, inbound, { tag: "AwaitingPayment" });
     await report(client, inbound, {
+      tag: "Deposit",
+      value: {
+        deposit: {
+          tag: "Crypto",
+          value: {
+            address: "0x0000000000000000000000000000000000000001",
+            network: "Ethereum",
+            asset: "USDT",
+            amount: 1_000n,
+            decimals: 6,
+            exact: true,
+            uri: undefined,
+            expiresAt: undefined,
+          },
+        },
+      },
+    });
+    await report(client, inbound, {
       tag: "PaymentReceived",
-      value: { finalized: true },
+      value: { finalized: true, mismatch: undefined },
     });
     await report(client, inbound, { tag: "Converting" });
     const backwards = await client.fundingProvider.report({

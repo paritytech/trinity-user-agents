@@ -2725,7 +2725,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 
     let assignment = |last_update, saved: Option<&[u8]>| {
         Some(Ok(v01::HostFundingServeSubscribeItem::Assigned {
-            session: v01::FundingAssignment {
+            session: Box::new(v01::FundingAssignment {
                 intent: intent.clone(),
                 direction: v01::FundingDirection::In,
                 amount: Some(1_000),
@@ -2733,7 +2733,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
                 last_update,
                 quote: None,
                 saved: saved.map(<[u8]>::to_vec),
-            },
+            }),
         }))
     };
     let delivered = wait_for_stage(&after, &intent);

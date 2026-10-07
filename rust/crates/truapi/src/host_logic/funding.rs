@@ -10,7 +10,7 @@
 use parity_scale_codec::{Decode, Encode};
 use tracing::warn;
 use truapi::latest::{
-    FundingAssignment, FundingDirection, FundingFailure, FundingQuote, FundingRail, FundingUpdate,
+    FundingAssignment, FundingDirection, FundingFailure, FundingDeposit, FundingQuote, FundingRail, FundingReceived, FundingUpdate,
     HostFundingStatusSubscribeItem,
 };
 
@@ -104,6 +104,11 @@ pub struct FundingProgress {
     pub transaction_id: Option<String>,
     /// The provider's reference, from its latest `Details`.
     pub reference: Option<String>,
+    /// Where and what the user pays, from the provider's latest `Deposit`.
+    pub deposit: Option<FundingDeposit>,
+    /// What arrived when it differs from what was asked, from the latest
+    /// `PaymentReceived`.
+    pub mismatch: Option<FundingReceived>,
 }
 
 /// One step of a session's progress.
@@ -327,7 +332,7 @@ impl FundingSession {
                 )
             }),
             FundingStep::Approved => {
-                first(|update| matches!(update, FundingUpdate::PaymentReceived { finalized: true }))
+                first(|update| matches!(update, FundingUpdate::PaymentReceived { finalized: true, .. }))
             }
             FundingStep::Conversion => first(|update| {
                 matches!(update, FundingUpdate::Converting | FundingUpdate::Crediting { .. })
@@ -377,6 +382,19 @@ impl FundingSession {
                 FundingUpdate::Details { reference, .. } => reference.as_ref(),
                 _ => None,
             }),
+            deposit: self.updates.iter().rev().find_map(|record| match &record.update {
+                FundingUpdate::Deposit { deposit } => Some(deposit.clone()),
+                _ => None,
+            }),
+            mismatch: self
+                .updates
+                .iter()
+                .rev()
+                .find_map(|record| match &record.update {
+                    FundingUpdate::PaymentReceived { mismatch, .. } => Some(mismatch.clone()),
+                    _ => None,
+                })
+                .flatten(),
         }
     }
 
@@ -432,7 +450,7 @@ impl FundingSession {
         fits_direction
             && match update {
                 FundingUpdate::Details { .. } => true,
-                FundingUpdate::Failed { .. } => !self.funds_moving(),
+                FundingUpdate::Failed { .. } | FundingUpdate::Deposit { .. } => !self.funds_moving(),
                 FundingUpdate::Crediting { top_up_id, .. } => {
                     last <= update_rank(update)
                         && top_ups.len() < TOP_UP_LIMIT
@@ -625,18 +643,18 @@ impl FundingSession {
 }
 
 /// Order of an update within a session: a later update ranks higher, and a
-/// top-up and a payment request rank where funds start moving. `Details`
-/// has no place in the order.
+/// top-up and a payment request rank where funds start moving. `Deposit`
+/// and `Details` have no place in the order.
 fn update_rank(update: &FundingUpdate) -> Option<u8> {
     Some(match update {
         FundingUpdate::AwaitingPayment => 0,
-        FundingUpdate::PaymentReceived { finalized: false } => 1,
-        FundingUpdate::PaymentReceived { finalized: true } => 2,
+        FundingUpdate::PaymentReceived { finalized: false, .. } => 1,
+        FundingUpdate::PaymentReceived { finalized: true, .. } => 2,
         FundingUpdate::Converting => 3,
         FundingUpdate::Crediting { .. } | FundingUpdate::Collecting { .. } => 4,
         FundingUpdate::Delivered => 5,
         FundingUpdate::Failed { .. } => 6,
-        FundingUpdate::Details { .. } => return None,
+        FundingUpdate::Deposit { .. } | FundingUpdate::Details { .. } => return None,
     })
 }
 
@@ -893,7 +911,7 @@ mod tests {
     fn a_served_session_asks_its_provider_until_the_payment_arrives() {
         let mut before = served(FundingDirection::In);
         let mut after = served(FundingDirection::In);
-        reported(&mut after, &[FundingUpdate::PaymentReceived { finalized: false }]);
+        reported(&mut after, &[FundingUpdate::PaymentReceived { finalized: false, mismatch: None }]);
 
         assert_eq!(
             (before.cancel(NOW), before.cancel_requested, before.is_terminal(), after.cancel(NOW)),
@@ -964,7 +982,7 @@ mod tests {
     #[test]
     fn progress_follows_the_rail_and_fills_skipped_steps() {
         let mut bank = chosen(FundingDirection::In, FundingRail::Bank);
-        report_at(&mut bank, FundingUpdate::PaymentReceived { finalized: false }, NOW + 1);
+        report_at(&mut bank, FundingUpdate::PaymentReceived { finalized: false, mismatch: None }, NOW + 1);
         report_at(&mut bank, FundingUpdate::Crediting { top_up_id: [1; 32], amount: 100 }, NOW + 3);
         let mut card = chosen(FundingDirection::In, FundingRail::Card);
         report_at(&mut card, FundingUpdate::Converting, NOW + 2);
@@ -1027,6 +1045,51 @@ mod tests {
                 Some(Settlement::TopUps(vec![([1; 32], 100)])),
                 Some("tx-2".to_string()),
                 Some("REF".to_string()),
+            )
+        );
+    }
+
+    fn usdt_deposit(amount: u128) -> FundingDeposit {
+        FundingDeposit::Crypto {
+            address: "0xdeposit".to_string(),
+            network: "Ethereum".to_string(),
+            asset: "USDT".to_string(),
+            amount,
+            decimals: 6,
+            exact: true,
+            uri: None,
+            expires_at: Some(NOW + 1_000),
+        }
+    }
+
+    // A short payment, as getcash handles it: the provider says what arrived
+    // and asks for the rest at the same address; the host shows the latest
+    // instructions. Once funds move, or for a withdrawal, there is nothing
+    // left for the user to pay.
+    #[test]
+    fn a_short_payment_asks_for_the_rest_until_funds_move() {
+        let mut session = served(FundingDirection::In);
+        let short = FundingReceived { asset: "USDT".to_string(), amount: 60 };
+        reported(
+            &mut session,
+            &[
+                FundingUpdate::Deposit { deposit: usdt_deposit(100) },
+                FundingUpdate::PaymentReceived { finalized: false, mismatch: Some(short.clone()) },
+                FundingUpdate::Deposit { deposit: usdt_deposit(40) },
+            ],
+        );
+        let progress = session.progress();
+        reported(&mut session, &[FundingUpdate::Crediting { top_up_id: [1; 32], amount: 100 }]);
+        let after_funds_move = session.report(PROVIDER, FundingUpdate::Deposit { deposit: usdt_deposit(1) }, NOW);
+        let withdrawal = served(FundingDirection::Out).report(PROVIDER, FundingUpdate::Deposit { deposit: usdt_deposit(1) }, NOW);
+
+        assert_eq!(
+            (progress.deposit, progress.mismatch, after_funds_move, withdrawal),
+            (
+                Some(usdt_deposit(40)),
+                Some(short),
+                Err(ReportRefusal::OutOfOrder),
+                Err(ReportRefusal::OutOfOrder),
             )
         );
     }

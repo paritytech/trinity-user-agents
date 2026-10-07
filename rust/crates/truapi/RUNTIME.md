@@ -447,8 +447,13 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   `Payment`, `Approved` (bank and crypto, once the payment can no longer be
   reversed), `Conversion`, `Added`; out, `Started`, `Payment`, `Sent`. A step
   the provider skipped takes the time of the first later one. It also carries
-  when the session failed and the latest transaction id and reference the
-  provider reported with `Details`.
+  when the session failed, the latest transaction id and reference the
+  provider reported with `Details`, the latest `Deposit` instructions for the
+  host to draw (a crypto address with network, asset, amount, whether it is
+  exact, an optional payment URI for the QR code and expiry, or bank details
+  with the reference), and what arrived when a `PaymentReceived` reports a
+  short or wrong-asset payment. `Deposit` is inbound only and allowed until
+  funds move, so a provider can ask for the rest of a short payment.
   That provider's worker runs it through the `FundingProvider` trait:
   `serveSubscribe` replays its sessions in flight and then streams new ones
   and cancel requests, `report` stores each update on the session (only from

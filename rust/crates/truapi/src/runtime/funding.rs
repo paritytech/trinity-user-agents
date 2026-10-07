@@ -116,7 +116,7 @@ impl FundingRegistry {
         let Some(session) = assigned else {
             return Ok(false);
         };
-        self.serve_item(provider_id, HostFundingServeSubscribeItem::Assigned { session });
+        self.serve_item(provider_id, HostFundingServeSubscribeItem::Assigned { session: Box::new(session) });
         Ok(true)
     }
 
@@ -152,7 +152,7 @@ impl FundingRegistry {
                         intent: session.intent.clone(),
                     });
                 std::iter::once(HostFundingServeSubscribeItem::Assigned {
-                    session: session.assignment(),
+                    session: Box::new(session.assignment()),
                 })
                 .chain(cancel)
             })
