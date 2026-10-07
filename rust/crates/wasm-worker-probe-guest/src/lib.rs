@@ -5,10 +5,19 @@
 //! never blocks on the host. Every entry point returns the frames to send, and
 //! the embedder relays them; replies come back through [`Worker::on_frame`].
 //!
-//! On start it registers a bot, creates a room, subscribes to renderer
-//! actions and posts one `Custom` message. When the host opens
-//! `renderer.render` for that message the guest streams a tree showing the
-//! count and one button; each `bump` action increments the count and redraws.
+//! Two modes share the counter, the tree and the lifecycle:
+//!
+//! - [`Mode::Chat`] (the default, what the CLI proof runs): on start it
+//!   registers a bot, creates a room, subscribes to renderer actions and posts
+//!   one `Custom` message; the host then opens `renderer.render` for that
+//!   message.
+//! - [`Mode::Pocket`] (the `pocket` cargo feature selects it for the wasm32
+//!   ABI): on start it only handshakes and subscribes to renderer actions. It
+//!   makes no Chat call, because a host that serves Pocket workers need not
+//!   serve Chat, and a refused call would be noise rather than a finding. The
+//!   host opens `renderer.render` for a Pocket card.
+//!
+//! Each `bump` action increments the count and redraws every open stream.
 
 use parity_scale_codec::{Decode, DecodeAll, Encode};
 use truapi::v01::{
@@ -142,12 +151,13 @@ pub enum Event {
         /// Host-assigned message id.
         message_id: String,
     },
-    /// The host asked the guest to draw this message.
+    /// The host asked the guest to draw a body it owns.
     RenderOpened {
         /// Host-minted subscription id.
         request_id: String,
-        /// Message id from the render context.
-        message_id: String,
+        /// The message id (chat mode) or card id (Pocket mode) from the
+        /// render context.
+        body: String,
     },
     /// The host closed a render stream.
     RenderClosed {
@@ -168,9 +178,20 @@ pub enum Event {
     },
 }
 
+/// Which surface the bot draws for, decided at construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    /// A chat message the bot posts itself.
+    #[default]
+    Chat,
+    /// A Pocket card the host's manifest (or debug settings) declares.
+    Pocket,
+}
+
 /// The counter bot. Pure state machine: frames in, frames and events out.
 #[derive(Debug, Default)]
 pub struct Worker {
+    mode: Mode,
     count: u32,
     paused: bool,
     next_id: u64,
@@ -181,9 +202,17 @@ pub struct Worker {
 }
 
 impl Worker {
-    /// A fresh bot with the count at zero.
+    /// A fresh chat bot with the count at zero.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A fresh Pocket-card bot with the count at zero.
+    pub fn pocket() -> Self {
+        Self {
+            mode: Mode::Pocket,
+            ..Self::default()
+        }
     }
 
     /// Events recorded since the last call, oldest first.
@@ -198,8 +227,9 @@ impl Worker {
         id
     }
 
-    /// Frames to send when the connection opens: handshake, bot, room and the
-    /// action subscription. The message waits for the room to exist.
+    /// Frames to send when the connection opens. Both modes handshake and
+    /// subscribe to renderer actions; chat mode also registers the bot and
+    /// creates the room, and posts the message once the room exists.
     pub fn start(&mut self) -> Vec<Frame> {
         let handshake = Frame::request(
             self.mint(Pending::Handshake),
@@ -208,6 +238,9 @@ impl Worker {
                 codec_version: WIRE_CODEC_VERSION,
             }),
         );
+        if self.mode == Mode::Pocket {
+            return vec![handshake, self.subscribe_actions()];
+        }
         let register_bot = Frame::request(
             self.mint(Pending::RegisterBot),
             wire::CHAT_REGISTER_BOT,
@@ -226,15 +259,19 @@ impl Worker {
                 icon: String::new(),
             }),
         );
+        let subscribe_actions = self.subscribe_actions();
+        vec![handshake, register_bot, create_room, subscribe_actions]
+    }
+
+    fn subscribe_actions(&mut self) -> Frame {
         self.next_id += 1;
-        let subscribe_actions = Frame {
+        Frame {
             request_id: format!("w:{}", self.next_id),
             trait_id: wire::RENDERER_ACTION_SUBSCRIBE.0,
             method_id: wire::RENDERER_ACTION_SUBSCRIBE.1,
             message_type: wire::MESSAGE_TYPE_REQUEST,
             payload: versioned::renderer::HostRendererActionSubscribeRequest::V1.encode(),
-        };
-        vec![handshake, register_bot, create_room, subscribe_actions]
+        }
     }
 
     /// Handle one frame from the host and answer with the frames it causes.
@@ -376,13 +413,14 @@ impl Worker {
                 else {
                     return Vec::new();
                 };
-                let message_id = match request.context {
-                    RenderContext::ChatMessage { message_id, .. } => message_id,
+                let body = match (self.mode, request.context) {
+                    (Mode::Chat, RenderContext::ChatMessage { message_id, .. }) => message_id,
+                    (Mode::Pocket, RenderContext::PocketCard { card_id }) => card_id,
                     _ => return Vec::new(),
                 };
                 self.events.push(Event::RenderOpened {
                     request_id: frame.request_id.clone(),
-                    message_id,
+                    body,
                 });
                 self.render_streams.push(frame.request_id.clone());
                 vec![self.tree_frame(frame.request_id)]
@@ -649,7 +687,7 @@ mod tests {
             vec![
                 Event::RenderOpened {
                     request_id: "h:1".to_string(),
-                    message_id: "m1".to_string()
+                    body: "m1".to_string()
                 },
                 Event::TreeSent {
                     count: 0,
@@ -687,6 +725,57 @@ mod tests {
         assert!(
             worker.on_resume().is_empty(),
             "a stopped stream is not redrawn"
+        );
+    }
+
+    fn pocket_render_start(request_id: &str) -> Vec<u8> {
+        Frame {
+            request_id: request_id.to_string(),
+            trait_id: wire::RENDERER_RENDER.0,
+            method_id: wire::RENDERER_RENDER.1,
+            message_type: wire::MESSAGE_TYPE_REQUEST,
+            payload: versioned::renderer::ProductRendererRenderRequest::V1(
+                ProductRendererRenderRequest {
+                    context: RenderContext::PocketCard {
+                        card_id: "counter".to_string(),
+                    },
+                    payload: Vec::new(),
+                },
+            )
+            .encode(),
+        }
+        .encode()
+    }
+
+    #[test]
+    fn pocket_mode_makes_no_chat_call_and_draws_the_card() {
+        let mut worker = Worker::pocket();
+        let start = worker.start();
+        assert_eq!(
+            start
+                .iter()
+                .map(|frame| (frame.trait_id, frame.method_id))
+                .collect::<Vec<_>>(),
+            vec![wire::SYSTEM_HANDSHAKE, wire::RENDERER_ACTION_SUBSCRIBE]
+        );
+        let trees = worker.on_frame(&pocket_render_start("h:7"));
+        assert_eq!(tree_count(&trees[0]), "count 0");
+        assert!(
+            worker.on_frame(&render_start("h:8")).is_empty(),
+            "a chat message context is not this mode's body"
+        );
+        assert_eq!(
+            worker.take_events(),
+            vec![
+                Event::RenderOpened {
+                    request_id: "h:7".to_string(),
+                    body: "counter".to_string()
+                },
+                Event::TreeSent {
+                    count: 0,
+                    paused: false
+                },
+            ]
         );
     }
 

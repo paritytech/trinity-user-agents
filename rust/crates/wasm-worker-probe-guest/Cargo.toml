@@ -9,6 +9,11 @@ publish = false
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# The wasm32 ABI draws a Pocket card and makes no Chat call. Without it the
+# module is the chat bot the CLI proof runs.
+pocket = []
+
 [dependencies]
 truapi = { path = "../truapi", default-features = false }
 parity-scale-codec = { workspace = true, features = ["derive"] }

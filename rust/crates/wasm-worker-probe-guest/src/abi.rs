@@ -8,7 +8,17 @@ use std::cell::RefCell;
 use crate::Worker;
 
 thread_local! {
-    static WORKER: RefCell<Worker> = RefCell::new(Worker::new());
+    static WORKER: RefCell<Worker> = RefCell::new(fresh_worker());
+}
+
+#[cfg(feature = "pocket")]
+fn fresh_worker() -> Worker {
+    Worker::pocket()
+}
+
+#[cfg(not(feature = "pocket"))]
+fn fresh_worker() -> Worker {
+    Worker::new()
 }
 
 #[link(wasm_import_module = "host")]
