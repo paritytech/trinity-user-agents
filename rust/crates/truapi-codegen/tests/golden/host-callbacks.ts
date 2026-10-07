@@ -10,6 +10,7 @@ import {
   AllocatableResource,
   Bytes32,
   ChainIdentifier,
+  CodeFormat,
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
   HostSignPayloadRequest,
@@ -41,6 +42,7 @@ import type {
   HostPocketRemoveCardRequest,
   HostPushNotificationRequest,
   HostPushNotificationResponse,
+  HostScannerScanRequest,
   HostThemeSubscribeItem,
   HostWorkerBeginOperationResponse,
   Result,
@@ -351,6 +353,24 @@ export type HostContactPick =
    * apart from "this host will never pick".
    */
   | { tag: "Unsupported"; value?: undefined };
+
+/**
+ * How the host's scanner ended.
+ */
+export type HostScan =
+  /**
+   * The user scanned a code the request accepts.
+   */
+  | { tag: "Scanned"; value: { text: string; format: CodeFormat } }
+  /**
+   * The user closed the viewfinder without scanning.
+   */
+  | { tag: "Dismissed"; value?: undefined }
+  /**
+   * The device has no camera, or the user refused the host application one.
+   * The host has already told the user how to turn it on.
+   */
+  | { tag: "CameraUnavailable"; value?: undefined };
 
 /**
  * Review shown before a product learns the user's primary identity.
@@ -865,6 +885,21 @@ export const HostContactPick: S.Codec<HostContactPick> = S.lazy(
       Dismissed: S._void,
       NoContacts: S._void,
       Unsupported: S._void,
+    }),
+);
+
+/**
+ * How the host's scanner ended.
+ */
+export const HostScan: S.Codec<HostScan> = S.lazy(
+  (): S.Codec<HostScan> =>
+    S.TaggedUnion({
+      Scanned: S.Struct({ text: S.str, format: CodeFormat }) as S.Codec<{
+        text: string;
+        format: CodeFormat;
+      }>,
+      Dismissed: S._void,
+      CameraUnavailable: S._void,
     }),
 );
 
@@ -1667,6 +1702,28 @@ export interface ProductStorage {
 }
 
 /**
+ * Host-owned viewfinder for QR codes and barcodes.
+ *
+ * Optional, and listed on `OptionalPlatform` as `ContactsPlatform` is.
+ *
+ * The host draws the viewfinder and titles it with the requesting product's
+ * id. Only `request.hint` is product text. It hands every code the camera
+ * reads to the core's `ScanFilter` and acts on its verdict, and never follows
+ * a scanned link itself. The core drops
+ * the returned future when the product cancels, and the host closes the
+ * viewfinder then.
+ */
+export interface ScannerPlatform {
+  /**
+   * Open the viewfinder on behalf of `product` and wait for the user.
+   */
+  scanCode(
+    product: ProductContext,
+    request: HostScannerScanRequest,
+  ): Promise<HostScan>;
+}
+
+/**
  * Host theme source.
  */
 export interface ThemeHost {
@@ -1722,6 +1779,7 @@ export interface HostCallbacks {
   game?: GamePlatform;
   permissionStatus?: PermissionStatusHost;
   pocket?: PocketPlatform;
+  scanner?: ScannerPlatform;
 }
 
 export interface RequiredHostCallbacks {
@@ -1743,4 +1801,5 @@ export interface RequiredHostCallbacks {
   game?: Required<GamePlatform>;
   permissionStatus?: Required<PermissionStatusHost>;
   pocket?: Required<PocketPlatform>;
+  scanner?: Required<ScannerPlatform>;
 }

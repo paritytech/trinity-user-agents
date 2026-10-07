@@ -273,7 +273,7 @@ where
 /// withdrawn call stops waiting, so an answer given after the withdrawal
 /// authorizes nothing. The error is the one `remote_authority_call` answers,
 /// so each caller maps it into its method's own domain error.
-async fn until_cancelled<T>(
+pub(crate) async fn until_cancelled<T>(
     cx: &CallContext,
     wait: impl Future<Output = T>,
 ) -> Result<T, AuthorityError> {

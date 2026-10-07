@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use crate::platform::{
     ChatPlatform, ContactsPlatform, GamePlatform, PermissionStatusHost, PocketPlatform,
+    ScannerPlatform,
 };
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
@@ -276,6 +277,16 @@ impl PairingHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_game_platform"))]
     pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
         self.services.install_game_platform(platform)
+    }
+
+    /// Install the host's [`ScannerPlatform`], which draws the viewfinder.
+    ///
+    /// Set-once, so the viewfinder cannot change hands under a running product.
+    /// Returns whether this call installed it. Call it before serving any
+    /// product runtime.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_scanner_platform"))]
+    pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
+        self.services.install_scanner_platform(platform)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -709,6 +720,16 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_game_platform"))]
     pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
         self.services.install_game_platform(platform)
+    }
+
+    /// Install the host's [`ScannerPlatform`], which draws the viewfinder.
+    ///
+    /// Set-once, so the viewfinder cannot change hands under a running product.
+    /// Returns whether this call installed it. Call it before serving any
+    /// product runtime.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_scanner_platform"))]
+    pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
+        self.services.install_scanner_platform(platform)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and

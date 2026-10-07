@@ -50,7 +50,9 @@ use truapi::versioned::resource_allocation::{
     HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
     HostRequestResourceAllocationResponse,
 };
-use truapi::versioned::scanner::HostScannerScanRequest;
+use truapi::versioned::scanner::{
+    HostScannerScanError, HostScannerScanRequest, HostScannerScanResponse,
+};
 use truapi::versioned::signing::{
     HostCreateTransactionError, HostCreateTransactionRequest, HostCreateTransactionResponse,
     HostCreateTransactionWithLegacyAccountError, HostCreateTransactionWithLegacyAccountRequest,
@@ -7684,21 +7686,251 @@ fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
     }
 }
 
-/// A product tells "no scanner here" by `Unsupported` and falls back to its own
-/// camera code; a `HostFailure` would read as a real failure.
-#[test]
-fn scanner_scan_is_unsupported_until_a_host_implements_it() {
-    let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
+/// A scanner whose answer is fixed, recording each product and request it is
+/// asked for. A parked one never answers, standing in for a user who has not
+/// scanned yet, and records when the core stops waiting on it.
+struct StubScannerPlatform {
+    answer: crate::platform::HostScan,
+    park: bool,
+    asked: Mutex<Vec<(String, truapi::latest::HostScannerScanRequest)>>,
+    abandoned: Arc<AtomicBool>,
+}
 
+impl StubScannerPlatform {
+    fn answering(answer: crate::platform::HostScan) -> Arc<Self> {
+        Arc::new(Self {
+            answer,
+            park: false,
+            asked: Mutex::new(Vec::new()),
+            abandoned: Arc::default(),
+        })
+    }
+
+    fn parked() -> Arc<Self> {
+        Arc::new(Self {
+            answer: crate::platform::HostScan::Dismissed,
+            park: true,
+            asked: Mutex::new(Vec::new()),
+            abandoned: Arc::default(),
+        })
+    }
+
+    fn asked(&self) -> Vec<(String, truapi::latest::HostScannerScanRequest)> {
+        self.asked.lock().unwrap().clone()
+    }
+}
+
+/// Sets its flag when dropped, which is how a parked scan sees the core stop
+/// waiting.
+struct SetOnDrop(Arc<AtomicBool>);
+
+impl Drop for SetOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+#[truapi::async_trait]
+impl crate::platform::ScannerPlatform for StubScannerPlatform {
+    async fn scan_code(
+        &self,
+        product: &crate::platform::ProductContext,
+        request: &truapi::latest::HostScannerScanRequest,
+    ) -> Result<crate::platform::HostScan, truapi::latest::GenericError> {
+        self.asked
+            .lock()
+            .unwrap()
+            .push((product.product_id.clone(), request.clone()));
+        if self.park {
+            let _abandoned = SetOnDrop(self.abandoned.clone());
+            futures::future::pending::<()>().await;
+        }
+        Ok(self.answer.clone())
+    }
+}
+
+/// A runtime for `greenmarket.dot` with no session, and `scanner` installed
+/// when given.
+fn scanner_host(scanner: Option<Arc<StubScannerPlatform>>) -> ProductRuntimeHost {
+    let (host_config, product) = runtime_config("greenmarket.dot");
+    let services = RuntimeServices::with_chat_platform(
+        stub_platform() as Arc<dyn Platform>,
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+        None,
+    );
+    if let Some(scanner) = scanner {
+        services.install_scanner_platform(scanner);
+    }
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+    ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
+}
+
+fn receipt_request() -> truapi::latest::HostScannerScanRequest {
+    truapi::latest::HostScannerScanRequest {
+        formats: vec![v01::CodeFormat::Qr],
+        prefix: Some("https://greenmarket.example/r/".into()),
+        hint: Some("Point at the receipt's QR code".into()),
+    }
+}
+
+fn scan_in(
+    host: &ProductRuntimeHost,
+    cx: &CallContext,
+) -> Result<v01::ScanOutcome, CallError<v01::HostScannerScanError>> {
     let result = futures::executor::block_on(Scanner::scan(
+        host,
+        cx,
+        HostScannerScanRequest::V1(receipt_request()),
+    ));
+    unwrap_scan(result)
+}
+
+fn unwrap_scan(
+    result: Result<HostScannerScanResponse, CallError<HostScannerScanError>>,
+) -> Result<v01::ScanOutcome, CallError<v01::HostScannerScanError>> {
+    match result {
+        Ok(HostScannerScanResponse::V1(response)) => Ok(response.outcome),
+        Err(CallError::Domain(HostScannerScanError::V1(error))) => Err(CallError::Domain(error)),
+        Err(CallError::Unsupported) => Err(CallError::Unsupported),
+        Err(CallError::Cancelled) => Err(CallError::Cancelled),
+        Err(other) => panic!("unexpected scanner error: {other:?}"),
+    }
+}
+
+fn scan(host: &ProductRuntimeHost) -> Result<v01::ScanOutcome, CallError<v01::HostScannerScanError>> {
+    scan_in(host, &CallContext::default())
+}
+
+fn scanned(text: &str, format: v01::CodeFormat) -> crate::platform::HostScan {
+    crate::platform::HostScan::Scanned {
+        text: text.into(),
+        format,
+    }
+}
+
+#[test]
+fn scanning_without_a_scanner_is_unsupported() {
+    // A product reads `Unsupported` as "use your own camera code"; a
+    // `HostFailure` would read as a real failure.
+    let host = scanner_host(None);
+    assert_eq!(scan(&host), Err(CallError::Unsupported));
+}
+
+#[test]
+fn a_scan_returns_the_code_and_names_the_product_without_a_session() {
+    // No session is installed: scanning reads no account, so it works signed out.
+    let scanner = StubScannerPlatform::answering(scanned(
+        "https://greenmarket.example/r/BAG6",
+        v01::CodeFormat::Qr,
+    ));
+    let host = scanner_host(Some(scanner.clone()));
+
+    assert_eq!(
+        scan(&host),
+        Ok(v01::ScanOutcome::Scanned {
+            text: "https://greenmarket.example/r/BAG6".into(),
+            format: v01::CodeFormat::Qr,
+        })
+    );
+    // The host titles the viewfinder with this id, so it must be the caller's.
+    assert_eq!(
+        scanner.asked(),
+        vec![("greenmarket.dot".to_owned(), receipt_request())]
+    );
+}
+
+#[test]
+fn a_dismissal_is_an_outcome_and_a_missing_camera_is_an_error() {
+    // The product offers a dismissed scan again, but not one with no camera.
+    let dismissed = scanner_host(Some(StubScannerPlatform::answering(
+        crate::platform::HostScan::Dismissed,
+    )));
+    assert_eq!(scan(&dismissed), Ok(v01::ScanOutcome::Dismissed));
+
+    let no_camera = scanner_host(Some(StubScannerPlatform::answering(
+        crate::platform::HostScan::CameraUnavailable,
+    )));
+    assert_eq!(
+        scan(&no_camera),
+        Err(CallError::Domain(v01::HostScannerScanError::CameraUnavailable))
+    );
+}
+
+#[test]
+fn an_invalid_request_never_reaches_the_host() {
+    // No viewfinder may open for a request the product could not make.
+    let scanner = StubScannerPlatform::answering(crate::platform::HostScan::Dismissed);
+    let host = scanner_host(Some(scanner.clone()));
+    let mut request = receipt_request();
+    request.hint = Some("Scan the code on your computer\nto sign in".into());
+
+    let result = unwrap_scan(futures::executor::block_on(Scanner::scan(
         &host,
         &CallContext::default(),
-        HostScannerScanRequest::V1(v01::HostScannerScanRequest {
-            formats: vec![v01::CodeFormat::Qr],
-            prefix: None,
-            hint: None,
-        }),
-    ));
+        HostScannerScanRequest::V1(request),
+    )));
 
-    assert!(matches!(result, Err(CallError::Unsupported)));
+    assert!(matches!(
+        result,
+        Err(CallError::Domain(v01::HostScannerScanError::InvalidRequest { .. }))
+    ));
+    assert!(scanner.asked().is_empty());
+}
+
+#[test]
+fn a_host_answer_the_request_does_not_accept_never_reaches_the_product() {
+    // A buggy host must not hand a receipts product a pairing link, or the
+    // right text in a format it did not ask for.
+    for answer in [
+        scanned("polkadotapp://pair?handshake=00", v01::CodeFormat::Qr),
+        scanned("https://greenmarket.example/r/BAG6", v01::CodeFormat::Code128),
+    ] {
+        let host = scanner_host(Some(StubScannerPlatform::answering(answer)));
+        assert!(matches!(
+            scan(&host),
+            Err(CallError::Domain(v01::HostScannerScanError::Unknown { .. }))
+        ));
+    }
+}
+
+#[test]
+fn a_second_scan_waits_its_turn_and_a_cancel_frees_the_viewfinder() {
+    // The device has one viewfinder. Cancelling the open scan must close it,
+    // which the host sees as its wait being dropped, and let the next one in.
+    let scanner = StubScannerPlatform::parked();
+    let host = scanner_host(Some(scanner.clone()));
+    let cancel = truapi::CancellationToken::default();
+    let first_cx = CallContext::with_parts("scan-first".into(), cancel.clone());
+    let mut first = Box::pin(Scanner::scan(
+        &host,
+        &first_cx,
+        HostScannerScanRequest::V1(receipt_request()),
+    ));
+    assert!(futures::FutureExt::now_or_never(&mut first).is_none());
+
+    assert_eq!(
+        scan(&host),
+        Err(CallError::Domain(v01::HostScannerScanError::Busy))
+    );
+
+    cancel.cancel();
+    assert_eq!(
+        unwrap_scan(futures::executor::block_on(first)),
+        Err(CallError::Cancelled)
+    );
+    assert!(scanner.abandoned.load(Ordering::SeqCst));
+
+    let next_cx = CallContext::default();
+    let mut next = Box::pin(Scanner::scan(
+        &host,
+        &next_cx,
+        HostScannerScanRequest::V1(receipt_request()),
+    ));
+    assert!(futures::FutureExt::now_or_never(&mut next).is_none());
+    assert_eq!(scanner.asked().len(), 2);
 }

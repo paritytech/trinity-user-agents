@@ -27,7 +27,7 @@ pub mod mock;
 
 use truapi::latest::{
     AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
-    ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, GenericError,
+    ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, GenericError,
     HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
     HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
@@ -35,6 +35,7 @@ use truapi::latest::{
     HostFeatureSupportedResponse, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
     HostNavigateToError, HostPlatform, HostPocketListSubscribeItem, HostPocketRemoveCardError,
     HostPocketRemoveCardRequest, HostPushNotificationRequest, HostPushNotificationResponse,
+    HostScannerScanRequest,
     HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
     HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, HostWorkerBeginOperationResponse,
     HostWorkerOperationError, LegacyAccountTxPayload, ProductAccountId, ProductAccountTxPayload,
@@ -3492,6 +3493,44 @@ pub trait ContactsPlatform: Send + Sync {
     }
 }
 
+/// How the host's scanner ended.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum HostScan {
+    /// The user scanned a code the request accepts.
+    Scanned {
+        /// The code's content.
+        text: String,
+        /// The code's format.
+        format: CodeFormat,
+    },
+    /// The user closed the viewfinder without scanning.
+    Dismissed,
+    /// The device has no camera, or the user refused the host application one.
+    /// The host has already told the user how to turn it on.
+    CameraUnavailable,
+}
+
+/// Host-owned viewfinder for QR codes and barcodes.
+///
+/// Optional, and listed on [`OptionalPlatform`] as [`ContactsPlatform`] is.
+///
+/// The host draws the viewfinder and titles it with the requesting product's
+/// id. Only `request.hint` is product text. It hands every code the camera
+/// reads to the core's `ScanFilter` and acts on its verdict, and never follows
+/// a scanned link itself. The core drops
+/// the returned future when the product cancels, and the host closes the
+/// viewfinder then.
+#[async_trait]
+pub trait ScannerPlatform: Send + Sync {
+    /// Open the viewfinder on behalf of `product` and wait for the user.
+    async fn scan_code(
+        &self,
+        product: &ProductContext,
+        request: &HostScannerScanRequest,
+    ) -> Result<HostScan, GenericError>;
+}
+
 /// Combined platform interface. A host must provide every capability trait
 /// listed here. Members marked optional may be omitted; the core answers their
 /// product calls with `Unsupported`. See [`OptionalPlatform`].
@@ -3534,11 +3573,21 @@ impl<T> Platform for T where
 /// with `Unsupported`. Codegen reads this list to emit each capability as an
 /// optional group on the host-callback surface.
 pub trait OptionalPlatform:
-    ChatPlatform + ContactsPlatform + PermissionStatusHost + PocketPlatform + GamePlatform
+    ChatPlatform
+    + ContactsPlatform
+    + PermissionStatusHost
+    + PocketPlatform
+    + GamePlatform
+    + ScannerPlatform
 {
 }
 
 impl<T> OptionalPlatform for T where
-    T: ChatPlatform + ContactsPlatform + PermissionStatusHost + PocketPlatform + GamePlatform
+    T: ChatPlatform
+        + ContactsPlatform
+        + PermissionStatusHost
+        + PocketPlatform
+        + GamePlatform
+        + ScannerPlatform
 {
 }
