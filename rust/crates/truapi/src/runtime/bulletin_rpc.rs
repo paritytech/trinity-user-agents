@@ -1424,6 +1424,25 @@ mod tests {
             operation: HostOperation,
         }
 
+        impl SubmissionFixture {
+            async fn submit(
+                &self,
+                value: &[u8],
+                budget: Duration,
+            ) -> Result<Vec<u8>, BulletinSubmitError> {
+                self.rpc
+                    .submit_preimage(
+                        &CallContext::default(),
+                        Instant::now() + budget,
+                        self.host.accounts(),
+                        &self.operation,
+                        &allowance_fixture(),
+                        value,
+                    )
+                    .await
+            }
+        }
+
         fn rpc(provider: Arc<BulletinScriptedProvider>) -> SubmissionFixture {
             let services = RuntimeServices::new(
                 stub_platform(),
@@ -1460,15 +1479,8 @@ mod tests {
             ]));
             let value = b"scripted bulletin happy path";
             let fixture = rpc(provider.clone());
-            let result = futures::executor::block_on(fixture.rpc.submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                fixture.host.accounts(),
-                &fixture.operation,
-                &allowance_fixture(),
-                value,
-            ))
-            .unwrap();
+            let result =
+                futures::executor::block_on(fixture.submit(value, Duration::from_secs(2))).unwrap();
 
             assert_eq!(result, preimage_key(value));
             assert_eq!(
@@ -1523,18 +1535,8 @@ mod tests {
             let nonce_reply = provider.hold_nonce_reply();
             let fixture = rpc(provider.clone());
             let error = futures::executor::block_on(async {
-                let cx = CallContext::default();
-                let allowance = allowance_fixture();
                 let submission = fixture
-                    .rpc
-                    .submit_preimage(
-                        &cx,
-                        Instant::now() + Duration::from_secs(2),
-                        fixture.host.accounts(),
-                        &fixture.operation,
-                        &allowance,
-                        b"reactivated wallet",
-                    )
+                    .submit(b"reactivated wallet", Duration::from_secs(2))
                     .fuse();
                 let nonce_reply = nonce_reply.fuse();
                 futures::pin_mut!(submission, nonce_reply);
@@ -1582,15 +1584,8 @@ mod tests {
             ]));
             let value = b"scripted bulletin retry";
             let fixture = rpc(provider.clone());
-            let result = futures::executor::block_on(fixture.rpc.submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                fixture.host.accounts(),
-                &fixture.operation,
-                &allowance_fixture(),
-                value,
-            ))
-            .unwrap();
+            let result =
+                futures::executor::block_on(fixture.submit(value, Duration::from_secs(2))).unwrap();
 
             assert_eq!(result, preimage_key(value));
             assert_eq!(
@@ -1606,15 +1601,8 @@ mod tests {
             ]));
             let value = b"scripted bulletin inconsistent inclusion";
             let fixture = rpc(provider.clone());
-            let result = futures::executor::block_on(fixture.rpc.submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                fixture.host.accounts(),
-                &fixture.operation,
-                &allowance_fixture(),
-                value,
-            ))
-            .unwrap();
+            let result =
+                futures::executor::block_on(fixture.submit(value, Duration::from_secs(2))).unwrap();
 
             assert_eq!(result, preimage_key(value));
             // The reported inclusion block was inconsistent, but the re-check
@@ -1634,15 +1622,8 @@ mod tests {
             ]));
             let value = b"scripted watch stop recovery";
             let fixture = rpc(provider.clone());
-            let result = futures::executor::block_on(fixture.rpc.submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                fixture.host.accounts(),
-                &fixture.operation,
-                &allowance_fixture(),
-                value,
-            ))
-            .unwrap();
+            let result =
+                futures::executor::block_on(fixture.submit(value, Duration::from_secs(2))).unwrap();
 
             assert_eq!(result, preimage_key(value));
             assert_eq!(
@@ -1659,13 +1640,9 @@ mod tests {
                     .with_failed_events(),
             );
             let fixture = rpc(provider.clone());
-            let error = futures::executor::block_on(fixture.rpc.submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                fixture.host.accounts(),
-                &fixture.operation,
-                &allowance_fixture(),
+            let error = futures::executor::block_on(fixture.submit(
                 b"scripted watch stop failed dispatch",
+                Duration::from_secs(2),
             ))
             .unwrap_err();
 
@@ -1692,15 +1669,8 @@ mod tests {
             ]));
             let value = b"scripted watch stop rebroadcast";
             let fixture = rpc(provider.clone());
-            let result = futures::executor::block_on(fixture.rpc.submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                fixture.host.accounts(),
-                &fixture.operation,
-                &allowance_fixture(),
-                value,
-            ))
-            .unwrap();
+            let result =
+                futures::executor::block_on(fixture.submit(value, Duration::from_secs(2))).unwrap();
 
             assert_eq!(result, preimage_key(value));
             let submitted = provider.submitted_transactions();
@@ -1718,15 +1688,8 @@ mod tests {
             ]));
             let value = b"scripted bounced rebroadcast recovery";
             let fixture = rpc(provider.clone());
-            let result = futures::executor::block_on(fixture.rpc.submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                fixture.host.accounts(),
-                &fixture.operation,
-                &allowance_fixture(),
-                value,
-            ))
-            .unwrap();
+            let result =
+                futures::executor::block_on(fixture.submit(value, Duration::from_secs(2))).unwrap();
 
             assert_eq!(result, preimage_key(value));
             // The bounce triggers one more re-check, which finds the first
@@ -1744,13 +1707,9 @@ mod tests {
                 TransactionOutcome::InvalidWithMissingBody,
             ]));
             let fixture = rpc(provider.clone());
-            let error = futures::executor::block_on(fixture.rpc.submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                fixture.host.accounts(),
-                &fixture.operation,
-                &allowance_fixture(),
+            let error = futures::executor::block_on(fixture.submit(
                 b"scripted bounced rebroadcast unseen",
+                Duration::from_secs(2),
             ))
             .unwrap_err();
 
@@ -1775,14 +1734,9 @@ mod tests {
                 TransactionOutcome::Invalid,
             ]));
             let fixture = rpc(provider.clone());
-            let error = futures::executor::block_on(fixture.rpc.submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                fixture.host.accounts(),
-                &fixture.operation,
-                &allowance_fixture(),
-                b"scripted stale allowance",
-            ))
+            let error = futures::executor::block_on(
+                fixture.submit(b"scripted stale allowance", Duration::from_secs(2)),
+            )
             .unwrap_err();
 
             let BulletinSubmitError::Subxt(error) = error else {
@@ -1816,14 +1770,9 @@ mod tests {
                     ),
             );
             let fixture = rpc(provider.clone());
-            let error = futures::executor::block_on(fixture.rpc.submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                fixture.host.accounts(),
-                &fixture.operation,
-                &allowance_fixture(),
-                b"scripted stale allowance",
-            ))
+            let error = futures::executor::block_on(
+                fixture.submit(b"scripted stale allowance", Duration::from_secs(2)),
+            )
             .unwrap_err();
 
             assert!(matches!(
@@ -1846,15 +1795,9 @@ mod tests {
         fn submit_preimage_budget_reports_pre_broadcast_phase() {
             let provider = Arc::new(BulletinScriptedProvider::with_options([], true));
             let fixture = rpc(provider);
-            let error = futures::executor::block_on(fixture.rpc.submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_millis(25),
-                fixture.host.accounts(),
-                &fixture.operation,
-                &allowance_fixture(),
-                b"timeout",
-            ))
-            .unwrap_err();
+            let error =
+                futures::executor::block_on(fixture.submit(b"timeout", Duration::from_millis(25)))
+                    .unwrap_err();
 
             assert!(matches!(
                 &error,
@@ -1879,15 +1822,8 @@ mod tests {
             );
             let value = b"scripted allowance propagation";
             let fixture = rpc(provider.clone());
-            let result = futures::executor::block_on(fixture.rpc.submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                fixture.host.accounts(),
-                &fixture.operation,
-                &allowance_fixture(),
-                value,
-            ))
-            .unwrap();
+            let result =
+                futures::executor::block_on(fixture.submit(value, Duration::from_secs(2))).unwrap();
 
             assert_eq!(result, preimage_key(value));
             assert_eq!(
@@ -1907,13 +1843,9 @@ mod tests {
                     .with_validation_outcomes([ValidationOutcome::AllowanceRejected], false),
             );
             let fixture = rpc(provider.clone());
-            let error = futures::executor::block_on(fixture.rpc.submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                fixture.host.accounts(),
-                &fixture.operation,
-                &allowance_fixture(),
+            let error = futures::executor::block_on(fixture.submit(
                 b"scripted propagation block wait timeout",
+                Duration::from_secs(2),
             ))
             .unwrap_err();
 
@@ -1948,15 +1880,9 @@ mod tests {
             );
             let value = b"scripted fast-block allowance propagation";
             let fixture = rpc(provider.clone());
-            let result = futures::executor::block_on(fixture.rpc.submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(30),
-                fixture.host.accounts(),
-                &fixture.operation,
-                &allowance_fixture(),
-                value,
-            ))
-            .unwrap();
+            let result =
+                futures::executor::block_on(fixture.submit(value, Duration::from_secs(30)))
+                    .unwrap();
 
             assert_eq!(result, preimage_key(value));
             assert_eq!(
@@ -1982,13 +1908,9 @@ mod tests {
             fixture.rpc = fixture
                 .rpc
                 .with_allowance_propagation_window(Duration::ZERO);
-            let error = futures::executor::block_on(fixture.rpc.submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                fixture.host.accounts(),
-                &fixture.operation,
-                &allowance_fixture(),
+            let error = futures::executor::block_on(fixture.submit(
                 b"scripted propagation window elapsed",
+                Duration::from_secs(2),
             ))
             .unwrap_err();
 

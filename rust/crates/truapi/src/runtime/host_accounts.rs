@@ -14,7 +14,6 @@ use super::signing_host::{
     ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
 };
 use super::vrf;
-use crate::chain_runtime::ChainRuntime;
 use crate::host_internal::extrinsic::{
     Sr25519Signer, build_signed_transaction, local_transaction_metadata,
 };
@@ -27,7 +26,7 @@ use crate::host_logic::product_account::{
 use crate::host_logic::raw_signing::raw_payload_bytes;
 use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::platform::{
-    Platform, ProductContext, SignVrfReview, UserConfirmationReview, normalize_product_identifier,
+    ProductContext, SignVrfReview, UserConfirmationReview, normalize_product_identifier,
 };
 use futures::StreamExt;
 use std::sync::Arc;
@@ -37,8 +36,6 @@ use zeroize::Zeroizing;
 /// Receives, retains and uses product grants from one selected account holder.
 pub struct HostAccounts<H: AccountHolder> {
     services: Arc<RuntimeServices>,
-    platform: Arc<dyn Platform>,
-    chain: ChainRuntime,
     holder: Arc<H>,
     session_state: Arc<SessionState>,
     grants: Arc<HostGrantStore>,
@@ -61,8 +58,6 @@ impl<H: AccountHolder> HostAccounts<H> {
         >,
     ) -> Arc<Self> {
         Arc::new(Self {
-            platform: services.platform.clone(),
-            chain: services.chain.clone(),
             ring_resolver: ChainRingResolver::new(services.chain.clone()),
             services,
             holder,
@@ -697,7 +692,7 @@ impl<H: AccountHolder> HostAccounts<H> {
         if !matches!(request, SignRawAuthorityRequest::Product(_)) && !matches!(&grant, Ok(None)) {
             self.require_current_operation(operation)?;
             invocation
-                .confirm(self.platform.as_ref(), review.clone())
+                .confirm(self.services.platform.as_ref(), review.clone())
                 .await?;
         }
         if let (Some(grant), Some(account)) = (grant?, account) {
@@ -755,14 +750,17 @@ impl<H: AccountHolder> HostAccounts<H> {
                 .await?
         {
             if !payload.contacts.is_empty() {
-                invocation.confirm(self.platform.as_ref(), review).await?;
+                invocation
+                    .confirm(self.services.platform.as_ref(), review)
+                    .await?;
             }
             let cx = super::remote_authority_context(invocation.call);
             return super::remote_authority_call(
                 &cx,
                 operation.run(self, async {
                     let metadata =
-                        local_transaction_metadata(&self.chain, payload.genesis_hash).await?;
+                        local_transaction_metadata(&self.services.chain, payload.genesis_hash)
+                            .await?;
                     let _lifecycle = self.hold_operation(operation)?;
                     let keypair = Self::grant_keypair(&grant, &payload.signer)?;
                     Ok(api::HostCreateTransactionResponse {
@@ -972,7 +970,7 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
     > {
         let access = super::product_manifest::ring_vrf_key_access_granted(
             &self.services,
-            self.platform.as_ref(),
+            self.services.platform.as_ref(),
             caller,
             handle,
         )

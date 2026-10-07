@@ -296,57 +296,7 @@ impl WalletAccountHolder {
         }
     }
 
-    /// Registered providers in the selected wallet.
-    pub async fn ring_vrf_providers(
-        &self,
-        ring: &api::RingLocation,
-    ) -> Result<Vec<api::ProductAccountId>, RingVrfError> {
-        let session = self.current_session().ok_or(RingVrfError::Unknown {
-            reason: "no active session".to_string(),
-        })?;
-        let result = self
-            .ring_vrf_registry
-            .providers(session.public_key, ring)
-            .await?;
-        self.require_current_session(&session)?;
-        Ok(result)
-    }
 
-    /// Selected provider in the active wallet registry.
-    pub async fn selected_ring_vrf_provider(
-        &self,
-        ring: &api::RingLocation,
-    ) -> Result<Option<api::ProductAccountId>, RingVrfError> {
-        let session = self.current_session().ok_or(RingVrfError::Unknown {
-            reason: "no active session".to_string(),
-        })?;
-        let result = self
-            .ring_vrf_registry
-            .selected_provider(session.public_key, ring)
-            .await?;
-        self.require_current_session(&session)?;
-        Ok(result)
-    }
-
-    /// Persist selection under the wallet captured before storage preparation.
-    pub async fn select_ring_vrf_provider(
-        &self,
-        ring: api::RingLocation,
-        handle: api::ProductAccountId,
-    ) -> Result<(), RingVrfError> {
-        let session = self.current_session().ok_or(RingVrfError::Unknown {
-            reason: "no active session".to_string(),
-        })?;
-        let mut update = self
-            .ring_vrf_registry
-            .prepare_update(session.public_key)
-            .await?;
-        self.require_current_session(&session)?;
-        update.select_provider(ring, handle)?;
-        update.persist().await?;
-        self.require_current_session(&session)?;
-        Ok(())
-    }
 }
 
 #[async_trait::async_trait]
@@ -578,18 +528,7 @@ impl AccountHolder for WalletAccountHolder {
         self.with_keys(session, |keys| {
             keys.product_keypair(&request.account).map(|_| ())
         })?;
-        let granted = match invocation.caller {
-            AccountCaller::Local { authorization, .. } => {
-                self.auto_signing_status(
-                    session,
-                    calling_product_id,
-                    &request.account,
-                    authorization,
-                )? == AutoSigningGrant::Active
-            }
-            AccountCaller::Remote { .. } => false,
-        };
-        if !granted {
+        if !self.invocation_auto_signing(&invocation, &request.account)? {
             let confirmed = until_cancelled(
                 invocation.call,
                 self.services
