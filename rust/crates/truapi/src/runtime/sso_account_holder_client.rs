@@ -64,6 +64,28 @@ impl SsoAccountHolderClient {
             .map_err(remote_authority_error)
     }
 
+    async fn call_product<R: Send, T>(
+        &self,
+        invocation: &AccountInvocation<'_>,
+        payload: R,
+    ) -> Result<T, RingVrfError>
+    where
+        ProductRequest<R>: SsoRequest<Response = Result<T, RingVrfError>>,
+    {
+        self.call(
+            invocation,
+            ProductRequest {
+                calling_product_id: invocation
+                    .caller
+                    .product_id()
+                    .ok_or(RingVrfError::NotAllowlisted)?
+                    .to_string(),
+                payload,
+            },
+        )
+        .await?
+    }
+
     async fn call<R: SsoRequest>(
         &self,
         invocation: &AccountInvocation<'_>,
@@ -249,18 +271,7 @@ impl AccountHolder for SsoAccountHolderClient {
         invocation: AccountInvocation<'_>,
         request: latest::HostAccountGetAliasRequest,
     ) -> Result<latest::HostAccountGetAliasResponse, RingVrfError> {
-        self.call(
-            &invocation,
-            ProductRequest {
-                calling_product_id: invocation
-                    .caller
-                    .product_id()
-                    .ok_or(RingVrfError::NotAllowlisted)?
-                    .to_string(),
-                payload: request,
-            },
-        )
-        .await?
+        self.call_product(&invocation, request).await
     }
 
     async fn create_proof(
@@ -268,18 +279,7 @@ impl AccountHolder for SsoAccountHolderClient {
         invocation: AccountInvocation<'_>,
         request: latest::HostAccountCreateProofRequest,
     ) -> Result<latest::HostAccountCreateProofResponse, RingVrfError> {
-        self.call(
-            &invocation,
-            ProductRequest {
-                calling_product_id: invocation
-                    .caller
-                    .product_id()
-                    .ok_or(RingVrfError::NotAllowlisted)?
-                    .to_string(),
-                payload: request,
-            },
-        )
-        .await?
+        self.call_product(&invocation, request).await
     }
 
     async fn register_ring_vrf_key(
@@ -287,18 +287,7 @@ impl AccountHolder for SsoAccountHolderClient {
         invocation: AccountInvocation<'_>,
         request: latest::HostAccountRegisterRingVrfKeyRequest,
     ) -> Result<latest::HostAccountRegisterRingVrfKeyResponse, RingVrfError> {
-        self.call(
-            &invocation,
-            ProductRequest {
-                calling_product_id: invocation
-                    .caller
-                    .product_id()
-                    .ok_or(RingVrfError::NotAllowlisted)?
-                    .to_string(),
-                payload: request,
-            },
-        )
-        .await?
+        self.call_product(&invocation, request).await
     }
 
     async fn list_ring_vrf_keys(
@@ -306,18 +295,7 @@ impl AccountHolder for SsoAccountHolderClient {
         invocation: AccountInvocation<'_>,
         request: latest::HostAccountListRingVrfKeysRequest,
     ) -> Result<latest::HostAccountListRingVrfKeysResponse, RingVrfError> {
-        self.call(
-            &invocation,
-            ProductRequest {
-                calling_product_id: invocation
-                    .caller
-                    .product_id()
-                    .ok_or(RingVrfError::NotAllowlisted)?
-                    .to_string(),
-                payload: request,
-            },
-        )
-        .await?
+        self.call_product(&invocation, request).await
     }
 
     async fn ring_vrf_sign(
@@ -325,18 +303,7 @@ impl AccountHolder for SsoAccountHolderClient {
         invocation: AccountInvocation<'_>,
         request: latest::HostAccountRingVrfSignRequest,
     ) -> Result<latest::HostAccountRingVrfSignResponse, RingVrfError> {
-        self.call(
-            &invocation,
-            ProductRequest {
-                calling_product_id: invocation
-                    .caller
-                    .product_id()
-                    .ok_or(RingVrfError::NotAllowlisted)?
-                    .to_string(),
-                payload: request,
-            },
-        )
-        .await?
+        self.call_product(&invocation, request).await
     }
 
     async fn sign_statement_store_product_payload(

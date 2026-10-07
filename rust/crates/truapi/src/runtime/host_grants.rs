@@ -724,26 +724,12 @@ impl HostGrantStore {
         let keys = match decoded {
             Ok(keys) => keys,
             Err(err) => {
-                self.auto_signing_keys
-                    .lock()
-                    .expect("AutoSigning key cache mutex poisoned")
-                    .clear();
-                let _ = self
-                    .storage
-                    .clear_core_storage(CoreStorageKey::AutoSigningKeys)
-                    .await;
+                let _ = _storage_guard.clear_auto_signing_keys().await;
                 return Err(err);
             }
         };
         if keys.iter().any(|persisted| persisted.owner != owner) {
-            self.auto_signing_keys
-                .lock()
-                .expect("AutoSigning key cache mutex poisoned")
-                .clear();
-            let _ = self
-                .storage
-                .clear_core_storage(CoreStorageKey::AutoSigningKeys)
-                .await;
+            let _ = _storage_guard.clear_auto_signing_keys().await;
             return Ok(None);
         }
         let Some(persisted) = keys
@@ -768,14 +754,7 @@ impl HostGrantStore {
         if current_expected_subtree
             .is_some_and(|expected| expected != persisted.expected_product_subtree_public_key)
         {
-            self.auto_signing_keys
-                .lock()
-                .expect("AutoSigning key cache mutex poisoned")
-                .clear();
-            let _ = self
-                .storage
-                .clear_core_storage(CoreStorageKey::AutoSigningKeys)
-                .await;
+            let _ = _storage_guard.clear_auto_signing_keys().await;
             return Err(AuthorityError::Unavailable {
                 reason: "AutoSigning capability is not for the current product subtree".to_string(),
             });
@@ -787,14 +766,7 @@ impl HostGrantStore {
         ) {
             Ok(key) => key,
             Err(err) => {
-                self.auto_signing_keys
-                    .lock()
-                    .expect("AutoSigning key cache mutex poisoned")
-                    .clear();
-                let _ = self
-                    .storage
-                    .clear_core_storage(CoreStorageKey::AutoSigningKeys)
-                    .await;
+                let _ = _storage_guard.clear_auto_signing_keys().await;
                 return Err(err);
             }
         };
@@ -969,16 +941,10 @@ impl HostGrantPersistence<'_> {
     /// Attempt all queued deletions, retaining failures for a later drain.
     pub async fn drain_cleanup(&self) -> Result<(), String> {
         let mut attempted: Vec<CoreStorageKey> = Vec::new();
-        let mut cleared = Vec::new();
         let mut first_error = None;
         loop {
             let next = {
-                let mut lifecycle = self.store.lifecycle();
-                // Guarded writes cannot intervene, so repeated revocation shares a completed deletion.
-                lifecycle
-                    .state
-                    .pending_deletions
-                    .retain(|key| !cleared.contains(key));
+                let lifecycle = self.store.lifecycle();
                 lifecycle
                     .state
                     .pending_deletions
@@ -991,7 +957,12 @@ impl HostGrantPersistence<'_> {
             };
             attempted.push(key.clone());
             match self.store.storage.clear_core_storage(key.clone()).await {
-                Ok(()) => cleared.push(key),
+                Ok(()) => self
+                    .store
+                    .lifecycle()
+                    .state
+                    .pending_deletions
+                    .retain(|pending| *pending != key),
                 Err(error) if first_error.is_none() => first_error = Some(error.reason),
                 Err(_) => {}
             }

@@ -178,12 +178,6 @@ impl SsoRequestService {
         lifecycle.advance()
     }
 
-    /// Test hook for [`Self::start_session_store_sync`].
-    #[cfg(test)]
-    pub fn start_session_store_sync_for_tests(self: Arc<Self>, spawner: Spawner) {
-        self.start_session_store_sync(spawner);
-    }
-
     /// `message_id` of the request the session's request channel carries.
     #[cfg(test)]
     pub fn newest_request_for_tests(&self) -> Option<String> {
@@ -197,12 +191,6 @@ impl SsoRequestService {
     #[cfg(test)]
     pub fn session_store_change_ticks_for_tests(&self) -> usize {
         self.session_store_change_ticks.load(Ordering::SeqCst)
-    }
-
-    /// Test alias for [`Self::start_remote_monitor_for_current_session`].
-    #[cfg(test)]
-    pub fn start_session_supervision_for_current_session(&self) {
-        self.start_remote_monitor_for_current_session();
     }
 
     /// Pause replacement before the guarded installation for race tests.

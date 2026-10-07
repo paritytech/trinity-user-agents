@@ -5129,7 +5129,7 @@ fn idle_peer_disconnect_monitor_clears_session_store_and_broadcasts() {
 
     pairing_host
         .sso_for_tests()
-        .start_session_supervision_for_current_session();
+        .start_remote_monitor_for_current_session();
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     let disconnected = loop {
@@ -7140,7 +7140,7 @@ fn store_notification_during_external_activation_restores_persisted_session() {
     pairing_host
         .sso_for_tests()
         .clone()
-        .start_session_store_sync_for_tests(test_spawner());
+        .start_session_store_sync(test_spawner());
     wait_until(
         || host.test_session_state().current() == Some(persisted.clone()),
         "initial persisted session was not restored",
@@ -7326,7 +7326,7 @@ fn session_store_sync_restores_valid_blob_from_tick() {
     pairing_host
         .sso_for_tests()
         .clone()
-        .start_session_store_sync_for_tests(test_spawner());
+        .start_session_store_sync(test_spawner());
     wait_until(
         || host.test_session_state().current() == Some(stored.clone()),
         "session store sync did not restore valid blob",
@@ -7362,7 +7362,7 @@ fn session_store_sync_announces_a_signed_out_boot() {
     pairing_host
         .sso_for_tests()
         .clone()
-        .start_session_store_sync_for_tests(test_spawner());
+        .start_session_store_sync(test_spawner());
 
     wait_until(
         || {
@@ -7398,7 +7398,7 @@ fn session_store_sync_announces_a_restored_boot_once() {
     pairing_host
         .sso_for_tests()
         .clone()
-        .start_session_store_sync_for_tests(test_spawner());
+        .start_session_store_sync(test_spawner());
 
     wait_until(
         || {
@@ -7436,7 +7436,7 @@ fn session_store_sync_stays_silent_on_an_unchanged_tick() {
     pairing_host
         .sso_for_tests()
         .clone()
-        .start_session_store_sync_for_tests(test_spawner());
+        .start_session_store_sync(test_spawner());
     wait_until(
         || {
             !platform
@@ -7490,7 +7490,7 @@ fn session_store_sync_replaces_valid_blob_and_broadcasts_connected() {
     pairing_host
         .sso_for_tests()
         .clone()
-        .start_session_store_sync_for_tests(test_spawner());
+        .start_session_store_sync(test_spawner());
 
     assert_eq!(
         futures::executor::block_on(statuses.next()).unwrap(),
@@ -7514,7 +7514,7 @@ fn session_store_sync_clears_invalid_blob() {
     pairing_host
         .sso_for_tests()
         .clone()
-        .start_session_store_sync_for_tests(test_spawner());
+        .start_session_store_sync(test_spawner());
     wait_until(
         || host.test_session_state().current().is_none(),
         "session store sync did not clear invalid blob",
@@ -7558,7 +7558,7 @@ fn session_store_sync_clears_unreadable_blob() {
     pairing_host
         .sso_for_tests()
         .clone()
-        .start_session_store_sync_for_tests(test_spawner());
+        .start_session_store_sync(test_spawner());
     wait_until(
         || *session_clears.lock().unwrap() == 1,
         "session store sync did not clear unreadable blob",
@@ -7586,7 +7586,7 @@ fn session_store_sync_clears_once_on_initial_persistent_read_error() {
     pairing_host
         .sso_for_tests()
         .clone()
-        .start_session_store_sync_for_tests(test_spawner());
+        .start_session_store_sync(test_spawner());
 
     wait_until(
         || *session_clears.lock().unwrap() == 1,
@@ -7730,7 +7730,7 @@ fn disconnect_emits_disconnected_auth_state_after_store_sync_connected() {
     pairing_host
         .sso_for_tests()
         .clone()
-        .start_session_store_sync_for_tests(test_spawner());
+        .start_session_store_sync(test_spawner());
     wait_until(
         || {
             platform
