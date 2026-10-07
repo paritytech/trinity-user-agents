@@ -1,16 +1,17 @@
-//! Worker executable manifests, v1 and v2, as the core reads them for every
-//! host.
+//! Worker executable manifests, as the core reads them for every host.
 //!
-//! Parsing is pure: the JSON arrives from `crate::runtime::product_manifest`. Only the
-//! fields this core reads are modelled. A v2 manifest is the v1 one with
-//! `$v: 2` and an `includes.funding` configuration, read the way the RFC
-//! requires: a value this core does not recognise is ignored, never fatal, and
-//! a configuration left with nothing usable serves no Funding.
+//! Parsing is pure: the JSON arrives from `crate::runtime::product_manifest`.
+//! Only the fields this core reads are modelled, and an `includes` key it does
+//! not recognise is ignored. The `includes.funding` configuration is read the
+//! way the RFC requires: a value this core does not recognise is ignored, never
+//! fatal, and a configuration left with nothing usable serves no Funding.
 
 use serde::Deserialize;
 
 /// The executable kind a Worker manifest must declare.
 const WORKER_KIND: &str = "worker";
+/// Manifest schema version this core parses.
+const SUPPORTED_SCHEMA_VERSION: u32 = 1;
 
 /// What a product's `worker.<product_id>.<tld>` subname publishes, as far as
 /// this core reads it.
@@ -160,9 +161,8 @@ struct PublishedQuote {
 }
 
 impl WorkerManifest {
-    /// Parses a Worker manifest. A schema version this core cannot read, a
-    /// `kind` other than `worker`, or a funding configuration on a v1
-    /// manifest, makes the executable unusable.
+    /// Parses a Worker manifest. A schema version this core cannot read, or a
+    /// `kind` other than `worker`, makes the executable unusable.
     pub fn parse(json: &str) -> Result<Self, String> {
         let published: Published = serde_json::from_str(json)
             .map_err(|err| format!("worker manifest is not valid JSON: {err}"))?;
@@ -172,22 +172,21 @@ impl WorkerManifest {
                 published.kind
             ));
         }
-        let funding = match (published.schema_version, published.includes.funding) {
-            (1, None) => None,
-            (1, Some(_)) => return Err("a v1 worker manifest cannot serve Funding".to_string()),
-            (2, funding) => funding.and_then(PublishedFunding::usable),
-            (version, _) => {
-                return Err(format!(
-                    "worker manifest schema version {version} is not supported"
-                ));
-            }
-        };
+        if published.schema_version != SUPPORTED_SCHEMA_VERSION {
+            return Err(format!(
+                "worker manifest schema version {} is not supported",
+                published.schema_version
+            ));
+        }
         Ok(Self {
             entrypoint: published.entrypoint,
             pocket: published.includes.pocket,
             chat: published.includes.chat,
             input: published.includes.input,
-            funding,
+            funding: published
+                .includes
+                .funding
+                .and_then(PublishedFunding::usable),
         })
     }
 }
@@ -255,7 +254,7 @@ mod tests {
 
     /// The RFC's example provider: card in, and crypto in and out.
     const EXAMPLE: &str = r#"{
-        "$v": 2,
+        "$v": 1,
         "appVersion": [1, 2, 0],
         "kind": "worker",
         "entrypoint": "index.js",
@@ -270,9 +269,9 @@ mod tests {
         }
     }"#;
 
-    fn v2_with_funding(funding: &str) -> String {
+    fn with_funding(funding: &str) -> String {
         format!(
-            r#"{{"$v":2,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{{"chat":true,"funding":{funding}}}}}"#
+            r#"{{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{{"chat":true,"funding":{funding}}}}}"#
         )
     }
 
@@ -325,9 +324,9 @@ mod tests {
         );
     }
 
-    // A v1 worker keeps serving what it served, and serves no Funding.
+    // A worker that serves no Funding reads as it always did.
     #[test]
-    fn a_v1_manifest_reads_its_flags_and_serves_no_funding() {
+    fn a_manifest_without_funding_reads_its_flags() {
         let manifest = WorkerManifest::parse(
             r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":{"pocket":true}}"#,
         );
@@ -344,31 +343,22 @@ mod tests {
         );
     }
 
+    // Surfaces are added to `includes` without a new `$v`, so one this core
+    // does not know must not cost the worker the surfaces it does.
     #[test]
-    fn a_v2_manifest_without_funding_serves_its_v1_surfaces() {
+    fn an_unrecognised_includes_key_is_ignored() {
         let manifest = WorkerManifest::parse(
-            r#"{"$v":2,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":{"chat":true}}"#,
+            r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":{"chat":true,"teleport":{"anything":1}}}"#,
         )
         .expect("parses");
 
         assert_eq!((manifest.chat, manifest.funding), (true, None));
     }
 
-    // Funding is what v2 adds, so a v1 manifest carrying it was written
-    // against a schema it does not declare.
-    #[test]
-    fn funding_on_a_v1_manifest_makes_the_executable_unusable() {
-        let manifest = WorkerManifest::parse(&v2_with_funding(&format!(
-            r#"{{"routes":[{CARD_IN}],"quote":{{"via":"worker"}}}}"#
-        )).replace(r#""$v":2"#, r#""$v":1"#));
-
-        assert!(manifest.is_err());
-    }
-
     #[test]
     fn an_unknown_version_or_a_kind_other_than_worker_is_refused() {
         let unknown = WorkerManifest::parse(
-            r#"{"$v":3,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js"}"#,
+            r#"{"$v":2,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js"}"#,
         );
         let app =
             WorkerManifest::parse(r#"{"$v":1,"appVersion":[1,0,0],"kind":"app","entrypoint":"w.js"}"#);
@@ -380,7 +370,7 @@ mod tests {
     // unrecognised one costs only the route or the value it appears in.
     #[test]
     fn unrecognised_routes_and_directions_are_ignored() {
-        let manifest = WorkerManifest::parse(&v2_with_funding(&format!(
+        let manifest = WorkerManifest::parse(&with_funding(&format!(
             r#"{{"routes":[
                 {CARD_IN},
                 {{ "mode": "CASH", "directions": ["In"], "assets": ["EUR"] }},
@@ -418,14 +408,14 @@ mod tests {
         ];
 
         for funding in unusable {
-            let manifest = WorkerManifest::parse(&v2_with_funding(&funding)).expect("parses");
+            let manifest = WorkerManifest::parse(&with_funding(&funding)).expect("parses");
             assert_eq!((manifest.chat, manifest.funding), (true, None), "{funding}");
         }
     }
 
     #[test]
     fn a_url_quote_source_and_a_backend_are_kept() {
-        let manifest = WorkerManifest::parse(&v2_with_funding(&format!(
+        let manifest = WorkerManifest::parse(&with_funding(&format!(
             r#"{{"routes":[{CARD_IN}],"quote":{{"via":"url","url":"https://quotes.example/v1"}},"backend":"meld"}}"#
         )))
         .expect("parses");
@@ -444,7 +434,7 @@ mod tests {
 
     #[test]
     fn a_route_of_the_wrong_shape_fails_the_document() {
-        let manifest = WorkerManifest::parse(&v2_with_funding(
+        let manifest = WorkerManifest::parse(&with_funding(
             r#"{"routes":[{ "mode": "CARD", "directions": "In", "assets": ["EUR"] }],"quote":{"via":"worker"}}"#,
         ));
 
