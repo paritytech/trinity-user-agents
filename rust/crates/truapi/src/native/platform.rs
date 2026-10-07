@@ -17,7 +17,8 @@ use crate::{DevicePairingObserver, PairedSsoPeer};
 
 use super::callbacks::{
     HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-    NativePaymentCallbacks, NativePocketCallbacks, NativePocketRemoval, NativeTopUpCallbacks,
+    NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativePocketRemoval,
+    NativeTopUpCallbacks,
 };
 use super::errors::HostRejection;
 use super::events::NativeEventBus;
@@ -630,6 +631,37 @@ impl crate::platform::PocketPlatform for PocketCallbackPlatform {
                 Ok(())
             }
         }
+    }
+}
+
+/// [`crate::platform::GamePlatform`] served by host-provided
+/// [`NativeGameCallbacks`]; constructed only when the host passed one.
+pub struct GameCallbackPlatform {
+    /// Host game-reminder surface.
+    pub game: Arc<dyn NativeGameCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::GamePlatform for GameCallbackPlatform {
+    async fn schedule_game_reminder(
+        &self,
+        _product: &ProductContext,
+        starts_at: u64,
+    ) -> Result<(), v01::GenericError> {
+        self.game
+            .schedule_reminder(starts_at)
+            .await
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn cancel_game_reminder(
+        &self,
+        _product: &ProductContext,
+    ) -> Result<(), v01::GenericError> {
+        self.game
+            .cancel_reminder()
+            .await
+            .map_err(v01::GenericError::from)
     }
 }
 

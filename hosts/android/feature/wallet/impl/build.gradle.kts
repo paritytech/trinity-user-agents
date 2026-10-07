@@ -17,6 +17,7 @@ dependencies {
     implementation(libs.androidx.fragment.ktx)
 
     implementation(libs.nova.substrate.sdk)
+    implementation(libs.kotlinx.serialization.json)
 
     implementation(project(":common"))
     implementation(project(":chains"))

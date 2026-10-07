@@ -6,34 +6,26 @@ extension FiatOnrampTrackingServicing {
 
     func startUpdateTriggersTask() {
         let logger = logger
-        let clock = clock
+
+        // Subscribed before triggers start: a late replay-subject consumer drops sends between replay and register.
+        let updateEvents = updateTriggerEventSequence.makeAsyncIterator()
 
         updateTriggersTask = Task { [weak self] in
             await self?.emitTransactionStatusesUpdates()
 
-            await Self.runRetryingStreamLoop(
-                clock: clock,
-                logger: logger,
-                streamName: "Fiat on-ramp tracking stream"
-            ) { [weak self] in
-                guard let updateEvents = self?.updateTriggerEventSequence.eraseToAnyAsyncSequence() else {
-                    throw CancellationError()
+            var iterator = updateEvents
+
+            while let updateEvent = await iterator.next() {
+                guard !Task.isCancelled, let self else {
+                    return
                 }
 
-                for try await updateEvent in updateEvents {
-                    try Task.checkCancellation()
-
-                    do {
-                        guard let self else {
-                            throw CancellationError()
-                        }
-
-                        try await handleTriggerEvent(updateEvent)
-                    } catch is CancellationError {
-                        throw CancellationError()
-                    } catch {
-                        logger.error("Fiat on-ramp tracking event failed: \(error)")
-                    }
+                do {
+                    try await handleTriggerEvent(updateEvent)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    logger.error("Fiat on-ramp tracking event failed: \(error)")
                 }
             }
         }

@@ -769,6 +769,12 @@ Scripts under `js/scripts/` include:
   in `TRUAPI_POCKET_LOG`. The cases read that transcript, so a pass means the
   host and the product agree rather than resting on the product's word.
 
+  The CLI accepts and logs Game reminders on every execution kind, without
+  holding or firing them. The core serves Game to the game product (`dim2`)
+  alone, so the battery skips it. To try a game product locally, run
+  `truapi-host dev --product-id dim2.dot -- <dev command>`; without the flag
+  the product runs as `localhost:<port>` and Game answers `Unsupported`.
+
   Contacts are served on every phase, from `TRUAPI_CONTACTS`
   (`alice=0x<32-byte account>;bob=0x…`) or, unset, from a two-name development
   list so `contacts.pick` has someone to return. An empty spec is an empty list,

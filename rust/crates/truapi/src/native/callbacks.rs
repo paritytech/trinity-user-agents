@@ -277,6 +277,25 @@ pub enum NativePocketRemoval {
     Privileged,
 }
 
+/// Native game-reminder adapter. Hosts that can hold reminders pass an
+/// implementation to [`NativeTrUApiHostRuntime::open_product_execution`];
+/// hosts without one pass `None`. Both callbacks are async, so a host may hop
+/// to its own thread to answer without blocking the core's dispatch pool.
+///
+/// The execution is bound to one product, so neither call names it. The host
+/// owns the reminder: see [`crate::platform::GamePlatform`] for what it must
+/// do with one.
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeGameCallbacks: Send + Sync {
+    /// Hold `starts_at` (Unix milliseconds, UTC) as this product's reminder,
+    /// replacing any it holds.
+    async fn schedule_reminder(&self, starts_at: u64) -> Result<(), HostRejection>;
+
+    /// Drop this product's reminder. Idempotent.
+    async fn cancel_reminder(&self) -> Result<(), HostRejection>;
+}
+
 /// Native contacts adapter. A host with a contact list and a picker passes an
 /// implementation to [`NativeTrUApiHostRuntime::set_contacts_callbacks`]; one
 /// without leaves `contacts.pick` answering `Unsupported`.

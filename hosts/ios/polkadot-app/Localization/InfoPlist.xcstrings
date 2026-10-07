@@ -25,6 +25,18 @@
         }
       }
     },
+    "NSAlarmKitUsageDescription": {
+      "comment": "Privacy - AlarmKit Usage Description",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "new",
+            "value": "Polkadot uses alarms to notify you when a scheduled event is about to start."
+          }
+        }
+      }
+    },
     "NSCalendarsFullAccessUsageDescription": {
       "comment": "Privacy - Calendars Full Access Usage Description",
       "extractionState": "manual",
@@ -44,7 +56,7 @@
         "en": {
           "stringUnit": {
             "state": "new",
-            "value": "The app will add upcoming game to your calendar and remind you 5 minutes before the game starts."
+            "value": "Polkadot adds upcoming events to your calendar and reminds you before they start."
           }
         }
       }

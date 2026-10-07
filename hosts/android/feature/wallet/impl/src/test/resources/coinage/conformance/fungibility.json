@@ -1,0 +1,27 @@
+{
+  "note": "fungibilityLevel(k) = k == 0 ? 0 : floor(log2 k) + 1; wearForLevel(level) = (1 \u2212 level/10)^1.15",
+  "ringCapacity": 767,
+  "maxLevel": 10,
+  "samples": [
+    {"k": 0, "level": 0, "wear": 1},
+    {"k": 1, "level": 1, "wear": 0.885888},
+    {"k": 2, "level": 2, "wear": 0.773666},
+    {"k": 3, "level": 2, "wear": 0.773666},
+    {"k": 4, "level": 3, "wear": 0.663533},
+    {"k": 7, "level": 3, "wear": 0.663533},
+    {"k": 8, "level": 4, "wear": 0.555743},
+    {"k": 15, "level": 4, "wear": 0.555743},
+    {"k": 16, "level": 5, "wear": 0.450625},
+    {"k": 31, "level": 5, "wear": 0.450625},
+    {"k": 32, "level": 6, "wear": 0.348633},
+    {"k": 63, "level": 6, "wear": 0.348633},
+    {"k": 64, "level": 7, "wear": 0.250432},
+    {"k": 127, "level": 7, "wear": 0.250432},
+    {"k": 128, "level": 8, "wear": 0.157103},
+    {"k": 255, "level": 8, "wear": 0.157103},
+    {"k": 256, "level": 9, "wear": 0.070795},
+    {"k": 511, "level": 9, "wear": 0.070795},
+    {"k": 512, "level": 10, "wear": 0},
+    {"k": 766, "level": 10, "wear": 0}
+  ]
+}

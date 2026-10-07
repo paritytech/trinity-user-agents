@@ -19,7 +19,16 @@ const UNARY_TIMEOUT_MS = 10_000;
 const REMOTE_RESPONSE_TIMEOUT_MS = 190_000;
 const LIVE_ALLOCATION_TIMEOUT_MS = 420_000;
 const APP_SERVICES = servicesForExecution(services, "App");
-const SKIPPED_SERVICES = new Set(["Coin Payment", "Payment"]);
+const UNWIRED_SERVICES = ["Coin Payment", "Payment"];
+const SKIPPED_SERVICES = new Map<string, string>([
+  ...UNWIRED_SERVICES.map(
+    (name) => [name, `${name} service not yet wired up by hosts`] as const,
+  ),
+  [
+    "Game",
+    "Game serves only the game product; the truapi runtime tests cover it",
+  ],
+]);
 const LONG_TIMEOUT_METHODS = new Set([
   "Account/get_account",
   "Account/get_account_alias",
@@ -93,19 +102,13 @@ export function knownUnsupportedReason(
   serviceName: string,
   _id: string,
 ): string | undefined {
-  if (SKIPPED_SERVICES.has(serviceName)) {
-    return `${serviceName} service not yet wired up by hosts`;
-  }
-  return undefined;
+  return SKIPPED_SERVICES.get(serviceName);
 }
 
 export function expectedCliBatteryFailureReason(
   row: Pick<DiagnosisRow, "serviceName">,
 ): string | undefined {
-  if (SKIPPED_SERVICES.has(row.serviceName)) {
-    return `${row.serviceName} service not yet wired up by hosts`;
-  }
-  return undefined;
+  return SKIPPED_SERVICES.get(row.serviceName);
 }
 
 async function runOne(

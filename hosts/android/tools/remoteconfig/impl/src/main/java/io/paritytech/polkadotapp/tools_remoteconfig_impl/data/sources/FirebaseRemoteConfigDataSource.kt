@@ -7,6 +7,7 @@ import com.google.firebase.remoteconfig.CustomSignals
 import com.google.firebase.remoteconfig.FirebaseRemoteConfigException
 import com.google.firebase.remoteconfig.remoteConfig
 import com.google.firebase.remoteconfig.remoteConfigSettings
+import io.paritytech.polkadotapp.common.BuildConfig
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.coerceToUnit
@@ -83,7 +84,7 @@ class FirebaseRemoteConfigDataSource @Inject constructor(
     private fun TestnetEnvironment.toEnvironmentSignal(): String {
         return when (this) {
             TestnetEnvironment.TESTNET -> "unstable"
-            TestnetEnvironment.NIGHTLY -> "nightly"
+            TestnetEnvironment.NIGHTLY -> if (BuildConfig.SAFETY_MODE) "safetynet" else "nightly"
             TestnetEnvironment.PRODUCTION -> "release"
         }
     }
