@@ -1052,13 +1052,13 @@ mod tests {
         // because it is catching a hang, not asserting latency.
         let allocation = futures::executor::block_on(async {
             let session = signing_host.account_holder().current_session().unwrap();
-            let call = CallContext::default();
+            let call = truapi::CallContext::default();
             futures::select! {
                 result = signing_host.account_holder().ensure_allowance(
-                    crate::runtime::AccountInvocation {
+                    crate::runtime::authority::AccountInvocation {
                         call: &call,
                         session: &session,
-                        caller: crate::runtime::AccountCaller::Remote { product_id: Some(product_id) },
+                        caller: crate::runtime::authority::AccountCaller::Remote { product_id: Some(product_id) },
                     },
                     crate::runtime::allowances::AllowanceResource::StatementStore,
                     OnExistingAllowancePolicy::Ignore,
@@ -1071,7 +1071,7 @@ mod tests {
         })
         .expect("an existing allowance is returned");
 
-        let crate::runtime::AccountGrant::StatementStore { key, .. } = allocation else {
+        let crate::runtime::authority::AccountGrant::StatementStore { key, .. } = allocation else {
             panic!("expected a statement-store allowance");
         };
         assert_eq!(key.secret, allowance.secret.to_bytes());

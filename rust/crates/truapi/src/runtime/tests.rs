@@ -8075,6 +8075,8 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
         ProductRuntimeHost::new_pairing_for_tests(platform, host_config, product, test_spawner());
     install_pairing_session(&host, session.clone());
     let lifecycle_epoch = pairing_host.grants_for_tests().lifecycle().revision();
+    let allowance =
+        crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0x42; 32]).unwrap();
     futures::executor::block_on(
         pairing_host
             .grants_for_tests()
@@ -8083,7 +8085,8 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
                 &session,
                 lifecycle_epoch,
                 "myapp.dot",
-                BulletinAllowanceKey::from_secret_bytes([0x42; 64].to_vec()).unwrap(),
+                BulletinAllowanceKey::from_secret_bytes(allowance.secret.to_bytes().to_vec())
+                    .unwrap(),
             ),
     )
     .expect("the wallet's allowance is cached");
