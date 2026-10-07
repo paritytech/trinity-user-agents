@@ -10,6 +10,7 @@
 /scripts @valentunn
 /config/detekt @valentunn
 /bindings @valentunn
+/bindings/wasmi-worker @tallesborges
 /tools/car-parser @valentunn
 /tools/ipfs @valentunn
 /tools/auth @mikyar

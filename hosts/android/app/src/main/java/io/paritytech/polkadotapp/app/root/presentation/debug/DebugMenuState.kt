@@ -10,6 +10,7 @@ data class DebugMenuState(
     val hasJWTToken: Boolean = false,
     val coinageDebugWidgetsEnabled: Boolean = true,
     val truapiRuntimeEnabled: Boolean = true,
+    val wasmiWorkerRuntimeEnabled: Boolean = false,
     /** Non-null while the restart prompt is up; the value to restore if it is declined. */
     val runtimeRestartRevertsTo: Boolean? = null,
 )

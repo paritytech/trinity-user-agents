@@ -41,6 +41,8 @@ interface DebugMenuContract {
 
     fun onTruapiRuntimeToggled(enabled: Boolean)
 
+    fun onWasmiWorkerRuntimeToggled(enabled: Boolean)
+
     fun onRuntimeRestartConfirmed()
 
     fun onRuntimeRestartCancelled()

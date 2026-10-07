@@ -63,6 +63,7 @@ fun DebugMenuScreen(contract: DebugMenuContract) {
         onSimulateGameResultsClick = contract::onSimulateGameResultsClick,
         onCoinageDebugWidgetsToggled = contract::onCoinageDebugWidgetsToggled,
         onTruapiRuntimeToggled = contract::onTruapiRuntimeToggled,
+        onWasmiWorkerRuntimeToggled = contract::onWasmiWorkerRuntimeToggled,
         onRuntimeRestartConfirmed = contract::onRuntimeRestartConfirmed,
         onRuntimeRestartCancelled = contract::onRuntimeRestartCancelled,
     )
@@ -90,6 +91,7 @@ private fun DebugMenuScreenInternal(
     onSimulateGameResultsClick: () -> Unit,
     onCoinageDebugWidgetsToggled: (Boolean) -> Unit,
     onTruapiRuntimeToggled: (Boolean) -> Unit,
+    onWasmiWorkerRuntimeToggled: (Boolean) -> Unit,
     onRuntimeRestartConfirmed: () -> Unit,
     onRuntimeRestartCancelled: () -> Unit,
 ) {
@@ -123,6 +125,14 @@ private fun DebugMenuScreenInternal(
                 title = stringResource(RCommon.string.debug_menu_truapi_runtime),
                 checked = state.truapiRuntimeEnabled,
                 onCheckedChange = onTruapiRuntimeToggled
+            )
+
+            VerticalSpacer { large }
+
+            DebugMenuToggleItem(
+                title = stringResource(RCommon.string.debug_menu_wasmi_worker_runtime),
+                checked = state.wasmiWorkerRuntimeEnabled,
+                onCheckedChange = onWasmiWorkerRuntimeToggled
             )
 
             VerticalSpacer { extraLargeIncreased }
@@ -418,6 +428,7 @@ private fun DebugMenuScreenPreview() {
             onSimulateGameResultsClick = {},
             onCoinageDebugWidgetsToggled = {},
             onTruapiRuntimeToggled = {},
+            onWasmiWorkerRuntimeToggled = {},
             onRuntimeRestartConfirmed = {},
             onRuntimeRestartCancelled = {},
         )

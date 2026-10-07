@@ -679,6 +679,7 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="debug_menu_simulate_game_results">Simulate game-results WebView</string>
     <string name="debug_menu_coinage_debug_widgets">Coinage debug overlays</string>
     <string name="debug_menu_truapi_runtime">TrUAPI runtime (products)</string>
+    <string name="debug_menu_wasmi_worker_runtime">Workers as wasm under wasmi (experimental)</string>
     <string name="debug_menu_runtime_restart_title">Restart required</string>
     <string name="debug_menu_runtime_restart_message">The product runtime changed. Restart the app to apply it — a running product keeps the runtime it started with, and the two do not share stored data.</string>
     <string name="debug_menu_runtime_restart_confirm">Restart</string>

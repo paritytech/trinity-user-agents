@@ -149,6 +149,11 @@ class DebugMenuViewModel @Inject constructor(
         refreshTruapiRuntimeState()
     }
 
+    override fun onWasmiWorkerRuntimeToggled(enabled: Boolean) {
+        productRuntimeSettings.setWasmiWorkerRuntimeEnabled(enabled)
+        refreshTruapiRuntimeState()
+    }
+
     override fun onRuntimeRestartConfirmed() {
         restartAppUseCase()
     }
@@ -169,6 +174,11 @@ class DebugMenuViewModel @Inject constructor(
     }
 
     private fun refreshTruapiRuntimeState() {
-        state.update { it.copy(truapiRuntimeEnabled = productRuntimeSettings.isTrUAPIRuntimeEnabled()) }
+        state.update {
+            it.copy(
+                truapiRuntimeEnabled = productRuntimeSettings.isTrUAPIRuntimeEnabled(),
+                wasmiWorkerRuntimeEnabled = productRuntimeSettings.isWasmiWorkerRuntimeEnabled(),
+            )
+        }
     }
 }

@@ -55,6 +55,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
 import uniffi.truapi.ThemeVariant as NativeThemeVariant
 import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
+import uniffi.truapi.WsBridgeEndpoint
 
 /**
  * Native platform callbacks ([io.parity.truapi.HostBridge]) for one product
@@ -106,6 +107,10 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
     private var execution: TrUAPIProductExecution? = null
     private var pocketBridge: ProductPocketHostBridge? = null
+
+    /** The loopback bridge the attached execution listens on, for a runtime that connects to it itself. */
+    var bridgeEndpoint: WsBridgeEndpoint? = null
+        private set
 
     init {
         // Tear the execution down with the owning scope: otherwise a closed
@@ -279,6 +284,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
                 onClosed = opened::notifyChainClosed,
             )
             val endpoint = opened.startWsBridge()
+            bridgeEndpoint = endpoint
             observeAppTheme()
             observeAppLifecycle()
             onReadyToInject(LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token))
@@ -323,6 +329,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // handle that no longer exists.
         pocketBridge?.stop()
         pocketBridge = null
+        bridgeEndpoint = null
         chainProvider.detach()
         chainProvider.closeAll()
         opened.stopWsBridge()

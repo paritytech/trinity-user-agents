@@ -1,6 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
+import io.parity.truapi.TrUAPIHostRuntime
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
+import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.RuntimeState
+import kotlinx.coroutines.flow.first
 import uniffi.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
@@ -39,7 +43,9 @@ enum class WorkerDemand { START, STOP }
 
 /**
  * Runs product workers on the core for as long as the core's reference ledger wants them: a `Start`
- * boots the worker script in a hidden WebView behind a `WORKER` execution, a `Stop` tears it down.
+ * boots the worker executable behind a `WORKER` execution, a `Stop` tears it down. The executable
+ * runs as a script in a hidden WebView, or, when the debug setting selects it, as a wasm module in
+ * the embedded sandbox; the execution and its bridge are the same either way.
  * Chat is not served on this path; chat products keep their native worker.
  */
 @Singleton
@@ -51,10 +57,26 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val scriptResolver: ProductScriptResolver,
     private val webViewProviderFactory: ChatWebViewProvider.Factory,
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
+    private val runtimeSettings: ProductRuntimeSettings,
+    private val wasmiRuntimeFactory: WasmiWorkerRuntime.Factory,
+    private val guestFactory: WorkerGuestFactory,
+    private val moduleFetcher: WorkerModuleFetcher,
     dispatchers: CoroutineDispatchers,
 ) {
+    private sealed interface WorkerHost {
+        fun dispose()
+
+        class WebView(private val runtime: WebViewRuntime) : WorkerHost {
+            override fun dispose() = runtime.dispose()
+        }
+
+        class Wasmi(private val runtime: WasmiWorkerRuntime) : WorkerHost {
+            override fun dispose() = runtime.dispose()
+        }
+    }
+
     private class RunningWorker(val scope: CoroutineScope) {
-        var webViewRuntime: WebViewRuntime? = null
+        var host: WorkerHost? = null
     }
 
     // WebViews are created and driven on the main thread.
@@ -101,8 +123,12 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         val runtime = runtimeProvider.get().runtime().getOrElse { return Result.failure(it) }
         val workerScript = WorkerScript.of(script.scriptUrl)
 
+        if (runtimeSettings.isWasmiWorkerRuntimeEnabled()) {
+            return bootWasmi(productId, worker, runtime, workerScript)
+        }
+
         val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript), worker.scope)
-        val webViewRuntime = WebViewRuntime(provider).also { worker.webViewRuntime = it }
+        val webViewRuntime = WebViewRuntime(provider).also { worker.host = WorkerHost.WebView(it) }
         // The bootstrap publishes the loopback port and token, so it goes to the worker's own origin only.
         val installBootstrap = runCatching {
             webViewRuntime.initialize()
@@ -134,6 +160,41 @@ class TrUAPIWorkerSupervisor @Inject constructor(
             .onSuccess { execution -> executions.update { it + (productId to execution) } }
     }
 
+    /**
+     * The wasm path: the module is fetched from the worker URL, the execution and its bridge open as
+     * for a script, and the sandbox connects to that bridge itself, so the bootstrap script the bridge
+     * hands back has nowhere to go and is dropped. A guest fault ends the worker; nothing reboots it,
+     * because a guest that trapped once would trap again on the same frames.
+     */
+    private suspend fun bootWasmi(
+        productId: ProductId,
+        worker: RunningWorker,
+        runtime: TrUAPIHostRuntime,
+        workerScript: WorkerScript,
+    ): Result<TrUAPIProductExecution> {
+        val module = moduleFetcher.fetch(workerScript).getOrElse { return Result.failure(it) }
+        val wasmiRuntime = wasmiRuntimeFactory.create(worker.scope).also { worker.host = WorkerHost.Wasmi(it) }
+        val hostBridge = hostBridgeFactory.create(worker.scope)
+
+        return hostBridge
+            .attach(runtime, productId, chainDirectory.resolve(), ignoredNavigation(), ProductExecutionKind.WORKER) {}
+            .flatMap { execution ->
+                val endpoint = hostBridge.bridgeEndpoint
+                    ?: return@flatMap Result.failure(IllegalStateException("worker execution opened without a bridge"))
+                guestFactory.create(module, WASMI_FUEL_PER_TURN, WASMI_MEMORY_BYTES)
+                    .flatMap { guest -> wasmiRuntime.start(endpoint, guest) }
+                    .map { execution }
+            }
+            .onSuccess { execution ->
+                executions.update { it + (productId to execution) }
+                worker.scope.launch {
+                    val failure = wasmiRuntime.state.first { it is RuntimeState.Error } as RuntimeState.Error
+                    Timber.w("wasmi worker for %s stopped: %s", productId.value, failure.cause)
+                    transitions.withLock { if (workers[productId] === worker) stop(productId) }
+                }
+            }
+    }
+
     // The renderer takes the running script with it, and only a fresh boot runs the script again.
     private fun rebootAfterRendererLoss(productId: ProductId, worker: RunningWorker) {
         scope.launch {
@@ -148,7 +209,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private fun stop(productId: ProductId) {
         val worker = workers.remove(productId) ?: return
         executions.update { it - productId }
-        worker.webViewRuntime?.dispose()
+        worker.host?.dispose()
         worker.scope.cancel()
     }
 
@@ -160,5 +221,10 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private companion object {
         // Generous: a cold WebView on a slow device fetching a worker archive over dotNS.
         val READY_TIMEOUT = 60.seconds
+
+        // The CLI proof's defaults: well above one render turn of the counter guest, and a cap no
+        // Pocket worker should approach.
+        const val WASMI_FUEL_PER_TURN = 50_000_000L
+        const val WASMI_MEMORY_BYTES = 16L * 1024 * 1024
     }
 }
