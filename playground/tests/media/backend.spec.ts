@@ -40,6 +40,56 @@ test.afterEach(async ({ page }) => {
   await page.evaluate("window.mediaFixture?.dispose()");
 });
 
+test("a receive-only session opens without a screen capture API", async ({
+  page,
+}) => {
+  await page.evaluate("mediaFixture.disableScreenCapture()");
+  expect(
+    await page.evaluate("mediaFixture.openReceiveOnlyWithoutCapture()"),
+  ).toEqual({
+    supported: true,
+    opened: "Done",
+    committed: "LocalState",
+    captureRequests: 0,
+  });
+});
+
+test("camera calls and host video overlays work without a screen capture API", async ({
+  page,
+}) => {
+  await page.evaluate("mediaFixture.disableScreenCapture()");
+  await page.evaluate("mediaFixture.startPairWithEarlyPicture()");
+  await expect
+    .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 15_000 })
+    .toEqual({
+      failures: [],
+      captureRequests: 1,
+      peers: ["Connected", "Connected"],
+      remoteCameras: ["Off", "Live"],
+    });
+  await expect
+    .poll(() => page.evaluate("mediaFixture.decodedFrames()"))
+    .toBeGreaterThan(0);
+});
+
+test("a screen request fails when the browser has no screen capture API", async ({
+  page,
+}) => {
+  await page.evaluate("mediaFixture.disableScreenCapture()");
+  expect(await page.evaluate("mediaFixture.openScreenWithoutCapture()")).toEqual({
+    supported: true,
+    result: {
+      tag: "Rejected",
+      value: {
+        failure: {
+          tag: "Domain",
+          value: { error: { tag: "DeviceUnavailable" } },
+        },
+      },
+    },
+  });
+});
+
 test("peers connect through TURN and signal only relay candidates", async ({
   page,
 }) => {

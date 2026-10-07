@@ -127,6 +127,43 @@ async function connectPair() {
 }
 
 window.mediaFixture = {
+  disableScreenCapture() {
+    Object.defineProperty(navigator.mediaDevices, "getDisplayMedia", {
+      configurable: true,
+      value: undefined,
+    });
+  },
+  async openReceiveOnlyWithoutCapture() {
+    const node = createNode(0);
+    nodes.push(node);
+    const capabilities = await node.backend.mediaBackendCapabilities(product);
+    node.backend.attach(node.runtime);
+    const opened = await node.backend.mediaBackendCommand(product, node.runtime, {
+      tag: "OpenSession",
+      value: { sessionId: node.session, operationId: id(699), tracks: off },
+    });
+    const committed = await node.backend.mediaBackendCommand(product, node.runtime, {
+      tag: "CommitOperation",
+      value: { operationId: id(699) },
+    });
+    return {
+      supported: capabilities.supported,
+      opened: opened.tag,
+      committed: committed.tag,
+      captureRequests: captures.length,
+    };
+  },
+  async openScreenWithoutCapture() {
+    const node = createNode(0);
+    nodes.push(node);
+    const capabilities = await node.backend.mediaBackendCapabilities(product);
+    node.backend.attach(node.runtime);
+    const result = await node.backend.mediaBackendCommand(product, node.runtime, {
+      tag: "OpenSession",
+      value: { sessionId: node.session, operationId: id(700), tracks: { ...off, screen: true } },
+    });
+    return { supported: capabilities.supported, result };
+  },
   async startPair() {
     await openPair();
     await connectPair();
