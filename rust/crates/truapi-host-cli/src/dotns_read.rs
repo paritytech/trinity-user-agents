@@ -10,8 +10,8 @@ use serde_json::Value;
 use subxt_rpcs::client::{RpcClient, rpc_params};
 use truapi::host_logic::dotns_gateway::{
     DotnsIdentity, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, account_alias_key,
-    classify_labels, discover_pop_controller, encode_revive_call, label_available,
-    lite_label_owner_key, resolve_labels, timestamp_now_key, view_output,
+    discover_pop_controller, encode_revive_call, label_available, lite_label_owner_key,
+    resolve_identity, timestamp_now_key, view_output,
 };
 use truapi::platform::async_trait;
 
@@ -74,13 +74,11 @@ impl AssetHubReader {
         account_id_value("DotnsGateway.LiteLabelOwner", value)
     }
 
-    /// Usernames of `account` as recorded by the dotNS contracts.
+    /// Usernames of `account` as recorded by the dotNS contracts and the
+    /// gateway pallet.
     pub async fn dotns_identity(&mut self, account: &[u8; 32]) -> Result<DotnsIdentity> {
         let controller = self.pop_controller().await?;
-        let labels = resolve_labels(self, &controller, account)
-            .await
-            .map_err(anyhow::Error::msg)?;
-        classify_labels(self, &controller, labels)
+        resolve_identity(self, &controller, account)
             .await
             .map_err(anyhow::Error::msg)
     }
