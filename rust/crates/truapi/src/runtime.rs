@@ -1644,6 +1644,7 @@ impl FundingProvider for ProductRuntimeHost {
             Ok(()) => Ok(HostFundingReportResponse::V1),
             Err(ReportRefusal::NotFound) => Err(domain(v01::HostFundingReportError::NotFound)),
             Err(ReportRefusal::OutOfOrder) => Err(domain(v01::HostFundingReportError::OutOfOrder)),
+            Err(ReportRefusal::DuplicateId) => Err(domain(v01::HostFundingReportError::DuplicateId)),
         }
     }
 
