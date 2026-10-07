@@ -159,13 +159,12 @@ jobs:
 
   # The app jobs all need the core generated from this commit, and it is the
   # same output for each of them, so it is built once here and carried across.
-  # Built on the larger runner because it is Rust compilation and CPU bound:
-  # the same work measured 11m13s on macos-26 and 5m44s on macos-26-xlarge.
+  # Built on the larger runner because it is Rust compilation and CPU bound.
   core:
     name: Build the in-tree core
     needs: check-skip-label
     if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
-    runs-on: macos-26-xlarge
+    runs-on: parity-macos-large
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -221,7 +220,7 @@ jobs:
     needs: [check-skip-label, core]
     if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
     timeout-minutes: 30
-    runs-on: macos-26-xlarge
+    runs-on: parity-macos
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -474,7 +473,7 @@ jobs:
     needs: [check-skip-label, core]
     if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
     timeout-minutes: 30
-    runs-on: macos-26-xlarge
+    runs-on: parity-macos-large
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
