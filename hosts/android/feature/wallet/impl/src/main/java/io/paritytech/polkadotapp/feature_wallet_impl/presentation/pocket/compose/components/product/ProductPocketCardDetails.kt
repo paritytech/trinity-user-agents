@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,21 +58,33 @@ fun ProductPocketCardDetails(
     card: PocketCardUiModel.ProductCard,
     bindings: ProductFaceBindings,
     session: SpaHostSession?,
+    openingFaceShown: Boolean?,
     cardIndex: Int,
     onSettled: () -> Unit,
     onBack: () -> Unit,
 ) {
     BackHandler { onBack() }
 
+    val fold = rememberExpandedCardFoldState()
+
     // The product is asked for only once the card has arrived, so its WebView is not built while the
-    // card is still travelling.
+    // card is still travelling. The face folds away after the arrival, so the shared-element
+    // transition lands on the card's real bounds, and before the page loads, so building the WebView
+    // does not starve that animation. Applied once: a recreated screen must not fold away a face
+    // the user has pulled back.
     val arrival = LocalNavAnimatedVisibilityScope.current?.transition
     val arrived = arrival == null || arrival.currentState == EnterExitState.Visible
-    LaunchedEffect(arrived) {
-        if (arrived) onSettled()
+    var openingFaceApplied by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(arrived, openingFaceShown) {
+        if (!arrived || openingFaceShown == null) return@LaunchedEffect
+
+        if (!openingFaceApplied) {
+            if (!openingFaceShown) fold.showFace(false)
+            openingFaceApplied = true
+        }
+        onSettled()
     }
 
-    val fold = rememberExpandedCardFoldState()
     LaunchedEffect(session, fold) {
         session?.faceShownRequests?.collect { request ->
             launch { request.reply.complete(fold.showFace(request.shown)) }

@@ -57,6 +57,7 @@ class PocketViewModelTest {
         when {
             invocation.method.name == "observeRank" -> flowOf(PocketRank.Basic)
             invocation.method.name == "warmUpProduct" -> Result.success(Unit)
+            invocation.method.name == "faceShownOnOpen" -> true
             invocation.method.returnType == Flow::class.java -> emptyFlow<Any>()
             else -> null
         }
@@ -256,5 +257,25 @@ class PocketViewModelTest {
 
         assertEquals(face, viewModel.bindingsOf(uiCard).face.value)
         listCopy.cancel()
+    }
+
+    // The card is on screen while its lookup runs, so what the screen shows first has to be
+    // "not known yet" rather than a guess: a guessed face would flash shown before folding away.
+    @Test
+    fun `a card published with its face away reports it once opened, and nothing once dismissed`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(card)))
+        whenever(interactor.faceShownOnOpen(card.key)).thenReturn(false)
+
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+        assertNull(viewModel.openingFaceShown.value)
+
+        viewModel.selectCard(uiCard)
+        advanceUntilIdle()
+        assertEquals(false, viewModel.openingFaceShown.value)
+
+        viewModel.dismissCard()
+        assertNull(viewModel.openingFaceShown.value)
     }
 }

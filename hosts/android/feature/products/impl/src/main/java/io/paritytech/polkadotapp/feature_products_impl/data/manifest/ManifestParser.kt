@@ -96,11 +96,16 @@ internal class ManifestParser @Inject constructor(
         val preview = requireNotNull(preview) { "pocket card missing preview" }
         require(title.isNotEmpty()) { "pocket card title must not be blank" }
         require(preview.isNotBlank()) { "pocket card preview must not be blank" }
+        val faceShown = faceShown?.let {
+            require(it.isJsonPrimitive && it.asJsonPrimitive.isBoolean) { "pocket card faceShown must be a boolean" }
+            it.asBoolean
+        }
         return PocketCardDefinition(
             id = PocketCardId(screenPocketCardId(requireNotNull(id) { "pocket card missing id" })),
             title = title,
             // Always a path in the archive: a published card must not be able to name a URL.
             preview = PocketCardPreview.Archive(preview),
+            faceShown = faceShown ?: true,
         )
     }
 
