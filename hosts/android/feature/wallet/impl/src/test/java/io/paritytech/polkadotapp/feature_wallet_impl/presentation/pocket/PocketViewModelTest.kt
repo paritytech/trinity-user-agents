@@ -48,6 +48,7 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 import org.mockito.stubbing.Answer
+import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
 class PocketViewModelTest {
     // Every flow the screen combines answers empty unless a test says otherwise, so each test names
@@ -278,4 +279,27 @@ class PocketViewModelTest {
         viewModel.dismissCard()
         assertNull(viewModel.openingFaceShown.value)
     }
+
+    // A card whose product has not answered yet must not inherit the previous card's answer: it would
+    // fold a face the new card publishes as shown.
+    @Test
+    fun `selecting another card forgets the previous card's opening face until its own answer arrives`() =
+        runTest(testDispatcher) {
+            val away = productCard("away")
+            val pending = productCard("pending")
+            whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(away, pending)))
+            whenever(interactor.faceShownOnOpen(away.key)).thenReturn(false)
+            whenever(interactor.faceShownOnOpen(pending.key)).thenAnswer { COROUTINE_SUSPENDED }
+
+            val viewModel = createViewModel()
+            val cards = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>()
+            viewModel.selectCard(cards.single { it.title == away.title })
+            advanceUntilIdle()
+            assertEquals(false, viewModel.openingFaceShown.value)
+
+            viewModel.selectCard(cards.single { it.title == pending.title })
+            advanceUntilIdle()
+
+            assertNull(viewModel.openingFaceShown.value)
+        }
 }

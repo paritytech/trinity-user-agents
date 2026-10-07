@@ -236,6 +236,7 @@ class PocketViewModel @Inject constructor(
 
     private fun lookUpOpeningFace(card: PocketCardUiModel.ProductCard) {
         openingFaceLookup?.cancel()
+        _openingFaceShown.value = null
         openingFaceLookup = launch { _openingFaceShown.value = interactor.faceShownOnOpen(card.key) }
     }
 

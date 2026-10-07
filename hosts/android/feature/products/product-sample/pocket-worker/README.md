@@ -49,7 +49,8 @@ buttons that call `expandedCard.setFaceShown` (Hide face, Show face, Hide face i
 each call's answer (`ok`, `UserMoving`, `NotPresented`, `Unsupported`, `Denied`), the page's
 `innerHeight` (updated on resize) and a red BOTTOM EDGE bar pinned to the bottom of the page, which
 goes missing when the host sizes the page wrong. The card's `faceShown` in `manifest/worker.json`
-sets whether the face starts shown.
+sets whether the face starts shown for a published card; in the debug loop the card comes from the
+product form, so its "Open with the face away" switch decides instead.
 
 1. `npm run build`, then serve `dist/` on port 5173, for example `npx serve -l 5173 dist`.
 2. `adb reverse tcp:5173 tcp:5173` so the emulator reaches it.
