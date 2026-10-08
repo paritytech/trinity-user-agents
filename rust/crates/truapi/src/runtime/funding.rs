@@ -39,6 +39,10 @@ type Subscribers = HashMap<String, Vec<mpsc::UnboundedSender<HostFundingStatusSu
 #[derive(Default)]
 pub struct FundingRegistry {
     sessions: Mutex<HashMap<String, FundingSession>>,
+    /// Sessions whose overlay is still up: live in memory, so the overlay can
+    /// quote and pick a provider for them, but not stored until the user
+    /// starts them.
+    presenting: Mutex<HashSet<String>>,
     subscribers: Mutex<Subscribers>,
     /// Held across every load and write; the flag records whether persisted
     /// sessions have been loaded.
@@ -65,10 +69,17 @@ impl FundingRegistry {
         self.lock_sessions().get(intent).cloned()
     }
 
-    /// Every session the core keeps, for the host's progress and history
-    /// views: those in flight first, then the ended ones, each newest first.
+    /// Every session the user started that the core keeps, for the host's
+    /// progress and history views: those in flight first, then the ended
+    /// ones, each newest first.
     pub fn sessions(&self) -> Vec<FundingSession> {
-        let mut sessions: Vec<_> = self.lock_sessions().values().cloned().collect();
+        let presenting = self.lock_presenting().clone();
+        let mut sessions: Vec<_> = self
+            .lock_sessions()
+            .values()
+            .filter(|session| !presenting.contains(&session.intent))
+            .cloned()
+            .collect();
         sessions.sort_by_key(|session| {
             (
                 session.is_terminal(),
@@ -161,15 +172,24 @@ impl FundingRegistry {
             }
         }
         let (result, edited) = edit(&mut working);
+        // A session the host is told about must be stored too, which covers
+        // one leaving the overlay: started, though nothing in it changed.
+        let announces = !edited.is_empty();
         changed.extend(edited);
         for session in working.values_mut() {
             if session.expire_if_due(now_ms) {
                 changed.push(session.intent.clone());
             }
         }
-        if !*loaded || working != before {
+        if !*loaded || announces || working != before {
             let kept = retained(working.into_values());
-            store_sessions(storage, &kept).await?;
+            let presenting = self.lock_presenting().clone();
+            let started: Vec<_> = kept
+                .iter()
+                .filter(|session| !presenting.contains(&session.intent))
+                .cloned()
+                .collect();
+            store_sessions(storage, &started).await?;
             *self.lock_sessions() = kept
                 .into_iter()
                 .map(|session| (session.intent.clone(), session))
@@ -257,6 +277,12 @@ impl FundingRegistry {
         if let Some(platform) = self.platform() {
             platform.funding_session_changed(session.intent.clone(), item);
         }
+    }
+
+    fn lock_presenting(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
+        self.presenting
+            .lock()
+            .expect("funding presenting mutex poisoned")
     }
 
     fn lock_sessions(&self) -> std::sync::MutexGuard<'_, HashMap<String, FundingSession>> {
@@ -392,8 +418,22 @@ impl RuntimeServices {
             amount,
             now_ms,
         );
-        // Nothing is stored until the user starts the session, so an overlay
-        // the app is killed under leaves no session behind.
+        // Live while the overlay is up, so the overlay can quote and pick a
+        // provider, but stored only once the user starts it: an overlay the
+        // app is killed under leaves no session behind.
+        let storage = self.platform.as_ref();
+        registry.lock_presenting().insert(session.intent.clone());
+        let shown = session.clone();
+        if let Err(error) = registry
+            .commit(storage, now_ms, move |sessions| {
+                sessions.insert(shown.intent.clone(), shown);
+                ((), Vec::new())
+            })
+            .await
+        {
+            registry.lock_presenting().remove(&session.intent);
+            return Err(OpenFundingError::Session(error));
+        }
         let presented = platform
             .present_funding(
                 product,
@@ -404,22 +444,34 @@ impl RuntimeServices {
                 },
             )
             .await;
+        registry.lock_presenting().remove(&session.intent);
+        let intent = session.intent.clone();
         match presented {
             Ok(FundingPresentOutcome::Started) => {
-                let started = session.clone();
+                // The host hears of a session only once the user has started
+                // it, and that commit is what stores it.
                 registry
-                    .commit(self.platform.as_ref(), current_unix_millis(), move |sessions| {
-                        let intent = started.intent.clone();
-                        sessions.insert(intent.clone(), started);
-                        ((), vec![intent])
-                    })
+                    .commit(storage, current_unix_millis(), move |_| ((), vec![intent]))
                     .await
                     .map_err(OpenFundingError::Session)?;
                 registry.keep_expiring(self);
-                Ok(session)
+                Ok(registry.get(&session.intent).unwrap_or(session))
             }
-            Ok(_) => Err(OpenFundingError::Dismissed),
-            Err(error) => Err(OpenFundingError::Present(error)),
+            outcome => {
+                let discarded = registry
+                    .commit(storage, current_unix_millis(), move |sessions| {
+                        sessions.remove(&intent);
+                        ((), Vec::new())
+                    })
+                    .await;
+                if let Err(error) = discarded {
+                    tracing::warn!(%error, "discarding an unstarted funding session failed");
+                }
+                Err(match outcome {
+                    Ok(_) => OpenFundingError::Dismissed,
+                    Err(error) => OpenFundingError::Present(error),
+                })
+            }
         }
     }
 }
