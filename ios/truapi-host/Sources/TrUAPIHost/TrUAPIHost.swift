@@ -68,8 +68,9 @@ public protocol HostBridge: AnyObject, Sendable {
 
     /// Show or hide the face above this execution's expanded card. Answers
     /// `.notPresented` when the product is not under its card and `.userMoving`
-    /// while the user drags it. Defaults to `.unsupported`, so an app without
-    /// cards says so instead of pretending it moved one.
+    /// while the user drags it, and returns without waiting for the animation.
+    /// Defaults to `.unsupported`, so an app without cards says so instead of
+    /// pretending it moved one.
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome
 
     /// Deliver a push notification (`HostPushNotificationRequest`)

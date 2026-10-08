@@ -205,6 +205,10 @@ class ManifestParserTest {
         publishesNoCards(worker("""{}"""))
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":"no"}]}"""))
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":0}]}"""))
+        // The RFC drops every card over one invalid definition, so a valid card does not survive beside it.
+        publishesNoCards(
+            worker("""{"cards":[{"id":"a","title":"A","preview":"a.json"},{"id":"b","title":"B","preview":"b.json","faceShown":"no"}]}""")
+        )
     }
 
     private fun faceShownOf(cardJson: String): Boolean? {

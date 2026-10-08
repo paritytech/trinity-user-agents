@@ -21,10 +21,10 @@ Pocket-targeted deeplink and approves a host dialog showing the card as it will 
 product can remove a card. Three privileged cards, Humanity, Balance and Scarcity, are always present and removable by
 neither.
 
-A face is drawn through the [Unified Renderer](https://github.com/paritytech/trinity-user-agents/pull/633)'s `PocketCard`
-context. The collection itself is one `Pocket` trait with two methods, a Pocket section in the Worker manifest, and a
-deeplink grammar that names a target modality. An opened card adds one `ExpandedCard` trait, through which the Widget
-moves the face out of the way and back.
+A face is drawn through the [Unified Renderer](https://github.com/paritytech/trinity-user-agents/pull/633)'s
+`PocketCard` context. The collection itself is one `Pocket` trait with two methods, a Pocket section in the Worker
+manifest, and a deeplink grammar that names a target modality. An opened card adds one `ExpandedCard` trait, through
+which the Widget moves the face out of the way and back.
 
 Tracking issue: [#563](https://github.com/paritytech/trinity-user-agents/issues/563).
 
@@ -75,8 +75,9 @@ with `ExpandedCard::set_face_shown`, to take the whole screen or to bring the fa
 card definition's `faceShown` sets where the face starts when the card opens. The host sizes the Widget to the part of
 the screen the face leaves, so the Widget learns the space it has from its own `resize` event. The face is never locked:
 the user can always move it, and a call that arrives while the user is moving it has no effect and is answered
-`UserMoving`, so the product can retry once the user lets go. Keeping the native face visible through the open and close
-animation, and preloading the WebView, are host implementation and not part of the contract.
+`UserMoving`, so the product can retry once the user lets go. A product should not undo a move the user made. Keeping
+the native face visible through the open and close animation, and preloading the WebView, are host implementation and
+not part of the contract.
 
 ### Lifecycle
 
@@ -105,7 +106,9 @@ type PocketCardDefinition = {
 };
 ```
 
-A `faceShown` that is not a boolean makes the definition invalid, as a missing `title` does.
+A `faceShown` that is not a boolean makes the definition invalid, as a missing `title` does, and an invalid definition
+drops all of the product's cards. A host that does not read `faceShown` shows nothing wrong, so a product checks the
+field before publishing rather than relying on what today's hosts display.
 
 The preview is a static file in the CID-pinned archive, so the host can show a card before any product code runs, the
 same property the [funding modality](https://github.com/paritytech/trinity-user-agents/pull/339) relies on for its rail list.

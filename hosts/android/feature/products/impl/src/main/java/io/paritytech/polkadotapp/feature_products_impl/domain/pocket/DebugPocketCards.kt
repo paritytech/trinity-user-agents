@@ -31,7 +31,10 @@ interface DebugPocketCards {
 
     fun set(productId: ProductId, card: DebugPocketCard?)
 
-    /** Where the product's page is served from on the developer's machine, if it is. */
+    /**
+     * Where the product's page is served from on the developer's machine, if it is. It serves every session of the
+     * product, under its card, in a tab and in the open sheet, so a page can be tried both with and without a card.
+     */
     fun appUrl(productId: ProductId): String?
 
     fun setAppUrl(productId: ProductId, appUrl: String?)
