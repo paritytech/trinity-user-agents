@@ -64,18 +64,29 @@ pub enum Status {
 }
 
 /// Successful handshake payload used to establish the SSO session.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(
+    derive_more::Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    zeroize::Zeroize,
+    zeroize::ZeroizeOnDrop,
+)]
 pub struct Success {
     /// User identity sr25519 account id, used for username lookup and chat addressing.
     pub identity_account_id: [u8; 32],
     /// User root sr25519 public key; parent for soft-derived product accounts.
     pub root_account_id: [u8; 32],
     /// User identity chat X25519 private key.
+    #[debug("\"<redacted>\"")]
     pub identity_chat_private_key: [u8; 32],
     /// Wallet's persistent X25519 public key; keys the SSO session channels.
     pub sso_enc_pub_key: [u8; 32],
     /// X25519 public key of the answering wallet device.
     pub device_enc_pub_key: [u8; 32],
     /// Wallet-derived source for deterministic product entropy, never the raw root secret.
+    #[debug("\"<redacted>\"")]
     pub root_entropy_source: [u8; 32],
 }
