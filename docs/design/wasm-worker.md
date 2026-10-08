@@ -23,7 +23,27 @@ let worker = WasmWorker::new(env, &wasm)?;
 worker.run().await?;
 ```
 
-`WasmEnv` maps each import name, such as `account_get_user_id`, to a closure that decodes the request, calls `Account::get_user_id` on `host`, and encodes the result. `WasmWorker::new` rejects a module that imports a name the table lacks.
+`WasmEnv` maps each import name to a typed call on `host`. For `Account`, `#[wasm_env]` generates:
+
+```rust
+self.request("account_get_user_id", |host, cx, request| {
+    Box::pin(async move { Account::get_user_id(&*host, &cx, request).await })
+});
+```
+
+`WasmEnv::request` wraps it so it decodes the versioned request, runs the call, and encodes the result in the caller's protocol version.
+
+`WasmWorker::new` then links each import the module declares into wasmi. A method import only copies the request out of guest memory and queues the call, because wasm imports are synchronous:
+
+```rust
+let method = env.methods.get(name).ok_or_else(unknown_import)?.clone();
+linker.func_wrap("truapi", name, move |caller: Caller<'_, GuestState>, ptr: u32, len: u32| {
+    // Reads the request, hands out the next handle, queues the call for the host loop.
+    start_call(caller, method.clone(), ptr, len)
+})?;
+```
+
+A module that imports a name the table lacks is rejected before it runs.
 
 ## A call, end to end
 
