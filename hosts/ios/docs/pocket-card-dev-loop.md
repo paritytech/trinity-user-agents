@@ -59,6 +59,43 @@ A product with **no published worker**, driven by hand.
    share one scroll, so scrolling past the card leaves the product the whole
    screen.
 
+## The expanded card, live
+
+An opened card shows its product's page under the face, and that page can call
+`truapi.expandedCard.setFaceShown({ shown })` to move the face away and back.
+To try it with the test page in
+[`pocket-worker`](../../android/feature/products/product-sample/pocket-worker/README.md)
+(its README has the details):
+
+1. **Debug → TrUAPI Runtime** on, and restart when asked. It applies at the
+   next launch, and the native runtime has no expanded card.
+2. Build the test page against this checkout's client (the README's "Build"
+   section) and serve its `dist/` on port 5173:
+   `npx serve -l 5173 dist`.
+3. Loop B with worker URL `http://127.0.0.1:5173/worker.js`, card `loyalty`,
+   face URL `http://127.0.0.1:5173/faces/loyalty.json` and **Widget URL
+   (optional)** `http://127.0.0.1:5173/index.html`. The app appends
+   `card=<id>` to the widget URL, keeping its own query, so add `?hideOnLoad`
+   to test a call made as the page loads. **Open with the face away** opens the
+   card onto the page with the face out of the way.
+4. Add the card and open it.
+
+The page has buttons that hide and show the face, a log of each answer, its own
+height, and a red bar pinned to its bottom edge, which goes missing when the
+page is sized wrong. The answers:
+
+| Answer | When |
+|---|---|
+| `ok` | the face moved, or was already where the page asked |
+| `UserMoving` | the user is dragging the face, or it is still gliding after the drag; nothing moves |
+| `NotPresented` | the card is closed, while its page stays loaded in the background |
+| `Denied` | the page is shown somewhere other than a card |
+
+The user can always drag the face back, whatever the page asked.
+
+A card's page stays loaded after the card closes and is reused, so after
+editing a widget URL open another card first, or relaunch.
+
 ## What fails where
 
 Work down this list. Each step rules out the one below it.
@@ -82,3 +119,25 @@ Work down this list. Each step rules out the one below it.
 - **A card id that fails screening reads as no card**, not as an error. If a card
   never arrives, check the id before anything else.
 - **Confirm a tap actually lands** before concluding an action was dropped.
+
+## When you are ready to publish
+
+Declare the card in the worker's manifest instead, and the debug fields stop
+being involved:
+
+```json
+{
+  "$v": 1,
+  "kind": "worker",
+  "appVersion": [1, 0, 0],
+  "entrypoint": "worker.js",
+  "includes": { "chat": false, "pocket": true },
+  "pocket": {
+    "cards": [{ "id": "loyalty", "title": "Loyalty", "preview": "faces/loyalty.json", "faceShown": false }]
+  }
+}
+```
+
+`faceShown: false` opens the card with its face away; left out or `null`, the
+face shows, and a value that is not a boolean drops all of the product's cards
+while its worker keeps running.
