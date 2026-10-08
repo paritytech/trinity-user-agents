@@ -74,18 +74,6 @@ struct PocketCardScreenTests {
         withExtendedLifetime(window) {}
     }
 
-    /// A card that declares its face away must open onto the page alone, not
-    /// show the face and then scroll it off.
-    @Test
-    func opensWithTheFaceAwayWhenTheCardAsks() {
-        let product = StubSPAView()
-
-        let screen = laidOutScreen(product: product, faceShown: false)
-
-        #expect(screen.scrollView?.contentOffset.y == faceHeight)
-        #expect(product.controller.view.frame.height == screenSize.height)
-    }
-
     /// A warm page can ask as soon as its screen is built, before the screen
     /// knows its size; the request must not be lost.
     @Test
@@ -101,10 +89,11 @@ struct PocketCardScreenTests {
         #expect(product.controller.view.frame.height == screenSize.height)
     }
 
-    /// A screen can be laid out before it is given its size; a face placed
-    /// then would be lost when the size arrives.
+    /// A card that declares its face away must open onto the page alone, not
+    /// show the face and then scroll it off. A screen can be laid out before it
+    /// is given its size, and a face placed then would be lost when it arrives.
     @Test
-    func waitsForItsSizeToPlaceTheOpeningFace() {
+    func opensWithTheFaceAwayOnceItHasItsSize() {
         let product = StubSPAView()
         let screen = PocketCardScreenViewController(
             card: loyaltyCard,
@@ -121,89 +110,54 @@ struct PocketCardScreenTests {
         #expect(product.controller.view.frame.height == screenSize.height)
     }
 
-    /// The user's finger decides while it is down; the page must be told so
-    /// rather than fight it.
+    /// The user owns the face from the start of a drag until it stops moving,
+    /// not only while the finger is down: a request honoured while a released
+    /// face still glides would be overridden by that glide, and the page told
+    /// it had worked.
     @Test
-    func refusesToMoveTheFaceWhileTheUserDragsIt() throws {
+    func refusesToMoveTheFaceFromADragUntilItsGlideEnds() throws {
         let screen = laidOutScreen(product: StubSPAView())
         let scrollView = try #require(screen.scrollView)
+
         scrollView.delegate?.scrollViewWillBeginDragging?(scrollView)
-
-        let outcome = screen.setFaceShown(false, animated: false)
-
-        #expect(outcome == .userMoving)
-        #expect(scrollView.contentOffset.y == 0)
-    }
-
-    /// The user owns the face until it stops moving, not only while the
-    /// finger is down: a request honoured while a released face still glides
-    /// would be overridden by that glide, and the page told it had worked.
-    @Test
-    func refusesToMoveTheFaceWhileItGlidesAfterADrag() throws {
-        let screen = laidOutScreen(product: StubSPAView())
-        let scrollView = try #require(screen.scrollView)
-        scrollView.delegate?.scrollViewWillBeginDragging?(scrollView)
+        let whileDragging = screen.setFaceShown(false, animated: false)
         scrollView.delegate?.scrollViewDidEndDragging?(scrollView, willDecelerate: true)
+        let whileGliding = screen.setFaceShown(false, animated: false)
 
-        let outcome = screen.setFaceShown(false, animated: false)
-
-        #expect(outcome == .userMoving)
+        #expect([whileDragging, whileGliding] == [.userMoving, .userMoving])
         #expect(scrollView.contentOffset.y == 0)
     }
 
     /// The page is only refused while the user moves the face; once it rests,
-    /// the page may move it again.
+    /// whether its glide ran out or a tap stopped it, the page may move it again.
+    /// A tap that stops a glide ends a drag with no end-of-glide callback.
     @Test
     func honoursRequestsAgainOnceTheFaceComesToRest() throws {
         let screen = laidOutScreen(product: StubSPAView())
         let scrollView = try #require(screen.scrollView)
+
         scrollView.delegate?.scrollViewWillBeginDragging?(scrollView)
         scrollView.delegate?.scrollViewDidEndDragging?(scrollView, willDecelerate: true)
         scrollView.delegate?.scrollViewDidEndDecelerating?(scrollView)
 
-        let outcome = screen.setFaceShown(false, animated: false)
-
-        #expect(outcome == .applied)
+        #expect(screen.setFaceShown(false, animated: false) == .applied)
         #expect(scrollView.contentOffset.y == faceHeight)
-    }
 
-    /// A tap that stops a gliding face ends a drag with no glide after it and
-    /// no end-of-glide callback; the face is at rest, so the page may move it.
-    @Test
-    func honoursRequestsAfterATapStopsTheGlidingFace() throws {
-        let screen = laidOutScreen(product: StubSPAView())
-        let scrollView = try #require(screen.scrollView)
         scrollView.delegate?.scrollViewWillBeginDragging?(scrollView)
         scrollView.delegate?.scrollViewDidEndDragging?(scrollView, willDecelerate: true)
         scrollView.delegate?.scrollViewWillBeginDragging?(scrollView)
         scrollView.delegate?.scrollViewDidEndDragging?(scrollView, willDecelerate: false)
 
-        let outcome = screen.setFaceShown(false, animated: false)
-
-        #expect(outcome == .applied)
-        #expect(scrollView.contentOffset.y == faceHeight)
+        #expect(screen.setFaceShown(true, animated: false) == .applied)
+        #expect(scrollView.contentOffset.y == 0)
     }
 
-    /// The page is fitted only once the face rests, so while the face scrolls
-    /// away the page must already reach the bottom of the screen, or a blank
-    /// strip would open under it.
+    /// The page is fitted only once the face rests, so while the user carries
+    /// the face it must reach the bottom of the screen, or a blank strip would
+    /// open under it. That holds when the drag cut short a move the page
+    /// started, whose end then arrives mid-drag.
     @Test
-    func laysThePageUnderTheWholeScreenWhileTheUserDrags() throws {
-        let product = StubSPAView()
-        let screen = laidOutScreen(product: product)
-        let scrollView = try #require(screen.scrollView)
-
-        scrollView.delegate?.scrollViewWillBeginDragging?(scrollView)
-        scrollView.contentOffset.y = 100
-        screen.view.layoutIfNeeded()
-
-        #expect(product.controller.view.frame.height == screenSize.height)
-    }
-
-    /// A drag can take over a move the page started; that move's end must not
-    /// fit the page while the user is still carrying the face.
-    @Test
-    func leavesThePageUnderTheWholeScreenWhenADragCutsAPageMoveShort() throws {
+    func laysThePageUnderTheWholeScreenWhileTheUserCarriesTheFace() throws {
         let product = StubSPAView()
         let screen = laidOutScreen(product: product)
         let scrollView = try #require(screen.scrollView)
@@ -274,7 +228,9 @@ struct PocketCardScreenTests {
 
         #expect(screen.setFaceShown(false, animated: true) == .applied)
         #expect(screen.setFaceShown(true, animated: true) == .applied)
-        letMotionSettle(on: screen)
+        // The face ends where it started, so there is no end state to wait for.
+        RunLoop.main.run(until: Date().addingTimeInterval(1))
+        screen.view.layoutIfNeeded()
 
         #expect(scrollView.contentOffset.y == 0)
         #expect(product.controller.view.frame.height == visibleHeight - faceHeight)
@@ -360,13 +316,8 @@ struct PocketCardScreenTests {
 private let faceHeight = PocketOpenedCardView.height
 
 @MainActor
-private func laidOutScreen(product: SPAViewProtocol, faceShown: Bool = true) -> PocketCardScreenViewController {
-    let screen = PocketCardScreenViewController(
-        card: loyaltyCard,
-        product: product,
-        surface: PocketCardSurface(),
-        faceShown: faceShown
-    )
+private func laidOutScreen(product: SPAViewProtocol) -> PocketCardScreenViewController {
+    let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: PocketCardSurface())
     layOut(screen)
 
     return screen
@@ -391,14 +342,6 @@ private func waitUntil(on screen: UIViewController, _ condition: () -> Bool) -> 
     }
 
     return false
-}
-
-/// Runs long enough for any move of the face to finish, for a check that
-/// cannot name the end state it waits for.
-@MainActor
-private func letMotionSettle(on screen: UIViewController) {
-    RunLoop.main.run(until: Date().addingTimeInterval(1))
-    screen.view.layoutIfNeeded()
 }
 
 private extension PocketCardScreenViewController {
