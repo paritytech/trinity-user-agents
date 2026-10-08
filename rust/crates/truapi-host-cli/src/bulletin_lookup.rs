@@ -225,7 +225,7 @@ impl<S: BlobSource + 'static> BulletinLookup<S> {
             );
             return Ok(None);
         }
-        info!(key = %hex::encode(key), size = value.len(), "preimage read from Bulletin");
+        info!(key = %hex::encode(key), size = value.len(), "preimage read");
         Ok(Some(value))
     }
 }

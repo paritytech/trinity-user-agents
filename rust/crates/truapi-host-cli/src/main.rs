@@ -16,6 +16,7 @@ mod accounts;
 mod attestation;
 mod bootstrap;
 mod bulletin_lookup;
+mod cache_lookup;
 mod chain;
 mod chat;
 mod contacts;

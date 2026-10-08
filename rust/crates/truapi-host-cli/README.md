@@ -968,6 +968,27 @@ for another device, pairing fails and preserves the existing identity and
 pairings. Remove a paired device or wait for a new allowance period before
 trying again.
 
+## Preimage lookup through cache nodes
+
+A preimage lookup that the core cannot answer from its own cache goes to the
+network's Bulletin node, by CID over `bitswap_v1_get`. Set `TRUAPI_CACHE_NODES`
+to also ask cache nodes first: base URLs separated by commas, asked in order,
+each with `POST /acquire` for `bulletin:<cid>`. A cache node keeps verified
+copies of Bulletin blobs close to its users and answers faster than a Bulletin
+node. `TRUAPI_CACHE_CLIENT` names the payer in the cache nodes' ledger
+(default `truapi`).
+
+```bash
+TRUAPI_CACHE_NODES=http://127.0.0.1:8081,http://127.0.0.1:8082 \
+  truapi-host signing-host --frame-listen 127.0.0.1:9955
+```
+
+The host trusts no cache node. Bytes that do not hash to the CID are dropped
+and the next node is asked. A node that is down, refuses the payer or does not
+have the blob costs one request, and the Bulletin node answers as it would
+without cache nodes. The log names the node and the source it reports (`local`,
+`peer:<id>` or `source`) for every read a cache node serves.
+
 ## Manual use (two terminals)
 
 ```bash

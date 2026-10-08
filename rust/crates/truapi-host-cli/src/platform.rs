@@ -31,6 +31,7 @@ use truapi::platform::{
 use truapi::v01;
 
 use crate::bulletin_lookup::{BitswapRpc, BulletinLookup};
+use crate::cache_lookup::{CacheFirst, CacheNodes};
 use crate::chain::WsChainProvider;
 use crate::terminal_ui::{ApprovalKind, SystemEvent, UiHandle};
 
@@ -104,7 +105,7 @@ pub struct CliPlatform {
     device_storage_path: Option<PathBuf>,
     state_dir: Mutex<Option<PathBuf>>,
     pairing_scope: Option<PairingStorageScope>,
-    bulletin: Arc<BulletinLookup<BitswapRpc>>,
+    bulletin: Arc<BulletinLookup<CacheFirst<BitswapRpc>>>,
     next_notification_id: AtomicU32,
     scheduled_notifications: Arc<Mutex<HashMap<u32, api::HostPushNotificationRequest>>>,
     approval: Mutex<ApprovalPolicy>,
@@ -190,7 +191,10 @@ impl CliPlatform {
             device_storage_path,
             state_dir: Mutex::new(storage.as_ref().map(|paths| paths.state_dir.clone())),
             pairing_scope: storage.and_then(|paths| paths.pairing_scope),
-            bulletin: Arc::new(BulletinLookup::new(BitswapRpc::new(network.bulletin_ws))),
+            bulletin: Arc::new(BulletinLookup::new(CacheFirst::new(
+                CacheNodes::from_env(),
+                BitswapRpc::new(network.bulletin_ws),
+            ))),
             next_notification_id: AtomicU32::new(1),
             scheduled_notifications: Arc::new(Mutex::new(HashMap::new())),
             approval: Mutex::new(approval),
