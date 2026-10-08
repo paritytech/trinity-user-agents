@@ -51,6 +51,7 @@ pub mod pocket;
 pub mod preimage;
 pub mod renderer;
 pub mod resource_allocation;
+pub mod scanner;
 pub mod signing;
 pub mod statement_store;
 pub mod system;

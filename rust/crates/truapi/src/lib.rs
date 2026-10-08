@@ -85,9 +85,9 @@ pub mod latest {
         BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
         ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
         ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
-        ChatRoomRegistrationStatus, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome,
-        ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect, EffectProps,
-        FundingDirection, FundingFailure, GenericError, HorizontalAlignment,
+        ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
+        ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
+        EffectProps, FundingDirection, FundingFailure, GenericError, HorizontalAlignment,
         HostAccountCreateProofRequest, HostAccountGetAliasRequest,
         HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
         HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
@@ -98,7 +98,7 @@ pub mod latest {
         RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
         RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, RingLocation,
         RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
-        Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
+        ScanOutcome, Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
         StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
         TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature,
     };
@@ -145,6 +145,12 @@ pub mod latest {
     pub type HostContactsPickResponse = LatestOf<versioned::contacts::HostContactsPickResponse>;
     /// Contact picker failure.
     pub type HostContactsPickError = LatestOf<versioned::contacts::HostContactsPickError>;
+    /// Scanner request.
+    pub type HostScannerScanRequest = LatestOf<versioned::scanner::HostScannerScanRequest>;
+    /// Scanner outcome.
+    pub type HostScannerScanResponse = LatestOf<versioned::scanner::HostScannerScanResponse>;
+    /// Scanner failure.
+    pub type HostScannerScanError = LatestOf<versioned::scanner::HostScannerScanError>;
     /// Contextual alias derivation result.
     pub type HostAccountGetAliasResponse =
         LatestOf<versioned::account::HostAccountGetAliasResponse>;
