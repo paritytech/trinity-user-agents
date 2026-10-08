@@ -22,6 +22,17 @@ struct DebugPocketCardsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                        if let widgetUrl = card.widgetUrl {
+                            Text(widgetUrl)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        if card.faceShown == false {
+                            Text("Opens with the face away")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .onDelete { viewModel.delete(at: $0) }
@@ -39,6 +50,11 @@ struct DebugPocketCardsView: View {
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                TextField("Widget URL (optional)", text: $viewModel.widgetUrl)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Toggle("Open with the face away", isOn: $viewModel.opensWithFaceAway)
 
                 Button("Save") { viewModel.save() }
                     .disabled(!viewModel.canSave)

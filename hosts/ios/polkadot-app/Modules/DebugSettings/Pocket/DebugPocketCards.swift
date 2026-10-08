@@ -14,6 +14,10 @@ struct DebugPocketCard: Codable, Equatable, Swift.Identifiable {
     let cardId: String
     let title: String
     let faceUrl: String
+    /// The page the card opens instead of the product's published widget,
+    /// typically one served from the developer's machine.
+    let widgetUrl: String?
+    let faceShown: Bool?
 
     var id: String { "\(productId)/\(cardId)" }
 
@@ -22,7 +26,12 @@ struct DebugPocketCard: Codable, Equatable, Swift.Identifiable {
         // error, so a typo shows up as the card simply not being offered.
         guard let screened = try? screenPocketCardId(id: cardId) else { return nil }
 
-        return PocketCardDefinition(id: PocketCardId(value: screened), title: title, preview: .url(faceUrl))
+        return PocketCardDefinition(
+            id: PocketCardId(value: screened),
+            title: title,
+            preview: .url(faceUrl),
+            faceShown: faceShown ?? true
+        )
     }
 }
 
@@ -53,9 +62,7 @@ struct DebugPocketCards: DebugPocketCardsStoring {
     }
 
     func cards(for productId: ProductId) -> [PocketCardDefinition] {
-        cards()
-            .filter { $0.productId.lowercased() == productId.lowercased() }
-            .compactMap(\.definition)
+        cards(of: productId).compactMap(\.definition)
     }
 
     func save(_ card: DebugPocketCard) {
@@ -68,9 +75,28 @@ struct DebugPocketCards: DebugPocketCardsStoring {
         write(cards().filter { $0.id != card.id })
     }
 
+    /// The page is loaded as typed rather than through the card's launch
+    /// address, so it is handed the card query the launch address carries.
+    func widgetURL(for key: PocketCardKey) -> URL? {
+        guard
+            let widgetUrl = cards(of: key.productId).first(where: { $0.definition?.id == key.cardId })?.widgetUrl,
+            var components = URLComponents(string: widgetUrl)
+        else { return nil }
+
+        components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "card", value: key.cardId.value)]
+
+        return components.url
+    }
+
     private func write(_ cards: [DebugPocketCard]) {
         guard let data = try? JSONEncoder().encode(cards) else { return }
 
         settingsManager.set(anyValue: data, for: SettingsKey.debugPocketCards.rawValue)
+    }
+}
+
+private extension DebugPocketCards {
+    func cards(of productId: ProductId) -> [DebugPocketCard] {
+        cards().filter { $0.productId.lowercased() == productId.lowercased() }
     }
 }

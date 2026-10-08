@@ -29,16 +29,7 @@ enum PocketCardOpening {
                 )
 
                 let product = pocket.cardHosts.product(for: card.key) { surface in
-                    let configuration = SPAConfiguration(
-                        title: card.title,
-                        isRootScreen: false,
-                        showMoreButton: false,
-                        page: page,
-                        executable: .widget,
-                        cardSurface: surface
-                    )
-
-                    return SPAViewFactory.createView(configuration: configuration, flowState: flowState)
+                    makeView(for: card, page: page, surface: surface, flowState: flowState)
                 }
 
                 guard let product else { return }
@@ -73,5 +64,40 @@ enum PocketCardOpening {
 
             open(card, flowState: flowState, navigator: navigator, pocket: pocket)
         }
+    }
+}
+
+private extension PocketCardOpening {
+    static func makeView(
+        for card: PocketCardViewModel,
+        page: ProductPage,
+        surface: PocketCardSurface,
+        flowState: SPAFlowState
+    ) -> SPAViewProtocol? {
+        let widgetURL = debugWidgetURL(for: card.key)
+        let configuration = SPAConfiguration(
+            title: card.title,
+            isRootScreen: false,
+            showMoreButton: false,
+            page: page,
+            contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs,
+            executable: .widget,
+            cardSurface: surface
+        )
+
+        // The native runtime cannot load a page by its address.
+        return widgetURL == nil
+            ? SPAViewFactory.createView(configuration: configuration, flowState: flowState)
+            : SPAViewFactory.createRustView(configuration: configuration, flowState: flowState)
+    }
+
+    /// A page typed into the debug menu, which is how a product with no
+    /// published widget is worked on from the developer's machine.
+    static func debugWidgetURL(for key: PocketCardKey) -> URL? {
+        #if DEBUG
+            return DebugPocketCards().widgetURL(for: key)
+        #else
+            return nil
+        #endif
     }
 }
