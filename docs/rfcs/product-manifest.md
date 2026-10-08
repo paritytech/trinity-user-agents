@@ -175,10 +175,10 @@ type WidgetManifest = CommonExecutableFields & {
 type WorkerManifest = CommonExecutableFields & {
   kind: 'worker';
   entrypoint: string;                              // Path to the worker entry module inside the executable directory.
-  includes: {                                      // Surfaces served; an omitted key means `false`.
+  includes: {                                      // Surfaces served; an omitted key means not served.
     pocket?: boolean;
     chat?: boolean;
-    input?: boolean;
+    input?: { supports: ('text' | 'audio' | 'video' | 'image' | 'file')[] }; // Input shapes the worker accepts.
   };
 };
 
@@ -319,10 +319,10 @@ type WorkerConfig = {
   root: string; // Path to the executable directory on disk.
   appVersion: SemVer; // Same SemVer tuple as the matching ExecutableManifest.
   entrypoint: string; // Path to the worker entry module inside the executable directory.
-  includes: { // Same shape as WorkerManifest.includes; all may be false for a background-only worker.
+  includes: { // Same shape as WorkerManifest.includes; all may be omitted for a background-only worker.
     chat?: boolean;
     pocket?: boolean;
-    input?: boolean;
+    input?: { supports: ('text' | 'audio' | 'video' | 'image' | 'file')[] };
   };
 };
 ```
@@ -378,7 +378,7 @@ The returned record has shape `{ extent: { transactions_allowance, transactions,
 - `expiration > currentBlock`, and
 - the remaining capacity (`transactions_allowance − transactions`, `bytes_allowance − bytes`) covers the planned upload (chunks-needed and total-bytes for the icon + every executable in this publish operation).
 
-Granting is out-of-band via `TransactionStorage.authorize_account({ who, transactions, bytes })`. On testnet, the well-known `//Alice` keypair holds the authorization authority and a testnet publisher MAY self-grant. On mainnet `//Alice` has no such authority; authorization MUST come from a production-role account, and the request mechanism (portal, governance proposal, operator extrinsic, …) is **TBD** alongside the mainnet Bulletin deployment.
+Granting is out-of-band via `TransactionStorage.authorize_account({ who, transactions, bytes })`. On testnet, the well-known `//Alice` keypair holds the authorization authority and a testnet publisher MAY self-grant. On mainnet `//Alice` has no such authority; authorization MUST come from a production-role account, and the request mechanism (portal, governance proposal, operator extrinsic, …) is decided alongside the mainnet Bulletin deployment.
 
 #### Step 4 — Upload assets to the Bulletin chain
 
@@ -409,7 +409,7 @@ All payloads start with `$v: 1`.
 Before any dotNS write, the publisher:
 
 1. Parses each composed JSON back through the v1 JSON Schema to confirm conformance.
-2. Computes the UTF-8 byte length of each manifest and rejects any that exceed the dotNS text-record budget (the exact figure is still TBD — see [Unresolved Questions](#unresolved-questions)).
+2. Computes the UTF-8 byte length of each manifest and rejects any that exceed the dotNS text-record budget (the exact figure is an unresolved question — see [Unresolved Questions](#unresolved-questions)).
 
 Either check failing aborts the publish before on-chain writes begin (see [Security § Size cap at publishing](#security)).
 
