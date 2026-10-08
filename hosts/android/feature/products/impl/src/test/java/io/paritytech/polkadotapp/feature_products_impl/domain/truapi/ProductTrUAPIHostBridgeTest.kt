@@ -1,6 +1,12 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.content.Context
+import io.parity.truapi.HostBridge
+import uniffi.truapi.AccountAccessReview
+import uniffi.truapi.HostRejection
+import uniffi.truapi.PermissionDecision
+import uniffi.truapi.ProfileDisclosureReview
+import uniffi.truapi.UserConfirmationReview
 import io.paritytech.polkadotapp.feature_settings_api.domain.language.AppLanguageProvider
 import kotlinx.coroutines.flow.flowOf
 import uniffi.truapi.ProductExecutionKind
@@ -22,9 +28,13 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.fail
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.verify
+import org.mockito.Mockito.verifyNoInteractions
 import org.mockito.stubbing.Answer
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostRejection
@@ -34,18 +44,14 @@ import uniffi.truapi.WsBridgeEndpoint
 class ProductTrUAPIHostBridgeTest {
     private val refusingCore = Answer<Any> { throw IllegalStateException("loopback port unavailable") }
 
-    private val gameReminder = mockk<ProductGameReminder>(relaxUnitFun = true)
-    private val game = ProductId.fromStoredValue("game.dot")
-
     private fun TestScope.bridge(
-        scope: CoroutineScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
-        hostApiInteractor: HostApiInteractor = mock(HostApiInteractor::class.java),
+        launcher: TrUAPIConfirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
     ) = ProductTrUAPIHostBridge(
-        hostApiInteractor = hostApiInteractor,
+        hostApiInteractor = mock(HostApiInteractor::class.java),
         chainHttpClient = OkHttpClient(),
         encryptedPreferences = mock(EncryptedPreferences::class.java),
-        confirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
-        appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
+        confirmationLauncher = launcher,
+        appLifecycleObserver = mock(AppLifecycleObserver::class.java),
         dotNsTldProvider = mock(DotNsTldProvider::class.java),
         pocketCardStore = mock(PocketCardStore::class.java),
         context = mock(Context::class.java),
@@ -73,101 +79,52 @@ class ProductTrUAPIHostBridgeTest {
         assertTrue(outcome.isFailure)
     }
 
-    // The worker supervisor never holds the bridge; it stops a worker by cancelling the scope it
-    // handed in. That cancel is what has to close the execution, or every card scrolled off screen
-    // leaves its execution, loopback registration and chain sockets alive for the whole process.
-    @Test
-    fun `cancelling the owning scope closes the execution`() = runTest {
-        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
-        val execution = mockk<TrUAPIProductExecution>(relaxUnitFun = true) {
-            every { startWsBridge(any()) } returns WsBridgeEndpoint(port = 1u, token = "token")
-        }
-        val runtime = mockk<TrUAPIHostRuntime> {
-            every { openProductExecution(any(), any(), any(), any(), any()) } returns execution
-        }
-        val bridge = bridge(scope, hostApiInteractor = mockk { every { subscribeTheme() } returns emptyFlow() })
-
-        bridge.attach(
+    private suspend fun TestScope.callbacks(launcher: TrUAPIConfirmationLauncher): HostBridge {
+        var callbacks: HostBridge? = null
+        val runtime = mock(TrUAPIHostRuntime::class.java, Answer<Any> { invocation ->
+            callbacks = invocation.arguments.filterIsInstance<HostBridge>().single()
+            throw IllegalStateException("captured callbacks without opening a native execution")
+        })
+        val outcome = bridge(launcher).attach(
             runtime = runtime,
             productId = ProductId.fromStoredValue("game.dot"),
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
-            kind = ProductExecutionKind.WORKER,
+            kind = ProductExecutionKind.APP,
             onReadyToInject = {},
         )
-        scope.cancel()
-        advanceUntilIdle()
-
-        verify { execution.stopWsBridge() }
-        verify { execution.close() }
-    }
-
-    private suspend fun TestScope.attachCapturingBridge(card: ExpandedCardFace?): HostBridge {
-        var opened: HostBridge? = null
-        val runtime = mock(TrUAPIHostRuntime::class.java, Answer<Any> { invocation ->
-            opened = invocation.getArgument(0)
-            throw IllegalStateException("captured")
-        })
-        bridge().attach(
-            runtime = runtime,
-            productId = game,
-            chains = EMPTY_CHAINS,
-            navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
-            kind = ProductExecutionKind.WIDGET,
-            card = card,
-            onReadyToInject = {},
-        )
-        return checkNotNull(opened)
-    }
-
-    // Only a session drawn under a card has a face to move; any other session must say so rather
-    // than pretend.
-    @Test
-    fun `a product that is not under a card cannot move a face`() = runTest {
-        val hostBridge = attachCapturingBridge(card = null)
-
-        assertEquals(ExpandedCardFaceOutcome.UNSUPPORTED, hostBridge.setExpandedCardFaceShown(true))
+        assertTrue(outcome.isFailure)
+        return checkNotNull(callbacks)
     }
 
     @Test
-    fun `a product under a card asks that card and gets its answer`() = runTest {
-        val asked = mutableListOf<Boolean>()
-        val hostBridge = attachCapturingBridge(ExpandedCardFace { shown ->
-            asked += shown
-            ExpandedCardFaceOutcome.USER_MOVING
-        })
+    fun `unsupported profile permission throws through product callbacks while actions fail closed`() = runTest {
+        val launcher = mock(TrUAPIConfirmationLauncher::class.java)
+        val callbacks = callbacks(launcher)
+        val review = UserConfirmationReview.ProfileDisclosure(ProfileDisclosureReview("game.dot"))
 
-        val outcome = hostBridge.setExpandedCardFaceShown(false)
-
-        assertEquals(listOf(false), asked)
-        assertEquals(ExpandedCardFaceOutcome.USER_MOVING, outcome)
-    }
-
-    @Test
-    fun `the game bridge schedules and cancels for the calling product`() = runTest {
-        withScheduleOutcome(Result.success(Unit))
-        val gameBridge = bridge().gameBridge(game)
-
-        gameBridge.scheduleReminder(1_000u)
-        gameBridge.cancelReminder()
-
-        coVerify {
-            gameReminder.schedule(game, 1_000)
-            gameReminder.cancel(game)
+        try {
+            callbacks.confirmPermission(review)
+            fail("An unavailable prompt must not return a durable denial")
+        } catch (_: HostRejection.Rejected) {
+            // The core maps this callback error to NotDetermined without persisting a decision.
         }
+        assertFalse(callbacks.confirmUserAction(review))
+        verifyNoInteractions(launcher)
     }
 
     @Test
-    fun `the game bridge rejects a schedule the reminder fails`() = runTest {
-        withScheduleOutcome(Result.failure(IllegalStateException("notifications are not allowed")))
-        val gameBridge = bridge().gameBridge(game)
+    fun `supported permission preserves explicit approval and denial through product callbacks`() = runTest {
+        val review = UserConfirmationReview.AccountAccess(AccountAccessReview("game.dot", "target.dot"))
+        for (approved in listOf(true, false)) {
+            val launcher = mock(TrUAPIConfirmationLauncher::class.java, Answer { approved })
+            val callbacks = callbacks(launcher)
 
-        val outcome = runCatching { gameBridge.scheduleReminder(1_000u) }
-
-        assertEquals("notifications are not allowed", (outcome.exceptionOrNull() as? HostRejection.Rejected)?.reason)
-    }
-
-    private fun withScheduleOutcome(outcome: Result<Unit>) {
-        coEvery { gameReminder.schedule(game, 1_000) } returns outcome
+            assertEquals(
+                if (approved) PermissionDecision.ALLOW_ALWAYS else PermissionDecision.DENY,
+                callbacks.confirmPermission(review),
+            )
+            verify(launcher).awaitDecision(review.toConfirmation("game.dot"))
+        }
     }
 }

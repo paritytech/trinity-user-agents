@@ -9,6 +9,10 @@ protocol TrUAPIConfirmationPresenting: Sendable {
         review: MainPurseChatPaymentReview,
         requiresPrivacyConfirmation: Bool
     ) async -> Bool
+    func confirmPermission(
+        review: UserConfirmationReview,
+        from requesterName: String
+    ) async throws -> TrUAPIPermissionDecision
 }
 
 /// Routes core-reviewed actions to the native confirmation surfaces exposed
@@ -51,7 +55,7 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
     func confirmPermission(
         review: UserConfirmationReview,
         from _: String
-    ) async -> TrUAPIPermissionDecision {
+    ) async throws -> TrUAPIPermissionDecision {
         switch review {
         case let .preimageSubmit(preimageReview):
             await presentPreimagePermission(preimageReview)
@@ -71,6 +75,9 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
             await presentPermission(
                 promptMapper.makePermissionRequest(from: chatReview)
             )
+        case .profileDisclosure:
+            // An unavailable prompt is not a user denial and must not be persisted.
+            throw HostRejection.Rejected(reason: "profile disclosure has no prompt on this host")
         default:
             .deny
         }
@@ -97,15 +104,14 @@ private extension TrUAPIConfirmationPresenter {
             false
         case let .productSubtree(subtreeReview):
             await confirmAction(promptMapper.makeActionRequest(from: subtreeReview))
-        // No prompt exists for profile disclosure yet, so `confirmPermission`
-        // refuses it.
+        // Unsupported permission reviews throw; `confirm` still fails closed for single actions.
         case .identityDisclosure,
              .chatAuthority,
              .preimageSubmit,
              .accountAccess,
              .accountAlias,
              .profileDisclosure:
-            await confirmPermission(review: review, from: requesterName) != .deny
+            try await confirmPermission(review: review, from: requesterName) != .deny
         case let .createProof(proofReview):
             try await confirmCreateProof(
                 promptMapper.makeCreateProofRequest(from: proofReview)

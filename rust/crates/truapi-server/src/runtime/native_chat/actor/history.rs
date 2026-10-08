@@ -378,6 +378,8 @@ impl NativeChatActor {
             pages,
             imports,
         };
+        self.record_profile_references(context, peer, profile_references)
+            .await?;
         let valid = context.session_valid.clone();
         self.store
             .update(move |state| {
@@ -391,8 +393,6 @@ impl NativeChatActor {
                 state.boundary.history.push(delivery);
                 validate_deliveries(&state.boundary.history)
             })
-            .await?;
-        self.record_profile_references(context, peer, profile_references)
             .await?;
         self.continue_open(context, id, 0).await
     }

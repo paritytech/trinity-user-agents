@@ -106,16 +106,10 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
 
     is UserConfirmationReview.ProductSubtree ->
         TrUAPIConfirmation.ProductSubtree(requesterProductId = v1.productId)
-    is UserConfirmationReview.Calling ->
-        TrUAPIConfirmation.Calling(v1.productId, v1.network.displayHex(), v1.account.displayHex())
-    is UserConfirmationReview.ChatAuthority ->
-        TrUAPIConfirmation.ChatAuthority(v1.productId)
-    is UserConfirmationReview.MainPurseChatPayment -> TrUAPIConfirmation.MainPurseChatPayment(
-        v1.callingProductId,
-        listOfNotNull(v1.recipientUsername, v1.recipientIdentity.displayHex()).joinToString("\n"),
-        v1.amountCents, v1.maxDebitCents, v1.genesisHash.displayHex(),
-        v1.coinageInstanceId?.toString() ?: "Legacy single asset", v1.operationId.displayHex(),
-    )
+
+    // Single actions fail closed; permission callbacks must propagate an error, not persist denial.
+    is UserConfirmationReview.ProfileDisclosure ->
+        throw UnsupportedReviewException("profile disclosure has no prompt on this host")
 }
 
 @OptIn(ExperimentalStdlibApi::class)
