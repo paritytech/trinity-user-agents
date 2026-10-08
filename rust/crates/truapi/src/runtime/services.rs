@@ -274,7 +274,7 @@ impl RuntimeServices {
 
     /// Claim the one open scan, or `None` while another holds it. Dropping the
     /// claim frees it, so a cancelled or failed scan cannot keep it.
-    pub(crate) fn claim_scan(&self) -> Option<ScanClaim<'_>> {
+    pub fn claim_scan(&self) -> Option<ScanClaim<'_>> {
         self.scan_open
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .ok()
@@ -508,7 +508,7 @@ impl RuntimeChainProvider for HostChainProvider {
 }
 
 /// The open scan. Frees the slot when dropped.
-pub(crate) struct ScanClaim<'a>(&'a AtomicBool);
+pub struct ScanClaim<'a>(&'a AtomicBool);
 
 impl Drop for ScanClaim<'_> {
     fn drop(&mut self) {

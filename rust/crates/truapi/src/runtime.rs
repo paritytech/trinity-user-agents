@@ -325,7 +325,7 @@ pub struct ProductRuntimeHost {
 
 /// How long after a tap a Worker may still open the scanner, as browsers bound
 /// transient user activation.
-pub(crate) const USER_TAP_WINDOW_SECS: u64 = 5;
+pub const USER_TAP_WINDOW_SECS: u64 = 5;
 
 /// A connection that goes away without ending its operations still owes the
 /// ledger their references, so the host is told to stop rather than keeping a
@@ -366,7 +366,7 @@ impl ProductRuntimeHost {
     /// Whether the user tapped UI the host drew for this product within the
     /// last [`USER_TAP_WINDOW_SECS`]. A Worker may scan only shortly after one,
     /// because it has no screen the user could be looking at.
-    pub(crate) fn recently_tapped(&self) -> bool {
+    pub fn recently_tapped(&self) -> bool {
         self.renderer.published_within(USER_TAP_WINDOW_SECS)
     }
 

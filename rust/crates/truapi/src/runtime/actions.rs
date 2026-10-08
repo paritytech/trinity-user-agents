@@ -96,13 +96,14 @@ impl<Item: Send + 'static> ActionChannel<Item> {
     }
 
     /// Whether the host published an item within the last `window_secs`.
-    pub(crate) fn published_within(&self, window_secs: u64) -> bool {
+    pub fn published_within(&self, window_secs: u64) -> bool {
         let published_at = self.last_published_secs.load(Ordering::Acquire);
         published_at != 0
             && crate::unix_time::current_unix_secs().saturating_sub(published_at) <= window_secs
     }
 
-    pub(crate) fn note_published_at(&self, unix_secs: u64) {
+    /// Record that the host published an item at `unix_secs`.
+    pub fn note_published_at(&self, unix_secs: u64) {
         self.last_published_secs.store(unix_secs, Ordering::Release);
     }
 
