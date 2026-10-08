@@ -6,6 +6,7 @@ import Individuality
 import SubstrateStorageQuery
 import Operation_iOS
 import ChainRegistry
+import BulletinChain
 
 extension ServiceCoordinator {
     @MainActor
@@ -39,11 +40,14 @@ extension ServiceCoordinator {
             )
         }
 
+        let converter = HexToCIDConverter(ipfsBaseURL: AppConfig.KnownIPFS.main)
         let botFactory = ProductBotFactory(
             productFileProvider: productFileProvider,
             runtimeProvider: truapiRuntimeProvider,
             workers: { pocket?.workers },
-            workerManager: workerFacade.manager
+            workerManager: workerFacade.manager,
+            dotNsResolver: spaFlowState.dotNsResolver,
+            ipfsUrl: { converter.ipfsURL(cid: $0) }
         )
 
         let productBotProvider = ProductBotProvider(

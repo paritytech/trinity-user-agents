@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import Keystore_iOS
+import PolkadotUI
 import Products
 
 /// Creates ``ProductBot`` instances for a given product.
@@ -15,6 +16,8 @@ final class ProductBotFactory {
     private let runtimeProvider: TrUAPIHostRuntimeProviding
     private let workers: @Sendable () -> (any TrUAPIWorkerManaging)?
     private let workerManager: ProductWorkerManaging
+    private let dotNsResolver: any DotNsResolverProtocol
+    private let ipfsUrl: @Sendable (String) -> URL?
     private let logger: LoggerProtocol
 
     init(
@@ -22,6 +25,8 @@ final class ProductBotFactory {
         runtimeProvider: TrUAPIHostRuntimeProviding,
         workers: @Sendable @escaping () -> (any TrUAPIWorkerManaging)?,
         workerManager: ProductWorkerManaging,
+        dotNsResolver: any DotNsResolverProtocol,
+        ipfsUrl: @escaping @Sendable (String) -> URL?,
         settingsManager: SettingsManagerProtocol = SettingsManager.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -30,6 +35,8 @@ final class ProductBotFactory {
         self.runtimeProvider = runtimeProvider
         self.workers = workers
         self.workerManager = workerManager
+        self.dotNsResolver = dotNsResolver
+        self.ipfsUrl = ipfsUrl
         self.logger = logger
     }
 
@@ -37,6 +44,7 @@ final class ProductBotFactory {
         guard servesChat(resolved) else { return nil }
 
         let product = resolved.product
+        let resolveImage = Self.chatImages(for: resolved, dotNsResolver: dotNsResolver, ipfsUrl: ipfsUrl)
 
         if settingsManager.isTrUAPIRuntimeEnabled, let workers = workers() {
             let runtime = TrUAPIChatHandler(
@@ -44,11 +52,29 @@ final class ProductBotFactory {
                 workers: workers,
                 logger: logger
             )
-            return ProductBot(product: product, runtime: runtime, logger: logger)
+            return ProductBot(product: product, runtime: runtime, resolveImage: resolveImage, logger: logger)
         }
 
         let runtime = ManagedChatRuntime(productId: product.identifier, manager: workerManager)
-        return ProductBot(product: product, runtime: runtime, logger: logger)
+        return ProductBot(product: product, runtime: runtime, resolveImage: resolveImage, logger: logger)
+    }
+}
+
+extension ProductBotFactory {
+    /// Reads the images inside a chat card the way a Pocket card reads its own:
+    /// an archive path from the product's worker archive, which also serves the
+    /// chat, and a Bulletin CID through the IPFS gateway.
+    static func chatImages(
+        for resolved: ResolvedProduct,
+        dotNsResolver: any DotNsResolverProtocol,
+        ipfsUrl: @escaping @Sendable (String) -> URL?
+    ) -> WidgetImageResolver {
+        let images = PocketImageResolver(
+            contentId: { resolved.contentId(for: .worker) },
+            archive: ProductWorkerArchive(dotNsResolver: dotNsResolver),
+            ipfsUrl: ipfsUrl
+        )
+        return WidgetImageResolver { await images.resolve($0) }
     }
 }
 

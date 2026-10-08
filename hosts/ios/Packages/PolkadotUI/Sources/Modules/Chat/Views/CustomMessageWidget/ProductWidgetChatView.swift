@@ -8,16 +8,23 @@ public struct ProductWidgetChatView: View, Hashable {
     let messageId: String
     let nodeProvider: any WidgetNodeProviding
     let onAction: WidgetActionHandler?
+    let resolveImage: WidgetImageResolver?
 
-    public init(messageId: String, nodeProvider: any WidgetNodeProviding, onAction: WidgetActionHandler?) {
+    public init(
+        messageId: String,
+        nodeProvider: any WidgetNodeProviding,
+        onAction: WidgetActionHandler?,
+        resolveImage: WidgetImageResolver? = nil
+    ) {
         self.messageId = messageId
         self.nodeProvider = nodeProvider
         self.onAction = onAction
+        self.resolveImage = resolveImage
     }
 
     public var body: some View {
         if let node = nodeProvider.node {
-            CustomMessageWidgetView(node: node, onAction: onAction)
+            CustomMessageWidgetView(node: node, onAction: onAction, resolveImage: resolveImage)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             ProgressView()
