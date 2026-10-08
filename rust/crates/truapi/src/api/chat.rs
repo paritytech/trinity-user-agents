@@ -8,9 +8,10 @@ use crate::versioned::chat::{
     HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
 };
 use crate::{CallContext, CallError, Subscription};
-use crate::{wire, wire_trait};
+use crate::{wasm_env, wire, wire_trait};
 
 /// Chat room, bot, and message APIs.
+#[wasm_env]
 #[wire_trait(id = 4)]
 #[crate::service(required_execution = Worker)]
 #[crate::async_trait]

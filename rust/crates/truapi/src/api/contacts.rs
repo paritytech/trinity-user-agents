@@ -4,7 +4,7 @@ use crate::versioned::contacts::{
     HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse,
 };
 use crate::{CallContext, CallError};
-use crate::{wire, wire_trait};
+use crate::{wasm_env, wire, wire_trait};
 
 /// User-mediated access to the user's contacts.
 ///
@@ -16,6 +16,7 @@ use crate::{wire, wire_trait};
 /// That is also why there is no permission to request: the user choosing a
 /// contact in host UI is the consent, and a product that is never handed the
 /// list has nothing to be granted.
+#[wasm_env]
 #[wire_trait(id = 20)]
 #[crate::async_trait]
 pub trait Contacts: Send + Sync {

@@ -5,9 +5,10 @@ use crate::versioned::permissions::{
     RemotePermissionError, RemotePermissionRequest, RemotePermissionResponse,
 };
 use crate::{CallContext, CallError};
-use crate::{wire, wire_trait};
+use crate::{wasm_env, wire, wire_trait};
 
 /// Permission request methods.
+#[wasm_env]
 #[wire_trait(id = 10)]
 #[crate::async_trait]
 pub trait Permissions: Send + Sync {

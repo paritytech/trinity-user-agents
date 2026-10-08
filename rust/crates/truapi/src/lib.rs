@@ -50,6 +50,10 @@ pub mod api;
 pub mod v01;
 pub mod v02;
 pub mod versioned;
+pub mod wasm_abi;
+
+#[cfg(feature = "guest")]
+pub mod guest;
 
 /// A 32-byte value, passed as plain bytes on FFI surfaces. Version-neutral:
 /// the FFI conversion below applies to `[u8; 32]` fields in every protocol
@@ -261,7 +265,7 @@ pub mod latest {
     pub type RemotePermissionResponse = LatestOf<versioned::permissions::RemotePermissionResponse>;
 }
 
-pub use truapi_macros::{service, wire, wire_trait};
+pub use truapi_macros::{service, wasm_env, wire, wire_trait};
 
 /// Wire codec version this crate defines. Frames address a method with a
 /// `(trait, method)` byte pair. The handshake accepts only this version, and
@@ -299,6 +303,18 @@ impl<D> CallError<D> {
     pub fn unavailable() -> Self {
         Self::HostFailure {
             reason: "unavailable".into(),
+        }
+    }
+
+    /// Convert the domain error, keeping every framework outcome.
+    pub fn map_domain<T>(self, convert: impl FnOnce(D) -> T) -> CallError<T> {
+        match self {
+            Self::Domain(domain) => CallError::Domain(convert(domain)),
+            Self::Denied => CallError::Denied,
+            Self::Unsupported => CallError::Unsupported,
+            Self::MalformedFrame { reason } => CallError::MalformedFrame { reason },
+            Self::HostFailure { reason } => CallError::HostFailure { reason },
+            Self::Cancelled => CallError::Cancelled,
         }
     }
 }

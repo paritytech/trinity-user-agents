@@ -4,9 +4,10 @@ use crate::versioned::theme::{
     HostThemeSubscribeError, HostThemeSubscribeItem, HostThemeSubscribeRequest,
 };
 use crate::{CallContext, CallError, Subscription};
-use crate::{wire, wire_trait};
+use crate::{wasm_env, wire, wire_trait};
 
 /// Host theme subscription.
+#[wasm_env]
 #[wire_trait(id = 15)]
 #[crate::async_trait]
 pub trait Theme: Send + Sync {

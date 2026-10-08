@@ -6,9 +6,10 @@ use crate::versioned::renderer::{
     ProductRendererRenderRequest,
 };
 use crate::{CallContext, CallError, Subscription};
-use crate::{wire, wire_trait};
+use crate::{wasm_env, wire, wire_trait};
 
 /// Product-rendered bodies and the actions triggered inside them.
+#[wasm_env]
 #[wire_trait(id = 17)]
 #[crate::service(required_execution = Worker)]
 #[crate::async_trait]

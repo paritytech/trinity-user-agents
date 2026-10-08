@@ -6,6 +6,7 @@
 mod service;
 mod sso_service;
 mod versioned_type;
+mod wasm_env;
 mod wire;
 
 use proc_macro::TokenStream;
@@ -58,6 +59,31 @@ pub fn wire_trait(args: TokenStream, item: TokenStream) -> TokenStream {
     wire::expand_trait(args, item)
 }
 
+/// Expose a TrUAPI service trait to wasm workers.
+///
+/// ```ignore
+/// #[wasm_env]
+/// #[wire_trait(id = 2)]
+/// #[crate::async_trait]
+/// pub trait Account: Send + Sync { ... }
+/// ```
+///
+/// Must precede `#[wire_trait]` and `#[async_trait]`, so it reads the
+/// methods as written. Every method a product may start becomes an import
+/// named `<trait>_<method>` in the `truapi` wasm module, the same name the
+/// wire table uses. From that one list the macro emits:
+///
+/// - under the `wasm-worker` feature, `WasmEnv::link_<trait>`, which links
+///   each import to a typed call on the product's trait implementation;
+/// - under the `guest` feature, a `guest` module beside the trait with the
+///   import declarations and one typed wrapper per method.
+///
+/// Only works inside `truapi`.
+#[proc_macro_attribute]
+pub fn wasm_env(args: TokenStream, item: TokenStream) -> TokenStream {
+    wasm_env::expand(args, item)
+}
+
 /// Generate versioned message envelopes.
 ///
 /// ```ignore
@@ -68,9 +94,10 @@ pub fn wire_trait(args: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 ///
 /// Each declaration becomes a SCALE enum with positional codec indices and an
-/// `impl Versioned` exposing `Latest`, `LATEST`, and `version()`. Single-version
-/// envelopes also get trivial `IntoLatest`/`FromLatest` impls; multi-version
-/// envelopes leave those to be written by hand, since the conversion is bespoke.
+/// `impl Versioned` exposing `Latest`, `LATEST`, `version()`, and
+/// `wrap_latest()`. Single-version envelopes also get trivial
+/// `IntoLatest`/`FromLatest` impls; multi-version envelopes leave those to be
+/// written by hand, since the conversion is bespoke.
 ///
 /// The enum and every variant receive generated doc comments; a variant keeps
 /// its own doc attributes when the declaration provides them.

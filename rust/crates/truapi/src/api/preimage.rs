@@ -6,9 +6,10 @@ use crate::versioned::preimage::{
     RemotePreimageSubmitResponse,
 };
 use crate::{CallContext, CallError, Subscription};
-use crate::{wire, wire_trait};
+use crate::{wasm_env, wire, wire_trait};
 
 /// Preimage lookup and submission methods.
+#[wasm_env]
 #[wire_trait(id = 11)]
 #[crate::async_trait]
 pub trait Preimage: Send + Sync {

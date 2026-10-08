@@ -20,9 +20,10 @@ use crate::versioned::chain::{
     RemoteChainTransactionStopRequest, RemoteChainTransactionStopResponse,
 };
 use crate::{CallContext, CallError, Subscription};
-use crate::{wire, wire_trait};
+use crate::{wasm_env, wire, wire_trait};
 
 /// Chain interaction methods.
+#[wasm_env]
 #[wire_trait(id = 3)]
 #[crate::async_trait]
 pub trait Chain: Send + Sync {
