@@ -103,8 +103,6 @@ private extension TabFactory {
         let spaFlowState = flowStateProvider.flowState()
         let context = WalletFlowContext(
             depositService: serviceCoordinator.depositService,
-            fiatOnrampService: serviceCoordinator.fiatOnrampService,
-            fiatOnrampTrackingService: serviceCoordinator.fiatOnrampTrackingService,
             coinageService: serviceCoordinator.coinageService,
             coinageBackupSyncService: serviceCoordinator.coinageBackupSyncService,
             personDataStore: serviceCoordinator.personDataStore,

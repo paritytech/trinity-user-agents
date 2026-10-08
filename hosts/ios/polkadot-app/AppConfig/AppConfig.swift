@@ -22,10 +22,8 @@ enum AppConfig {
     enum Assets {
         #if UNSTABLE
             static let mainAsset: ChainAssetId = SupportedAssets.dDollar
-            static let fiatOnrampFundedAsset: ChainAssetId = SupportedAssets.usdt
         #else
             static let mainAsset: ChainAssetId = SupportedAssets.pusdPPL
-            static let fiatOnrampFundedAsset: ChainAssetId = SupportedAssets.pusdAH
         #endif
 
         static let pgasAsset: ChainAssetId = SupportedAssets.pgasAH

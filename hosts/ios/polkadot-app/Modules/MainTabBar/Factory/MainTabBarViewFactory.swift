@@ -166,9 +166,6 @@ enum MainTabBarViewFactory {
             let dimHandlers: [URLHandlingServiceProtocol] = []
         #endif
 
-        let fiatOnrampRedirect = FiatOnrampRedirectService(
-            fiatOnrampTransactionTracking: serviceCoordinator.fiatOnrampTrackingService
-        )
         let payDeeplink = PayDeeplinkService(
             coinageService: serviceCoordinator.coinageService,
             moduleNavigator: moduleNavigator
@@ -206,7 +203,6 @@ enum MainTabBarViewFactory {
         return URLHandlingService(children: signInHandler + [
             chatService
         ] + dimHandlers + [
-            fiatOnrampRedirect,
             payDeeplink
         ] + productHandlers + [
             w3sPayDeeplink

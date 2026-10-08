@@ -45,9 +45,5 @@ extension AppConfig {
 
             return URL(string: DeepLink.scheme + "://players?\(idPart)&\(datePart)")!
         }
-
-        static func fiatOnramp(sessionId: String) -> URL {
-            URL(string: DeepLink.scheme + "://fiatOnramp/buySuccess?sessionId=\(sessionId)")!
-        }
     }
 }

@@ -1,4 +1,3 @@
-import BigInt
 import Foundation
 import Foundation_iOS
 import SubstrateSdk
@@ -17,10 +16,6 @@ final class AssetDetailsPresenter {
     let viewModelFactory: WalletCardViewModelFactoryProtocol
     let paymentAssetViewModelFactory: PaymentAssetViewModelMaking
     private let balanceFormatterFactory: AssetBalanceFormatterFactoryProtocol
-    private var balanceFormatter: LocalizableDecimalFormatting?
-    private var priceFormatter: LocalizableDecimalFormatting?
-    private lazy var fundingConfiguration: AssetFundingStatusView.Configuration =
-        .fundingDigitalDollarConfiguration()
 
     private let chainAsset: ChainAsset
     private var balance: Decimal = 0
@@ -117,14 +112,6 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
         wireframe.showAddTokens(from: view)
     }
 
-    func onFundingCompletedAction() {
-        interactor?.removeCompletedFiatOnrampTransactions()
-    }
-
-    func onFundingFailedAction() {
-        interactor?.removeFailedFiatOnrampTransactions()
-    }
-
     func onTopUp() {
         openRampProduct(.topUp)
     }
@@ -174,10 +161,6 @@ extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
         }
     #endif
 
-    func didReceive(fiatOnrampStatuses: Set<FiatOnrampTransactionStatusPayload>) {
-        provideFundingStates(from: fiatOnrampStatuses)
-    }
-
     func didReceive(balance: Decimal) {
         self.balance = balance
         provideAssetBalance()
@@ -205,82 +188,6 @@ extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
         } else {
             view?.didHideBackupNotification()
         }
-    }
-}
-
-private extension AssetDetailsPresenter {
-    func provideFundingStates(from statuses: Set<FiatOnrampTransactionStatusPayload>) {
-        let sortedStatuses = statuses.sorted { lhs, rhs in
-            lhs.id.value < rhs.id.value
-        }
-
-        let states: [AssetFundingStatusView.FundingState] = sortedStatuses.map { status in
-            switch status.status {
-            case .funding:
-                .init(id: status.id.value, status: .waiting)
-            case let .inProgress(remainedTime, inAmount, outAmount):
-                .init(
-                    id: status.id.value,
-                    status: .inProgress(
-                        totalSeconds: Int(ceil(remainedTime)),
-                        amountIn: formatAmount(inAmount),
-                        amountOut: formatUsdAmount(outAmount)
-                    )
-                )
-            case let .completed(inAmount, outAmount):
-                .init(
-                    id: status.id.value,
-                    status: .completed(
-                        amountIn: formatAmount(inAmount),
-                        amountOut: formatUsdAmount(outAmount)
-                    )
-                )
-            case .failed:
-                .init(id: status.id.value, status: .failed)
-            }
-        }
-
-        view?.didReceive(fundingStates: states)
-    }
-
-    func formatAmount(_ amount: Balance) -> String {
-        let formatter = getBalanceFormatter()
-        let decimalAmount = amount.decimal(assetInfo: chainAsset.assetDisplayInfo)
-        return formatter.stringFromDecimal(decimalAmount) ?? ""
-    }
-
-    func getBalanceFormatter() -> LocalizableDecimalFormatting {
-        if let balanceFormatter {
-            return balanceFormatter
-        }
-
-        let formatter = balanceFormatterFactory
-            .createTokenFormatter(for: chainAsset.assetDisplayInfo)
-            .value(for: .current)
-
-        balanceFormatter = formatter
-
-        return formatter
-    }
-
-    func getPriceFormatter() -> LocalizableDecimalFormatting {
-        if let priceFormatter {
-            return priceFormatter
-        }
-
-        let formatter = balanceFormatterFactory
-            .createAssetPriceFormatter(for: .usd)
-            .value(for: .current)
-
-        priceFormatter = formatter
-
-        return formatter
-    }
-
-    func formatUsdAmount(_ amount: Balance) -> String {
-        let formatter = getPriceFormatter()
-        let decimalAmount = amount.decimal(assetInfo: chainAsset.assetDisplayInfo)
-        return formatter.stringFromDecimal(decimalAmount) ?? ""
     }
 }
 

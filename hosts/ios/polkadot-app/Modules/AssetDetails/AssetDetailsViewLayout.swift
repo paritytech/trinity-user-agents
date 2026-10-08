@@ -175,25 +175,6 @@ struct AssetDetailsView: View {
     #endif
 }
 
-/// Funding progress banner. Pinned by the wallet host while the asset card is expanded.
-struct AssetDetailsFundingBar: View {
-    @Bindable var viewModel: AssetDetailsViewModel
-
-    var body: some View {
-        if !viewModel.fundingStates.isEmpty {
-            AssetFundingStatusView(
-                states: $viewModel.fundingStates,
-                isExpanded: $viewModel.isFundingExpanded,
-                configuration: .fundingDigitalDollarConfiguration(
-                    onCompletedAction: viewModel.onFundingCompleted,
-                    onFailedAction: viewModel.onFundingFailed
-                )
-            )
-            .frame(maxWidth: .infinity)
-        }
-    }
-}
-
 private struct CoinageBalanceBreakdownView: View {
     let breakdown: CoinageBalanceBreakdownViewModel
 
