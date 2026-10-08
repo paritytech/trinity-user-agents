@@ -1184,9 +1184,9 @@ mod tests {
     }
 
     #[test]
-    fn a_tap_the_execution_publishes_lets_its_worker_scan() {
+    fn a_tap_the_execution_publishes_counts_on_its_connections() {
         // Hosts publish taps on the execution, while the scanner checks them on
-        // the connection the scan arrives on.
+        // a connection the execution opened.
         let host = NativeTrUApiHostRuntime::with_runtime_config(
             Arc::new(EventCallbacks::new()),
             native_host_runtime_config(),
