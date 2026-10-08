@@ -33,6 +33,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.RemotePermissionRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.job
@@ -40,6 +41,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import timber.log.Timber
+import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostPushNotificationRequest
@@ -122,6 +124,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private fun buildBridge(
         callingProductId: ProductId,
         navigation: NavigationPolicy,
+        card: ExpandedCardFace?,
     ) = object : HostBridge {
         override val storage: HostStorage =
             EncryptedHostStorage(encryptedPreferences, callingProductId.value)
@@ -227,6 +230,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             chainProvider.send(connectionId, request)
 
         override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
+
+        override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
+            card?.setFaceShown(shown) ?: ExpandedCardFaceOutcome.UNSUPPORTED
     }
 
     internal fun gameBridge(callingProductId: ProductId) = object : GameHostBridge {
@@ -252,6 +258,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         chains: TrUAPIChains,
         navigationPolicy: NavigationPolicy,
         kind: ProductExecutionKind,
+        card: ExpandedCardFace? = null,
         onReadyToInject: suspend (bootstrap: String) -> Unit,
     ): Result<TrUAPIProductExecution> {
         execution?.let {
@@ -264,7 +271,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             cachedChains.set(chains)
             val pocket = ProductPocketHostBridge(productId, pocketCardStore, scope)
             val opened = runtime.openProductExecution(
-                bridge = buildBridge(productId, navigationPolicy),
+                bridge = buildBridge(productId, navigationPolicy, card),
                 configuration = ProductExecutionConfig(productId.value, kind),
                 pocket = pocket,
                 game = gameBridge(productId),

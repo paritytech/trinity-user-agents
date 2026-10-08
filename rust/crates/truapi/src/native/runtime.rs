@@ -137,6 +137,7 @@ impl NativeTrUApiHostRuntime {
         });
         let permission_status: Arc<dyn crate::platform::PermissionStatusHost> =
             callback_platform.clone();
+        let expanded_card: Arc<dyn crate::platform::ExpandedCardHost> = callback_platform.clone();
         let platform: Arc<dyn crate::platform::Platform> = callback_platform;
         let chat: Option<Arc<dyn crate::platform::ChatPlatform>> =
             chat_callbacks.map(|chat| -> Arc<dyn crate::platform::ChatPlatform> {
@@ -164,6 +165,7 @@ impl NativeTrUApiHostRuntime {
             pocket,
             game,
             permission_status,
+            expanded_card,
             permission_grants: Arc::new(TemporaryPermissions::default()),
             events,
             shared_events: self.events.clone(),
@@ -612,6 +614,8 @@ pub struct NativeProductExecution {
     /// The same `CallbackPlatform` as `platform`, kept separately because
     /// `Arc<dyn Platform>` cannot be downcast to the optional capability.
     permission_status: Arc<dyn crate::platform::PermissionStatusHost>,
+    /// The same `CallbackPlatform`, so a Widget's call reaches this execution's callbacks.
+    expanded_card: Arc<dyn crate::platform::ExpandedCardHost>,
     /// One-use grants follow this execution across its product and admin connections.
     permission_grants: Arc<TemporaryPermissions>,
     events: Arc<NativeEventBus>,
@@ -646,6 +650,7 @@ impl NativeProductExecution {
             chat: self.chat_connection.clone(),
             renderer: self.renderer_connection.clone(),
             pocket_platform: self.pocket.clone(),
+            expanded_card: Some(self.expanded_card.clone()),
             game_platform: self.game.clone(),
         }
     }
@@ -1174,6 +1179,53 @@ mod tests {
             panic!("expected a renderer action item")
         };
         assert_eq!(delivered, published);
+    }
+
+    #[test]
+    fn an_expanded_card_face_request_reaches_only_the_execution_that_made_it() {
+        let host = NativeTrUApiHostRuntime::with_runtime_config(
+            Arc::new(EventCallbacks::new()),
+            native_host_runtime_config(),
+        )
+        .expect("host runtime config should be valid");
+        let open_widget = |product_id: &str| {
+            let callbacks = Arc::new(EventCallbacks::new());
+            let execution = host
+                .open_product_execution(
+                    callbacks.clone(),
+                    None,
+                    None,
+                    None,
+                    native_execution_config(product_id, ProductExecutionKind::Widget),
+                )
+                .expect("Widget execution should open");
+            (execution, callbacks)
+        };
+        let (card, card_callbacks) = open_widget("card.dot");
+        let (_other, other_callbacks) = open_widget("other.dot");
+
+        let admin = card.admin();
+        let reply = futures::executor::block_on(truapi::api::ExpandedCard::set_face_shown(
+            admin.product_runtime().as_ref(),
+            &truapi::CallContext::default(),
+            truapi::versioned::expanded_card::HostExpandedCardSetFaceShownRequest::V1(
+                v01::HostExpandedCardSetFaceShownRequest { shown: false },
+            ),
+        ));
+
+        assert!(reply.is_ok(), "the card's own host applied the request: {reply:?}");
+        assert_eq!(
+            *card_callbacks.face_requests.lock().expect("face requests"),
+            [false]
+        );
+        assert!(
+            other_callbacks
+                .face_requests
+                .lock()
+                .expect("face requests")
+                .is_empty(),
+            "another product's card must not be asked to move its face"
+        );
     }
 
     #[test]
