@@ -1,4 +1,5 @@
 import Products
+import SwiftUI
 import Testing
 import UIKit
 import UIKitExt
@@ -297,6 +298,18 @@ struct PocketCardScreenTests {
 
         #expect(product.controller.parent == nil)
         #expect(product.controller.view.superview == nil)
+    }
+
+    /// A hidden face sits under the status bar. Were it to inset itself for
+    /// the safe area there, it could carry the inset back when shown and draw
+    /// pushed down, its foot cut off by the page.
+    @Test
+    func drawsTheFaceWithoutSafeAreaInsets() {
+        let screen = laidOutScreen(product: StubSPAView())
+
+        let face = screen.children.compactMap { $0 as? UIHostingController<PocketOpenedCardView> }.first
+
+        #expect(face?.safeAreaRegions == [])
     }
 }
 

@@ -39,6 +39,7 @@ final class PocketCardScreenViewController: UIViewController {
         requestedFaceShown = faceShown
         let face = UIHostingController(rootView: PocketOpenedCardView(card: card))
         face.view.backgroundColor = .clear
+        face.safeAreaRegions = []
         self.face = face
 
         super.init(nibName: nil, bundle: nil)
