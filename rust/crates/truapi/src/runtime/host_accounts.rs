@@ -1006,7 +1006,7 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         let access = super::product_manifest::ring_vrf_key_access_granted(
             &self.services,
             self.services.platform.as_ref(),
-            caller,
+            caller.product_id().ok_or(RingVrfError::Rejected)?,
             handle,
         )
         .await?;

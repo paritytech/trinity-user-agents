@@ -927,14 +927,12 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try inner.activateLocalSession(secret: secret, liteUsername: liteUsername)
     }
 
-    /// Bind an external SSO transport to the active wallet after verifying
-    /// its own statement and encryption public keys. Retain this binding
-    /// with the transport and open one service per authenticated peer.
-    public func openSsoSession(
+    /// Bind one peer to the wallet matching the transport's public keys.
+    public func openSsoService(
         ownStatementAccountId: Data,
         ownEncryptionPublicKey: Data
-    ) throws -> NativeSsoAccountHolderSession {
-        try inner.openSsoSession(
+    ) throws -> NativeSsoAccountHolderService {
+        try inner.openSsoService(
             ownStatementAccountId: ownStatementAccountId,
             ownEncryptionPublicKey: ownEncryptionPublicKey
         )

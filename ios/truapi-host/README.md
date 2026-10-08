@@ -362,25 +362,24 @@ The container enforces product consent, while native media delegates resolve OS 
 
 ## SSO session handling
 
-An externally owned SSO transport calls `openSsoSession` once with its own statement-account and encryption public keys. Rust verifies both against the active wallet and binds the returned `NativeSsoAccountHolderSession` to that activation. Locking or reactivating the wallet invalidates the binding, including reactivation with the same secret.
+An externally owned SSO transport calls `openSsoService` for each peer with its own statement-account and encryption public keys. Rust verifies both against the active wallet and binds the returned service to that activation. Locking or reactivating the wallet invalidates the binding, including reactivation with the same secret.
 
 ```swift
-let session = try runtime.openSsoSession(
+let service = try runtime.openSsoService(
     ownStatementAccountId: statementAccountId,
     ownEncryptionPublicKey: encryptionPublicKey
 )
-let service = try session.openService()
 ```
 
 Retain one generated service per authenticated peer. Before queueing each decrypted SCALE message, call `service.handleSsoControl(message:)`: a non-nil outcome handles the message immediately, allowing Cancel to reach a running request. Queue only nil results, in arrival order, for `service.handleSsoRequest(message:)`. Both calls use the same service and withdrawal state. Malformed messages throw.
 
 The generated `SsoRequestOutcome` distinguishes these results:
 
-- `.response(message:)`: SCALE-encoded reply. Call `service.requireCurrentSession()` before starting the post over the same authenticated transport.
+- `.response(message:)`: SCALE-encoded reply to post over the same authenticated transport, including not-connected errors after wallet replacement.
 - `.disconnected`: the peer ended the session; tear down its transport and records.
 - `.ignored`: nothing to post.
 
-Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`. Release each service with its peer transport and the session binding with its coordinator. An invalid binding cannot be reused after wallet activation; recreate the coordinator and verify its transport keys again.
+Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`. Release each service with its peer transport. An invalid binding cannot be reused after wallet activation; recreate the coordinator and verify its transport keys again.
 
 `runtime.prepareDisconnectRequest()` builds the SCALE-encoded `Disconnected` message without requiring an active wallet. Posting and record cleanup stay with the host.
 

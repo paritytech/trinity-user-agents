@@ -5375,18 +5375,14 @@ fn resource_allocation_rejects_when_user_declines() {
     let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
     install_pairing_session(&host, session_info());
     let cx = CallContext::default();
-    let err = futures::executor::block_on(ResourceAllocation::request(
-        &host,
-        &cx,
-        resource_allocation_request(),
-    ))
-    .unwrap_err();
-    match err {
-        CallError::Domain(HostRequestResourceAllocationError::V1(
-            v01::ResourceAllocationError::Unknown { reason },
-        )) => assert_eq!(reason, "User rejected resource allocation"),
-        other => panic!("expected user-rejected resource allocation error, got {other:?}"),
-    }
+    let request = resource_allocation_request();
+    let HostRequestResourceAllocationRequest::V1(inner) = &request;
+    let expected =
+        HostRequestResourceAllocationResponse::V1(v01::HostRequestResourceAllocationResponse {
+            outcomes: vec![v01::AllocationOutcome::Rejected; inner.resources.len()],
+        });
+    let result = futures::executor::block_on(ResourceAllocation::request(&host, &cx, request));
+    assert_eq!(result, Ok(expected));
 }
 
 #[test]

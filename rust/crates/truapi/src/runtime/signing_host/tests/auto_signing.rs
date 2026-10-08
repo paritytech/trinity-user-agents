@@ -272,8 +272,8 @@ fn direct_allocation_cannot_authorize_signing_without_wallet_approval() {
             platform.resource_allocation_reviews.lock().unwrap().clone()
         ),
         (
-            Err(AuthorityError::Unknown {
-                reason: "User rejected resource allocation".to_string()
+            Ok(truapi::latest::HostRequestResourceAllocationResponse {
+                outcomes: vec![truapi::latest::AllocationOutcome::Rejected],
             }),
             Ok(false),
             vec![crate::platform::ResourceAllocationReview {

@@ -14,7 +14,6 @@ use schnorrkel::SecretKey;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::warn;
-use truapi::latest::GenericError;
 use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Clone, PartialEq, Eq, Hash, Encode, Decode)]
@@ -975,24 +974,9 @@ impl HostGrantGuard<'_> {
         Ok(())
     }
 
-    /// Preserve cleanup intent across failed or dropped session writes.
-    pub fn queue_auth_deletion(&mut self) {
-        self.state.queue_deletion(CoreStorageKey::AuthSession);
-    }
-
-    /// Consume the selected write's cleanup intent at commit.
-    pub fn forget_auth_deletion(&mut self) {
-        self.state
-            .pending_deletions
-            .retain(|key| *key != CoreStorageKey::AuthSession);
-    }
-
     /// Queue the old session's durable grants before its caches are detached.
-    pub fn revoke_session(&mut self, previous: Option<&SessionInfo>, clear_auth: bool) {
+    pub fn revoke_session(&mut self, previous: Option<&SessionInfo>) {
         self.advance();
-        if clear_auth {
-            self.queue_auth_deletion();
-        }
         self.state.queue_deletion(CoreStorageKey::AutoSigningKeys);
         if let Some(sso) = previous.and_then(|session| session.sso.as_ref()) {
             let session_id = allowances::session_storage_id(sso);
@@ -1019,22 +1003,6 @@ impl HostGrantGuard<'_> {
 }
 
 impl HostGrantPersistence<'_> {
-    /// Read the auth snapshot while replacement and deletion are excluded.
-    pub async fn read_auth_session(&self) -> Result<Option<Vec<u8>>, GenericError> {
-        self.store
-            .storage
-            .read_core_storage(CoreStorageKey::AuthSession)
-            .await
-    }
-
-    /// Persist the auth snapshot within the caller's selected commit.
-    pub async fn write_auth_session(&self, blob: Vec<u8>) -> Result<(), GenericError> {
-        self.store
-            .storage
-            .write_core_storage(CoreStorageKey::AuthSession, blob)
-            .await
-    }
-
     /// Evict keys loaded before revocation acquired persistence.
     pub fn begin_cleanup(&self) -> bool {
         if self.store.lifecycle().state.pending_deletions.is_empty() {

@@ -447,7 +447,7 @@ impl CreateTransactionAuthorityRequest {
 }
 
 /// Whether blessed `calling_product_id` is using its own account, `owner`.
-pub(crate) fn is_blessed_owner(calling_product_id: &str, owner: &str) -> bool {
+pub fn is_blessed_owner(calling_product_id: &str, owner: &str) -> bool {
     use crate::platform::{has_trusted_remote_permissions, normalize_product_identifier};
     normalize_product_identifier(calling_product_id).is_ok_and(|caller| {
         has_trusted_remote_permissions(&caller)

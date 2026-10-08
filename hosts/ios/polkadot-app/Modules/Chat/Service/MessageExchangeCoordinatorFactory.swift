@@ -119,11 +119,6 @@ extension MessageExchangeCoordinatorFactory: MessageExchangeCoordinatorMaking {
             .makeSigner(for: ownKeyId.signKeyId)
         let encryptor = try ChatEncryptionManager(entropyManager: entropyManager)
             .makeEncryptorFactory(ownEncryptionKeyId: ownKeyId.encryptionKeyId)
-        let runtime = try runtimeProvider.sharedRuntime()
-        let session = try runtime.openSsoSession(
-            ownStatementAccountId: signer.accountId,
-            ownEncryptionPublicKey: encryptor.localPublicKey
-        )
 
         return SSOTruAPICoordinator(
             ownKeyId: ownKeyId,
@@ -138,8 +133,12 @@ extension MessageExchangeCoordinatorFactory: MessageExchangeCoordinatorMaking {
                 logger: logger
             ),
             runtimeProvider: runtimeProvider,
-            runtime: runtime,
-            session: session
+            makeAccountHolderService: {
+                try runtimeProvider.sharedRuntime().openSsoService(
+                    ownStatementAccountId: signer.accountId,
+                    ownEncryptionPublicKey: encryptor.localPublicKey
+                )
+            }
         )
     }
 

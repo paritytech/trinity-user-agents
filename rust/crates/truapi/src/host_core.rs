@@ -33,7 +33,7 @@ use truapi::{CallContext, CancellationReason};
 use crate::frame::ProtocolMessage;
 use crate::host_logic::worker::WorkerLedger;
 use crate::runtime::{
-    AccountCaller, AccountHolder, ActionChannel, AuthorityError, AuthoritySession,
+    AccountCaller, AccountHolder, ActionChannel, AuthorityError,
     DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver, HostAccounts, HostSession,
     LocalActivation, PairedSsoPeer, ProductConnection, ProductRuntimeHost, ResponderExit,
     RuntimeServices, SigningHostRole, SsoAccountHolderClient, SsoAccountHolderService,
@@ -613,13 +613,12 @@ impl SigningHostRuntime {
         &self,
         product_id: &str,
     ) -> Result<Option<[u8; 32]>, v01::GenericError> {
-        crate::runtime::wallet_derive_subtree_public_key(
-            self.signing_host.account_holder(),
-            product_id,
-        )
-        .map_err(|err| v01::GenericError {
-            reason: err.to_string(),
-        })
+        self.signing_host
+            .account_holder()
+            .derive_subtree_public_key(product_id)
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
     }
 
     /// Answer these resource tags as refused, replacing any earlier set.
@@ -986,22 +985,21 @@ impl SigningHostRuntime {
     }
 
     /// Bind an external SSO transport to the wallet matching both of its keys.
-    pub fn open_sso_session(
+    pub fn open_sso_service(
         &self,
         own_statement_account_id: [u8; 32],
         own_encryption_public_key: [u8; 32],
-    ) -> Result<SsoAccountHolderSession, AuthorityError> {
+    ) -> Result<SsoAccountHolderService, AuthorityError> {
         let wallet = self.signing_host.account_holder().clone();
         let session = wallet
             .current_session()
             .ok_or(AuthorityError::Disconnected)?;
-        crate::runtime::wallet_require_sso_identity(
-            &wallet,
+        wallet.require_sso_identity(
             &session,
             own_statement_account_id,
             own_encryption_public_key,
         )?;
-        Ok(SsoAccountHolderSession { wallet, session })
+        Ok(SsoAccountHolderService::new(wallet, session))
     }
 }
 
@@ -1041,23 +1039,6 @@ pub fn product_admin_with_adapters(
     )
 }
 
-/// A wallet activation authenticated by an externally owned SSO transport.
-pub struct SsoAccountHolderSession {
-    wallet: Arc<WalletAccountHolder>,
-    session: AuthoritySession,
-}
-
-impl SsoAccountHolderSession {
-    /// Give each peer independent request and withdrawal state.
-    pub fn open_service(&self) -> Result<SsoAccountHolderService, AuthorityError> {
-        self.wallet.require_current_session(&self.session)?;
-        Ok(SsoAccountHolderService::new(
-            self.wallet.clone(),
-            self.session.clone(),
-        ))
-    }
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 impl SigningHostRuntime {
     /// Record statement-store accounts the host must keep renewed across
@@ -1067,12 +1048,11 @@ impl SigningHostRuntime {
         &self,
         targets: Vec<crate::runtime::StatementRenewalTarget>,
     ) -> Result<(), v01::GenericError> {
-        crate::runtime::wallet_track_statement_renewal_targets(
-            self.signing_host.account_holder(),
-            targets,
-        )
-        .await
-        .map_err(|reason| v01::GenericError { reason })
+        self.signing_host
+            .account_holder()
+            .track_statement_renewal_targets(targets)
+            .await
+            .map_err(|reason| v01::GenericError { reason })
     }
 
     /// Every statement account the renewal ledger currently tracks.
@@ -1083,7 +1063,9 @@ impl SigningHostRuntime {
     pub async fn statement_renewal_targets(
         &self,
     ) -> Result<Vec<crate::runtime::TrackedStatementRenewalTarget>, v01::GenericError> {
-        crate::runtime::wallet_statement_renewal_targets(self.signing_host.account_holder())
+        self.signing_host
+            .account_holder()
+            .statement_renewal_targets()
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -1096,7 +1078,9 @@ impl SigningHostRuntime {
     /// from what it will prune.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.statement_renewal_owner_key"))]
     pub fn statement_renewal_owner_key(&self) -> Result<truapi::Bytes32, v01::GenericError> {
-        crate::runtime::wallet_statement_renewal_owner_key(self.signing_host.account_holder())
+        self.signing_host
+            .account_holder()
+            .statement_renewal_owner_key()
             .map_err(|reason| v01::GenericError { reason })
     }
 
@@ -1106,12 +1090,11 @@ impl SigningHostRuntime {
         &self,
         account_id: &[u8; 32],
     ) -> Result<bool, v01::GenericError> {
-        crate::runtime::wallet_untrack_statement_renewal_account(
-            self.signing_host.account_holder(),
-            account_id,
-        )
-        .await
-        .map_err(|reason| v01::GenericError { reason })
+        self.signing_host
+            .account_holder()
+            .untrack_statement_renewal_account(account_id)
+            .await
+            .map_err(|reason| v01::GenericError { reason })
     }
 
     /// Run one statement-store renewal pass now and return per-target
@@ -1123,7 +1106,9 @@ impl SigningHostRuntime {
         &self,
     ) -> Result<crate::statement_allowance::renewal::StatementRenewalReport, v01::GenericError>
     {
-        crate::runtime::wallet_renew_statement_allowances(self.signing_host.account_holder())
+        self.signing_host
+            .account_holder()
+            .renew_statement_allowances()
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -1152,7 +1137,9 @@ impl SigningHostRuntime {
     pub fn last_statement_renewal_report(
         &self,
     ) -> Option<crate::statement_allowance::renewal::StatementRenewalReport> {
-        crate::runtime::wallet_last_statement_renewal_report(self.signing_host.account_holder())
+        self.signing_host
+            .account_holder()
+            .last_statement_renewal_report()
     }
 }
 

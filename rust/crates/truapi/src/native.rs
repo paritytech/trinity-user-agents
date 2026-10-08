@@ -38,7 +38,7 @@ pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
     NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };
-pub use sso::{NativeSsoAccountHolderService, NativeSsoAccountHolderSession, SsoRequestOutcome};
+pub use sso::{NativeSsoAccountHolderService, SsoRequestOutcome};
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
 use parity_scale_codec::{DecodeLimit, Encode};

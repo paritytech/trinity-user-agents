@@ -44,14 +44,6 @@ pub mod statement_store;
 mod statement_store_rpc;
 mod vrf;
 
-pub use signing_host::{wallet_derive_subtree_public_key, wallet_require_sso_identity};
-#[cfg(not(target_arch = "wasm32"))]
-pub use signing_host::{
-    wallet_last_statement_renewal_report, wallet_renew_statement_allowances,
-    wallet_statement_renewal_owner_key, wallet_statement_renewal_targets,
-    wallet_track_statement_renewal_targets, wallet_untrack_statement_renewal_account,
-};
-
 use core::future::Future;
 use core::time::Duration;
 use std::collections::HashSet;

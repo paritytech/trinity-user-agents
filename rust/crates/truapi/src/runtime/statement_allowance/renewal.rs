@@ -8,7 +8,7 @@
 //! on `paseo-next-v2` as of 2026-08-15. This module is the
 //! chain-pure pass: given already-resolved targets, register each for the
 //! requested period. Scheduling and target persistence live in
-//! `signing_host::allowance_renewal`.
+//! `signing_host::wallet_account_holder::allowance_renewal`.
 //!
 //! A host owns the schedule. The core answers when the next pass is due and what
 //! a pass achieved; it never asks to be woken, because the period arithmetic a
